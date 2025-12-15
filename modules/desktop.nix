@@ -30,6 +30,7 @@
     powerOnBoot = true;
     settings.General.Experimental = true; # Displays battery % for devices
   };
+
   services.blueman.enable = true; # GUI for Bluetooth management
 
   # ---------------------------------------------------------
