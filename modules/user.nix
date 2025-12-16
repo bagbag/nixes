@@ -40,6 +40,17 @@
     }
   ];
 
+  # Workaround for https://github.com/nix-community/home-manager/issues/322
+  systemd.services.home-manager-patrick = {
+    preStart = ''
+      rm -f "$HOME/.ssh/config"
+    '';
+
+    postStart = ''
+      cp --remove-destination "$(readlink -f "$HOME/.ssh/config")" "$HOME/.ssh/config"
+    '';
+  };
+
   # Connect Home Manager Configuration
   home-manager.users.patrick = import ./home.nix;
 }

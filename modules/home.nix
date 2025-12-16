@@ -190,10 +190,10 @@
   programs.ssh = {
     enable = true;
     enableDefaultConfig = false;
-    hashKnownHosts = false;
 
     matchBlocks = {
       "*" = {
+        hashKnownHosts = false;
         controlMaster = "auto";
         controlPath = "~/.ssh/control-master-%r@%h:%p";
         controlPersist = "30";
