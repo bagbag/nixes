@@ -5,7 +5,7 @@
     e2fsprogs
 
     # Runtimes
-    nodejs_25
+    nodejs_latest
     deno
 
     # Development Tools

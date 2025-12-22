@@ -156,7 +156,6 @@
 
   home.sessionVariables = {
     EDITOR = "micro";
-    # Point nh to your flake location so it works automatically
     NH_FLAKE = "/etc/nixos";
     NIXOS_OZONE_WL = "1";
   };
@@ -274,7 +273,6 @@
     config = {
       profile = "high-quality";
       ytdl-format = "bestvideo+bestaudio";
-      cache-default = 4000000;
     };
   };
 }

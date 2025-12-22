@@ -2,7 +2,6 @@
 {
   programs.vscode = {
     enable = true;
-    package = pkgs.vscode.fhs;
 
     profiles.default = {
       extensions = with pkgs.vscode-marketplace; [
@@ -18,7 +17,7 @@
 
         # --- Languages & Frameworks ---
         angular.ng-template
-        denoland.vscode-deno
+        # denoland.vscode-deno
         rust-lang.rust-analyzer
         svelte.svelte-vscode
         tamasfe.even-better-toml
