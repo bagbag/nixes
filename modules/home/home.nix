@@ -179,6 +179,17 @@
     enable = true;
     enableBashIntegration = true;
     enableZshIntegration = true;
+
+    settings = {
+      window-width = 165;
+      window-height = 40;
+      font-family = "Noto Sans Mono";
+      font-size = 12;
+      window-padding-x = 4;
+      window-padding-y = 4;
+      mouse-hide-while-typing = true;
+      scrollback-limit = 100000000;
+    };
   };
 
   # ---------------------------------------------------------
@@ -263,6 +274,7 @@
       user.name = "Patrick Hein";
       user.email = "bagbag98@googlemail.com";
       init.defaultBranch = "main";
+      pull.rebase = true;
     };
   };
 
