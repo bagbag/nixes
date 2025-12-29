@@ -13,7 +13,11 @@
     dbeaver-bin
 
     # Other Software
+    ffmpeg
     gimp
+    rclone
     remmina
+    signal-desktop
+    transmission_4-gtk
   ];
 }

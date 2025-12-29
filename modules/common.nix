@@ -11,6 +11,7 @@
     ./nix.nix
     ./podman.nix
     ./programs.nix
+    ./services.nix
     ./system-packages.nix
   ];
 }
