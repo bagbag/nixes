@@ -145,6 +145,7 @@
     tcpdump
     wget
     wl-clipboard-rs
+    unzip
 
     # System Monitoring
     btop
@@ -160,6 +161,10 @@
     nixfmt-rfc-style
     repomix
     terraform
+
+    # Signal Export
+    libsecret
+    signal-export
 
     # Gnome Extensions
     gnomeExtensions.launch-new-instance
