@@ -17,6 +17,9 @@
 
     nix-vscode-extensions.url = "github:nix-community/nix-vscode-extensions";
     nix-vscode-extensions.inputs.nixpkgs.follows = "nixpkgs";
+
+    stylix.url = "github:nix-community/stylix";
+    stylix.inputs.nixpkgs.follows = "nixpkgs";
   };
 
   outputs =
@@ -45,17 +48,12 @@
             system = "x86_64-linux";
             specialArgs = { inherit inputs; };
             modules = [
-              # Host Specific Configuration
               ./hosts/nixstation/host.nix
-
-              # Core System Bundle
               ./modules/common.nix
-
-              # Optional Features
               ./modules/desktop.nix
-
-              # User Configuration
               ./modules/user.nix
+
+              inputs.stylix.nixosModules.stylix
 
               # VS Code Extensions Overlay
               {

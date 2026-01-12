@@ -17,10 +17,12 @@
     # Other Software
     ffmpeg
     gimp
+    poppler-utils
+    qpdf
     rclone
     remmina
+    rustdesk-flutter
     signal-desktop
     transmission_4-gtk
-    rustdesk-flutter
   ];
 }

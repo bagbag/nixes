@@ -158,7 +158,7 @@
     awscli2
     git
     libpst
-    nixfmt-rfc-style
+    nixfmt
     repomix
     terraform
 

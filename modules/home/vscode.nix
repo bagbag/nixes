@@ -18,6 +18,7 @@
         # --- Languages & Frameworks ---
         angular.ng-template
         # denoland.vscode-deno
+        vitest.explorer
         rust-lang.rust-analyzer
         svelte.svelte-vscode
         tamasfe.even-better-toml
