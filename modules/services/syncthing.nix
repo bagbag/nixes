@@ -58,5 +58,9 @@ in
         folders = cfg.folders;
       };
     };
+
+    systemd.tmpfiles.rules = [
+      "d ${config.services.syncthing.dataDir} 0700 ${cfg.user} ${config.services.syncthing.group} - -"
+    ];
   };
 }
