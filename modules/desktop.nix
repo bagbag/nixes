@@ -100,12 +100,16 @@ in
     services.gnome.core-developer-tools.enable = true;
     services.gnome.games.enable = false;
 
-    environment.systemPackages = with pkgs; [
-      gnome-tweaks
-      gnome-disk-utility
-      easyeffects
-      keepassxc
-    ];
+    environment.systemPackages =
+      with pkgs;
+      [
+        gnome-disk-utility
+      ]
+      ++ (lib.optionals (!config.modules.system.installMode) [
+        gnome-tweaks
+        easyeffects
+        keepassxc
+      ]);
 
     # ---------------------------------------------------------
     # Theming

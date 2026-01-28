@@ -14,6 +14,7 @@
   podman = ./podman.nix;
   programs = ./programs.nix;
   system = ./system.nix;
+  installMode = ./install-mode.nix;
   systemPackages = ./system-packages.nix;
   user = ./user.nix;
 

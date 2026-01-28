@@ -3,6 +3,7 @@
   lib,
   pkgs,
   config,
+  osConfig,
   ...
 }:
 {
@@ -117,64 +118,70 @@
   # ---------------------------------------------------------
   # User Packages
   # ---------------------------------------------------------
-  home.packages = with pkgs; [
-    # System Helpers
-    nstdl.diff-gen
-    nix-du
-    nix-tree
+  home.packages =
+    with pkgs;
+    [
+      # System Helpers
+      nstdl.diff-gen
+      nix-du
+      nix-tree
 
-    # Modern Coreutils
-    bat
-    eza
-    fd
-    ripgrep
+      # Modern Coreutils
+      bat
+      eza
+      fd
+      ripgrep
 
-    # Core Editors
-    micro
-    nano
+      # Core Editors
+      micro
+      nano
 
-    # Productivity Tools
-    fzf
-    tealdeer
-    tmux
+      # Productivity Tools
+      fzf
+      tealdeer
+      tmux
 
-    # Utilities
-    bind
-    curl
-    inetutils
-    ipcalc
-    tcpdump
-    wget
-    wl-clipboard-rs
-    unzip
+      # Utilities
+      bind
+      curl
+      inetutils
+      ipcalc
+      tcpdump
+      wget
+      wl-clipboard-rs
+      unzip
 
-    # System Monitoring
-    btop
-    htop
-    iotop
-    nmon
+      # System Monitoring
+      btop
+      htop
+      iotop
+      nmon
 
-    # Miscellaneous
-    aria2
-    awscli2
-    git
-    libpst
-    nixfmt
-    repomix
-    terraform
+      # Miscellaneous
+      aria2
+      awscli2
+      git
+      libpst
+      nixfmt
+      repomix
+      terraform
 
-    # LaTeX
-    texliveFull
+      # LaTeX
+    ]
+    ++ (lib.optionals (!osConfig.modules.system.installMode) [
+      pkgs.texliveFull
+    ])
+    ++ [
 
-    # Signal Export
-    libsecret
-    signal-export
+      # Signal Export
+      libsecret
+      signal-export
 
-    # Gnome Extensions
-    gnomeExtensions.launch-new-instance
-    gnomeExtensions.status-icons
-    gnomeExtensions.uptime-kuma-indicator
-  ];
+      # Gnome Extensions
+      gnomeExtensions.launch-new-instance
+      gnomeExtensions.status-icons
+      gnomeExtensions.uptime-kuma-indicator
+    ];
 
   home.sessionVariables = {
     EDITOR = "micro";

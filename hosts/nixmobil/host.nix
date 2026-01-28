@@ -16,6 +16,7 @@
   # Use the module library
   modules = {
     system.type = "desktop";
+    system.installMode = true;
     common.enable = true;
 
     # User configuration
