@@ -18,3 +18,4 @@
 
 ## Hardware Support
 - **NixOS Hardware:** Utilizing community or custom modules to optimize performance for specific components (e.g., AMD CPUs/GPUs).
+- **nixos-hardware flake:** Integrated as a source for community-maintained hardware specific configurations and optimizations.

@@ -5,6 +5,8 @@
   desktop = ./desktop.nix;
   firewall = ./firewall.nix;
   amd = ./hardware/amd.nix;
+  intel = ./hardware/intel.nix;
+  laptop = ./hardware/laptop.nix;
   spdifWorkaround = ./hardware/spdif-workaround.nix;
   homeManager = ./home-manager.nix;
   network = ./network.nix;

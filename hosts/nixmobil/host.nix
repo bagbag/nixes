@@ -3,15 +3,15 @@
   imports = [
     ./hardware-configuration.nix
     ./disko.nix
-    inputs.nixos-hardware.nixosModules.common-cpu-amd
-    inputs.nixos-hardware.nixosModules.common-cpu-amd-pstate
-    inputs.nixos-hardware.nixosModules.common-pc-ssd
+    inputs.nixos-hardware.nixosModules.common-cpu-intel
+    inputs.nixos-hardware.nixosModules.common-pc-laptop
+    inputs.nixos-hardware.nixosModules.common-pc-laptop-ssd
   ];
 
   system.stateVersion = "25.11";
 
   # Host identification
-  networking.hostName = "nixstation";
+  networking.hostName = "nixmobil";
 
   # Use the module library
   modules = {
@@ -26,20 +26,18 @@
 
     # Networking
     network = {
-      hostName = "nixstation";
+      hostName = "nixmobil";
       domain = "lan";
     };
 
-    # Hardware specific workarounds
-    hardware.spdif-workaround.enable = true;
+    # Hardware specific optimizations
+    hardware = {
+      intel.enable = true;
+      laptop.enable = true;
+    };
 
     # Services
     services = {
-      librechat = {
-        enable = true;
-        googleServiceKeyFile = "/var/lib/librechat/google-insolytix-application-service-key.json";
-      };
-      mongodb.enable = true;
       syncthing = {
         enable = true;
         devices = {
@@ -47,9 +45,9 @@
             name = "Pixel 10 Pro XL";
             id = "LFANBT3-MUYNDTL-LZEBKEE-Y7RLJY6-D3ACPXY-73TVXN2-SARNRPW-CKODLQL";
           };
-          "nixmobil" = {
-            name = "nixmobil";
-            id = "FIXME-GET-MOBIL-ID";
+          "nixstation" = {
+            name = "nixstation";
+            id = "E26C5UM-W5QYAS6-PCZXTN6-CDBNUNO-QMGH3AM-4CB2JQE-OYCH4WH-3MHNQQS";
           };
         };
         folders = {
@@ -58,7 +56,7 @@
             path = "/home/patrick/syncthing/keepass";
             devices = [
               "pixel10"
-              "nixmobil"
+              "nixstation"
             ];
           };
           "keepass-work" = {
@@ -66,7 +64,7 @@
             path = "/home/patrick/syncthing/keepass-work";
             devices = [
               "pixel10"
-              "nixmobil"
+              "nixstation"
             ];
           };
         };
@@ -75,8 +73,7 @@
   };
 
   # Secrets rekeying configuration
-  age.rekey = {
-    hostPubkey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFALQ9WJhksoUBKzZGwx2xN0Y6sb/1BEX4/j+PsdI3Cx";
-    masterIdentities = [ "~/.ssh/id_ed25519" ];
-  };
+  # hostPubkey should be added here once the system is installed and keys are generated
+  # age.rekey.hostPubkey = "...";
+  age.rekey.masterIdentities = [ "~/.ssh/id_ed25519" ];
 }

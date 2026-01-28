@@ -4,6 +4,8 @@
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
 
+    nixos-hardware.url = "github:NixOS/nixos-hardware/master";
+
     flake-parts.url = "github:hercules-ci/flake-parts";
 
     disko.url = "github:nix-community/disko";
@@ -76,6 +78,26 @@
             specialArgs = { inherit inputs; };
             modules = (lib.attrValues inputs.self.nixosModules) ++ [
               ./hosts/nixstation/host.nix
+
+              inputs.stylix.nixosModules.stylix
+              inputs.ragenix.nixosModules.default
+              inputs.agenix-rekey.nixosModules.default
+
+              # Overlays
+              {
+                nixpkgs.overlays = [
+                  inputs.nix-vscode-extensions.overlays.default
+                  inputs.self.overlays.default
+                ];
+              }
+            ];
+          };
+
+          nixmobil = inputs.nixpkgs.lib.nixosSystem {
+            system = "x86_64-linux";
+            specialArgs = { inherit inputs; };
+            modules = (lib.attrValues inputs.self.nixosModules) ++ [
+              ./hosts/nixmobil/host.nix
 
               inputs.stylix.nixosModules.stylix
               inputs.ragenix.nixosModules.default
