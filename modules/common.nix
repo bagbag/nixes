@@ -1,4 +1,12 @@
-{ inputs, ... }:
+{
+  config,
+  lib,
+  inputs,
+  ...
+}:
+let
+  cfg = config.modules.common;
+in
 {
   imports = [
     inputs.disko.nixosModules.disko
@@ -11,7 +19,23 @@
     ./nix.nix
     ./podman.nix
     ./programs.nix
-    ./services.nix
+    ./system.nix
     ./system-packages.nix
+
+    ./services/librechat.nix
+    ./services/mongodb.nix
+    ./services/syncthing.nix
   ];
+
+  options.modules.common = {
+    enable = lib.mkOption {
+      type = lib.types.bool;
+      default = true;
+      description = "Enable common system modules.";
+    };
+  };
+
+  config = lib.mkIf cfg.enable {
+    modules.base.enable = lib.mkDefault true;
+  };
 }

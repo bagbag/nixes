@@ -1,43 +1,70 @@
+{ inputs, ... }:
 {
   imports = [
     ./hardware-configuration.nix
     ./disko.nix
-
-    ../../modules/hardware/amd.nix
-
-    ./services/librechat.nix
-    ./services/mongodb.nix
-    ./services/syncthing.nix
   ];
 
   system.stateVersion = "25.11";
 
+  # Host identification
   networking.hostName = "nixstation";
-  networking.domain = "lan";
-  networking.search = [ "lan" ];
 
-  # Workaround for SPDIF audio drops
-  boot.kernelParams = [
-    "snd_usb_audio.power_save=0"
-    "snd_usb_audio.power_save_controller=N"
-  ];
+  # Use the module library
+  modules = {
+    system.type = "desktop";
+    common.enable = true;
 
-  services.pipewire.wireplumber.extraConfig = {
-    "10-disable-spdif-suspend" = {
-      "monitor.alsa.rules" = [
-        {
-          matches = [
-            {
-              "node.name" = "~alsa_output.usb-Generic_USB_Audio.*SPDIF.*";
-            }
-          ];
-          actions = {
-            update-props = {
-              "session.suspend-timeout-seconds" = 0; # Keep the hardware awake
-            };
-          };
-        }
-      ];
+    # User configuration
+    user = {
+      enable = true;
+      name = "patrick";
     };
+
+    # Networking
+    network = {
+      hostName = "nixstation";
+      domain = "lan";
+    };
+
+    # Hardware specific workarounds
+    hardware.spdif-workaround.enable = true;
+    hardware.amd.enable = true;
+
+    # Services
+    services = {
+      librechat = {
+        enable = true;
+        googleServiceKeyFile = "/var/lib/librechat/google-insolytix-application-service-key.json";
+      };
+      mongodb.enable = true;
+      syncthing = {
+        enable = true;
+        devices = {
+          "pixel10" = {
+            name = "Pixel 10 Pro XL";
+            id = "LFANBT3-MUYNDTL-LZEBKEE-Y7RLJY6-D3ACPXY-73TVXN2-SARNRPW-CKODLQL";
+          };
+        };
+        folders = {
+          "keepass" = {
+            id = "dizum-nfezd";
+            path = "/home/patrick/syncthing/keepass";
+            devices = [ "pixel10" ];
+          };
+          "keepass-work" = {
+            id = "jqqq6-c9zap";
+            path = "/home/patrick/syncthing/keepass-work";
+            devices = [ "pixel10" ];
+          };
+        };
+      };
+    };
+  };
+
+  # Secrets rekeying configuration
+  age.rekey = {
+    hostPubkey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFALQ9WJhksoUBKzZGwx2xN0Y6sb/1BEX4/j+PsdI3Cx";
+    masterIdentities = [ "~/.ssh/id_ed25519" ];
   };
 }

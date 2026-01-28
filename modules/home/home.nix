@@ -119,6 +119,7 @@
   # ---------------------------------------------------------
   home.packages = with pkgs; [
     # System Helpers
+    nstdl.diff-gen
     nix-du
     nix-tree
 
