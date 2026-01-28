@@ -162,6 +162,9 @@
     repomix
     terraform
 
+    # LaTeX
+    texliveFull
+
     # Signal Export
     libsecret
     signal-export

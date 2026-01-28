@@ -3,6 +3,7 @@
   environment.systemPackages = with pkgs; [
     deploy-rs
     e2fsprogs
+    usbutils
 
     # Runtimes
     nodejs_latest
