@@ -102,6 +102,7 @@ in
 
     environment.systemPackages = with pkgs; [
       gnome-tweaks
+      gnome-disk-utility
       easyeffects
       keepassxc
     ];
