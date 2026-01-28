@@ -49,7 +49,7 @@
           };
           "nixmobil" = {
             name = "nixmobil";
-            id = "FIXME-GET-MOBIL-ID";
+            id = "BPCWIO6-XR3XFSG-AAGT5Q6-SEZLTGD-3YQZJAQ-3ATSTJY-HT6ALN6-KSPN2AL";
           };
         };
         folders = {
