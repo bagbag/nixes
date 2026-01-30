@@ -32,6 +32,7 @@
         "firefox@developer-edition"
         "spotify"
         "ghostty"
+        "rustdesk"
       ];
 
       masApps = {
