@@ -1,5 +1,6 @@
 {
   system = ./system.nix;
+  programs = ./programs.nix;
   nix = ./nix.nix;
   
   # Home Manager Modules

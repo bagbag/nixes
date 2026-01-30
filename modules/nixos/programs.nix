@@ -1,8 +1,8 @@
 { pkgs, ... }:
 {
-  programs.nix-ld.enable = true;
+  imports = [ ../shared/programs.nix ];
 
-  programs.zsh.enable = true;
+  programs.nix-ld.enable = true;
 
   programs.npm = {
     enable = true;

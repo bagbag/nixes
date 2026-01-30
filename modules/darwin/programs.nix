@@ -5,6 +5,8 @@
   ...
 }:
 {
+  imports = [ ../shared/programs.nix ];
+
   options.modules.programs = {
     enable = lib.mkOption {
       type = lib.types.bool;

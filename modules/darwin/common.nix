@@ -32,8 +32,6 @@ in
       "flakes"
     ];
 
-    programs.zsh.enable = true;
-
     # Darwin specific settings
     system.primaryUser = config.modules.user.name;
 
