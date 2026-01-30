@@ -1,11 +1,11 @@
-{ pkgs, ... }:
+{ pkgs, config, ... }:
 {
   nix = {
     package = pkgs.lix;
 
     settings.trusted-users = [
       "root"
-      "patrick"
+      config.modules.user.name
     ];
   };
 

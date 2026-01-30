@@ -16,7 +16,7 @@ in
     ./firewall.nix
     ./home-manager.nix
     ./network.nix
-    ./nix.nix
+    ../shared/nix.nix
     ./podman.nix
     ./programs.nix
     ../shared/system.nix

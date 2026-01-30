@@ -17,7 +17,6 @@
     # Homebrew Configuration
     homebrew = {
       enable = true;
-      mutableTaps = false;
 
       onActivation = {
         autoUpdate = true;
