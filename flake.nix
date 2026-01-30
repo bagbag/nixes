@@ -28,6 +28,9 @@
 
     ragenix.url = "github:yaxitech/ragenix";
     ragenix.inputs.nixpkgs.follows = "nixpkgs";
+
+    nix-darwin.url = "github:nix-darwin/nix-darwin";
+    nix-darwin.inputs.nixpkgs.follows = "nixpkgs";
   };
 
   outputs =
@@ -42,6 +45,7 @@
 
       systems = [
         "x86_64-linux"
+        "aarch64-darwin"
       ];
 
       perSystem =
@@ -70,7 +74,9 @@
           };
         };
 
-        nixosModules = import ./modules/default.nix;
+        nixosModules = import ./modules/nixos/default.nix;
+        darwinModules = import ./modules/darwin/default.nix;
+        sharedModules = import ./modules/shared/default.nix;
 
         nixosConfigurations = {
           nixstation = inputs.nixpkgs.lib.nixosSystem {
@@ -104,6 +110,28 @@
               inputs.agenix-rekey.nixosModules.default
 
               # Overlays
+              {
+                nixpkgs.overlays = [
+                  inputs.nix-vscode-extensions.overlays.default
+                  inputs.self.overlays.default
+                ];
+              }
+            ];
+          };
+        };
+
+        darwinConfigurations = {
+          nixbook-air = inputs.nix-darwin.lib.darwinSystem {
+            system = "aarch64-darwin";
+            specialArgs = { inherit inputs; };
+            modules = (lib.attrValues inputs.self.darwinModules) ++ [
+              ./hosts/nixbook-air/host.nix
+
+              inputs.home-manager.darwinModules.home-manager
+              # stylix.darwinModules.stylix is not always available, but let's check or omit for now
+              # inputs.ragenix.nixosModules.default
+              # inputs.agenix-rekey.nixosModules.default
+
               {
                 nixpkgs.overlays = [
                   inputs.nix-vscode-extensions.overlays.default

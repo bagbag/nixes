@@ -78,6 +78,6 @@ in
     };
 
     # Connect Home Manager Configuration
-    home-manager.users.${cfg.name} = import ./home/home.nix;
+    home-manager.users.${cfg.name} = import ../shared/home/home.nix;
   };
 }

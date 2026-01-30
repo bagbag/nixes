@@ -19,12 +19,12 @@ in
     ./nix.nix
     ./podman.nix
     ./programs.nix
-    ./system.nix
+    ../shared/system.nix
     ./system-packages.nix
 
     ./services/librechat.nix
     ./services/mongodb.nix
-    ./services/syncthing.nix
+    ../shared/services/syncthing-options.nix
   ];
 
   options.modules.common = {

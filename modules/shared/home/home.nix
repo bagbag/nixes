@@ -11,6 +11,8 @@
 
   imports = [
     ./vscode.nix
+    ./shell.nix
+    ./services/syncthing.nix
   ];
 
   home.sessionPath = [
@@ -18,9 +20,9 @@
   ];
 
   # ---------------------------------------------------------
-  # GNOME Desktop Configuration (Dconf)
+  # GNOME Desktop Configuration (Dconf) - Linux Only
   # ---------------------------------------------------------
-  dconf.settings = {
+  dconf.settings = lib.mkIf pkgs.stdenv.isLinux {
     "org/gnome/settings-daemon/plugins/power" = {
       sleep-inactive-ac-type = "nothing";
       power-button-action = "interactive";
@@ -112,7 +114,6 @@
       switch-windows = [ "<Alt>Tab" ];
       switch-windows-backward = [ "<Shift><Alt>Tab" ];
     };
-
   };
 
   # ---------------------------------------------------------
@@ -126,20 +127,9 @@
       nix-du
       nix-tree
 
-      # Modern Coreutils
-      bat
-      eza
-      fd
-      ripgrep
-
       # Core Editors
       micro
       nano
-
-      # Productivity Tools
-      fzf
-      tealdeer
-      tmux
 
       # Utilities
       bind
@@ -148,14 +138,11 @@
       ipcalc
       tcpdump
       wget
-      wl-clipboard-rs
       unzip
 
       # System Monitoring
       btop
       htop
-      iotop
-      nmon
 
       # Miscellaneous
       aria2
@@ -168,80 +155,25 @@
 
       # LaTeX
     ]
-    ++ (lib.optionals (!osConfig.modules.system.installMode) [
-      pkgs.texliveFull
-    ])
-    ++ [
-
-      # Signal Export
+    ++ (lib.optionals pkgs.stdenv.isLinux [
+      iotop
+      nmon
+      wl-clipboard-rs
       libsecret
       signal-export
-
-      # Gnome Extensions
       gnomeExtensions.launch-new-instance
       gnomeExtensions.status-icons
       gnomeExtensions.uptime-kuma-indicator
-    ];
+    ])
+    ++ (lib.optionals (!osConfig.modules.system.installMode) [
+      pkgs.texliveFull
+    ]);
 
   home.sessionVariables = {
     EDITOR = "micro";
+  } // (lib.optionalAttrs pkgs.stdenv.isLinux {
     NIXOS_OZONE_WL = "1";
-  };
-
-  # ---------------------------------------------------------
-  # Terminal Configuration
-  # ---------------------------------------------------------
-
-  programs.ghostty = {
-    enable = true;
-    enableBashIntegration = true;
-    enableZshIntegration = true;
-
-    settings = {
-      window-width = 165;
-      window-height = 40;
-      font-family = "Noto Sans Mono";
-      font-size = 12;
-      window-padding-x = 4;
-      window-padding-y = 4;
-      mouse-hide-while-typing = true;
-      scrollback-limit = 100000000;
-      shell-integration-features = [
-        "ssh-env"
-        "ssh-terminfo"
-      ];
-    };
-  };
-
-  # ---------------------------------------------------------
-  # Shell Configuration
-  # ---------------------------------------------------------
-  programs.zsh = {
-    enable = true;
-    enableCompletion = true;
-    autosuggestion.enable = true;
-    syntaxHighlighting.enable = true;
-
-    initContent = ''
-      WORDCHARS=''${WORDCHARS//[\/.-=]/}
-
-      bindkey "^[[1;5C" forward-word
-      bindkey "^[[1;5D" backward-word
-    '';
-
-    shellAliases = {
-      ls = "eza --smart-group --icons";
-      la = "eza --smart-group -a --icons";
-      ll = "eza --smart-group -l --icons";
-      cat = "bat";
-      grep = "grep --color=auto";
-    };
-
-    history = {
-      size = 100000;
-      path = "$HOME/.zsh_history";
-    };
-  };
+  });
 
   programs.ssh = {
     enable = true;
@@ -284,10 +216,6 @@
   # Program Modules
   # ---------------------------------------------------------
   programs.home-manager.enable = true;
-  programs.nix-index.enable = true;
-  programs.nix-index-database.comma.enable = true;
-  programs.starship.enable = true;
-  programs.zoxide.enable = true;
 
   programs.git = {
     enable = true;
@@ -299,7 +227,7 @@
     };
   };
 
-  programs.chromium = {
+  programs.chromium = lib.mkIf pkgs.stdenv.isLinux {
     enable = true;
     package = pkgs.ungoogled-chromium;
 
@@ -317,9 +245,9 @@
         uosc
       ];
 
-      mpv-unwrapped = pkgs.mpv-unwrapped.override {
+      mpv-unwrapped = pkgs.mpv-unwrapped.override (lib.optionalAttrs pkgs.stdenv.isLinux {
         waylandSupport = true;
-      };
+      });
     };
 
     config = {

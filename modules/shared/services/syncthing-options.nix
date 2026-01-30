@@ -38,7 +38,7 @@ in
         lib.types.submodule {
           options = {
             id = lib.mkOption { type = lib.types.str; };
-            path = lib.mkOption { type = lib.types.path; };
+            path = lib.mkOption { type = lib.types.str; }; # Changed from path to str for HM compatibility
             devices = lib.mkOption { type = lib.types.listOf lib.types.str; };
           };
         }
@@ -46,21 +46,5 @@ in
       default = { };
       description = "Syncthing folders.";
     };
-  };
-
-  config = lib.mkIf cfg.enable {
-    services.syncthing = {
-      enable = true;
-      openDefaultPorts = true;
-      user = cfg.user;
-      settings = {
-        devices = cfg.devices;
-        folders = cfg.folders;
-      };
-    };
-
-    systemd.tmpfiles.rules = [
-      "d ${config.services.syncthing.dataDir} 0700 ${cfg.user} ${config.services.syncthing.group} - -"
-    ];
   };
 }
