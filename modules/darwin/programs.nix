@@ -17,6 +17,8 @@
     # Homebrew Configuration
     homebrew = {
       enable = true;
+      mutableTaps = false;
+
       onActivation = {
         autoUpdate = true;
         upgrade = true;
@@ -25,15 +27,16 @@
 
       taps = [ ];
 
+      brews = [ ];
+
       casks = [
         "firefox@developer-edition"
         "spotify"
         "ghostty"
-        "bitwarden"
       ];
 
       masApps = {
-        # Add Mac App Store apps here as "AppName" = appID;
+        "Bitwarden" = 1352778147;
       };
     };
   };
