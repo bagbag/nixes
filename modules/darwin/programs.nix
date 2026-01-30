@@ -31,6 +31,7 @@
         "firefox"
         "spotify"
         "ghostty"
+        "bitwarden"
       ];
 
       masApps = {

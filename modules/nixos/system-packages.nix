@@ -33,6 +33,7 @@
       remmina
       rustdesk-flutter
       signal-desktop
+      bitwarden
       transmission_4-gtk
     ]);
 }
