@@ -10,7 +10,7 @@
   spdifWorkaround = ./hardware/spdif-workaround.nix;
   homeManager = ./home-manager.nix;
   network = ./network.nix;
-  nix = ../shared/nix.nix;
+  nix = ./nix.nix;
   podman = ./podman.nix;
   programs = ./programs.nix;
   system = ../shared/system.nix;
