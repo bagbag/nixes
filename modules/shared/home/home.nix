@@ -152,8 +152,6 @@
       nixfmt
       repomix
       terraform
-
-      # LaTeX
     ]
     ++ (lib.optionals pkgs.stdenv.isLinux [
       iotop
@@ -166,6 +164,7 @@
       gnomeExtensions.uptime-kuma-indicator
     ])
     ++ (lib.optionals (!osConfig.modules.system.installMode) [
+      # LaTeX
       pkgs.texliveFull
     ]);
 

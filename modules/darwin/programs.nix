@@ -28,7 +28,7 @@
       ];
 
       casks = [
-        "firefox"
+        "firefox-developer-edition"
         "spotify"
         "ghostty"
         "bitwarden"
