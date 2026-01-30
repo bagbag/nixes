@@ -23,9 +23,7 @@
         cleanup = "zap";
       };
 
-      taps = [
-        "homebrew/services"
-      ];
+      taps = [ ];
 
       casks = [
         "firefox@developer-edition"
