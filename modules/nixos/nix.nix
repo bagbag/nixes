@@ -1,8 +1,13 @@
+{ pkgs, ... }:
 {
-  nix.settings.trusted-users = [
-    "root"
-    "patrick"
-  ];
+  nix = {
+    package = pkgs.lix;
+
+    settings.trusted-users = [
+      "root"
+      "patrick"
+    ];
+  };
 
   programs.nh = {
     enable = true;
