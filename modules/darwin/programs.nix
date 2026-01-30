@@ -28,7 +28,7 @@
       ];
 
       casks = [
-        "firefox-developer-edition"
+        "firefox@developer-edition"
         "spotify"
         "ghostty"
         "bitwarden"
