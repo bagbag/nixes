@@ -2,7 +2,6 @@
   config,
   lib,
   osConfig,
-  pkgs,
   ...
 }:
 let
@@ -18,15 +17,6 @@ in
     settings = {
       devices = cfg.devices;
       folders = cfg.folders;
-    };
-  };
-
-  launchd.agents.syncthing-init = lib.mkIf pkgs.stdenv.isDarwin {
-    enable = lib.mkForce true;
-
-    config = {
-      WatchPaths = lib.mkForce [ ];
-      RunAtLoad = true;
     };
   };
 }
