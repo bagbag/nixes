@@ -12,6 +12,7 @@ in
     ./home-manager.nix
     ./user.nix
     ./programs.nix
+    ./system-packages.nix
     ../shared/services/syncthing-options.nix
     ../shared/system.nix
   ];
