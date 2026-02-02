@@ -151,7 +151,7 @@
       libpst
       nixfmt
       repomix
-      terraform
+      # terraform
     ]
     ++ (lib.optionals pkgs.stdenv.isLinux [
       iotop
