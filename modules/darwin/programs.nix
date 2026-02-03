@@ -35,6 +35,7 @@
         "spotify"
         "ghostty"
         "rustdesk"
+        "keepassxc"
       ];
 
       masApps = {
