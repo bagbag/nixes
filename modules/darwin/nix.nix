@@ -4,6 +4,6 @@
 
   environment = {
     systemPackages = [ pkgs.nh ];
-    variables.NH_FLAKE = "/etc/nixos";
+    variables.NH_FLAKE = "/etc/nix-darwin";
   };
 }
