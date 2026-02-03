@@ -15,6 +15,7 @@ in
     ./system-packages.nix
     ../shared/services/syncthing-options.nix
     ../shared/system.nix
+    ../shared/system-packages.nix
   ];
 
   options.modules.common = {

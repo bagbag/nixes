@@ -74,6 +74,22 @@
     };
   };
 
+  fileSystems."/home/patrick/mnt/nixbook" = {
+    device = "patrick@nixbook-air.lan:/Users/patrick";
+    fsType = "fuse.sshfs";
+    options = [
+      "nodev"
+      "noatime"
+      "allow_other"
+      "IdentityFile=/home/patrick/.ssh/id_ed25519"
+      "x-systemd.automount"
+      "x-systemd.idle-timeout=600"
+      "_netdev"
+      "noauto"
+      "reconnect"
+    ];
+  };
+
   # Secrets rekeying configuration
   age.rekey = {
     hostPubkey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFALQ9WJhksoUBKzZGwx2xN0Y6sb/1BEX4/j+PsdI3Cx";

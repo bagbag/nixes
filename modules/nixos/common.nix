@@ -20,6 +20,7 @@ in
     ./podman.nix
     ./programs.nix
     ../shared/system.nix
+    ../shared/system-packages.nix
     ./system-packages.nix
 
     ./services/librechat.nix

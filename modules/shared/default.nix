@@ -2,6 +2,7 @@
   system = ./system.nix;
   programs = ./programs.nix;
   nix = ./nix.nix;
+  systemPackages = ./system-packages.nix;
   
   # Home Manager Modules
   home = ./home/home.nix;
