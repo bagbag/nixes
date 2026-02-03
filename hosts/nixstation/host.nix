@@ -51,6 +51,14 @@
             name = "nixmobil";
             id = "BPCWIO6-XR3XFSG-AAGT5Q6-SEZLTGD-3YQZJAQ-3ATSTJY-HT6ALN6-KSPN2AL";
           };
+          "nixbook-air" = {
+            name = "nixbook-air";
+            id = "SMDDMZM-643ZB7Y-GUTT7KF-A6PRWK3-RINATYN-OPSRTDW-RD5UVRL-6QV6QQZ";
+          };
+          "iphone-17-pro-max" = {
+            name = "iPhone 17 Pro Max";
+            id = "PVHXECA-YFONWHV-ZDXESDB-6QOVLKL-YCBFXUO-C4FZPSY-5D46XCT-VWV6DAG";
+          };
         };
         folders = {
           "keepass" = {
@@ -59,6 +67,8 @@
             devices = [
               "pixel10"
               "nixmobil"
+              "nixbook-air"
+              "iphone-17-pro-max"
             ];
           };
           "keepass-work" = {
@@ -67,6 +77,8 @@
             devices = [
               "pixel10"
               "nixmobil"
+              "nixbook-air"
+              "iphone-17-pro-max"
             ];
           };
         };
