@@ -171,8 +171,19 @@
       gnomeExtensions.uptime-kuma-indicator
     ])
     ++ (lib.optionals (!osConfig.modules.system.installMode) [
+      # LibreOffice
+      libreoffice-fresh
+      hunspell
+      hunspellDicts.en_US
+      hunspellDicts.de_DE
+      hyphenDicts.en_US
+      hyphenDicts.de_DE
+
       # LaTeX
-      pkgs.texliveFull
+      texliveFull
+
+      typst
+      pandoc
     ]);
 
   home.sessionVariables = {
