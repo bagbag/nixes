@@ -25,12 +25,6 @@ in
           };
         };
 
-        # The GNOME bridge: Required for window tracking on GNOME Wayland
-        aw-watcher-gnome = {
-          package = pkgs.activitywatch;
-          executable = "aw-watcher-gnome";
-        };
-
         # Optional: Input watcher (tracks keypress/mouse click frequency)
         aw-watcher-input = {
           package = pkgs.activitywatch;
@@ -39,7 +33,26 @@ in
       };
     };
 
-    # Crucial: Install and enable the GNOME Extension
-    home.packages = [ pkgs.gnomeExtensions.activitywatch-status ];
+    # awatcher handles window tracking on Wayland natively
+    home.packages = with pkgs; [
+      awatcher
+      gnomeExtensions.focused-window-d-bus
+    ];
+
+    # Create a simple systemd service to run it in the background
+    systemd.user.services.awatcher = {
+      Unit = {
+        Description = "ActivityWatch Wayland watcher";
+        After = [ "graphical-session.target" ];
+        PartOf = [ "graphical-session.target" ];
+      };
+      Service = {
+        ExecStart = "${pkgs.awatcher}/bin/awatcher";
+        Restart = "always";
+      };
+      Install = {
+        WantedBy = [ "graphical-session.target" ];
+      };
+    };
   };
 }

@@ -55,11 +55,17 @@
     "org/gnome/shell" = {
       disable-user-extensions = false;
 
-      enabled-extensions = with pkgs.gnomeExtensions; [
-        launch-new-instance.extensionUuid
-        status-icons.extensionUuid
-        uptime-kuma-indicator.extensionUuid
-      ];
+      enabled-extensions =
+        with pkgs.gnomeExtensions;
+        [
+          appindicator.extensionUuid
+          launch-new-instance.extensionUuid
+          status-icons.extensionUuid
+          uptime-kuma-indicator.extensionUuid
+        ]
+        ++ (lib.optionals (osConfig.modules.services.activitywatch.enable or false) [
+          focused-window-d-bus.extensionUuid
+        ]);
 
       favorite-apps = [
         "firefox-devedition.desktop"
