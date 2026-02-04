@@ -22,4 +22,5 @@
   librechat = ./services/librechat.nix;
   mongodb = ./services/mongodb.nix;
   syncthing = ../shared/services/syncthing-options.nix;
+  activitywatch = ./services/activitywatch-options.nix;
 }

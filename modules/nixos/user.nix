@@ -78,6 +78,11 @@ in
     };
 
     # Connect Home Manager Configuration
-    home-manager.users.${cfg.name} = import ../shared/home/home.nix;
+    home-manager.users.${cfg.name} = {
+      imports = [
+        ../shared/home/home.nix
+        ./home/services/activitywatch.nix
+      ];
+    };
   };
 }

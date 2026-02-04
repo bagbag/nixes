@@ -1,5 +1,4 @@
 {
-  config,
   lib,
   osConfig,
   ...
@@ -8,15 +7,17 @@ let
   cfg = osConfig.modules.services.syncthing;
 in
 {
-  services.syncthing = {
-    enable = cfg.enable;
+  config = lib.mkIf cfg.enable {
+    services.syncthing = {
+      enable = true;
 
-    overrideDevices = true;
-    overrideFolders = true;
+      overrideDevices = true;
+      overrideFolders = true;
 
-    settings = {
-      devices = cfg.devices;
-      folders = cfg.folders;
+      settings = {
+        devices = cfg.devices;
+        folders = cfg.folders;
+      };
     };
   };
 }

@@ -159,6 +159,7 @@
       wl-clipboard-rs
       libsecret
       signal-export
+      gnomeExtensions.appindicator
       gnomeExtensions.launch-new-instance
       gnomeExtensions.status-icons
       gnomeExtensions.uptime-kuma-indicator
@@ -170,7 +171,8 @@
 
   home.sessionVariables = {
     EDITOR = "micro";
-  } // (lib.optionalAttrs pkgs.stdenv.isLinux {
+  }
+  // (lib.optionalAttrs pkgs.stdenv.isLinux {
     NIXOS_OZONE_WL = "1";
   });
 
@@ -244,9 +246,11 @@
         uosc
       ];
 
-      mpv-unwrapped = pkgs.mpv-unwrapped.override (lib.optionalAttrs pkgs.stdenv.isLinux {
-        waylandSupport = true;
-      });
+      mpv-unwrapped = pkgs.mpv-unwrapped.override (
+        lib.optionalAttrs pkgs.stdenv.isLinux {
+          waylandSupport = true;
+        }
+      );
     };
 
     config = {

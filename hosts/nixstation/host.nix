@@ -35,11 +35,14 @@
 
     # Services
     services = {
+      mongodb.enable = true;
+      activitywatch.enable = true;
+
       librechat = {
         enable = true;
         googleServiceKeyFile = "/var/lib/librechat/google-insolytix-application-service-key.json";
       };
-      mongodb.enable = true;
+
       syncthing = {
         enable = true;
         devices = {

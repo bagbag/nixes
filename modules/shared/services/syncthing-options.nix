@@ -1,8 +1,4 @@
-{
-  config,
-  lib,
-  ...
-}:
+{ lib, config, ... }:
 let
   cfg = config.modules.services.syncthing;
 in
@@ -38,7 +34,7 @@ in
         lib.types.submodule {
           options = {
             id = lib.mkOption { type = lib.types.str; };
-            path = lib.mkOption { type = lib.types.str; }; # Changed from path to str for HM compatibility
+            path = lib.mkOption { type = lib.types.str; };
             devices = lib.mkOption { type = lib.types.listOf lib.types.str; };
           };
         }

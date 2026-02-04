@@ -1,6 +1,7 @@
 { pkgs, ... }:
 {
-  environment.systemPackages = [
-    pkgs.sshfs
+  environment.systemPackages = with pkgs; [
+    jq
+    sshfs
   ];
 }
