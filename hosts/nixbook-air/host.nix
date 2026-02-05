@@ -52,7 +52,7 @@
 
   age.rekey = {
     storageMode = "local";
-    hostPubkey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBAZNTeHlIEMl2ILVsUjmWwptaTSSLOQRx0Xpeci562a";
+    hostPubkey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPpPhXfy+OmQXWkjhFxn68tDs+++MTXzpSgMS3iM5gwN";
     masterIdentities = [ "~/.ssh/id_ed25519" ];
     localStorageDir = ../../. + "/secrets/rekeyed/nixbook-air";
   };
