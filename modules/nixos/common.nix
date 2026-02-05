@@ -21,10 +21,13 @@ in
     ./programs.nix
     ../shared/system.nix
     ../shared/system-packages.nix
+    ../shared/secrets.nix
+    ../shared/services/openssh.nix
     ./system-packages.nix
 
     ./services/librechat.nix
     ./services/mongodb.nix
+    ./services/openssh.nix
     ../shared/services/syncthing-options.nix
   ];
 

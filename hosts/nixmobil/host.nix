@@ -90,8 +90,10 @@
     };
   };
 
-  # Secrets rekeying configuration
-  # hostPubkey should be added here once the system is installed and keys are generated
-  # age.rekey.hostPubkey = "...";
-  age.rekey.masterIdentities = [ "~/.ssh/id_ed25519" ];
+  age.rekey = {
+    storageMode = "local";
+    hostPubkey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIHBJaMs/1fLo7FOQD5xTHc7Pox4rHN5G6hX96P81DO4e";
+    masterIdentities = [ "~/.ssh/id_ed25519" ];
+    localStorageDir = ../../. + "/secrets/rekeyed/nixmobil";
+  };
 }

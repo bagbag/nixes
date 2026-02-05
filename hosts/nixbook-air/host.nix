@@ -50,11 +50,12 @@
 
   security.pam.services.sudo_local.touchIdAuth = true;
 
-  # Secrets rekeying configuration
-  # age.rekey = {
-  #   hostPubkey = "ssh-ed25519 <INSERT_MACBOOK_PUBKEY>";
-  #   masterIdentities = [ "~/.ssh/id_ed25519" ];
-  # };
+  age.rekey = {
+    storageMode = "local";
+    hostPubkey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBAZNTeHlIEMl2ILVsUjmWwptaTSSLOQRx0Xpeci562a";
+    masterIdentities = [ "~/.ssh/id_ed25519" ];
+    localStorageDir = ../../. + "/secrets/rekeyed/nixbook-air";
+  };
 
   # Set Git commit hash for darwin-version.
   system.configurationRevision = inputs.self.rev or inputs.self.dirtyRev or null;

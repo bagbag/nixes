@@ -11,21 +11,11 @@ in
     enable = lib.mkOption {
       type = lib.types.bool;
       default = true;
-      description = "Enable administration tools (SSH, sudo, etc.).";
+      description = "Enable administration tools (sudo, etc.).";
     };
   };
 
   config = lib.mkIf cfg.enable {
-    services.openssh = {
-      enable = true;
-      openFirewall = true;
-      settings = {
-        PasswordAuthentication = lib.mkDefault false;
-        KbdInteractiveAuthentication = lib.mkDefault true;
-        PermitRootLogin = lib.mkDefault "prohibit-password";
-      };
-    };
-
     security.doas.enable = true;
     security.sudo.enable = true;
   };

@@ -1,0 +1,4 @@
+{ ... }:
+{
+  services.openssh.openFirewall = true;
+}

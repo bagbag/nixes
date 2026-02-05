@@ -9,6 +9,7 @@
   shell = ./home/shell.nix;
 
   # Services
+  openssh = ./services/openssh.nix;
   syncthing = ./home/services/syncthing.nix;
   syncthing-options = ./services/syncthing-options.nix;
 }

@@ -109,9 +109,10 @@
     ];
   };
 
-  # Secrets rekeying configuration
   age.rekey = {
+    storageMode = "local";
     hostPubkey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFALQ9WJhksoUBKzZGwx2xN0Y6sb/1BEX4/j+PsdI3Cx";
     masterIdentities = [ "~/.ssh/id_ed25519" ];
+    localStorageDir = ../../. + "/secrets/rekeyed/nixstation";
   };
 }

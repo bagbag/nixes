@@ -7,6 +7,7 @@
   home-manager = {
     useGlobalPkgs = true;
     useUserPackages = true;
+    backupFileExtension = "backup";
     extraSpecialArgs = { inherit inputs; };
     sharedModules = [
       inputs.nix-index-database.homeModules.nix-index

@@ -65,6 +65,9 @@
           devShells.default = pkgs.mkShell {
             nativeBuildInputs = [ config.agenix-rekey.package ];
           };
+
+          agenix-rekey.nixosConfigurations =
+            inputs.self.nixosConfigurations // inputs.self.darwinConfigurations;
         };
 
       flake = {
@@ -128,9 +131,8 @@
               ./hosts/nixbook-air/host.nix
 
               inputs.home-manager.darwinModules.home-manager
-              # stylix.darwinModules.stylix is not always available, but let's check or omit for now
-              # inputs.ragenix.nixosModules.default
-              # inputs.agenix-rekey.nixosModules.default
+              inputs.ragenix.nixosModules.default
+              inputs.agenix-rekey.nixosModules.default
 
               {
                 nixpkgs.overlays = [

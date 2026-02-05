@@ -52,8 +52,6 @@ in
       autoSubUidGidRange = true;
     };
 
-    services.openssh.settings.AllowUsers = [ cfg.name ];
-
     security.doas.extraRules = [
       {
         users = [ cfg.name ];

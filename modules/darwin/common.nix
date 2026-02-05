@@ -16,6 +16,8 @@ in
     ../shared/services/syncthing-options.nix
     ../shared/system.nix
     ../shared/system-packages.nix
+    ../shared/secrets.nix
+    ../shared/services/openssh.nix
   ];
 
   options.modules.common = {

@@ -10,6 +10,7 @@
   home.stateVersion = "25.11";
 
   imports = [
+    ./awscli.nix
     ./vscode.nix
     ./shell.nix
     ./services/syncthing.nix
@@ -130,6 +131,7 @@
     [
       # System Helpers
       nstdl.diff-gen
+      ragenix
       nix-du
       nix-tree
 
@@ -152,7 +154,6 @@
 
       # Miscellaneous
       aria2
-      awscli2
       git
       libpst
       nixfmt
