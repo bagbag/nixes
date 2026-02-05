@@ -48,7 +48,12 @@
     NSGlobalDomain.AppleInterfaceStyle = "Dark";
   };
 
-  security.pam.services.sudo_local.touchIdAuth = true;
+  security.pam.services.sudo_local = {
+    enable = true;
+    touchIdAuth = true;
+    watchIdAuth = true;
+    reattach = true;
+  };
 
   age.rekey = {
     storageMode = "local";
