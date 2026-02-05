@@ -131,7 +131,7 @@
               ./hosts/nixbook-air/host.nix
 
               inputs.home-manager.darwinModules.home-manager
-              inputs.ragenix.nixosModules.default
+              inputs.ragenix.darwinModules.default
               inputs.agenix-rekey.nixosModules.default
 
               {
