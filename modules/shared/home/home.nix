@@ -131,7 +131,8 @@
     [
       # System Helpers
       nstdl.diff-gen
-      ragenix
+      (lib.hiPrio inputs.ragenix.packages.${pkgs.stdenv.hostPlatform.system}.default)
+      (lib.lowPrio inputs.agenix-rekey.packages.${pkgs.stdenv.hostPlatform.system}.default)
       nix-du
       nix-tree
 
