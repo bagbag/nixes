@@ -25,6 +25,12 @@ in
       default = "changeMeNow";
       description = "Initial password for the user.";
     };
+
+    authorizedKeys = lib.mkOption {
+      type = lib.types.listOf lib.types.str;
+      default = [ ];
+      description = "SSH public keys to add to authorized_keys.";
+    };
   };
 
   config = lib.mkIf cfg.enable {
@@ -34,6 +40,7 @@ in
       isNormalUser = true;
       shell = pkgs.zsh;
       initialPassword = cfg.initialPassword;
+      openssh.authorizedKeys.keys = cfg.authorizedKeys;
 
       extraGroups = [
         "wheel"
