@@ -36,6 +36,7 @@
         "ghostty"
         "rustdesk"
         "keepassxc"
+        "libreoffice"
       ];
 
       masApps = {

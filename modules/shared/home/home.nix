@@ -170,7 +170,7 @@
       gnomeExtensions.status-icons
       gnomeExtensions.uptime-kuma-indicator
     ])
-    ++ (lib.optionals (!osConfig.modules.system.installMode) [
+    ++ (lib.optionals (pkgs.stdenv.isLinux && !osConfig.modules.system.installMode) [
       # LibreOffice
       libreoffice-fresh
       hunspell
@@ -178,9 +178,10 @@
       hunspellDicts.de_DE
       hyphenDicts.en_US
       hyphenDicts.de_DE
-
+    ])
+    ++ (lib.optionals (!osConfig.modules.system.installMode) [
       # LaTeX
-      texliveFull
+      # texliveFull
 
       typst
       pandoc
