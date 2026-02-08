@@ -37,6 +37,7 @@
         "rustdesk"
         "keepassxc"
         "libreoffice"
+        "whatsapp"
       ];
 
       masApps = {
