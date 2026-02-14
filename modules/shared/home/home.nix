@@ -155,7 +155,9 @@
 
       # Miscellaneous
       aria2
+      d2
       git
+      graphviz
       libpst
       nixfmt
       repomix
