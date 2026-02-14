@@ -2,9 +2,9 @@
 {
   imports = [ ../shared/nix.nix ];
 
-  programs.nh = {
-    enable = true;
-    flake = "/etc/nixos";
+  environment = {
+    systemPackages = [ pkgs.nh ];
+    variables.NH_FLAKE = "/etc/nix-darwin";
   };
 
   nix.gc = {
