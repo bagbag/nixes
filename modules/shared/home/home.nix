@@ -168,7 +168,7 @@
       nmon
       wl-clipboard-rs
       libsecret
-      signal-export
+      # signal-export - build issue as of 2026-02-25
       gnomeExtensions.appindicator
       gnomeExtensions.launch-new-instance
       gnomeExtensions.status-icons

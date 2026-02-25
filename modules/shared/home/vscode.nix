@@ -7,6 +7,7 @@
       extensions = with pkgs.vscode-marketplace; [
         # --- Formatters & Linters ---
         dbaeumer.vscode-eslint
+        biomejs.biome
         esbenp.prettier-vscode
         foxundermoon.shell-format
         redhat.vscode-xml
