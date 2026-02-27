@@ -103,9 +103,12 @@
       "IdentityFile=/home/patrick/.ssh/id_ed25519"
       "x-systemd.automount"
       "x-systemd.idle-timeout=600"
+      "x-systemd.mount-timeout=5s"
+      "ConnectTimeout=5"
       "_netdev"
       "noauto"
       "reconnect"
+      "ServerAliveInterval=15"
     ];
   };
 
