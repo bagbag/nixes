@@ -11,4 +11,5 @@ let
 in
 {
   "awscli-insolytix-s3-secret-key.age".publicKeys = keys;
+  "davfs2-secrets.age".publicKeys = keys;
 }

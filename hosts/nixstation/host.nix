@@ -1,4 +1,4 @@
-{ inputs, ... }:
+{ config, inputs, ... }:
 {
   imports = [
     ./hardware-configuration.nix
@@ -93,22 +93,47 @@
     };
   };
 
+  # Top-level NixOS services
+  services.davfs2.enable = true;
+
+  # Link the age secret for davfs2 to the location davfs2 expects
+  environment.etc."davfs2/secrets".source = config.age.secrets."davfs2-secrets".path;
+
   fileSystems."/home/patrick/mnt/nixbook" = {
     device = "patrick@nixbook-air.lan:/Users/patrick";
     fsType = "fuse.sshfs";
     options = [
+      "user"
+      "noauto"
       "nodev"
       "noatime"
-      "allow_other"
+      "nosuid"
       "IdentityFile=/home/patrick/.ssh/id_ed25519"
       "x-systemd.automount"
       "x-systemd.idle-timeout=600"
       "x-systemd.mount-timeout=5s"
+      "x-systemd.after=network-online.target"
       "ConnectTimeout=5"
       "_netdev"
-      "noauto"
       "reconnect"
       "ServerAliveInterval=15"
+    ];
+  };
+
+  fileSystems."/home/patrick/mnt/torbox" = {
+    device = "https://webdav.torbox.app/";
+    fsType = "davfs";
+    options = [
+      "user"
+      "noauto"
+      "nodev"
+      "noatime"
+      "nosuid"
+      "x-systemd.automount"
+      "x-systemd.idle-timeout=600"
+      "x-systemd.mount-timeout=5s"
+      "x-systemd.after=network-online.target"
+      "_netdev"
     ];
   };
 
