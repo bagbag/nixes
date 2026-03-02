@@ -40,10 +40,17 @@
     syntaxHighlighting.enable = true;
 
     initContent = ''
-      WORDCHARS=''${WORDCHARS//[\/.-=]/}
+      WORDCHARS=''${WORDCHARS//[-.\/=]/}
 
+      setopt autocd extendedglob nomatch
+
+      # Better word navigation
       bindkey "^[[1;5C" forward-word
       bindkey "^[[1;5D" backward-word
+
+      # Better history navigation
+      bindkey "^[[A" up-line-or-beginning-search
+      bindkey "^[[B" down-line-or-beginning-search
     '';
 
     shellAliases = {
@@ -52,12 +59,22 @@
       ll = "eza --smart-group -l --icons";
       cat = "bat";
       grep = "grep --color=auto";
+
+      # Navigation
+      ".." = "cd ..";
+      "..." = "cd ../..";
+      "...." = "cd ../../..";
     };
 
     history = {
       size = 100000;
       path = "$HOME/.zsh_history";
     };
+  };
+
+  programs.fzf = {
+    enable = true;
+    enableZshIntegration = true;
   };
 
   programs.nix-index.enable = true;
@@ -73,7 +90,6 @@
     ripgrep
 
     # Utilities
-    fzf
     tealdeer
     tmux
   ];
