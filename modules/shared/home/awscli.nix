@@ -13,7 +13,7 @@ let
     SECRET=$(${pkgs.coreutils}/bin/cat "${secretPath}")
     echo '{
       "Version": 1,
-      "AccessKeyId": "GK...",
+      "AccessKeyId": "GK896dd5444664f0351b82bd15",
       "SecretAccessKey": "'"$SECRET"'",
       "Region": "garage"
     }'
@@ -25,7 +25,7 @@ in
 
     # This generates ~/.aws/config
     settings = {
-      "profile garage" = {
+      "profile insolytix-production" = {
         region = "garage";
         endpoint_url = "https://s3.insolytix.de";
         credential_process = "${awscliInsolytixCredentialsLoader}";
