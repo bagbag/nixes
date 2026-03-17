@@ -33,7 +33,7 @@
       remmina
       rustdesk-flutter
       signal-desktop
-      bitwarden-desktop
+      # bitwarden-desktop # TEMP: Disabled because electron-unwrapped fails to build in this nixpkgs revision
       transmission_4-gtk
     ]);
 }
