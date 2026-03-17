@@ -40,7 +40,6 @@
         # --- AI & Copilot ---
         github.copilot
         github.copilot-chat
-        ms-vscode.copilot-mermaid-diagram
         google.gemini-cli-vscode-ide-companion
 
         # --- Debuggers ---
