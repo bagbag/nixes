@@ -44,6 +44,14 @@
 
       setopt autocd extendedglob nomatch
 
+      # Load the functions from Zsh's library
+      autoload -U up-line-or-beginning-search
+      autoload -U down-line-or-beginning-search
+
+      # Register them as widgets so 'bindkey' can see them
+      zle -N up-line-or-beginning-search
+      zle -N down-line-or-beginning-search
+
       # Better word navigation
       bindkey "^[[1;5C" forward-word
       bindkey "^[[1;5D" backward-word
