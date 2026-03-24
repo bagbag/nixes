@@ -41,6 +41,7 @@
     services = {
       mongodb.enable = true;
       activitywatch.enable = true;
+      qui.enable = true;
 
       librechat = {
         enable = true;
