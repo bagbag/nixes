@@ -6,7 +6,6 @@
 
   programs.npm = {
     enable = true;
-    package = pkgs.nodePackages_latest.npm;
     npmrc = ''
       prefix = ''${HOME}/.node_modules
     '';
