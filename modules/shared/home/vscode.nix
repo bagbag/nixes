@@ -41,6 +41,7 @@
         github.copilot
         github.copilot-chat
         google.gemini-cli-vscode-ide-companion
+        anthropic.claude-code
 
         # --- Debuggers ---
         firefox-devtools.vscode-firefox-debug

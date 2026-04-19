@@ -162,6 +162,9 @@
       nixfmt
       repomix
       # terraform
+
+      # Development Tools
+      claude-code
     ]
     ++ (lib.optionals pkgs.stdenv.isLinux [
       iotop
