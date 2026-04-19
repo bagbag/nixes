@@ -21,10 +21,8 @@
     # User configuration
     user = {
       enable = true;
-      name = "patrick";
+      name = "p0v0";
       authorizedKeys = [
-        "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAICvnCyc7hK0Tb5bXujzcjF+FjpmGi4FnfD9y84RtU6ZQ patrick@nixmobil"
-        "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBAZNTeHlIEMl2ILVsUjmWwptaTSSLOQRx0Xpeci562a patrick@nixbook-air"
       ];
     };
 
@@ -39,12 +37,12 @@
 
     # Services
     services = {
-      mongodb.enable = true;
+      mongodb.enable = false;
       activitywatch.enable = true;
-      qui.enable = true;
+      qui.enable = false;
 
       librechat = {
-        enable = true;
+        enable = false;
         googleServiceKeyFile = "/var/lib/librechat/google-insolytix-application-service-key.json";
       };
 
@@ -53,35 +51,25 @@
         devices = {
           "pixel10" = {
             name = "Pixel 10 Pro XL";
-            id = "LFANBT3-MUYNDTL-LZEBKEE-Y7RLJY6-D3ACPXY-73TVXN2-SARNRPW-CKODLQL";
+            id = "ABC";
           };
           "nixmobil" = {
             name = "nixmobil";
-            id = "BPCWIO6-XR3XFSG-AAGT5Q6-SEZLTGD-3YQZJAQ-3ATSTJY-HT6ALN6-KSPN2AL";
+            id = "ABC";
           };
           "nixbook-air" = {
             name = "nixbook-air";
-            id = "SMDDMZM-643ZB7Y-GUTT7KF-A6PRWK3-RINATYN-OPSRTDW-RD5UVRL-6QV6QQZ";
+            id = "ABC";
           };
           "iphone-17-pro-max" = {
             name = "iPhone 17 Pro Max";
-            id = "PVHXECA-YFONWHV-ZDXESDB-6QOVLKL-YCBFXUO-C4FZPSY-5D46XCT-VWV6DAG";
+            id = "ABC";
           };
         };
         folders = {
           "keepass" = {
-            id = "dizum-nfezd";
-            path = "/home/patrick/syncthing/keepass";
-            devices = [
-              "pixel10"
-              "nixmobil"
-              "nixbook-air"
-              "iphone-17-pro-max"
-            ];
-          };
-          "keepass-work" = {
-            id = "jqqq6-c9zap";
-            path = "/home/patrick/syncthing/keepass-work";
+            id = "ABC";
+            path = "/home/p0v0/syncthing/keepass";
             devices = [
               "pixel10"
               "nixmobil"
@@ -100,8 +88,8 @@
   # Link the age secret for davfs2 to the location davfs2 expects
   environment.etc."davfs2/secrets".source = config.age.secrets."davfs2-secrets".path;
 
-  fileSystems."/home/patrick/mnt/nixbook" = {
-    device = "patrick@nixbook-air.lan:/Users/patrick";
+  fileSystems."/home/p0v0/mnt/nixbook" = {
+    device = "p0v0@nixbook-air.lan:/Users/p0v0";
     fsType = "fuse.sshfs";
     options = [
       "user"
@@ -109,7 +97,7 @@
       "nodev"
       "noatime"
       "nosuid"
-      "IdentityFile=/home/patrick/.ssh/id_ed25519"
+      "IdentityFile=/home/p0v0/.ssh/id_ed25519"
       "x-systemd.automount"
       "x-systemd.idle-timeout=600"
       "x-systemd.mount-timeout=5s"
@@ -121,27 +109,10 @@
     ];
   };
 
-  fileSystems."/home/patrick/mnt/torbox" = {
-    device = "https://webdav.torbox.app/";
-    fsType = "davfs";
-    options = [
-      "user"
-      "noauto"
-      "nodev"
-      "noatime"
-      "nosuid"
-      "x-systemd.automount"
-      "x-systemd.idle-timeout=600"
-      "x-systemd.mount-timeout=5s"
-      "x-systemd.after=network-online.target"
-      "_netdev"
-    ];
-  };
-
-  age.rekey = {
-    storageMode = "local";
-    hostPubkey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFALQ9WJhksoUBKzZGwx2xN0Y6sb/1BEX4/j+PsdI3Cx";
-    masterIdentities = [ "~/.ssh/id_ed25519" ];
-    localStorageDir = ../../. + "/secrets/rekeyed/nixstation";
-  };
+  # age.rekey = {
+  #   storageMode = "local";
+  #   hostPubkey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFALQ9WJhksoUBKzZGwx2xN0Y6sb/1BEX4/j+PsdI3Cx";
+  #   masterIdentities = [ "~/.ssh/id_ed25519" ];
+  #   localStorageDir = ../../. + "/secrets/rekeyed/nixstation";
+  # };
 }

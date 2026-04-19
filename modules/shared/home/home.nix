@@ -213,12 +213,6 @@
         controlPersist = "30";
       };
 
-      "nl01" = {
-        hostname = "10.98.0.100";
-        user = "root";
-        proxyJump = "root@pve01.nightlines.eu";
-      };
-
       "s01.k-fin.de" = {
         hostname = "10.38.7.100";
         user = "root";
@@ -229,11 +223,6 @@
         hostname = "10.38.7.101";
         user = "root";
         proxyJump = "root@pve02.cloud.kledig.de";
-      };
-
-      "gateway01.nightlines.eu" = {
-        hostname = "217.160.18.89";
-        user = "root";
       };
     };
   };
@@ -246,8 +235,8 @@
   programs.git = {
     enable = true;
     settings = {
-      user.name = "Patrick Hein";
-      user.email = "bagbag98@googlemail.com";
+      user.name = "P0V0";
+      user.email = "p0v0@localhost";
       init.defaultBranch = "main";
       pull.rebase = true;
     };

@@ -22,8 +22,8 @@
   };
 
   systemd.tmpfiles.rules = [
-    "d /home/patrick/.config/containers 0755 patrick users -"
-    "L+ /home/patrick/.config/containers/policy.json - - - - /etc/containers/policy.json"
-    "L+ /home/patrick/.config/containers/registries.conf - - - - /etc/containers/registries.conf"
+    "d /home/p0v0/.config/containers 0755 p0v0 users -"
+    "L+ /home/p0v0/.config/containers/policy.json - - - - /etc/containers/policy.json"
+    "L+ /home/p0v0/.config/containers/registries.conf - - - - /etc/containers/registries.conf"
   ];
 }

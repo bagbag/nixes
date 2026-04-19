@@ -21,10 +21,8 @@
     # User configuration
     user = {
       enable = true;
-      name = "patrick";
+      name = "p0v0";
       authorizedKeys = [
-        "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIMM/o1cLFjnD1m41DE41yWySYzOjvN7MizVJLIpbhbXN patrick@nixstation"
-        "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBAZNTeHlIEMl2ILVsUjmWwptaTSSLOQRx0Xpeci562a patrick@nixbook-air"
       ];
     };
 
@@ -49,35 +47,25 @@
         devices = {
           "pixel10" = {
             name = "Pixel 10 Pro XL";
-            id = "LFANBT3-MUYNDTL-LZEBKEE-Y7RLJY6-D3ACPXY-73TVXN2-SARNRPW-CKODLQL";
+            id = "ABC";
           };
           "nixstation" = {
             name = "nixstation";
-            id = "E26C5UM-W5QYAS6-PCZXTN6-CDBNUNO-QMGH3AM-4CB2JQE-OYCH4WH-3MHNQQS";
+            id = "ABC";
           };
           "nixbook-air" = {
             name = "nixbook-air";
-            id = "SMDDMZM-643ZB7Y-GUTT7KF-A6PRWK3-RINATYN-OPSRTDW-RD5UVRL-6QV6QQZ";
+            id = "ABC";
           };
           "iphone-17-pro-max" = {
             name = "iPhone 17 Pro Max";
-            id = "PVHXECA-YFONWHV-ZDXESDB-6QOVLKL-YCBFXUO-C4FZPSY-5D46XCT-VWV6DAG";
+            id = "ABC";
           };
         };
         folders = {
           "keepass" = {
-            id = "dizum-nfezd";
-            path = "/home/patrick/syncthing/keepass";
-            devices = [
-              "pixel10"
-              "nixstation"
-              "nixbook-air"
-              "iphone-17-pro-max"
-            ];
-          };
-          "keepass-work" = {
-            id = "jqqq6-c9zap";
-            path = "/home/patrick/syncthing/keepass-work";
+            id = "ABC";
+            path = "/home/p0v0/syncthing/keepass";
             devices = [
               "pixel10"
               "nixstation"
@@ -90,10 +78,10 @@
     };
   };
 
-  age.rekey = {
-    storageMode = "local";
-    hostPubkey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIHBJaMs/1fLo7FOQD5xTHc7Pox4rHN5G6hX96P81DO4e";
-    masterIdentities = [ "~/.ssh/id_ed25519" ];
-    localStorageDir = ../../. + "/secrets/rekeyed/nixmobil";
-  };
+  # age.rekey = {
+  #   storageMode = "local";
+  #   hostPubkey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIHBJaMs/1fLo7FOQD5xTHc7Pox4rHN5G6hX96P81DO4e";
+  #   masterIdentities = [ "~/.ssh/id_ed25519" ];
+  #   localStorageDir = ../../. + "/secrets/rekeyed/nixmobil";
+  # };
 }

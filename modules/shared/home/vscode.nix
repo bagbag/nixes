@@ -179,7 +179,7 @@
           "editor.defaultFormatter" = "redhat.vscode-yaml";
           "diffEditor.ignoreTrimWhitespace" = true;
         };
-        "prettier.prettierPath" = "/home/patrick/.node_modules/lib/node_modules/prettier";
+        "prettier.prettierPath" = "/home/p0v0/.node_modules/lib/node_modules/prettier";
         "rust-analyzer.diagnostics.styleLints.enable" = true;
         "rust-analyzer.hover.actions.references.enable" = true;
         "editor.inlayHints.enabled" = "offUnlessPressed";
