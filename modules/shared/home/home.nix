@@ -10,7 +10,6 @@
   home.stateVersion = "25.11";
 
   imports = [
-    ./awscli.nix
     ./vscode.nix
     ./shell.nix
     ./services/syncthing.nix
@@ -131,8 +130,8 @@
     [
       # System Helpers
       nstdl.diff-gen
-      (lib.hiPrio inputs.ragenix.packages.${pkgs.stdenv.hostPlatform.system}.default)
-      (lib.lowPrio inputs.agenix-rekey.packages.${pkgs.stdenv.hostPlatform.system}.default)
+      # (lib.hiPrio inputs.ragenix.packages.${pkgs.stdenv.hostPlatform.system}.default)
+      # (lib.lowPrio inputs.agenix-rekey.packages.${pkgs.stdenv.hostPlatform.system}.default)
       nix-du
       nix-tree
 

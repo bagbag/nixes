@@ -82,12 +82,6 @@
     };
   };
 
-  # Top-level NixOS services
-  services.davfs2.enable = true;
-
-  # Link the age secret for davfs2 to the location davfs2 expects
-  environment.etc."davfs2/secrets".source = config.age.secrets."davfs2-secrets".path;
-
   fileSystems."/home/p0v0/mnt/nixbook" = {
     device = "p0v0@nixbook-air.lan:/Users/p0v0";
     fsType = "fuse.sshfs";

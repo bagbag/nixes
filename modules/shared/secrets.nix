@@ -1,15 +1,14 @@
 { config, ... }:
 {
-  age.secrets."awscli-insolytix-s3-secret-key" = {
-    rekeyFile = ../../secrets/awscli-insolytix-s3-secret-key.age;
-    mode = "600";
-    owner = config.modules.user.name;
-  };
+  # This is a skeleton for secret management using agenix-rekey/ragenix.
+  # Imports of this module are currently commented out in:
+  # - modules/nixos/common.nix
+  # - modules/darwin/common.nix
 
-  age.secrets."davfs2-secrets" = {
-    rekeyFile = ../../secrets/davfs2-secrets.age;
-    mode = "600";
-    # owner = "root";
-    group = "davfs2";
-  };
+  # Example secret definition:
+  # age.secrets."example-secret" = {
+  #   rekeyFile = ../../secrets/example-secret.age;
+  #   mode = "600";
+  #   owner = config.modules.user.name;
+  # };
 }

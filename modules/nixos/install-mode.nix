@@ -12,6 +12,10 @@
     programs.firefox.enable = lib.mkForce false;
     programs.thunderbird.enable = lib.mkForce false;
 
+    # Disable heavy services
+    modules.services.activitywatch.enable = lib.mkForce false;
+    stylix.enable = lib.mkForce false;
+
     # ---------------------------------------------------------
     # Home Manager Overrides
     # ---------------------------------------------------------

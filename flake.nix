@@ -23,11 +23,11 @@
     stylix.url = "github:nix-community/stylix";
     stylix.inputs.nixpkgs.follows = "nixpkgs";
 
-    agenix-rekey.url = "github:oddlama/agenix-rekey";
-    agenix-rekey.inputs.nixpkgs.follows = "nixpkgs";
+    # agenix-rekey.url = "github:oddlama/agenix-rekey";
+    # agenix-rekey.inputs.nixpkgs.follows = "nixpkgs";
 
-    ragenix.url = "github:yaxitech/ragenix";
-    ragenix.inputs.nixpkgs.follows = "nixpkgs";
+    # ragenix.url = "github:yaxitech/ragenix";
+    # ragenix.inputs.nixpkgs.follows = "nixpkgs";
 
     nix-darwin.url = "github:nix-darwin/nix-darwin";
     nix-darwin.inputs.nixpkgs.follows = "nixpkgs";
@@ -40,7 +40,7 @@
     in
     flake-parts.lib.mkFlake { inherit inputs; } {
       imports = [
-        inputs.agenix-rekey.flakeModule
+        # inputs.agenix-rekey.flakeModule
       ];
 
       systems = [
@@ -59,15 +59,15 @@
         }:
         {
           packages.default = pkgs.hello; # Placeholder
-          packages.ragenix = inputs.ragenix.packages.${system}.default;
+          # packages.ragenix = inputs.ragenix.packages.${system}.default;
           packages.diff-gen = pkgs.callPackage ./pkgs/diff-gen/default.nix { };
 
           devShells.default = pkgs.mkShell {
-            nativeBuildInputs = [ config.agenix-rekey.package ];
+            # nativeBuildInputs = [ config.agenix-rekey.package ];
           };
 
-          agenix-rekey.nixosConfigurations =
-            inputs.self.nixosConfigurations // inputs.self.darwinConfigurations;
+          # agenix-rekey.nixosConfigurations =
+          #   inputs.self.nixosConfigurations // inputs.self.darwinConfigurations;
         };
 
       flake = {
@@ -89,8 +89,8 @@
               ./hosts/nixstation/host.nix
 
               inputs.stylix.nixosModules.stylix
-              inputs.ragenix.nixosModules.default
-              inputs.agenix-rekey.nixosModules.default
+              # inputs.ragenix.nixosModules.default
+              # inputs.agenix-rekey.nixosModules.default
 
               # Overlays
               {
@@ -109,8 +109,8 @@
               ./hosts/nixmobil/host.nix
 
               inputs.stylix.nixosModules.stylix
-              inputs.ragenix.nixosModules.default
-              inputs.agenix-rekey.nixosModules.default
+              # inputs.ragenix.nixosModules.default
+              # inputs.agenix-rekey.nixosModules.default
 
               # Overlays
               {
@@ -131,8 +131,8 @@
               ./hosts/nixbook-air/host.nix
 
               inputs.home-manager.darwinModules.home-manager
-              inputs.ragenix.darwinModules.default
-              inputs.agenix-rekey.nixosModules.default
+              # inputs.ragenix.darwinModules.default
+              # inputs.agenix-rekey.nixosModules.default
 
               {
                 nixpkgs.overlays = [

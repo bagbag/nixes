@@ -21,7 +21,7 @@ in
     ./programs.nix
     ../shared/system.nix
     ../shared/system-packages.nix
-    ../shared/secrets.nix
+    # ../shared/secrets.nix
     ../shared/services/openssh.nix
     ./system-packages.nix
 

@@ -57,15 +57,17 @@ in
     # ---------------------------------------------------------
     # Fonts
     # ---------------------------------------------------------
-    fonts.packages = with pkgs; [
-      noto-fonts
-      noto-fonts-color-emoji
-      liberation_ttf
-      fira-code
-      fira-code-symbols
-      nerd-fonts.fira-code
-      nerd-fonts.droid-sans-mono
-    ];
+    fonts.packages =
+      with pkgs;
+      lib.optionals (!config.modules.system.installMode) [
+        noto-fonts
+        noto-fonts-color-emoji
+        liberation_ttf
+        fira-code
+        fira-code-symbols
+        nerd-fonts.fira-code
+        nerd-fonts.droid-sans-mono
+      ];
 
     # ---------------------------------------------------------
     # Software Infrastructure
