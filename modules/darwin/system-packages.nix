@@ -3,7 +3,8 @@
   ...
 }:
 {
-  environment.systemPackages = [
-    pkgs.battery-toolkit
+  environment.systemPackages = with pkgs; [
+    battery-toolkit
+    nodejs_latest
   ];
 }
