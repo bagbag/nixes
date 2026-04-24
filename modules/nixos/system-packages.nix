@@ -17,6 +17,7 @@
       # Runtimes
       nodejs_latest
       deno
+      python3
 
       # Development Tools
       podman-compose

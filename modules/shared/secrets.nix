@@ -5,11 +5,4 @@
     mode = "600";
     owner = config.modules.user.name;
   };
-
-  age.secrets."davfs2-secrets" = {
-    rekeyFile = ../../secrets/davfs2-secrets.age;
-    mode = "600";
-    # owner = "root";
-    group = "davfs2";
-  };
 }

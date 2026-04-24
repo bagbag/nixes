@@ -47,7 +47,7 @@ in
         "networkmanager"
         "video"
         "audio"
-      ] ++ lib.optional config.services.davfs2.enable "davfs2";
+      ];
 
       autoSubUidGidRange = true;
     };

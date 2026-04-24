@@ -39,12 +39,12 @@
 
     # Services
     services = {
-      mongodb.enable = true;
+      mongodb.enable = false;
       activitywatch.enable = true;
       qui.enable = true;
 
       librechat = {
-        enable = true;
+        enable = false;
         googleServiceKeyFile = "/var/lib/librechat/google-insolytix-application-service-key.json";
       };
 
@@ -94,12 +94,6 @@
     };
   };
 
-  # Top-level NixOS services
-  services.davfs2.enable = true;
-
-  # Link the age secret for davfs2 to the location davfs2 expects
-  environment.etc."davfs2/secrets".source = config.age.secrets."davfs2-secrets".path;
-
   fileSystems."/home/patrick/mnt/nixbook" = {
     device = "patrick@nixbook-air.lan:/Users/patrick";
     fsType = "fuse.sshfs";
@@ -118,23 +112,6 @@
       "_netdev"
       "reconnect"
       "ServerAliveInterval=15"
-    ];
-  };
-
-  fileSystems."/home/patrick/mnt/torbox" = {
-    device = "https://webdav.torbox.app/";
-    fsType = "davfs";
-    options = [
-      "user"
-      "noauto"
-      "nodev"
-      "noatime"
-      "nosuid"
-      "x-systemd.automount"
-      "x-systemd.idle-timeout=600"
-      "x-systemd.mount-timeout=5s"
-      "x-systemd.after=network-online.target"
-      "_netdev"
     ];
   };
 
