@@ -29,7 +29,7 @@
       taps = [ ];
 
       brews = [
-        gemini-cli
+        "gemini-cli"
       ];
 
       casks = [
