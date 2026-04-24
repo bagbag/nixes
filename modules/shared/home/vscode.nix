@@ -38,7 +38,6 @@
         ms-vsliveshare.vsliveshare
 
         # --- AI & Copilot ---
-        github.copilot
         github.copilot-chat
         google.gemini-cli-vscode-ide-companion
         anthropic.claude-code

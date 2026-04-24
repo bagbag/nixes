@@ -97,6 +97,9 @@
     fd
     ripgrep
 
+    # Development Tools
+    biome
+
     # Utilities
     tealdeer
     tmux
