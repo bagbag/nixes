@@ -17,6 +17,7 @@
       # Runtimes
       nodejs_latest
       deno
+      bun
       python3
 
       # Development Tools
