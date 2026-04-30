@@ -155,7 +155,6 @@
 
       # Miscellaneous
       aria2
-      d2
       git
       graphviz
       libpst
@@ -167,6 +166,7 @@
       claude-code
     ]
     ++ (lib.optionals pkgs.stdenv.isLinux [
+      d2
       iotop
       nmon
       wl-clipboard-rs
