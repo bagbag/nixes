@@ -141,6 +141,7 @@
       nano
 
       # Utilities
+      age
       bind
       curl
       inetutils
@@ -192,6 +193,8 @@
 
       typst
       pandoc
+
+      typescript-language-server
     ]);
 
   home.sessionVariables = {

@@ -7,14 +7,13 @@
       extensions = with pkgs.vscode-marketplace; [
         # --- Formatters & Linters ---
         dbaeumer.vscode-eslint
-        biomejs.biome
+        editorconfig.editorconfig
         esbenp.prettier-vscode
-        foxundermoon.shell-format
+        oxc.oxc-vscode
         redhat.vscode-xml
         redhat.vscode-yaml
         sibiraj-s.vscode-scss-formatter
         tyriar.sort-lines
-        editorconfig.editorconfig
 
         # --- Languages & Frameworks ---
         angular.ng-template
@@ -24,7 +23,6 @@
         svelte.svelte-vscode
         tamasfe.even-better-toml
         jnoortheen.nix-ide
-        matthewpi.caddyfile-support
 
         # --- Data & CSV ---
         janisdd.vscode-edit-csv
@@ -39,7 +37,6 @@
 
         # --- AI & Copilot ---
         github.copilot-chat
-        google.gemini-cli-vscode-ide-companion
         anthropic.claude-code
 
         # --- Debuggers ---
@@ -248,7 +245,6 @@
           "https://json.schemastore.org/" = true;
           "https://json-schema.org/" = true;
           "https://developer.microsoft.com/json-schemas/" = true;
-          "https://biomejs.dev" = true;
         };
       };
     };

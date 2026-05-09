@@ -98,7 +98,7 @@
     ripgrep
 
     # Development Tools
-    biome
+    oxlint
 
     # Utilities
     tealdeer
