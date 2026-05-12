@@ -99,6 +99,7 @@
 
     # Development Tools
     oxlint
+    oxfmt
 
     # Utilities
     tealdeer
