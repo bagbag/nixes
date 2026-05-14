@@ -144,7 +144,6 @@
       age
       bind
       curl
-      (lib.hiPrio iputils)  # ping from iputils — required by gping, wins over inetutils
       inetutils
       ipcalc
       tcpdump
@@ -173,6 +172,7 @@
       nmon
       wl-clipboard-rs
       libsecret
+      (lib.hiPrio iputils) # ping from iputils — required by gping, wins over inetutils
       # signal-export - build issue as of 2026-02-25
       gnomeExtensions.appindicator
       gnomeExtensions.launch-new-instance
