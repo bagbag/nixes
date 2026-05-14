@@ -36,9 +36,11 @@ in
   config = lib.mkIf cfg.enable {
     users.mutableUsers = true;
 
+    environment.shells = [ pkgs.nushell ];
+
     users.users.${cfg.name} = {
       isNormalUser = true;
-      shell = pkgs.zsh;
+      shell = pkgs.nushell;
       initialPassword = cfg.initialPassword;
       openssh.authorizedKeys.keys = cfg.authorizedKeys;
 

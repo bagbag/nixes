@@ -28,9 +28,11 @@ in
   };
 
   config = lib.mkIf cfg.enable {
+    environment.shells = [ pkgs.nushell ];
+
     users.users.${cfg.name} = {
       home = "/Users/${cfg.name}";
-      shell = pkgs.zsh;
+      shell = pkgs.nushell;
       openssh.authorizedKeys.keys = cfg.authorizedKeys;
     };
 

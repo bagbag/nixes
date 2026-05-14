@@ -144,6 +144,7 @@
       age
       bind
       curl
+      (lib.hiPrio iputils)  # ping from iputils — required by gping, wins over inetutils
       inetutils
       ipcalc
       tcpdump
@@ -253,6 +254,16 @@
       user.email = "bagbag98@googlemail.com";
       init.defaultBranch = "main";
       pull.rebase = true;
+    };
+  };
+
+  programs.delta = {
+    enable = true;
+    enableGitIntegration = true;
+    options = {
+      navigate = true;
+      line-numbers = true;
+      side-by-side = true;
     };
   };
 
