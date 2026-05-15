@@ -5,6 +5,7 @@
   homeManager = ./home-manager.nix;
   nix = ./nix.nix;
   systemPackages = ./system-packages.nix;
+  shortcuts = ./shortcuts.nix;
 
   system = ../shared/system.nix;
 

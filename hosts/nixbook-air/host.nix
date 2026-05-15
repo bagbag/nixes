@@ -22,7 +22,13 @@
   };
 
   # Networking
-  networking.hostName = "nixbook-air";
+  networking = {
+    hostName = "nixbook-air";
+    applicationFirewall = {
+      enable = true;
+      enableStealthMode = false;
+    };
+  };
 
   # Nix configuration
   nix.settings.trusted-users = [

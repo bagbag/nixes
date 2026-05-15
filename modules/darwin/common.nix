@@ -13,6 +13,7 @@ in
     ./user.nix
     ./programs.nix
     ./system-packages.nix
+    ./shortcuts.nix
     ../shared/services/syncthing-options.nix
     ../shared/system.nix
     ../shared/system-packages.nix
