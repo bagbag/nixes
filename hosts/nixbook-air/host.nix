@@ -35,17 +35,46 @@
     dock = {
       autohide = true;
       show-recents = false;
-      static-only = true;
+      static-only = false;
+      mru-spaces = false;
+      persistent-apps = [
+        "/Applications/Ghostty.app"
+        "/Applications/Firefox Developer Edition.app"
+      ];
     };
 
     finder = {
       AppleShowAllExtensions = true;
       ShowPathbar = true;
+      ShowStatusBar = true;
       FXPreferredViewStyle = "clmv";
+      FXEnableExtensionChangeWarning = false;
+      _FXShowPosixPathInTitle = true;
+      CreateDesktop = false;
+    };
+
+    trackpad = {
+      Clicking = true;
+      TrackpadThreeFingerDrag = true;
     };
 
     loginwindow.GuestEnabled = false;
-    NSGlobalDomain.AppleInterfaceStyle = "Dark";
+
+    screensaver.askForPasswordDelay = 5;
+
+    screencapture = {
+      location = "~/Pictures/Screenshots";
+      disable-shadow = true;
+    };
+
+    NSGlobalDomain = {
+      AppleInterfaceStyle = "Dark";
+      KeyRepeat = 2;
+      InitialKeyRepeat = 15;
+      ApplePressAndHoldEnabled = false;
+      AppleShowAllExtensions = true;
+      AppleICUForce24HourTime = true;
+    };
   };
 
   security.pam.services.sudo_local = {

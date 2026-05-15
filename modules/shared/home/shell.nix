@@ -1,8 +1,17 @@
 {
   pkgs,
   lib,
+  osConfig,
   ...
 }:
+let
+  # On macOS, nix-darwin's `users.users.<name>.shell` doesn't actually update
+  # the system user record, so Ghostty (and other GUI terminals) still launch
+  # the default `/bin/zsh`. Read the declared shell here and force it in
+  # Ghostty's `command` setting. On Linux the login shell mechanism works
+  # natively, so no override is needed.
+  declaredShell = osConfig.users.users.${osConfig.modules.user.name}.shell;
+in
 {
   # ---------------------------------------------------------
   # Terminal Configuration
@@ -17,16 +26,34 @@
     settings = {
       window-width = 165;
       window-height = 40;
-      font-family = "Noto Sans Mono";
+      font-family = "FiraCode Nerd Font Mono";
       font-size = 12;
+      font-thicken = true;
+      font-thicken-strength = 128;
+      theme = "Atom One Dark";
       window-padding-x = 4;
       window-padding-y = 4;
       mouse-hide-while-typing = true;
       scrollback-limit = 100000000;
+      macos-titlebar-style = "tabs";
+      background-opacity = 0.95;
+      background-blur = true;
       shell-integration-features = [
         "ssh-env"
         "ssh-terminfo"
       ];
+    } // lib.optionalAttrs pkgs.stdenv.isDarwin {
+      # Launch via a login zsh so nix-darwin's PATH hooks (/etc/zshenv ->
+      # path_helper, per-user profile) populate the environment, then exec
+      # into the declared shell. Without this, launchd's bare PATH excludes
+      # /etc/profiles/per-user/<name>/bin and home-manager-installed binaries
+      # (zoxide, etc.) can't be found from the shell.
+      command = "/bin/zsh -lc 'exec ${lib.getExe declaredShell}'";
+
+      # Left Option behaves as Alt so meta+<key> bindings reach TUIs (e.g.
+      # cmd+p in Claude Code). Right Option keeps native macOS composition
+      # for typing `@`, `|`, `~`, `{}`, etc. on a German layout.
+      macos-option-as-alt = "left";
     };
   };
 
@@ -78,43 +105,81 @@
       })
 
       # Hint legacy commands toward modern alternatives.
-      # Triggers when the command is the first word on the line — so the
-      # nushell `find` filter used in pipelines (`ls | find ...`) is unaffected.
+      # Each entry can declare:
+      #   modern   — the external tool replacement (e.g. rg for grep)
+      #   nu       — the nushell-native way (e.g. `... | where $it =~ ...`)
+      #   nuOwns   — when nu's own builtin transparently handles this form:
+      #                "piped" → don't hint when used after a `|`
+      #                "bare"  → don't hint when typed with no args
+      # Display: show whichever of `modern` and `nu` are defined; both are
+      # joined with `  |  `. The hint is suppressed entirely when `nuOwns`
+      # matches the current context (i.e., nu's own builtin is doing the job).
       # Printed once before execution and once after, for visibility.
       def hints-for-command [line: string] {
         let hints = {
-          find: "fd — friendlier syntax, .gitignore-aware. example: `fd config.nu`"
-          grep: "rg — recursive by default. in pipes use nu: `... | where $it =~ TODO`"
-          cat: "bat — syntax-highlighted cat. example: `bat shell.nix`"
-          du: "dust — visual disk usage tree. example: `dust -d 2`"
-          df: "duf — colorful disk free overview. example: `duf`"
-          ps: "use nushell builtin: `ps | where name =~ chromium`"
-          top: "btop — richer process viewer. example: `btop`"
-          sed: "sd 'old' 'new' file. in pipes use nu: `... | str replace 'old' 'new'`"
-          awk: "use nushell pipelines: `... | get col | uniq`"
-          man: "tldr — practical examples. example: `tldr tar`"
-          time: "hyperfine — proper benchmarking. example: `hyperfine 'cmd a' 'cmd b'`"
-          dig: "doggo — readable DNS lookups. example: `doggo example.com`"
-          nslookup: "doggo — readable DNS lookups. example: `doggo example.com MX`"
-          diff: "difft — syntax-aware diff. example: `difft a.nix b.nix`"
-          hexdump: "hexyl — colorful hex viewer. example: `hexyl file.bin`"
-          xxd: "hexyl — colorful hex viewer. example: `hexyl file.bin`"
-          tree: "use eza: `eza --tree --git-ignore`"
-          ping: "gping — live latency graph. example: `gping 1.1.1.1`"
-          wget: "use curl or `http get <url>` (nushell builtin)"
-          sort: "use nushell: `... | sort` or `sort-by col`"
-          uniq: "use nushell: `... | uniq` or `uniq-by col`"
-          head: "use nushell: `... | first 10` (also slices `... | range 0..9`)"
-          tail: "use nushell: `... | last 10`"
-          wc: "use nushell: `... | length` (rows) or `... | str length` (chars)"
-          cut: "use nushell: `... | get col` or `... | split column ','`"
+          # nu's builtin handles these natively in the marked context, but
+          # we still want a hint when the user invokes the legacy form
+          find:     { modern: "fd config.nu",                              nuOwns: "piped" }
+          sort:     { nu: "... | sort  (or `sort-by col`)",                nuOwns: "piped" }
+          uniq:     { nu: "... | uniq  (or `uniq-by col`)",                nuOwns: "piped" }
+          ps:       { nu: "ps | where name =~ 'chromium'",                 nuOwns: "bare" }
+
+          # Both alternatives available
+          grep:     { modern: "rg TODO",                                   nu: "... | where $it =~ 'pattern'" }
+          cat:      { modern: "bat shell.nix",                             nu: "open file  (structured) or `open --raw file`" }
+          sed:      { modern: "sd 'old' 'new' file",                       nu: "... | str replace 'old' 'new'" }
+
+          # nu-native only (no nice external replacement)
+          awk:      {                                                      nu: "... | get col  (or `split column ','`)" }
+          head:     {                                                      nu: "... | first 10" }
+          tail:     {                                                      nu: "... | last 10" }
+          wc:       {                                                      nu: "... | length  (rows) or `... | str length` (chars)" }
+          cut:      {                                                      nu: "... | get col  or `... | split column ','`" }
+
+          # External-only — no nu equivalent
+          du:       { modern: "dust -d 2" }
+          df:       { modern: "duf" }
+          top:      { modern: "btop" }
+          man:      { modern: "tldr tar" }
+          time:     { modern: "hyperfine 'cmd a' 'cmd b'" }
+          dig:      { modern: "doggo example.com" }
+          nslookup: { modern: "doggo example.com MX" }
+          diff:     { modern: "difft a.nix b.nix" }
+          hexdump:  { modern: "hexyl file.bin" }
+          xxd:      { modern: "hexyl file.bin" }
+          tree:     { modern: "eza --tree --git-ignore" }
+          ping:     { modern: "gping 1.1.1.1" }
+          wget:     { modern: "curl <url>  (or nushell: `http get <url>`)" }
         }
-        # Inspect first word of every pipeline segment, dedup hints, return list.
         $line
           | str trim
           | split row '|'
-          | each { |seg| $seg | str trim | split row ' ' | first | default ''' | str replace '^' ''' }
-          | each { |w| $hints | get --optional $w }
+          | enumerate
+          | each {|it|
+              let parts = ($it.item | str trim | split row ' ' | where {|w| $w != ''' })
+              # Strip leading `^` (nu's force-external prefix) so `^find` etc. still match
+              let cmd = ($parts | first | default ''' | str replace --regex '^\^' ''')
+              let entry = ($hints | get --optional $cmd)
+              if $entry == null {
+                null
+              } else {
+                let isPiped = $it.index > 0
+                let hasArgs = ($parts | length) > 1
+                let nuOwns = ($entry | get --optional nuOwns | default ''')
+                let skip = ($nuOwns == 'piped' and $isPiped) or ($nuOwns == 'bare' and (not $hasArgs))
+                if $skip {
+                  null
+                } else {
+                  let m = ($entry | get --optional modern)
+                  let n = ($entry | get --optional nu)
+                  let bits = ([
+                    (if ($m != null) { $"modern: ($m)" } else { null })
+                    (if ($n != null) { $"nu: ($n)" }     else { null })
+                  ] | where {|b| $b != null })
+                  if ($bits | is-empty) { null } else { $bits | str join '  |  ' }
+                }
+              }
+            }
           | where {|h| $h != null }
           | uniq
       }
