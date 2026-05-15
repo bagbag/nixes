@@ -303,6 +303,17 @@ in
   };
 
   # ---------------------------------------------------------
+  # External-command completions (git, docker, cargo, ...)
+  # ---------------------------------------------------------
+  # Nushell has no built-in completions for external CLIs. Carapace ships
+  # completions for ~1000 tools and registers itself as nushell's external
+  # completer.
+  programs.carapace = {
+    enable = true;
+    enableNushellIntegration = true;
+  };
+
+  # ---------------------------------------------------------
   # History (atuin, local-only)
   # ---------------------------------------------------------
   programs.atuin = {

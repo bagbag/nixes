@@ -74,8 +74,18 @@
       ApplePressAndHoldEnabled = false;
       AppleShowAllExtensions = true;
       AppleICUForce24HourTime = true;
+      NSDocumentSaveNewDocumentsToCloud = false;
+    };
+
+    controlcenter.BatteryShowPercentage = true;
+
+    CustomUserPreferences."com.apple.desktopservices" = {
+      DSDontWriteNetworkStores = true;
+      DSDontWriteUSBStores = true;
     };
   };
+
+  system.startup.chime = false;
 
   security.pam.services.sudo_local = {
     enable = true;
