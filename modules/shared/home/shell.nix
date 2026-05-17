@@ -54,6 +54,10 @@ in
       # cmd+p in Claude Code). Right Option keeps native macOS composition
       # for typing `@`, `|`, `~`, `{}`, etc. on a German layout.
       macos-option-as-alt = "left";
+
+      # Quit Ghostty (and remove its Dock icon) when the last window is
+      # closed, instead of macOS's default of leaving the process alive.
+      quit-after-last-window-closed = true;
     };
   };
 
