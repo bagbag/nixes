@@ -9,7 +9,7 @@
         dbaeumer.vscode-eslint
         editorconfig.editorconfig
         esbenp.prettier-vscode
-        oxc.oxc-vscode
+        # oxc.oxc-vscode
         redhat.vscode-xml
         redhat.vscode-yaml
         sibiraj-s.vscode-scss-formatter
