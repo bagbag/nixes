@@ -36,11 +36,10 @@
     }
     // lib.optionalAttrs pkgs.stdenv.isDarwin {
       # Launch via a login zsh so nix-darwin's PATH hooks (/etc/zshenv ->
-      # path_helper, per-user profile) populate the environment, then exec
-      # into nushell. Without this, launchd's bare PATH excludes
-      # /etc/profiles/per-user/<name>/bin and home-manager-installed binaries
-      # (zoxide, etc.) can't be found from the shell.
-      command = "/bin/zsh -lc 'exec ${lib.getExe pkgs.nushell} --login'";
+      # path_helper, per-user profile) populate the environment. The exec
+      # into nushell is handled by zsh's profileExtra below, gated on a
+      # real interactive TTY so non-interactive callers stay in zsh.
+      command = "/bin/zsh -l";
 
       # Left Option behaves as Alt so meta+<key> bindings reach TUIs (e.g.
       # cmd+p in Claude Code). Right Option keeps native macOS composition
