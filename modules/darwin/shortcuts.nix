@@ -21,7 +21,7 @@
     services.skhd = {
       enable = true;
       skhdConfig = ''
-        shift + alt - t : osascript -e 'tell application "Ghostty" to activate' -e 'tell application "System Events" to keystroke "n" using command down'
+        shift + alt - t : osascript -e 'tell application "Ghostty" to activate' -e 'tell application "System Events"' -e 'repeat until frontmost of process "Ghostty" is true' -e 'delay 0.05' -e 'end repeat' -e 'keystroke "n" using command down' -e 'end tell'
       '';
     };
   };
