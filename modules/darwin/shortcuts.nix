@@ -21,7 +21,7 @@
     services.skhd = {
       enable = true;
       skhdConfig = ''
-        shift + alt - t : osascript -e 'if application "Ghostty" is running then' -e 'tell application "Ghostty"' -e 'if (count of windows) is 0 then' -e 'reopen' -e 'else' -e 'make new window' -e 'end if' -e 'activate' -e 'end tell' -e 'else' -e 'tell application "Ghostty" to activate' -e 'end if'
+        shift + alt - t : osascript -e 'if application "Ghostty" is running then' -e 'tell application "Ghostty" to set dummyWin to new window' -e 'else' -e 'tell application "Ghostty" to activate' -e 'end if'
       '';
     };
   };
