@@ -40,7 +40,7 @@ in
 
     users.users.${cfg.name} = {
       isNormalUser = true;
-      shell = pkgs.nushell;
+      shell = pkgs.zsh;
       initialPassword = cfg.initialPassword;
       openssh.authorizedKeys.keys = cfg.authorizedKeys;
 

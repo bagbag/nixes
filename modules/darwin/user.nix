@@ -32,7 +32,7 @@ in
 
     users.users.${cfg.name} = {
       home = "/Users/${cfg.name}";
-      shell = pkgs.nushell;
+      shell = pkgs.zsh;
       openssh.authorizedKeys.keys = cfg.authorizedKeys;
     };
 

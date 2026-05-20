@@ -1,17 +1,8 @@
 {
   pkgs,
   lib,
-  osConfig,
   ...
 }:
-let
-  # On macOS, nix-darwin's `users.users.<name>.shell` doesn't actually update
-  # the system user record, so Ghostty (and other GUI terminals) still launch
-  # the default `/bin/zsh`. Read the declared shell here and force it in
-  # Ghostty's `command` setting. On Linux the login shell mechanism works
-  # natively, so no override is needed.
-  declaredShell = osConfig.users.users.${osConfig.modules.user.name}.shell;
-in
 {
   # ---------------------------------------------------------
   # Terminal Configuration
@@ -45,10 +36,10 @@ in
     } // lib.optionalAttrs pkgs.stdenv.isDarwin {
       # Launch via a login zsh so nix-darwin's PATH hooks (/etc/zshenv ->
       # path_helper, per-user profile) populate the environment, then exec
-      # into the declared shell. Without this, launchd's bare PATH excludes
+      # into nushell. Without this, launchd's bare PATH excludes
       # /etc/profiles/per-user/<name>/bin and home-manager-installed binaries
       # (zoxide, etc.) can't be found from the shell.
-      command = "/bin/zsh -lc 'exec ${lib.getExe declaredShell}'";
+      command = "/bin/zsh -lc 'exec ${lib.getExe pkgs.nushell} --login'";
 
       # Left Option behaves as Alt so meta+<key> bindings reach TUIs (e.g.
       # cmd+p in Claude Code). Right Option keeps native macOS composition
@@ -58,6 +49,11 @@ in
       # Quit Ghostty (and remove its Dock icon) when the last window is
       # closed, instead of macOS's default of leaving the process alive.
       quit-after-last-window-closed = true;
+    } // lib.optionalAttrs pkgs.stdenv.isLinux {
+      # Explicitly launch via a login zsh so /etc/set-environment is sourced
+      # (giving npm, etc. their correct config), then exec into nushell.
+      # Without this, Ghostty uses $SHELL which may point to a stale path.
+      command = "${pkgs.zsh}/bin/zsh --login";
     };
   };
 
@@ -67,7 +63,7 @@ in
   home.shell.enableNushellIntegration = true;
 
   # ---------------------------------------------------------
-  # Nushell (login shell)
+  # Nushell
   # ---------------------------------------------------------
   programs.nushell = {
     enable = true;
@@ -80,6 +76,16 @@ in
     environmentVariables = {
       EDITOR = "micro";
     };
+
+    extraEnv = ''
+      if ($env.GHOSTTY_RESOURCES_DIR? | is-not-empty) {
+        $env.NU_VENDOR_AUTOLOAD_DIRS = (
+          $env.NU_VENDOR_AUTOLOAD_DIRS?
+            | default []
+            | prepend ($env.GHOSTTY_RESOURCES_DIR | path join "shell-integration/nushell/vendor/autoload")
+        )
+      }
+    '';
 
     extraConfig = ''
       $env.config = ($env.config? | default {} | merge {
@@ -238,10 +244,11 @@ in
   };
 
   # ---------------------------------------------------------
-  # Zsh (fallback / non-login interactive)
+  # Zsh (login shell — sources /etc/set-environment, then execs nushell)
   # ---------------------------------------------------------
   programs.zsh = {
     enable = true;
+    profileExtra = "exec ${pkgs.nushell}/bin/nu --login";
     enableCompletion = true;
     autosuggestion.enable = true;
     syntaxHighlighting.enable = true;

@@ -209,35 +209,35 @@
     enable = true;
     enableDefaultConfig = false;
 
-    matchBlocks = {
-      "*" = {
-        hashKnownHosts = false;
-        controlMaster = "auto";
-        controlPath = "~/.ssh/control-master-%r@%h:%p";
-        controlPersist = "30";
+    settings = {
+      "Host *" = {
+        HashKnownHosts = false;
+        ControlMaster = "auto";
+        ControlPath = "~/.ssh/control-master-%r@%h:%p";
+        ControlPersist = "30";
       };
 
-      "nl01" = {
-        hostname = "10.98.0.100";
-        user = "root";
-        proxyJump = "root@pve01.nightlines.eu";
+      "Host nl01" = {
+        HostName = "10.98.0.100";
+        User = "root";
+        ProxyJump = "root@pve01.nightlines.eu";
       };
 
-      "s01.k-fin.de" = {
-        hostname = "10.38.7.100";
-        user = "root";
-        proxyJump = "root@pve02.cloud.kledig.de";
+      "Host s01.k-fin.de" = {
+        HostName = "10.38.7.100";
+        User = "root";
+        ProxyJump = "root@pve02.cloud.kledig.de";
       };
 
-      "s01.cloud.kledig.de" = {
-        hostname = "10.38.7.101";
-        user = "root";
-        proxyJump = "root@pve02.cloud.kledig.de";
+      "Host s01.cloud.kledig.de" = {
+        HostName = "10.38.7.101";
+        User = "root";
+        ProxyJump = "root@pve02.cloud.kledig.de";
       };
 
-      "gateway01.nightlines.eu" = {
-        hostname = "217.160.18.89";
-        user = "root";
+      "Host gateway01.nightlines.eu" = {
+        HostName = "217.160.18.89";
+        User = "root";
       };
     };
   };
