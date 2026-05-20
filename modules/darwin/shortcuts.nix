@@ -15,13 +15,17 @@
   config = lib.mkIf config.modules.shortcuts.enable {
     # Global hotkey daemon. Mirrors the GNOME binding in
     # modules/shared/home/home.nix (Shift+Alt+T opens a new Ghostty window).
-    # Uses AppleScript instead of `open -n` so we get a new window in the
-    # existing Ghostty process rather than a new process (which would add a
-    # separate Dock icon every time).
+    # Ghostty has no working AppleScript dictionary and no CLI/URL action for
+    # "new window", so we drive its `File > New Window` menu item via the
+    # Accessibility API. Layout-independent (unlike `keystroke "n"`) and
+    # deterministic (unlike `make new window`, which silently fails on a
+    # non-scriptable Cocoa app). Requires skhd to have Accessibility access.
+    # When Ghostty isn't running yet, `activate` launches it and macOS
+    # creates the initial window automatically.
     services.skhd = {
       enable = true;
       skhdConfig = ''
-        shift + alt - t : osascript -e 'if application "Ghostty" is running then' -e 'tell application "Ghostty" to set dummyWin to new window' -e 'else' -e 'tell application "Ghostty" to activate' -e 'end if'
+        shift + alt - t : osascript -e 'if application "Ghostty" is running then' -e 'tell application "System Events" to tell process "Ghostty" to click menu item "New Window" of menu "File" of menu bar 1' -e 'else' -e 'tell application "Ghostty" to activate' -e 'end if'
       '';
     };
   };

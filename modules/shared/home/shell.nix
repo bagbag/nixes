@@ -33,7 +33,8 @@
         "ssh-env"
         "ssh-terminfo"
       ];
-    } // lib.optionalAttrs pkgs.stdenv.isDarwin {
+    }
+    // lib.optionalAttrs pkgs.stdenv.isDarwin {
       # Launch via a login zsh so nix-darwin's PATH hooks (/etc/zshenv ->
       # path_helper, per-user profile) populate the environment, then exec
       # into nushell. Without this, launchd's bare PATH excludes
@@ -49,7 +50,8 @@
       # Quit Ghostty (and remove its Dock icon) when the last window is
       # closed, instead of macOS's default of leaving the process alive.
       quit-after-last-window-closed = true;
-    } // lib.optionalAttrs pkgs.stdenv.isLinux {
+    }
+    // lib.optionalAttrs pkgs.stdenv.isLinux {
       # Explicitly launch via a login zsh so /etc/set-environment is sourced
       # (giving npm, etc. their correct config), then exec into nushell.
       # Without this, Ghostty uses $SHELL which may point to a stale path.
@@ -248,7 +250,17 @@
   # ---------------------------------------------------------
   programs.zsh = {
     enable = true;
-    profileExtra = "exec ${pkgs.nushell}/bin/nu --login";
+    # Only upgrade to nushell when this is a real interactive TTY session
+    # (Ghostty, console, `ssh -t`). For everything else — Claude Code's
+    # $SHELL env-capture, `$SHELL -c "…"` from scripts, piped input — stay
+    # in zsh so callers get POSIX semantics. /etc/set-environment has
+    # already been sourced by this point, so the exec'd nushell inherits
+    # the full system PATH (npm, etc.) the same as before.
+    profileExtra = ''
+      if [[ -o interactive && -t 0 && -t 1 ]]; then
+        exec ${pkgs.nushell}/bin/nu --login
+      fi
+    '';
     enableCompletion = true;
     autosuggestion.enable = true;
     syntaxHighlighting.enable = true;
