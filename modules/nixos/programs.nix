@@ -8,6 +8,7 @@
     enable = true;
     npmrc = ''
       prefix = ''${HOME}/.node_modules
+      min-release-age = 2
     '';
   };
 }

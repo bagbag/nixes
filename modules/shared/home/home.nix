@@ -165,6 +165,7 @@
 
       # Development Tools
       claude-code
+      pnpm
     ]
     ++ (lib.optionals pkgs.stdenv.isLinux [
       d2
@@ -197,6 +198,11 @@
 
       typescript-language-server
     ]);
+
+  home.file.".config/pnpm/config.yaml".text = ''
+    minimumReleaseAge: 2880
+    trustPolicy: no-downgrade
+  '';
 
   home.sessionVariables = {
     EDITOR = "micro";
