@@ -144,6 +144,7 @@
       age
       bind
       curl
+      openssl
       inetutils
       ipcalc
       tcpdump

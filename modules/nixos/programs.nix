@@ -9,6 +9,7 @@
     npmrc = ''
       prefix = ''${HOME}/.node_modules
       min-release-age = 2
+      @tstdl:registry = https://forge.cloudful.de/api/packages/patrick/npm/
     '';
   };
 }
