@@ -205,6 +205,15 @@
     trustPolicy: no-downgrade
   '';
 
+  programs.npm = {
+    enable = true;
+    settings = {
+      prefix = "${config.home.homeDirectory}/.node_modules";
+      min-release-age = 2;
+      "@tstdl:registry" = "https://forge.cloudful.de/api/packages/patrick/npm/";
+    };
+  };
+
   home.sessionVariables = {
     EDITOR = "micro";
   }
