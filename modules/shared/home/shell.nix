@@ -55,6 +55,15 @@
       # (giving npm, etc. their correct config), then exec into nushell.
       # Without this, Ghostty uses $SHELL which may point to a stale path.
       command = "${pkgs.zsh}/bin/zsh --login";
+
+      # Force single-instance mode OFF so each launch spawns a fully
+      # independent process. When launched from a GNOME custom keybinding
+      # (no TERM_PROGRAM, no CLI args), Ghostty's heuristic enables GTK
+      # single-instance mode and routes the new window over D-Bus to the
+      # existing instance. On 1.3.x that GNOME + D-Bus activation path is
+      # racy (~1 in 9 launches), producing an empty, non-rendering window.
+      # See ghostty-org/ghostty discussion #11724 and issue #10219.
+      gtk-single-instance = false;
     };
   };
 

@@ -17,7 +17,7 @@
   ];
 
   home.sessionPath = [
-    "${config.home.homeDirectory}/.node_modules/bin"
+    "${config.home.homeDirectory}/.local/share/pnpm/bin"
   ];
 
   # ---------------------------------------------------------
@@ -157,7 +157,6 @@
 
       # Miscellaneous
       aria2
-      git
       graphviz
       libpst
       nixfmt
@@ -207,8 +206,8 @@
 
   programs.npm = {
     enable = true;
+    package = pkgs.nodejs_26;
     settings = {
-      prefix = "${config.home.homeDirectory}/.node_modules";
       min-release-age = 2;
       "@tstdl:registry" = "https://forge.cloudful.de/api/packages/patrick/npm/";
     };
@@ -265,11 +264,17 @@
 
   programs.git = {
     enable = true;
+    package = pkgs.gitFull;
     settings = {
       user.name = "Patrick Hein";
       user.email = "bagbag98@googlemail.com";
       init.defaultBranch = "main";
       pull.rebase = true;
+      credential.helper =
+        if pkgs.stdenv.isDarwin then
+          "osxkeychain"
+        else
+          "${config.programs.git.package}/bin/git-credential-libsecret";
     };
   };
 
