@@ -29,9 +29,7 @@
 
       taps = [ ];
 
-      brews = [
-        "gemini-cli"
-      ];
+      brews = [ ];
 
       casks = [
         "firefox@developer-edition"
