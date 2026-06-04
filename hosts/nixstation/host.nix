@@ -51,10 +51,6 @@
       syncthing = {
         enable = true;
         devices = {
-          "pixel10" = {
-            name = "Pixel 10 Pro XL";
-            id = "LFANBT3-MUYNDTL-LZEBKEE-Y7RLJY6-D3ACPXY-73TVXN2-SARNRPW-CKODLQL";
-          };
           "nixmobil" = {
             name = "nixmobil";
             id = "BPCWIO6-XR3XFSG-AAGT5Q6-SEZLTGD-3YQZJAQ-3ATSTJY-HT6ALN6-KSPN2AL";
@@ -73,7 +69,6 @@
             id = "dizum-nfezd";
             path = "/home/patrick/syncthing/keepass";
             devices = [
-              "pixel10"
               "nixmobil"
               "nixbook-air"
               "iphone-17-pro-max"
@@ -83,7 +78,6 @@
             id = "jqqq6-c9zap";
             path = "/home/patrick/syncthing/keepass-work";
             devices = [
-              "pixel10"
               "nixmobil"
               "nixbook-air"
               "iphone-17-pro-max"
