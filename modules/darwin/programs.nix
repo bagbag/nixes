@@ -24,6 +24,7 @@
         autoUpdate = true;
         upgrade = true;
         cleanup = "zap";
+        extraFlags = [ "--force-cleanup" ]; # workaround until https://github.com/nix-darwin/nix-darwin/issues/1787 is fixed
       };
 
       taps = [ ];
