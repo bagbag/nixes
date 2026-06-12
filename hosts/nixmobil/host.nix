@@ -42,8 +42,6 @@
 
     # Services
     services = {
-      activitywatch.enable = true;
-
       syncthing = {
         enable = true;
         devices = {

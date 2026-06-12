@@ -40,8 +40,12 @@
     # Services
     services = {
       mongodb.enable = false;
-      activitywatch.enable = true;
       qui.enable = true;
+
+      ollama = {
+        enable = true;
+        acceleration = "rocm";
+      };
 
       librechat = {
         enable = false;

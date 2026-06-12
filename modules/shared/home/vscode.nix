@@ -107,6 +107,8 @@
         "javascript.referencesCodeLens.enabled" = true;
         "javascript.referencesCodeLens.showOnAllFunctions" = true;
         "javascript.suggest.completeFunctionCalls" = true;
+        "markdown.preview.doubleClickToSwitchToEditor" = true;
+        "markdown.validate.enabled" = true;
         "prettier.printWidth" = 999;
         "scm.defaultViewMode" = "tree";
         "scss.lint.duplicateProperties" = "warning";
