@@ -29,6 +29,7 @@
       # Other Software
       ffmpeg
       gimp
+      pdfcpu
       poppler-utils
       qpdf
       rclone

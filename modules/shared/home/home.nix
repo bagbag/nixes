@@ -166,6 +166,7 @@
       # Development Tools
       claude-code
       pnpm
+      postgresql_18
     ]
     ++ (lib.optionals pkgs.stdenv.isLinux [
       d2

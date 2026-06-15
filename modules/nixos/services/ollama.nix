@@ -48,5 +48,12 @@ in
       package = if cfg.acceleration == null then pkgs.ollama else accelerationPackages.${cfg.acceleration};
       loadModels = cfg.loadModels;
     };
+
+    # Work around a boot-time race where ollama starts before the GPU kernel
+    # driver (e.g. amdgpu) is loaded, so GPU discovery finds nothing and the
+    # service silently falls back to CPU until manually restarted.
+    # Ordering after systemd-modules-load ensures the driver is up first.
+    # See https://github.com/NixOS/nixpkgs/issues/419097 (fix PR #422355).
+    systemd.services.ollama.after = [ "systemd-modules-load.service" ];
   };
 }
