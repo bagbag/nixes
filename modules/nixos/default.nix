@@ -20,6 +20,7 @@
 
   # Services
   librechat = ./services/librechat.nix;
+  llama-swap = ./services/llama-swap.nix;
   mongodb = ./services/mongodb.nix;
   ollama = ./services/ollama.nix;
   qui = ./services/qui.nix;

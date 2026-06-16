@@ -47,6 +47,25 @@
         acceleration = "rocm";
       };
 
+      llama-swap = {
+        enable = true;
+        acceleration = "rocm";
+        # 10 min, so a large model's first Hugging Face download finishes
+        # before llama-swap gives up on the launch.
+        healthCheckTimeout = 600;
+        # Listens on localhost:8080 by default; firewall stays closed.
+        # Models auto-download from Hugging Face on first launch (cached in
+        # /var/lib/llama-swap).
+        # models."qwen3-4b" = {
+        #   hfRepo = "unsloth/Qwen3-4B-GGUF:Q4_K_M";
+        #   extraArgs = "-ngl 99 -c 8192 --no-webui";
+        #   aliases = [ "default" ];
+        # };
+        # Gated/private repos: set hfTokenFile (e.g. an agenix secret containing
+        # a line `HF_TOKEN=hf_...`).
+        models = { };
+      };
+
       librechat = {
         enable = false;
         googleServiceKeyFile = "/var/lib/librechat/google-insolytix-application-service-key.json";
