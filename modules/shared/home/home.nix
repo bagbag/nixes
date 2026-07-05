@@ -11,6 +11,7 @@
 
   imports = [
     ./awscli.nix
+    ./claude.nix
     ./vscode.nix
     ./shell.nix
     ./services/syncthing.nix
