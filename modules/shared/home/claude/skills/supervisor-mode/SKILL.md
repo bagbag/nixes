@@ -1,15 +1,12 @@
 ---
 name: supervisor-mode
 description: >-
-  Run large build/refactor/design sessions as a supervisor: the user is the sole
-  decision-maker, the main agent acts as planner/lead-architect/reviewer with a lean
-  context, and subagent workers do all substantive implementation in disjoint file
-  zones with STOP-and-report briefs. Use this whenever the user says things like
-  "you are the supervisor/planner", "spawn subagents for the work", "we decide
-  together", "I decide, you recommend" — and lean toward it for any multi-workstream
-  session (several features/refactors in flight at once), long design-then-implement
-  arcs, or sessions where the user reviews and ratifies decisions individually. Also
-  use it when a session that started small grows parallel workstreams.
+  Orchestrate large multi-workstream build/refactor/design sessions: user decides,
+  supervisor plans and reviews, subagent workers build in disjoint file zones. Use when
+  the user says "you are the supervisor/planner", "spawn subagents for the work", "we
+  decide together". Lean toward it for any session with
+  several features/refactors in flight, long design-then-implement arcs, or one that
+  grew parallel workstreams.
 ---
 
 # Supervisor mode — user decides, supervisor orchestrates, workers build
@@ -77,6 +74,22 @@ Mechanics that matter:
   there really no better name?", "shouldn't this be X?"), genuinely re-examine —
   concede when they're right and say so. The user's instinct that "all options feel
   wrong" is data: look for the misframed premise.
+- **Grounding can dissolve a decision.** Before surfacing a decision round, ask
+  whether a verifiable fact would collapse it into a report ("the config already
+  encodes the answer"). Find the **discriminating check** — the single property that
+  settles the disagreement — and run it (a read-only verification worker) first. The
+  user decides only what genuinely needs deciding; everything else you verify and
+  report.
+- **A free-text answer to a structured question is a gift, not a failure to answer.**
+  When the user replies past the options — "Other", a counter-question, a new idea —
+  the option set was probably mis-framed. Treat the reply as a design contribution
+  and rebuild the frame around it; a session's best ideas often arrive exactly this
+  way.
+- **Reopen decisions made under your own mis-framing.** When you discover the user
+  decided on a premise *you* framed imprecisely (a category you drew too wide, a
+  distinction you collapsed), re-surface the decision explicitly, name the framing
+  error as yours, and let them re-decide on the corrected framing. Silently building
+  on it converts your error into their decision.
 - **Three decision owners, not two.** The user owns product/architecture choices; you
   own only trivial reversible defaults (take them and mention them). Domain-content
   truth (legal, regulatory, medical, scientific) belongs to an **external expert** —
@@ -100,6 +113,15 @@ Mechanics that matter:
 A flaw in the plan multiplies across every worker built on it — so the plan gets
 adversarial treatment *before* the first implementation worker launches:
 
+- **Understand what you're building, why, and how — before orchestrating.** At
+  session start, and again whenever the goal shifts, build the big picture: what the
+  system is *for*, why it's shaped the way it is, and how the pieces serve that
+  purpose — by reading the orientation sources (or delegating a reader), then asking
+  the user until the intent is genuinely shared. Interrogate structure against
+  purpose: "what is this gate/layer/step FOR?" — a supervisor who knows only the task
+  list optimizes locally; one who holds the intent notices when the structure fights
+  the goal (over-gating, vestigial steps, complexity serving no requirement). This is
+  the cheapest moment such findings will ever have.
 - **Plan first, as a document.** For any multi-worker arc, have a planning agent
   produce a written plan: scope boundary, work packages sized so one worker can
   complete one package, dependency order, per-package test strategy, and its own list
@@ -124,6 +146,15 @@ adversarial treatment *before* the first implementation worker launches:
   hand-verified samples, and conformance fixtures created early become the regression
   net every later wave is judged against — budget them into the packages rather than
   hoping they appear later.
+- **Name the empirical bets — and test them first.** When a plan stacks novel,
+  interlocked mechanisms reasoned from thin evidence, require it to name the few
+  empirical assumptions everything rests on, and sequence the build to get a cheap
+  early read on each (a spike against the golden set) *before* building the tower
+  around them. If a bet fails, large parts of the design change — learn that on the
+  small golden set, not after the build.
+- **Declare each wave's scope boundary explicitly** — "this wave is docs-only: no
+  code, no migrations" — in the wave plan AND in every brief. Undeclared boundaries
+  make scope creep invisible until review; declared ones make it a STOP.
 - **Launch in waves, not all at once.** There's a practical concurrency ceiling
   (harness caps, review bandwidth — reviewing eight simultaneous reports poorly is
   worse than reviewing four well). Launch the packages whose dependencies are met,
@@ -166,7 +197,10 @@ Every worker brief carries, explicitly:
    doesn't fit (a premise that contradicts the source, a design that fights the
    code), raise it to you instead of silently complying — the same principle as your
    push-back to the user, one level down. A good STOP or push-back is a *success*,
-   not a failure — treat it as one when reviewing.
+   not a failure — treat it as one when reviewing. This extends to *mechanical* brief
+   items: your brief itself may be wrong — a worker that verifies an instruction
+   against reality (the file, the git history) and refuses to apply a "fix" that
+   would break a correct reference is doing it right.
 6. **A verification gate with real numbers.** Typecheck, test suite, lint —
    "report actual counts; fix what you introduced; report pre-existing failures
    without fixing them." Attribution matters in parallel work: "if failures appear in
@@ -189,6 +223,11 @@ Further brief rules:
   fixtures or acceptance tests, brief it explicitly: a mismatch STOPs and reports —
   never bend the fixture or the module to force green. A red gate with an honest
   mismatch report is the gate *working*.
+- **Reversal guards.** When a brief touches ratified content that a session decision
+  REVERSED, carry an explicit anti-regression STOP: "never re-add X — reversed
+  <date>; the docs you read may still state it." A faithful-copy worker will
+  otherwise re-import the reversed rule from the very sources it's told to trust —
+  the highest-liability trap in integration waves.
 - **Route follow-ups to warm context.** Resuming a completed agent with a new message
   is far cheaper than a fresh worker rebuilding the same understanding. Related task
   → resume; unrelated → fresh.
@@ -244,6 +283,22 @@ trail, not something to quietly patch.
   zone are usually the user (or their linter) working in parallel — verify authorship
   before treating them as corruption, fold them in as intentional, and never revert
   what you didn't write.
+- **Disjoint files ≠ disjoint concepts.** A concept that spans documents — an
+  invariant, a mechanism description, a shared contract — drifts when two workers
+  each describe it in their own words. Assign every cross-doc concept ONE owning
+  section that authors the canonical phrasing; every other doc references it by name
+  + anchor and never re-describes. At review, verify the reference web resolves in
+  both directions (the reference names a section that exists; the owner is actually
+  authored, not itself a reference).
+- **De-risk a wave with its two most-coupled members first.** Launch the two workers
+  whose outputs must interlock most (the central concept-owners) as a first
+  sub-wave; verify their cross-references compose before committing the rest of the
+  wave to the same pattern. A composition flaw found at N=2 is a brief fix; at N=6
+  it's a re-dispatch.
+- **After each wave, check the tree AND the index.** `git status`/`diff` over the
+  repo: did workers stay in-zone, did anything get staged or touched despite no-git
+  limits? An unexplained index change is a finding to surface (and to attribute —
+  user vs. worker-overstep), never to silently absorb or revert.
 - **The integration seam between zones is yours.** Disjoint zones guarantee no two
   workers collide on a file — not that their outputs compose. The contract *between*
   zones (a type one exports and another imports, a shared enum, a call signature) is
@@ -281,13 +336,18 @@ pipeline end-to-end", "operators instead of raw SQL"):
 reopening) after workers already implemented it — same machinery, opposite direction:
 
 1. Find what implemented the old decision: grep the symbols/artifacts it produced,
-   check which accepted zones embody it.
+   check which accepted zones embody it — **and the docs/notes that merely REFERENCE
+   the old rule** (implementation plans, working notes, secondary specs): stale
+   references outlive the law they cite and re-teach it to the next reader.
 2. Re-open those zones with a corrective brief (route to the warm worker where
    possible); re-verify dependents, exactly as in §4's containment.
 3. Record the reversal as a **new** append-only entry (decision log, changelog) —
    never edit the original entry; the audit trail must show both the decision and its
    reversal. Without this propagation, a reversed decision half-lives in
    already-accepted code indefinitely.
+4. Add the reversal as a standing **anti-regression STOP** to every subsequent brief
+   that touches the surface (§3's reversal guards) — the docs a worker reads may
+   still state the old rule.
 
 ## 7. md-sync discipline
 
@@ -298,6 +358,28 @@ updated everywhere they appear (watch for the headline-vs-ledger trap: updating 
 changelog tail while a headline three lines up still says the old version).
 Scratch artifacts and handover notes go to the project's scratch dir
 (`short-term-context/` or equivalent); durable design decisions go to the design docs.
+
+**Mark unvalidated design law as such.** When integrating novel, not-yet-validated
+mechanisms into ratified docs, mark each "design intent — validation-pending" (and
+leave genuinely settled facts — legal requirements, ratified decisions — unmarked;
+mis-marking a hard fact as pending is its own defect). Later empirical revisions then
+read as expected refinements, not reversals to unwind; the audit trail stays honest
+about what's known vs. hoped.
+
+**Rough file layout** — a predefined shape with much freedom; the project's own
+conventions always win where they exist, this fills the gaps:
+
+- **Orientation doc / index** (durable, the project's docs dir) — the START-HERE a
+  fresh agent orients from; carries current state + next action + locked decisions.
+- **Decision log** (durable, append-only) — the dated audit trail.
+- **The living board** (scratch dir, ONE file, recognizably named:
+  `<arc>-decision-board.md` or `board.md`) — §8's running state.
+- **Grounding notes** (scratch, `grounding-<topic>.md`, one per verification worker) —
+  the evidence the board's verdicts cite.
+- **Plans** (scratch while drafts: `<arc>-plan.md`, version-suffixed revisions;
+  promoted to the docs dir only if meant to outlive the arc).
+- **Worker deliverables** go directly to their zone files; reports stay in
+  transcripts and get distilled onto the board.
 
 ## 8. The supervisor's own context budget — board, compaction, handover
 
@@ -314,6 +396,15 @@ manage it like one, not just the workers':
   updated as you dispatch and accept, not reconstructed from memory later. Then
   handover and compaction-insurance are free byproducts, and you never rebuild state
   under a saturated context.
+- **Chat is not the record.** A decision is recorded when the file edit *lands*, not
+  when you've stated it in conversation — "I logged it" in prose with no Write behind
+  it is the exact slip that poisons workers briefed on the board. And when a new
+  decision supersedes an earlier board line, edit that line in the same moment (mark
+  it superseded, point to the new entry): a stale "authoritative" line is an
+  instruction to some future worker to re-implement the old decision.
+- **Workers double as board auditors — for free.** Brief every spec-consuming worker
+  to flag internal contradictions in the board/spec it reads. A fresh reader catches
+  the stale line the author re-reads past.
 - **Watch for saturation signals**: your own spot-checks getting shallower, re-asking
   things already settled, sync slips (the headline-vs-ledger class), reluctance to
   read anything new. Saturation degrades judgment silently — the failure mode is not
@@ -336,6 +427,10 @@ manage it like one, not just the workers':
 Re-thinking keeps a long arc converging on a *clean* end product, not an accumulation
 of local decisions. Run it at every point where being wrong is about to get expensive:
 
+- **at design milestones, proactively** — offer the user a deliberate step-back round
+  even when nothing feels wrong; re-derivations at a higher abstraction level are
+  often the highest-yield finds (they catch over-structure and blind spots the
+  artifact lenses below can't see);
 - **after a milestone** (the classic trigger);
 - **before a large fan-out** (§2's pressure-test is this loop applied to a plan);
 - **after a rule change or decision reversal** (what else does the new rule/insight
@@ -349,6 +444,12 @@ of local decisions. Run it at every point where being wrong is about to get expe
 Run named lenses, one round at a time, presenting findings as decisions (options +
 recommendation), never as silent fixes:
 
+- **Generalization lens (ascend a level):** for every special case or enumerated
+  exception, ask "what is the general form?" A rule that needs exceptions is usually
+  a specific instance of a rule that needs none — and the general mechanism is often
+  simpler than the sum of its carve-outs. When the design accretes special cases, or
+  the user's options all feel wrong, step UP an abstraction level and re-derive the
+  general mechanism instead of tuning the current frame.
 - **Asymmetry/special-case lens:** every special case, ask "who else has this
   property?" (the highest-yield lens — special cases usually paper over a root cause).
 - **Single-source lens:** duplicated knowledge — prose copied into code, tables in
@@ -368,6 +469,31 @@ recommendation), never as silent fixes:
 
 Stop the loop when a round's yield is mostly cosmetic — say "diminishing returns" and
 recommend handover; let the user choose one more round if they want it.
+
+**The advisor loop.** Use the advisor/strong reviewer as the pressure-tester for
+designs, plans, and anything expensive to be wrong about. Pass economics:
+
+- **Each pass must target new surface** (design → plan → pivot → final coherence);
+  re-running the same question buys nothing. Before each call, name what this pass is
+  for and what would block.
+- **Respect a declared stop, override it only for a genuine pivot.** When the
+  reviewer says "don't call me again", a materially changed design is grounds to
+  override; anxiety is not. The reviewer's own criterion — "the remaining unknowns
+  are empirical, not whiteboard-discoverable" — is the test.
+- **Reconcile conflicts via the reviewer's own discriminating test.** When user
+  evidence contradicts a reviewer premise, don't pick a side — extract the reviewer's
+  operative criterion and check the evidence against *it* (often the user's point
+  satisfies the criterion, dissolving the conflict without another pass).
+- **Record each pass's outcome as an append-only board entry** (blockers, resolutions,
+  refinements accepted/rejected with reasons) — reviewer passes are decisions-grade
+  audit-trail material.
+
+**Phase-gate self-review.** Before declaring a phase closed, genuinely ask yourself:
+"would I sign off on this — and on what grounds?" Shape the audit to the task;
+typical prompts: what did I verify vs. take on word, and does anything load-bearing
+rest on the latter? what were my own misses, per §10? where would residue live if
+I'm wrong? if I distrusted this phase, what would I check first — then check it.
+Sign off with named conditions, not a bare yes.
 
 ## 10. Boundaries that keep the session safe
 
@@ -393,9 +519,10 @@ recommend handover; let the user choose one more round if they want it.
 
 ## Quick-start checklist (new session in this mode)
 
-1. Read the project's orientation doc (design index / CLAUDE.md) — and any
+1. Read the project's orientation doc (design index / CLAUDE.md / README.md) — and any
    supervisor-handover/board note in the scratch dir; confirm the role split and
-   standing rules with the user if not already recorded.
+   standing rules with the user if not already recorded. Build the what/why/how big
+   picture before orchestrating (§2) — interrogate structure against purpose.
 2. Surface the next action + parallelizable tracks as options; user picks.
 3. For multi-worker arcs: plan → adversarial pressure-test loop until approved →
    decision round → zones (§2). Only then fan out, in waves.
@@ -406,5 +533,5 @@ recommend handover; let the user choose one more round if they want it.
 6. Maintain the living board and watch your own budget per §8; re-think at every
    expensive-to-be-wrong point per §9; push rule changes and propagate reversals
    per §6.
-7. End state: board empty, docs synced, audit trail complete, tree green — and the
-   commit in the user's hands.
+7. End state: phase-gate self-review done (§9), board empty, docs synced, audit
+   trail complete, tree green — and the commit in the user's hands.
