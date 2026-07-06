@@ -7,7 +7,7 @@
   home-manager = {
     useGlobalPkgs = true;
     useUserPackages = true;
-    backupFileExtension = "backup";
+    # backupFileExtension = "backup"; # unset: error out on file collisions instead of backing up
     extraSpecialArgs = { inherit inputs; };
     sharedModules = [
       inputs.nix-index-database.homeModules.nix-index
