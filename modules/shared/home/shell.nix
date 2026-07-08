@@ -331,6 +331,9 @@
   programs.fzf = {
     enable = true;
     enableZshIntegration = true;
+    # Ctrl-R is owned by atuin (see programs.atuin below); disable fzf's
+    # conflicting binding explicitly rather than relying on load order.
+    historyWidget.command = "";
   };
 
   # ---------------------------------------------------------
