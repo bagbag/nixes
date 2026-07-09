@@ -101,7 +101,7 @@ Subagents run in their own context window and return only a summary. Use them wh
 **Role agents** (`~/.claude/agents/`, model pinned per role — speak in role names, never model IDs; the binding lives in one line of frontmatter per agent):
 
 - **`scout`** (haiku) — single-fact lookups that require searching or reading: "where is X", who calls Y, config values. Single-command checks (file exists, service status) run directly instead.
-- **`Explore`** (sonnet) — broad read-only sweeps across many files/locations; locates, doesn't review.
+- **`Explore`** (sonnet) — broad read-only sweeps across many files/locations, or the web (API/library capabilities); locates, doesn't review.
 - **`transform`** (sonnet) — fully-specified mechanical edits: renames, pattern sweeps, transcriptions, doc syncs.
 - **`build`** (sonnet) — implementing an unambiguous, ratified plan with existing patterns.
 - **`craft`** (opus) — implementation needing judgment: features, fixes, design-sensitive refactors, integration.

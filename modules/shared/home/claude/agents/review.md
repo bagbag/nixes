@@ -6,7 +6,7 @@ description: >-
   summarize. Findings graded confirmed / plausible / open-observation with
   honest per-lens empties. Use before fan-outs, at milestones, and as the
   final-round reviewer.
-tools: Read, Grep, Glob, Bash
+tools: Read, Grep, Glob, Bash, WebSearch, WebFetch
 model: opus
 effort: xhigh
 hooks:
