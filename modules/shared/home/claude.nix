@@ -15,6 +15,17 @@ in
   home.file.".claude/statusline-command.sh".source =
     config.lib.file.mkOutOfStoreSymlink "${src}/statusline-command.sh";
 
+  # Individual links, not the directory: ~/.claude/hooks/ also holds files
+  # from other plugins like context-mode plugin that home-manager must not clobber.
+  home.file.".claude/hooks/context-watch.sh".source =
+    config.lib.file.mkOutOfStoreSymlink "${src}/hooks/context-watch.sh";
+
+  home.file.".claude/hooks/fable-guard.sh".source =
+    config.lib.file.mkOutOfStoreSymlink "${src}/hooks/fable-guard.sh";
+
+  home.file.".claude/hooks/readonly-guard.sh".source =
+    config.lib.file.mkOutOfStoreSymlink "${src}/hooks/readonly-guard.sh";
+
   # Whole directories: new entries dropped in land in the repo automatically.
   home.file.".claude/skills".source =
     config.lib.file.mkOutOfStoreSymlink "${src}/skills";

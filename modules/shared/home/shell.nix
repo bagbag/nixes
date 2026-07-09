@@ -98,6 +98,13 @@
     '';
 
     extraConfig = ''
+      # Lean (350k) is the settings.json default; claude-full raises the
+      # compaction window for long supervisor arcs (see zsh alias of the same
+      # name). Nushell aliases can't carry env prefixes, hence def --wrapped.
+      def --wrapped claude-full [...args] {
+        with-env { CLAUDE_CODE_AUTO_COMPACT_WINDOW: "900000" } { claude ...$args }
+      }
+
       $env.config = ($env.config? | default {} | merge {
         show_banner: false
         edit_mode: emacs
@@ -295,6 +302,11 @@
       cat = "bat";
       lg = "lazygit";
       grep = "grep --color=auto";
+
+      # Lean (350k) is the settings.json default for every session. claude-full
+      # raises the compaction window for long interactive supervisor arcs —
+      # the one case that wants deep context (900k = 10% buffer below 1M).
+      claude-full = "CLAUDE_CODE_AUTO_COMPACT_WINDOW=900000 claude";
 
       ".." = "cd ..";
       "..." = "cd ../..";

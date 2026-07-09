@@ -83,7 +83,7 @@ When something genuinely needs deep thought — a tricky design tradeoff, a subt
 
 ### Get advisor sign-off on the plan before implementing
 
-For any non-trivial change, run the plan past the `advisor` and iterate in a feedback loop until it holds up — don't start implementing on the first draft.
+For any non-trivial change, run the plan past the `advisor` and iterate in a feedback loop until it holds up — don't start implementing on the first draft. Where a fresh-context `review` worker already gates the plan (supervisor arcs), the advisor is for hard design tradeoffs, not a second per-plan gate: `review` grounds against the sources, the advisor reasons with the transcript.
 
 - Once you have a concrete plan, call the `advisor` for approval. Fold its feedback back into the plan and call it again. Repeat until the advisor raises no substantive concerns and signs off.
 - Treat unresolved objections as blocking: if the advisor flags a gap, risk, or better approach, address it (or consciously reject it with a reason) before the next pass — don't paper over it to declare the loop done.
@@ -98,13 +98,21 @@ After a couple of failed attempts, stop varying the same approach: step back and
 
 Subagents run in their own context window and return only a summary. Use them whenever a side task would flood the main conversation with logs, search results, or file contents you won't reference again.
 
-- **`Explore` subagent** (read-only) — exploration, file discovery, code search, "where is X defined / what uses Y?". The default for "I need to find out…".
-- **`Plan` subagent** (read-only) — codebase research for planning a larger change or refactor.
-- **`general-purpose` subagent** — complex multi-step tasks that need both exploration and modification, when isolation from main context is worth it.
+**Role agents** (`~/.claude/agents/`, model pinned per role — speak in role names, never model IDs; the binding lives in one line of frontmatter per agent):
 
-**Model choice inside subagents:** **Haiku** only for very simple mechanical edits (find-and-replace, listing, format fixes); **Sonnet** only where a mistake is really unlikely *and* the cost of one is cheap; **Opus** for everything else — the default whenever there's real design judgment, tricky debugging, non-obvious tradeoffs, or output that's expensive to get wrong. **Fable** is the most capable but expensive — never auto-select it; use it only when the user explicitly asks for it. When unsure between the others, pick the stronger candidate.
+- **`scout`** (haiku) — single-fact lookups that require searching or reading: "where is X", who calls Y, config values. Single-command checks (file exists, service status) run directly instead.
+- **`Explore`** (sonnet) — broad read-only sweeps across many files/locations; locates, doesn't review.
+- **`transform`** (sonnet) — fully-specified mechanical edits: renames, pattern sweeps, transcriptions, doc syncs.
+- **`build`** (sonnet) — implementing an unambiguous, ratified plan with existing patterns.
+- **`craft`** (opus) — implementation needing judgment: features, fixes, design-sensitive refactors, integration.
+- **`verify`** (opus) — fresh-context fact-check of named claims or a result's brief-conformance → CONFIRMED/REFUTED/UNVERIFIABLE; never fixes.
+- **`review`** (opus) — fresh-eyes adversarial critique of a plan/design/diff with graded findings.
+- **`Plan`** (opus) — implementation planning for a multi-step arc; read-only plus at most one output file.
+- **`general-purpose`** — fallback for multi-step tasks no role fits.
 
-**Run in background** (concurrent) when the goal and path are clear and especially when independent subagents can work in parallel; run in **foreground** (blocking) when the work needs iteration with you. **Resume an existing subagent** (via `SendMessage` with its agent ID) whenever a new task is related to the previous one — don't spawn a fresh one that has to rebuild the same context.
+**Routing rule:** choose by **spec completeness, not task size** — a brief that fully determines the output routes cheap (`transform`/`build`); any real design surface, integration risk, or plausible ambiguity routes to `craft`. Pick the cheapest *plausible* role, then escalate one role up after two failures or an ambiguity-STOP — never a third retry at the same tier, and never route judgment work down-tier to save tokens. Gate delegated work behind a `verify` pass where being wrong is expensive. **Fable** is never auto-selected for subagents; use it only when the user explicitly asks.
+
+**Run in background** (concurrent) when the goal and path are clear and especially when independent subagents can work in parallel; run in **foreground** (blocking) when the work needs iteration with you. **Resume an existing subagent** (via `SendMessage` with its agent ID) whenever a new task is related to the previous one — don't spawn a fresh one that has to rebuild the same context. Same when a result comes back insufficient — not thorough enough, places unsearched, claims unverified: resume that agent and instruct it to get more, rather than accepting the gap, redoing it inline, or starting a fresh agent.
 
 ### Self-review before declaring done
 
