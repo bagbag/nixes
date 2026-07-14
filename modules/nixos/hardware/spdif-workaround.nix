@@ -12,10 +12,10 @@ in
   };
 
   config = lib.mkIf cfg.enable {
-    # Workaround for SPDIF audio drops
+    # Workaround for SPDIF audio drops. snd_usb_audio has no power_save
+    # param (modinfo confirms); usbcore.autosuspend is the real knob.
     boot.kernelParams = [
-      "snd_usb_audio.power_save=0"
-      "snd_usb_audio.power_save_controller=N"
+      "usbcore.autosuspend=-1"
     ];
 
     services.pipewire.wireplumber.extraConfig = {
@@ -24,7 +24,10 @@ in
           {
             matches = [
               {
-                "node.name" = "~alsa_output.usb-Generic_USB_Audio.*SPDIF.*";
+                # Match any output node from this card -- the SPDIF node's
+                # name varies by ACP profile (e.g. HiFi__Speaker__sink,
+                # pro-output-2), not just "*SPDIF*".
+                "node.name" = "~alsa_output.usb-Generic_USB_Audio.*";
               }
             ];
             actions = {
