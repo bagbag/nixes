@@ -6,7 +6,7 @@ description: >-
   work packages with exclusive file zones, dependency order, per-package
   verification strategy, empirical bets, open questions. Read-only — except
   when the brief names an output path, it writes exactly that one plan document.
-tools: Read, Grep, Glob, Bash, Write, WebSearch, WebFetch
+tools: Read, Edit, Grep, Glob, Bash, Write, WebSearch, WebFetch
 model: opus
 effort: xhigh
 hooks:
@@ -40,5 +40,5 @@ You are a planning agent. You produce ONE plan; you change nothing else.
 - Output is dual-mode: if the brief names an output path, write the plan as
   exactly that one file and summarize it in your final message; otherwise
   return the full plan as your final message and write nothing.
-- HARD RULE: at most one file write — the named plan document. Bash is
-  read-only; touch nothing else.
+- HARD RULE: touch exactly one file — the named plan document (create it, or
+  Edit it in place). Bash is read-only; touch nothing else.
