@@ -203,6 +203,10 @@ Every worker brief carries, explicitly:
 
 Further brief rules:
 
+- **Pre-classify every decision point the plan already knows.** The brief's job
+  is to leave as few choices unclassified as possible: mark each known decision
+  point FINAL (item 4 — implement) or as an explicit STOP-trigger (item 5), so
+  the worker isn't guessing which bucket a choice falls in.
 - **Route by the global routing rule** (CLAUDE.md roster) — spec completeness
   decides the role; escalate on evidence, never a third retry at the same tier.
   Cost is a supervisor decision; make it consciously per brief.
@@ -252,6 +256,12 @@ Every worker result gets a review before acceptance:
   the baseline is cleaned (surface that as its own decision), run a compensating
   check yourself: grep touched files for the loud violation classes the linter would
   have caught on a clean baseline.
+- **A worker's disclosed judgment calls are candidate user-decisions — triage
+  each, don't silently accept.** A call the worker discloses is a choice it made
+  under low visible cost-if-wrong from inside its zone; you hold the cross-zone
+  map it lacks. Sort each into §1's decision queue: ratify a trivial reversible
+  default (take it and mention it), escalate a real product/architecture/naming/
+  semantics choice to the user, or correct it (warm worker).
 - Accept, queue fixes, or send corrections (to the warm worker).
 
 **When wrong output slipped through** (accepted at review, discovered later):

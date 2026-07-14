@@ -5,6 +5,7 @@ description: >-
   find-and-replace refactors, faithful transcriptions, doc syncs, bulk
   formatting. The brief must fully determine the output — anything requiring
   judgment or interpretation is out of scope and STOPs.
+tools: Read, Edit, Write, Grep, Glob, Bash
 model: sonnet
 effort: low
 ---

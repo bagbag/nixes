@@ -3,11 +3,12 @@
     "CLAUDE_CODE_SCROLL_SPEED": "0.25",
     "DISABLE_ERROR_REPORTING": "1",
     "DISABLE_AUTOUPDATER": "1",
-    "DISABLE_BUG_COMMAND": "1"
+    "DISABLE_BUG_COMMAND": "1",
+    "CONTEXT_WATCH_RESERVE_PCT": "10"
   },
   "model": "opus[1m]",
   "autoCompactEnabled": true,
-  "autoCompactWindow": 350000,
+  "autoCompactWindow": 409000,
   "hooks": {
     "SessionStart": [
       {

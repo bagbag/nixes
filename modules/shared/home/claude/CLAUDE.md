@@ -23,6 +23,8 @@ Scale how much you align to what's at stake. For anything non-trivial or hard to
 
 Do **not** run git commands that modify the working tree, index, stashes, refs, or commit history without explicit confirmation first — `reset`, `checkout`/`switch`/`restore` that discard changes, `stash`, `rebase`/`merge`/`cherry-pick`, `commit --amend` and other history rewrites, `clean`, `push --force`, branch/tag deletion. Read-only commands (`git status`, `git log`, `git diff`, `git show`, `git branch --list`, etc.) are always fine. If a mutating command is genuinely needed, explain why and ask first.
 
+**Renames and moves use `git mv`.** File and folder renames or moves should go through `git mv` by default, avoid filesystem moves (or `mv` + `git add`) when git tracks the path.
+
 **Committing and staging.** Commit and push only when the user explicitly asks ("commit this", "commit and push", `/commit`) — plans, todo lists, and workflow steps do **not** count as that instruction. Instead, when the tree reaches a coherent, verified state (bug fixed with tests passing, a feature step complete, a refactor done with lint/tests green), end the turn by recommending a commit point: `✅ Good commit point: <subject> — <one sentence>`. Commit messages follow **Conventional Commits** (`<type>(scope): <description>`, subject ≤ 72 chars; lean body — what changed, not prose or file-by-file recaps), unless a project defines its own commit convention, which overrides.
 
 ## Filesystem: confirm before destructive operations
@@ -103,14 +105,14 @@ Subagents run in their own context window and return only a summary. Use them wh
 - **`scout`** (haiku) — single-fact lookups that require searching or reading: "where is X", who calls Y, config values. Single-command checks (file exists, service status) run directly instead.
 - **`Explore`** (sonnet) — broad read-only sweeps across many files/locations, or the web (API/library capabilities); locates, doesn't review.
 - **`transform`** (sonnet) — fully-specified mechanical edits: renames, pattern sweeps, transcriptions, doc syncs.
-- **`build`** (sonnet) — implementing an unambiguous, ratified plan with existing patterns.
-- **`craft`** (opus) — implementation needing judgment: features, fixes, design-sensitive refactors, integration.
+- **`build`** (sonnet) — default for routine implementation that follows existing patterns.
+- **`craft`** (opus) — implementation that turns on latent design judgment.
 - **`verify`** (opus) — fresh-context fact-check of named claims or a result's brief-conformance → CONFIRMED/REFUTED/UNVERIFIABLE; never fixes.
 - **`review`** (opus) — fresh-eyes adversarial critique of a plan/design/diff with graded findings.
 - **`Plan`** (opus) — implementation planning for a multi-step arc; read-only plus at most one output file.
 - **`general-purpose`** — fallback for multi-step tasks no role fits.
 
-**Routing rule:** choose by **spec completeness, not task size** — a brief that fully determines the output routes cheap (`transform`/`build`); any real design surface, integration risk, or plausible ambiguity routes to `craft`. Pick the cheapest *plausible* role, then escalate one role up after two failures or an ambiguity-STOP — never a third retry at the same tier, and never route judgment work down-tier to save tokens. Gate delegated work behind a `verify` pass where being wrong is expensive. **Fable** is never auto-selected for subagents; use it only when the user explicitly asks.
+**Routing rule:** choose by **spec completeness, not task size**. **`build` is the default** for implementation — litmus: if you can name the files and point to an existing pattern to copy ("do X like Y"), it's `build`, and routine integration that reuses existing wiring counts. Reach for `craft` when the task turns on latent design judgment the pattern doesn't hand you. Pick the cheapest *plausible* role, then escalate one role up after two failures or an ambiguity-STOP — never a third retry at the same tier, and never route judgment work down-tier to save tokens. Routing down is protected: `build` STOPs on legible ambiguity, and a `verify` pass catches the rest where being wrong is expensive. **Fable** is never auto-selected for subagents; use it only when the user explicitly asks.
 
 **Run in background** (concurrent) when the goal and path are clear and especially when independent subagents can work in parallel; run in **foreground** (blocking) when the work needs iteration with you. **Resume an existing subagent** (via `SendMessage` with its agent ID) whenever a new task is related to the previous one — don't spawn a fresh one that has to rebuild the same context. Same when a result comes back insufficient — not thorough enough, places unsearched, claims unverified: resume that agent and instruct it to get more, rather than accepting the gap, redoing it inline, or starting a fresh agent.
 

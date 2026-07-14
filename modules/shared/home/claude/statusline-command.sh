@@ -15,7 +15,8 @@ mapfile -t vals < <(jq -r '
  (.rate_limits.five_hour.used_percentage // ""),
  (.rate_limits.five_hour.resets_at // ""),
  (.rate_limits.seven_day.used_percentage // ""),
- (.rate_limits.seven_day.resets_at // "")
+ (.rate_limits.seven_day.resets_at // ""),
+ (.context_window.context_window_size // 0)
 ' <<<"$input")
 cwd=${vals[0]}
 model=${vals[1]}
@@ -28,6 +29,7 @@ five_hour=${vals[7]}
 five_hour_resets=${vals[8]}
 seven_day=${vals[9]}
 seven_day_resets=${vals[10]}
+ctx_size=${vals[11]}
 
 printf -v now '%(%s)T' -1
 
@@ -80,6 +82,7 @@ esac
 BAR_FULL='██████████'
 BAR_GHOST='▒▒▒▒▒▒▒▒▒▒'
 BAR_EMPTY='░░░░░░░░░░'
+BAR_MARK='╷'   # compaction-cliff marker inside the ctx bar
 
 make_bar() {
  local pct=$1
@@ -87,6 +90,25 @@ make_bar() {
  (( filled > 10 )) && filled=10
  local empty=$(( 10 - filled ))
  _bar="${BAR_FULL:0:filled}${BAR_EMPTY:0:empty}"
+}
+
+# Full-window ctx bar with a compaction-cliff marker: fill to usage, place the
+# marker at the cliff cell, empty beyond. If usage has reached the cliff, the
+# fill covers the marker.
+make_ctx_bar() {
+ local pct=$1 cliff=$2 width=10
+ local filled=$(( (pct * width + 50) / 100 ))
+ (( filled > width )) && filled=width
+ local mark=$(( (cliff * width + 50) / 100 ))
+ (( mark < 0 )) && mark=0
+ (( mark > width - 1 )) && mark=$(( width - 1 ))
+ if (( mark >= filled )); then
+   local pre=$(( mark - filled )) post=$(( width - mark - 1 ))
+   _bar="${BAR_FULL:0:filled}${BAR_EMPTY:0:pre}${BAR_MARK}${BAR_EMPTY:0:post}"
+ else
+   local empty=$(( width - filled ))
+   _bar="${BAR_FULL:0:filled}${BAR_EMPTY:0:empty}"
+ fi
 }
 
 make_rate_bar() {
@@ -189,11 +211,31 @@ fi
 # Session
 add_part "${DIM}${session_time}${RESET}"
 
-# Context window
+# Context window. Mark the auto-compaction cliff (autoCompactWindow minus the
+# CONTEXT_WATCH_RESERVE_PCT margin — same math as context-watch.sh) inside the
+# full-window bar, and colour by nearness to that cliff, not to 100%.
 if [ -n "$used" ]; then
  printf -v used_int '%.0f' "$used"
- make_bar "$used_int"
- quota_color "$used_int"
+ acw=${CLAUDE_CODE_AUTO_COMPACT_WINDOW:-}
+ reserve_pct=${CONTEXT_WATCH_RESERVE_PCT:-}
+ if [ -z "$acw" ] || [ -z "$reserve_pct" ]; then
+   mapfile -t _s < <(jq -r '(.autoCompactWindow // ""), (.env.CONTEXT_WATCH_RESERVE_PCT // "")' "$HOME/.claude/settings.json" 2>/dev/null)
+   [ -z "$acw" ] && acw=${_s[0]:-}
+   [ -z "$reserve_pct" ] && reserve_pct=${_s[1]:-}
+ fi
+ { [[ "$reserve_pct" =~ ^[0-9]+$ ]] && (( reserve_pct < 100 )); } || reserve_pct=10
+ win=${ctx_size:-0}; (( win < 1 )) && win=1000000
+ cliff_pct=0
+ if [[ "$acw" =~ ^[0-9]+$ ]] && (( acw > 0 )); then
+   cliff_pct=$(( (acw - acw * reserve_pct / 100) * 100 / win ))
+ fi
+ if (( cliff_pct > 0 && cliff_pct < 100 )); then
+   make_ctx_bar "$used_int" "$cliff_pct"
+   danger=$(( used_int * 100 / cliff_pct )); (( danger > 100 )) && danger=100
+   quota_color "$danger"
+ else
+   make_bar "$used_int"; quota_color "$used_int"
+ fi
  add_part "${DIM}ctx${RESET} ${_color}${_bar} ${used_int}%${RESET}"
 fi
 

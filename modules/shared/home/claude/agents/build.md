@@ -1,10 +1,11 @@
 ---
 name: build
 description: >-
-  Implementation from an unambiguous, ratified plan or spec: apply it faithfully
-  using the codebase's existing patterns. Use when the brief fully determines
-  the design and STOP conditions are unlikely to fire; open design surface or
-  judgment calls belong to craft instead.
+  Default for routine implementation — applying a brief that follows the
+  codebase's existing patterns, including integration that reuses existing
+  wiring. Litmus: you can name the files and copy an existing pattern
+  ("do X like Y"). STOPs on any real judgment call.
+tools: Read, Edit, Write, Grep, Glob, Bash
 model: sonnet
 effort: high
 ---
