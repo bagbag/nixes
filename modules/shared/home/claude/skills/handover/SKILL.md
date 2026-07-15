@@ -16,9 +16,7 @@ a note).
 
 `handover.md` in the project's scratch dir (its existing convention —
 `short-term-context/` or equivalent; if none exists, create one and gitignore
-it). One file, kept current: a handover is transient state, not an audit
-trail — decisions and history belong to the project's durable records, and the
-note points at them instead of re-typing them.
+it). One file, kept current.
 
 ## WRITE mode
 
@@ -36,11 +34,10 @@ self-contained for a reader with zero session context:
 - **Open questions / parked decisions**, each with your recommendation.
 - **Gotchas** — environment quirks, traps discovered, things that look wrong
   but are intentional.
-- **How to verify current state** — the gate commands and expected results, so
-  the next session can check the ground it stands on.
+- **How to verify current state** — the gate commands and expected results.
 
-Don't include: agent IDs or session references (they die with the session), or
-anything the durable docs already say (point instead).
+Don't include: agent IDs or session references, or anything the durable docs
+already say (point instead).
 
 ## ORIENT mode
 

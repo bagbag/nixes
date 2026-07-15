@@ -12,6 +12,8 @@ disable-model-invocation: true
 Worker discipline as always: roster and routing per the global CLAUDE.md;
 every worker gets a complete brief (task-specific spec, exclusive file zone,
 gate commands), and every result is reviewed before anything builds on it.
+Durable docs the arc touches follow the shared durable-docs convention
+(`skills/shared/durable-docs.md`).
 This skill defines the decision layer and the safety rails on top.
 
 ## 0. Pre-flight — the last moment to ask
@@ -66,6 +68,10 @@ project's durable gitignored scratch dir (the handover skill's convention): date
 entries for every ratification item, every parked decision, every contained
 failure. It is the audit trail the user ratifies from — a decision that isn't
 in the journal didn't happen; don't build on it.
+
+The journal is autopilot's instance of the shared **board-files** convention
+(`skills/shared/board-files.md`): read it for the sync discipline and the
+subagent mechanic.
 
 ## 4. Isolation and checkpoints
 

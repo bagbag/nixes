@@ -116,6 +116,16 @@ Subagents run in their own context window and return only a summary. Use them wh
 
 **Run in background** (concurrent) when the goal and path are clear and especially when independent subagents can work in parallel; run in **foreground** (blocking) when the work needs iteration with you. **Resume an existing subagent** (via `SendMessage` with its agent ID) whenever a new task is related to the previous one — don't spawn a fresh one that has to rebuild the same context. Same when a result comes back insufficient — not thorough enough, places unsearched, claims unverified: resume that agent and instruct it to get more, rather than accepting the gap, redoing it inline, or starting a fresh agent.
 
+### Board files
+
+On a multi-step arc, keep ONE living **board file** in the project scratch dir — the running record of state (live/queued workers or tracks, an append-only dated decision log, pending decisions, verified vs. taken-on-a-worker's-word, the next action). Update it as things happen, not later; a decision counts only when the file edit lands, and a superseding decision edits the old line in the same moment. Full convention: `skills/shared/board-files.md`.
+
+- **As a worker/subagent:** if your brief says a board exists, flag any board/spec contradiction and return results in a form the lead can distil onto it.
+
+### Durable docs
+
+A project's durable design/architecture docs (its docs dir): a clean **honest START-HERE index** carrying live state (current state · next action · locked decisions · read-order · file index) — not a growing stack of dated UPDATE blocks; **topical subfolders**, not a flat pile; a clearly-separated **`history/`** for superseded material; **single-sourced** cross-doc concepts (one owning section, others reference by anchor); **English** names. Update in the same pass as the change that alters them. Full convention: `skills/shared/durable-docs.md`.
+
 ### Self-review before declaring done
 
 - **Challenge your own output.** Before you say "done," ask: *what's wrong with this? what did I miss? what edge case haven't I considered? what would break if a user did the obvious-but-wrong thing?* Then go check.

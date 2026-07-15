@@ -13,8 +13,8 @@ disable-model-invocation: true
 
 ## 1. What to mine for
 
-The mining is main-agent work — a fresh subagent cannot see the session's
-friction; don't delegate it. Walk the session for friction with a fingerprint:
+The mining is main-agent work; don't delegate it. Walk the session for
+friction with a fingerprint:
 
 - corrections the user made twice — propose the rule that would have prevented
   the second;
@@ -52,4 +52,4 @@ item carrying: the learning, the evidence (what actually happened), the
 proposed edit verbatim, and the destination layer. Nothing is written until
 the user approves that item. Apply ratified items in the same pass and confirm
 what landed where. Phrase rules with the why and the boundary cases the user
-decided — lean and information-dense, like everything else in the config.
+decided — lean and information-dense.

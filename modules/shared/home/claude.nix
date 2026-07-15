@@ -26,6 +26,9 @@ in
   home.file.".claude/hooks/readonly-guard.sh".source =
     config.lib.file.mkOutOfStoreSymlink "${src}/hooks/readonly-guard.sh";
 
+  home.file.".claude/hooks/git-stash-guard.sh".source =
+    config.lib.file.mkOutOfStoreSymlink "${src}/hooks/git-stash-guard.sh";
+
   # Whole directories: new entries dropped in land in the repo automatically.
   home.file.".claude/skills".source =
     config.lib.file.mkOutOfStoreSymlink "${src}/skills";
