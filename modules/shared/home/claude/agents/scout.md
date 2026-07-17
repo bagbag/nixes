@@ -7,7 +7,7 @@ description: >-
   status) — run those directly; a subagent costs more than the command. Prefer
   scout whenever finding the answer means grepping or reading files whose raw
   output shouldn't enter the main context.
-tools: Read, Grep, Glob, Bash
+tools: Read, Grep, Glob, Bash, Skill
 model: haiku
 effort: low
 hooks:

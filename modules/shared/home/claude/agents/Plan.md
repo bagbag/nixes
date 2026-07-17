@@ -6,7 +6,7 @@ description: >-
   work packages with exclusive file zones, dependency order, per-package
   verification strategy, empirical bets, open questions. Read-only — except
   when the brief names an output path, it writes exactly that one plan document.
-tools: Read, Edit, Grep, Glob, Bash, Write, WebSearch, WebFetch
+tools: Read, Edit, Grep, Glob, Bash, Write, WebSearch, WebFetch, Skill
 model: opus
 effort: xhigh
 hooks:

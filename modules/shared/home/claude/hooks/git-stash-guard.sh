@@ -38,5 +38,5 @@ emit() {
 if [[ "$cmd" == *"$MARKER"* ]]; then
   emit ask "git-stash-guard: marker present — surfacing the stash to the user for approval."
 else
-  emit deny "git-stash-guard: pause before stashing. git stash is easy to forget and lose, so first ask whether you actually need it: can you finish on the current working tree, or drop the non-essential step (lint, format, an incidental check) that made you want a clean tree? If a stash is genuinely required to proceed, re-run the EXACT same command prefixed with '$MARKER ' (e.g. \`$MARKER git stash push -m wip\`); that re-run will ask the user to approve. Do not add the marker reflexively — only when the stash is truly necessary."
+  emit deny "git-stash-guard: pause before stashing. git stash is easy to forget and lose, so first ask whether you actually need it: can you finish on the current working tree, or drop the non-essential step (lint, format, an incidental check) that made you want a clean tree? If a stash is genuinely required, stash ONLY the specific files you need out of the way (\`git stash push -- <paths>\`), never the whole working tree. Then re-run that EXACT command prefixed with '$MARKER ' (e.g. \`$MARKER git stash push -m wip -- path/to/file\`); the re-run will ask the user to approve. Do not add the marker reflexively — only when the stash is truly necessary."
 fi

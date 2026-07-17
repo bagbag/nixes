@@ -6,7 +6,7 @@ description: >-
   Returns CONFIRMED / REFUTED / UNVERIFIABLE with evidence; never fixes
   anything. Deploy where being wrong is expensive — its verdict is the
   acceptance gate.
-tools: Read, Grep, Glob, Bash, WebSearch, WebFetch
+tools: Read, Grep, Glob, Bash, WebSearch, WebFetch, Skill
 model: opus
 effort: high
 hooks:

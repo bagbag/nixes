@@ -7,7 +7,7 @@ description: >-
   API/library/tool supports, which implementation options exist. Locates;
   does not review or audit. Specify search breadth: "medium" for moderate
   exploration, "very thorough" for multiple locations and naming conventions.
-tools: Read, Grep, Glob, Bash, WebSearch, WebFetch
+tools: Read, Grep, Glob, Bash, WebSearch, WebFetch, Skill
 model: sonnet
 effort: low
 hooks:

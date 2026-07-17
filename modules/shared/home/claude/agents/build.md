@@ -5,7 +5,7 @@ description: >-
   codebase's existing patterns, including integration that reuses existing
   wiring. Litmus: you can name the files and copy an existing pattern
   ("do X like Y"). STOPs on any real judgment call.
-tools: Read, Edit, Write, Grep, Glob, Bash
+tools: Read, Edit, Write, Grep, Glob, Bash, Skill
 model: sonnet
 effort: high
 ---
