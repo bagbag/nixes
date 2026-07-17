@@ -4,7 +4,8 @@
     "DISABLE_ERROR_REPORTING": "1",
     "DISABLE_AUTOUPDATER": "1",
     "DISABLE_BUG_COMMAND": "1",
-    "CONTEXT_WATCH_RESERVE_PCT": "10"
+    "CONTEXT_WATCH_RESERVE_PCT": "10",
+    "CLAUDE_CODE_DISABLE_POLICY_SKILLS": "1"
   },
   "model": "opus[1m]",
   "autoCompactEnabled": true,
@@ -102,10 +103,16 @@
   "advisorModel": "opus",
   "tui": "fullscreen",
   "autoMemoryEnabled": false,
-  "skipWorkflowUsageWarning": true,
   "agentPushNotifEnabled": true,
   "skipAutoPermissionPrompt": true,
-  "includeCoAuthoredBy": false,
   "includeGitInstructions": false,
-  "inputNeededNotifEnabled": true
+  "inputNeededNotifEnabled": true,
+  "disableWorkflows": true,
+  "disableArtifact": true,
+  "disableClaudeAiConnectors": true,
+  "attribution": {
+    "commit": "",
+    "pr": "",
+    "sessionUrl": false
+  }
 }
