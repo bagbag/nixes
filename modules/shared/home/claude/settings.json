@@ -15,7 +15,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "\"/home/patrick/.claude/hooks/context-mode-cache-heal.mjs\""
+            "command": "\"$HOME/.claude/hooks/context-mode-cache-heal.mjs\""
           }
         ]
       }
@@ -67,7 +67,7 @@
   },
   "statusLine": {
     "type": "command",
-    "command": "bash /home/patrick/.claude/statusline-command.sh"
+    "command": "bash \"$HOME/.claude/statusline-command.sh\""
   },
   "enabledPlugins": {
     "code-simplifier@claude-plugins-official": true,
