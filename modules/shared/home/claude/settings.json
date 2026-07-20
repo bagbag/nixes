@@ -7,9 +7,14 @@
     "CONTEXT_WATCH_RESERVE_PCT": "10",
     "CLAUDE_CODE_DISABLE_POLICY_SKILLS": "1"
   },
+  "attribution": {
+    "commit": "",
+    "pr": "",
+    "sessionUrl": false
+  },
+  "includeGitInstructions": false,
   "model": "opus[1m]",
-  "autoCompactEnabled": true,
-  "autoCompactWindow": 409000,
+  "disableClaudeAiConnectors": true,
   "hooks": {
     "SessionStart": [
       {
@@ -66,6 +71,8 @@
       }
     ]
   },
+  "disableWorkflows": true,
+  "disableArtifact": true,
   "statusLine": {
     "type": "command",
     "command": "bash \"$HOME/.claude/statusline-command.sh\""
@@ -82,14 +89,16 @@
     "frontend-design@claude-plugins-official": true,
     "security-guidance@claude-plugins-official": true,
     "context-mode@context-mode": true,
-    "playwright@claude-plugins-official": true
+    "playwright@claude-plugins-official": true,
+    "tstdl-base@tstdl": true
   },
   "extraKnownMarketplaces": {
     "context-mode": {
       "source": {
         "source": "github",
         "repo": "mksglu/context-mode"
-      }
+      },
+      "autoUpdate": true
     },
     "tstdl": {
       "source": {
@@ -100,19 +109,12 @@
     }
   },
   "effortLevel": "high",
+  "autoCompactWindow": 409000,
   "advisorModel": "opus",
   "tui": "fullscreen",
   "autoMemoryEnabled": false,
-  "agentPushNotifEnabled": true,
-  "skipAutoPermissionPrompt": true,
-  "includeGitInstructions": false,
+  "autoCompactEnabled": true,
   "inputNeededNotifEnabled": true,
-  "disableWorkflows": true,
-  "disableArtifact": true,
-  "disableClaudeAiConnectors": true,
-  "attribution": {
-    "commit": "",
-    "pr": "",
-    "sessionUrl": false
-  }
+  "agentPushNotifEnabled": true,
+  "skipAutoPermissionPrompt": true
 }
