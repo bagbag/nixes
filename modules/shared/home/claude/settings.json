@@ -90,7 +90,8 @@
     "security-guidance@claude-plugins-official": true,
     "context-mode@context-mode": true,
     "playwright@claude-plugins-official": true,
-    "tstdl-base@tstdl": true
+    "tstdl-base@tstdl": true,
+    "codex@openai-codex": true
   },
   "extraKnownMarketplaces": {
     "context-mode": {
