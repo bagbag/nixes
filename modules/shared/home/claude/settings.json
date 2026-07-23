@@ -13,8 +13,14 @@
     "sessionUrl": false
   },
   "includeGitInstructions": false,
-  "model": "opus[1m]",
+  "model": "sonnet",
   "disableClaudeAiConnectors": true,
+  "skillOverrides": {
+    "architect": "user-invocable-only",
+    "autopilot": "user-invocable-only",
+    "retro": "user-invocable-only",
+    "supervisor": "user-invocable-only"
+  },
   "hooks": {
     "SessionStart": [
       {
@@ -22,6 +28,16 @@
           {
             "type": "command",
             "command": "\"$HOME/.claude/hooks/context-mode-cache-heal.mjs\""
+          }
+        ]
+      },
+      {
+        "matcher": "compact",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$HOME/.claude/hooks/compact-reorient.sh\"",
+            "timeout": 10
           }
         ]
       }
@@ -109,7 +125,7 @@
       "autoUpdate": true
     }
   },
-  "effortLevel": "high",
+  "effortLevel": "medium",
   "autoCompactWindow": 409000,
   "advisorModel": "opus",
   "tui": "fullscreen",
