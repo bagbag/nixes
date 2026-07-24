@@ -4,7 +4,7 @@ description: >-
   Implementation that turns on latent design judgment — choosing an interface
   or approach, designing a contract other modules depend on, or changes where a
   wrong call is expensive to unwind.
-effort: high
+effort: medium
 claude-model: opus
 codex-sandbox: workspace-write
 codex-model: gpt-5.6-sol

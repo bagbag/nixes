@@ -6,7 +6,7 @@ description: >-
   summarize. Findings graded confirmed / plausible / open-observation with
   honest per-lens empties. Use before fan-outs, at milestones, and as the
   final-round reviewer.
-effort: xhigh
+effort: high
 claude-tools: Read, Grep, Glob, Bash, WebSearch, WebFetch, Skill
 claude-model: opus
 claude-hooks: readonly-bash
