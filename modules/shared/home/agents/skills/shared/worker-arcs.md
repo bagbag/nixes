@@ -18,6 +18,18 @@ For a multi-worker arc, have a `plan` worker produce one written plan containing
 - empirical assumptions with cheap early tests;
 - open questions and decision points, never silently resolved.
 
+Before freezing a public API, sketch representative declaration, registration,
+and runtime call sites and inspect the strongest analogous API already in the
+repository. Challenge raw string identifiers, duplicated names, unnecessary
+suffixes or wrappers, and refactoring-hostile literals. Internal architectural
+correctness does not pass the public-surface gate until the consumer DX is
+coherent.
+
+When an abstraction is unreleased or uncommitted, compare the proposed subset
+with the coherent known target. If deferred items would immediately reshape the
+same public contracts, recommend implementing them together; defer only
+orthogonal capabilities whose omission leaves the surface stable.
+
 Derive zones from the decomposition. Pull shared cross-cutting files into a
 dedicated consolidation package with one owner. If two packages need the same
 file, merge them, extract the shared package, or sequence them. Assign each

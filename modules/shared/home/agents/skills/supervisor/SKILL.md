@@ -210,6 +210,13 @@ Use the lenses that fit:
 - **Silent failure:** where can omission or typo degrade invisibly?
 - **Dead weight / doc drift / test blind spots:** what residue remains?
 
+Treat stuff like raw SQL statements, unsafe casts, duplicated codecs or identities,
+test-driven compatibility paths, and infrastructure changes introduced solely
+to accommodate one consumer as abstraction-pressure signals. Ask first whether
+the capability belongs at all, then present local containment versus root
+repair. Optimize for the user's stated criterion—such as “cleanest,” not an
+assumed smallest diff.
+
 Ground proposed changes to ratified design with `verify` first. The final
 high-stakes round belongs to a fresh `review` worker barred from repeating
 adopted findings. With user approval, give it an open-feedback license for
