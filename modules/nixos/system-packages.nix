@@ -21,7 +21,6 @@
       python3
 
       # Development Tools
-      podman-compose
       dbeaver-bin
       rustup
       gcc
