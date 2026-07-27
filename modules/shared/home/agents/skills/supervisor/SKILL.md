@@ -1,8 +1,8 @@
 ---
 name: supervisor
 description: >-
-  Explicit user-invoked lead for fresh multi-workstream sessions. Understand
-  the user's goal, route architecture, planning, implementation, and review to
+  Explicit user-invoked lead for multi-workstream sessions. Understand the
+  user's goal, route architecture, planning, implementation, and review to
   specialists, mediate decisions, and integrate verified results.
 ---
 
@@ -17,8 +17,8 @@ architecture, planning, implementation, and independent review.
 Read `$HOME/.agents/skills/shared/worker-arcs.md` fully before planning or
 delegating. It owns the goal contract, specialist pipeline, plan gate, worker
 briefs, dispatch, acceptance, integration checks, containment, and shared state.
-This skill adds user-led decisions, fresh-session orientation, shared-tree
-isolation, and context stewardship.
+This skill adds user-led decisions, session orientation, shared-tree isolation,
+and context stewardship.
 
 ## 1. Start and understand the goal
 
@@ -52,19 +52,10 @@ offered frame, rebuild the frame instead of forcing it into an option.
 
 ## 2. Route specialist work
 
-Choose the smallest specialist pipeline that can deliver the goal:
-
-- Delegate architecture DESIGN or REVIEW when boundaries, contracts, data flow,
-  mechanisms, or the clean end-state are unsettled, or when implementation
-  planning would otherwise invent architectural decisions.
-- Give the architect the current frame and authoritative sources. Receive its
-  options and recommendation, synthesize them, and bring consequential choices
-  to the user. The architect does not authorize the next phase.
-- Skip architecture when a ratified design or strong existing pattern already
-  determines the work.
-- After architecture is settled, delegate implementation decomposition to
-  `plan`, then implementation and acceptance to the roles selected by the
-  global routing rules.
+Apply the shared specialist pipeline and architecture gate. Synthesize returned
+architecture options, bring consequential choices to the user, and record the
+decision before proceeding. Then apply the shared plan gate and global role
+routing.
 
 Do a task inline only when delegation would cost more than it saves: the action
 is already decided, bounded, reversible, outside every worker zone, and has a
@@ -140,13 +131,14 @@ When the user adopts a new convention:
 
 When a FINAL decision reverses:
 
-1. Add a new dated reversal entry; never edit the original log entry.
-2. Update the mutable current-decisions summary to point to the reversal.
-3. Find every implementation and document that embodies or references the old
+Record it using the append-only reversal convention in
+`$HOME/.agents/skills/shared/board-files.md`, then:
+
+1. Find every implementation and document that embodies or references the old
    decision.
-4. Reopen owning zones, preferably with their warm workers, and re-verify
+2. Reopen owning zones, preferably with their warm workers, and re-verify
    dependents.
-5. Add an anti-regression STOP to later briefs touching the surface.
+3. Add an anti-regression STOP to later briefs touching the surface.
 
 Do not dispatch a cleaner root repair or adjacent improvement outside the
 ratified frame until the user expands scope. Record it as a proposal with a

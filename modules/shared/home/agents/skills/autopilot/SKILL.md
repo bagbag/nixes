@@ -47,16 +47,12 @@ Once the contract is sufficient:
    `bash "$HOME/.agents/bin/set-context-watch-mode" autopilot`; the helper
    activates a supported monitor and otherwise safely does nothing.
 
-Inside the chosen workspace, identify unresolved architecture before
-implementation planning. Delegate to an architect worker while the user is
-present whenever boundaries, public contracts, mechanisms, or the desired
-clean end-state remain open. Bring its options and recommendation to the user
-for ratification. If the architecture is already settled, skip this ceremony.
-
 ## 2. Plan and route
 
-Apply the shared specialist and plan gates. Spend the user's remaining presence
-on unresolved plan and architecture decisions; after departure, the same choice
+Apply the shared specialist pipeline, architecture gate, and plan gate. Run
+architecture work while the user is present when possible, and bring returned
+options to the user for ratification. Spend the user's remaining presence on
+unresolved plan and architecture decisions; after departure, the same choice
 must fit an autonomy tier or be parked.
 
 If new architectural uncertainty appears mid-arc, delegate analysis to an
@@ -94,8 +90,12 @@ and checkpoint evidence. A decision that is not recorded did not happen; do
 not build on it.
 
 After a crash, window boundary, or compaction, re-orient from the chosen
-workspace, its Git state when applicable, the board, and the handover. Verify
-their agreement before resuming.
+workspace, its Git state when applicable, the board, and the handover. Treat
+workspace and Git state as observed reality, the board as current intent, and
+the handover as the last checkpoint snapshot. On disagreement, preserve the
+evidence, reconcile the board to observed reality, log the discrepancy, and
+rerun affected gates. Park the track if recovery would exceed ratified
+authority.
 
 ## 5. Execute in the ratified workspace
 

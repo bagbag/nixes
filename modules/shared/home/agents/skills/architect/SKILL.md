@@ -12,8 +12,7 @@ description: >-
 Use two modes sharing one spine: **DESIGN** (design something new from a goal) and
 **REVIEW** (assess an existing implementation against its purpose). The spine:
 stay high-level, preserve context through deliberate delegation, frame the task
-with the user before diving, and scale the artifact and review depth to the
-stakes.
+before diving, and scale the artifact and review depth to the stakes.
 
 Modes: `design <idea>` and `review <target>`. Infer the mode when the request is
 clear. On a bare or genuinely ambiguous invocation, ask which mode and target.
@@ -49,7 +48,15 @@ A sweep may settle orientation, but never an evidence-bearing REVIEW finding.
 Ground those in current source through a targeted scout, a verifier when the
 claim is load-bearing or contested, or a narrow direct spot-check.
 
-## Frame with the user first
+## Establish the frame first
+
+Direct questions and choices to whoever invoked the skill:
+
+- **Standalone** — work directly with the user.
+- **Delegated by a lead** — treat the brief and its cited sources as the
+  ratified frame. Return missing questions, consequential alternatives, and
+  recommendations to the lead, which mediates user decisions and authorizes
+  what follows.
 
 Cheap orientation first (README / docs index, at most one broad `explore` sweep)
 so questions are specific — then a structured framing round before substantive
@@ -64,7 +71,7 @@ work:
   The chosen lenses become the drill-down agenda; unchosen ones stay closed.
 
 Treat the agreed frame as authorization for routine exploration and drill-downs
-within those lenses. Return to the user when crossing the boundary, choosing
+within those lenses. Return to the invoker when crossing the boundary, choosing
 between consequential alternatives, or discovering a constraint that changes
 the premise. Handle trivial reversible defaults yourself and state material
 assumptions.
@@ -91,20 +98,20 @@ made of:
 1. **Goal** — from the framing round: purpose, consumers, non-goals,
    constraints, chosen lenses.
 2. **Usage design** — sketch the consumer's view: high-level API-usage
-   sketches (calls, not implementations). Iterate with the user until the DX
-   holds; write the sketch a consumer would *want* to write, then make the
+   sketches (calls, not implementations). Iterate with the invoker until the
+   DX holds; write the sketch a consumer would *want* to write, then make the
    design serve it — before what exists gets a chance to bend it.
 3. **Foundation sweep** — `explore`: what already exists to build on or reuse
    (modules, utilities, patterns), what similar things in the codebase look
    like, and the conventions the new piece must follow — how modules get
    registered, wired, named, exposed. The design plugs into those
    conventions, not around them — but conventions aren't sacred: when a
-   genuinely better pattern exists, propose it to the user as an explicit
-   convention change (with what it improves and what existing code it
-   leaves inconsistent), never as a silent deviation. Reuse-before-adding
-   applies to whole modules, not just helpers.
+   genuinely better pattern exists, propose it to the invoker as an explicit
+   convention change (with what it improves and what existing code it leaves
+   inconsistent), never as a silent deviation. Reuse-before-adding applies to
+   whole modules, not just helpers.
    If the sweep reveals a materially better trade-off, revisit step 2 with the
-   user rather than silently bending the sketch.
+   invoker rather than silently bending the sketch.
 4. **Architecture** — what it's built on, module boundaries and
    responsibilities, interconnection with existing modules, data flow, key
    mechanisms *named* (never implemented).
@@ -117,10 +124,11 @@ made of:
    invariants, isolation of proven variation, or credible extensibility.
    Reject ceremony whose main benefit is being abstract or accommodating
    hypothetical needs. Bring optional complexity, speculative extensibility,
-   and scope expansion to the user as explicit trade-offs with a recommendation.
+   and scope expansion to the invoker as explicit trade-offs with a
+   recommendation.
 7. **Deliverable** — the design result (below).
 
-Bring consequential or contractual choices to the user as options plus a
+Bring consequential or contractual choices to the invoker as options plus a
 recommendation. Treat steps 2–4 as feedback loops, not single passes.
 
 ## REVIEW mode
@@ -143,8 +151,8 @@ recommendation. Treat steps 2–4 as feedback loops, not single passes.
    credible extensibility, or is it ceremony for hypothetical needs?
    Does the architecture converge on the cleanest coherent end-state, or carry
    accidental complexity and speculative scope? Treat complexity and scope as
-   trade-offs to bring to the user, not defects merely because a smaller design
-   exists.
+   trade-offs to bring to the invoker, not defects merely because a smaller
+   design exists.
 4. **Drill-ins** — within the framed lenses, delegate to `explore`/`scout` by
    default; escalate one surface to a `review` worker only when the sweep
    showed it genuinely complex or contested.
@@ -164,7 +172,7 @@ Let the problem determine the structure; do not force a fixed template. Make
 the purpose and scope, decisions or findings, rationale and evidence, material
 risks or open questions, and next action easy to locate.
 
-For a quick arc, answer in chat unless the user asks for a file or the result
+For a quick arc, answer in chat unless the invoker asks for a file or the result
 needs to persist. For standard or high-stakes work, land a durable doc in the
 project's docs dir per
 `$HOME/.agents/skills/shared/durable-docs.md`, then give a concise chat summary
@@ -178,9 +186,9 @@ On a longer arc, keep the running state on a board file per
 
 - **No implementation.** End at the design or review and do not assume what
   follows. When useful, offer to hand a ratified design to the `plan` agent or
-  a supervisor arc for implementation decomposition; proceed only if the user
-  chooses it.
+  a supervisor arc for implementation decomposition; the invoker decides what
+  follows.
 - **No silent consequential decisions.** Bring meaningful alternatives to the
-  user with a recommendation; own trivial reversible defaults.
+  invoker with a recommendation; own trivial reversible defaults.
 - If the design keeps accreting special cases or all options feel wrong, step
   up an abstraction level and re-derive — don't tune a misframed design.
