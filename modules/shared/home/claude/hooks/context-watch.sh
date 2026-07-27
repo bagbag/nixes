@@ -86,7 +86,7 @@ fitflag="$dir/$session_id.fitwarn"
 if [[ ( "$mode" == "autopilot" || "$mode" == "supervisor" ) && ! -f "$fitflag" ]]; then
   fitmsg=""
   if [[ "$mode" == "autopilot" ]] && (( eff_acw > 400000 )); then
-    fitmsg="context-watch: this autopilot session compacts around ${eff_acw} tokens — a large window makes every turn slower and costlier as context grows. Record the effective window in the journal, and recommend launching this routine with the lean default (no claude-full, no window override) in the ratification report."
+    fitmsg="context-watch: this autopilot session compacts around ${eff_acw} tokens — a large window makes every turn slower and costlier as context grows. Record the effective window on the board, and recommend launching this routine with the lean default (no claude-full, no window override) in the ratification report."
   elif [[ "$mode" == "supervisor" ]] && (( eff_acw < 500000 )); then
     fitmsg="context-watch: this supervisor session compacts early (~${eff_acw} tokens) — a long arc will auto-compact repeatedly. Tell the user: relaunch via claude-full for this arc, or keep the board/docs continuously synced."
   fi
@@ -136,7 +136,7 @@ msg=""
 if (( current >= imminent_pct )); then
   case "$mode" in
     supervisor) msg="context-watch: auto-compaction is IMMINENT. Bring every coordination doc fully in sync NOW and keep it in sync with every further change: when compaction runs, nothing of value may exist only in this session." ;;
-    autopilot)  msg="context-watch: auto-compaction is IMMINENT. Refresh the handover note and journal NOW and keep them in sync with every further change (checkpoint-commit only when the tree is coherent); when compaction runs, ORIENT from the note to re-ground." ;;
+    autopilot)  msg="context-watch: auto-compaction is IMMINENT. Refresh the board and handover NOW and keep them in sync with every further change (checkpoint-commit only when authorized and coherent); when compaction runs, ORIENT from the handover to re-ground." ;;
     *)          msg="context-watch: auto-compaction is imminent — the conversation will be condensed automatically. Keep working; if you are maintaining any docs, notes, or a plan/handover file, bring them in sync now so nothing important survives only in this conversation." ;;
   esac
 elif (( current <= 60 )); then
@@ -147,7 +147,7 @@ elif (( current <= 60 )); then
 else
   case "$mode" in
     supervisor) msg="context-watch: context is deep now — it degrades speed and quality and burns quota every turn. Actively steer to a cheap-loss point and recommend compaction; bring every coordination doc fully in sync first (board, index, decision log)." ;;
-    autopilot)  msg="context-watch: run the handover protocol now — WRITE/refresh the handover note and journal (checkpoint-commit only at the next coherent state), then continue working; when auto-compaction fires, ORIENT from the note to re-ground." ;;
+    autopilot)  msg="context-watch: run the handover protocol now — WRITE/refresh the board and handover (checkpoint-commit only when authorized and coherent), then continue working; when auto-compaction fires, ORIENT from the handover to re-ground." ;;
   esac
 fi
 

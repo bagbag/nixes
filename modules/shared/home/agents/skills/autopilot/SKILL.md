@@ -1,115 +1,146 @@
 ---
 name: autopilot
 description: >-
-  Unattended work arcs: overnight runs, scheduled routines, long loops with no
-  user available to decide. Tiered decision autonomy with a ratification
-  journal, isolated worktree with checkpoint commits, hardened verification.
+  Explicit user-invoked autonomous lead for unattended multi-workstream arcs.
+  Understand a ratified goal, route specialist work, make bounded reversible
+  decisions, park unsafe choices, and return a verified result for user
+  ratification.
 ---
 
-# Autopilot — unattended arcs with a ratification trail
+# Autopilot — autonomous lead with a ratification trail
 
 Read `$HOME/.agents/skills/shared/worker-arcs.md` fully before planning or
-delegating. It owns the common plan gate, worker brief, dispatch, acceptance,
-containment, and bounded-retry rules. This skill adds unattended decision
-authority, isolation, checkpoints, and stricter verification. Durable docs
-follow `$HOME/.agents/skills/shared/durable-docs.md`.
+delegating. It owns the goal contract, specialist pipeline, plan gate, worker
+briefs, dispatch, acceptance, integration, containment, and shared state. This
+skill adds unattended decision authority, workspace choice, recovery, and
+stricter verification.
 
-## 0. Pre-flight — the last moment to ask
+## 1. Pre-flight — ratify the unattended contract
 
-Before going unattended, the arc needs a contract: goal, scope boundary (in
-AND out), done-criteria, and budget (time/windows). If any of these is vague,
-ask NOW, while the user is still present. Then set up: create the worktree
-and branch, create the journal, and run the whole-repo gate once to record
-baseline counts. Register the context-monitor mode with
-`bash "$HOME/.agents/bin/set-context-watch-mode" autopilot`; the helper
-activates a supported monitor and otherwise safely does nothing.
+Before the user leaves, establish the shared goal contract plus:
 
-## 1. Plan first — the whole night builds on it
+- an unattended budget in time, windows, or milestones;
+- explicit pre-authorizations and forbidden actions;
+- the evidence required for the user to accept the result;
+- the expected return point and report.
 
-Apply the shared worker-arc plan gate. The plan gets more scrutiny than
-anything else in the arc:
+Orient from project sources before asking questions. Do not begin unattended
+work until the user ratifies scope, authority, done criteria, and the workspace
+strategy.
 
-- **Spend the user's remaining presence on the plan's decision points.** While
-  they're still there (§0), every open point resolved is a real user decision;
-  after they leave, the same point is at best a ratification item, at worst a
-  parked track. Surface the plan's decisions at invocation, not at 3am.
-- Mid-arc discoveries that contradict the plan are STOPs at plan level: park,
-  journal, re-plan only the affected packages — never improvise divergence.
+Once the contract is sufficient:
 
-## 2. Decision tiers (replaces ask-the-user)
+1. Propose a dedicated worktree on an
+   `autopilot/<topic-slug>/<arc-slug>` branch as the default isolation
+   strategy, with its cost and benefit. The user chooses whether to create it
+   or work in another named workspace. Do not create or switch branches or
+   worktrees without explicit approval.
+2. Record the chosen workspace and exact Git authority, including whether
+   checkpoint commits are authorized. Invoking this skill alone authorizes no
+   Git mutation.
+3. Create `.scratch/<topic-slug>/<arc-slug>/board.md` following
+   `$HOME/.agents/skills/shared/board-files.md`, and record the durable target
+   `docs/<topic-slug>/`.
+4. Run the whole-repository gate when one exists, or the strongest available
+   baseline gates otherwise, and record their output.
+5. Register the context-monitor mode with
+   `bash "$HOME/.agents/bin/set-context-watch-mode" autopilot`; the helper
+   activates a supported monitor and otherwise safely does nothing.
 
-- **Trivial + reversible** → act, one line in the journal's minor log.
+Inside the chosen workspace, identify unresolved architecture before
+implementation planning. Delegate to an architect worker while the user is
+present whenever boundaries, public contracts, mechanisms, or the desired
+clean end-state remain open. Bring its options and recommendation to the user
+for ratification. If the architecture is already settled, skip this ceremony.
+
+## 2. Plan and route
+
+Apply the shared specialist and plan gates. Spend the user's remaining presence
+on unresolved plan and architecture decisions; after departure, the same choice
+must fit an autonomy tier or be parked.
+
+If new architectural uncertainty appears mid-arc, delegate analysis to an
+architect worker rather than letting an implementation worker invent the
+design. Apply the decision tiers to the returned options. A change that reshapes
+public contracts, the durable end-state, or substantial downstream work has
+high reversal cost even when Git could technically undo it.
+
+A discovery that contradicts the ratified plan is a plan-level STOP. Park the
+affected track, record the evidence, and re-plan only the affected packages
+within existing authority. Never improvise silent divergence.
+
+## 3. Decision tiers
+
+- **Trivial + reversible** → act, one line in the board's minor log.
 - **Non-trivial but reversible** → derive the decision as if presenting it to
   the user (options, honest for/against, the one you'd mark recommended), act
-  on that recommendation, and journal it as a **ratification item**: what,
-  options considered, choice, reasoning, and how to reverse it.
-- **Irreversible, outward-facing, or scope-changing** → **park it**: journal
+  on that recommendation, and record a **ratification item** on the board:
+  what, options considered, choice, reasoning, and how to reverse it.
+- **Irreversible, outward-facing, or scope-changing** → **park it**: record
   the decision with your would-be recommendation, work around it where
   possible, and continue every track that doesn't depend on it. A parked
   decision stalls its track, never the arc.
 
-Tier honestly: when unsure which tier applies, it's the higher one. And
-"reversible" means reversible from the journal entry alone — if undoing it
-would need remembered session context, it isn't reversible.
+Tier honestly; when unsure, choose the higher tier. Reversible means the choice
+can be undone from the board entry without remembered context or costly
+downstream rework. Version-control reversibility alone is insufficient.
 
-## 3. The journal
+## 4. Board and recovery
 
-One append-only file, `autopilot-journal.md`, next to the handover note in the
-project's durable gitignored scratch dir (the handover skill's convention): dated
-entries for every ratification item, every parked decision, every contained
-failure. It is the audit trail the user ratifies from — a decision that isn't
-in the journal didn't happen; don't build on it.
+Use one living `.scratch/<topic-slug>/<arc-slug>/board.md` beside
+`handover.md`. Maintain a mutable current-state summary and an append-only dated
+log for ratification items, parked decisions, scope proposals, containment,
+and checkpoint evidence. A decision that is not recorded did not happen; do
+not build on it.
 
-The journal is autopilot's instance of the shared **board-files** convention
-(`$HOME/.agents/skills/shared/board-files.md`): read it for the sync discipline and the
-subagent mechanic.
+After a crash, window boundary, or compaction, re-orient from the chosen
+workspace, its Git state when applicable, the board, and the handover. Verify
+their agreement before resuming.
 
-## 4. Isolation and checkpoints
+## 5. Execute in the ratified workspace
 
-- Run the arc in a dedicated worktree on a branch named `autopilot/<arc>`.
-  Invoking this skill grants exactly this much git: the worktree/branch setup
-  from §0, then checkpoint commits on that branch (Conventional Commits),
-  whenever the tree reaches a coherent state.
-- NEVER: push, touch the user's branches or working tree, rewrite history,
-  operate outside the worktree.
-- After a crash or window gap, the branch + journal are the recovery point:
-  re-orient from them, verify the tree state, continue.
-- **Handover at every milestone.** Whenever a milestone lands (a work package
-  accepted, a track closed — the same moments as checkpoint commits), run the
-  `handover` skill (WRITE mode, note next to the journal) so the note is
-  always current. After a window end, crash, or compaction, ORIENT from the
-  note and continue the arc. You cannot end the session yourself; when
-  usage runs high, keep the note current and work on until auto-compaction
-  fires, then re-ground from the note.
+- Operate only inside the workspace the user authorized. If it is an isolated
+  worktree, never touch the user's original working tree or branches.
+- Follow the shared dependency-ready waves, ownership, acceptance, and
+  containment rules.
+- If checkpoint commits were explicitly authorized, commit only coherent
+  milestones using Conventional Commits. Never rewrite history.
+- At every coherent milestone and before a window or context boundary, update
+  the board and run `handover` in WRITE mode so another session can resume
+  without transcript context.
+- Continue every independent track when one track parks; a parked track never
+  stalls the whole arc.
 
-## 5. Hardened verification
+## 6. Hardened verification and checkpoints
 
 No user catches slips mid-run, so the gates tighten:
 
 - The `verify`-gate threshold drops: gate every write-worker result that
   anything downstream will consume.
-- The whole-repo gate runs before every checkpoint commit; any regression from
-  the §0 baseline blocks the checkpoint — commit only coherent states;
-  investigate or park.
-- If the shared bounded-retry sequence fails, park the track with a diagnosis
-  in the journal.
+- The whole-repo gate runs before every authorized checkpoint commit and final
+  acceptance. Any regression from the pre-flight baseline blocks the
+  checkpoint or acceptance; investigate or park.
+- If shared retry and escalation fail, park the track with a diagnosis.
+- Architecture, plans, and worker results consumed downstream must carry their
+  required fresh review or verification before that dependency proceeds.
 
-## 6. Hard ceiling — never on autopilot, no exceptions
+## 7. Hard ceiling — never on autopilot
 
 Pushing or publishing anything; outward-facing actions (messages, PRs,
 deployments, external APIs with side effects); migrations or writes against
-real data; deletions outside the worktree; secret/credential handling; global
-system changes. If the arc cannot proceed without one, that IS a parked
-decision — journal it and move to another track.
+real data; deletions outside the authorized workspace; secret/credential
+handling; global system changes. If the arc cannot proceed without one, that
+is a parked decision—record it on the board and move to another track.
 
-## 7. The return: ratification report
+## 8. Return for ratification
 
 **Stop at done.** When the arc's done-criteria are met, stop and report —
-adjacent improvements you noticed are journal notes for the user, not new
+adjacent improvements you noticed are board notes for the user, not new
 tracks.
 
-End every run (and every scheduled window) with a report built from the
-journal: done-and-verified with actual gate numbers; ratification items;
+End every run (and every scheduled window) with a report built from the board:
+done-and-verified with actual gate numbers; ratification items;
 parked decisions with recommendations; failures and parks with diagnoses; and
-the merge-or-discard choice for the `autopilot/<arc>` branch. The user
-ratifies; only then does work merge.
+the proposed disposition of the authorized workspace. If a branch or worktree
+exists, present the merge-or-discard choice. The user ratifies and chooses what
+happens next; autopilot never merges its own work.

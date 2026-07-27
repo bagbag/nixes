@@ -1,15 +1,25 @@
 # Board files (shared convention)
 
-One living file per multi-step arc, in the project scratch dir — the durable record of arc state. The
-supervisor skill's decision board and autopilot's `autopilot-journal.md` are its instances.
+Keep one living board per multi-step arc at
+`.scratch/<topic-slug>/<arc-slug>/board.md`. It is transient coordination
+state, not a durable project conclusion. Supervisor and autopilot use the same
+filename and shape; autopilot's ratification log is a section of its board.
 
 ## Where & what
 
-- Scratch dir (`short-term-context/` or the handover skill's scratch dir), recognizably named:
-  `<arc>-board.md`, `board.md`, or the mode's name (`autopilot-journal.md`).
-- Hold: live/queued workers or tracks (id · zone · task · status); a mutable current-decisions
-  summary; an append-only, dated decision log; pending decisions with their state; verified vs.
-  taken-on-a-worker's-word; the next action.
+- Use lowercase kebab-case for topic and arc slugs.
+- Each active lead owns exactly one topic, and each topic has one active lead.
+  A lead may run multiple arcs for its topic; give each arc its own subdirectory.
+  Record the stable topic slug, arc slug, mode, status, and durable target
+  `docs/<topic-slug>/` at the top of each board.
+- Keep `handover.md` beside the board. Create `evidence/` only when transient
+  grounding artifacts need files of their own.
+- Hold the current goal contract; live/queued workers or tracks (id · zone ·
+  task · status); a mutable current-decisions summary; an append-only, dated
+  decision or ratification log; pending decisions and scope proposals; verified
+  vs. taken-on-a-worker's-word; external-validation items (claim · owner ·
+  status · evidence · affected behavior); containment; and the next action.
+- Keep the entire `.scratch/` tree gitignored. Do not store secrets there.
 
 ## Sync
 

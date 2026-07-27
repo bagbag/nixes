@@ -56,8 +56,12 @@ When triaging a **pre-existing** list of findings (e.g. a handed-over `roast.md`
 
 Keep chat responses concise. When you produce a large standalone artifact — a full report, spec, plan, generated file, or bulk command/log dump that runs more than a screen or two — write it to a file and reference the path in your reply rather than dumping it in chat.
 
-- **Durable artifacts** (docs, specs, plans, or a handover meant to survive into another session) go under the project's `docs/` — or wherever the project's conventions place them. Never leave a durable deliverable only in the chat log.
-- **Transient scratch** (intermediate dumps, throwaway working notes) goes in the session scratchpad the harness provides — don't commit it into the repo.
+- **Durable artifacts** (docs, specs, plans, and decision records) go under
+  `docs/<topic-slug>/`. Never leave a durable deliverable only in chat.
+- **Arc continuity and transient state** (boards, handovers, evidence, working
+  notes, and intermediate dumps) goes under
+  `.scratch/<topic-slug>/<arc-slug>/`. Keep `.scratch/` gitignored and never
+  commit it.
 
 ## Tests verify behavior — write them first when possible
 

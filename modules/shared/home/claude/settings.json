@@ -16,7 +16,6 @@
   "model": "sonnet",
   "disableClaudeAiConnectors": true,
   "skillOverrides": {
-    "architect": "user-invocable-only",
     "autopilot": "user-invocable-only",
     "retro": "user-invocable-only",
     "supervisor": "user-invocable-only"

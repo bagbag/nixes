@@ -12,7 +12,8 @@ import tomllib
 from pathlib import Path
 
 
-EXPLICIT_ONLY_SKILLS = {"architect", "autopilot", "retro", "supervisor"}
+EXPLICIT_ONLY_SKILLS = {"autopilot", "retro", "supervisor"}
+IMPLICIT_SKILLS = {"architect"}
 sys.dont_write_bytecode = True
 
 
@@ -82,6 +83,12 @@ def validate_skills(root: Path) -> None:
         if not policy.is_file() or policy.read_text(encoding="utf-8") != expected:
             raise ValueError(f"{policy}: missing explicit-only Codex policy")
 
+    for name in IMPLICIT_SKILLS:
+        policy = skills_dir / name / "agents" / "openai.yaml"
+        expected = "policy:\n  allow_implicit_invocation: true\n"
+        if not policy.is_file() or policy.read_text(encoding="utf-8") != expected:
+            raise ValueError(f"{policy}: missing implicit Codex policy")
+
     worker_arcs = skills_dir / "shared" / "worker-arcs.md"
     if not worker_arcs.is_file() or not worker_arcs.read_text(encoding="utf-8").strip():
         raise ValueError(f"{worker_arcs}: missing shared worker-arc convention")
@@ -92,6 +99,37 @@ def validate_skills(root: Path) -> None:
             raise ValueError(
                 f"{name}: expected exactly one shared worker-arc reference"
             )
+
+    path_contracts = {
+        root / "AGENTS.md": (
+            "docs/<topic-slug>/",
+            ".scratch/<topic-slug>/<arc-slug>/",
+        ),
+        skills_dir / "shared" / "board-files.md": (
+            ".scratch/<topic-slug>/<arc-slug>/board.md",
+            "docs/<topic-slug>/",
+        ),
+        skills_dir / "shared" / "durable-docs.md": (
+            "docs/<topic-slug>/",
+            "index.md",
+        ),
+        skills_dir / "handover" / "SKILL.md": (
+            ".scratch/<topic-slug>/<arc-slug>/handover.md",
+        ),
+        skills_dir / "supervisor" / "SKILL.md": (
+            ".scratch/<topic-slug>/<arc-slug>/board.md",
+            "docs/<topic-slug>/",
+        ),
+        skills_dir / "autopilot" / "SKILL.md": (
+            ".scratch/<topic-slug>/<arc-slug>/board.md",
+            "docs/<topic-slug>/",
+        ),
+    }
+    for path, required in path_contracts.items():
+        text = path.read_text(encoding="utf-8")
+        missing = [marker for marker in required if marker not in text]
+        if missing:
+            raise ValueError(f"{path}: missing path contract {missing}")
 
 
 def validate_generated_agents(root: Path, generator) -> None:

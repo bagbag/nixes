@@ -1,53 +1,53 @@
 ---
 name: architect
 description: >-
-  High-level design work at deliberate altitude: plan a new module/feature
-  (PLAN) or assess an existing implementation's architecture (REVIEW). Use
-  when the user invokes the architect skill, asks to plan or design a module, feature,
-  or API, or wants an architecture/design review — anywhere the deliverable
-  is a design, not code. Not for implementation or line-level code review.
+  Architecture design and review. Use when the user explicitly wants an
+  architectural design for a feature, module, or API; an assessment of an
+  existing architecture; or the architect skill itself. Not for implementation
+  planning, implementation, or line-level code review.
 ---
 
 # Architect — design at altitude
 
-Two modes sharing one spine: **PLAN** (design something new from a goal) and
+Use two modes sharing one spine: **DESIGN** (design something new from a goal) and
 **REVIEW** (assess an existing implementation against its purpose). The spine:
-stay high-level, delegate every detail-read to subagents, frame the task with
-the user before diving, and land the result as a durable doc. The whole point
-is to keep full thought-power on the design itself — the moment you're reading
-implementation, you've lost the altitude.
+stay high-level, preserve context through deliberate delegation, frame the task
+with the user before diving, and scale the artifact and review depth to the
+stakes.
 
-Modes: `plan <idea>` and `review <target>`. On a bare or ambiguous invocation,
-ask which mode and what target.
+Modes: `design <idea>` and `review <target>`. Infer the mode when the request is
+clear. On a bare or genuinely ambiguous invocation, ask which mode and target.
 
 ## The altitude rule
 
-**You do not read source files. Ever.** All code knowledge arrives as
-summaries from subagents:
+Keep broad and source-heavy discovery out of the lead context when delegation
+is viable. Start with a delegated sweep; do not inspect source in parallel
+merely to recreate the same map:
 
 - **`explore`** for the sweeps: module map, responsibilities, public surfaces,
   dependency directions, conventions, how pieces correlate.
 - **`scout`** for single facts: "does a retry helper exist", "what does config
   X expose".
-- **`review`** / **`verify`** as escalation only, never the default: reach
-  for them when an explore/scout result shows a surface is genuinely complex
-  or contested — adversarial critique of that one surface, or grounding a
-  load-bearing finding. If a sweep's summary already settles it, it's
-  settled.
+- **`review`** / **`verify`** for targeted escalation and acceptance, never
+  initial discovery: use them when an explore/scout result shows a surface is
+  genuinely complex or contested, or when the arc's stakes justify an
+  independent grounding pass.
 
-**Exempt** (readable directly, already at design altitude): READMEs, the
-project's durable design docs, and design-altitude artifacts *you* author this
-session (the design doc, board, framing notes). A file a worker dumped source
-into is still source — the exemption never launders code through scratch.
+Read READMEs, durable design docs, and design-altitude artifacts directly. When
+delegation is unavailable, a report is insufficient, or an architectural
+decision hinges on exact implementation, inspect the smallest relevant source
+slice yourself to answer a named question. Keep the descent narrow and return
+immediately to synthesis; never turn a spot-check into an unbounded source
+sweep.
 
 Brief `explore` for the altitude you need: *purpose, public surface, dependency
 direction, patterns — no code dumps, no line-level detail*. If a report comes
-back implementation-flavored or too shallow, **resume that agent** and ask for
-the right altitude — never compensate by reading the files yourself.
+back implementation-flavored or too shallow, resume that agent and ask for the
+right altitude before inspecting source yourself.
 
-**Descents are decided, not drifted into.** Drilling into an interface (DX), a
-mechanism, a data model is an explicit step agreed with the user — executed by
-a subagent, returned as a summary, folded back into the high-level picture.
+A sweep may settle orientation, but never an evidence-bearing REVIEW finding.
+Ground those in current source through a targeted scout, a verifier when the
+claim is load-bearing or contested, or a narrow direct spot-check.
 
 ## Frame with the user first
 
@@ -55,7 +55,7 @@ Cheap orientation first (README / docs index, at most one broad `explore` sweep)
 so questions are specific — then a structured framing round before substantive
 work:
 
-- **What exactly** is being planned/reviewed, and its boundary (what's out).
+- **What exactly** is being designed/reviewed, and its boundary (what's out).
 - **Goals and non-goals** — what the thing is *for*; for REVIEW, the intended
   purpose to assess against.
 - **Constraints** — compatibility, dependencies, conventions that bind.
@@ -63,11 +63,30 @@ work:
   boundaries, mechanisms & data flow, extensibility, error model, lifecycle…
   The chosen lenses become the drill-down agenda; unchosen ones stay closed.
 
-Don't start substantive exploration on an unagreed frame.
+Treat the agreed frame as authorization for routine exploration and drill-downs
+within those lenses. Return to the user when crossing the boundary, choosing
+between consequential alternatives, or discovering a constraint that changes
+the premise. Handle trivial reversible defaults yourself and state material
+assumptions.
 
-## PLAN mode
+## Scale the arc
 
-Usage before internals — design how it's consumed before what it's made of:
+Use the lightest level that protects the decision:
+
+- **Quick** — one bounded design question or review lens: targeted orientation,
+  concise answer, and spot-checks as needed. No mandatory board or independent
+  review.
+- **Standard** — a module, feature, or API with several interacting choices:
+  durable doc and one fresh grounding/reasoning review.
+- **High-stakes** — broad, costly-to-reverse, security-sensitive, or
+  invariant-bearing architecture: independent critic for trade-offs and fresh
+  reviewer/verifier for grounding; use a board when the arc is multi-step.
+
+## DESIGN mode
+
+Design toward the cleanest coherent end-state, not the fewest immediate moving
+parts. Usage comes before internals — design how it's consumed before what it's
+made of:
 
 1. **Goal** — from the framing round: purpose, consumers, non-goals,
    constraints, chosen lenses.
@@ -84,17 +103,25 @@ Usage before internals — design how it's consumed before what it's made of:
    convention change (with what it improves and what existing code it
    leaves inconsistent), never as a silent deviation. Reuse-before-adding
    applies to whole modules, not just helpers.
-   If the sweep reveals a cheaper shape, revisit step 2 with the user rather
-   than silently bending the sketch.
+   If the sweep reveals a materially better trade-off, revisit step 2 with the
+   user rather than silently bending the sketch.
 4. **Architecture** — what it's built on, module boundaries and
    responsibilities, interconnection with existing modules, data flow, key
    mechanisms *named* (never implemented).
-5. **Drill-downs** — per the framed lenses, one agreed descent at a time.
-6. **Deliverable** — the design doc (below).
+5. **Drill-downs** — per the framed lenses, one bounded descent at a time.
+6. **Complexity and scope pass** — challenge the design before finalizing it.
+   Ask what each layer, abstraction, extension point, and mechanism buys.
+   Seek the cleanest end-state: clear contracts, focused responsibilities,
+   deliberate extension seams, and no accidental complexity. Extra structure
+   can earn its place through cleaner or more stable contracts, protected
+   invariants, isolation of proven variation, or credible extensibility.
+   Reject ceremony whose main benefit is being abstract or accommodating
+   hypothetical needs. Bring optional complexity, speculative extensibility,
+   and scope expansion to the user as explicit trade-offs with a recommendation.
+7. **Deliverable** — the design result (below).
 
-Every real choice along the way — naming, boundaries, tradeoffs — goes to the
-user as options + recommendation; steps 2–4 are feedback loops, not single
-passes.
+Bring consequential or contractual choices to the user as options plus a
+recommendation. Treat steps 2–4 as feedback loops, not single passes.
 
 ## REVIEW mode
 
@@ -110,34 +137,50 @@ passes.
    parallel ones — and is the convention itself still the best pattern? A
    convention that's outlived its reasons is a finding too: recommend the
    better pattern as a proposed evolution, not just flag the deviation. What
-   is each layer/gate *for* — and does anything fight the goal?
-4. **Drill-ins** — per lens, agreed with the user, delegated: `explore`/`scout`
-   by default; escalate one surface to a `review` worker only when the sweep
+   is each layer/gate *for* — and does anything fight the goal? Does each
+   abstraction, layer, extension point, or mechanism earn its cost through a
+   concrete benefit such as cleaner contracts, protected invariants, or
+   credible extensibility, or is it ceremony for hypothetical needs?
+   Does the architecture converge on the cleanest coherent end-state, or carry
+   accidental complexity and speculative scope? Treat complexity and scope as
+   trade-offs to bring to the user, not defects merely because a smaller design
+   exists.
+4. **Drill-ins** — within the framed lenses, delegate to `explore`/`scout` by
+   default; escalate one surface to a `review` worker only when the sweep
    showed it genuinely complex or contested.
-5. **Findings** — verify before flagging: ground each candidate in source via
-   `scout` (`verify` only for load-bearing or contested claims) before
-   reporting; grade confirmed / plausible / open-observation; drop or mark
-   false-positives and intentional choices.
-6. **Deliverable** — the review doc (below).
+5. **Results** — verify before flagging. Report defects only as **confirmed
+   findings** grounded in current source. Each must identify the violated goal
+   or invariant, concrete impact, and exact source location; a different
+   structural preference is not a finding. Separate anything unresolved into
+   **risks requiring validation** or **open questions / intent checks**. If
+   intent cannot be established, ask rather than infer a defect. Drop
+   false-positives; describe intentional choices as findings only when their
+   stated trade-off no longer serves the goal.
+6. **Deliverable** — the review result (below).
 
 ## Deliverable
 
-The result lands as a **durable doc** in the project's docs dir per the shared
-convention (`$HOME/.agents/skills/shared/durable-docs.md`) — a design plan (PLAN) or graded
-findings with rationale (REVIEW), including the decisions the user made and
-the options that were rejected with reasons. Chat gets a concise summary and
-the path. Before declaring it done, pressure-test the draft with an independent
-critic for design trade-offs and a fresh reviewer for grounding against the
-repo and sources — fold the findings from both.
+Let the problem determine the structure; do not force a fixed template. Make
+the purpose and scope, decisions or findings, rationale and evidence, material
+risks or open questions, and next action easy to locate.
+
+For a quick arc, answer in chat unless the user asks for a file or the result
+needs to persist. For standard or high-stakes work, land a durable doc in the
+project's docs dir per
+`$HOME/.agents/skills/shared/durable-docs.md`, then give a concise chat summary
+and path. Include rejected options when they materially explain the chosen
+design, not as ceremony.
 
 On a longer arc, keep the running state on a board file per
 `$HOME/.agents/skills/shared/board-files.md`.
 
 ## Boundaries
 
-- **No implementation.** The skill ends at the doc; building it is a separate
-  arc (hand the doc to a planning/supervisor session).
-- **No silent decisions** — every design choice is the user's; bring options
-  with a recommendation.
+- **No implementation.** End at the design or review and do not assume what
+  follows. When useful, offer to hand a ratified design to the `plan` agent or
+  a supervisor arc for implementation decomposition; proceed only if the user
+  chooses it.
+- **No silent consequential decisions.** Bring meaningful alternatives to the
+  user with a recommendation; own trivial reversible defaults.
 - If the design keeps accreting special cases or all options feel wrong, step
   up an abstraction level and re-derive — don't tune a misframed design.

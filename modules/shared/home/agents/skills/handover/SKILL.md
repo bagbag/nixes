@@ -4,7 +4,8 @@ description: >-
   Write or consume a session handover note so work continues losslessly in a
   fresh session. Use when the user invokes the handover skill, says "write a handover",
   "continue this in a new session", before compaction with meaningful state —
-  and at session start when a handover note exists in the project scratch dir.
+  and at session start when
+  `.scratch/<topic-slug>/<arc-slug>/handover.md` exists.
 ---
 
 # Handover — lossless session continuity
@@ -14,10 +15,11 @@ a note).
 
 ## Where notes live
 
-`handover.md` in the project's existing scratch dir (`short-term-context/` or
-equivalent). In ORIENT mode, never create a scratch dir or alter `.gitignore`.
-In WRITE mode, if the project has no scratch convention, propose a location and
-ask before creating it or changing `.gitignore`. One file, kept current.
+Use `.scratch/<topic-slug>/<arc-slug>/handover.md`, beside the arc's `board.md`.
+The active lead or user supplies both slugs; if either is unknown, ask rather
+than guessing. Keep `.scratch/` gitignored. WRITE may create the arc directory
+and keeps one note current. ORIENT reads the specified note and never creates
+another arc.
 
 ## WRITE mode
 
