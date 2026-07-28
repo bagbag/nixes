@@ -28,12 +28,14 @@ in
     enable = lib.mkEnableOption "llama-swap (llama.cpp model swapping proxy)";
 
     acceleration = lib.mkOption {
-      type = lib.types.nullOr (lib.types.enum [
-        "rocm"
-        "cuda"
-        "vulkan"
-        "cpu"
-      ]);
+      type = lib.types.nullOr (
+        lib.types.enum [
+          "rocm"
+          "cuda"
+          "vulkan"
+          "cpu"
+        ]
+      );
       default = null;
       example = "rocm";
       description = ''

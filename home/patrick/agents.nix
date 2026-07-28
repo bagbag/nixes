@@ -8,9 +8,9 @@ let
   # Out-of-store symlinks point at the live working tree, so edits (by hand,
   # /remember, or skill-creator) apply immediately without a rebuild.
   flakeRoot = if pkgs.stdenv.isDarwin then "/etc/nix-darwin" else "/etc/nixos";
-  claudeSrc = "${flakeRoot}/modules/shared/home/claude";
-  codexSrc = "${flakeRoot}/modules/shared/home/codex";
-  agentsSrc = "${flakeRoot}/modules/shared/home/agents";
+  claudeSrc = "${flakeRoot}/home/patrick/claude";
+  codexSrc = "${flakeRoot}/home/patrick/codex";
+  agentsSrc = "${flakeRoot}/home/patrick/agents";
   agentsStoreSrc = ./agents;
   agentConfigs =
     pkgs.runCommand "custom-agent-configs"
@@ -48,17 +48,15 @@ in
   # resolved path is a multi-hop chain whose first hop still lands in the
   # (read-only) Nix store -> EROFS. Link directly, single-hop, instead.
   #
-  # Guarded: only (re)link when the path is missing or already exactly this
-  # symlink, so a stray regular file or unrelated symlink there is never
-  # clobbered.
+  # The declared setting owns a symlink at this path. A regular file remains
+  # user-owned and is never overwritten.
   home.activation.linkClaudeSettings = lib.hm.dag.entryAfter [ "writeBoundary" ] ''
     target="$HOME/.claude/settings.json"
     wanted=${lib.escapeShellArg "${claudeSrc}/settings.json"}
-    if [ -e "$target" ] || [ -L "$target" ]; then
-      current=$(readlink "$target" 2>/dev/null || true)
-      if [ "$current" != "$wanted" ]; then
-        echo "agents.nix: $target exists and is not the expected symlink -> $wanted; leaving it untouched" >&2
-      fi
+    if [ -L "$target" ]; then
+      ln -sfn "$wanted" "$target"
+    elif [ -e "$target" ]; then
+      echo "agents.nix: $target exists and is not the expected symlink -> $wanted; leaving it untouched" >&2
     else
       ln -s "$wanted" "$target"
     fi

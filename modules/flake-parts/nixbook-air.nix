@@ -42,7 +42,7 @@
       }
       {
         home-manager.users.patrick.imports = [
-          (inputs.self.outPath + "/modules/shared/home/patrick.nix")
+          (inputs.self.outPath + "/home/patrick")
         ];
       }
       (inputs.self.outPath + "/hosts/nixbook-air/nstdl.nix")

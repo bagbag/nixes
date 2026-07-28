@@ -32,9 +32,5 @@
         ./modules/flake-parts/nixmobil.nix
         ./modules/flake-parts/nixbook-air.nix
       ];
-
-      flake = {
-        nixosModules = import ./modules/nixos/default.nix;
-      };
     };
 }

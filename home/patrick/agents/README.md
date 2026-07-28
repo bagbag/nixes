@@ -11,7 +11,7 @@ To inspect generated output manually:
 
 ```sh
 output_dir=$(mktemp -d)
-python3 modules/shared/home/agents/bin/generate-agent-configs.py \
+python3 home/patrick/agents/bin/generate-agent-configs.py \
   --target codex \
   --output "$output_dir"
 ```
@@ -20,8 +20,8 @@ To validate every shared skill, both generated formats, aliases, sandboxes, and
 multiline fields:
 
 ```sh
-python3 modules/shared/home/agents/bin/test-agent-configs.py \
-  modules/shared/home/agents
+python3 home/patrick/agents/bin/test-agent-configs.py \
+  home/patrick/agents
 ```
 
 The generator translates portable fields to both formats. Each definition

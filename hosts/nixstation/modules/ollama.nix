@@ -45,7 +45,8 @@ in
   config = lib.mkIf cfg.enable {
     services.ollama = {
       enable = true;
-      package = if cfg.acceleration == null then pkgs.ollama else accelerationPackages.${cfg.acceleration};
+      package =
+        if cfg.acceleration == null then pkgs.ollama else accelerationPackages.${cfg.acceleration};
       loadModels = cfg.loadModels;
     };
 

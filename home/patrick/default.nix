@@ -1,4 +1,9 @@
-{ config, lib, pkgs, ... }:
+{
+  config,
+  lib,
+  pkgs,
+  ...
+}:
 {
   imports = [
     ./agents.nix
@@ -62,7 +67,10 @@
         user.name = "Patrick Hein";
         user.email = "bagbag98@googlemail.com";
         credential.helper =
-          if pkgs.stdenv.isDarwin then "osxkeychain" else "${config.programs.git.package}/bin/git-credential-libsecret";
+          if pkgs.stdenv.isDarwin then
+            "osxkeychain"
+          else
+            "${config.programs.git.package}/bin/git-credential-libsecret";
       };
     };
 

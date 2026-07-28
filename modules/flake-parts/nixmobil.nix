@@ -55,7 +55,7 @@
       (inputs.self.outPath + "/hosts/nixmobil/disko.nix")
       {
         home-manager.users.patrick.imports = [
-          (inputs.self.outPath + "/modules/shared/home/patrick.nix")
+          (inputs.self.outPath + "/home/patrick")
         ];
       }
       (inputs.self.outPath + "/hosts/nixmobil/nstdl.nix")

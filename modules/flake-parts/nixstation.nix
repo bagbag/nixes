@@ -18,8 +18,8 @@
         "remote-access"
         "secrets"
         "full-stack-developer"
-      "remote-desktop"
-      "office-suite"
+        "remote-desktop"
+        "office-suite"
       ];
       systemStateVersion = "25.11";
       domain = "lan";
@@ -56,14 +56,14 @@
         inputs.nixos-hardware.nixosModules.common-cpu-amd
         inputs.nixos-hardware.nixosModules.common-cpu-amd-pstate
         inputs.nixos-hardware.nixosModules.common-pc-ssd
-        inputs.self.nixosModules.llama-swap
-        inputs.self.nixosModules.ollama
-        inputs.self.nixosModules.qui
+        (inputs.self.outPath + "/hosts/nixstation/modules/llama-swap.nix")
+        (inputs.self.outPath + "/hosts/nixstation/modules/ollama.nix")
+        (inputs.self.outPath + "/hosts/nixstation/modules/qui.nix")
         (inputs.self.outPath + "/hosts/nixstation/hardware-configuration.nix")
         (inputs.self.outPath + "/hosts/nixstation/disko.nix")
         {
           home-manager.users.patrick.imports = [
-            (inputs.self.outPath + "/modules/shared/home/patrick.nix")
+            (inputs.self.outPath + "/home/patrick")
           ];
         }
         (inputs.self.outPath + "/hosts/nixstation/nstdl.nix")
