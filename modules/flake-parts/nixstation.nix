@@ -18,7 +18,8 @@
         "remote-access"
         "secrets"
         "full-stack-developer"
-        "remote-desktop"
+      "remote-desktop"
+      "office-suite"
       ];
       systemStateVersion = "25.11";
       domain = "lan";
@@ -33,9 +34,11 @@
             features = [
               "workstation"
               "developer"
+              "system-utilities"
               "desktop-apps"
               "full-stack-developer"
               "office-tools"
+              "document-tools"
               "creative-media"
               "remote-desktop"
               "messaging"

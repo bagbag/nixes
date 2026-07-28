@@ -22,6 +22,7 @@
         features = [
           "workstation"
           "developer"
+          "system-utilities"
           "desktop-apps"
           "full-stack-developer"
           "messaging"
