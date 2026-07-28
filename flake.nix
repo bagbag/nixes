@@ -27,7 +27,9 @@
     flake-parts.lib.mkFlake { inherit inputs; } {
       imports = [
         inputs.nstdl.flakeModules.default
+        ./modules/flake-parts/secrets.nix
         ./modules/flake-parts/nixstation.nix
+        ./modules/flake-parts/nixbook-air.nix
       ];
 
       flake = {
