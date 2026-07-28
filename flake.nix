@@ -29,6 +29,7 @@
         inputs.nstdl.flakeModules.default
         ./modules/flake-parts/secrets.nix
         ./modules/flake-parts/nixstation.nix
+        ./modules/flake-parts/nixmobil.nix
         ./modules/flake-parts/nixbook-air.nix
       ];
 

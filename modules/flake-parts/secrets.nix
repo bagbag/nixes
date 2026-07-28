@@ -25,10 +25,18 @@
         owner = "patrick";
         mode = "0400";
       };
+      access.nixmobil = {
+        owner = "patrick";
+        mode = "0400";
+      };
     };
     items.awscli-insolytix-s3-secret-key = {
       rekeyFile = inputs.self.outPath + "/secrets/awscli-insolytix-s3-secret-key.age";
       access.nixstation = {
+        owner = "patrick";
+        mode = "0600";
+      };
+      access.nixmobil = {
         owner = "patrick";
         mode = "0600";
       };
