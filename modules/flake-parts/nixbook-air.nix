@@ -10,6 +10,7 @@
       "podman"
       "remote-access"
       "secrets"
+      "office-suite"
     ];
     systemStateVersion = 6;
     secrets.hostPubkey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPpPhXfy+OmQXWkjhFxn68tDs+++MTXzpSgMS3iM5gwN";
@@ -25,6 +26,7 @@
           "full-stack-developer"
           "messaging"
           "syncthing"
+          "document-tools"
           "vscode"
           "ai-agent-tools"
           "secret-admin"

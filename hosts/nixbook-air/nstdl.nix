@@ -1,10 +1,11 @@
-{ ... }:
+{ pkgs, ... }:
 {
+  environment.systemPackages = [ pkgs.battery-toolkit ];
+
   homebrew = {
     casks = [
       "rustdesk"
       "keepassxc"
-      "libreoffice"
       "whatsapp"
     ];
     masApps.Bitwarden = 1352778147;
