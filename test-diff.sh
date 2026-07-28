@@ -20,12 +20,20 @@ if [[ ! -e /run/current-system ]]; then
   exit 1
 fi
 
-if nix eval --no-write-lock-file --raw ".#nixosConfigurations.${host}.config.system.build.toplevel.drvPath" >/dev/null 2>&1; then
+nixos_error="$(mktemp)"
+darwin_error="$(mktemp)"
+trap 'rm -f "${nixos_error}" "${darwin_error}"' EXIT
+
+if nix eval --no-write-lock-file --raw ".#nixosConfigurations.${host}.config.system.build.toplevel.drvPath" >/dev/null 2>"${nixos_error}"; then
   configuration="nixosConfigurations"
-elif nix eval --no-write-lock-file --raw ".#darwinConfigurations.${host}.config.system.build.toplevel.drvPath" >/dev/null 2>&1; then
+elif nix eval --no-write-lock-file --raw ".#darwinConfigurations.${host}.config.system.build.toplevel.drvPath" >/dev/null 2>"${darwin_error}"; then
   configuration="darwinConfigurations"
 else
   echo "No NixOS or nix-darwin configuration named '${host}' exists in this flake." >&2
+  echo "NixOS lookup error:" >&2
+  sed 's/^/  /' "${nixos_error}" >&2
+  echo "nix-darwin lookup error:" >&2
+  sed 's/^/  /' "${darwin_error}" >&2
   exit 1
 fi
 
@@ -40,7 +48,7 @@ nix store diff-closures /run/current-system "${candidate}"
 
 live_commands="$(mktemp)"
 candidate_commands="$(mktemp)"
-trap 'rm -f "${live_commands}" "${candidate_commands}"' EXIT
+trap 'rm -f "${nixos_error}" "${darwin_error}" "${live_commands}" "${candidate_commands}"' EXIT
 
 collect_commands() {
   local target="$1"

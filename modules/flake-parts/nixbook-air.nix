@@ -8,6 +8,7 @@
       "developer"
       "desktop-apps"
       "podman"
+      "remote-access"
       "secrets"
     ];
     systemStateVersion = 6;
@@ -23,6 +24,7 @@
           "desktop-apps"
           "full-stack-developer"
           "messaging"
+          "syncthing"
           "vscode"
           "ai-agent-tools"
           "secret-admin"
@@ -33,6 +35,7 @@
       { nixpkgs.overlays = [ inputs.nix-vscode-extensions.overlays.default ]; }
       {
         system.configurationRevision = inputs.self.rev or inputs.self.dirtyRev or null;
+        environment.variables.NH_FLAKE = "/etc/nix-darwin";
       }
       {
         home-manager.users.patrick.imports = [

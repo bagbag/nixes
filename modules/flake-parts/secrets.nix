@@ -32,6 +32,10 @@
         owner = "patrick";
         mode = "0600";
       };
+      access.nixbook-air = {
+        owner = "patrick";
+        mode = "0600";
+      };
     };
   };
 }
