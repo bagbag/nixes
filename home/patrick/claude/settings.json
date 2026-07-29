@@ -119,7 +119,7 @@
     "tstdl": {
       "source": {
         "source": "git",
-        "url": "https://forge.cloudful.de/patrick/claude-marketplace.git"
+        "url": "https://forge.cloudful.de/patrick/agent-marketplace.git"
       },
       "autoUpdate": true
     }
