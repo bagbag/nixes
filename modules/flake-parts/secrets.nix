@@ -10,6 +10,10 @@
         identity = "~/.ssh/id_ed25519";
         publicKey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBAZNTeHlIEMl2ILVsUjmWwptaTSSLOQRx0Xpeci562a patrick@nixbook-air";
       };
+      macbook-pro = {
+        identity = "~/.ssh/id_ed25519";
+        publicKey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIC8IGUs9pgbtktVQcbmaIOXv6DQfDxtjvu+wds9JrEJu patrick@macbook-pro";
+      };
       nixmobil = {
         identity = "~/.ssh/id_ed25519";
         publicKey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAICvnCyc7hK0Tb5bXujzcjF+FjpmGi4FnfD9y84RtU6ZQ patrick@nixmobil";
@@ -41,6 +45,10 @@
         mode = "0600";
       };
       access.nixbook-air = {
+        owner = "patrick";
+        mode = "0600";
+      };
+      access.macbook-pro = {
         owner = "patrick";
         mode = "0600";
       };

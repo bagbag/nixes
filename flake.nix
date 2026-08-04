@@ -31,6 +31,7 @@
         ./modules/flake-parts/nixstation.nix
         ./modules/flake-parts/nixmobil.nix
         ./modules/flake-parts/nixbook-air.nix
+        ./modules/flake-parts/macbook-pro.nix
       ];
     };
 }

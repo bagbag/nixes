@@ -2,6 +2,7 @@
 {
   programs.vscode = {
     enable = true;
+    package = if pkgs.stdenv.isDarwin then null else pkgs.vscode;
 
     profiles.default = {
       extensions = with pkgs.vscode-marketplace; [
