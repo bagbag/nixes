@@ -34,11 +34,7 @@
   };
   systemd.services = {
     ollama.after = [ "systemd-modules-load.service" ];
-    llama-swap = {
-      after = [ "systemd-modules-load.service" ];
-      serviceConfig.StateDirectory = "llama-swap";
-      environment.LLAMA_CACHE = "/var/lib/llama-swap";
-    };
+    llama-swap.after = [ "systemd-modules-load.service" ];
     qui-secret-generator = {
       description = "Generate session secret for qui";
       wantedBy = [ "multi-user.target" ];
