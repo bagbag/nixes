@@ -16,6 +16,7 @@
     file.".config/pnpm/config.yaml".text = ''
       minimumReleaseAge: 2880
       trustPolicy: no-downgrade
+      pmOnFail: warn
     '';
   };
 
