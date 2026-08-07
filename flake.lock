@@ -469,11 +469,11 @@
         "ragenix": "ragenix"
       },
       "locked": {
-        "lastModified": 1786095679,
-        "narHash": "sha256-4cX/4EIeKGdq4t5velNlHI1RiJGpl6TUv5hrBVyMWS8=",
+        "lastModified": 1786096618,
+        "narHash": "sha256-z+miBeNSb6Pd5ec/xx69xpi5WDX5Jfrj0dPSZK/XXNM=",
         "owner": "bagbag",
         "repo": "nstdl",
-        "rev": "0d088ba8dd4a1cb50b4cd429f46be99e028adbed",
+        "rev": "d27f6728929861481370a83038335120cc5a4325",
         "type": "github"
       },
       "original": {
