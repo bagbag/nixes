@@ -13,7 +13,6 @@
 
   home = {
     sessionPath = [ "${config.home.homeDirectory}/.local/share/pnpm/bin" ];
-    packages = [ pkgs.claude-code ];
     file.".config/pnpm/config.yaml".text = ''
       minimumReleaseAge: 2880
       trustPolicy: no-downgrade

@@ -11,6 +11,7 @@
       "remote-access"
       "secrets"
       "office-suite"
+      "ai-agent-tools"
     ];
     systemStateVersion = 6;
     secrets.hostPubkey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPpPhXfy+OmQXWkjhFxn68tDs+++MTXzpSgMS3iM5gwN";
