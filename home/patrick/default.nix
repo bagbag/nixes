@@ -4,6 +4,10 @@
   pkgs,
   ...
 }:
+let
+  pnpmConfigPath =
+    if pkgs.stdenv.isDarwin then "Library/Preferences/pnpm/config.yaml" else ".config/pnpm/config.yaml";
+in
 {
   imports = [
     ./agents.nix
@@ -13,7 +17,7 @@
 
   home = {
     sessionPath = [ "${config.home.homeDirectory}/.local/share/pnpm/bin" ];
-    file.".config/pnpm/config.yaml".text = ''
+    file.${pnpmConfigPath}.text = ''
       minimumReleaseAge: 2880
       trustPolicy: no-downgrade
       pmOnFail: warn
