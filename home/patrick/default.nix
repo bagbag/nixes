@@ -20,8 +20,8 @@ in
     file.${pnpmConfigPath}.text = ''
       minimumReleaseAge: 2880
       trustPolicy: no-downgrade
-      pmOnFail: warn
     '';
+    sessionVariables.PNPM_CONFIG_PM_ON_FAIL = "warn";
   };
 
   programs = {
