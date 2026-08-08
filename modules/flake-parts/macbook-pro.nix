@@ -10,6 +10,7 @@
       "podman"
       "remote-access"
       "secrets"
+      "sleepless"
       "office-suite"
       "ai-agent-tools"
     ];
