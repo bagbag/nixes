@@ -8,6 +8,7 @@
       "developer"
       "desktop-apps"
       "podman"
+      "battery-charge-limit"
       "remote-access"
       "secrets"
       "office-suite"

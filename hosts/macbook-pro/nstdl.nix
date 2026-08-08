@@ -1,7 +1,5 @@
-{ pkgs, ... }:
+{ ... }:
 {
-  environment.systemPackages = [ pkgs.battery-toolkit ];
-
   homebrew = {
     casks = [
       "rustdesk"
