@@ -470,11 +470,11 @@
         "sleepless": "sleepless"
       },
       "locked": {
-        "lastModified": 1786189491,
-        "narHash": "sha256-PTSd2JK921Z5XvzPtV7LPvL1WsJ+VK4fmTmlx7BlgGc=",
+        "lastModified": 1786222217,
+        "narHash": "sha256-D/xVGvqDLfX8YAqwVRucn8w2DIz6KAFchKuwYHFihL8=",
         "owner": "bagbag",
         "repo": "nstdl",
-        "rev": "a6b4426c593b8f90bbc41a4fea9262e4d3549d10",
+        "rev": "67f025b6d3a6be2149ad5df19d2c17afa637ea9d",
         "type": "github"
       },
       "original": {
@@ -568,11 +568,11 @@
     "sleepless": {
       "flake": false,
       "locked": {
-        "lastModified": 1786185466,
-        "narHash": "sha256-ODE01bB4F9S2ShglnuklrtVeAddYqPrOP67EOy67nQ4=",
+        "lastModified": 1786221990,
+        "narHash": "sha256-Gry8/Rs5Y2KWnLDbPCS5XtoUTNNT3Oov47m31O97URQ=",
         "owner": "bagbag",
         "repo": "Sleepless",
-        "rev": "6ec9ebd3825a5392ee57ca41ca32cec271679f29",
+        "rev": "c9e4be8ec389b89c2000e55675e6f3fd13e15f1d",
         "type": "github"
       },
       "original": {
