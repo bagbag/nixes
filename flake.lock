@@ -470,11 +470,11 @@
         "sleepless": "sleepless"
       },
       "locked": {
-        "lastModified": 1786186962,
-        "narHash": "sha256-vQYaaBUizHb4lNV9QSHi/CZbD9/wrIXvq3Gor4o0Xy8=",
+        "lastModified": 1786189491,
+        "narHash": "sha256-PTSd2JK921Z5XvzPtV7LPvL1WsJ+VK4fmTmlx7BlgGc=",
         "owner": "bagbag",
         "repo": "nstdl",
-        "rev": "ebc64b42a935f09c1ff42175a8c03f118ce760a7",
+        "rev": "a6b4426c593b8f90bbc41a4fea9262e4d3549d10",
         "type": "github"
       },
       "original": {
