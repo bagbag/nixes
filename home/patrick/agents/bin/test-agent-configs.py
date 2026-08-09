@@ -13,7 +13,7 @@ from pathlib import Path
 
 
 EXPLICIT_ONLY_SKILLS = {"autopilot", "retro", "supervisor"}
-IMPLICIT_SKILLS = {"architect"}
+IMPLICIT_SKILLS = {"architect", "second-opinion"}
 sys.dont_write_bytecode = True
 
 
@@ -144,6 +144,7 @@ def validate_generated_agents(root: Path, generator) -> None:
         "plan.toml",
         "review.toml",
         "scout.toml",
+        "second-opinion.toml",
         "transform.toml",
         "verify.toml",
     }
@@ -154,6 +155,7 @@ def validate_generated_agents(root: Path, generator) -> None:
         "Plan.md",
         "review.md",
         "scout.md",
+        "second-opinion.md",
         "transform.md",
         "verify.md",
     }
@@ -167,8 +169,15 @@ def validate_generated_agents(root: Path, generator) -> None:
         raise ValueError("duplicate effective Codex agent names")
     if parsed["verify.toml"]["sandbox_mode"] != "workspace-write":
         raise ValueError("verify must permit incidental verification artifacts")
+    second_opinion = parsed["second-opinion.toml"]
+    if second_opinion["model"] != "gpt-5.6-sol":
+        raise ValueError("second-opinion must use Sol")
+    if second_opinion["sandbox_mode"] != "read-only":
+        raise ValueError("second-opinion must remain read-only")
     if "readonly-guard.sh" not in claude["Explore.md"]:
         raise ValueError("Claude Explore lost its readonly Bash hook")
+    if "readonly-guard.sh" not in claude["second-opinion.md"]:
+        raise ValueError("Claude second-opinion lost its readonly Bash hook")
 
 
 def validate_multiline_and_optional_names(generator) -> None:

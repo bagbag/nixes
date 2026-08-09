@@ -97,6 +97,37 @@ claims that require an outside expert.
 If a stricter protocol lands mid-session, list earlier unilateral calls and ask
 the user to ratify or reverse them.
 
+## Prevent architecture ratchets
+
+Keep the committed product boundary and walking skeleton visible on the existing
+board. Do not create a separate complexity artifact.
+
+After a related cluster of consequential decisions, before dispatching another
+architecture or implementation wave, and whenever review findings materially
+expand scope, perform a cumulative-design check. Summarize:
+
+- what durable concepts, workflow boundaries, abstractions, and process gates
+  the arc has added or removed;
+- which current or committed consumers require them;
+- what executable product composition has advanced;
+- what remains safely additive and deferred; and
+- whether the combined design still satisfies the user's stated quality
+  criterion.
+
+Approval of individual choices does not relieve the lead of explaining their
+combined architectural effect. If that effect materially changes the prior
+frame, bring the synthesized design back to the user before further dispatch.
+
+Classify review findings as **current blockers**, **deferred committed
+requirements**, or **speculative concerns** under the shared plan rule. A worker
+or verifier finding is not automatically a repair instruction. Prefer
+consumer-bearing vertical work over successive horizontal foundation waves
+unless a concrete dependency requires the latter.
+
+If reviews repeatedly grow architecture or coordination while runnable
+composition does not advance, pause the affected fan-out, reopen the premise
+with an architect, and present smaller clean, coherent options to the user.
+
 ## 4. Orchestrate and integrate
 
 Apply the shared plan and review gates. Return unresolved design choices or a

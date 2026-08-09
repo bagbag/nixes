@@ -89,11 +89,18 @@ Use the lightest level that protects the decision:
   invariant-bearing architecture: independent critic for trade-offs and fresh
   reviewer/verifier for grounding; use a board when the arc is multi-step.
 
+Freshness applies to the independent initial judgment, not every amendment.
+Use the same reviewer to verify that its findings were addressed. Start another
+fresh review only when the premise or target materially changes, the result is
+genuinely contested, or the user explicitly requests another independent
+opinion. A fresh review must reconsider the frame; it must not merely restart
+the same gap-finding loop.
+
 ## DESIGN mode
 
-Design toward the cleanest coherent end-state, not the fewest immediate moving
-parts. Usage comes before internals — design how it's consumed before what it's
-made of:
+Design toward the smallest clean, coherent end-state, not the fewest immediate
+moving parts. Usage comes before internals — design how it's consumed before
+what it's made of:
 
 1. **Goal** — from the framing round: purpose, consumers, non-goals,
    constraints, chosen lenses.
@@ -116,16 +123,37 @@ made of:
    responsibilities, interconnection with existing modules, data flow, key
    mechanisms *named* (never implemented).
 5. **Drill-downs** — per the framed lenses, one bounded descent at a time.
-6. **Complexity and scope pass** — challenge the design before finalizing it.
-   Ask what each layer, abstraction, extension point, and mechanism buys.
-   Seek the cleanest end-state: clear contracts, focused responsibilities,
-   deliberate extension seams, and no accidental complexity. Extra structure
-   can earn its place through cleaner or more stable contracts, protected
-   invariants, isolation of proven variation, or credible extensibility.
-   Reject ceremony whose main benefit is being abstract or accommodating
-   hypothetical needs. Bring optional complexity, speculative extensibility,
-   and scope expansion to the invoker as explicit trade-offs with a
-   recommendation.
+6. **Product-boundary, cumulative-design, and composition pass** — restate the
+   committed product behavior and walking skeleton before finalizing.
+   Distinguish internal intermediates from user-facing outcomes so
+   simplification does not silently remove committed behavior. Evaluate the
+   design as a whole, including the cumulative effect of choices that appeared
+   reasonable in isolation.
+
+   For every additional durable concept, abstraction, workflow boundary,
+   coordination mechanism, or acceptance layer, establish:
+
+   - its current or committed consumer;
+   - the plausible supported-workload failure or concrete contract instability
+     it prevents;
+   - why an existing type, transaction, database constraint, or focused service
+     invariant is insufficient; and
+   - why deferral would require replacement of an enduring public or persistence
+     contract rather than an additive extension.
+
+   A current consumer may justify current implementation. A later committed
+   consumer normally justifies preserving a clean additive path, not
+   implementing its supporting structure now. Move that structure onto the
+   current path only when deferral would replace a semantic identity or boundary
+   already required by current behavior, or would leave a plausible
+   supported-workload integrity failure.
+
+   If those conditions are not met, defer the addition and preserve only the
+   seam the committed behavior actually needs. Prefer consumer-bearing verticals
+   and runnable composition feedback before elaborating adjacent foundations.
+   If reviews repeatedly increase structure without advancing an executable
+   outcome, stop patching individual gaps and re-derive the design with the
+   invoker.
 7. **Deliverable** — the design result (below).
 
 Bring consequential or contractual choices to the invoker as options plus a
@@ -149,10 +177,10 @@ recommendation. Treat steps 2–4 as feedback loops, not single passes.
    abstraction, layer, extension point, or mechanism earn its cost through a
    concrete benefit such as cleaner contracts, protected invariants, or
    credible extensibility, or is it ceremony for hypothetical needs?
-   Does the architecture converge on the cleanest coherent end-state, or carry
-   accidental complexity and speculative scope? Treat complexity and scope as
-   trade-offs to bring to the invoker, not defects merely because a smaller
-   design exists.
+   Does the architecture converge on the smallest clean, coherent end-state, or
+   carry accidental complexity and speculative scope? Treat complexity and
+   scope as trade-offs to bring to the invoker, not defects merely because a
+   smaller design exists.
 4. **Drill-ins** — within the framed lenses, delegate to `explore`/`scout` by
    default; escalate one surface to a `review` worker only when the sweep
    showed it genuinely complex or contested.
@@ -164,6 +192,19 @@ recommendation. Treat steps 2–4 as feedback loops, not single passes.
    intent cannot be established, ask rather than infer a defect. Drop
    false-positives; describe intentional choices as findings only when their
    stated trade-off no longer serves the goal.
+   Classify each confirmed concern as a **current blocker**, a **deferred
+   committed requirement**, or a **speculative concern**. A current blocker
+   violates committed behavior, an enduring current contract, or realistic
+   integrity under supported workloads. A deferred committed requirement belongs
+   to later committed behavior and can be added without replacing the current
+   architecture; record its activation condition and keep it out of current
+   implementation. A speculative concern lacks a committed consumer or plausible
+   supported-workload failure and does not become architecture, a gate, or a
+   durable backlog item by default. Any recommendation that expands architecture
+   must state its cumulative cost, effect on the walking skeleton, and why a
+   smaller clean, coherent option is insufficient. When repeated findings only
+   grow the design, challenge the governing premise rather than treating prior
+   ratification as proof that the premise remains right.
 6. **Deliverable** — the review result (below).
 
 ## Deliverable
@@ -173,11 +214,13 @@ the purpose and scope, decisions or findings, rationale and evidence, material
 risks or open questions, and next action easy to locate.
 
 For a quick arc, answer in chat unless the invoker asks for a file or the result
-needs to persist. For standard or high-stakes work, land a durable doc in the
-project's docs dir per
-`$HOME/.agents/skills/shared/durable-docs.md`, then give a concise chat summary
-and path. Include rejected options when they materially explain the chosen
-design, not as ceremony.
+needs to persist. Artifact location follows the durable-doc convention, not the
+size or stakes of the arc alone. Promote a result to `docs/` when it becomes a
+canonical design or review conclusion that future work must rely on. Keep
+working designs, alternatives, review reports, and grounding under the arc's
+`.scratch/` directory. High stakes justify stronger reasoning and verification;
+they do not by themselves justify more durable documents. Include rejected
+options when they materially explain the chosen design, not as ceremony.
 
 On a longer arc, keep the running state on a board file per
 `$HOME/.agents/skills/shared/board-files.md`.

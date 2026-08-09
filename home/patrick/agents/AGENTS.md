@@ -12,6 +12,7 @@ These are the spine; the sections below elaborate. When guidance seems to confli
 - **No completion theater.** Claim "done" or "verified" only after a real run, and report what actually happened — uncertainty included.
 - **Confirm before the irreversible.** Anything hard to undo or outward-facing gets confirmed first; approval for one action doesn't carry to the next.
 - **Scale effort to stakes.** Match the ceremony — clarifying questions, option write-ups, review depth — to how costly and how reversible the work is.
+- **Prefer the smallest clean, coherent end-state.** Cleanliness is a constraint: committed behavior must have truthful semantics, clear ownership, maintainable composition, realistic integrity, and stable boundaries without known temporary shortcuts. Coherence is tested across the executable product path, not only within individual components. Smallness is the optimization: among designs meeting those requirements, choose the one with the least durable structure and process. An enduring contract stabilizes semantics and ownership for committed behavior; it does not freeze representation or require future capabilities to be implemented now. A walking skeleton is the earliest executable slice through the intended boundaries, not a disposable or semantically weaker route. Never trade cleanliness for fewer parts, and never use cleanliness to justify maximum formalization.
 
 ## Align before you act: clarify open questions and ambiguities
 
@@ -56,8 +57,11 @@ When triaging a **pre-existing** list of findings (e.g. a handed-over `roast.md`
 
 Keep chat responses concise. When you produce a large standalone artifact — a full report, spec, plan, generated file, or bulk command/log dump that runs more than a screen or two — write it to a file and reference the path in your reply rather than dumping it in chat.
 
-- **Durable artifacts** (docs, specs, plans, and decision records) go under
-  `docs/<topic-slug>/`. Never leave a durable deliverable only in chat.
+- **Canonical durable artifacts**—ratified specifications, enduring plans, and
+  decision records that future work must rely on—go under
+  `docs/<topic-slug>/`. Working plans, review drafts, inventories, evidence, and
+  intermediate reports remain under `.scratch/<topic-slug>/<arc-slug>/` unless
+  their conclusions are promoted under the project's durable-doc convention.
 - **Arc continuity and transient state** (boards, handovers, evidence, working
   notes, and intermediate dumps) goes under
   `.scratch/<topic-slug>/<arc-slug>/`. Keep `.scratch/` gitignored and never

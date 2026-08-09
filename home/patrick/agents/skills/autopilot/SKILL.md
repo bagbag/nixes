@@ -81,6 +81,24 @@ Tier honestly; when unsure, choose the higher tier. Reversible means the choice
 can be undone from the board entry without remembered context or costly
 downstream rework. Version-control reversibility alone is insufficient.
 
+Assess reversibility and scope cumulatively, not only one decision at a time. A
+sequence of locally reversible changes may become scope-changing once downstream
+work adopts their combined architecture.
+
+Unless explicitly covered by the unattended contract, expansion of the durable
+architecture, workflow, public contract, or delivery process is scope-changing
+and must be parked. A review finding does not itself authorize that expansion;
+classify it as a **current blocker**, a **deferred committed requirement**, or a
+**speculative concern** under the shared plan rule.
+
+At each coherent milestone, compare cumulative structural and procedural growth
+with advancement of the ratified walking skeleton. If architecture or
+coordination keeps growing while no executable user outcome advances, treat
+that as a plan-level STOP. Park the affected work and return with the current
+combined design, smaller clean, coherent alternatives, and a recommendation.
+Do not silently convert a consumer-bearing plan into construction of unconsumed
+foundations.
+
 ## 4. Board and recovery
 
 Use one living `.scratch/<topic-slug>/<arc-slug>/board.md` beside

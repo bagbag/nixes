@@ -21,6 +21,8 @@ Before decomposition, establish one goal contract:
 - done criteria and verification evidence;
 - constraints and compatibility requirements;
 - the user's quality criterion for the end-state;
+- the committed product boundary and smallest executable walking skeleton when
+  the arc affects architecture or product flow;
 - known decisions, unknowns, and empirical assumptions.
 
 Orient from project sources and existing handover, board, or design records
@@ -60,6 +62,25 @@ plan containing:
 - integration checkpoints chosen by blast radius;
 - open questions and decision points, never silently resolved.
 
+Prefer consumer-bearing vertical packages. Separating foundational layers is
+appropriate when a concrete dependency requires it, but the plan must identify
+the earliest runnable composition checkpoint and explain why preceding work
+cannot be validated through a consumer sooner. Do not schedule successive
+foundation-only waves merely because their concepts can be designed
+independently.
+
+Every substantial addition must name its current or committed consumer and the
+realistic failure or enduring contract instability it prevents. Anything
+safely additive without replacement of an enduring contract belongs in the
+explicit deferral ledger rather than the current package graph.
+
+A current consumer may justify current implementation. A later committed
+consumer normally justifies preserving a clean additive path, not implementing
+its supporting structure now. Move that structure onto the current path only
+when deferral would replace a semantic identity or boundary already required by
+current behavior, or would leave a plausible supported-workload integrity
+failure.
+
 Before freezing a public API, sketch representative declaration, registration,
 and runtime call sites and inspect the strongest analogous API in the
 repository. Challenge refactoring-hostile literals, duplicated names, and
@@ -87,6 +108,27 @@ Do not launch implementation workers from an unreviewed plan. A critic is
 separate: use one only when a difficult premise or trade-off needs reasoning
 pressure beyond source grounding. Return unresolved decisions or a
 non-converging review loop to the active mode.
+
+Freshness applies to the independent initial judgment, not every amendment. Use
+the same reviewer to verify that its findings were addressed. Start another
+fresh review only when the premise or target materially changes, the result is
+genuinely contested, or the user explicitly requests another independent
+opinion. A fresh review must reconsider the frame; it must not merely restart
+the same gap-finding loop.
+
+A plan review must challenge cumulative scope as well as requirements coverage.
+Classify scope-expanding recommendations as **current blockers**, **deferred
+committed requirements**, or **speculative concerns**. A current blocker
+violates committed behavior, an enduring current contract, or realistic
+integrity under supported workloads. A deferred committed requirement belongs
+to later committed behavior and can be added without replacing the current
+architecture; record its activation condition and keep it out of the current
+package graph. A speculative concern lacks a committed consumer or plausible
+supported-workload failure and does not become architecture, a gate, or a
+durable backlog item by default. When a review round only adds structure,
+require it to test a smaller clean, coherent option and its effect on the
+earliest runnable composition checkpoint. Return a non-converging scope-growth
+loop to the lead instead of ratcheting the plan automatically.
 
 ## 3. Worker brief contract
 
