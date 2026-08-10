@@ -32,6 +32,7 @@
             "system-utilities"
             "desktop-apps"
             "full-stack-developer"
+            "developer-extras"
             "office-tools"
             "document-tools"
             "creative-media"

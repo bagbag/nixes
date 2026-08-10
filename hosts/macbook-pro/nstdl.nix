@@ -10,16 +10,6 @@
     masApps.Bitwarden = 1352778147;
   };
 
-  nix.linux-builder = {
-    enable = true;
-    ephemeral = true;
-    maxJobs = 4;
-    systems = [
-      "aarch64-linux"
-      "x86_64-linux"
-    ];
-  };
-
   networking.applicationFirewall = {
     enable = true;
     enableStealthMode = false;

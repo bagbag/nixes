@@ -27,7 +27,7 @@ in
   programs = {
     npm = {
       enable = true;
-      package = pkgs.nodejs_26;
+      package = null;
       settings = {
         min-release-age = 2;
         "@tstdl:registry" = "https://forge.cloudful.de/api/packages/patrick/npm/";

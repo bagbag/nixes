@@ -29,7 +29,7 @@
           "system-utilities"
           "desktop-apps"
           "full-stack-developer"
-          "messaging"
+          "developer-extras"
           "syncthing"
           "document-tools"
           "vscode"
