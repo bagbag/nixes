@@ -7,6 +7,7 @@
     features = [
       "developer"
       "desktop-apps"
+      "messaging"
       "podman"
       "battery-charge-limit"
       "remote-access"
