@@ -1,12 +1,6 @@
 { ... }:
 {
   homebrew = {
-    casks = [
-      "rustdesk"
-      "keepassxc"
-      "whatsapp"
-      "visual-studio-code"
-    ];
     masApps.Bitwarden = 1352778147;
   };
 
