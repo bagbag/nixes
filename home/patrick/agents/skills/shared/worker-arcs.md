@@ -10,6 +10,8 @@ review, role-routing, documentation, and closure discipline. Do not restate
 those rules in briefs or mode skills. Read this file fully before planning or
 delegating the first worker.
 
+<!-- @include shared/decision-discipline.md -->
+
 ## 1. Frame the goal and route specialists
 
 Before decomposition, establish one goal contract:

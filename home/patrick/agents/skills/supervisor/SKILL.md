@@ -105,8 +105,8 @@ the framing error and let the user decide again.
 
 - Batch related decisions without holding ready work merely to fill a batch.
 - Surface the critical-path or highest-unblock-count decision first.
-- Before asking, check whether one verifiable fact would dissolve the choice.
-  Report facts instead of asking the user to decide them.
+- Before asking, resolve decision-changing facts from authoritative project or
+  dependency sources. Report facts instead of asking the user to decide them.
 - When the user asks for a walkthrough, restate everything needed to decide.
 - Answer pushback on its merits; re-examine instead of defending reflexively.
 - When all options feel wrong, step up an abstraction level.

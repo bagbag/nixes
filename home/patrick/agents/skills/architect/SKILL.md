@@ -64,6 +64,8 @@ Outside a board-bearing arc, an architecture map is turn-local and is not
 reusable across sessions. Do not create another persistence artifact merely to
 retain it.
 
+<!-- @include shared/decision-discipline.md -->
+
 ## Establish the frame first
 
 Direct questions and choices to whoever invoked the skill:
@@ -139,6 +141,7 @@ what it's made of:
    responsibilities, interconnection with existing modules, data flow, key
    mechanisms *named* (never implemented).
 5. **Drill-downs** — per the framed lenses, one bounded descent at a time.
+   Apply the shared decision discipline above before preferring a mechanism.
 6. **Product-boundary, cumulative-design, and composition pass** — restate the
    committed product behavior and walking skeleton before finalizing.
    Distinguish internal intermediates from user-facing outcomes so
@@ -200,6 +203,8 @@ recommendation. Treat steps 2–4 as feedback loops, not single passes.
 4. **Drill-ins** — within the framed lenses, delegate to `explore`/`scout` by
    default; escalate one surface to a `review` worker only when the sweep
    showed it genuinely complex or contested.
+   Apply the shared decision discipline above before treating a mechanism
+   preference as an architectural finding.
 5. **Results** — verify before flagging. Report defects only as **confirmed
    findings** grounded in current source. Each must identify the violated goal
    or invariant, concrete impact, and exact source location; a different

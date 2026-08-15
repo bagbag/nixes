@@ -4,8 +4,22 @@
 files use Claude Code-compatible agent frontmatter as a practical superset;
 the prompt body and canonical lowercase role name are shared by both tools.
 
+`skills/` is the source and template tree for shared skills. Markdown files may
+include another skills-root-relative Markdown file with a marker on its own
+line:
+
+```md
+<!-- @include shared/decision-discipline.md -->
+```
+
+The build expands includes recursively into complete standalone skill files.
+Missing targets, escaping paths, cycles, frontmatter markers, and malformed or
+unresolved markers fail validation.
+
 Nix generates the Claude Code and Codex representations into the store, and
-Home Manager links them at activation; generated files do not live in Git.
+Home Manager links them at activation. It also renders the shared skill tree
+into the store; generated files do not live in Git. Skill changes therefore
+require `darwin-rebuild switch` before they become active.
 
 To inspect generated output manually:
 
@@ -14,6 +28,10 @@ output_dir=$(mktemp -d)
 python3 home/patrick/agents/bin/generate-agent-configs.py \
   --target codex \
   --output "$output_dir"
+
+python3 home/patrick/agents/bin/expand-skills.py \
+  --source home/patrick/agents/skills \
+  --output "$output_dir/skills"
 ```
 
 To validate every shared skill, both generated formats, aliases, sandboxes, and

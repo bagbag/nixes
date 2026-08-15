@@ -52,3 +52,7 @@ proposed edit verbatim, and the destination layer. Nothing is written until
 the user approves that item. Apply ratified items in the same pass and confirm
 what landed where. Phrase rules with the why and the boundary cases the user
 decided — lean and information-dense.
+
+When skills are rendered or store-backed, edit their canonical template source,
+then run the owner-provided validation, build, and activation workflow. Treat
+installed generated output as immutable.

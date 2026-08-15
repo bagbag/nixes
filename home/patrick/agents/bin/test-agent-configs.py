@@ -27,6 +27,16 @@ def load_generator(root: Path):
     return module
 
 
+def load_skill_expander(root: Path):
+    path = root / "bin" / "expand-skills.py"
+    spec = importlib.util.spec_from_file_location("skill_expander", path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"cannot load {path}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
 def parse_skill_frontmatter(path: Path) -> dict[str, str]:
     text = path.read_text(encoding="utf-8")
     parts = text.split("---", 2)
@@ -65,6 +75,17 @@ def parse_skill_frontmatter(path: Path) -> dict[str, str]:
     if not metadata["description"] or not parts[2].strip():
         raise ValueError(f"{path}: description and instructions must not be empty")
     return metadata
+
+
+def skill_frontmatter_bytes(path: Path) -> bytes:
+    lines = path.read_bytes().splitlines(keepends=True)
+    if not lines or lines[0].rstrip(b"\r\n") != b"---":
+        raise ValueError(f"{path}: expected YAML frontmatter")
+
+    for index, line in enumerate(lines[1:], start=1):
+        if line.rstrip(b"\r\n") == b"---":
+            return b"".join(lines[: index + 1])
+    raise ValueError(f"{path}: unterminated YAML frontmatter")
 
 
 def validate_skills(root: Path) -> None:
@@ -191,6 +212,171 @@ def validate_generated_agents(root: Path, generator) -> None:
         raise ValueError("Claude second-opinion lost its readonly Bash hook")
 
 
+def validate_skill_expander(root: Path, expander) -> None:
+    with tempfile.TemporaryDirectory() as directory:
+        temporary = Path(directory)
+        source = temporary / "source"
+        output = temporary / "output"
+        (source / "shared").mkdir(parents=True)
+        (source / "sample").mkdir()
+        (source / "shared" / "nested.md").write_text(
+            "Nested rule.\n", encoding="utf-8"
+        )
+        (source / "shared" / "rule.md").write_text(
+            "Rule start.\n<!-- @include shared/nested.md -->\nRule end.\n",
+            encoding="utf-8",
+        )
+        skill = source / "sample" / "SKILL.md"
+        frontmatter = "---\nname: sample\ndescription: Sample skill.\n---\n"
+        skill.write_text(
+            frontmatter + "\n<!-- @include shared/rule.md -->\n",
+            encoding="utf-8",
+        )
+        binary = source / "sample" / "asset.bin"
+        binary.write_bytes(b"\x00skill-asset\xff")
+
+        expander.expand_tree(source, output)
+        rendered = (output / "sample" / "SKILL.md").read_text(encoding="utf-8")
+        if not rendered.startswith(frontmatter):
+            raise ValueError("skill expansion changed YAML frontmatter")
+        if "Rule start.\nNested rule.\nRule end." not in rendered:
+            raise ValueError("nested skill include was not expanded")
+        if "@include" in rendered:
+            raise ValueError("rendered skill contains an include marker")
+        if (output / "sample" / "asset.bin").read_bytes() != binary.read_bytes():
+            raise ValueError("skill expansion changed a copied asset")
+
+        invalid = temporary / "invalid"
+        invalid.mkdir()
+        cases = {
+            "missing.md": "<!-- @include shared/missing.md -->\n",
+            "escape.md": "<!-- @include ../outside.md -->\n",
+            "frontmatter.md": "---\n<!-- @include shared/rule.md -->\n---\n",
+            "malformed.md": "<!-- @include shared/rule.md-->",
+        }
+        for name, content in cases.items():
+            path = source / name
+            path.write_text(content, encoding="utf-8")
+            try:
+                expander.expand_markdown(path, source.resolve())
+            except ValueError:
+                pass
+            else:
+                raise ValueError(f"skill expander accepted invalid case: {name}")
+
+        cycle_a = source / "shared" / "cycle-a.md"
+        cycle_b = source / "shared" / "cycle-b.md"
+        cycle_a.write_text(
+            "<!-- @include shared/cycle-b.md -->\n", encoding="utf-8"
+        )
+        cycle_b.write_text(
+            "<!-- @include shared/cycle-a.md -->\n", encoding="utf-8"
+        )
+        try:
+            expander.expand_markdown(cycle_a, source.resolve())
+        except ValueError as error:
+            if "include cycle" not in str(error):
+                raise
+        else:
+            raise ValueError("skill expander accepted an include cycle")
+
+
+def validate_rendered_skills(root: Path, expander) -> None:
+    with tempfile.TemporaryDirectory() as directory:
+        temporary_root = Path(directory)
+        rendered_skills = temporary_root / "skills"
+        expander.expand_tree(root / "skills", rendered_skills)
+        (temporary_root / "AGENTS.md").write_text(
+            (root / "AGENTS.md").read_text(encoding="utf-8"),
+            encoding="utf-8",
+        )
+        validate_skills(temporary_root)
+
+        source_skills = root / "skills"
+        for source in sorted(source_skills.glob("*/SKILL.md")):
+            rendered = rendered_skills / source.relative_to(source_skills)
+            if skill_frontmatter_bytes(source) != skill_frontmatter_bytes(rendered):
+                raise ValueError(f"{source}: rendered frontmatter changed")
+
+        marker = "<!-- @include shared/decision-discipline.md -->"
+        include_owners = (
+            source_skills / "architect" / "SKILL.md",
+            source_skills / "second-opinion" / "SKILL.md",
+            source_skills / "shared" / "worker-arcs.md",
+        )
+        for path in include_owners:
+            if path.read_text(encoding="utf-8").count(marker) != 1:
+                raise ValueError(f"{path}: expected one decision-discipline include")
+
+        for name in ("autopilot", "supervisor"):
+            path = source_skills / name / "SKILL.md"
+            if marker in path.read_text(encoding="utf-8"):
+                raise ValueError(f"{path}: must inherit decision discipline via worker-arcs")
+
+        canonical_rules = (
+            "authoritative domain state from operational execution state",
+            "timeout, routing, transaction, recovery, observability",
+            "consequential architectural property before descending into an implementation preference",
+            "Apply reconciliation only when the disagreement could materially change",
+            "Treat position-swapping without resolved premises as continued disagreement",
+            "Do not force consensus or decide by majority",
+        )
+        rendered_owners = (
+            rendered_skills / "architect" / "SKILL.md",
+            rendered_skills / "second-opinion" / "SKILL.md",
+            rendered_skills / "shared" / "worker-arcs.md",
+        )
+        for path in rendered_owners:
+            normalized = " ".join(path.read_text(encoding="utf-8").split())
+            for rule in canonical_rules:
+                if normalized.count(rule) != 1:
+                    raise ValueError(
+                        f"{path}: decision rule was not rendered once: {rule}"
+                    )
+
+        rendered_architect = rendered_skills / "architect" / "SKILL.md"
+        architect_text = rendered_architect.read_text(encoding="utf-8")
+        if architect_text.count("Apply the shared decision discipline above") != 2:
+            raise ValueError(
+                f"{rendered_architect}: expected DESIGN and REVIEW discipline pointers"
+            )
+
+        rendered_second_opinion = (
+            rendered_skills / "second-opinion" / "SKILL.md"
+        )
+        second_opinion_text = rendered_second_opinion.read_text(encoding="utf-8")
+        if second_opinion_text.count("Apply the shared discipline only when") != 1:
+            raise ValueError(
+                f"{rendered_second_opinion}: missing reconciliation ceremony gate"
+            )
+
+        for path in sorted(rendered_skills.glob("*/SKILL.md")):
+            headings = [
+                line for line in path.read_text(encoding="utf-8").splitlines()
+                if line.startswith("# ")
+            ]
+            if len(headings) != 1:
+                raise ValueError(f"{path}: expected exactly one H1, got {headings}")
+
+        worker_arcs = rendered_skills / "shared" / "worker-arcs.md"
+        worker_headings = [
+            line for line in worker_arcs.read_text(encoding="utf-8").splitlines()
+            if line.startswith("# ")
+        ]
+        if len(worker_headings) != 1:
+            raise ValueError(
+                f"{worker_arcs}: expected exactly one H1, got {worker_headings}"
+            )
+
+        unresolved = [
+            path
+            for path in rendered_skills.rglob("*.md")
+            if "<!-- @include " in path.read_text(encoding="utf-8")
+        ]
+        if unresolved:
+            raise ValueError(f"rendered skills contain include markers: {unresolved}")
+
+
 def validate_multiline_and_optional_names(generator) -> None:
     with tempfile.TemporaryDirectory() as directory:
         source = Path(directory) / "sample.md"
@@ -300,7 +486,10 @@ def main() -> int:
         else Path(__file__).resolve().parents[1]
     )
     generator = load_generator(root)
+    expander = load_skill_expander(root)
     validate_skills(root)
+    validate_skill_expander(root, expander)
+    validate_rendered_skills(root, expander)
     validate_generated_agents(root, generator)
     validate_multiline_and_optional_names(generator)
     validate_hooks(root)

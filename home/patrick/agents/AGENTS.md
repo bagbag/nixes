@@ -31,7 +31,7 @@ Do **not** run git commands that modify the working tree, index, stashes, refs, 
 
 **Renames and moves use `git mv`.** File and folder renames or moves should go through `git mv` by default, avoid filesystem moves (or `mv` + `git add`) when git tracks the path.
 
-**Committing and staging.** Commit and push only when the user explicitly asks ("commit this", "commit and push", `/commit`) — plans, todo lists, and workflow steps do **not** count as that instruction. Instead, when the tree reaches a coherent, verified state (bug fixed with tests passing, a feature step complete, a refactor done with lint/tests green), end the turn by recommending a commit point: `✅ Good commit point: <subject> — <one sentence>`. Commit messages follow **Conventional Commits** (`<type>(scope): <description>`, subject ≤ 72 chars; lean body — what changed, not prose or file-by-file recaps), unless a project defines its own commit convention, which overrides.
+**Committing and staging.** Commit and push only when the user explicitly asks ("commit this", "commit and push", `/commit`) — plans, todo lists, and workflow steps do **not** count as that instruction. Instead, when the tree reaches a coherent, verified state (bug fixed with tests passing, a feature step complete, a refactor done with lint/tests green), end the turn with the headline only: `✅ Good commit point: <subject>`. Follow the project's commit convention when defined. Otherwise use a **Conventional Commit** subject in the form `<type>(scope): <description>` (≤ 72 characters), then a blank line and a concise `- ` bullet list summarizing the material changes.
 
 ## Filesystem: confirm before destructive operations
 
@@ -106,6 +106,8 @@ model is the real owner.
 ## Comments and docs: lean and information-dense
 
 Write a comment or doc only when it earns its place — explaining *why*, a non-obvious constraint, or a gotcha the code can't show. Keep it lean and information-dense: no restating what the code already says, no filler prose, no narrating the obvious. If it doesn't add information, leave it out.
+
+**Skill instructions:** Phrase normal guidance as direct affirmative actions. Use prohibitions or explanatory rationale for safety boundaries, non-obvious constraints, and recurring failure modes.
 
 ## Orchestration and delegation
 

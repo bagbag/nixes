@@ -15,6 +15,8 @@ description: >-
 Own the user-facing orchestration. The dedicated `second-opinion` agent owns the
 independent judgment and report.
 
+<!-- @include shared/decision-discipline.md -->
+
 ## 1. Frame neutrally
 
 Inspect the cheapest relevant orientation sources first. Give the reviewer:
@@ -86,3 +88,12 @@ Use the same reviewer for a focused clarification or amendment check. Start a
 new fresh reviewer when the premise or target materially changes, the result is
 genuinely contested, or the user explicitly requests another independent
 opinion.
+
+### Reconcile material reviewer disagreement
+
+Apply the shared discipline only when disagreement could materially change the
+decision or downstream work. Give each warm reviewer the other's strongest
+argument and request a focused keep, amend, or withdraw reassessment. Reuse
+warm reviewers while the premise and target remain stable; use fresh neutral
+adjudication after factual closure when consequential disagreement remains.
+Return residual disagreement to the user.

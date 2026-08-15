@@ -12,8 +12,8 @@ let
   codexSrc = "${flakeRoot}/home/patrick/codex";
   agentsSrc = "${flakeRoot}/home/patrick/agents";
   agentsStoreSrc = ./agents;
-  agentConfigs =
-    pkgs.runCommand "custom-agent-configs"
+  agentArtifacts =
+    pkgs.runCommand "agent-artifacts"
       {
         nativeBuildInputs = [
           pkgs.jq
@@ -22,7 +22,7 @@ let
       }
       ''
         python3 ${agentsStoreSrc}/bin/test-agent-configs.py ${agentsStoreSrc}
-        mkdir -p "$out/claude" "$out/codex"
+        mkdir -p "$out/claude" "$out/codex" "$out/skills"
         python3 ${agentsStoreSrc}/bin/generate-agent-configs.py \
           --source ${agentsStoreSrc}/definitions \
           --target claude \
@@ -31,6 +31,9 @@ let
           --source ${agentsStoreSrc}/definitions \
           --target codex \
           --output "$out/codex"
+        python3 ${agentsStoreSrc}/bin/expand-skills.py \
+          --source ${agentsStoreSrc}/skills \
+          --output "$out/skills"
       '';
 in
 {
@@ -40,7 +43,7 @@ in
   # global guidance. Both links point at the shared AGENTS.md source.
   home.file.".codex/AGENTS.md".source = config.lib.file.mkOutOfStoreSymlink "${agentsSrc}/AGENTS.md";
   home.file.".codex/hooks.json".source = config.lib.file.mkOutOfStoreSymlink "${codexSrc}/hooks.json";
-  home.file.".codex/agents".source = "${agentConfigs}/codex";
+  home.file.".codex/agents".source = "${agentArtifacts}/codex";
 
   # settings.json is written by Claude Code itself (atomic write: temp file
   # + rename, one readlink deep). home.file's mkOutOfStoreSymlink goes
@@ -93,14 +96,15 @@ in
   home.file.".agents/bin/set-context-watch-mode".source =
     config.lib.file.mkOutOfStoreSymlink "${agentsSrc}/bin/set-context-watch-mode.sh";
 
-  # Whole directories: new entries dropped in land in the repo automatically.
-  home.file.".claude/skills".source = config.lib.file.mkOutOfStoreSymlink "${agentsSrc}/skills";
+  # Skills are rendered from the shared source tree so included instructions
+  # remain single-sourced while each deployed SKILL.md is self-contained.
+  home.file.".claude/skills".source = "${agentArtifacts}/skills";
 
   # Codex discovers personal skills in ~/.agents/skills (not ~/.codex/skills).
-  # It follows this symlink, so both tools use the same SKILL.md files.
-  home.file.".agents/skills".source = config.lib.file.mkOutOfStoreSymlink "${agentsSrc}/skills";
+  # Both tools use the same rendered SKILL.md files.
+  home.file.".agents/skills".source = "${agentArtifacts}/skills";
 
-  home.file.".claude/agents".source = "${agentConfigs}/claude";
+  home.file.".claude/agents".source = "${agentArtifacts}/claude";
 
   home.file.".claude/commands".source = config.lib.file.mkOutOfStoreSymlink "${claudeSrc}/commands";
 }
