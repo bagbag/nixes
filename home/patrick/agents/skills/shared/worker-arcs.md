@@ -21,6 +21,8 @@ Before decomposition, establish one goal contract:
 - done criteria and verification evidence;
 - constraints and compatibility requirements;
 - the user's quality criterion for the end-state;
+- the product's defining user outcome and, where material, the mechanism or
+  hypothesis through which it intends to deliver that outcome;
 - the committed product boundary and smallest executable walking skeleton when
   the arc affects architecture or product flow;
 - known decisions, unknowns, and empirical assumptions.
@@ -28,6 +30,16 @@ Before decomposition, establish one goal contract:
 Orient from project sources and existing handover, board, or design records
 before asking questions. The active mode decides how unresolved choices reach
 the user or become ratification/parking items.
+
+Use the `define-goal` skill when this contract is absent, the next milestone is
+unclear, the product purpose has shifted, reviews disagree about what success
+means, or scope grows without advancing the defining value path. Do not
+reconstruct a weaker local goal-framing workflow.
+
+The plan must identify the earliest executable checkpoint that exercises and
+evaluates the defining value path and apply the `define-goal` skill's milestone
+challenge. Do not redefine product acceptance around infrastructure-only
+fallback evidence.
 
 Resolve factual uncertainty through the global routing rules before asking the
 user to decide it. Before implementation planning, delegate to a capable worker
@@ -155,6 +167,13 @@ Launch dependency-ready packages in waves. Run only disjoint file zones and
 concept ownership concurrently; sequence shared files and contracts under one
 owner. Among equally ready, safely isolated packages, the lead may prioritize
 work that establishes a pattern needed by later packages.
+
+Destructive actions whose safety depends on user authorization remain owned by
+the user-facing lead. A worker may inventory targets, map impact, and perform
+subsequent adaptations, but the lead resolves the exact targets, obtains
+confirmation, and executes the approved deletion, reset, or discard. Do not
+relay destructive authorization through a worker brief unless the orchestration
+environment explicitly preserves it as trusted authority.
 
 Treat unexplained out-of-zone changes as potentially belonging to the user.
 Attribute them before acting and never revert them. Inspect the working tree,

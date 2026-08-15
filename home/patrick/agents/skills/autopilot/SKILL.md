@@ -28,6 +28,11 @@ Orient from project sources before asking questions. Do not begin unattended
 work until the user ratifies scope, authority, done criteria, and the workspace
 strategy.
 
+Invoke the `define-goal` skill at the start of every new autopilot arc while the
+user is still available. Use it to establish or advance the defining outcome,
+value path, next observable milestone, walking skeleton, non-goals, and
+acceptance evidence before asking the user to delegate unattended authority.
+
 Once the contract is sufficient:
 
 1. Propose a dedicated worktree on an
@@ -67,15 +72,24 @@ within existing authority. Never improvise silent divergence.
 
 ## 3. Decision tiers
 
-- **Trivial + reversible** → act, one line in the board's minor log.
+- **Trivial + reversible** → act, one line in the current board's minor-
+  decisions section.
 - **Non-trivial but reversible** → derive the decision as if presenting it to
   the user (options, honest for/against, the one you'd mark recommended), act
-  on that recommendation, and record a **ratification item** on the board:
+  on that recommendation, and record a **ratification item** on the current
+  board:
   what, options considered, choice, reasoning, and how to reverse it.
 - **Irreversible, outward-facing, or scope-changing** → **park it**: record
   the decision with your would-be recommendation, work around it where
   possible, and continue every track that doesn't depend on it. A parked
   decision stalls its track, never the arc.
+
+Before acting on a non-trivial reversible decision, resolve factual uncertainty
+and obtain a fresh independent second opinion. Select its initial depth and
+whether a separate architect companion is warranted under the second-opinion
+skill; permit that skill's evidence-driven depth escalation. If either review
+reveals a genuine trade-off outside the ratified unattended authority, park it
+rather than treating reviewer agreement as authorization.
 
 Tier honestly; when unsure, choose the higher tier. Reversible means the choice
 can be undone from the board entry without remembered context or costly
@@ -102,16 +116,17 @@ foundations.
 ## 4. Board and recovery
 
 Use one living `.scratch/<topic-slug>/<arc-slug>/board.md` beside
-`handover.md`. Maintain a mutable current-state summary and an append-only dated
-log for ratification items, parked decisions, scope proposals, containment,
-and checkpoint evidence. A decision that is not recorded did not happen; do
-not build on it.
+`handover.md` and `log.md`. Maintain the full current-state summary,
+ratification queue, parked decisions, scope proposals, containment, and
+checkpoint evidence on the board. `log.md` only indexes complete boards rotated
+into `history/`. A decision that is not recorded did not happen; do not build on
+it.
 
 After a crash, window boundary, or compaction, re-orient from the chosen
 workspace, its Git state when applicable, the board, and the handover. Treat
 workspace and Git state as observed reality, the board as current intent, and
 the handover as the last checkpoint snapshot. On disagreement, preserve the
-evidence, reconcile the board to observed reality, log the discrepancy, and
+evidence, reconcile the board to observed reality, record the discrepancy, and
 rerun affected gates. Park the track if recovery would exceed ratified
 authority.
 

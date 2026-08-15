@@ -48,3 +48,20 @@ execution state belongs on the board under `.scratch/`.
 Update durable docs in the same pass as the reality-changing work. Keep
 `index.md` sufficient for cold orientation. When a single-sourced concept
 changes, edit its owning section.
+
+## Closure audit
+
+At a phase boundary or after a material architecture reset, inventory every
+active document under the topic directory, excluding `history/`, and classify
+it as:
+
+- current canonical owner;
+- current narrow reference;
+- superseded material to move to `history/`; or
+- redundant material to remove.
+
+Then verify the active set as a whole: status and next action agree; each
+concept has one owner; active documents contain no stale workflow names,
+versions, migration identities, implementation-awaiting claims, or superseded
+terminology; all links resolve; and the index lists only current authority.
+Updating the index alone does not complete synchronization.

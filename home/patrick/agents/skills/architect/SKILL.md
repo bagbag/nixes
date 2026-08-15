@@ -48,6 +48,22 @@ A sweep may settle orientation, but never an evidence-bearing REVIEW finding.
 Ground those in current source through a targeted scout, a verifier when the
 claim is load-bearing or contested, or a narrow direct spot-check.
 
+An architecture map intended for reuse must record a validity envelope when it
+is created: target and product boundary, authoritative owners, covered source
+zones, material exclusions, and the decisions or source changes that invalidate
+it. Record that envelope on the active board rather than creating another
+architecture artifact.
+
+To reuse the map, inspect only its recorded invalidators through the board and
+changed covered zones. If none occurred, spot-check the decisive current fact
+and reuse the map; do not reconstruct it merely to establish reuse. If the map
+lacks a validity envelope, its target changed, or an invalidator occurred,
+obtain a new sweep.
+
+Outside a board-bearing arc, an architecture map is turn-local and is not
+reusable across sessions. Do not create another persistence artifact merely to
+retain it.
+
 ## Establish the frame first
 
 Direct questions and choices to whoever invoked the skill:

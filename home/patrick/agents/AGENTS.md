@@ -86,6 +86,23 @@ Update status/version references everywhere they appear (watch the headline-vs-b
 
 Before writing a new helper, utility, or tool — or adding a dependency — search the codebase for one that already does the job. Duplicating something that should have been reused fragments the code and lets the copies drift out of sync. Reuse or extend what exists; add a new one only when nothing fits, and say why.
 
+**User-owned dependencies are part of the option space.** When a blocker appears
+to come from a framework or dependency the user owns or is actively developing,
+inspect its current source, skills, and unreleased changelog before designing an
+application workaround. Present the upstream root fix and the local workaround
+as explicit alternatives. Prefer the upstream fix when it produces the cleaner
+reusable contract. A temporary application workaround requires explicit
+approval and a recorded retirement condition.
+
+**Root cause before workaround.** When generated output, tooling, a dependency,
+or the execution environment behaves unexpectedly, isolate the owning failure
+before changing adjacent configuration or patching the result manually. Inspect
+the authoritative source and run the smallest useful reproduction first. A
+workaround is acceptable only when the root cause is known or explicitly
+unresolved, its consequences are understood, and its retirement condition is
+recorded. Do not hand-edit generated artifacts when the generator or source
+model is the real owner.
+
 ## Comments and docs: lean and information-dense
 
 Write a comment or doc only when it earns its place — explaining *why*, a non-obvious constraint, or a gotcha the code can't show. Keep it lean and information-dense: no restating what the code already says, no filler prose, no narrating the obvious. If it doesn't add information, leave it out.

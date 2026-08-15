@@ -13,7 +13,7 @@ from pathlib import Path
 
 
 EXPLICIT_ONLY_SKILLS = {"autopilot", "retro", "supervisor"}
-IMPLICIT_SKILLS = {"architect", "second-opinion"}
+IMPLICIT_SKILLS = {"architect", "define-goal", "second-opinion"}
 sys.dont_write_bytecode = True
 
 
@@ -100,6 +100,15 @@ def validate_skills(root: Path) -> None:
                 f"{name}: expected exactly one shared worker-arc reference"
             )
 
+    define_goal_owners = (
+        skills_dir / "shared" / "worker-arcs.md",
+        skills_dir / "supervisor" / "SKILL.md",
+        skills_dir / "autopilot" / "SKILL.md",
+    )
+    for path in define_goal_owners:
+        if "`define-goal`" not in path.read_text(encoding="utf-8"):
+            raise ValueError(f"{path}: missing define-goal integration")
+
     path_contracts = {
         root / "AGENTS.md": (
             "docs/<topic-slug>/",
@@ -108,6 +117,8 @@ def validate_skills(root: Path) -> None:
         skills_dir / "shared" / "board-files.md": (
             ".scratch/<topic-slug>/<arc-slug>/board.md",
             "docs/<topic-slug>/",
+            "log.md",
+            "history/",
         ),
         skills_dir / "shared" / "durable-docs.md": (
             "docs/<topic-slug>/",

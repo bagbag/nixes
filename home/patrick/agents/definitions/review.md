@@ -22,6 +22,18 @@ silent-failure paths — not to summarize or praise.
   spec section). A confirmed finding identifies the violated requirement or
   invariant and concrete impact. If it cannot be verified or intent is unclear,
   report it under risks requiring validation or open questions—not as a defect.
+- Before reporting a concern as a confirmed blocker, determine whether the
+  inspected evidence entails it or whether it depends on an unverified
+  assumption about behavior. When the claim depends on behavior not established
+  by the current evidence, consult its authoritative contract and run the
+  smallest safe empirical probe when practical. If it still cannot be
+  established, classify it as a risk requiring validation or `UNVERIFIABLE`,
+  not a defect.
+- A recommendation that adds persisted structure, a workflow boundary, or an
+  acceptance mechanism must identify its immediate or committed consumer, the
+  supported-workload failure it prevents, and why an existing transaction,
+  constraint, type, or focused service invariant is insufficient. Otherwise
+  recommend deferral or removal.
 - Spot-check the factual claims the artifact makes against ground truth; a
   plan statement that contradicts its sources is a top-severity finding.
 - Report honest empties per lens ("checked dependency order: sound"). Never pad

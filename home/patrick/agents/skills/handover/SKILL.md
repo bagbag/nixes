@@ -23,7 +23,7 @@ another arc.
 
 ## WRITE mode
 
-First bring reality in sync: docs, decision log, TODO — nothing of value may
+First bring reality in sync: docs, board, `log.md`, TODO — nothing of value may
 exist only in the session (same rule as pre-compaction). Then write the note,
 self-contained for a reader with zero session context:
 

@@ -47,6 +47,12 @@ fresh arc:
    durable target `docs/<topic-slug>/`, decisions, verification status, worker
    state, and next action as they change.
 
+Invoke the `define-goal` skill when the defining outcome or value path cannot be
+stated clearly, the next milestone proves only infrastructure, reviews disagree
+about what success means, structural scope grows without executable value-path
+progress, the user materially reframes the purpose, or a phase ends without a
+grounded next milestone.
+
 Do not fan out from a vague premise. If the user's response falls outside the
 offered frame, rebuild the frame instead of forcing it into an option.
 
@@ -68,6 +74,25 @@ The user owns consequential scope, semantics, naming, architecture, and
 trade-offs. Present genuine choices with honest for/against and a marked
 recommendation. Use a structured-question tool when available.
 
+Before presenting a consequential decision, resolve its factual uncertainties
+and obtain a fresh independent second opinion. Select its initial depth and
+whether a separate architect companion is warranted under the second-opinion
+skill; permit that skill's evidence-driven depth escalation.
+
+Classify the synthesized result before involving the user:
+
+- **Entailed conclusion:** only one option satisfies the ratified goal and
+  constraints, with no material residual trade-off. Proceed and report it
+  concisely.
+- **Implementation default:** local, cheaply reversible, pattern-determined,
+  and without costly downstream adoption. Proceed and state any material
+  assumption.
+- **User-owned trade-off:** multiple viable options retain materially different
+  consequences. Present the grounded options, disagreements, and recommendation.
+
+Reviewer consensus is evidence, not authorization. It does not convert a real
+product, semantic, risk, or scope trade-off into an entailed conclusion.
+
 The user decides, but push back before executing a choice that conflicts with
 current evidence or an established constraint. State the concern and preferred
 alternative concretely. If the user holds to the choice, follow it and record
@@ -87,8 +112,18 @@ the framing error and let the user decide again.
 - When all options feel wrong, step up an abstraction level.
 - If the user delegates a decision to you, re-derive it from first principles,
   choose, and state the choice and reasoning.
-- While the user is away, continue unblocked independent tracks and queue
-  decisions into one concise round for their return.
+- While the user is away, record blocked decisions with their options and
+  recommendation, continue every authorized track that does not depend on them,
+  and queue the decisions into one concise round for their return.
+
+When the user approves a multi-step plan or explicitly names a continuation
+horizon, record that horizon on the board and advance every dependency-ready
+authorized packet within it. A blocked decision parks only its dependent work;
+continue everything else. The arc stops when the horizon is complete, all
+remaining work is blocked or unready, scope or authority would expand, an
+irreversible or outward-facing action needs confirmation, or no useful
+authorized work remains. A review result is a transition point, not an endpoint,
+when its approved repair or next package is already determined.
 
 Record decisions immediately on the board and in the owning durable source when
 they must outlive the arc. Follow the shared external-validation protocol for
@@ -191,7 +226,7 @@ validation-pending,” never settled fact.
 When the context monitor warns:
 
 1. Audit what is bloating context.
-2. Bring the board, index, TODO, and decision log fully in sync.
+2. Bring the board, `log.md`, index, and TODO fully in sync.
 3. Recommend compaction at a cheap-loss point; the user decides.
 4. If the budget is already low, invoke `handover` in WRITE mode and make the
    note self-sufficient.
