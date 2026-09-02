@@ -20,6 +20,7 @@
         static-only = false;
         mru-spaces = false;
         persistent-apps = [
+          "/Applications/Spacedrive.app"
           "/Applications/Ghostty.app"
           "/Applications/Firefox Developer Edition.app"
         ];

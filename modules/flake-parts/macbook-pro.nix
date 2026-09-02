@@ -9,6 +9,7 @@
       "desktop-apps"
       "messaging"
       "podman"
+      "qui"
       "battery-charge-limit"
       "remote-access"
       "secrets"

@@ -16,6 +16,7 @@
         "developer"
         "desktop-apps"
         "podman"
+        "qui"
         "remote-access"
         "secrets"
         "full-stack-developer"
@@ -60,7 +61,6 @@
         inputs.nixos-hardware.nixosModules.common-pc-ssd
         (inputs.self.outPath + "/hosts/nixstation/modules/llama-swap.nix")
         (inputs.self.outPath + "/hosts/nixstation/modules/ollama.nix")
-        (inputs.self.outPath + "/hosts/nixstation/modules/qui.nix")
         (inputs.self.outPath + "/hosts/nixstation/hardware-configuration.nix")
         (inputs.self.outPath + "/hosts/nixstation/disko.nix")
         {

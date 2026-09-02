@@ -30,34 +30,11 @@
         models = { };
       };
     };
-    qui.enable = true;
   };
   systemd.services = {
     ollama.after = [ "systemd-modules-load.service" ];
     llama-swap.after = [ "systemd-modules-load.service" ];
-    qui-secret-generator = {
-      description = "Generate session secret for qui";
-      wantedBy = [ "multi-user.target" ];
-      before = [ "qui.service" ];
-      path = [ pkgs.openssl ];
-      serviceConfig = {
-        Type = "oneshot";
-        RemainAfterExit = true;
-      };
-      script = ''
-        if [ ! -f /var/lib/qui/secret ]; then
-          mkdir -p /var/lib/qui
-          openssl rand -hex 32 > /var/lib/qui/secret
-          chmod 600 /var/lib/qui/secret
-        fi
-      '';
-    };
-    qui = {
-      after = [ "qui-secret-generator.service" ];
-      requires = [ "qui-secret-generator.service" ];
-    };
   };
-  services.qui.secretFile = "/var/lib/qui/secret";
 
   home-manager.users.patrick.services.syncthing = {
     enable = true;
