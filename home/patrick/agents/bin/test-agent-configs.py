@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -411,19 +412,123 @@ Second instruction.
             raise ValueError("multiline instructions were not preserved")
 
 
-def run_hook(path: Path, payload: dict[str, object]) -> dict[str, object] | None:
+def run_hook(
+    path: Path,
+    payload: dict[str, object],
+    env: dict[str, str] | None = None,
+) -> dict[str, object] | None:
     result = subprocess.run(
         ["bash", str(path)],
         input=json.dumps(payload),
         text=True,
         capture_output=True,
         check=True,
+        env={**os.environ, **(env or {})},
     )
     return json.loads(result.stdout) if result.stdout.strip() else None
 
 
 def validate_hooks(root: Path) -> None:
     hooks = root / "hooks"
+    session_lead = root / "bin" / "session-lead-mode.sh"
+
+    with tempfile.TemporaryDirectory() as state_dir:
+        state_env = {
+            "AGENT_SESSION_LEAD_STATE_DIR": state_dir,
+            "AGENT_SESSION_LEAD_COMMAND": str(session_lead),
+        }
+
+        subprocess.run(
+            ["bash", str(session_lead), "activate", "supervisor"],
+            check=True,
+            env={**os.environ, **state_env, "CLAUDE_CODE_SESSION_ID": "claude-test"},
+        )
+        supervisor = subprocess.run(
+            ["bash", str(session_lead), "get", "claude-test"],
+            check=True,
+            text=True,
+            capture_output=True,
+            env={**os.environ, **state_env},
+        ).stdout.strip()
+        if supervisor != "supervisor":
+            raise ValueError("session-lead-mode lost Claude's active supervisor")
+
+        subprocess.run(
+            ["bash", str(session_lead), "activate", "autopilot"],
+            check=True,
+            env={**os.environ, **state_env, "CODEX_THREAD_ID": "codex-test"},
+        )
+        autopilot = subprocess.run(
+            ["bash", str(session_lead), "get", "codex-test"],
+            check=True,
+            text=True,
+            capture_output=True,
+            env={**os.environ, **state_env},
+        ).stdout.strip()
+        if autopilot != "autopilot":
+            raise ValueError("session-lead-mode lost Codex's active autopilot")
+
+        invalid = subprocess.run(
+            ["bash", str(session_lead), "activate", "invalid"],
+            text=True,
+            capture_output=True,
+            env={**os.environ, **state_env, "CODEX_SESSION_ID": "invalid-test"},
+        )
+        if invalid.returncode == 0:
+            raise ValueError("session-lead-mode accepted an invalid lead")
+
+        compact = run_hook(
+            hooks / "compact-reorient.sh",
+            {
+                "hook_event_name": "SessionStart",
+                "source": "compact",
+                "session_id": "claude-test",
+            },
+            state_env,
+        )
+        compact_context = (
+            compact["hookSpecificOutput"].get("additionalContext", "")
+            if compact is not None
+            else ""
+        )
+        if not all(
+            marker in compact_context
+            for marker in ("supervisor", "remains active", "SKILL.md", "existing arc")
+        ):
+            raise ValueError("compact recovery did not restore the active supervisor")
+
+        resumed = run_hook(
+            hooks / "compact-reorient.sh",
+            {
+                "hook_event_name": "SessionStart",
+                "source": "resume",
+                "session_id": "codex-test",
+            },
+            state_env,
+        )
+        resume_context = (
+            resumed["hookSpecificOutput"].get("additionalContext", "")
+            if resumed is not None
+            else ""
+        )
+        if not all(
+            marker in resume_context
+            for marker in ("autopilot", "remains active", "SKILL.md", "existing arc")
+        ):
+            raise ValueError("resume recovery did not restore the active autopilot")
+
+        startup = run_hook(
+            hooks / "compact-reorient.sh",
+            {
+                "hook_event_name": "SessionStart",
+                "source": "startup",
+                "session_id": "claude-test",
+            },
+            state_env,
+        )
+        if startup is not None:
+            raise ValueError("session recovery ran for a new session")
+
     stash = run_hook(
         hooks / "git-stash-guard.sh",
         {
@@ -468,7 +573,12 @@ def validate_hooks(root: Path) -> None:
 
     compact = run_hook(
         hooks / "compact-reorient.sh",
-        {"hook_event_name": "SessionStart", "source": "compact"},
+        {
+            "hook_event_name": "SessionStart",
+            "source": "compact",
+            "session_id": "inactive-test",
+        },
+        {"AGENT_SESSION_LEAD_STATE_DIR": "/nonexistent/session-lead-test"},
     )
     context = (
         compact["hookSpecificOutput"].get("additionalContext", "")

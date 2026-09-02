@@ -91,10 +91,9 @@ in
   home.file.".codex/hooks/git-stash-guard.sh".source =
     config.lib.file.mkOutOfStoreSymlink "${agentsSrc}/hooks/git-stash-guard.sh";
 
-  # Stable, tool-neutral path used by shared skills. It currently activates
-  # Claude Code's context watcher and safely no-ops under other tools.
-  home.file.".agents/bin/set-context-watch-mode".source =
-    config.lib.file.mkOutOfStoreSymlink "${agentsSrc}/bin/set-context-watch-mode.sh";
+  # Stable, tool-neutral session-lead registry shared by Codex and Claude Code.
+  home.file.".agents/bin/session-lead-mode".source =
+    config.lib.file.mkOutOfStoreSymlink "${agentsSrc}/bin/session-lead-mode.sh";
 
   # Skills are rendered from the shared source tree so included instructions
   # remain single-sourced while each deployed SKILL.md is self-contained.

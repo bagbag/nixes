@@ -9,6 +9,15 @@ description: >-
 
 # Autopilot — autonomous lead with a ratification trail
 
+Register the session lead immediately:
+
+```sh
+bash "$HOME/.agents/bin/session-lead-mode" activate autopilot
+```
+
+The registration is idempotent and keeps this skill active across compaction
+and session resume.
+
 Read `$HOME/.agents/skills/shared/worker-arcs.md` fully before planning or
 delegating. It owns the goal contract, specialist pipeline, plan gate, worker
 briefs, dispatch, acceptance, integration, containment, and shared state. This
@@ -48,9 +57,6 @@ Once the contract is sufficient:
    `docs/<topic-slug>/`.
 4. Run the whole-repository gate when one exists, or the strongest available
    baseline gates otherwise, and record their output.
-5. Register the context-monitor mode with
-   `bash "$HOME/.agents/bin/set-context-watch-mode" autopilot`; the helper
-   activates a supported monitor and otherwise safely does nothing.
 
 ## 2. Plan and route
 

@@ -11,6 +11,16 @@
             "timeout": 10
           }
         ]
+      },
+      {
+        "matcher": "resume",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$HOME/.codex/hooks/compact-reorient.sh\"",
+            "timeout": 10
+          }
+        ]
       }
     ],
     "PreToolUse": [

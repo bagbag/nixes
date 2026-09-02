@@ -2,9 +2,8 @@
 # context-watch: warn a session as it approaches auto-compaction.
 #
 # Every session gets baseline "compaction is near" warnings. Sessions that opt
-# into a mode get richer, mode-specific guidance; a session opts in by writing
-# its mode to /tmp/claude-context-watch/<session_id>.mode — the supervisor and
-# autopilot skills do this on invocation.
+# into a mode get richer, mode-specific guidance. The supervisor and autopilot
+# skills register their session-scoped lead mode on invocation.
 #
 #   default:    no opt-in — last-warning rungs only (compaction imminent).
 #   supervisor: 35 42 50, then +5 up to 80 -> recommend compaction.
@@ -30,6 +29,7 @@ command -v jq >/dev/null 2>&1 || exit 0
 input=$(cat)
 settings="$HOME/.claude/settings.json"
 dir=/tmp/claude-context-watch
+session_lead=${AGENT_SESSION_LEAD_COMMAND:-$HOME/.agents/bin/session-lead-mode}
 
 # Read a value: env override wins, else settings.json at <jq-path>, else default.
 setting() {  # <jq-path> <env-override> <default>
@@ -45,7 +45,10 @@ event=$(jq -r '.hook_event_name // "PostToolUse"' <<<"$input")
 [[ -n "$session_id" && -n "$transcript" && -f "$transcript" ]] || exit 0
 
 mode=default
-[[ -f "$dir/$session_id.mode" ]] && mode=$(<"$dir/$session_id.mode")
+active_mode=$(bash "$session_lead" get "$session_id" 2>/dev/null || true)
+case "$active_mode" in
+  autopilot | supervisor) mode=$active_mode ;;
+esac
 
 # --- window (percentage base) -----------------------------------------------
 # Every current model (Opus, Sonnet, Fable) has a 1M window; only Haiku is

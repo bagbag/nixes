@@ -22,13 +22,14 @@ and context stewardship.
 
 ## 1. Start and understand the goal
 
-Register the context-monitor mode:
+Register the session lead immediately:
 
 ```sh
-bash "$HOME/.agents/bin/set-context-watch-mode" supervisor
+bash "$HOME/.agents/bin/session-lead-mode" activate supervisor
 ```
 
-The helper activates a supported monitor and otherwise safely does nothing.
+The registration is idempotent and keeps this skill active across compaction
+and session resume.
 
 Read the project's orientation sources and any active handover, board, or
 durable design record. Build the what/why/how picture before decomposing. On a
