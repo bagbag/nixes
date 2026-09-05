@@ -160,7 +160,7 @@ Choose roles through the global routing rules. Every brief names:
    files, with the required content or format.
 2. Authoritative sources and required skills or project instructions.
 3. One exclusive file zone and explicit no-touch zones.
-4. Ratified decisions marked FINAL.
+4. Current ratified decisions, their rationale, and material assumptions.
 5. Task-specific STOP conditions.
 6. Concrete verification commands and permitted side effects.
 7. The living board path, with an instruction to flag board/spec
@@ -181,9 +181,12 @@ read-only; assign artifact-producing work to a role that can write it.
 
 Use spec-as-source and brief-as-delta. Point to ratified sources instead of
 copying shared decisions. An override must name the section and decision that
-authorized it; an unmarked conflict is a STOP. Relay project-specific rules,
-not generic role discipline. Add an anti-regression STOP when older sources may
-still encode a reversed decision.
+authorized it; return an unmarked conflict to the lead before dependent work.
+Treat legacy FINAL labels as current authorization subject to the global
+reconsideration rule. Workers actively report material reasons to revisit a
+decision; the lead resolves revisions under the active mode's authority.
+Relay project-specific rules, not generic role discipline. Add an anti-regression
+STOP when older sources may still encode a reversed decision.
 
 ## 4. Dispatch and integration
 

@@ -17,8 +17,9 @@ complete former boards into `history/` at coherent phase boundaries.
   transient grounding artifacts need files of their own; keep rotated boards
   under `history/`.
 - Hold the current goal contract; live/queued workers or tracks (id · zone ·
-  task · status); a mutable current-decisions summary; full pending
-  ratification items; a concise minor-decisions section; pending decisions and
+  task · status); a mutable current-decisions summary with rationale and material
+  assumptions; full pending ratification items; a concise minor-decisions
+  section; pending decisions and
   scope proposals; verified vs. taken-on-a-worker's-word; external-validation
   items (claim · owner · status · evidence · affected behavior);
   containment; and the next action.
@@ -30,8 +31,9 @@ complete former boards into `history/` at coherent phase boundaries.
   as they happen.
 - Record decisions in the board before dependent work consumes them.
 - Keep full decision and ratification records on the current board. Within a
-  phase they are append-only: a reversal adds a new entry and updates the
-  mutable current summary rather than rewriting the original.
+  phase they are append-only: a refinement or reversal records what changed,
+  why, and which decision it supersedes. Update the current summary and affected
+  work while retaining the earlier entry as history.
 - Keep `log.md` short and append-only: one dated sentence per rotated board,
   naming the phase or milestone and linking to its file under `history/`. It is
   an archive index, not a decision or evidence store.

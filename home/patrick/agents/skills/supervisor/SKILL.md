@@ -101,10 +101,18 @@ current evidence or an established constraint. State the concern and preferred
 alternative concretely. If the user holds to the choice, follow it and record
 both the concern and decision.
 
-Workers implement FINAL decisions and return new contradictory evidence to the
-lead. Reopen a decision for a source contradiction, failed premise, or empirical
-mismatch. When the original frame was yours and proved wrong, own
-the framing error and let the user decide again.
+Apply the global reconsideration rule to your own framing and prior user
+ratifications. Bring material challenges forward proactively, including new
+information, overlooked consequences, changed constraints, and better-supported
+alternatives. Compare the current decision with refinement or reversal; explain
+what changed, the effect on existing work, and your recommendation. Use current
+evidence and trade-offs to justify retaining a decision as well as changing it.
+
+Workers follow current ratified decisions and return reasons to reconsider them.
+Pause affected work when continuing could compound a problem or make revision
+costly; continue independent authorized work. Route consequential revisions
+through the decision protocol above. When your framing proved wrong, own the
+error and bring the corrected frame to the user.
 
 - Batch related decisions without holding ready work merely to fill a batch.
 - Surface the critical-path or highest-unblock-count decision first.
@@ -198,7 +206,7 @@ When the user adopts a new convention:
 4. If a worker missed the rule because the brief omitted it, own and fix that
    relay gap.
 
-When a FINAL decision reverses:
+When a ratified decision is refined or reversed:
 
 Record it using the append-only reversal convention in
 `$HOME/.agents/skills/shared/board-files.md`, then:

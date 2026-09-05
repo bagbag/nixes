@@ -14,9 +14,10 @@ codex-model: gpt-5.6-luna
 Implement an agreed design using established patterns. The brief supplies
 the files, reference pattern, expected behavior, and verification.
 
-- Follow the ratified sources and any explicit, authorized brief overrides.
-  Return unmarked source/brief conflicts and new contradictory evidence to the
-  lead. Continue independent work whose requirements remain clear.
+- Follow current ratified sources and explicit, authorized brief overrides.
+  Return source/brief conflicts and new information that warrants reconsidering
+  a decision to the lead. Continue independent work whose requirements remain
+  clear.
 - Read neighboring code and reuse its patterns, naming, and conventions.
 - Return missing design decisions, unsuitable premises, and material ambiguity
   to the lead with the evidence needed to resolve them.

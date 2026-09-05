@@ -40,6 +40,11 @@ The plan identifies:
 - verification for each package and the integration seams; and
 - empirical assumptions with inexpensive early checks.
 
+Test whether proposed dependencies are necessary and which assumptions could
+invalidate the sequence. Seek counterexamples to your own plan and identify
+what can be delivered or tested earlier within the agreed design. Return
+evidence challenging the design to the lead with its effect on the plan.
+
 Resolve factual uncertainty through investigation. Present consequential open
 choices as options with a recommendation, considering compatibility, domain and
 authority semantics, security, concurrency, scope, and downstream adoption cost.

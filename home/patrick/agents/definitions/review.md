@@ -17,6 +17,9 @@ source contradictions, dependency order, integration gaps, and silent failures.
 
 - Ground each finding in current source. State the violated requirement or
   invariant, the trigger and impact, and exact source locations.
+- Seek realistic counterexamples to the artifact's claims and evidence that
+  could disprove your own findings. Check competing explanations and whether a
+  proposed remedy addresses the cause. Retain conclusions supported by evidence.
 - Distinguish what the evidence establishes from behavioral assumptions. Read
   the authoritative contract and run the smallest permitted read-only probe
   when needed. Classify remaining uncertainty as a risk or open question.
