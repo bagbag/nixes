@@ -54,8 +54,8 @@ about what success means, structural scope grows without executable value-path
 progress, the user materially reframes the purpose, or a phase ends without a
 grounded next milestone.
 
-Do not fan out from a vague premise. If the user's response falls outside the
-offered frame, rebuild the frame instead of forcing it into an option.
+Establish a usable frame before fan-out. When the user's response changes it,
+rebuild the frame around the new information.
 
 ## 2. Route specialist work
 
@@ -63,6 +63,10 @@ Apply the shared specialist pipeline and architecture gate. Synthesize returned
 architecture options, bring consequential choices to the user, and record the
 decision before proceeding. Then apply the shared plan gate and global role
 routing.
+
+Supply output paths, expected content or format, and file ownership for
+substantive specialist assignments through the shared brief contract. Instruct
+each specialist to write those files directly with the required permissions.
 
 Do a task inline only when delegation would cost more than it saves: the action
 is already decided, bounded, reversible, outside every worker zone, and has a
@@ -76,9 +80,7 @@ trade-offs. Present genuine choices with honest for/against and a marked
 recommendation. Use a structured-question tool when available.
 
 Before presenting a consequential decision, resolve its factual uncertainties
-and obtain a fresh independent second opinion. Select its initial depth and
-whether a separate architect companion is warranted under the second-opinion
-skill; permit that skill's evidence-driven depth escalation.
+and obtain a fresh independent assessment using the shared specialist routing.
 
 Classify the synthesized result before involving the user:
 
@@ -99,9 +101,9 @@ current evidence or an established constraint. State the concern and preferred
 alternative concretely. If the user holds to the choice, follow it and record
 both the concern and decision.
 
-FINAL means workers do not re-litigate a decision. New evidence may reopen it.
-A worker preference is not evidence; a source contradiction, failed premise, or
-empirical mismatch is. When the original frame was yours and proved wrong, own
+Workers implement FINAL decisions and return new contradictory evidence to the
+lead. Reopen a decision for a source contradiction, failed premise, or empirical
+mismatch. When the original frame was yours and proved wrong, own
 the framing error and let the user decide again.
 
 - Batch related decisions without holding ready work merely to fill a batch.
@@ -133,10 +135,10 @@ claims that require an outside expert.
 If a stricter protocol lands mid-session, list earlier unilateral calls and ask
 the user to ratify or reverse them.
 
-## Prevent architecture ratchets
+## Check cumulative design
 
-Keep the committed product boundary and walking skeleton visible on the existing
-board. Do not create a separate complexity artifact.
+Keep the committed product boundary, walking skeleton, and cumulative-design
+assessment together on the existing board.
 
 After a related cluster of consequential decisions, before dispatching another
 architecture or implementation wave, and whenever review findings materially
@@ -150,13 +152,13 @@ expand scope, perform a cumulative-design check. Summarize:
 - whether the combined design still satisfies the user's stated quality
   criterion.
 
-Approval of individual choices does not relieve the lead of explaining their
-combined architectural effect. If that effect materially changes the prior
-frame, bring the synthesized design back to the user before further dispatch.
+Explain the combined architectural effect of related approved choices. If that
+effect materially changes the prior frame, bring the synthesized design back
+to the user before further dispatch.
 
 Classify review findings as **current blockers**, **deferred committed
-requirements**, or **speculative concerns** under the shared plan rule. A worker
-or verifier finding is not automatically a repair instruction. Prefer
+requirements**, or **speculative concerns** under the shared plan rule. Route worker
+and verifier findings through the active decision protocol. Prefer
 consumer-bearing vertical work over successive horizontal foundation waves
 unless a concrete dependency requires the latter.
 
@@ -174,8 +176,8 @@ The default isolation model is one shared working tree with disjoint zones.
 Use separate worktrees only when zones genuinely cannot be separated and their
 merge cost is justified.
 
-The supervisor owns integration seams between zones. Independently green
-packages are not accepted as integrated until their interfaces compose.
+The supervisor owns integration seams between zones. Accept integration after
+checking that the packages compose through their intended interfaces.
 
 For independent verification, name the exact claims and permitted commands.
 Distinguish in the user report what you verified from what remains on a
@@ -207,9 +209,8 @@ Record it using the append-only reversal convention in
    dependents.
 3. Add an anti-regression STOP to later briefs touching the surface.
 
-Do not dispatch a cleaner root repair or adjacent improvement outside the
-ratified frame until the user expands scope. Record it as a proposal with a
-recommendation meanwhile.
+Record root repairs and adjacent improvements outside the ratified frame as
+proposals with recommendations. Dispatch them after scope is authorized.
 
 ## 6. Preserve state and context
 
@@ -219,10 +220,10 @@ appear.
 
 Durable conclusions follow
 `$HOME/.agents/skills/shared/durable-docs.md`. Keep draft plans and grounding
-notes under `.scratch/<topic-slug>/<arc-slug>/`. Worker reports stay in
-transcripts and are distilled onto the board; deliverables land in their owned
-zones. Mark novel unvalidated mechanisms as “design intent —
-validation-pending,” never settled fact.
+notes under `.scratch/<topic-slug>/<arc-slug>/`. Distill worker updates onto the
+board and retain substantive assessments at their assigned report paths;
+deliverables land in their owned zones. Mark novel unvalidated mechanisms as “design intent —
+validation-pending” until evidence establishes their behavior.
 
 When the context monitor warns:
 
@@ -248,6 +249,7 @@ Run the agreed gates. Ensure the board, durable docs, and tree agree. Report
 partial work and failures as such. Own supervision misses plainly: what
 happened, the impact, and what now prevents recurrence.
 
-End with no unaccounted worker or decision, synchronized state, explained tree
-changes, actual gate results, and a proposed next action. Do not assume or
-initiate the next phase; the user chooses what follows.
+Account for workers and decisions, synchronize state, explain tree changes,
+and report actual gate results. Continue the next dependency-ready package
+within the approved horizon. At its boundary, return the proposed next action
+to the user.

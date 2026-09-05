@@ -1,9 +1,8 @@
 #!/usr/bin/env bash
-# readonly-guard: PreToolUse(Bash) hook carried by the read-only role agents
-# (scout, Explore, verify, review, Plan) via their frontmatter. Their tool
-# lists already exclude Edit/Write; this closes the Bash hole by denying
-# mutating commands. A deny-list raises the bar, it is not a sandbox — the
-# role prompts remain the semantic guard.
+# readonly-guard: PreToolUse(Bash) hook for specialist investigation commands.
+# Artifact-writing roles use Edit/Write for assigned files. This deny-list
+# raises the bar against shell mutations; it is not a sandbox. Role prompts
+# own artifact scope and any explicitly permitted verification side effects.
 set -euo pipefail
 
 input=$(cat)
@@ -12,7 +11,7 @@ cmd=$(jq -r '.tool_input.command // ""' <<<"$input")
 [[ -n "$cmd" ]] || exit 0
 
 deny() {
-  jq -cn --arg r "readonly-guard: this role is read-only — blocked: $1. Verify and report; never fix. If the command was genuinely read-only, note the false positive in your report instead of working around the guard." \
+  jq -cn --arg r "readonly-guard: investigation shell mutation blocked: $1. Use file-editing tools for assigned artifacts. Return implementation work to the lead. If this command was read-only or an authorized verification check, report the rejection instead of working around the guard." \
     '{hookSpecificOutput:{hookEventName:"PreToolUse",permissionDecision:"deny",permissionDecisionReason:$r}}'
   exit 0
 }

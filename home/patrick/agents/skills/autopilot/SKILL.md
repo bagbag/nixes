@@ -33,9 +33,8 @@ Before the user leaves, establish the shared goal contract plus:
 - the evidence required for the user to accept the result;
 - the expected return point and report.
 
-Orient from project sources before asking questions. Do not begin unattended
-work until the user ratifies scope, authority, done criteria, and the workspace
-strategy.
+Orient from project sources before asking questions. Begin unattended work
+after the user ratifies scope, authority, done criteria, and workspace strategy.
 
 Invoke the `define-goal` skill at the start of every new autopilot arc while the
 user is still available. Use it to establish or advance the defining outcome,
@@ -66,15 +65,19 @@ options to the user for ratification. Spend the user's remaining presence on
 unresolved plan and architecture decisions; after departure, the same choice
 must fit an autonomy tier or be parked.
 
-If new architectural uncertainty appears mid-arc, delegate analysis to an
-architect worker rather than letting an implementation worker invent the
-design. Apply the decision tiers to the returned options. A change that reshapes
+Supply output paths, expected content or format, and artifact ownership for
+substantive specialist assignments through the shared brief contract. Instruct
+each specialist to write those files directly with the required permissions.
+Prepare their directories before dispatch when needed.
+
+If new architectural uncertainty appears mid-arc, delegate that question to the
+architect and apply the decision tiers to its returned options. A change that reshapes
 public contracts, the durable end-state, or substantial downstream work has
 high reversal cost even when Git could technically undo it.
 
 A discovery that contradicts the ratified plan is a plan-level STOP. Park the
 affected track, record the evidence, and re-plan only the affected packages
-within existing authority. Never improvise silent divergence.
+within existing authority, with the revised plan recorded before resuming.
 
 ## 3. Decision tiers
 
@@ -91,17 +94,16 @@ within existing authority. Never improvise silent divergence.
   decision stalls its track, never the arc.
 
 Before acting on a non-trivial reversible decision, resolve factual uncertainty
-and obtain a fresh independent second opinion. Select its initial depth and
-whether a separate architect companion is warranted under the second-opinion
-skill; permit that skill's evidence-driven depth escalation. If either review
-reveals a genuine trade-off outside the ratified unattended authority, park it
-rather than treating reviewer agreement as authorization.
+and obtain a fresh independent assessment using the shared specialist routing.
+If the assessment reveals a genuine trade-off outside the ratified unattended
+authority, park it for user decision. Reviewer agreement leaves the ratified
+authority unchanged.
 
 Tier honestly; when unsure, choose the higher tier. Reversible means the choice
 can be undone from the board entry without remembered context or costly
 downstream rework. Version-control reversibility alone is insufficient.
 
-Assess reversibility and scope cumulatively, not only one decision at a time. A
+Assess the cumulative reversibility and scope of related decisions. A
 sequence of locally reversible changes may become scope-changing once downstream
 work adopts their combined architecture.
 
@@ -116,8 +118,7 @@ with advancement of the ratified walking skeleton. If architecture or
 coordination keeps growing while no executable user outcome advances, treat
 that as a plan-level STOP. Park the affected work and return with the current
 combined design, smaller clean, coherent alternatives, and a recommendation.
-Do not silently convert a consumer-bearing plan into construction of unconsumed
-foundations.
+Preserve the consumer-bearing path when revising the plan.
 
 ## 4. Board and recovery
 
@@ -125,8 +126,7 @@ Use one living `.scratch/<topic-slug>/<arc-slug>/board.md` beside
 `handover.md` and `log.md`. Maintain the full current-state summary,
 ratification queue, parked decisions, scope proposals, containment, and
 checkpoint evidence on the board. `log.md` only indexes complete boards rotated
-into `history/`. A decision that is not recorded did not happen; do not build on
-it.
+into `history/`. Record a decision before dependent work uses it.
 
 After a crash, window boundary, or compaction, re-orient from the chosen
 workspace, its Git state when applicable, the board, and the handover. Treat
@@ -147,17 +147,23 @@ authority.
 - At every coherent milestone and before a window or context boundary, update
   the board and run `handover` in WRITE mode so another session can resume
   without transcript context.
-- Continue every independent track when one track parks; a parked track never
-  stalls the whole arc.
+- Continue independent authorized tracks within the remaining unattended budget
+  when another track parks.
+
+Check the agreed time, window, or milestone budget before dispatch and at each
+checkpoint. Reserve time to collect worker state and write the return report.
+When the budget is exhausted, stop new dispatch, bring active work to a safe
+stopping point, and report verified progress, incomplete work, and the next
+authorized action. Resume only within a newly granted or remaining window.
 
 ## 6. Hardened verification and checkpoints
 
-No user catches slips mid-run, so the gates tighten:
+Unattended work uses explicit verification checkpoints:
 
 - The `verify`-gate threshold drops: gate every write-worker result that
   anything downstream will consume.
-- The whole-repo gate runs before every authorized checkpoint commit and final
-  acceptance. Any regression from the pre-flight baseline blocks the
+- Run the applicable gates selected at preflight before every authorized
+  checkpoint commit and final acceptance. Any regression from that baseline blocks the
   checkpoint or acceptance; investigate or park.
 - If shared retry and escalation fail, park the track with a diagnosis.
 - Architecture, plans, and worker results consumed downstream must carry their
@@ -173,9 +179,9 @@ is a parked decision—record it on the board and move to another track.
 
 ## 8. Return for ratification
 
-**Stop at done.** When the arc's done-criteria are met, stop and report —
-adjacent improvements you noticed are board notes for the user, not new
-tracks.
+Return when the done criteria or agreed budget is reached. Record adjacent
+improvements as proposals for the user. Keep incomplete work explicit when
+returning at a budget boundary.
 
 End every run (and every scheduled window) with a report built from the board:
 done-and-verified with actual gate numbers; ratification items;

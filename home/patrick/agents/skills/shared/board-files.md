@@ -2,7 +2,7 @@
 
 Keep one living board per multi-step arc at
 `.scratch/<topic-slug>/<arc-slug>/board.md`. It is transient coordination
-state, not a durable project conclusion. Supervisor and autopilot use the same
+state. Supervisor and autopilot use the same
 filename and shape. Keep a concise append-only index at `log.md` and rotate
 complete former boards into `history/` at coherent phase boundaries.
 
@@ -26,8 +26,9 @@ complete former boards into `history/` at coherent phase boundaries.
 
 ## Sync
 
-- Update as you dispatch / decide / accept — never reconstruct later.
-- A decision is recorded only when the file edit lands, not when stated in chat.
+- Update at dispatch, decision, and acceptance so the board reflects events
+  as they happen.
+- Record decisions in the board before dependent work consumes them.
 - Keep full decision and ratification records on the current board. Within a
   phase they are append-only: a reversal adds a new entry and updates the
   mutable current summary rather than rewriting the original.
@@ -36,8 +37,8 @@ complete former boards into `history/` at coherent phase boundaries.
   an archive index, not a decision or evidence store.
 - At a coherent phase boundary, move the complete `board.md` to
   `history/<date>-<phase>.md`, append its one-line index entry to `log.md`, and
-  create a new current board containing only the carried-forward state. Do not
-  copy the historical body into the new board. Recovery reads `board.md` first
+  create a new current board containing the carried-forward state and pointers
+  to the relevant history. Recovery reads `board.md` first
   and follows `log.md` references only when provenance is needed.
 - Re-sync the instant reality changes, and immediately when a compaction/context warning fires.
 
@@ -45,4 +46,7 @@ complete former boards into `history/` at coherent phase boundaries.
 
 - Relay a board pointer in every worker brief: "Living board at `<path>`; flag any board/spec
   contradiction; return results in a form I can distil onto it."
-- Distil worker results onto the board yourself; worker reports stay in transcripts.
+- Distill worker results onto the board yourself and link to substantive
+  assessments at their assigned report paths.
+- A board reference grants reading and reporting. Assign board write ownership
+  explicitly when a worker must edit it, and sequence those edits with the lead.

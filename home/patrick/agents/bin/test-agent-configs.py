@@ -12,6 +12,8 @@ import tempfile
 import tomllib
 from pathlib import Path
 
+import yaml
+
 
 EXPLICIT_ONLY_SKILLS = {"autopilot", "retro", "supervisor"}
 IMPLICIT_SKILLS = {"architect", "define-goal", "second-opinion"}
@@ -38,39 +40,18 @@ def load_skill_expander(root: Path):
     return module
 
 
-def parse_skill_frontmatter(path: Path) -> dict[str, str]:
+def parse_skill_frontmatter(path: Path) -> dict[str, object]:
     text = path.read_text(encoding="utf-8")
     parts = text.split("---", 2)
     if len(parts) != 3 or parts[0].strip():
         raise ValueError(f"{path}: expected YAML frontmatter")
 
-    metadata: dict[str, str] = {}
-    lines = parts[1].strip("\n").splitlines()
-    index = 0
-    while index < len(lines):
-        line = lines[index]
-        if not line or line[0].isspace() or ":" not in line:
-            index += 1
-            continue
-        key, raw_value = line.split(":", 1)
-        value = raw_value.strip().strip("\"'")
-        if value in {">", ">-", "|", "|-"}:
-            folded: list[str] = []
-            index += 1
-            while index < len(lines) and (
-                not lines[index] or lines[index][0].isspace()
-            ):
-                folded.append(lines[index].strip())
-                index += 1
-            value = " ".join(part for part in folded if part)
-        else:
-            index += 1
-        metadata[key] = value
-
-    if set(metadata) != {"name", "description"}:
-        raise ValueError(
-            f"{path}: skill frontmatter must contain only name and description"
-        )
+    metadata = yaml.safe_load(parts[1])
+    if not isinstance(metadata, dict):
+        raise ValueError(f"{path}: expected a frontmatter mapping")
+    for field in ("name", "description"):
+        if not isinstance(metadata.get(field), str) or not metadata[field].strip():
+            raise ValueError(f"{path}: {field} must be a nonempty string")
     if metadata["name"] != path.parent.name:
         raise ValueError(f"{path}: skill name must match its directory")
     if not metadata["description"] or not parts[2].strip():
@@ -89,6 +70,43 @@ def skill_frontmatter_bytes(path: Path) -> bytes:
     raise ValueError(f"{path}: unterminated YAML frontmatter")
 
 
+def validate_invocation_policy(path: Path, expected: bool) -> None:
+    config = yaml.safe_load(path.read_text(encoding="utf-8")) if path.exists() else {}
+    if not isinstance(config, dict):
+        raise ValueError(f"{path}: expected a metadata mapping")
+    policy = config.get("policy", {})
+    if not isinstance(policy, dict):
+        raise ValueError(f"{path}: expected a policy mapping")
+    if policy.get("allow_implicit_invocation", True) is not expected:
+        raise ValueError(f"{path}: unexpected implicit invocation policy")
+
+
+def validate_policy_semantics() -> None:
+    with tempfile.TemporaryDirectory() as directory:
+        path = Path(directory) / "openai.yaml"
+        validate_invocation_policy(path, True)
+        for value in (True, False):
+            path.write_text(
+                "# Invocation policy\ninterface:\n  display_name: Example\n"
+                f"policy: {{allow_implicit_invocation: {str(value).lower()}}}\n",
+                encoding="utf-8",
+            )
+            validate_invocation_policy(path, value)
+            try:
+                validate_invocation_policy(path, not value)
+            except ValueError:
+                pass
+            else:
+                raise ValueError("policy validation accepted the wrong invocation mode")
+        path.write_text('policy: {allow_implicit_invocation: "false"}\n', encoding="utf-8")
+        try:
+            validate_invocation_policy(path, False)
+        except ValueError:
+            pass
+        else:
+            raise ValueError("policy validation accepted a string in place of a boolean")
+
+
 def validate_skills(root: Path) -> None:
     skills_dir = root / "skills"
     skill_files = sorted(skills_dir.glob("*/SKILL.md"))
@@ -99,17 +117,9 @@ def validate_skills(root: Path) -> None:
     if len(names) != len(skill_files):
         raise ValueError(f"{skills_dir}: duplicate skill names")
 
-    for name in EXPLICIT_ONLY_SKILLS:
+    for name in EXPLICIT_ONLY_SKILLS | IMPLICIT_SKILLS:
         policy = skills_dir / name / "agents" / "openai.yaml"
-        expected = "policy:\n  allow_implicit_invocation: false\n"
-        if not policy.is_file() or policy.read_text(encoding="utf-8") != expected:
-            raise ValueError(f"{policy}: missing explicit-only Codex policy")
-
-    for name in IMPLICIT_SKILLS:
-        policy = skills_dir / name / "agents" / "openai.yaml"
-        expected = "policy:\n  allow_implicit_invocation: true\n"
-        if not policy.is_file() or policy.read_text(encoding="utf-8") != expected:
-            raise ValueError(f"{policy}: missing implicit Codex policy")
+        validate_invocation_policy(policy, name in IMPLICIT_SKILLS)
 
     worker_arcs = skills_dir / "shared" / "worker-arcs.md"
     if not worker_arcs.is_file() or not worker_arcs.read_text(encoding="utf-8").strip():
@@ -171,6 +181,7 @@ def validate_generated_agents(root: Path, generator) -> None:
     claude = generator.expected_outputs(source, "claude")
 
     expected_codex = {
+        "architect.toml",
         "build.toml",
         "craft.toml",
         "explorer.toml",
@@ -182,6 +193,7 @@ def validate_generated_agents(root: Path, generator) -> None:
         "verify.toml",
     }
     expected_claude = {
+        "architect.md",
         "build.md",
         "craft.md",
         "Explore.md",
@@ -200,17 +212,32 @@ def validate_generated_agents(root: Path, generator) -> None:
     parsed = {filename: tomllib.loads(content) for filename, content in codex.items()}
     if len({agent["name"] for agent in parsed.values()}) != len(parsed):
         raise ValueError("duplicate effective Codex agent names")
-    if parsed["verify.toml"]["sandbox_mode"] != "workspace-write":
-        raise ValueError("verify must permit incidental verification artifacts")
-    second_opinion = parsed["second-opinion.toml"]
-    if second_opinion["model"] != "gpt-5.6-sol":
-        raise ValueError("second-opinion must use Sol")
-    if second_opinion["sandbox_mode"] != "read-only":
-        raise ValueError("second-opinion must remain read-only")
-    if "readonly-guard.sh" not in claude["Explore.md"]:
-        raise ValueError("Claude Explore lost its readonly Bash hook")
-    if "readonly-guard.sh" not in claude["second-opinion.md"]:
-        raise ValueError("Claude second-opinion lost its readonly Bash hook")
+    specialists = {
+        "architect": "architect",
+        "plan": "Plan",
+        "review": "review",
+        "second-opinion": "second-opinion",
+        "verify": "verify",
+    }
+    for codex_name, claude_name in specialists.items():
+        if parsed[f"{codex_name}.toml"]["sandbox_mode"] != "workspace-write":
+            raise ValueError(f"{codex_name} must permit assigned artifact writes")
+        document = claude[f"{claude_name}.md"]
+        metadata = yaml.safe_load(document.split("---", 2)[1])
+        if not {"Write", "Edit"}.issubset(metadata["tools"].split(", ")):
+            raise ValueError(f"Claude {claude_name} must permit artifact writes and edits")
+        if "readonly-guard.sh" not in document:
+            raise ValueError(f"Claude {claude_name} lost its readonly Bash hook")
+
+    for codex_name, claude_name in {"scout": "scout", "explorer": "Explore"}.items():
+        if parsed[f"{codex_name}.toml"]["sandbox_mode"] != "read-only":
+            raise ValueError(f"{codex_name} must remain response-only and read-only")
+        document = claude[f"{claude_name}.md"]
+        metadata = yaml.safe_load(document.split("---", 2)[1])
+        if {"Write", "Edit"}.intersection(metadata["tools"].split(", ")):
+            raise ValueError(f"Claude {claude_name} must remain response-only")
+        if "readonly-guard.sh" not in document:
+            raise ValueError(f"Claude {claude_name} lost its readonly Bash hook")
 
 
 def validate_skill_expander(root: Path, expander) -> None:
@@ -314,42 +341,13 @@ def validate_rendered_skills(root: Path, expander) -> None:
             if marker in path.read_text(encoding="utf-8"):
                 raise ValueError(f"{path}: must inherit decision discipline via worker-arcs")
 
-        canonical_rules = (
-            "authoritative domain state from operational execution state",
-            "timeout, routing, transaction, recovery, observability",
-            "consequential architectural property before descending into an implementation preference",
-            "Apply reconciliation only when the disagreement could materially change",
-            "Treat position-swapping without resolved premises as continued disagreement",
-            "Do not force consensus or decide by majority",
-        )
-        rendered_owners = (
-            rendered_skills / "architect" / "SKILL.md",
-            rendered_skills / "second-opinion" / "SKILL.md",
-            rendered_skills / "shared" / "worker-arcs.md",
-        )
-        for path in rendered_owners:
-            normalized = " ".join(path.read_text(encoding="utf-8").split())
-            for rule in canonical_rules:
-                if normalized.count(rule) != 1:
-                    raise ValueError(
-                        f"{path}: decision rule was not rendered once: {rule}"
-                    )
-
-        rendered_architect = rendered_skills / "architect" / "SKILL.md"
-        architect_text = rendered_architect.read_text(encoding="utf-8")
-        if architect_text.count("Apply the shared decision discipline above") != 2:
-            raise ValueError(
-                f"{rendered_architect}: expected DESIGN and REVIEW discipline pointers"
-            )
-
-        rendered_second_opinion = (
-            rendered_skills / "second-opinion" / "SKILL.md"
-        )
-        second_opinion_text = rendered_second_opinion.read_text(encoding="utf-8")
-        if second_opinion_text.count("Apply the shared discipline only when") != 1:
-            raise ValueError(
-                f"{rendered_second_opinion}: missing reconciliation ceremony gate"
-            )
+        discipline = expander.expand_markdown(
+            source_skills / "shared" / "decision-discipline.md", source_skills.resolve()
+        ).strip()
+        for source in include_owners:
+            rendered = rendered_skills / source.relative_to(source_skills)
+            if rendered.read_text(encoding="utf-8").count(discipline) != 1:
+                raise ValueError(f"{rendered}: shared decision discipline was not preserved once")
 
         for path in sorted(rendered_skills.glob("*/SKILL.md")):
             headings = [
@@ -598,11 +596,16 @@ def main() -> int:
     generator = load_generator(root)
     expander = load_skill_expander(root)
     validate_skills(root)
+    validate_policy_semantics()
     validate_skill_expander(root, expander)
     validate_rendered_skills(root, expander)
     validate_generated_agents(root, generator)
     validate_multiline_and_optional_names(generator)
     validate_hooks(root)
+    subprocess.run(
+        [sys.executable, "-B", str(root / "bin" / "test-worktree-fingerprint.py")],
+        check=True,
+    )
     print("shared agent and skill validation passed")
     return 0
 

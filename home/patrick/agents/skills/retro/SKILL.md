@@ -12,8 +12,8 @@ description: >-
 
 ## 1. What to mine for
 
-The mining is main-agent work; don't delegate it. Walk the session for
-friction with a fingerprint:
+Review the session in the main conversation, where the corrections and their
+context are available. Look for concrete recurring friction:
 
 - corrections the user made twice — propose the rule that would have prevented
   the second;
@@ -23,7 +23,7 @@ friction with a fingerprint:
 - surprises that cost cycles: tool behavior, environment quirks, assumptions
   that proved wrong;
 - rules that fired WRONG — noise, over-asking, a rule the user overrode:
-  propose weakening or removal, not only additions;
+  propose narrowing or removing the rule;
 - cost sinks: work a cheaper role or pattern would have done equally well.
 
 An honest empty is a valid outcome — a session without durable learnings
@@ -33,7 +33,7 @@ reports that instead of inventing some.
 
 Pick the most specific layer that covers all future recurrences — and reuse
 before adding: grep the target layer first and strengthen an existing rule
-rather than writing a sibling.
+with the new evidence.
 
 - **Global agent instructions** — cross-project behavior of the main agent.
 - **Project agent instructions** — this project's conventions.
@@ -46,13 +46,12 @@ rather than writing a sibling.
 
 ## 3. Ratification round — propose-only
 
-Present the findings in batched structured questions (3–4 per round), each
-item carrying: the learning, the evidence (what actually happened), the
-proposed edit verbatim, and the destination layer. Nothing is written until
-the user approves that item. Apply ratified items in the same pass and confirm
-what landed where. Phrase rules with the why and the boundary cases the user
-decided — lean and information-dense.
+Batch related proposals while keeping each independently reviewable. Include
+the learning, concrete evidence, exact proposed edit, and destination. Apply
+items after user approval and confirm what changed. Phrase ordinary guidance
+as positive actions; retain precise execution and authority boundaries.
 
 When skills are rendered or store-backed, edit their canonical template source,
-then run the owner-provided validation, build, and activation workflow. Treat
+then run the owner-provided validation and build. Report whether activation
+is still needed, and perform it only within existing authorization. Treat
 installed generated output as immutable.

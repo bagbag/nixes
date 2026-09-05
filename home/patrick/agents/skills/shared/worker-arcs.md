@@ -6,9 +6,9 @@ verify multi-worker arcs. Their skills define decision authority, isolation,
 checkpoints, context handling, and mode-specific safety ceilings.
 
 The global agent instructions remain active and own universal safety, git,
-review, role-routing, documentation, and closure discipline. Do not restate
-those rules in briefs or mode skills. Read this file fully before planning or
-delegating the first worker.
+review, role-routing, documentation, and closure discipline. Keep briefs and
+mode skills focused on their task-specific requirements. Read this file fully
+before planning or delegating the first worker.
 
 <!-- @include shared/decision-discipline.md -->
 
@@ -35,20 +35,19 @@ the user or become ratification/parking items.
 
 Use the `define-goal` skill when this contract is absent, the next milestone is
 unclear, the product purpose has shifted, reviews disagree about what success
-means, or scope grows without advancing the defining value path. Do not
-reconstruct a weaker local goal-framing workflow.
+means, or scope grows without advancing the defining value path. Use that
+skill as the owner of goal framing.
 
 The plan must identify the earliest executable checkpoint that exercises and
 evaluates the defining value path and apply the `define-goal` skill's milestone
-challenge. Do not redefine product acceptance around infrastructure-only
-fallback evidence.
+challenge. Keep product acceptance tied to the defining value path and
+label infrastructure-only evidence for what it establishes.
 
 Resolve factual uncertainty through the global routing rules before asking the
-user to decide it. Before implementation planning, delegate to a capable worker
-explicitly instructed to use the `architect` skill when module boundaries,
-public contracts, data flow, mechanisms, or the desired clean end-state remain
-open; when existing architecture needs assessment; or when a plan would
-otherwise invent architecture.
+user to decide it. Before implementation planning, delegate to the `architect`
+agent when module boundaries, public contracts, data flow, mechanisms, or the
+desired clean end-state remain open; when existing architecture needs
+assessment; or when a plan would otherwise invent architecture.
 
 Give the architect the ratified frame and expected result. It returns design
 options, recommendations, evidence, and unresolved decisions to the lead; it
@@ -57,6 +56,14 @@ insufficient, it returns focused questions rather than guessing. Skip this
 stage when a ratified design or strong existing pattern already determines the
 work. Start implementation planning only after load-bearing architecture is
 ratified or authorized under the active mode's decision protocol.
+
+For an independent assessment, use `second-opinion` to challenge a proposed
+decision, including an architectural decision, or a fresh `architect` in
+REVIEW mode to assess the architecture itself. Use both when they address
+distinct questions. The lead commissions specialist follow-up for concrete
+unresolved questions and keeps each author separate from its independent
+reviewer. Select depth through the chosen skill and adjust it as evidence
+warrants.
 
 Specialist output always returns to the lead for synthesis. The lead remains
 accountable for the whole arc and is the only component that mediates user
@@ -74,7 +81,7 @@ plan containing:
 - per-package verification commands and permitted side effects;
 - empirical assumptions with cheap early tests;
 - integration checkpoints chosen by blast radius;
-- open questions and decision points, never silently resolved.
+- open questions and decision points for the lead to resolve.
 
 Prefer consumer-bearing vertical packages. Separating foundational layers is
 appropriate when a concrete dependency requires it, but the plan must identify
@@ -123,12 +130,11 @@ separate: use one only when a difficult premise or trade-off needs reasoning
 pressure beyond source grounding. Return unresolved decisions or a
 non-converging review loop to the active mode.
 
-Freshness applies to the independent initial judgment, not every amendment. Use
+Use a fresh worker for the independent initial judgment. Use
 the same reviewer to verify that its findings were addressed. Start another
 fresh review only when the premise or target materially changes, the result is
 genuinely contested, or the user explicitly requests another independent
-opinion. A fresh review must reconsider the frame; it must not merely restart
-the same gap-finding loop.
+opinion. The review role owns independent frame reassessment.
 
 A plan review must challenge cumulative scope as well as requirements coverage.
 Classify scope-expanding recommendations as **current blockers**, **deferred
@@ -138,17 +144,18 @@ integrity under supported workloads. A deferred committed requirement belongs
 to later committed behavior and can be added without replacing the current
 architecture; record its activation condition and keep it out of the current
 package graph. A speculative concern lacks a committed consumer or plausible
-supported-workload failure and does not become architecture, a gate, or a
-durable backlog item by default. When a review round only adds structure,
+supported-workload failure; keep it as a labeled observation until evidence
+justifies action. When a review round only adds structure,
 require it to test a smaller clean, coherent option and its effect on the
 earliest runnable composition checkpoint. Return a non-converging scope-growth
-loop to the lead instead of ratcheting the plan automatically.
+loop to the lead with the alternatives and supporting evidence.
 
 ## 3. Worker brief contract
 
 Choose roles through the global routing rules. Every brief names:
 
-1. One task and its expected result.
+1. One task and its expected result: a response or explicitly named artifact
+   files, with the required content or format.
 2. Authoritative sources and required skills or project instructions.
 3. One exclusive file zone and explicit no-touch zones.
 4. Ratified decisions marked FINAL.
@@ -156,6 +163,19 @@ Choose roles through the global routing rules. Every brief names:
 6. Concrete verification commands and permitted side effects.
 7. The living board path, with an instruction to flag board/spec
    contradictions.
+
+For substantive specialist artifacts, the lead supplies concrete
+output file paths in the brief, normally under the active arc's `.scratch/`
+directory. Assign those files to the specialist's write zone and identify
+existing artifacts to update. Short factual answers may remain in the response.
+References to boards or source files grant reading; specify any write ownership
+separately. Prepare required directories in the lead when the worker's command
+permissions cannot create them.
+Instruct each specialist to write its assigned files directly and return their
+paths with a concise summary. Grant the permissions needed for those writes
+within the assigned file zone.
+Scout and explore return discovery results in their responses and remain
+read-only; assign artifact-producing work to a role that can write it.
 
 Use spec-as-source and brief-as-delta. Point to ratified sources instead of
 copying shared decisions. An override must name the section and decision that
@@ -177,6 +197,10 @@ confirmation, and executes the approved deletion, reset, or discard. Do not
 relay destructive authorization through a worker brief unless the orchestration
 environment explicitly preserves it as trusted authority.
 
+The lead also owns Git index/history mutations and tracked-file moves. Workers
+provide exact rename mappings and perform associated content edits after the
+lead executes the approved `git mv` operation.
+
 Treat unexplained out-of-zone changes as potentially belonging to the user.
 Attribute them before acting and never revert them. Inspect the working tree,
 index, and package boundaries after each wave.
@@ -185,10 +209,10 @@ Use the orchestrator's tracked liveness and wait/resume mechanisms first.
 Resume related work with the warm worker and tell it what exists, what remains,
 and what changed. A new task gets a fresh worker.
 
-The lead owns integration seams. Independently green packages are not accepted
-as integrated until their interfaces compose. New work discovered outside the
-goal contract remains a proposal until the active mode authorizes a scope
-change.
+The lead owns integration seams and verifies that the packages compose
+through their intended interfaces before accepting integration. New work
+discovered outside the goal contract remains a proposal until the active mode
+authorizes a scope change.
 
 Before large fan-out, at milestones, and after reversals or containment, step
 back from the local diff. Recheck the work against the desired end-state:
@@ -223,14 +247,12 @@ checks over touched surfaces for what the broken gate would otherwise cover.
 
 ## 6. Retry and containment
 
-Follow the global retry and escalation rule; do not invent a mode-local retry
-ladder. If escalation still fails, invoke the active mode's user-decision or
-parking protocol.
+Use the global retry and escalation rule. If escalation still fails, invoke
+the active mode's user-decision or parking protocol.
 
 When accepted output later proves wrong, stop downstream consumers, map the
 blast radius, reopen the owning zone with its warm worker when viable, re-verify
-dependents, and record and disclose the containment. Never silently patch an
-accepted error.
+dependents, and disclose the error and containment in the current record.
 
 ## 7. Evidence and state
 

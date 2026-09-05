@@ -4,51 +4,58 @@ description: >-
   Write or consume a session handover note so work continues losslessly in a
   fresh session. Use when the user invokes the handover skill, says "write a handover",
   "continue this in a new session", before compaction with meaningful state —
-  and at session start when
-  `.scratch/<topic-slug>/<arc-slug>/handover.md` exists.
+  and at session start when the active arc has a handover.md note under .scratch/.
 ---
 
-# Handover — lossless session continuity
+# Handover
 
-Two modes: **WRITE** (ending a stretch of work) and **ORIENT** (starting from
-a note).
+Write or consume the state needed to continue in a fresh session.
 
-## Where notes live
+## Location and ownership
 
-Use `.scratch/<topic-slug>/<arc-slug>/handover.md`, beside the arc's `board.md`.
-The active lead or user supplies both slugs; if either is unknown, ask rather
-than guessing. Keep `.scratch/` gitignored. WRITE may create the arc directory
-and keeps one note current. ORIENT reads the specified note and never creates
-another arc.
+Use `.scratch/<topic-slug>/<arc-slug>/handover.md` beside the arc's board.
+The user or active lead supplies the slugs. Ask for missing paths and keep
+`.scratch/` gitignored. WRITE may create the assigned arc directory; ORIENT
+uses the supplied note and existing arc.
 
-## WRITE mode
+## WRITE
 
-First bring reality in sync: docs, board, `log.md`, TODO — nothing of value may
-exist only in the session (same rule as pre-compaction). Then write the note,
-self-contained for a reader with zero session context:
+Synchronize the existing board, decision records, and project owners affected
+by the work. Keep transient decisions on the board and enduring decisions in
+their canonical owner. Then record:
 
-- **Anchor** — branch, HEAD commit, write date/time, and a dirty-tree fingerprint
-  (`git status --short` plus the diff's hash); ORIENT's mismatch check compares
-  against exactly this without assuming a matching HEAD means a matching tree.
-- **State** — done and verified (with actual gate numbers) vs. in progress
-  vs. not started; what was taken on a worker's word.
-- **Decisions** — pointers to the durable record. A decision that exists only
-  in the note is a sync gap to fix first, not a note feature.
-- **Next actions**, priority-ordered, each with enough context to start cold.
-- **Open questions / parked decisions**, each with your recommendation.
-- **Gotchas** — environment quirks, traps discovered, things that look wrong
-  but are intentional.
-- **How to verify current state** — the gate commands and expected results.
+- **Anchor:** date/time, branch, HEAD, and the JSON fingerprint from
+  `python3 "$HOME/.agents/bin/worktree-fingerprint" .` in the active workspace.
+  It covers staged entries, assume-unchanged/skip-worktree flags, Git status,
+  and tracked/nonignored untracked contents, including symlinks and initialized
+  submodules. Ignored files and Git configuration are outside its scope.
+  Capture it with workspace writers idle and retry any reported concurrent
+  change. If the helper cannot capture the workspace, record that limitation
+  explicitly and return the issue to the lead.
+- **State:** verified work and its evidence, in-progress work, remaining work,
+  and claims still taken on a worker's word.
+- **Decisions:** pointers to the current board or enduring decision owner.
+- **Next actions:** priority order and enough context to begin each cold.
+- **Open questions:** parked decisions and recommendations.
+- **Gotchas:** relevant environment constraints and intentional oddities.
+- **Checks:** verification commands, expected results, and authorized effects.
 
-Don't include: agent IDs or session references, or anything the durable docs
-already say (point instead).
+Use source and artifact pointers for reusable context. Keep session-specific
+worker identifiers in the live board; describe continuation work by its task
+and owned paths in the handover. If there is no board, the note may carry
+transient state itself. Create further records only when the work needs them.
 
-## ORIENT mode
+## ORIENT
 
-When a handover note exists at session start: read it, then verify before
-trusting — run its verification commands and compare the tree state against
-its anchor. A mismatch is the first finding, not something to silently absorb
-(the user may have worked since). Confirm the priority order with the user
-(when unattended, proceed on the note's order without asking). Do not rewrite
-the note merely to mark it consumed; consumption is session state. Update it
-only when WRITE mode next records materially changed handover state.
+Read the note and compare its fingerprint with current workspace state before
+running checks that may create artifacts. Investigate differences and preserve
+user changes. A matching fingerprint establishes file state within the helper's
+scope; it does not establish that the recorded claims are correct.
+
+Run the relevant verification commands within current authorization. Account
+for declared output artifacts separately from changes present at arrival.
+Continue the recorded authorized next action when its assumptions and priority
+still hold. Return material changes in scope, evidence, or priority to the user
+or active lead; unattended work follows its existing parking policy.
+
+Update the note in WRITE mode when handover state materially changes.

@@ -118,6 +118,12 @@ supports them; otherwise put the role, constraints, and expected report directly
 in the brief. Model bindings belong in native agent configuration, never in plans
 or worker briefs.
 
+For artifact-producing assignments, supply allowed output paths and instruct
+the specialist to write those files directly. Provide the required permissions
+and keep each artifact within its assigned file ownership.
+Scout and explore are response-only discovery roles; use an artifact-writing
+specialist when a file is required.
+
 - **`scout`** — one narrow factual lookup requiring search or reading: where X
   is defined, who calls Y, what config Z says. A single-command check stays inline.
 - **`explore` / `explorer`** — broad read-only sweeps across files, naming conventions, or
@@ -132,6 +138,7 @@ or worker briefs.
   returning CONFIRMED / REFUTED / UNVERIFIABLE with evidence; it never fixes.
 - **`review`** — fresh-eyes adversarial critique of a plan, design, or diff. It
   finds grounded defects and gaps rather than summarizing.
+- **`architect`** — architecture design and assessment. Returns options and recommendations to the lead.
 - **`plan`** — implementation planning for a multi-step arc: scope, work
   packages, exclusive file zones, dependencies, checks, and open decisions.
 - **`general-purpose` / `default`** — fallback for multi-step work that fits no

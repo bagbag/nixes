@@ -36,8 +36,8 @@ options.
 
 ### Synthesize
 
-- Do not force consensus or decide by majority. Synthesize from verified facts,
-  explicit trade-offs, and independent judgment. Treat agreement after shared
+- Synthesize from verified facts, explicit trade-offs, and independent judgment.
+  Preserve material disagreement through the decision. Treat agreement after shared
   framing or a lead-authored amendment as correlated evidence.
 - Preserve material disagreement, distinguish facts from preferences, and
   return genuine trade-offs to the decision owner with a recommendation.

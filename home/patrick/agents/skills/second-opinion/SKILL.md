@@ -1,9 +1,9 @@
 ---
 name: second-opinion
 description: >-
-  Obtain a fresh independent Sol second opinion on a consequential decision,
+  Obtain a fresh independent second opinion on a consequential decision,
   architecture, plan, blocker, or proposed solution. Use when the user says
-  “ask fresh Sol,” “get a second/2nd opinion,” “explore other options,”
+  “ask a fresh reviewer,” “get a second/2nd opinion,” “explore other options,”
   “recommend refinements,” or requests fresh sign-off. Frame the question
   neutrally, dispatch the dedicated source-grounded reviewer without inherited
   conversational conclusions, and return its recommendation and disagreements
@@ -28,29 +28,28 @@ Inspect the cheapest relevant orientation sources first. Give the reviewer:
 
 Omit the lead's recommendation, desired answer, and earlier reviewer verdicts.
 When reviewing a concrete proposal, include it as the object of review without
-endorsing it. Put a long brief in the active arc's `.scratch/` directory; never
-create a durable document merely to dispatch the review.
+endorsing it. Keep long dispatch briefs in the active arc's `.scratch/`
+directory.
+
+For a substantive report, assign a concrete output path and instruct the reviewer
+to write it directly. Include the expected content or format and write ownership;
+use the active arc's working-artifact location when available. Short bounded
+opinions may remain in the response.
 
 ## 2. Dispatch fresh
 
-Start a new `second-opinion` agent with no inherited conversation turns. Never
-reuse a warm worker for the initial opinion. The native agent definition owns
-its model, sandbox, reasoning discipline, and output contract; do not duplicate
-them in the brief.
+Start the initial opinion with a new `second-opinion` agent and a clean
+conversation containing only the neutral brief. The native agent definition
+owns its model, sandbox, reasoning discipline, and output contract.
 
-When both a second opinion and an architect review are warranted—whether
-user-requested or protocol-required—treat them as genuinely different lenses.
-Dispatch a separate architect by default whenever the decision materially
-affects product boundaries, enduring contracts, system ownership or data flow,
-workflow or lifecycle, or cumulative complexity. Use one fresh
-`second-opinion` agent applying the `architect` skill only when the user
-explicitly asks for a single combined judgment or the target is narrow enough
-that a second independent lens would add no material scrutiny. Optimize
-duplicated discovery, not independent judgment.
+The reviewer may challenge architectural decisions as part of its assessment.
+The lead owns specialist follow-up: commission an architect when a concrete
+architectural question warrants that expertise. Give each reviewer a distinct
+question and keep the design author separate from its independent reviewer.
 
 Give the agent repository access and source pointers, while requiring it to
-inspect current sources independently rather than trust the brief's factual
-claims. If the user says to let it expand, permit broader exploration while
+verify the brief's factual claims independently against current sources. If
+the user says to let it expand, permit broader exploration while
 keeping the requested decision and product boundary explicit.
 
 Preserve the requested review depth in the brief:
@@ -73,8 +72,8 @@ boundary may be wrong, consequences are systemic or hard to reverse, or source
 evidence and independent judgments do not converge.
 
 State that depth increased and why. Keep the report concise around the material
-decision even after deeper work. Do not expand merely to be comprehensive;
-lack of requested brevity is not evidence of rigor.
+decision even after deeper work. Expand when further investigation could
+materially change the judgment.
 
 ## 3. Synthesize
 

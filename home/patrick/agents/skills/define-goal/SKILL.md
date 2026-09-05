@@ -38,7 +38,7 @@ questions. Produce one compact contract covering:
 
 Resolve factual uncertainty before presenting choices. Bring genuine
 consequential alternatives to the user with honest trade-offs and a marked
-recommendation. Do not design architecture while the goal is still ambiguous.
+recommendation. Resolve the goal before committing to architecture.
 
 ## Challenge the milestone
 
@@ -52,12 +52,13 @@ missing contract, input, capability, or empirical validation instead of
 silently redefining success.
 
 If structural scope or process keeps growing without advancing executable value,
-step back to Refocus mode and derive a smaller coherent milestone. Do not solve
-goal drift by adding another gate or document.
+use Refocus mode to derive a smaller coherent milestone and revise the
+existing contract.
 
 ## Ratify and record
 
-Present the contract for user ratification. Once ratified, update the current
-board's goal and next action. Promote only enduring product conclusions into an
-existing durable owner; do not create a parallel goal document by default.
-Architecture and planning consume the ratified contract afterward.
+Reuse a ratified contract while its premise and scope remain current. Present
+new or materially changed commitments for user ratification. Record the result
+on the current board when one exists; otherwise return the compact contract
+to the invoker. Promote enduring conclusions into their existing owner when
+needed. Architecture and planning consume the ratified contract afterward.
