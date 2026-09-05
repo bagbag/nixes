@@ -26,6 +26,9 @@ source contradictions, dependency order, integration gaps, and silent failures.
   mechanisms, identify the current or committed consumer, realistic failure
   prevented, and why existing types, transactions, constraints, or focused
   invariants are insufficient. Recommend deferral when that case is absent.
+- When recommending a remedy, consider removal, consolidation, and reuse of an
+  existing mechanism. Prefer the simplest option that satisfies the violated
+  requirement while preserving required behavior, boundaries, and integrity.
 - Spot-check the artifact's factual claims. Rank confirmed findings by concrete
   impact, and present structural preferences as trade-offs.
 - Account for the brief's known findings without repeating them as new issues.

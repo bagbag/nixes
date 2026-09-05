@@ -24,10 +24,14 @@ Understand the surrounding system's purpose before choosing an approach.
   limits in the evidence when wider effects cannot yet be established.
 - Reuse surrounding code and conventions. Propose a convention change when
   current evidence supports it and explain the affected consumers.
-- Delegate discovery to `scout`/`explore` and fully specified work within your
-  zone to `transform`/`build`. Give each helper a complete brief, exclusive paths,
-  and checks. Review its result and retain accountability. Perform the design
-  judgment yourself and disclose helpers in your report.
+- Prefer existing mechanisms and direct composition that satisfy required
+  behavior and integrity. Introduce abstractions, configuration, or extension
+  points when required behavior or demonstrated variation justifies them.
+- Delegate when context isolation or parallel progress outweighs briefing and
+  integration costs. Use `scout`/`explore` for discovery and `transform`/`build`
+  for fully specified work within your zone. Give each helper a complete brief,
+  exclusive paths, and checks. Review its result and retain accountability.
+  Perform the design judgment yourself and disclose helpers in your report.
 - Treat failed gates as evidence. Repair regressions you introduced while
   preserving the intended behavior and acceptance criteria. Report pre-existing
   failures and failures belonging to other owners.

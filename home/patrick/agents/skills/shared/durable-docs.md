@@ -31,9 +31,12 @@ execution state belongs on the board under `.scratch/`.
 
 ## Structure
 
-- **Honest `index.md`**: current state, next action, locked decisions,
-  read order, and file index. Keep live state only; superseded material belongs
-  in `history/`.
+Keep a small topic in one canonical document. Add navigation and subdivisions
+when the amount of material or distinct ownership makes them useful.
+
+- **`index.md` when navigation needs it**: current state, next action, locked
+  decisions, read order, and file index. Keep live state only; superseded
+  material belongs in `history/`.
 - **Topical subfolders** when the topic needs them, not a flat accumulation
   (for example model, pipeline, evidence, legal, or build).
 - **Separated `history/`** for superseded-but-retained material, clearly
@@ -44,23 +47,26 @@ execution state belongs on the board under `.scratch/`.
 
 ## Sync
 
-Update durable docs in the same pass as the reality-changing work. Keep
-`index.md` sufficient for cold orientation. When a single-sourced concept
-changes, edit its owning section.
+Update durable docs in the same pass as the reality-changing work. Keep the
+topic's entry document sufficient for cold orientation, whether it is the
+single canonical document or an index. When a single-sourced concept changes,
+edit its owning section.
 
 ## Closure audit
 
-At a phase boundary or after a material architecture reset, inventory every
-active document under the topic directory, excluding `history/`, and classify
-it as:
+At a phase boundary or after a material architecture reset, review the affected
+canonical owners and references. For a single-document topic, re-read that
+document and check its relevant links. Broaden to an inventory of the active
+topic documents when cross-document changes or uncertain ownership warrant it.
+Classify inventoried documents as:
 
 - current canonical owner;
 - current narrow reference;
 - superseded material to move to `history/`; or
 - redundant material to remove.
 
-Then verify the active set as a whole: status and next action agree; each
+Verify the affected set as a whole: status and next action agree; each
 concept has one owner; active documents contain no stale workflow names,
 versions, migration identities, implementation-awaiting claims, or superseded
-terminology; all links resolve; and the index lists only current authority.
-Complete synchronization across the active owners as well as the index.
+terminology; relevant links resolve; and any index lists only current authority.
+Complete synchronization across the affected owners and their entry document.

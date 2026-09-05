@@ -91,9 +91,11 @@ foundation-only waves merely because their concepts can be designed
 independently.
 
 Every substantial addition must name its current or committed consumer and the
-realistic failure or enduring contract instability it prevents. Anything
-safely additive without replacement of an enduring contract belongs in the
-explicit deferral ledger rather than the current package graph.
+required behavior, realistic failure, or enduring contract instability it
+addresses. Include capabilities needed for the current milestone even when
+their implementation is additive. Defer later capabilities when they can be
+added without replacing required contracts or compromising current integrity;
+record their activation conditions with the plan's deferrals.
 
 A current consumer may justify current implementation. A later committed
 consumer normally justifies preserving a clean additive path, not implementing
