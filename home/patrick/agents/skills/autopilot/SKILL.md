@@ -7,185 +7,126 @@ description: >-
   ratification.
 ---
 
-# Autopilot — autonomous lead with a ratification trail
+# Autopilot — unattended lead
 
-Register the session lead immediately:
+Register immediately; this idempotent command preserves the mode across resume
+and compaction:
 
 ```sh
 bash "$HOME/.agents/bin/session-lead-mode" activate autopilot
 ```
 
-The registration is idempotent and keeps this skill active across compaction
-and session resume.
-
 Read `$HOME/.agents/skills/shared/worker-arcs.md` fully before planning or
-delegating. It owns the goal contract, specialist pipeline, plan gate, worker
-briefs, dispatch, acceptance, integration, containment, and shared state. This
-skill adds unattended decision authority, workspace choice, recovery, and
-stricter verification.
+delegating. It owns framing, routing, planning, briefs, dispatch, acceptance,
+containment, and state. This skill adds unattended authority and safeguards.
 
-## 1. Pre-flight — ratify the unattended contract
+## 1. Ratify the unattended contract
 
-Before the user leaves, establish the shared goal contract plus:
+Orient from project sources before asking questions. Use `define-goal` at the
+start of every new arc while the user is available: establish or advance the
+outcome, value path, milestone, walking skeleton, non-goals, and evidence before
+requesting unattended authority. Add a time/window/milestone budget, explicit
+pre-authorizations and forbidden actions, acceptance evidence, and return point
+and report. Begin only after scope, authority, done criteria, and workspace
+strategy are ratified.
 
-- an unattended budget in time, windows, or milestones;
-- explicit pre-authorizations and forbidden actions;
-- the evidence required for the user to accept the result;
-- the expected return point and report.
+Propose a dedicated worktree on `autopilot/<topic-slug>/<arc-slug>` with costs
+and benefits. The user chooses it or another named workspace. Creating or
+switching branches/worktrees needs explicit approval; invoking this skill
+authorizes no Git mutation. Record the workspace and exact Git authority,
+including checkpoint commits.
 
-Orient from project sources before asking questions. Begin unattended work
-after the user ratifies scope, authority, done criteria, and workspace strategy.
+Create `.scratch/<topic-slug>/<arc-slug>/board.md` under
+`$HOME/.agents/skills/shared/board-files.md`, with durable target
+`docs/<topic-slug>/`. Run and record the whole-repository baseline gate when
+available, otherwise the strongest available gates.
 
-Invoke the `define-goal` skill at the start of every new autopilot arc while the
-user is still available. Use it to establish or advance the defining outcome,
-value path, next observable milestone, walking skeleton, non-goals, and
-acceptance evidence before asking the user to delegate unattended authority.
+## 2. Route work and decisions
 
-Once the contract is sufficient:
+Apply shared routing, architecture, plan, and artifact-brief rules; prepare
+output directories when needed. Do architecture work while the user is present
+when possible, and use that time to ratify architecture and plan choices. After
+departure, choices must fit the tiers below. Delegate new architectural
+uncertainty to an architect. Changes to public contracts, durable design, or
+substantial downstream work have high reversal cost even if Git can undo them.
 
-1. Propose a dedicated worktree on an
-   `autopilot/<topic-slug>/<arc-slug>` branch as the default isolation
-   strategy, with its cost and benefit. The user chooses whether to create it
-   or work in another named workspace. Do not create or switch branches or
-   worktrees without explicit approval.
-2. Record the chosen workspace and exact Git authority, including whether
-   checkpoint commits are authorized. Invoking this skill alone authorizes no
-   Git mutation.
-3. Create `.scratch/<topic-slug>/<arc-slug>/board.md` following
-   `$HOME/.agents/skills/shared/board-files.md`, and record the durable target
-   `docs/<topic-slug>/`.
-4. Run the whole-repository gate when one exists, or the strongest available
-   baseline gates otherwise, and record their output.
+A contradiction of the ratified plan is a plan-level STOP: park affected work,
+record evidence, and revise only affected packages within authority. Record the
+revised plan before resuming.
 
-## 2. Plan and route
+- **Trivial/reversible:** act; record one line in board minor decisions.
+- **Non-trivial/reversible:** compare options with honest for/against and a
+  recommendation as if presenting to the user. Act on it and record a
+  ratification item: issue, options, choice, reasons, and reversal procedure.
+- **Irreversible, outward-facing, or scope-changing:** park with a recommendation
+  and continue independent authorized tracks.
 
-Apply the shared specialist pipeline, architecture gate, and plan gate. Run
-architecture work while the user is present when possible, and bring returned
-options to the user for ratification. Spend the user's remaining presence on
-unresolved plan and architecture decisions; after departure, the same choice
-must fit an autonomy tier or be parked.
+Resolve facts and obtain independent assessment before non-trivial action; reuse
+adequate assessment of the same decision/sources/revision under shared review
+rules. Agreement does not expand authority; park trade-offs outside it. When
+uncertain, choose the higher tier. Reversal must be possible from the board
+without remembered context or costly downstream rework—not merely through Git.
 
-Supply output paths, expected content or format, and artifact ownership for
-substantive specialist assignments through the shared brief contract. Instruct
-each specialist to write those files directly with the required permissions.
-Prepare their directories before dispatch when needed.
+Assess related decisions cumulatively: individually reversible changes can
+become scope-changing after adoption. Unless the unattended contract covers it,
+expansion of durable architecture, workflow, public contracts, or delivery
+process must be parked. Review findings do not authorize expansion; apply the
+shared blocker/deferred/speculative categories.
 
-If new architectural uncertainty appears mid-arc, delegate that question to the
-architect and apply the decision tiers to its returned options. A change that reshapes
-public contracts, the durable end-state, or substantial downstream work has
-high reversal cost even when Git could technically undo it.
+At each coherent milestone, compare structural/procedural growth with walking-
+skeleton progress. Continued growth without executable user outcomes is a
+plan-level STOP. Park affected work and return the combined design, smaller
+coherent alternatives, and recommendation; preserve the consumer-bearing path.
 
-A discovery that contradicts the ratified plan is a plan-level STOP. Park the
-affected track, record the evidence, and re-plan only the affected packages
-within existing authority, with the revised plan recorded before resuming.
+## 3. Execute, verify, and recover
 
-## 3. Decision tiers
+Work only in the authorized workspace; isolated-worktree work must not touch the
+user's original tree or branches. Follow shared waves, ownership, acceptance,
+and containment. Explicitly authorized checkpoint commits must be coherent
+Conventional Commits.
 
-- **Trivial + reversible** → act, one line in the current board's minor-
-  decisions section.
-- **Non-trivial but reversible** → derive the decision as if presenting it to
-  the user (options, honest for/against, the one you'd mark recommended), act
-  on that recommendation, and record a **ratification item** on the current
-  board:
-  what, options considered, choice, reasoning, and how to reverse it.
-- **Irreversible, outward-facing, or scope-changing** → **park it**: record
-  the decision with your would-be recommendation, work around it where
-  possible, and continue every track that doesn't depend on it. A parked
-  decision stalls its track, never the arc.
+Never rewrite history or merge your own work.
 
-Before acting on a non-trivial reversible decision, resolve factual uncertainty
-and obtain a fresh independent assessment using the shared specialist routing.
-If the assessment reveals a genuine trade-off outside the ratified unattended
-authority, park it for user decision. Reviewer agreement leaves the ratified
-authority unchanged.
+Keep one board beside `handover.md` and `log.md`: current state, full
+ratification queue, parks, proposals, containment, and checkpoint evidence.
+Record decisions before dependent work; `log.md` only indexes complete boards in
+`history/`. Update the board and run `handover` WRITE at each coherent milestone
+and before window/context boundaries.
 
-Tier honestly; when unsure, choose the higher tier. Reversible means the choice
-can be undone from the board entry without remembered context or costly
-downstream rework. Version-control reversibility alone is insufficient.
-
-Assess the cumulative reversibility and scope of related decisions. A
-sequence of locally reversible changes may become scope-changing once downstream
-work adopts their combined architecture.
-
-Unless explicitly covered by the unattended contract, expansion of the durable
-architecture, workflow, public contract, or delivery process is scope-changing
-and must be parked. A review finding does not itself authorize that expansion;
-classify it as a **current blocker**, a **deferred committed requirement**, or a
-**speculative concern** under the shared plan rule.
-
-At each coherent milestone, compare cumulative structural and procedural growth
-with advancement of the ratified walking skeleton. If architecture or
-coordination keeps growing while no executable user outcome advances, treat
-that as a plan-level STOP. Park the affected work and return with the current
-combined design, smaller clean, coherent alternatives, and a recommendation.
-Preserve the consumer-bearing path when revising the plan.
-
-## 4. Board and recovery
-
-Use one living `.scratch/<topic-slug>/<arc-slug>/board.md` beside
-`handover.md` and `log.md`. Maintain the full current-state summary,
-ratification queue, parked decisions, scope proposals, containment, and
-checkpoint evidence on the board. `log.md` only indexes complete boards rotated
-into `history/`. Record a decision before dependent work uses it.
-
-After a crash, window boundary, or compaction, re-orient from the chosen
-workspace, its Git state when applicable, the board, and the handover. Treat
-workspace and Git state as observed reality, the board as current intent, and
-the handover as the last checkpoint snapshot. On disagreement, preserve the
-evidence, reconcile the board to observed reality, record the discrepancy, and
-rerun affected gates. Park the track if recovery would exceed ratified
+After crashes, window boundaries, or compaction, read workspace/Git state,
+board, and handover. They represent observed reality, current intent, and last
+checkpoint respectively. Follow linked decision and evidence records when their
+details govern the next action. Preserve discrepancies as evidence, reconcile
+the board to reality, and rerun affected gates. Park recovery exceeding
 authority.
 
-## 5. Execute in the ratified workspace
+Independently verify every coherent write result consumed downstream. The
+reviewer or lead owning that check must not have authored the implementation.
+Apply the shared requirements for independent runtime evidence; author logs
+alone are insufficient. Add a verifier only for unestablished claims and reuse
+suitable independent evidence under shared acceptance rules. Satisfy applicable
+review and verification gates before dependent work, sharing adequate evidence
+across overlapping requirements. Run preflight-selected gates before authorized
+checkpoint commits and final acceptance. Baseline regressions block checkpoints
+and acceptance: investigate or park. Park with a diagnosis if shared
+retry/escalation fails.
 
-- Operate only inside the workspace the user authorized. If it is an isolated
-  worktree, never touch the user's original working tree or branches.
-- Follow the shared dependency-ready waves, ownership, acceptance, and
-  containment rules.
-- If checkpoint commits were explicitly authorized, commit only coherent
-  milestones using Conventional Commits. Never rewrite history.
-- At every coherent milestone and before a window or context boundary, update
-  the board and run `handover` in WRITE mode so another session can resume
-  without transcript context.
-- Continue independent authorized tracks within the remaining unattended budget
-  when another track parks.
+Check the remaining budget before dispatch and at checkpoints; reserve time to
+collect worker state and report. Continue independent tracks when another parks.
+At exhaustion, stop dispatch, bring active work to a safe stopping point, and
+report verified/incomplete work and the next authorized action. Resume only
+within a newly granted or remaining window.
 
-Check the agreed time, window, or milestone budget before dispatch and at each
-checkpoint. Reserve time to collect worker state and write the return report.
-When the budget is exhausted, stop new dispatch, bring active work to a safe
-stopping point, and report verified progress, incomplete work, and the next
-authorized action. Resume only within a newly granted or remaining window.
+## 4. Hard ceiling and return
 
-## 6. Hardened verification and checkpoints
+Never autonomously push/publish; send messages, PRs, deployments, or
+side-effecting external API calls; migrate/write real data; delete outside the
+authorized workspace; handle secrets/credentials; or change global systems. If
+required, park the decision on the board and work on another track.
 
-Unattended work uses explicit verification checkpoints:
-
-- The `verify`-gate threshold drops: gate every write-worker result that
-  anything downstream will consume.
-- Run the applicable gates selected at preflight before every authorized
-  checkpoint commit and final acceptance. Any regression from that baseline blocks the
-  checkpoint or acceptance; investigate or park.
-- If shared retry and escalation fail, park the track with a diagnosis.
-- Architecture, plans, and worker results consumed downstream must carry their
-  required fresh review or verification before that dependency proceeds.
-
-## 7. Hard ceiling — never on autopilot
-
-Pushing or publishing anything; outward-facing actions (messages, PRs,
-deployments, external APIs with side effects); migrations or writes against
-real data; deletions outside the authorized workspace; secret/credential
-handling; global system changes. If the arc cannot proceed without one, that
-is a parked decision—record it on the board and move to another track.
-
-## 8. Return for ratification
-
-Return when the done criteria or agreed budget is reached. Record adjacent
-improvements as proposals for the user. Keep incomplete work explicit when
-returning at a budget boundary.
-
-End every run (and every scheduled window) with a report built from the board:
-done-and-verified with actual gate numbers; ratification items;
-parked decisions with recommendations; failures and parks with diagnoses; and
-the proposed disposition of the authorized workspace. If a branch or worktree
-exists, present the merge-or-discard choice. The user ratifies and chooses what
-happens next; autopilot never merges its own work.
+Return at the done criteria or budget boundary; keep incompleteness explicit and
+adjacent improvements as proposals. End every run/window with board-derived
+verified outcomes and actual gate numbers, ratification items, parked decisions
+and recommendations, failure/park diagnoses, and proposed workspace disposition.
+For a branch/worktree, present merge or discard. The user ratifies and decides
+what happens next.

@@ -28,8 +28,10 @@ options.
 - A changed recommendation must identify new evidence, a corrected premise, or
   an explicit reweighting of trade-offs.
 - Treat position-swapping without resolved premises as continued disagreement.
-  Resolve verifiable uncertainty first; use fresh neutral adjudication when
-  consequential judgment remains.
+  Use one focused reconciliation to resolve factual disputes, then return
+  remaining judgment differences to the decision owner with options and a
+  recommendation. Further neutral adjudication is optional for a named
+  unanswered question or explicit user request.
 - A compromise, hybrid, or other synthesized alternative is a new option. Test
   it neutrally against the original criteria and determine whether it preserves
   the parents' benefits or merely combines their costs.

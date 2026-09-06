@@ -31,16 +31,20 @@ When reviewing a concrete proposal, include it as the object of review without
 endorsing it. Keep long dispatch briefs in the active arc's `.scratch/`
 directory.
 
-For a substantive report, assign a concrete output path and instruct the reviewer
-to write it directly. Include the expected content or format and write ownership;
-use the active arc's working-artifact location when available. Short bounded
-opinions may remain in the response.
+For a substantive report, assign a concrete output path and instruct the
+reviewer to write it directly. Include the expected content or format and write
+ownership; use the active arc's working-artifact location when available. Short
+bounded opinions may remain in the response.
 
 ## 2. Dispatch fresh
 
 Start the initial opinion with a new `second-opinion` agent and a clean
-conversation containing only the neutral brief. The native agent definition
-owns its model, sandbox, reasoning discipline, and output contract.
+conversation containing only the neutral brief. The native agent definition owns
+its model, sandbox, reasoning discipline, and output contract. An explicit
+request for a new second opinion or fresh sign-off always starts a new
+independent reviewer. Reusing an earlier assessment for another workflow gate
+does not fulfill that request; clarifications and repairs stay with the
+reviewer.
 
 The reviewer may challenge architectural decisions as part of its assessment.
 The lead owns specialist follow-up: commission an architect when a concrete
@@ -48,9 +52,9 @@ architectural question warrants that expertise. Give each reviewer a distinct
 question and keep the design author separate from its independent reviewer.
 
 Give the agent repository access and source pointers, while requiring it to
-verify the brief's factual claims independently against current sources. If
-the user says to let it expand, permit broader exploration while
-keeping the requested decision and product boundary explicit.
+verify the brief's factual claims independently against current sources. If the
+user says to let it expand, permit broader exploration while keeping the
+requested decision and product boundary explicit.
 
 Preserve the requested review depth in the brief:
 
@@ -62,37 +66,36 @@ Preserve the requested review depth in the brief:
 - **Thorough:** expand across adjacent consequences, alternatives, and
   cumulative architecture when the decision warrants it.
 
-Depth is an initial budget, not a hard ceiling. Begin by testing whether the
-decision is actually as bounded as framed. Escalate Quick to Standard when its
-effects may reach the defining outcome, enduring contracts, domain or authority
-semantics, security, concurrency, cross-package ownership, or costly downstream
-work, or when the quick pass cannot establish that those surfaces are
-unaffected. Escalate Standard to Thorough when the governing premise or product
-boundary may be wrong, consequences are systemic or hard to reverse, or source
-evidence and independent judgments do not converge.
-
-State that depth increased and why. Keep the report concise around the material
-decision even after deeper work. Expand when further investigation could
-materially change the judgment.
+Depth is an initial budget, not a hard ceiling. Test whether the decision is as
+bounded as framed. Examine consequences for security, authority, isolation,
+concurrency, irreversible effects, and uncertain contract boundaries. Increase
+depth when the decision warrants it or when the scope of impact cannot be
+established; finding a defect first is not required. State the uncertainty and
+extra investigation. Investigation depth and reviewer count are separate
+choices; these risks do not automatically require additional agents. Keep the
+report focused on the material decision.
 
 ## 3. Synthesize
 
 Spot-check load-bearing evidence. Compare the independent opinion with the
 current direction, preserve meaningful disagreements, and explain what changed
-or stayed persuasive. The opinion is not authorization: return the options,
-the lead's recommendation after considering them, and the remaining decisions
-to the user before proceeding.
+or stayed persuasive. The opinion is not authorization: return the options, the
+lead's recommendation after considering them, and the remaining decisions to the
+user before proceeding.
 
-Use the same reviewer for a focused clarification or amendment check. Start a
-new fresh reviewer when the premise or target materially changes, the result is
-genuinely contested, or the user explicitly requests another independent
-opinion.
+Use the same reviewer for focused clarification or amendment checks; close the
+review when findings are resolved and agreed checks pass. Reuse adequate
+assessment of the same target, sources, and revision across review requirements.
+Reopen broader review on evidence of a materially changed premise or blast
+radius. An additional fresh opinion needs a stated distinct purpose or explicit
+user request.
 
 ### Reconcile material reviewer disagreement
 
 Apply the shared discipline only when disagreement could materially change the
 decision or downstream work. Give each warm reviewer the other's strongest
-argument and request a focused keep, amend, or withdraw reassessment. Reuse
-warm reviewers while the premise and target remain stable; use fresh neutral
-adjudication after factual closure when consequential disagreement remains.
-Return residual disagreement to the user.
+argument and request a focused keep, amend, or withdraw reassessment. Reuse warm
+reviewers for one focused reconciliation while the premise and target remain
+stable. After resolving factual disputes, return remaining judgment differences
+to the user with options and a recommendation. Further neutral adjudication is
+optional for a named unanswered question or user request.

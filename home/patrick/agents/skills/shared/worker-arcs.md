@@ -1,277 +1,232 @@
-# Worker arcs (shared convention)
+# Worker arcs
 
-Supervisor and autopilot are alternative user-facing leads. Both use this
-contract to frame goals, route specialist work, plan, dispatch, integrate, and
-verify multi-worker arcs. Their skills define decision authority, isolation,
-checkpoints, context handling, and mode-specific safety ceilings.
-
-The global agent instructions remain active and own universal safety, git,
-review, role-routing, documentation, and closure discipline. Keep briefs and
-mode skills focused on their task-specific requirements. Read this file fully
-before planning or delegating the first worker.
+Supervisor and autopilot share this contract for framing, routing, planning,
+dispatch, integration, verification, and state. Mode skills own authority,
+isolation, checkpoints, recovery, and safety ceilings; global instructions own
+universal safety, Git, review, role routing, documentation, and closure. Read
+this file fully before the first delegation; keep mode rules and briefs focused
+on their distinct requirements.
 
 <!-- @include shared/decision-discipline.md -->
 
-## 1. Frame the goal and route specialists
+## 1. Frame and route
 
-Before decomposition, establish one goal contract:
+Orient from project sources and current handover/board/design before questions.
+Before decomposition, establish one goal contract covering:
 
-- one user-assigned topic, its stable topic slug, and an arc slug for the
-  current execution arc;
-- desired outcome and why it matters;
-- scope explicitly in and out;
-- done criteria and verification evidence;
-- constraints and compatibility requirements;
-- the user's quality criterion for the end-state;
-- the product's defining user outcome and, where material, the mechanism or
-  hypothesis through which it intends to deliver that outcome;
+- the user-assigned topic, stable topic slug, and arc slug;
+- outcome, purpose, defining value path, and any material hypothesis;
+- scope and exclusions, done criteria and evidence, constraints, compatibility,
+  and the user's quality criterion;
 - the committed product boundary and smallest executable walking skeleton when
   the arc affects architecture or product flow;
-- known decisions, unknowns, and empirical assumptions.
+- decisions, unknowns, and empirical assumptions.
 
-Orient from project sources and existing handover, board, or design records
-before asking questions. The active mode decides how unresolved choices reach
-the user or become ratification/parking items.
+The active mode routes unresolved choices to decision or parking.
 
-Use the `define-goal` skill when this contract is absent, the next milestone is
-unclear, the product purpose has shifted, reviews disagree about what success
-means, or scope grows without advancing the defining value path. Use that
-skill as the owner of goal framing.
+Use `define-goal` as the owner of goal framing when the contract or next
+milestone is unclear, purpose shifts, success is contested, or scope grows
+without value-path progress.
 
-The plan must identify the earliest executable checkpoint that exercises and
-evaluates the defining value path and apply the `define-goal` skill's milestone
-challenge. Keep product acceptance tied to the defining value path and
-label infrastructure-only evidence for what it establishes.
+Resolve factual uncertainty through global routing before asking the user to
+decide. Use an `architect` before implementation planning when module
+boundaries, public contracts, data flow, mechanisms, or the clean end-state
+remain open, existing architecture needs assessment, or planning would invent
+architecture. Skip it when ratified design or a strong pattern determines the
+work. Give the frame and expected result; the architect returns grounded options
+and unresolved questions, not authority to expand scope or implement. An
+insufficient frame calls for focused questions rather than guesses. Plan only
+after load-bearing architecture is ratified or authorized under the active mode.
 
-Resolve factual uncertainty through the global routing rules before asking the
-user to decide it. Before implementation planning, delegate to the `architect`
-agent when module boundaries, public contracts, data flow, mechanisms, or the
-desired clean end-state remain open; when existing architecture needs
-assessment; or when a plan would otherwise invent architecture.
+Use `second-opinion` for independent decision challenge or a fresh architect in
+REVIEW mode for architecture assessment. Use both for distinct questions, keep
+authors separate from reviewers, and select depth through the relevant skill.
+The lead commissions follow-ups, synthesizes results, owns the whole arc, and
+alone mediates user decisions and authorizes phases.
 
-Give the architect the ratified frame and expected result. It returns design
-options, recommendations, evidence, and unresolved decisions to the lead; it
-does not authorize implementation or expand scope. If the frame is
-insufficient, it returns focused questions rather than guessing. Skip this
-stage when a ratified design or strong existing pattern already determines the
-work. Start implementation planning only after load-bearing architecture is
-ratified or authorized under the active mode's decision protocol.
+## 2. Plan and review
 
-For an independent assessment, use `second-opinion` to challenge a proposed
-decision, including an architectural decision, or a fresh `architect` in
-REVIEW mode to assess the architecture itself. Use both when they address
-distinct questions. The lead commissions specialist follow-up for concrete
-unresolved questions and keeps each author separate from its independent
-reviewer. Select depth through the chosen skill and adjust it as evidence
-warrants.
+For a multi-worker implementation arc, keep one written execution plan. The lead
+may write it or continuation deltas when approved architecture and established
+patterns determine ownership, dependencies, and checks; use a `plan` worker for
+material decomposition/integration uncertainty. Include the goal and design
+sources, coherent packages practical for one worker and reviewable as a whole,
+exclusive created/modified file zones, dependency waves, per-package checks and
+permitted effects, cheap tests of assumptions, integration checkpoints by blast
+radius, and decisions.
 
-Specialist output always returns to the lead for synthesis. The lead remains
-accountable for the whole arc and is the only component that mediates user
-decisions or authorizes the next phase.
+Every plan identifies the earliest executable checkpoint evaluating the defining
+value path, using the `define-goal` milestone challenge. Keep product acceptance
+tied to that path; label infrastructure-only evidence accurately.
 
-## 2. Plan gate
+Prefer vertical packages that exercise a consumer path across required
+boundaries. Foundation-only work needs a concrete dependency, the earliest
+runnable consumer checkpoint, and an explanation why validation cannot happen
+there sooner. Independent designability alone does not justify successive
+foundation waves.
 
-For a multi-worker implementation arc, have a `plan` worker produce one written
-plan containing:
+Each substantial addition names its current/committed consumer and required
+behavior, realistic failure, or current contract instability. A current consumer
+may justify current implementation. Include current milestone capabilities even
+when additive. Later consumers normally justify an additive path, not
+implementation now; defer with activation conditions unless deferral replaces a
+required semantic identity/boundary or leaves plausible supported-workload
+integrity failures. Compare unreleased abstractions to the clean end-state:
+implement together changes that otherwise immediately reshape the same public
+contract; defer orthogonal capabilities. Cleaner contracts, integrity, proven
+variation, or credible extensibility can justify structure; ceremony and
+speculative scope require explicit decisions.
 
-- the goal contract and authoritative design sources;
-- packages sized for one worker;
-- exclusive file zones, including created and modified files;
-- dependency order and dispatch waves;
-- per-package verification commands and permitted side effects;
-- empirical assumptions with cheap early tests;
-- integration checkpoints chosen by blast radius;
-- open questions and decision points for the lead to resolve.
+Before freezing public APIs, sketch declarations, registration, and runtime
+calls; inspect the strongest analogous repository API. Challenge brittle
+literals, duplicate names, and unnecessary wrappers. Freeze a public API only
+when representative consumer usage is coherent; internal correctness alone is
+insufficient.
 
-Prefer consumer-bearing vertical packages. Separating foundational layers is
-appropriate when a concrete dependency requires it, but the plan must identify
-the earliest runnable composition checkpoint and explain why preceding work
-cannot be validated through a consumer sooner. Do not schedule successive
-foundation-only waves merely because their concepts can be designed
-independently.
+For changes to shared behavior, trace input, mapping, and execution before
+dividing ownership. Use that understanding to identify affected paths and
+invariants; this investigation needs no separate report.
 
-Every substantial addition must name its current or committed consumer and the
-required behavior, realistic failure, or enduring contract instability it
-addresses. Include capabilities needed for the current milestone even when
-their implementation is additive. Defer later capabilities when they can be
-added without replacing required contracts or compromising current integrity;
-record their activation conditions with the plan's deferrals.
+Assign each file, shared contract, invariant, and cross-document concept one
+owner. Merge, extract, or sequence overlapping zones. Group shared invariants,
+mapping paths, and file ownership into one package where practical; keep one
+owner across internal steps/tests and review at a capability/consumer boundary.
+Split for useful parallelism, ownership, risk containment, or real dependencies.
+Probe novel load-bearing assumptions before dependent work; develop
+representative tests of shared behavior alongside implementation and
+integration. Plan early golden examples and hand-verified fixtures in
+domain-heavy arcs.
 
-A current consumer may justify current implementation. A later committed
-consumer normally justifies preserving a clean additive path, not implementing
-its supporting structure now. Move that structure onto the current path only
-when deferral would replace a semantic identity or boundary already required by
-current behavior, or would leave a plausible supported-workload integrity
-failure.
+Independently assess plans with material decomposition or integration
+uncertainty for coverage, grounding, dependencies, integration, verification,
+and silent failures before dispatch; an adequate architecture assessment can
+cover them. The lead may check its own pattern-determined dispatch plan; this is
+a local self-check, not independent review. Incorporate findings and resolve
+blockers before dependent work.
 
-Before freezing a public API, sketch representative declaration, registration,
-and runtime call sites and inspect the strongest analogous API in the
-repository. Challenge refactoring-hostile literals, duplicated names, and
-unnecessary wrappers. Internal correctness does not pass the public-surface
-gate until consumer usage is coherent.
+### Review ownership and closure
 
-Compare unreleased abstractions with the clean intended end-state. Implement
-together anything whose deferral would immediately reshape the same public
-contracts; defer orthogonal capabilities. Extra structure may earn its place
-through cleaner contracts, protected invariants, proven variation, or credible
-extensibility. Ceremony and speculative scope require an explicit decision.
+Assign one independent reviewer per coherent target. Independence is relative to
+authorship: a substantive implementation result needs a reviewer who did not
+author it, including when the lead wrote the implementation. A role name or
+passing self-check does not make an assessment independent. Reuse assessment
+covering the same decision, sources, and current revision across skill
+requirements; combine architecture/plan review where useful. Additional
+reviewers or critics need a named unanswered question or explicit user request.
+A critic supplies reasoning pressure on difficult premises or trade-offs beyond
+source grounding.
 
-Derive zones from dependencies and concept ownership. Give every shared
-contract, invariant, and cross-document concept one canonical owner. If two
-packages need the same file or concept, merge them, extract a single-owner
-package, or sequence them.
+A fresh reviewer makes the initial judgment; the author repairs findings and the
+same reviewer checks repairs and affected invariants. Accept when findings close
+and agreed gates pass. Evidence of a materially changed premise/blast radius
+reopens broader review; repair completion alone does not. Additional fresh
+opinions need a distinct purpose or user request. Reviewers reassess the frame
+independently; the active mode handles unresolved choices/non-convergence.
 
-Test novel load-bearing assumptions before downstream work. On domain-heavy
-arcs, plan golden examples and hand-verified fixtures early.
+Default sequence: coherent implementation/tests → independent review → focused
+repair closure → lead integration verification. Extra planning/opinions answer
+distinct questions rather than adding automatic stages.
 
-Have a fresh `review` worker challenge the plan's requirements coverage, source
-grounding, dependencies, integration seams, verification, and silent-failure
-paths. Fold substantive results into the plan and rerun the affected review.
-Do not launch implementation workers from an unreviewed plan. A critic is
-separate: use one only when a difficult premise or trade-off needs reasoning
-pressure beyond source grounding. Return unresolved decisions or a
-non-converging review loop to the active mode.
+Review cumulative scope as well as coverage. Classify expansion recommendations:
 
-Use a fresh worker for the independent initial judgment. Use
-the same reviewer to verify that its findings were addressed. Start another
-fresh review only when the premise or target materially changes, the result is
-genuinely contested, or the user explicitly requests another independent
-opinion. The review role owns independent frame reassessment.
+- **Current blocker:** violates committed behavior, an enduring current
+  contract, or realistic supported-workload integrity.
+- **Deferred committed requirement:** needed later and additive without replacing
+  current architecture; record activation, keep outside the current package graph.
+- **Speculative concern:** no committed consumer or plausible supported-workload
+  failure; retain as a labeled observation pending evidence.
 
-A plan review must challenge cumulative scope as well as requirements coverage.
-Classify scope-expanding recommendations as **current blockers**, **deferred
-committed requirements**, or **speculative concerns**. A current blocker
-violates committed behavior, an enduring current contract, or realistic
-integrity under supported workloads. A deferred committed requirement belongs
-to later committed behavior and can be added without replacing the current
-architecture; record its activation condition and keep it out of the current
-package graph. A speculative concern lacks a committed consumer or plausible
-supported-workload failure; keep it as a labeled observation until evidence
-justifies action. When a review round only adds structure,
-require it to test a smaller clean, coherent option and its effect on the
-earliest runnable composition checkpoint. Return a non-converging scope-growth
-loop to the lead with the alternatives and supporting evidence.
+When reviews only add structure, test a smaller coherent option against the
+earliest runnable checkpoint. Return non-converging growth to the lead with
+alternatives and evidence.
 
-## 3. Worker brief contract
+## 3. Brief and dispatch
 
-Choose roles through the global routing rules. Every brief names:
+Each brief follows global role routing and names: one task/result, authoritative
+sources/skills, exclusive write and no-touch zones, ratified decisions/rationale
+and material assumptions, STOP conditions, verification commands/effects, and
+the living board with an instruction to flag board/spec contradictions.
 
-1. One task and its expected result: a response or explicitly named artifact
-   files, with the required content or format.
-2. Authoritative sources and required skills or project instructions.
-3. One exclusive file zone and explicit no-touch zones.
-4. Current ratified decisions, their rationale, and material assumptions.
-5. Task-specific STOP conditions.
-6. Concrete verification commands and permitted side effects.
-7. The living board path, with an instruction to flag board/spec
-   contradictions.
+Assign substantive artifacts concrete output paths and content/format, usually
+under the active `.scratch/` arc; identify existing files to update. Workers
+write assigned artifacts directly with required permissions and return paths
+plus a concise summary. The lead prepares directories when worker permissions
+cannot. References grant reading, not writing. Short factual answers can remain
+in responses; scout/explore are response-only, read-only roles.
 
-For substantive specialist artifacts, the lead supplies concrete
-output file paths in the brief, normally under the active arc's `.scratch/`
-directory. Assign those files to the specialist's write zone and identify
-existing artifacts to update. Short factual answers may remain in the response.
-References to boards or source files grant reading; specify any write ownership
-separately. Prepare required directories in the lead when the worker's command
-permissions cannot create them.
-Instruct each specialist to write its assigned files directly and return their
-paths with a concise summary. Grant the permissions needed for those writes
-within the assigned file zone.
-Scout and explore return discovery results in their responses and remain
-read-only; assign artifact-producing work to a role that can write it.
+Use spec-as-source and brief-as-delta: reference decisions instead of repeating
+them. Overrides name the authorizing section/decision; return unmarked conflicts
+before dependent work. Treat legacy FINAL labels as current authorization,
+subject to global reconsideration. Workers report material challenges; the lead
+resolves them. Relay project-specific rules, not generic role discipline; add
+anti-regression STOPs where old sources may encode reversed decisions.
 
-Use spec-as-source and brief-as-delta. Point to ratified sources instead of
-copying shared decisions. An override must name the section and decision that
-authorized it; return an unmarked conflict to the lead before dependent work.
-Treat legacy FINAL labels as current authorization subject to the global
-reconsideration rule. Workers actively report material reasons to revisit a
-decision; the lead resolves revisions under the active mode's authority.
-Relay project-specific rules, not generic role discipline. Add an anti-regression
-STOP when older sources may still encode a reversed decision.
+Dispatch dependency-ready waves with disjoint file/concept ownership; sequence
+shared contracts. Among equally ready packages, the lead may prioritize a
+pattern needed by later packages. Use native liveness/wait/resume; resume
+related work with its warm worker, stating existing work, remaining work, and
+changes. New tasks get fresh workers.
 
-## 4. Dispatch and integration
+The lead owns destructive actions requiring user authority: workers may
+inventory and adapt, but the lead verifies exact targets, obtains confirmation,
+and executes deletion/reset/discard. Relay that authority only if orchestration
+preserves it as trusted authority. The lead also owns Git index/history and
+tracked moves; workers supply rename maps and edit content after approved
+`git mv`. Inspect tree/index/package boundaries after waves. Treat unexplained
+out-of-zone changes as potentially belonging to the user. Attribute them before
+acting and never revert them.
 
-Launch dependency-ready packages in waves. Run only disjoint file zones and
-concept ownership concurrently; sequence shared files and contracts under one
-owner. Among equally ready, safely isolated packages, the lead may prioritize
-work that establishes a pattern needed by later packages.
+The lead verifies integration through intended interfaces. Out-of-contract work
+remains a proposal until the mode authorizes expansion. Before large fan-out, at
+milestones, and after reversal/containment, assess the combined end-state:
+missing general mechanisms, asymmetric cases, duplicate owners, silent failures,
+dead weight, and doc drift. Cleaner out-of-scope repairs remain proposals. Stop
+rethinking when unknowns are empirical or further yield is cosmetic.
 
-Destructive actions whose safety depends on user authorization remain owned by
-the user-facing lead. A worker may inventory targets, map impact, and perform
-subsequent adaptations, but the lead resolves the exact targets, obtains
-confirmation, and executes the approved deletion, reset, or discard. Do not
-relay destructive authorization through a worker brief unless the orchestration
-environment explicitly preserves it as trusted authority.
+## 4. Accept and contain
 
-The lead also owns Git index/history mutations and tracked-file moves. Workers
-provide exact rename mappings and perform associated content edits after the
-lead executes the approved `git mv` operation.
+Inspect every result: actual gate output, baseline versus regression, and
+disclosed judgment calls. Triage those calls under the active mode's decision
+rules rather than silently accepting them.
 
-Treat unexplained out-of-zone changes as potentially belonging to the user.
-Attribute them before acting and never revert them. Inspect the working tree,
-index, and package boundaries after each wave.
+Load-bearing runtime claims require independent reproduction of decisive checks
+by a reviewer, verifier, or lead who did not author the implementation, unless
+suitable independent evidence already covers the same relevant code and
+environment. Author test output alone does not satisfy this requirement. That
+independent execution can satisfy the gate for everyone; a second verifier or
+lead rerun is not automatic. Attribute reused evidence and rerun when changes
+invalidate it or a new failure warrants investigation. For lower-risk claims,
+inspect output and spot-check the decisive claim. Use a separate verifier for
+claims not yet established. Let gates fail; never change implementation or
+evidence merely to force green.
 
-Use the orchestrator's tracked liveness and wait/resume mechanisms first.
-Resume related work with the warm worker and tell it what exists, what remains,
-and what changed. A new task gets a fresh worker.
+Report only source-confirmed defects with violated requirement/invariant and
+impact; separate risks, intent questions, and structural preferences. Authors
+run implementation gates; the lead runs cross-package integration checks.
+Existing briefs or reports state what checks prove and what invalidates them.
+Evidence files and execution logs are allowed; avoid a new tracking framework
+solely to coordinate repeated verification.
 
-The lead owns integration seams and verifies that the packages compose
-through their intended interfaces before accepting integration. New work
-discovered outside the goal contract remains a proposal until the active mode
-authorizes a scope change.
+Choose gates by blast radius: targeted after isolated waves, whole-repository
+after cross-cutting changes, at agreed milestones, and final acceptance when
+available. Modes may tighten this. For red baselines, target touched surfaces
+that the broken gate would cover.
 
-Before large fan-out, at milestones, and after reversals or containment, step
-back from the local diff. Recheck the work against the desired end-state:
-whether exceptions reveal a missing general mechanism, symmetric cases were
-missed, concepts have multiple owners, failures can stay silent, or dead weight
-and documentation drift remain. A cleaner root repair outside the ratified
-scope stays a proposal until the active mode authorizes it. Stop rethinking
-when remaining unknowns are empirical or further yield is cosmetic.
+Apply global retry/escalation to root causes, not each new failing example.
+After failed escalation, use the mode's decision/parking protocol; round limits
+never authorize known defects. If accepted work proves wrong, stop its
+consumers, map impact, reopen its owner with a warm worker where viable,
+re-verify dependents, and record the error and containment.
 
-## 5. Acceptance
+## 5. Record evidence and state
 
-Review every worker result before acceptance:
+Maintain one board under `$HOME/.agents/skills/shared/board-files.md`: goal,
+workers, decisions, verification, proposals, containment, next action. For
+consequential claims needing legal/regulatory/medical/scientific or other expert
+validation, record claim, owner, status, evidence, and affected behavior. Keep
+behavior fail-closed only where it depends on an unresolved load-bearing claim;
+the mode decides asking, ratifying, or parking.
 
-- require actual gate output and distinguish baseline failures from
-  regressions;
-- treat reported test results as claims until independently rerun;
-- use `verify` for load-bearing claims or full conformance when error cost is
-  high; otherwise spot-check the decisive claim;
-- triage disclosed judgment calls instead of silently accepting them;
-- allow acceptance gates to fail—never bend implementation or evidence to
-  force green.
-
-Report defects only as confirmed findings grounded in current source with a
-violated requirement or invariant and concrete impact. Keep unresolved risks
-and intent questions separate; a structural preference is not a defect.
-
-Choose integration gates by blast radius. Use targeted checks after isolated
-waves; run the whole-repository gate after cross-cutting changes, at agreed
-milestones, and before final acceptance when such a gate exists. An active mode
-may tighten these checkpoints. When the baseline is already red, add targeted
-checks over touched surfaces for what the broken gate would otherwise cover.
-
-## 6. Retry and containment
-
-Use the global retry and escalation rule. If escalation still fails, invoke
-the active mode's user-decision or parking protocol.
-
-When accepted output later proves wrong, stop downstream consumers, map the
-blast radius, reopen the owning zone with its warm worker when viable, re-verify
-dependents, and disclose the error and containment in the current record.
-
-## 7. Evidence and state
-
-Maintain one living board under
-`$HOME/.agents/skills/shared/board-files.md`. Record the goal contract, worker
-state, decisions, verification status, scope proposals, containment, and next
-action as reality changes.
-
-For a consequential claim that requires a legal, regulatory, medical,
-scientific, or other external expert, record an external-validation item on the
-board: claim, owner, status, evidence, and affected behavior. Keep behavior
-fail-closed only where it depends on an unresolved load-bearing claim. The
-active mode decides whether to ask, ratify, or park.
-
-Promote conclusions that must outlive the arc under
-`$HOME/.agents/skills/shared/durable-docs.md`; keep transient coordination and
-grounding notes under `.scratch/<topic-slug>/<arc-slug>/`.
+Promote enduring conclusions under
+`$HOME/.agents/skills/shared/durable-docs.md`; keep working
+coordination/evidence in `.scratch/<topic-slug>/<arc-slug>/`.

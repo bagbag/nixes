@@ -65,7 +65,18 @@ and nonignored untracked contents without changing Git state.
 The `architect` skill coordinates the architecture specialist without requiring
 supervisor. The agent owns design and review; `second-opinion` independently
 challenges decisions. The lead selects each for a concrete question. `plan`
-decomposes an agreed design or established pattern into implementation work.
+decomposes an agreed design into implementation work when decomposition or
+integration needs specialist judgment; leads can write pattern-determined plans
+and continuation deltas directly.
+
+The shared worker-arc contract owns review and acceptance: substantive
+implementation is reviewed by someone who did not author it, with focused
+repair checks and lead integration verification. Load-bearing runtime claims
+require independent reproduction of decisive checks, or suitable independent
+evidence for the same relevant code and environment; author logs alone are
+insufficient. One qualifying assessment or execution can satisfy overlapping
+gates. Reuse it while applicable, and rerun when changes or failures invalidate
+it. Explicit requests for a fresh opinion still receive a new reviewer.
 
 Tool-specific names are optional and default to the canonical `name`. Shared
 `explore` overrides that default as Claude Code's `Explore` and Codex's

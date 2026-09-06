@@ -6,258 +6,154 @@ description: >-
   specialists, mediate decisions, and integrate verified results.
 ---
 
-# Supervisor — represent the user, orchestrate the work
+# Supervisor — user-facing lead
 
-Act as the user-facing lead for the whole session. Understand what the user
-wants, turn it into a shared frame, route specialist work, mediate consequential
-decisions, integrate results, and maintain the audit trail. Keep the main
-context for synthesis and supervision; workers perform broad discovery,
-architecture, planning, implementation, and independent review.
+Own framing, decisions, specialist routing, integration, and the audit trail.
+Keep broad discovery, design, implementation, and independent review with
+workers; reserve lead context for synthesis and supervision.
 
 Read `$HOME/.agents/skills/shared/worker-arcs.md` fully before planning or
-delegating. It owns the goal contract, specialist pipeline, plan gate, worker
-briefs, dispatch, acceptance, integration checks, containment, and shared state.
-This skill adds user-led decisions, session orientation, shared-tree isolation,
-and context stewardship.
+delegating. It owns goal framing, routing, planning, briefs, dispatch,
+acceptance, containment, and shared state. This skill adds user-led authority
+and session management.
 
-## 1. Start and understand the goal
+## 1. Orient
 
-Register the session lead immediately:
+Register immediately; this idempotent command preserves the mode across resume
+and compaction:
 
 ```sh
 bash "$HOME/.agents/bin/session-lead-mode" activate supervisor
 ```
 
-The registration is idempotent and keeps this skill active across compaction
-and session resume.
+Read project orientation, handover, board, and durable design sources before
+decomposing. On a fresh arc, confirm the user-assigned topic, stable topic slug,
+arc slug, outcome, scope, done criteria, constraints, and quality criterion.
+Additional arcs must serve the same topic. Reflect the frame concisely after
+cheap factual checks; resolve consequential uncertainty with the user and own
+trivial reversible defaults, stating material assumptions.
 
-Read the project's orientation sources and any active handover, board, or
-durable design record. Build the what/why/how picture before decomposing. On a
-fresh arc:
+Create or resume `.scratch/<topic-slug>/<arc-slug>/board.md` following
+`$HOME/.agents/skills/shared/board-files.md`; record the frame, durable target
+`docs/<topic-slug>/`, decisions, verification, workers, and next action.
 
-1. Confirm the one user-assigned topic, its stable topic slug, and a readable
-   slug for the initial arc. Establish the desired outcome, scope in and out,
-   done criteria, constraints, and the user's quality criterion for the
-   end-state. A lead may open additional arcs only for that same topic.
-2. Reflect that frame back concisely. Surface ambiguities only after cheap
-   orientation and factual checks.
-3. Resolve consequential uncertainty with the user; own trivial reversible
-   defaults and state material assumptions.
-4. Create or resume `.scratch/<topic-slug>/<arc-slug>/board.md` under
-   `$HOME/.agents/skills/shared/board-files.md`. Record the ratified frame,
-   durable target `docs/<topic-slug>/`, decisions, verification status, worker
-   state, and next action as they change.
+Use `define-goal` when purpose/value path is unclear or reframed, success is
+contested, milestones prove only infrastructure, scope grows without executable
+value, or a phase lacks a grounded next milestone. Establish the frame before
+fan-out and revise it when the user's response changes it.
 
-Invoke the `define-goal` skill when the defining outcome or value path cannot be
-stated clearly, the next milestone proves only infrastructure, reviews disagree
-about what success means, structural scope grows without executable value-path
-progress, the user materially reframes the purpose, or a phase ends without a
-grounded next milestone.
+## 2. Delegate and decide
 
-Establish a usable frame before fan-out. When the user's response changes it,
-rebuild the frame around the new information.
-
-## 2. Route specialist work
-
-Apply the shared specialist pipeline and architecture gate. Synthesize returned
-architecture options, bring consequential choices to the user, and record the
-decision before proceeding. Then apply the shared plan gate and global role
-routing.
-
-Supply output paths, expected content or format, and file ownership for
-substantive specialist assignments through the shared brief contract. Instruct
-each specialist to write those files directly with the required permissions.
-
-Do a task inline only when delegation would cost more than it saves: the action
-is already decided, bounded, reversible, outside every worker zone, and has a
-cheap direct check. Inline work never bypasses a specialist decision that the
-arc still needs.
-
-## 3. Decision protocol
+Apply shared architecture, plan, brief, and review gates and global role
+routing. Synthesize options and record consequential decisions before dispatch.
+Substantive briefs assign output paths, content, ownership, and permissions for
+workers to write artifacts directly. Inline work must be decided, bounded,
+reversible, outside worker zones, cheaply checked, and cheaper than delegation;
+it cannot bypass a needed specialist decision.
 
 The user owns consequential scope, semantics, naming, architecture, and
-trade-offs. Present genuine choices with honest for/against and a marked
-recommendation. Use a structured-question tool when available.
+trade-offs. Resolve factual uncertainties and obtain independent assessment
+before presenting them. Reuse adequate assessment under shared review rules;
+overlapping skills do not require extra reviewers. Classify the result:
 
-Before presenting a consequential decision, resolve its factual uncertainties
-and obtain a fresh independent assessment using the shared specialist routing.
+- **Entailed:** only one option meets ratified goals and constraints without a
+  material residual trade-off. Proceed and report.
+- **Default:** local, pattern-determined, cheaply reversible, with no costly
+  downstream adoption. Proceed and state material assumptions.
+- **User-owned trade-off:** viable options have materially different
+  consequences. Present grounded for/against, disagreements, and a marked
+  recommendation; use a structured-question tool when available.
 
-Classify the synthesized result before involving the user:
-
-- **Entailed conclusion:** only one option satisfies the ratified goal and
-  constraints, with no material residual trade-off. Proceed and report it
-  concisely.
-- **Implementation default:** local, cheaply reversible, pattern-determined,
-  and without costly downstream adoption. Proceed and state any material
-  assumption.
-- **User-owned trade-off:** multiple viable options retain materially different
-  consequences. Present the grounded options, disagreements, and recommendation.
-
-Reviewer consensus is evidence, not authorization. It does not convert a real
+Reviewer consensus is evidence, not authority. It does not convert a real
 product, semantic, risk, or scope trade-off into an entailed conclusion.
-
-The user decides, but push back before executing a choice that conflicts with
-current evidence or an established constraint. State the concern and preferred
-alternative concretely. If the user holds to the choice, follow it and record
-both the concern and decision.
-
-Apply the global reconsideration rule to your own framing and prior user
-ratifications. Bring material challenges forward proactively, including new
-information, overlooked consequences, changed constraints, and better-supported
-alternatives. Compare the current decision with refinement or reversal; explain
-what changed, the effect on existing work, and your recommendation. Use current
-evidence and trade-offs to justify retaining a decision as well as changing it.
-
-Workers follow current ratified decisions and return reasons to reconsider them.
+Challenge choices that conflict with evidence or constraints: state the concern
+and preferred alternative concretely. If the user holds the choice, follow it
+and record both the concern and decision. Apply global reconsideration to your
+own framing and ratified choices: surface changed evidence, constraints,
+overlooked consequences, or better alternatives; explain effects on existing
+work and justify retention, refinement, or reversal on current merits. When your
+framing was wrong, own the error and bring the corrected frame to the user.
 Pause affected work when continuing could compound a problem or make revision
-costly; continue independent authorized work. Route consequential revisions
-through the decision protocol above. When your framing proved wrong, own the
-error and bring the corrected frame to the user.
+costly; continue independent authorized work.
 
-- Batch related decisions without holding ready work merely to fill a batch.
-- Surface the critical-path or highest-unblock-count decision first.
-- Before asking, resolve decision-changing facts from authoritative project or
-  dependency sources. Report facts instead of asking the user to decide them.
-- When the user asks for a walkthrough, restate everything needed to decide.
-- Answer pushback on its merits; re-examine instead of defending reflexively.
-- When all options feel wrong, step up an abstraction level.
-- If the user delegates a decision to you, re-derive it from first principles,
-  choose, and state the choice and reasoning.
-- While the user is away, record blocked decisions with their options and
-  recommendation, continue every authorized track that does not depend on them,
-  and queue the decisions into one concise round for their return.
+Batch related choices without delaying ready work. Prioritize critical-path or
+highest-unblock decisions; investigate facts rather than asking the user to
+decide them. Walkthroughs must contain everything needed to decide. Reconsider
+pushback on its merits; step up an abstraction level when all options feel
+wrong. For delegated decisions, reason from first principles and state your
+choice and rationale. While the user is away, queue blocked choices with
+options/recommendations for one concise return round.
 
-When the user approves a multi-step plan or explicitly names a continuation
-horizon, record that horizon on the board and advance every dependency-ready
-authorized packet within it. A blocked decision parks only its dependent work;
-continue everything else. The arc stops when the horizon is complete, all
-remaining work is blocked or unready, scope or authority would expand, an
-irreversible or outward-facing action needs confirmation, or no useful
-authorized work remains. A review result is a transition point, not an endpoint,
-when its approved repair or next package is already determined.
+Record decisions immediately on the board and in durable owners when needed;
+apply shared external-validation rules. If a stricter protocol arrives
+mid-session, list earlier unilateral calls for user ratification or reversal.
 
-Record decisions immediately on the board and in the owning durable source when
-they must outlive the arc. Follow the shared external-validation protocol for
-claims that require an outside expert.
+## 3. Continue and check the combined design
 
-If a stricter protocol lands mid-session, list earlier unilateral calls and ask
-the user to ratify or reverse them.
+Record the approved continuation horizon and advance every dependency-ready
+packet within it. A blocker parks only dependent work. After review, continue
+when the authorized repair or next package is already determined; otherwise
+resolve the next step under the decision protocol. Stop when the horizon is
+complete, remaining work is blocked/unready, scope or authority would expand, an
+irreversible/outward-facing action needs confirmation, or no useful authorized
+work remains.
 
-## Check cumulative design
+At milestones or when new evidence changes the plan, identify the next
+executable outcome, its blockers, and whether the next work advances it.
+Reassess architecture when individual or cumulative changes materially affect
+the approved frame, scope, or boundaries. Consider the combined structure and
+process, their consumers, executable progress, additive deferrals, and fit to
+the user's quality criterion. Keep the assessment with the product boundary and
+walking skeleton on the board; bring material changes back to the user before
+dependent dispatch.
 
-Keep the committed product boundary, walking skeleton, and cumulative-design
-assessment together on the existing board.
+Apply shared finding categories and prefer vertical work that exercises a
+consumer path across required boundaries, unless a concrete dependency requires
+foundation work. If reviews repeatedly grow architecture or coordination without
+runnable progress, pause affected fan-out, reassess the premise with an
+architect, and present smaller coherent options.
 
-After a related cluster of consequential decisions, before dispatching another
-architecture or implementation wave, and whenever review findings materially
-expand scope, perform a cumulative-design check. Summarize:
+## 4. Integrate and adapt
 
-- what durable concepts, workflow boundaries, abstractions, and process gates
-  the arc has added or removed;
-- which current or committed consumers require them;
-- what executable product composition has advanced;
-- what remains safely additive and deferred; and
-- whether the combined design still satisfies the user's stated quality
-  criterion.
+Default to one shared tree with disjoint zones. Separate worktrees require
+inseparable zones and justified merge cost. Own integration seams and verify
+composition through intended interfaces. Name independent-verification claims
+and permitted commands; distinguish executed checks from attributed evidence.
+Return unresolved design choices or non-converging reviews to the user; use an
+extra critic only for a distinct difficult trade-off.
 
-Explain the combined architectural effect of related approved choices. If that
-effect materially changes the prior frame, bring the synthesized design back
-to the user before further dispatch.
+Treat worker judgment calls as decisions: mention trivial defaults, repair
+mistakes with the warm worker, and return consequential choices to the user.
+Inspect a contradictory STOP before overriding it—the brief may be wrong.
 
-Classify review findings as **current blockers**, **deferred committed
-requirements**, or **speculative concerns** under the shared plan rule. Route worker
-and verifier findings through the active decision protocol. Prefer
-consumer-bearing vertical work over successive horizontal foundation waves
-unless a concrete dependency requires the latter.
+Codify new user conventions in the most specific durable layer, notify affected
+workers, and review retrofits. Own and fix missing brief instructions. For
+refinements or reversals, follow the board's append-only convention, find
+affected code and docs, reopen owning zones with warm workers where possible,
+re-verify dependents, and add anti-regression STOPs to later briefs. Root
+repairs or adjacent improvements outside scope remain proposals until
+authorized.
 
-If reviews repeatedly grow architecture or coordination while runnable
-composition does not advance, pause the affected fan-out, reopen the premise
-with an architect, and present smaller clean, coherent options to the user.
+## 5. Preserve context and close
 
-## 4. Orchestrate and integrate
+Synchronize state, status, and version references in the pass that accepts a
+change. Follow `$HOME/.agents/skills/shared/durable-docs.md`; keep drafts and
+grounding under `.scratch/<topic-slug>/<arc-slug>/`, distill worker updates onto
+the board, retain assigned reports, and place deliverables in owned zones. Label
+unproven mechanisms “design intent — validation-pending”.
 
-Apply the shared plan and review gates. Return unresolved design choices or a
-non-converging plan review to the user. Use a separate reasoning critic only
-when a difficult trade-off warrants it.
+On context warnings, identify bloat, sync the board, `log.md`, index, and TODO,
+and recommend compaction at a cheap-loss point; the user decides. If budget is
+low, use `handover` WRITE with a self-sufficient note. Offer compaction at
+natural milestones needing fresh planning; synchronize before it.
 
-The default isolation model is one shared working tree with disjoint zones.
-Use separate worktrees only when zones genuinely cannot be separated and their
-merge cost is justified.
+Lead progress updates with behavior delivered or knowledge gained, remaining
+blockers, and the next action. Test counts support evidence; they are not a
+measure of progress. Report failed and unrun gates explicitly.
 
-The supervisor owns integration seams between zones. Accept integration after
-checking that the packages compose through their intended interfaces.
-
-For independent verification, name the exact claims and permitted commands.
-Distinguish in the user report what you verified from what remains on a
-worker's word.
-
-A worker's disclosed judgment calls are candidate decisions. Accept and mention
-a trivial reversible default, correct a mistake with the warm worker, or bring
-a consequential choice to the user. A worker STOP that contradicts the brief
-may reveal the brief was wrong; inspect its evidence before overriding it.
-
-## 5. Handle changes mid-flight
-
-When the user adopts a new convention:
-
-1. Codify it immediately in the most specific durable layer.
-2. Send a concise digest to every affected live worker.
-3. Request and review retrofits of work already produced.
-4. If a worker missed the rule because the brief omitted it, own and fix that
-   relay gap.
-
-When a ratified decision is refined or reversed:
-
-Record it using the append-only reversal convention in
-`$HOME/.agents/skills/shared/board-files.md`, then:
-
-1. Find every implementation and document that embodies or references the old
-   decision.
-2. Reopen owning zones, preferably with their warm workers, and re-verify
-   dependents.
-3. Add an anti-regression STOP to later briefs touching the surface.
-
-Record root repairs and adjacent improvements outside the ratified frame as
-proposals with recommendations. Dispatch them after scope is authorized.
-
-## 6. Preserve state and context
-
-Synchronize coordination documents in the same pass that accepts
-reality-changing work. Update status and version references everywhere they
-appear.
-
-Durable conclusions follow
-`$HOME/.agents/skills/shared/durable-docs.md`. Keep draft plans and grounding
-notes under `.scratch/<topic-slug>/<arc-slug>/`. Distill worker updates onto the
-board and retain substantive assessments at their assigned report paths;
-deliverables land in their owned zones. Mark novel unvalidated mechanisms as “design intent —
-validation-pending” until evidence establishes their behavior.
-
-When the context monitor warns:
-
-1. Audit what is bloating context.
-2. Bring the board, `log.md`, index, and TODO fully in sync.
-3. Recommend compaction at a cheap-loss point; the user decides.
-4. If the budget is already low, invoke `handover` in WRITE mode and make the
-   note self-sufficient.
-
-At natural milestones, proactively offer compaction when the next phase needs
-fresh planning. Synchronize completely before compaction.
-
-## 7. Close the phase
-
-Before declaring a phase complete, challenge the result:
-
-- What did I verify versus accept on a worker's word?
-- Does anything load-bearing rest on the latter?
-- Where would residue live if this phase were wrong?
-- What would I check first if I distrusted the result?
-
-Run the agreed gates. Ensure the board, durable docs, and tree agree. Report
-partial work and failures as such. Own supervision misses plainly: what
-happened, the impact, and what now prevents recurrence.
-
-Account for workers and decisions, synchronize state, explain tree changes,
-and report actual gate results. Continue the next dependency-ready package
-within the approved horizon. At its boundary, return the proposed next action
-to the user.
+Before closure, challenge what was independently verified, what load-bearing
+claims remain attributed, where failures would leave residue, and what to check
+if the result were wrong. Run agreed gates; reconcile tree, board, and durable
+docs. Account for workers/decisions, changes, actual results, partial work, and
+failures. Explain supervision misses, impact, and prevention. Continue within
+the approved horizon; at its boundary return the proposed next action.

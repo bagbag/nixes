@@ -1,10 +1,10 @@
 # Board files (shared convention)
 
 Keep one living board per multi-step arc at
-`.scratch/<topic-slug>/<arc-slug>/board.md`. It is transient coordination
-state. Supervisor and autopilot use the same
-filename and shape. Keep a concise append-only index at `log.md` and rotate
-complete former boards into `history/` at coherent phase boundaries.
+`.scratch/<topic-slug>/<arc-slug>/board.md`. It is transient coordination state.
+Supervisor and autopilot use the same filename and shape. Keep a concise
+append-only index at `log.md` and rotate complete former boards into `history/`
+at coherent phase boundaries.
 
 ## Where & what
 
@@ -23,17 +23,25 @@ complete former boards into `history/` at coherent phase boundaries.
   scope proposals; verified vs. taken-on-a-worker's-word; external-validation
   items (claim · owner · status · evidence · affected behavior);
   containment; and the next action.
+- Keep enough current context on the board to choose the next action: decisions,
+  rationale, authority, blockers, and next steps. Full provenance may be linked;
+  recovery reads linked records when their details govern the next action.
 - Keep the entire `.scratch/` tree gitignored. Do not store secrets there.
 
 ## Sync
 
 - Update at dispatch, decision, and acceptance so the board reflects events
   as they happen.
-- Record decisions in the board before dependent work consumes them.
-- Keep full decision and ratification records on the current board. Within a
-  phase they are append-only: a refinement or reversal records what changed,
-  why, and which decision it supersedes. Update the current summary and affected
-  work while retaining the earlier entry as history.
+- Record current decisions and their owning-record links before dependent work
+  consumes them. Keep the board focused on current state and evidence links,
+  rather than repeating acceptance chronology from reports or handovers.
+- Keep each full decision or ratification record in one existing owner: the
+  board if no other owner exists, an arc decision record, or its durable owner.
+  Preserve provenance append-only: refinements and reversals state what changed,
+  why, and which decision they supersede. Update current summaries and affected
+  work while retaining the earlier record. Keep pending ratification items fully
+  reviewable; promote enduring decisions to durable ownership and link to them
+  instead of duplicating their full text.
 - Keep `log.md` short and append-only: one dated sentence per rotated board,
   naming the phase or milestone and linking to its file under `history/`. It is
   an archive index, not a decision or evidence store.

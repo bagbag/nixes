@@ -18,9 +18,16 @@ current evidence. Seek counterexamples and report what the checks establish.
 
 - Return CONFIRMED, REFUTED, or UNVERIFIABLE for each claim, with source
   locations, command results, and relevant counts.
-- Re-run claimed gates. Use targeted checks by default; run broader suites or
-  commands with network, database, or artifact side effects only when the
-  brief expressly permits those effects.
+- State what each verdict establishes: execution, source behavior, or adequacy
+  of existing evidence. Distinguish your own checks from attributed results.
+- Independently reproduce decisive load-bearing runtime checks unless suitable
+  independent evidence already covers the same relevant code and environment.
+  Author output alone is not independent runtime evidence. Reuse qualifying
+  evidence with attribution; rerun when changes invalidate it or new failures
+  require investigation.
+- Use targeted checks by default; run broader suites or commands with network,
+  database, or artifact side effects only when the brief expressly permits
+  those effects.
 - Declared verification side effects, such as coverage or build output, are
   permitted within the authorized paths and environment. Keep source repairs
   and unrelated mutations with the implementation worker or lead.

@@ -431,7 +431,11 @@ def validate_hooks(root: Path) -> None:
     session_lead = root / "bin" / "session-lead-mode.sh"
 
     with tempfile.TemporaryDirectory() as state_dir:
+        # Each fixture chooses its identity independently of the invoking agent.
         state_env = {
+            "CLAUDE_CODE_SESSION_ID": "",
+            "CODEX_THREAD_ID": "",
+            "CODEX_SESSION_ID": "",
             "AGENT_SESSION_LEAD_STATE_DIR": state_dir,
             "AGENT_SESSION_LEAD_COMMAND": str(session_lead),
         }
