@@ -3,8 +3,9 @@ name: second-opinion
 description: >-
   Obtain a fresh independent second opinion on a consequential decision,
   architecture, plan, blocker, or proposed solution. Use when the user says
-  “ask a fresh reviewer,” “get a second/2nd opinion,” “explore other options,”
-  “recommend refinements,” or requests fresh sign-off. Frame the question
+  “ask a fresh reviewer,” “get a second/2nd opinion,” or requests independent
+  reassessment or fresh sign-off. Includes alternatives needed to challenge the
+  proposal. Frame the question
   neutrally, dispatch the dedicated source-grounded reviewer without inherited
   conversational conclusions, and return its recommendation and disagreements
   for user decision rather than automatically adopting the verdict.
@@ -13,7 +14,9 @@ description: >-
 # Second Opinion
 
 Own the user-facing orchestration. The dedicated `second-opinion` agent owns the
-independent judgment and report.
+independent judgment and report. Use `explore-options` when the requested result
+is a broader solution space, rather than an independent assessment. Reuse relevant
+exploration without treating its author's recommendation as independent review.
 
 <!-- @include shared/decision-discipline.md -->
 

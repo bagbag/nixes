@@ -46,8 +46,13 @@ available, otherwise the strongest available gates.
 Apply shared routing, architecture, plan, and artifact-brief rules; prepare
 output directories when needed. Do architecture work while the user is present
 when possible, and use that time to ratify architecture and plan choices. After
-departure, choices must fit the tiers below. Delegate new architectural
-uncertainty to an architect. Changes to public contracts, durable design, or
+departure, choices must fit the tiers below. Use `explore-options` when the
+uncertainty is which approaches deserve consideration, especially when current
+options share an untested assumption or new evidence opens different mechanisms.
+Keep straightforward choices inline; bound exploration by the remaining budget,
+reuse its result, and park choices outside delegated authority. Exploration adds
+no automatic review stage or authority. Route architecture design or assessment
+to an architect. Changes to public contracts, durable design, or
 substantial downstream work have high reversal cost even if Git can undo them.
 
 A contradiction of the ratified plan is a plan-level STOP: park affected work,

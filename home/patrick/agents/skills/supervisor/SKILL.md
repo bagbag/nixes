@@ -51,6 +51,13 @@ workers to write artifacts directly. Inline work must be decided, bounded,
 reversible, outside worker zones, cheaply checked, and cheaper than delegation;
 it cannot bypass a needed specialist decision.
 
+Use `explore-options` when the user wants a broader choice set or the current
+options share a consequential assumption that needs exploration. Use it before
+committing to a mechanism, or when new evidence opens materially different
+approaches; keep straightforward choices inline. Give it the outcome and
+constraints without the preferred answer. Reuse its result for the next needed
+task; add no automatic architecture or review stage.
+
 The user owns consequential scope, semantics, naming, architecture, and
 trade-offs. Resolve factual uncertainties and obtain independent assessment
 before presenting them. Reuse adequate assessment under shared review rules;
@@ -96,7 +103,8 @@ when the authorized repair or next package is already determined; otherwise
 resolve the next step under the decision protocol. Stop when the horizon is
 complete, remaining work is blocked/unready, scope or authority would expand, an
 irreversible/outward-facing action needs confirmation, or no useful authorized
-work remains.
+work remains. Enforce the shared worker-arc stop condition for repeated repairs
+without material progress, including attempts spread across workers and reviews.
 
 At milestones or when new evidence changes the plan, identify the next
 executable outcome, its blockers, and whether the next work advances it.

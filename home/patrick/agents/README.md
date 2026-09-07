@@ -62,6 +62,13 @@ Handover uses `python3 "$HOME/.agents/bin/worktree-fingerprint" <repo>` to
 capture Git-visible state. The helper includes staged entries, working files,
 and nonignored untracked contents without changing Git state.
 
+The `explore-options` skill coordinates `option-explorer` to develop a broad
+solution space into realistic alternatives. It progressively screens and deepens
+approaches, reports material exclusions, and leaves decisions to the invoker.
+Supervisor and autopilot use it when broader exploration is needed, within their
+existing authority and budgets. Its result feeds the next needed task without
+adding an automatic architecture or review round.
+
 The `architect` skill coordinates the architecture specialist without requiring
 supervisor. The agent owns design and review; `second-opinion` independently
 challenges decisions. The lead selects each for a concrete question. `plan`

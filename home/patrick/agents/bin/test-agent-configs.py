@@ -16,7 +16,7 @@ import yaml
 
 
 EXPLICIT_ONLY_SKILLS = {"autopilot", "retro", "supervisor"}
-IMPLICIT_SKILLS = {"architect", "define-goal", "second-opinion"}
+IMPLICIT_SKILLS = {"architect", "define-goal", "explore-options", "second-opinion"}
 sys.dont_write_bytecode = True
 
 
@@ -185,6 +185,7 @@ def validate_generated_agents(root: Path, generator) -> None:
         "build.toml",
         "craft.toml",
         "explorer.toml",
+        "option-explorer.toml",
         "plan.toml",
         "review.toml",
         "scout.toml",
@@ -197,6 +198,7 @@ def validate_generated_agents(root: Path, generator) -> None:
         "build.md",
         "craft.md",
         "Explore.md",
+        "option-explorer.md",
         "Plan.md",
         "review.md",
         "scout.md",
@@ -214,6 +216,7 @@ def validate_generated_agents(root: Path, generator) -> None:
         raise ValueError("duplicate effective Codex agent names")
     specialists = {
         "architect": "architect",
+        "option-explorer": "option-explorer",
         "plan": "Plan",
         "review": "review",
         "second-opinion": "second-opinion",

@@ -212,11 +212,21 @@ after cross-cutting changes, at agreed milestones, and final acceptance when
 available. Modes may tighten this. For red baselines, target touched surfaces
 that the broken gate would cover.
 
-Apply global retry/escalation to root causes, not each new failing example.
-After failed escalation, use the mode's decision/parking protocol; round limits
-never authorize known defects. If accepted work proves wrong, stop its
-consumers, map impact, reopen its owner with a warm worker where viable,
-re-verify dependents, and record the error and containment.
+Apply global retry/escalation to the underlying problem across workers and
+review rounds; a new failing example or reassignment does not reset the count.
+After two repair attempts without material progress toward the original
+acceptance condition, stop affected repairs and dependent dispatch. More edits,
+passing local tests, or closing examples while the same mechanism keeps failing
+do not establish progress. Record what was tried, what remains broken, and
+whether evidence supports a different root-cause hypothesis or approach.
+
+Reassess the premise, seek an independent challenge when available, and allow
+one escalation only with an evidence-backed change of approach and a decisive
+check. If that fails, park the problem and bring the blocker, options, and
+recommendation to the user before another repair attempt. Continue independent
+authorized work. Round limits never authorize known defects. If accepted work
+proves wrong, stop its consumers, map impact, reopen its owner with a warm worker
+where viable, re-verify dependents, and record the error and containment.
 
 ## 5. Record evidence and state
 

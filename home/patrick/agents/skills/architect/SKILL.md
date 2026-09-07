@@ -14,7 +14,9 @@ Own the user-facing orchestration. The dedicated `architect` agent owns source
 discovery, DESIGN/REVIEW reasoning, and the specialist result. Standalone use
 means coordinating that agent directly for the user, independently of
 supervisor. An existing lead may dispatch the same agent within its own
-workflow.
+workflow. Use `explore-options` when the uncertainty is which solution families
+deserve consideration. Reuse its result for architecture work; exploration adds
+no automatic architecture or review round and preserves applicable review gates.
 
 <!-- @include shared/decision-discipline.md -->
 

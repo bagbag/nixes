@@ -158,6 +158,8 @@ specialist when a file is required.
   returning CONFIRMED / REFUTED / UNVERIFIABLE with evidence; it never fixes.
 - **`review`** — fresh-eyes adversarial critique of a plan, design, or diff. It
   finds grounded defects and gaps rather than summarizing.
+- **`option-explorer`** — develops a broad solution space into grounded alternatives
+  through progressive exploration; returns options and recommendations for a decision.
 - **`architect`** — architecture design and assessment. Returns options and recommendations to the lead.
 - **`plan`** — implementation planning for a multi-step arc: scope, work
   packages, exclusive file zones, dependencies, checks, and open decisions.

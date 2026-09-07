@@ -5,8 +5,11 @@ options.
 
 ### Ground the comparison
 
-- Freeze the alternatives, decision criteria, verified premises, unresolved
-  facts, and conditions that would change each recommendation.
+- State the current alternatives, decision criteria, verified premises,
+  unresolved facts, and conditions that would change each recommendation.
+  Develop and revisit alternatives as new information changes their case;
+  record the changed premise and its effect on the comparison. Return revisions
+  to approved decisions to their owner or act within existing delegated authority.
 - Resolve decision-changing facts from authoritative project and dependency
   sources.
 - Separate required properties from proposed mechanisms. Compare mechanisms by
