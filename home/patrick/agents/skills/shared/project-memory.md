@@ -20,9 +20,9 @@ and links its parent rather than repeating it. Execution topics may reference
 existing durable owners elsewhere; directory symmetry is not required.
 
 Distinguish product non-goals from milestone exclusions and committed deferrals.
-Keep each deferral in one existing owning record with its responsible area,
-activation condition and acceptance evidence. Milestones may span arcs; closing
-an arc does not retire a commitment. Keep independently active milestones
+Keep committed deferrals under the outstanding-work convention below.
+Milestones may span arcs; closing an arc does not retire a commitment.
+Keep independently active milestones
 distinguishable within their owners without another directory or registry.
 
 Record ratified goal changes before dependent work consumes them. Child plans
@@ -30,6 +30,26 @@ cannot silently narrow parent commitments; a newer authorized user decision can
 revise them. Goals describe intended outcomes, not execution permission.
 Cross-topic or cross-project work links its applicable owners and dependencies;
 unresolved priority conflicts return to the decision owner.
+
+### Outstanding work across arcs
+
+Keep material outstanding work in one durable owner. Reuse an existing suitable
+section; otherwise use `docs/backlog.md`. Group by topic and split when volume or
+independent ownership warrants it. Link owners from existing entry points and
+reference their entries from boards and plans.
+
+Distinguish committed deferrals, confirmed defects, open investigations and
+unapproved proposals. Retain investigations and proposals with a concrete reason
+to revisit them. Record approval status where relevant; recording an item or
+reaching its revisit condition does not authorize execution.
+
+Capture the problem or intended outcome, responsible area, reason for deferral,
+revisit condition and resolution evidence. Preserve enough essential findings,
+reproduction details and active containment to resume independently of scratch.
+
+Reconcile relevant entries when setting scope, when revisit conditions change
+and at arc closure. Record resolution with a concise disposition and supporting
+evidence.
 
 ### Structure
 
