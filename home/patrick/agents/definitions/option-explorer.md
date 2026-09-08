@@ -4,7 +4,7 @@ description: >-
   Develop a broad solution space into realistic alternatives through progressive,
   evidence-grounded exploration. Returns options and recommendations, not an
   implementation or acceptance verdict. May write assigned exploration reports.
-effort: high
+effort: medium
 claude-tools: Read, Edit, Write, Grep, Glob, Bash, WebSearch, WebFetch, Skill
 claude-model: opus
 claude-hooks: readonly-bash
