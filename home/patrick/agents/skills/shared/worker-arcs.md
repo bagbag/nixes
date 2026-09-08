@@ -11,8 +11,11 @@ on their distinct requirements.
 
 ## 1. Frame and route
 
-Orient from project sources and current handover/board/design before questions.
-Before decomposition, establish one goal contract covering:
+Identify the current task from user direction, then orient from its applicable
+project/topic goal owners and current handover/board/design before questions.
+Follow `$HOME/.agents/skills/shared/project-memory.md` for ownership.
+Before decomposition, establish
+the arc's contribution to the canonical milestone, covering:
 
 - the user-assigned topic, stable topic slug, and arc slug;
 - outcome, purpose, defining value path, and any material hypothesis;
@@ -58,6 +61,9 @@ radius, and decisions.
 Every plan identifies the earliest executable checkpoint evaluating the defining
 value path, using the `define-goal` milestone challenge. Keep product acceptance
 tied to that path; label infrastructure-only evidence accurately.
+Before dispatch and acceptance, reconcile the work with that milestone: identify
+its outcome contribution or necessary prerequisite. This is a planning check,
+not another report or review stage; preserve current user direction and authority.
 
 Prefer vertical packages that exercise a consumer path across required
 boundaries. Foundation-only work needs a concrete dependency, the earliest
@@ -156,8 +162,9 @@ in responses; scout/explore are response-only, read-only roles.
 
 Use spec-as-source and brief-as-delta: reference decisions instead of repeating
 them. Overrides name the authorizing section/decision; return unmarked conflicts
-before dependent work. Treat legacy FINAL labels as current authorization,
-subject to global reconsideration. Workers report material challenges; the lead
+before dependent work. Treat legacy FINAL labels as recorded decisions,
+reconciled with current sources and global reconsideration. Execute work within
+the current task and granted authority. Workers report material challenges; the lead
 resolves them. Relay project-specific rules, not generic role discipline; add
 anti-regression STOPs where old sources may encode reversed decisions.
 
@@ -230,13 +237,12 @@ where viable, re-verify dependents, and record the error and containment.
 
 ## 5. Record evidence and state
 
-Maintain one board under `$HOME/.agents/skills/shared/board-files.md`: goal,
+Maintain one board under `project-memory.md`: goal links,
 workers, decisions, verification, proposals, containment, next action. For
 consequential claims needing legal/regulatory/medical/scientific or other expert
 validation, record claim, owner, status, evidence, and affected behavior. Keep
 behavior fail-closed only where it depends on an unresolved load-bearing claim;
 the mode decides asking, ratifying, or parking.
 
-Promote enduring conclusions under
-`$HOME/.agents/skills/shared/durable-docs.md`; keep working
+Promote enduring conclusions under `project-memory.md`; keep working
 coordination/evidence in `.scratch/<topic-slug>/<arc-slug>/`.

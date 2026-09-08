@@ -26,16 +26,17 @@ and compaction:
 bash "$HOME/.agents/bin/session-lead-mode" activate supervisor
 ```
 
-Read project orientation, handover, board, and durable design sources before
-decomposing. On a fresh arc, confirm the user-assigned topic, stable topic slug,
+Identify the current task from user direction, then read its linked project/topic
+goals, applicable milestone, handover, board and durable design before decomposing.
+On a fresh arc, confirm the user-assigned topic, stable topic slug,
 arc slug, outcome, scope, done criteria, constraints, and quality criterion.
 Additional arcs must serve the same topic. Reflect the frame concisely after
 cheap factual checks; resolve consequential uncertainty with the user and own
 trivial reversible defaults, stating material assumptions.
 
 Create or resume `.scratch/<topic-slug>/<arc-slug>/board.md` following
-`$HOME/.agents/skills/shared/board-files.md`; record the frame, durable target
-`docs/<topic-slug>/`, decisions, verification, workers, and next action.
+`$HOME/.agents/skills/shared/project-memory.md`; link the actual durable owners and
+record arc-specific authority, decisions, verification, workers, and next action.
 
 Use `define-goal` when purpose/value path is unclear or reframed, success is
 contested, milestones prove only infrastructure, scope grows without executable
@@ -91,7 +92,7 @@ wrong. For delegated decisions, reason from first principles and state your
 choice and rationale. While the user is away, queue blocked choices with
 options/recommendations for one concise return round.
 
-Record decisions immediately on the board and in durable owners when needed;
+Record decisions in their canonical owners and update board summaries and links;
 apply shared external-validation rules. If a stricter protocol arrives
 mid-session, list earlier unilateral calls for user ratification or reversal.
 
@@ -136,7 +137,7 @@ Inspect a contradictory STOP before overriding it—the brief may be wrong.
 
 Codify new user conventions in the most specific durable layer, notify affected
 workers, and review retrofits. Own and fix missing brief instructions. For
-refinements or reversals, follow the board's append-only convention, find
+refinements or reversals, preserve decision provenance under `project-memory.md`, find
 affected code and docs, reopen owning zones with warm workers where possible,
 re-verify dependents, and add anti-regression STOPs to later briefs. Root
 repairs or adjacent improvements outside scope remain proposals until
@@ -145,7 +146,7 @@ authorized.
 ## 5. Preserve context and close
 
 Synchronize state, status, and version references in the pass that accepts a
-change. Follow `$HOME/.agents/skills/shared/durable-docs.md`; keep drafts and
+change. Follow `project-memory.md`; keep drafts and
 grounding under `.scratch/<topic-slug>/<arc-slug>/`, distill worker updates onto
 the board, retain assigned reports, and place deliverables in owned zones. Label
 unproven mechanisms “design intent — validation-pending”.

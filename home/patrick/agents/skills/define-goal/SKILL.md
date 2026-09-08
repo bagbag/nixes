@@ -24,7 +24,9 @@ small enough to guide the next coherent milestone.
 ## Build the contract
 
 Orient cheaply from the user's framing and current project owners before asking
-questions. Produce one compact contract covering:
+questions. Follow `$HOME/.agents/skills/shared/project-memory.md` for project/topic
+goal ownership. Distinguish the enduring outcome from the applicable milestone;
+produce or refine the owning contract without duplicating its parent:
 
 - intended user and defining outcome;
 - problem or burden being reduced;
@@ -58,7 +60,10 @@ existing contract.
 ## Ratify and record
 
 Reuse a ratified contract while its premise and scope remain current. Present
-new or materially changed commitments for user ratification. Record the result
-on the current board when one exists; otherwise return the compact contract
-to the invoker. Promote enduring conclusions into their existing owner when
-needed. Architecture and planning consume the ratified contract afterward.
+new or materially changed commitments for user ratification. On Establish,
+Advance or Refocus, record ratified commitments governing future work in their
+durable owner before dependent planning or dispatch. Reuse existing ratification
+for unchanged commitments. Boards link canonical goal owners and hold
+arc-specific proposals, execution authority and progress.
+A goal does not authorize execution. In a proposal-only or read-only task,
+return the contract and proposed owner for approval rather than writing files.

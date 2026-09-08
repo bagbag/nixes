@@ -37,8 +37,8 @@ authorizes no Git mutation. Record the workspace and exact Git authority,
 including checkpoint commits.
 
 Create `.scratch/<topic-slug>/<arc-slug>/board.md` under
-`$HOME/.agents/skills/shared/board-files.md`, with durable target
-`docs/<topic-slug>/`. Run and record the whole-repository baseline gate when
+`$HOME/.agents/skills/shared/project-memory.md`, linking the applicable goal and
+contract owners. Run and record the whole-repository baseline gate when
 available, otherwise the strongest available gates.
 
 ## 2. Route work and decisions
@@ -98,12 +98,12 @@ Record decisions before dependent work; `log.md` only indexes complete boards in
 `history/`. Update the board and run `handover` WRITE at each coherent milestone
 and before window/context boundaries.
 
-After crashes, window boundaries, or compaction, read workspace/Git state,
-board, and handover. They represent observed reality, current intent, and last
-checkpoint respectively. Follow linked decision and evidence records when their
-details govern the next action. Preserve discrepancies as evidence, reconcile
-the board to reality, and rerun affected gates. Park recovery exceeding
-authority.
+After crashes, window boundaries, or compaction, follow `handover` ORIENT:
+preserve newer user instructions, identify the still-authorized task, and read
+its linked goals/milestone and workspace/Git state, board and handover. Reconcile
+the plan and next action with those commitments and remaining unattended authority.
+Follow linked evidence when it governs that action; preserve discrepancies and
+rerun affected gates. Park recovery exceeding authority or the granted window.
 
 Independently verify every coherent write result consumed downstream. The
 reviewer or lead owning that check must not have authored the implementation.

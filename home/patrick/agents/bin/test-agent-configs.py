@@ -146,14 +146,13 @@ def validate_skills(root: Path) -> None:
             "docs/<topic-slug>/",
             ".scratch/<topic-slug>/<arc-slug>/",
         ),
-        skills_dir / "shared" / "board-files.md": (
+        skills_dir / "shared" / "project-memory.md": (
             ".scratch/<topic-slug>/<arc-slug>/board.md",
-            "docs/<topic-slug>/",
             "log.md",
             "history/",
-        ),
-        skills_dir / "shared" / "durable-docs.md": (
             "docs/<topic-slug>/",
+            "docs/goals.md",
+            "docs/<topic-slug>/goals.md",
             "index.md",
         ),
         skills_dir / "handover" / "SKILL.md": (
@@ -161,11 +160,11 @@ def validate_skills(root: Path) -> None:
         ),
         skills_dir / "supervisor" / "SKILL.md": (
             ".scratch/<topic-slug>/<arc-slug>/board.md",
-            "docs/<topic-slug>/",
+            "$HOME/.agents/skills/shared/project-memory.md",
         ),
         skills_dir / "autopilot" / "SKILL.md": (
             ".scratch/<topic-slug>/<arc-slug>/board.md",
-            "docs/<topic-slug>/",
+            "$HOME/.agents/skills/shared/project-memory.md",
         ),
     }
     for path, required in path_contracts.items():
@@ -533,6 +532,47 @@ def validate_hooks(root: Path) -> None:
         )
         if startup is not None:
             raise ValueError("session recovery ran for a new session")
+
+        # Exercise the emitted recovery contract for each mode and event. These
+        # checks verify the reminder, not an agent's subsequent decision-making.
+        for session, expected_mode in (
+            ("claude-test", "supervisor"),
+            ("codex-test", "autopilot"),
+            ("inactive-test", None),
+        ):
+            for recovery_source in ("compact", "resume"):
+                recovered = run_hook(
+                    hooks / "compact-reorient.sh",
+                    {
+                        "hook_event_name": "SessionStart",
+                        "source": recovery_source,
+                        "session_id": session,
+                    },
+                    state_env,
+                )
+                recovery_context = (
+                    recovered["hookSpecificOutput"].get("additionalContext", "")
+                    if recovered is not None
+                    else ""
+                )
+                for obligation in (
+                    "current task and newer user instructions",
+                    "canonical project goal",
+                    "topic goal and milestone",
+                    "next action with those commitments and existing authority",
+                    "only when it remains the current authorized task",
+                ):
+                    if obligation not in recovery_context:
+                        raise ValueError(
+                            f"{session}/{recovery_source} recovery omitted {obligation!r}"
+                        )
+                if "Resume the existing arc;" in recovery_context:
+                    raise ValueError("recovery unconditionally resumed an old arc")
+                if expected_mode is None:
+                    if "skill remains active" in recovery_context:
+                        raise ValueError("generic recovery invented an active lead")
+                elif f"`{expected_mode}` skill remains active" not in recovery_context:
+                    raise ValueError("goal recovery lost the registered lead mode")
 
     stash = run_hook(
         hooks / "git-stash-guard.sh",

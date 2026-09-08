@@ -22,13 +22,15 @@ else
   mode=$(bash "$session_lead" get 2>/dev/null || true)
 fi
 
-message="Session recovery: before continuing, re-orient from the project's agent instructions and any active board, handover, plan, or durable design docs. Verify the current working tree and recorded next action instead of only relying on compacted or remembered conversation state."
+message="Session recovery: before continuing, re-orient from the project's agent instructions."
 case "$mode" in
   autopilot | supervisor)
     skill_path="$HOME/.agents/skills/$mode/SKILL.md"
-    message="Session recovery: the \`$mode\` skill remains active for this session. Before continuing, reload \`$skill_path\` completely and follow it. Resume the existing arc; do not restart completed pre-flight work. Then re-orient from the project's agent instructions and active board, handover, plan, or durable design docs. Verify the current working tree and recorded next action instead of only relying on compacted or remembered conversation state."
+    message="Session recovery: the \`$mode\` skill remains active for this session. Before continuing, reload \`$skill_path\` completely and follow it within the current task. Then re-orient from the project's agent instructions."
     ;;
 esac
+
+message+=" Preserve the current task and newer user instructions. When continuing project work, follow entry-point or active-board links to the canonical project goal and applicable topic goal and milestone, then recover current execution state from the board and handover. Reconcile the active plan and next action with those commitments and existing authority. Resume an existing arc only when it remains the current authorized task; reuse completed pre-flight work while its evidence remains applicable. Read further linked contracts and evidence when they govern that action. Verify the current working tree and recorded next action to ground recovery in current evidence."
 
 jq -cn --arg m "$message" \
   '{hookSpecificOutput:{hookEventName:"SessionStart",additionalContext:$m}}'

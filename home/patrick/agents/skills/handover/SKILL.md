@@ -9,9 +9,7 @@ description: >-
 
 # Handover
 
-Write or consume the state needed to continue in a fresh session.
-
-## Location and ownership
+## Location
 
 Use `.scratch/<topic-slug>/<arc-slug>/handover.md` beside the arc's board. The
 user or active lead supplies the slugs. Ask for missing paths and keep
@@ -20,43 +18,34 @@ the supplied note and existing arc.
 
 ## WRITE
 
-Synchronize the existing board, decision records, and project owners affected by
-the work. Keep transient decisions on the board and enduring decisions in their
-canonical owner. Then record:
+Synchronize affected boards and canonical owners. Write one current recovery
+note with concise context and links; retain former notes as labeled snapshots
+when needed. Record:
 
 - **Anchor:** date/time, branch, HEAD, and the JSON fingerprint from
   `python3 "$HOME/.agents/bin/worktree-fingerprint" .` in the active workspace.
-  It covers staged entries, assume-unchanged/skip-worktree flags, Git status,
-  and tracked/nonignored untracked contents, including symlinks and initialized
-  submodules. Ignored files and Git configuration are outside its scope.
-  Capture it with workspace writers idle and retry any reported concurrent
-  change. If the helper cannot capture the workspace, record that limitation
-  explicitly and return the issue to the lead.
-- **State:** verified work and its evidence, in-progress work, remaining work,
-  and claims still taken on a worker's word.
-- **Decisions:** pointers to the current board or enduring decision owner.
-- **Next actions:** priority order and enough context to begin each cold.
-- **Open questions:** parked decisions and recommendations.
-- **Gotchas:** relevant environment constraints and intentional oddities.
-- **Checks:** verification commands, expected results, and authorized effects.
+- **Goal and decisions:** applicable project/topic owners, milestone and board.
+- **State:** verified outcomes with evidence, attributed claims, and remaining work.
+- **Next actions:** priority, authority and context to start cold, including owned paths.
+- **Blockers and gotchas:** parked choices, recommendations and environment constraints.
+- **Checks:** commands, expected results and authorized effects.
 
-Use source and artifact pointers for reusable context. Keep session-specific
-worker identifiers in the live board; describe continuation work by its task and
-owned paths in the handover. If there is no board, the note may carry transient
-state itself. Create further records only when the work needs them.
+Keep execution detail and worker identifiers on the board; the note carries
+transient state itself when no board exists. Capture the fingerprint with writers
+idle; retry reported concurrent changes and disclose capture failures to the lead.
+It covers Git-visible file state, including index flags, symlinks and initialized
+submodules; ignored files and Git configuration are excluded.
 
 ## ORIENT
 
-Read the note and compare its fingerprint with current workspace state before
-running checks that may create artifacts. Investigate differences and preserve
-user changes. A matching fingerprint establishes file state within the helper's
-scope; it does not establish that the recorded claims are correct. Read linked
-decision or evidence records when their details govern the next action.
-
-Run the relevant verification commands within current authorization. Account for
-declared output artifacts separately from changes present at arrival. Continue
-the recorded authorized next action when its assumptions and priority still
-hold. Return material changes in scope, evidence, or priority to the user or
-active lead; unattended work follows its existing parking policy.
-
-Update the note in WRITE mode when handover state materially changes.
+1. Identify the current authorized task, preserving newer user direction. Read
+   its linked goals/milestone, board and note; reconcile the plan and next action.
+   Follow further decisions and evidence when they govern that action.
+2. Compare the fingerprint before artifact-producing checks. Investigate
+   differences and preserve user changes. A match establishes file state within
+   the helper's scope, not correctness of recorded claims.
+3. Run relevant authorized checks, distinguishing their outputs from arrival
+   changes. Continue while the next action's authority, assumptions and priority
+   hold. Return material scope, evidence or priority changes to the user/lead;
+   unattended work follows its parking policy.
+4. Refresh the note in WRITE mode when handover state materially changes.

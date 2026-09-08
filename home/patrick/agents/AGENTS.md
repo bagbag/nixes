@@ -72,9 +72,10 @@ When triaging a **pre-existing** list of findings (e.g. a handed-over `roast.md`
 
 Keep chat responses concise. When you produce a large standalone artifact — a full report, spec, plan, generated file, or bulk command/log dump that runs more than a screen or two — write it to a file and reference the path in your reply rather than dumping it in chat.
 
-- **Canonical durable artifacts**—ratified specifications, enduring plans, and
-  decision records that future work must rely on—go under
-  `docs/<topic-slug>/`. Working plans, review drafts, inventories, evidence, and
+- **Canonical durable artifacts**—project-wide goals under `docs/`, and topic
+  goals, ratified specifications, enduring plans and decisions normally under
+  `docs/<topic-slug>/`—reuse suitable existing owners following the durable-doc
+  convention. Working plans, review drafts, inventories, evidence, and
   intermediate reports remain under `.scratch/<topic-slug>/<arc-slug>/` unless
   their conclusions are promoted under the project's durable-doc convention.
 - **Arc continuity and transient state** (boards, handovers, evidence, working
@@ -182,8 +183,7 @@ and acceptance. The lead remains accountable for results.
 ## Project memory
 
 When an active skill or project workflow calls for a board or durable design
-docs, follow `$HOME/.agents/skills/shared/board-files.md` and
-`$HOME/.agents/skills/shared/durable-docs.md`. Workers whose brief points to a
+docs, follow `$HOME/.agents/skills/shared/project-memory.md`. Workers whose brief points to a
 board must flag board/spec contradictions.
 
 ## Closure
