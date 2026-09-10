@@ -49,6 +49,9 @@ declares its Codex model and sandbox; Claude-specific models, tools, and hooks
 remain optional adapter fields. New roles therefore cannot accidentally
 inherit write access or an unintended Codex model.
 
+Validation covers source instruction/description/effort preservation, generated
+permissions and local hooks. Live runtime enforcement requires separate checks.
+
 Each role's `codex-model` field owns its model selection; validation requires
 an explicit, nonempty model without pinning a particular selection.
 
@@ -56,11 +59,18 @@ Scout and explore return discovery results in their responses. Other specialists
 can write assigned artifacts directly. Native configurations provide file-write
 tools and workspace access; role instructions confine edits
 to assigned artifacts, with implementation changes reserved for implementation
-roles. The shell guard remains in place for investigation commands.
+roles. Claude's investigation shell guard is a deny-list; Codex uses its native
+sandbox setting. Role instructions define assigned write zones.
 
 Handover uses `python3 "$HOME/.agents/bin/worktree-fingerprint" <repo>` to
 capture Git-visible state. The helper includes staged entries, working files,
 and nonignored untracked contents without changing Git state.
+
+Workflow owners:
+
+- [Worker arcs](skills/shared/worker-arcs.md): invariant traceability and evidence.
+- [Handover](skills/handover/SKILL.md): file and environment continuity.
+- [Retro](skills/retro/SKILL.md): rule proposals and regression cases.
 
 The `explore-options` skill coordinates `option-explorer` to develop a broad
 solution space into realistic alternatives. It progressively screens and deepens

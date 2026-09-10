@@ -213,6 +213,30 @@ def validate_generated_agents(root: Path, generator) -> None:
     parsed = {filename: tomllib.loads(content) for filename, content in codex.items()}
     if len({agent["name"] for agent in parsed.values()}) != len(parsed):
         raise ValueError("duplicate effective Codex agent names")
+
+    # Source comparison catches omissions shared by both adapters.
+    for path in sorted(source.glob("*.md")):
+        _, frontmatter, body = path.read_text(encoding="utf-8").split("---", 2)
+        metadata = yaml.safe_load(frontmatter)
+        codex_name = metadata.get("codex-name", metadata["name"])
+        claude_name = metadata.get("claude-name", metadata["name"])
+        codex_agent = parsed[f"{codex_name}.toml"]
+        _, claude_frontmatter, claude_body = claude[f"{claude_name}.md"].split("---", 2)
+        claude_agent = yaml.safe_load(claude_frontmatter)
+        if codex_agent["name"] != codex_name or claude_agent["name"] != claude_name:
+            raise ValueError(f"{path}: adapter changed role identity")
+        for target, instructions, description, effort in (
+            ("codex", codex_agent["developer_instructions"],
+             codex_agent["description"], codex_agent["model_reasoning_effort"]),
+            ("claude", claude_body, claude_agent["description"], claude_agent["effort"]),
+        ):
+            if instructions.strip() != body.strip():
+                raise ValueError(f"{path}: {target} changed shared instructions")
+            if description.split() != metadata["description"].split():
+                raise ValueError(f"{path}: {target} changed shared description")
+            if effort != metadata["effort"]:
+                raise ValueError(f"{path}: {target} changed shared effort")
+
     specialists = {
         "architect": "architect",
         "option-explorer": "option-explorer",

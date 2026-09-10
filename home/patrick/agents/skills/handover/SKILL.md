@@ -26,7 +26,8 @@ it. Retain former notes as labeled snapshots only when needed. Record:
   `python3 "$HOME/.agents/bin/worktree-fingerprint" .` in the active workspace.
 - **Orientation:** current-only board and applicable goal/checkpoint owners.
 - **Recovery caveats:** environment constraints, non-obvious resumption hazards
-  and evidence-validity limits; link details already on the board.
+  and evidence-validity limits. Link recorded environment dependencies beside
+  evidence; capture missing, claim-relevant identities without secrets.
 - **Checks:** pointers to commands, expected results and authorized effects;
   copy commands only when needed for cold recovery.
 
@@ -48,7 +49,9 @@ submodules; ignored files and Git configuration are excluded.
    inspect current workspace state and treat prior file-state continuity as
    unverified. Investigate differences and preserve user changes. A match
    establishes file state within the helper's scope, not correctness of claims.
-3. Run relevant authorized checks, distinguishing their outputs from arrival
+3. Before reusing evidence, compare its recorded environment dependencies.
+   Recheck claims with changed or unverified dependencies.
+   Run relevant authorized checks, distinguishing their outputs from arrival
    changes. Continue while the next action's authority, assumptions and priority
    hold. Return material scope, evidence or priority changes to the user/lead;
    unattended work follows its parking policy.

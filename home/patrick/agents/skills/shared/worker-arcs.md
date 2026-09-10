@@ -96,7 +96,11 @@ dividing ownership. Use that understanding to identify affected paths and
 invariants; this investigation needs no separate report.
 
 Assign each file, shared contract, invariant, and cross-document concept one
-owner. Merge, extract, or sequence overlapping zones. Group shared invariants,
+owner. For consequential invariants and assumptions, link affected packages to
+the contract/decision owner, decisive checks and consumers. Keep statements,
+assumption verification status and evidence gaps with that owner; reassess
+consumers when premises change.
+Merge, extract, or sequence overlapping zones. Group shared invariants,
 mapping paths, and file ownership into one package where practical; keep one
 owner across internal steps/tests and review at a capability/consumer boundary.
 Split for useful parallelism, ownership, risk containment, or real dependencies.
@@ -212,9 +216,11 @@ evidence merely to force green.
 Report only source-confirmed defects with violated requirement/invariant and
 impact; separate risks, intent questions, and structural preferences. Authors
 run implementation gates; the lead runs cross-package integration checks.
-Existing briefs or reports state what checks prove and what invalidates them.
-Evidence files and execution logs are allowed; avoid a new tracking framework
-solely to coordinate repeated verification.
+Record what checks prove and what invalidates them in existing briefs/reports.
+Beside results, identify claim-relevant environment dependencies outside the Git
+fingerprint: toolchain/service versions, database/fixture state or non-secret
+ignored-config identities. Mark unknowns; recheck claims when dependencies change.
+Keep supporting evidence and logs in the arc's existing artifacts.
 
 Choose gates by blast radius: targeted after isolated waves, whole-repository
 after cross-cutting changes, at agreed milestones, and final acceptance when

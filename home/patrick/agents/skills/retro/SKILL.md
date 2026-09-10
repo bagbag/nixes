@@ -46,10 +46,17 @@ with the new evidence.
 
 ## 3. Ratification round — propose-only
 
-Batch related proposals while keeping each independently reviewable. Include
-the learning, concrete evidence, exact proposed edit, and destination. Apply
-items after user approval and confirm what changed. Phrase ordinary guidance
-as positive actions; retain precise execution and authority boundaries.
+Batch related proposals; keep each independently reviewable. Include:
+
+- learning, triggering evidence, exact edit and destination;
+- expected observable behavior and validation method, reusing existing cases.
+
+Use executable checks for deterministic hooks/generators where practical.
+For judgment-heavy rules, retain scenarios in the existing working artifact;
+distinguish expected behavior, observed results and reliability still untested.
+Phrase guidance as positive actions; preserve execution and authority boundaries.
+
+Apply approved items, run applicable checks, and report results and limits.
 
 When skills are rendered or store-backed, edit their canonical template source,
 then run the owner-provided validation and build. Report whether activation
