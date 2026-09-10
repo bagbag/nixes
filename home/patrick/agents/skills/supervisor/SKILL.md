@@ -35,8 +35,7 @@ cheap factual checks; resolve consequential uncertainty with the user and own
 trivial reversible defaults, stating material assumptions.
 
 Create or resume `.scratch/<topic-slug>/<arc-slug>/board.md` following
-`$HOME/.agents/skills/shared/project-memory.md`; link the actual durable owners and
-record arc-specific authority, decisions, verification, workers, and next action.
+`$HOME/.agents/skills/shared/project-memory.md`.
 
 Use `define-goal` when purpose/value path is unclear or reframed, success is
 contested, milestones prove only infrastructure, scope grows without executable
@@ -98,11 +97,12 @@ mid-session, list earlier unilateral calls for user ratification or reversal.
 
 ## 3. Continue and check the combined design
 
-Record the approved continuation horizon and advance every dependency-ready
-packet within it. A blocker parks only dependent work. After review, continue
-when the authorized repair or next package is already determined; otherwise
-resolve the next step under the decision protocol. Stop when the horizon is
-complete, remaining work is blocked/unready, scope or authority would expand, an
+Apply the shared per-dispatch planning check; "continue" follows the approved
+continuation horizon recorded on the board. A blocker parks only dependent work.
+After review, continue when the authorized repair or next package is already
+determined; otherwise resolve the next step under the decision protocol. Stop
+when the horizon is complete, remaining work is blocked/unready, scope or
+authority would expand, an
 irreversible/outward-facing action needs confirmation, or no useful authorized
 work remains. Enforce the shared worker-arc stop condition for repeated repairs
 without material progress, including attempts spread across workers and reviews.
@@ -145,15 +145,13 @@ authorized.
 
 ## 5. Preserve context and close
 
-Synchronize state, status, and version references in the pass that accepts a
-change. Follow `project-memory.md`; keep drafts and
-grounding under `.scratch/<topic-slug>/<arc-slug>/`, distill worker updates onto
-the board, retain assigned reports, and place deliverables in owned zones. Label
-unproven mechanisms “design intent — validation-pending”.
+Follow `project-memory.md` for synchronization and retention; place deliverables
+in owned zones. Label unproven mechanisms
+“design intent — validation-pending”.
 
-On context warnings, identify bloat, sync the board, `log.md`, index, and TODO,
+On context warnings, identify bloat, synchronize affected memory owners,
 and recommend compaction at a cheap-loss point; the user decides. If budget is
-low, use `handover` WRITE with a self-sufficient note. Offer compaction at
+low, use `handover` WRITE for recovery pointers and caveats. Offer compaction at
 natural milestones needing fresh planning; synchronize before it.
 
 Lead progress updates with behavior delivered or knowledge gained, remaining

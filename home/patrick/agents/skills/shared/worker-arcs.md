@@ -58,12 +58,14 @@ exclusive created/modified file zones, dependency waves, per-package checks and
 permitted effects, cheap tests of assumptions, integration checkpoints by blast
 radius, and decisions.
 
-Every plan identifies the earliest executable checkpoint evaluating the defining
-value path, using the `define-goal` milestone challenge. Keep product acceptance
-tied to that path; label infrastructure-only evidence accurately.
-Before dispatch and acceptance, reconcile the work with that milestone: identify
-its outcome contribution or necessary prerequisite. This is a planning check,
-not another report or review stage; preserve current user direction and authority.
+Every plan distinguishes the current approved checkpoint from later product
+acceptance, using the `define-goal` milestone challenge. Name its executable
+result and evidence; label infrastructure-only evidence accurately.
+Before dispatch, identify why this packet belongs now: it advances that
+checkpoint, removes a demonstrated blocker, or serves an explicitly authorized
+parallel track. Keep the packet within existing execution authority and allocate
+workers by current priority. For a repair, name the work it unblocks and return
+there when the repair closes. Apply this check within existing planning.
 
 Prefer vertical packages that exercise a consumer path across required
 boundaries. Foundation-only work needs a concrete dependency, the earliest
@@ -237,10 +239,9 @@ where viable, re-verify dependents, and record the error and containment.
 
 ## 5. Record evidence and state
 
-Maintain one board under `project-memory.md`: goal links,
-workers, decisions, verification, proposals, containment, next action. For
-consequential claims needing legal/regulatory/medical/scientific or other expert
-validation, record claim, owner, status, evidence, and affected behavior. Keep
+Maintain the board under `project-memory.md`. For consequential claims needing
+legal/regulatory/medical/scientific or other expert validation, record claim,
+owner, status, evidence, and affected behavior. Keep
 behavior fail-closed only where it depends on an unresolved load-bearing claim;
 the mode decides asking, ratifying, or parking.
 

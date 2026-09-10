@@ -30,7 +30,7 @@ case "$mode" in
     ;;
 esac
 
-message+=" Preserve the current task and newer user instructions. When continuing project work, follow entry-point or active-board links to the canonical project goal and applicable topic goal and milestone, then recover current execution state from the board and handover. Reconcile the active plan and next action with those commitments and existing authority. Resume an existing arc only when it remains the current authorized task; reuse completed pre-flight work while its evidence remains applicable. Read further linked contracts and evidence when they govern that action. Verify the current working tree and recorded next action to ground recovery in current evidence."
+message+=" Preserve the current task and newer user instructions. Recover the current approved checkpoint, next authorized work, deferrals and return boundary from the current-only board (or handover if no board exists); use handover for recovery anchors and caveats. Consult the linked canonical project goal and applicable topic goal and milestone; reconcile the next action with those commitments and existing authority. Keep later product acceptance in its approved sequence. Resume an existing arc only when it remains the current authorized task. Check the working tree and relevant evidence; reuse applicable pre-flight results."
 
 jq -cn --arg m "$message" \
   '{hookSpecificOutput:{hookEventName:"SessionStart",additionalContext:$m}}'

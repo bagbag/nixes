@@ -557,9 +557,14 @@ def validate_hooks(root: Path) -> None:
                 )
                 for obligation in (
                     "current task and newer user instructions",
+                    "current approved checkpoint",
+                    "next authorized work, deferrals and return boundary",
+                    "current-only board (or handover if no board exists)",
+                    "handover for recovery anchors and caveats",
                     "canonical project goal",
                     "topic goal and milestone",
                     "next action with those commitments and existing authority",
+                    "Keep later product acceptance in its approved sequence",
                     "only when it remains the current authorized task",
                 ):
                     if obligation not in recovery_context:

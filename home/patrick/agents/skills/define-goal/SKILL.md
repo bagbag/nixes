@@ -25,8 +25,8 @@ small enough to guide the next coherent milestone.
 
 Orient cheaply from the user's framing and current project owners before asking
 questions. Follow `$HOME/.agents/skills/shared/project-memory.md` for project/topic
-goal ownership. Distinguish the enduring outcome from the applicable milestone;
-produce or refine the owning contract without duplicating its parent:
+goal and checkpoint ownership. Produce or refine the owning contract without
+duplicating its parent:
 
 - intended user and defining outcome;
 - problem or burden being reduced;
@@ -37,6 +37,9 @@ produce or refine the owning contract without duplicating its parent:
 - constraints and quality criterion;
 - acceptance evidence; and
 - unresolved empirical assumptions with the cheapest useful test.
+
+For a narrow path-validation checkpoint, name what it must deliver or teach,
+which broader capabilities wait, and when the user assesses expansion.
 
 Resolve factual uncertainty before presenting choices. Bring genuine
 consequential alternatives to the user with honest trade-offs and a marked

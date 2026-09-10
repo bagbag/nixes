@@ -25,6 +25,13 @@ Milestones may span arcs; closing an arc does not retire a commitment.
 Keep independently active milestones
 distinguishable within their owners without another directory or registry.
 
+Distinguish the eventual product outcome, the current approved checkpoint and
+the work authorized now. A checkpoint may validate a narrow executable path
+before broader capability delivery. Retain applicable integrity and authority
+constraints; keep later acceptance requirements in their approved sequence.
+Record sequencing changes in the milestone owner even when the product goal
+is unchanged; the board links that checkpoint and owns its execution state.
+
 Record ratified goal changes before dependent work consumes them. Child plans
 cannot silently narrow parent commitments; a newer authorized user decision can
 revise them. Goals describe intended outcomes, not execution permission.
@@ -68,42 +75,50 @@ when the amount of material or distinct ownership makes them useful.
 ## Arc state
 
 Keep working plans, drafts, reviews and evidence in
-`.scratch/<topic-slug>/<arc-slug>/`. Own current execution state in one living
-`board.md` per multi-step arc, shared by supervisor and autopilot:
+`.scratch/<topic-slug>/<arc-slug>/`. Own current execution state in one brief,
+current-only `board.md` per multi-step arc, shared by supervisor and autopilot:
 `.scratch/<topic-slug>/<arc-slug>/board.md`.
+
+The board owns the live execution summary. Update it in place. Keep superseded
+instructions and completed-work narratives in history; retain their resulting
+verified state and evidence links on the board.
 
 - Use lowercase kebab-case for topic and arc slugs.
 - Each active lead owns exactly one topic, and each topic has one active lead.
   A lead may run multiple arcs for its topic; give each arc its own subdirectory.
   Record the stable topic slug, arc slug, mode, status, and durable-owner links
   at the top of each board.
-- Keep `handover.md` and `log.md` beside the board. Use the `handover` skill
-  for writing and consuming recovery notes. Create `evidence/` when grounding
-  artifacts need their own files; keep rotated boards under `history/`.
-- Link applicable goals and milestones; state the arc's contribution, scope,
-  acceptance and execution authority. Include:
-
-  - workers/tracks (id · zone · task · status);
-  - current decisions with rationale, assumptions and owning-record links;
-  - fully reviewable pending ratifications, minor decisions and scope proposals;
-  - verified vs. attributed results and external-validation items
-    (claim · owner · status · evidence · affected behavior);
-  - containment, blockers and next action.
+- Keep `handover.md` for recovery anchors, environment caveats and pointers
+  to live state. Use the `handover` skill for recovery notes.
+  Keep `log.md` as the history index; use `evidence/` and `history/` for detailed
+  grounding and retained snapshots.
+- Make the opening summary sufficient to select the next action: goal and
+  checkpoint links, checkpoint completion evidence, verified position, next
+  authorized work and return-to-user boundary, blockers/pending choices, explicit
+  deferrals and independently authorized parallel tracks.
+- Keep active ownership (id · zone · task · status) and necessary authority,
+  containment and evidence qualifications below it. Link detailed plans, full
+  decisions and reports rather than copying them. Distinguish executed evidence
+  from author reports and unverified intent.
+- Aim for a first-screen summary and a short board.
 
 - Keep the entire `.scratch/` tree gitignored. Do not store secrets there.
 
 ### Worker coordination
 
 Supply the board pointer in every worker brief and require workers to flag
-board/spec contradictions. Distill their results onto the board and link
-substantive assessments. A board reference grants reading and reporting;
-assign write ownership explicitly and sequence board edits with the lead.
+board/spec contradictions. Workers report state deltas; the lead integrates
+them into the current board and links substantive assessments. A board reference
+grants reading and reporting; assign and sequence board edits explicitly.
 
 ## Synchronization
 
-Update current board state at dispatch, decision, acceptance and other reality
-changes, and immediately on context warnings. Replace superseded summaries and
-next actions. Record decisions before dependent work.
+Replace affected board state at dispatch, plan/decision changes, material
+completion, failed checks and changed blockers, and before recovery boundaries.
+Remove settled work from the active queue; update the verified position and the
+next action it unblocks. Record decisions and reconcile the plan before
+dependent dispatch.
+Append evidence to its report or history; replace the corresponding board summary.
 
 Promote ratified conclusions needed by future implementation, operation or
 maintenance into canonical owners, retaining working artifacts as evidence.
@@ -113,26 +128,28 @@ as optional context and keep the contract complete without those artifacts.
 
 ### Decision provenance
 
-Keep each full decision or ratification record in one existing owner: the board
-if no other owner exists, an arc decision record, or its durable owner.
-Preserve provenance append-only: refinements and reversals state what changed,
-why, and which decision they supersede. Update current summaries and affected
-work while retaining the earlier record; link full records from summaries.
-When the board holds the sole full provenance, rotate it before replacing that
-record. Reconcile affected owners, plans and next actions when goals or authority
-change; park only work dependent on an unresolved contradiction.
+Record relevant trivial defaults in their owning work artifact when one exists;
+otherwise keep them directly on the board while they affect current work.
+Keep full consequential decisions and ratifications in an existing durable or
+arc decision record; create one only when none fits. Preserve provenance
+append-only there: refinements and reversals state what changed, why and which
+decision they supersede. Summarize these records on the board with their current
+disposition and owning-record link.
+Before removing sole provenance from a legacy board, preserve it in its owner or
+an archived snapshot. Reconcile affected owners, plans and next actions when
+goals, sequencing or authority change; park only dependent work.
 
 ### Rotation and recovery
 
-At coherent phase boundaries, move the complete board to
-`history/<date>-<phase>.md`. Keep `log.md` as an append-only archive index:
+Archive a board snapshot when it preserves meaningful phase evidence or sole
+legacy provenance, using `history/<date>-<phase>.md`; otherwise replace board
+state in place. Keep `log.md` as an append-only archive index:
 one dated sentence per rotated board, naming its phase/milestone and linking
 to it, rather than storing decisions or evidence.
 
-Create a current board carrying goal links, current and unresolved decisions,
-authority, active ownership, blockers and next actions, with necessary history
-pointers. For the current task, recovery follows goal-owner and board pointers;
-read `log.md` and historical snapshots when provenance is needed.
+Recover the current approved checkpoint, next work and authority from the board,
+then consult its goal owners and applicable constraints. Use handover for recovery
+anchors and caveats. Read history when provenance is needed.
 
 ### Closure
 

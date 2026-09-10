@@ -59,7 +59,7 @@ A contradiction of the ratified plan is a plan-level STOP: park affected work,
 record evidence, and revise only affected packages within authority. Record the
 revised plan before resuming.
 
-- **Trivial/reversible:** act; record one line in board minor decisions.
+- **Trivial/reversible:** act; record relevant defaults.
 - **Non-trivial/reversible:** compare options with honest for/against and a
   recommendation as if presenting to the user. Act on it and record a
   ratification item: issue, options, choice, reasons, and reversal procedure.
@@ -69,8 +69,9 @@ revised plan before resuming.
 Resolve facts and obtain independent assessment before non-trivial action; reuse
 adequate assessment of the same decision/sources/revision under shared review
 rules. Agreement does not expand authority; park trade-offs outside it. When
-uncertain, choose the higher tier. Reversal must be possible from the board
-without remembered context or costly downstream rework—not merely through Git.
+uncertain, choose the higher tier. Link the reversal procedure from the board;
+it must be executable without remembered context or costly downstream rework—not
+merely through Git.
 
 Assess related decisions cumulatively: individually reversible changes can
 become scope-changing after adoption. Unless the unattended contract covers it,
@@ -92,18 +93,13 @@ Conventional Commits.
 
 Never rewrite history or merge your own work.
 
-Keep one board beside `handover.md` and `log.md`: current state, full
-ratification queue, parks, proposals, containment, and checkpoint evidence.
-Record decisions before dependent work; `log.md` only indexes complete boards in
-`history/`. Update the board and run `handover` WRITE at each coherent milestone
-and before window/context boundaries.
+Follow `project-memory.md` for current state and decision records; keep pending
+ratifications and parks visible on the board. Before window/context boundaries,
+run `handover` WRITE.
 
-After crashes, window boundaries, or compaction, follow `handover` ORIENT:
-preserve newer user instructions, identify the still-authorized task, and read
-its linked goals/milestone and workspace/Git state, board and handover. Reconcile
-the plan and next action with those commitments and remaining unattended authority.
-Follow linked evidence when it governs that action; preserve discrepancies and
-rerun affected gates. Park recovery exceeding authority or the granted window.
+After crashes, window boundaries, or compaction, follow `handover` ORIENT and
+check remaining unattended authority and time. Preserve discrepancies and rerun
+affected gates. Park recovery exceeding authority or the granted window.
 
 Independently verify every coherent write result consumed downstream. The
 reviewer or lead owning that check must not have authored the implementation.
