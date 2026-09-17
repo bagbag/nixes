@@ -43,6 +43,11 @@ in
           ControlPath = "~/.ssh/control-master-%r@%h:%p";
           ControlPersist = "30";
         };
+        "Host nl-pve01" = {
+          HostName = "10.98.0.10";
+          User = "root";
+          ProxyJump = "root@pve01.nightlines.eu";
+        };
         "Host nl01" = {
           HostName = "10.98.0.100";
           User = "root";

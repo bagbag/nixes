@@ -1,15 +1,17 @@
-{ inputs, ... }:
+{ ... }:
 let
-  # Remove once Node 26.7.0 is substituted for aarch64-darwin again.
-  cachedNodejsOverlay = final: _: {
-    nodejs_26 = inputs.nixpkgs-nodejs.legacyPackages.${final.stdenv.hostPlatform.system}.nodejs_26;
+  # qui's tests take t.TempDir() from nixpkgs' preCheck TMPDIR=/tmp, which is a
+  # symlink to /private/tmp on darwin; qui's partial-pool escape guard leaves the
+  # root unresolved and rejects every propagation. Remove once nixpkgs resolves
+  # TMPDIR on darwin.
+  quiDarwinTmpdirOverlay = _: prev: {
+    qui = prev.qui.overrideAttrs (_: {
+      preCheck = "export TMPDIR=/private/tmp";
+    });
   };
 in
 {
-  nstdl.hosts = {
-    nixstation.extraModules = [ { nixpkgs.overlays = [ cachedNodejsOverlay ]; } ];
-    nixmobil.extraModules = [ { nixpkgs.overlays = [ cachedNodejsOverlay ]; } ];
-    nixbook-air.extraModules = [ { nixpkgs.overlays = [ cachedNodejsOverlay ]; } ];
-    macbook-pro.extraModules = [ { nixpkgs.overlays = [ cachedNodejsOverlay ]; } ];
-  };
+  nstdl.hosts.macbook-pro.extraModules = [
+    { nixpkgs.overlays = [ quiDarwinTmpdirOverlay ]; }
+  ];
 }
