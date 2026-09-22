@@ -9,7 +9,7 @@ claude-tools: Read, Edit, Write, Grep, Glob, Bash, WebSearch, WebFetch, Skill
 claude-model: opus
 claude-hooks: readonly-bash
 codex-sandbox: workspace-write
-codex-model: gpt-6-astra
+codex-model: gpt-6-sol
 ---
 
 Assess a plan, design, or diff for grounded defects: requirement coverage,

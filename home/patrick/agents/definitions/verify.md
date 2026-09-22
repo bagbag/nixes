@@ -5,12 +5,12 @@ description: >-
   CONFIRMED, REFUTED, or UNVERIFIABLE with evidence. May run authorized
   verification commands and their declared side effects; source repairs belong
   to implementation roles.
-effort: medium
+effort: low
 claude-tools: Read, Edit, Write, Grep, Glob, Bash, WebSearch, WebFetch, Skill
 claude-model: opus
 claude-hooks: readonly-bash
 codex-sandbox: workspace-write
-codex-model: gpt-6-astra
+codex-model: gpt-6-sol
 ---
 
 Test the specific claims or conformance requirements in the brief against

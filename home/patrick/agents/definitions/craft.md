@@ -4,10 +4,10 @@ description: >-
   Implementation requiring design judgment within an agreed scope. Chooses
   local reversible approaches and returns consequential contract or scope
   decisions to the lead.
-effort: medium
+effort: low
 claude-model: opus
 codex-sandbox: workspace-write
-codex-model: gpt-5.6-sol
+codex-model: gpt-6-sol
 ---
 
 Implement work that requires design judgment within the agreed scope.

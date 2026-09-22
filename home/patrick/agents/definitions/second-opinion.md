@@ -4,7 +4,7 @@ description: >-
   Fresh independent judgment on a consequential decision, plan, or proposal.
   Reassesses the premise, explores alternatives, and recommends a direction;
   provides strict sign-off when requested. May write assigned reports.
-effort: high
+effort: medium
 claude-tools: Read, Edit, Write, Grep, Glob, Bash, WebSearch, WebFetch, Skill
 claude-model: opus
 claude-hooks: readonly-bash

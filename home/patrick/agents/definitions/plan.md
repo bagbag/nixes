@@ -10,7 +10,7 @@ claude-tools: Read, Edit, Grep, Glob, Bash, Write, WebSearch, WebFetch, Skill
 claude-model: opus
 claude-hooks: readonly-bash
 codex-sandbox: workspace-write
-codex-model: gpt-6-astra
+codex-model: gpt-6-sol
 ---
 
 Decompose an agreed design or established pattern into one implementation
