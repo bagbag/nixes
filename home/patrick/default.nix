@@ -1,12 +1,16 @@
 {
   config,
   lib,
+  osConfig,
   pkgs,
   ...
 }:
 let
   pnpmConfigPath =
     if pkgs.stdenv.isDarwin then "Library/Preferences/pnpm/config.yaml" else ".config/pnpm/config.yaml";
+  # pnpm defaults PNPM_HOME to ~/Library/pnpm on darwin, which is not on PATH;
+  # pin it to the directory the session exports so global installs succeed.
+  pnpmHome = "${config.home.homeDirectory}/.local/share/pnpm";
 in
 {
   imports = [
@@ -15,13 +19,24 @@ in
     ./vscode.nix
   ];
 
+  # Credentials go to auth.ini, not the config.yaml managed below, so the two
+  # do not collide. The token itself is read from the agenix path at
+  # activation and never enters the store.
+  nstdl.programs.pnpm.registryAuth.tstdl = {
+    registry = "https://forge.cloudful.de/api/packages/patrick/npm/";
+    tokenFile = osConfig.age.secrets.tstdl-npm-token.path;
+  };
+
   home = {
-    sessionPath = [ "${config.home.homeDirectory}/.local/share/pnpm/bin" ];
+    sessionPath = [ "${pnpmHome}/bin" ];
     file.${pnpmConfigPath}.text = ''
       minimumReleaseAge: 2880
       trustPolicy: no-downgrade
     '';
-    sessionVariables.PNPM_CONFIG_PM_ON_FAIL = "warn";
+    sessionVariables = {
+      PNPM_HOME = pnpmHome;
+      PNPM_CONFIG_PM_ON_FAIL = "warn";
+    };
   };
 
   programs = {
@@ -84,6 +99,10 @@ in
     };
 
     zsh.shellAliases.claude-full = "CLAUDE_CODE_AUTO_COMPACT_WINDOW=900000 claude";
+
+    # home.sessionVariables only reach POSIX shells; nushell reads its own
+    # environmentVariables, so PNPM_HOME must be declared in both.
+    nushell.environmentVariables.PNPM_HOME = pnpmHome;
 
     nushell.extraConfig = ''
       def --wrapped claude-full [...args] {

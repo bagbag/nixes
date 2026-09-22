@@ -5,6 +5,7 @@
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
 
     nixos-hardware.url = "github:NixOS/nixos-hardware/master";
+    nixos-hardware.inputs.nixpkgs.follows = "nixpkgs";
 
     flake-parts.url = "github:hercules-ci/flake-parts";
 

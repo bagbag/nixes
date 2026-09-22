@@ -25,6 +25,7 @@
     };
     items.patrick-password-hash = {
       rekeyFile = inputs.self.outPath + "/secrets/patrick-password-hash.age";
+      generator.type = "password-hash";
       access.nixstation = {
         owner = "patrick";
         mode = "0400";
@@ -34,6 +35,26 @@
         mode = "0400";
       };
       access.macbook-pro-nixvm = {
+        owner = "patrick";
+        mode = "0400";
+      };
+    };
+    # Auth token for the private @tstdl npm registry on forge.cloudful.de.
+    items.tstdl-npm-token = {
+      rekeyFile = inputs.self.outPath + "/secrets/tstdl-npm-token.age";
+      access.nixstation = {
+        owner = "patrick";
+        mode = "0400";
+      };
+      access.nixmobil = {
+        owner = "patrick";
+        mode = "0400";
+      };
+      access.nixbook-air = {
+        owner = "patrick";
+        mode = "0400";
+      };
+      access.macbook-pro = {
         owner = "patrick";
         mode = "0400";
       };

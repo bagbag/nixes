@@ -7,6 +7,7 @@
     features = [
       "developer"
       "desktop-apps"
+      "linux-builder"
       "messaging"
       "podman"
       "qui"
@@ -50,6 +51,7 @@
           (inputs.self.outPath + "/home/patrick")
         ];
       }
+      (inputs.self.outPath + "/hosts/macbook-pro/linux-builder.nix")
       (inputs.self.outPath + "/hosts/macbook-pro/nstdl.nix")
     ];
   };
