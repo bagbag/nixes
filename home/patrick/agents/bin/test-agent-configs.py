@@ -16,7 +16,7 @@ import yaml
 
 
 EXPLICIT_ONLY_SKILLS = {"autopilot", "retro", "supervisor"}
-IMPLICIT_SKILLS = {"architect", "define-goal", "explore-options", "second-opinion"}
+IMPLICIT_SKILLS = {"architect", "define-goal", "explore-options", "second-opinion", "staged-review"}
 sys.dont_write_bytecode = True
 
 
