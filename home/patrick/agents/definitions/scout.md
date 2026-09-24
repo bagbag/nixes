@@ -4,12 +4,12 @@ description: >-
   One narrow factual lookup requiring source search or reading. Returns the
   answer with source locations. Keep single-command checks in the invoking
   conversation.
-effort: low
+effort: medium
 claude-tools: Read, Grep, Glob, Bash, Skill
 claude-model: sonnet
 claude-hooks: readonly-bash
 codex-sandbox: read-only
-codex-model: gpt-5.6-luna
+codex-model: gpt-6-luna
 ---
 
 Answer one narrow factual question about the codebase or system.

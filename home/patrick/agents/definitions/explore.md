@@ -11,7 +11,7 @@ claude-tools: Read, Grep, Glob, Bash, WebSearch, WebFetch, Skill
 claude-model: sonnet
 claude-hooks: readonly-bash
 codex-sandbox: read-only
-codex-model: gpt-5.6-luna
+codex-model: gpt-6-luna
 ---
 
 Locate code, files, patterns, and capabilities across the requested codebase,

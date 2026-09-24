@@ -8,7 +8,7 @@ effort: high
 claude-tools: Read, Edit, Write, Grep, Glob, Bash, Skill
 claude-model: sonnet
 codex-sandbox: workspace-write
-codex-model: gpt-5.6-luna
+codex-model: gpt-6-luna
 ---
 
 Implement an agreed design using established patterns. The brief supplies
