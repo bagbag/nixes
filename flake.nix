@@ -4,6 +4,10 @@
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
 
+    # Node 26 substitutes for aarch64-darwin regularly lag nixpkgs. Advance
+    # this separate pin only after verifying the full package is cached.
+    nixpkgs-nodejs.url = "github:NixOS/nixpkgs/6ae88740575d77caf48a612284df89a91374af6d";
+
     nixos-hardware.url = "github:NixOS/nixos-hardware/master";
     nixos-hardware.inputs.nixpkgs.follows = "nixpkgs";
 
