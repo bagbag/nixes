@@ -32,14 +32,15 @@
     flake-parts.lib.mkFlake { inherit inputs; } {
       imports = [
         inputs.nstdl.flakeModules.default
+        ./accounts.nix
+        ./secrets/default.nix
+        ./hosts/nixstation/default.nix
+        ./hosts/nixmobil/default.nix
+        ./hosts/nixbook-air/default.nix
+        ./hosts/macbook-pro/default.nix
+        ./hosts/macbook-pro-nixvm/default.nix
         ./modules/flake-parts/workarounds.nix
         ./modules/flake-parts/codex.nix
-        ./modules/flake-parts/secrets.nix
-        ./modules/flake-parts/nixstation.nix
-        ./modules/flake-parts/nixmobil.nix
-        ./modules/flake-parts/nixbook-air.nix
-        ./modules/flake-parts/macbook-pro.nix
-        ./modules/flake-parts/macbook-pro-nixvm.nix
       ];
     };
 }

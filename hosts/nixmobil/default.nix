@@ -59,7 +59,7 @@
           (inputs.self.outPath + "/home/patrick")
         ];
       }
-      (inputs.self.outPath + "/hosts/nixmobil/nstdl.nix")
+      (inputs.self.outPath + "/hosts/nixmobil/system.nix")
     ];
   };
 }

@@ -73,11 +73,11 @@ sudo cat /etc/ssh/ssh_host_ed25519_key.pub
 ```
 
 Set that value as `secrets.hostPubkey` in
-`modules/flake-parts/macbook-pro-nixvm.nix`, then re-key from a configured
+`hosts/macbook-pro-nixvm/default.nix`, then re-key from a configured
 Patrick administrator machine:
 
 ```sh
-nix run .#agenix-rekey -- rekey
+./nstdl secret rekey
 ```
 
 Rebuild on the guest to pick up the re-keyed secret:

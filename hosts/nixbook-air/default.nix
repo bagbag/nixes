@@ -1,25 +1,22 @@
 { inputs, ... }:
 {
-  nstdl.hosts.macbook-pro = {
+  nstdl.hosts.nixbook-air = {
     platform = "darwin";
     system = "aarch64-darwin";
     role = "workstation";
     features = [
       "developer"
       "desktop-apps"
-      "linux-builder"
       "messaging"
       "podman"
-      "qui"
       "battery-charge-limit"
       "remote-access"
       "secrets"
-      "sleepless"
       "office-suite"
       "ai-agent-tools"
     ];
     systemStateVersion = 6;
-    secrets.hostPubkey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAILKTX/gW5kwXvwCEIiHjyRvGG6Tdpy4iJU41Gg8urz2T";
+    secrets.hostPubkey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPpPhXfy+OmQXWkjhFxn68tDs+++MTXzpSgMS3iM5gwN";
     accounts = {
       primary = "patrick";
       users.patrick.home = {
@@ -51,8 +48,7 @@
           (inputs.self.outPath + "/home/patrick")
         ];
       }
-      (inputs.self.outPath + "/hosts/macbook-pro/linux-builder.nix")
-      (inputs.self.outPath + "/hosts/macbook-pro/nstdl.nix")
+      (inputs.self.outPath + "/hosts/nixbook-air/system.nix")
     ];
   };
 }

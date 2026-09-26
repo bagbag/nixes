@@ -1,14 +1,10 @@
 #!/usr/bin/env bash
-# Wrapper for the nstdl CLI, per nstdl's README. Run from this directory:
-#
-#   ./nstdl secret status      # what is declared, missing or pending a rekey
-#   ./nstdl secret sync        # create every missing generated value, then rekey
-#   ./nstdl secret set <name>  # provide an externally issued value
-#
-# Replaces edit-secret.sh and rekey.sh, which drove ragenix directly against
-# secrets/secrets.nix — a second, hand-maintained list of recipients beside the
-# one nstdl already derives from `nstdl.secrets`.
-#
-# `.#`, never `path:`: a path reference copies ignored files — including
-# .scratch/ — into the world-readable Nix store.
-cd "$(dirname "$0")" && exec nix run .#nstdl -- "$@"
+set -euo pipefail
+
+# Keep Git flake semantics; path: would include ignored private key material.
+cd "$(dirname "$0")"
+if [[ ${1-} == prepare-host-key ]]; then
+  shift
+  exec nix run .#prepare-host-key -- "$@"
+fi
+exec nix run .#nstdl -- "$@"
