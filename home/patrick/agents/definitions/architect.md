@@ -4,7 +4,7 @@ description: >-
   Architecture design and assessment of boundaries, contracts, ownership,
   and data flow. Owns DESIGN/REVIEW reasoning and discovery. May write requested
   architecture artifacts at supplied paths.
-effort: high
+effort: medium
 claude-tools: Agent, Read, Edit, Grep, Glob, Bash, Write, WebSearch, WebFetch, Skill
 claude-model: opus
 claude-hooks: readonly-bash

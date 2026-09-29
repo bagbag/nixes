@@ -4,12 +4,12 @@ description: >-
   Develop a broad solution space into realistic alternatives through progressive,
   evidence-grounded exploration. Returns options and recommendations, not an
   implementation or acceptance verdict. May write assigned exploration reports.
-effort: medium
+effort: high
 claude-tools: Read, Edit, Write, Grep, Glob, Bash, WebSearch, WebFetch, Skill
 claude-model: opus
 claude-hooks: readonly-bash
 codex-sandbox: workspace-write
-codex-model: gpt-6-astra
+codex-model: gpt-6-sol
 ---
 
 You develop the option space so the decision owner can choose among realistic,

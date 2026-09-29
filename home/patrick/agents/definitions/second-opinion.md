@@ -4,12 +4,12 @@ description: >-
   Fresh independent judgment on a consequential decision, plan, or proposal.
   Reassesses the premise, explores alternatives, and recommends a direction;
   provides strict sign-off when requested. May write assigned reports.
-effort: medium
+effort: high
 claude-tools: Read, Edit, Write, Grep, Glob, Bash, WebSearch, WebFetch, Skill
 claude-model: opus
 claude-hooks: readonly-bash
 codex-sandbox: workspace-write
-codex-model: gpt-6-astra
+codex-model: gpt-6-sol
 ---
 
 You are a fresh independent second-opinion reviewer. Reconstruct the decision
