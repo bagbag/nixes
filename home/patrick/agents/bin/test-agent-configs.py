@@ -234,8 +234,8 @@ def validate_generated_agents(root: Path, generator) -> None:
                 raise ValueError(f"{path}: {target} changed shared instructions")
             if description.split() != metadata["description"].split():
                 raise ValueError(f"{path}: {target} changed shared description")
-            if effort != metadata["effort"]:
-                raise ValueError(f"{path}: {target} changed shared effort")
+            if effort != metadata.get(f"{target}-effort", metadata["effort"]):
+                raise ValueError(f"{path}: {target} changed resolved effort")
 
     specialists = {
         "architect": "architect",
@@ -434,6 +434,56 @@ Second instruction.
             raise ValueError("multiline description was not preserved")
         if "Second instruction." not in parsed["developer_instructions"]:
             raise ValueError("multiline instructions were not preserved")
+
+
+def validate_effort_overrides(generator) -> None:
+    def write(directory: str, extra: str) -> Path:
+        source = Path(directory) / "sample.md"
+        source.write_text(
+            f"""---
+name: sample
+description: Sample.
+effort: medium
+{extra}codex-model: gpt-5.6-terra
+codex-sandbox: read-only
+---
+
+Instruction.
+""",
+            encoding="utf-8",
+        )
+        return source
+
+    def efforts(source: Path) -> tuple[str, str]:
+        _, codex_text = generator.render_codex_agent(source)
+        _, claude_text = generator.render_claude_agent(source)
+        claude_frontmatter = yaml.safe_load(claude_text.split("---", 2)[1])
+        return (
+            tomllib.loads(codex_text)["model_reasoning_effort"],
+            claude_frontmatter["effort"],
+        )
+
+    with tempfile.TemporaryDirectory() as directory:
+        if efforts(write(directory, "codex-effort: ultra\n")) != ("ultra", "medium"):
+            raise ValueError("codex-effort override must affect only Codex")
+        if efforts(write(directory, "claude-effort: max\n")) != ("medium", "max"):
+            raise ValueError("claude-effort override must affect only Claude")
+        for extra in ("claude-effort: ultra\n", "codex-effort: minimal\n"):
+            try:
+                efforts(write(directory, extra))
+            except ValueError:
+                continue
+            raise ValueError(f"unsupported per-target effort accepted: {extra!r}")
+        shared_ultra = write(directory, "").read_text(encoding="utf-8")
+        shared_ultra = shared_ultra.replace("effort: medium", "effort: ultra")
+        (Path(directory) / "sample.md").write_text(shared_ultra, encoding="utf-8")
+        try:
+            generator.render_claude_agent(Path(directory) / "sample.md")
+        except ValueError:
+            pass
+        else:
+            raise ValueError("shared effort unsupported by Claude was accepted")
+        generator.render_codex_agent(Path(directory) / "sample.md")
 
 
 def run_hook(
@@ -677,6 +727,7 @@ def main() -> int:
     validate_rendered_skills(root, expander)
     validate_generated_agents(root, generator)
     validate_multiline_and_optional_names(generator)
+    validate_effort_overrides(generator)
     validate_hooks(root)
     subprocess.run(
         [sys.executable, "-B", str(root / "bin" / "test-worktree-fingerprint.py")],

@@ -149,16 +149,20 @@ specialist when a file is required.
   is defined, who calls Y, what config Z says. A single-command check stays inline.
 - **`explore` / `explorer`** — broad read-only sweeps across files, naming conventions, or
   the web. It locates and maps; it does not review or audit.
-- **`transform`** — fully specified mechanical edits: renames, pattern sweeps,
-  transcription, formatting, or documentation synchronization.
-- **`build`** — routine implementation that follows established patterns and a
-  complete brief. It stops when real judgment is required.
+- **`transform`** — fully specified changes with an exact, describable result:
+  renames, pattern sweeps, transcription, formatting, doc sync, or small code
+  changes mirroring existing code.
+- **`build`** — implementation whose approach the brief determines, usually via
+  an existing pattern. Makes and discloses local, reversible choices; returns
+  consequential ones.
 - **`craft`** — implementation that turns on consequential design judgment or
   an interface choice that would be costly to unwind.
-- **`verify`** — fresh-context fact-checking of named claims or brief conformance,
-  returning CONFIRMED / REFUTED / UNVERIFIABLE with evidence; it never fixes.
-- **`review`** — fresh-eyes adversarial critique of a plan, design, or diff. It
-  finds grounded defects and gaps rather than summarizing.
+- **`verify`** — fresh-context checks with checkable answers: named claims,
+  brief and pattern conformance, reuse, scope. Returns CONFIRMED / REFUTED /
+  UNVERIFIABLE with evidence. Default gate for transform and build.
+- **`review`** — fresh-eyes adversarial critique of a plan, design, or diff: is
+  it correct, clean, and right-sized? Gate for craft, open tasks, plans,
+  designs, contracts, and verify escalations.
 - **`option-explorer`** — develops a broad solution space into grounded alternatives
   through progressive exploration; returns options and recommendations for a decision.
 - **`architect`** — architecture design and assessment. Returns options and recommendations to the lead.
@@ -167,14 +171,22 @@ specialist when a file is required.
 - **`general-purpose` / `default`** — fallback for multi-step work that fits no
   narrower role.
 
-**Routing rule:** choose by **spec completeness, not task size**. `build` is the
-default when you can name the files and point to an existing pattern to copy;
-routine integration using existing wiring still counts. Reach for `craft` when
-the task depends on design judgment the pattern does not supply. Pick the least
-expensive plausible role without routing judgment work downward merely to save
-resources. After two failed attempts at the same level, reassess the premise,
-seek an independent challenge when available, and escalate once; then bring any
-remaining blocker to the user.
+**Routing rule:** choose by **spec completeness, not task size**: `transform`
+when you can describe the exact result; `build` when the brief determines the
+approach, typically through an existing pattern or established wiring; `craft`
+when the task needs design judgment beyond the pattern. Default to the cheapest
+role whose brief you can complete, with STOP conditions; workers return
+decisions they cannot make, so escalate on return. After two failed attempts
+at the same level, reassess the premise, seek an independent challenge when
+available, and escalate once; then bring any remaining blocker to the user.
+
+**Warm reuse:** continue an existing agent instead of spawning when its context
+covers the next task, its permissions allow the work, and it did not author what
+it would assess. Weigh context rebuild cost against tier: a warm stronger agent
+often handles a narrow follow-up more cheaply than a fresh one rereading its
+sources. Start fresh for independent judgments, changed premises, or after two
+failed attempts on the problem. Brief warm agents with the delta: new task,
+changes since, and superseded context.
 
 Skills that coordinate multi-worker arcs use
 `$HOME/.agents/skills/shared/worker-arcs.md` for planning, briefing, dispatch,

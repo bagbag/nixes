@@ -49,18 +49,23 @@ declares its Codex model and sandbox; Claude-specific models, tools, and hooks
 remain optional adapter fields. New roles therefore cannot accidentally
 inherit write access or an unintended Codex model.
 
-Validation covers source instruction/description/effort preservation, generated
-permissions and local hooks. Live runtime enforcement requires separate checks.
+`effort` is the shared reasoning level; optional `claude-effort` and
+`codex-effort` override it for one tool. The resolved value is validated per
+tool, since only Codex accepts `ultra`.
+
+Validation covers source instruction/description preservation, per-tool effort
+resolution, generated permissions, and local hooks. Live runtime enforcement requires separate checks.
 
 Each role's `codex-model` field owns its model selection; validation requires
 an explicit, nonempty model without pinning a particular selection.
 
 Scout and explore return discovery results in their responses. Other specialists
 can write assigned artifacts directly. Native configurations provide file-write
-tools and workspace access; role instructions confine edits
-to assigned artifacts, with implementation changes reserved for implementation
-roles. Claude's investigation shell guard is a deny-list; Codex uses its native
-sandbox setting. Role instructions define assigned write zones.
+tools and workspace access; role instructions confine edits to assigned
+artifacts and temporary probes. Implementation changes belong to implementation
+roles, except reported fixes an assessor is certain are the only realistic,
+clean option. Claude's investigation shell guard is a deny-list; Codex uses its
+native sandbox setting. Role instructions define assigned write zones.
 
 Handover uses `python3 "$HOME/.agents/bin/worktree-fingerprint" <repo>` to
 capture Git-visible state. The helper includes staged entries, working files,

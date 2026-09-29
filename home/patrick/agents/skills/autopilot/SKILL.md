@@ -102,7 +102,7 @@ check remaining unattended authority and time. Preserve discrepancies and rerun
 affected gates. Park recovery exceeding authority or the granted window.
 
 Independently verify every coherent write result consumed downstream. The
-reviewer or lead owning that check must not have authored the implementation.
+reviewer, verifier, or lead owning that check must be a non-author.
 Apply the shared requirements for independent runtime evidence; author logs
 alone are insufficient. Add a verifier only for unestablished claims and reuse
 suitable independent evidence under shared acceptance rules. Satisfy applicable

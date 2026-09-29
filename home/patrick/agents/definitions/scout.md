@@ -9,7 +9,7 @@ claude-tools: Read, Grep, Glob, Bash, Skill
 claude-model: sonnet
 claude-hooks: readonly-bash
 codex-sandbox: read-only
-codex-model: gpt-6-luna
+codex-model: ollama-cloud/deepseek-v4.1-flash
 ---
 
 Answer one narrow factual question about the codebase or system.

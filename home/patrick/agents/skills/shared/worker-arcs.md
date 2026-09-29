@@ -118,22 +118,36 @@ blockers before dependent work.
 
 ### Review ownership and closure
 
-Assign one independent reviewer per coherent target. Independence is relative to
-authorship: a substantive implementation result needs a reviewer who did not
-author it, including when the lead wrote the implementation. A role name or
-passing self-check does not make an assessment independent. Reuse assessment
-covering the same decision, sources, and current revision across skill
-requirements; combine architecture/plan review where useful. Additional
-reviewers or critics need a named unanswered question or explicit user request.
-A critic supplies reasoning pressure on difficult premises or trade-offs beyond
-source grounding.
+Assign one independent acceptance gate per coherent target. Independence is
+relative to authorship: a substantive implementation result needs an assessor
+who did not author it, including when the lead wrote it. A role name or passing
+self-check does not make an assessment independent.
+
+Choose the gate by question type. `verify` answers checkable questions: brief
+and pattern conformance, scope, reuse, leftovers, affected tests/docs, and
+decisive checks against baseline. It gates transform, build (including
+disclosed local, reversible choices), and repair closure. `review` answers
+judgment questions: is the result correct, clean, and right-sized beyond the
+listed claims? It gates craft, open tasks outside a plan, plans, designs,
+public contracts, cross-cutting changes, and verify escalations. A review
+reproduces decisive checks itself; add a verifier only for claims it leaves
+unestablished.
+
+Reuse assessment covering the same decision, sources, and current revision
+across skill requirements; combine architecture/plan review where useful.
+Additional reviewers or critics need a named unanswered question or explicit
+user request. A critic supplies reasoning pressure on difficult premises or
+trade-offs beyond source grounding.
 
 A fresh reviewer makes the initial judgment; the author repairs findings and the
-same reviewer checks repairs and affected invariants. Accept when findings close
-and agreed gates pass. Evidence of a materially changed premise/blast radius
-reopens broader review; repair completion alone does not. Additional fresh
-opinions need a distinct purpose or user request. Reviewers reassess the frame
-independently; the active mode handles unresolved choices/non-convergence.
+same reviewer checks repairs and affected invariants. Assessors apply and report
+fixes they are certain are the only realistic, clean option within the reviewed
+files; the lead forbids this while the author is active there and accepts each
+fix by inspecting its diff. Accept when findings close and agreed gates pass.
+Evidence of a materially changed premise/blast radius reopens broader review;
+repair completion alone does not. Additional fresh opinions need a distinct
+purpose or user request. Reviewers reassess the frame independently; the active
+mode handles unresolved choices/non-convergence.
 
 Default sequence: coherent implementation/tests → independent review → focused
 repair closure → lead integration verification. Extra planning/opinions answer
@@ -176,9 +190,9 @@ anti-regression STOPs where old sources may encode reversed decisions.
 
 Dispatch dependency-ready waves with disjoint file/concept ownership; sequence
 shared contracts. Among equally ready packages, the lead may prioritize a
-pattern needed by later packages. Use native liveness/wait/resume; resume
-related work with its warm worker, stating existing work, remaining work, and
-changes. New tasks get fresh workers.
+pattern needed by later packages. Use native liveness/wait/resume. Resume
+related work with its warm worker, and continue warm workers on new tasks under
+global warm reuse; state existing work, remaining work, and changes.
 
 The lead owns destructive actions requiring user authority: workers may
 inventory and adapt, but the lead verifies exact targets, obtains confirmation,

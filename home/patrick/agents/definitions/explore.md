@@ -6,12 +6,12 @@ description: >-
   Broad read-only discovery across files, naming conventions, or official
   documentation. Returns a factual map of locations, relationships, and
   capabilities. Review and recommendations belong to other roles.
-effort: high
+effort: medium
 claude-tools: Read, Grep, Glob, Bash, WebSearch, WebFetch, Skill
 claude-model: sonnet
 claude-hooks: readonly-bash
 codex-sandbox: read-only
-codex-model: gpt-6-luna
+codex-model: ollama-cloud/deepseek-v4.1-flash
 ---
 
 Locate code, files, patterns, and capabilities across the requested codebase,
