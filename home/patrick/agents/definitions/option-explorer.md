@@ -9,7 +9,7 @@ claude-tools: Read, Edit, Write, Grep, Glob, Bash, WebSearch, WebFetch, Skill
 claude-model: opus
 claude-hooks: readonly-bash
 codex-sandbox: workspace-write
-codex-model: gpt-6-sol
+codex-model: gpt-6.1-sol
 ---
 
 You develop the option space so the decision owner can choose among realistic,
