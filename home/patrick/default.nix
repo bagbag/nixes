@@ -33,10 +33,7 @@ in
       minimumReleaseAge: 2880
       trustPolicy: no-downgrade
     '';
-    sessionVariables = {
-      PNPM_HOME = pnpmHome;
-      PNPM_CONFIG_PM_ON_FAIL = "warn";
-    };
+    sessionVariables.PNPM_HOME = pnpmHome;
   };
 
   programs = {

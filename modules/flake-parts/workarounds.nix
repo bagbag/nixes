@@ -17,9 +17,16 @@ let
 in
 {
   nstdl.hosts = {
-    nixbook-air.extraModules = [ { nixpkgs.overlays = [ cachedNodejsOverlay ]; } ];
+    nixbook-air.extraModules = [
+      { nixpkgs.overlays = [ cachedNodejsOverlay ]; }
+    ];
     macbook-pro.extraModules = [
-      { nixpkgs.overlays = [ cachedNodejsOverlay quiDarwinTmpdirOverlay ]; }
+      {
+        nixpkgs.overlays = [
+          cachedNodejsOverlay
+          quiDarwinTmpdirOverlay
+        ];
+      }
     ];
   };
 }
