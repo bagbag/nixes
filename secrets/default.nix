@@ -59,20 +59,8 @@
         mode = "0400";
       };
     };
-    items.awscli-insolytix-s3-secret-key = {
-      rekeyFile = inputs.self.outPath + "/secrets/awscli-insolytix-s3-secret-key.age";
-      access.nixstation = {
-        owner = "patrick";
-        mode = "0600";
-      };
-      access.nixmobil = {
-        owner = "patrick";
-        mode = "0600";
-      };
-      access.nixbook-air = {
-        owner = "patrick";
-        mode = "0600";
-      };
+    items.awscli-vitrass-production-operator-s3-secret-key = {
+      rekeyFile = inputs.self.outPath + "/secrets/awscli-vitrass-production-operator-s3-secret-key.age";
       access.macbook-pro = {
         owner = "patrick";
         mode = "0600";

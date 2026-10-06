@@ -1,23 +1,22 @@
 {
-  config,
   osConfig,
   pkgs,
   ...
 }:
 let
-  secretPath = osConfig.age.secrets.awscli-insolytix-s3-secret-key.path;
-
   # A small script to output the JSON format AWS CLI requires
   # Format: https://docs.aws.amazon.com/cli/latest/userguide/cli-configure-executable.html
-  awscliInsolytixCredentialsLoader = pkgs.writeShellScript "get-awscli-insolytix-s3-secret-key" ''
-    SECRET=$(${pkgs.coreutils}/bin/cat "${secretPath}")
-    echo '{
-      "Version": 1,
-      "AccessKeyId": "GK896dd5444664f0351b82bd15",
-      "SecretAccessKey": "'"$SECRET"'",
-      "Region": "garage"
-    }'
-  '';
+  credentialsLoader =
+    { accessKeyId, secret }:
+    pkgs.writeShellScript "get-${secret}" ''
+      SECRET=$(${pkgs.coreutils}/bin/cat "${osConfig.age.secrets.${secret}.path}")
+      echo '{
+        "Version": 1,
+        "AccessKeyId": "${accessKeyId}",
+        "SecretAccessKey": "'"$SECRET"'",
+        "Region": "garage"
+      }'
+    '';
 in
 {
   programs.awscli = {
@@ -25,10 +24,14 @@ in
 
     # This generates ~/.aws/config
     settings = {
-      "profile insolytix-production" = {
+      # Every bucket on cloud-nix01 (production, staging and their -media).
+      "profile vitrass-production" = {
         region = "garage";
-        endpoint_url = "https://s3.insolytix.de";
-        credential_process = "${awscliInsolytixCredentialsLoader}";
+        endpoint_url = "https://s3.vitrass.com";
+        credential_process = "${credentialsLoader {
+          accessKeyId = "operator-1";
+          secret = "awscli-vitrass-production-operator-s3-secret-key";
+        }}";
       };
     };
   };
