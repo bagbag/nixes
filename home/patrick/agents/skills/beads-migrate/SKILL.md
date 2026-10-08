@@ -76,12 +76,16 @@ and the source anchor in `metadata.source`:
 issue a stable id (`<prefix>-<old id>`), an explicit `priority` (omitted means
 0, critical), its labels including `topic:<topic-slug>` (import does not
 inherit them), its `dependencies` including `parent-child` to the epic, and
-its comments inline. Run `bd import --dry-run import.jsonl` first; it must
-report every issue as new. Import upserts by id and resets live state (status,
-assignee, notes), so qualify an id that reports "updated" with the arc slug,
-and on a retry import only the entries still missing. Import skips a
-dependency whose target is missing, prints `Skipped dependency`, and still
-succeeds.
+its comments inline. Fields hold live content: `metadata` = `source`;
+comments = latest gate evidence, pause notes, revisit conditions; migration
+notes go to history; arc-wide criteria appear once, in the epic acceptance;
+retired rules are left out, not negated.
+
+Run `bd import --dry-run import.jsonl` first; it must report every issue as
+new. Import upserts by id and resets live state (status, assignee, notes), so
+qualify an id that reports "updated" with the arc slug, and on a retry import
+only the entries still missing. Import skips a dependency whose target is
+missing, prints `Skipped dependency`, and still succeeds.
 
 ## 3. Reconcile and retire
 
