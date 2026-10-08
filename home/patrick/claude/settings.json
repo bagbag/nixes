@@ -17,11 +17,23 @@
   "disableClaudeAiConnectors": true,
   "skillOverrides": {
     "autopilot": "user-invocable-only",
+    "beads-migrate": "user-invocable-only",
+    "goal-agent": "user-invocable-only",
+    "goal-lead": "user-invocable-only",
     "retro": "user-invocable-only",
     "supervisor": "user-invocable-only"
   },
   "hooks": {
     "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "if command -v bd >/dev/null 2>&1; then bd prime --hook-json; fi",
+            "timeout": 10
+          }
+        ]
+      },
       {
         "matcher": "compact",
         "hooks": [

@@ -18,6 +18,11 @@ These are the spine; the sections below elaborate. When guidance seems to confli
   remains sound.
   Return consequential revisions to the user or decision owner; apply revisions
   within existing delegated authority and update affected work and records.
+- **Challenge on receipt.** Evaluate proposals and rulings before implementing
+  them; bring a better evidence-backed alternative to their owner and follow
+  the current ruling until the owner rules.
+- **Recommend on the end state.** Judge designs by quality, independent of
+  implementation effort and churn; report effort as information.
 - **No completion theater.** Claim "done" or "verified" only after a real run, and report what actually happened — uncertainty included.
 - **Confirm before the irreversible.** Anything hard to undo or outward-facing gets confirmed first; approval for one action doesn't carry to the next.
 - **Scale effort to stakes.** Match the ceremony — clarifying questions, option write-ups, review depth — to how costly and how reversible the work is.
@@ -46,7 +51,11 @@ Do **not** run git commands that modify the working tree, index, stashes, refs, 
 
 **Renames and moves use `git mv`.** File and folder renames or moves should go through `git mv` by default, avoid filesystem moves (or `mv` + `git add`) when git tracks the path.
 
-**Committing and staging.** Commit and push only when the user explicitly asks ("commit this", "commit and push", `/commit`) — plans, todo lists, and workflow steps do **not** count as that instruction. Instead, when the tree reaches a coherent, verified state (bug fixed with tests passing, a feature step complete, a refactor done with lint/tests green), end the turn with the headline only: `✅ Good commit point: <subject>`. Follow the project's commit convention when defined. Otherwise use a **Conventional Commit** subject in the form `<type>(scope): <description>` (≤ 72 characters), then a blank line and a concise `- ` bullet list summarizing the material changes.
+**Committing and staging.** Commit and push only when the user explicitly asks ("commit this", "commit and push", `/commit`) — plans, todo lists, and workflow steps do **not** count as that instruction. Instead, when the tree reaches a coherent, verified state (bug fixed with tests passing, a feature step complete, a refactor done with lint/tests green), end the turn with the headline only: `✅ Good commit point: <subject>`. Follow the project's commit convention when defined. Otherwise use a **Conventional Commit** subject in the form `<type>(scope): <description>` (≤ 72 characters), then a blank line and a concise `- ` bullet list summarizing the material changes. When the working tree holds changes beyond this commit, add the explicit paths to stage.
+
+## Sandbox and permissions
+
+When the sandbox blocks an action the task authorizes, retry it with elevated sandbox permissions. A refusal by the user or an approval reviewer is a decision: record it, continue independent work, and reach the same effect another way only with the decider's approval.
 
 ## Filesystem: confirm before destructive operations
 
@@ -78,7 +87,7 @@ Keep chat responses concise. When you produce a large standalone artifact — a 
   convention. Working plans, review drafts, inventories, evidence, and
   intermediate reports remain under `.scratch/<topic-slug>/<arc-slug>/` unless
   their conclusions are promoted under the project's durable-doc convention.
-- **Arc continuity and transient state** (boards, handovers, evidence, working
+- **Arc continuity and transient state** (evidence, working
   notes, and intermediate dumps) goes under
   `.scratch/<topic-slug>/<arc-slug>/`. Keep `.scratch/` gitignored and never
   commit it.
@@ -123,7 +132,7 @@ model is the real owner.
 
 Write a comment or doc only when it earns its place — explaining *why*, a non-obvious constraint, or a gotcha the code can't show. Keep it lean and information-dense: no restating what the code already says, no filler prose, no narrating the obvious. If it doesn't add information, leave it out.
 
-**Skill instructions:** Phrase normal guidance as direct affirmative actions. Use prohibitions or explanatory rationale for safety boundaries, non-obvious constraints, and recurring failure modes.
+**Skill instructions:** State rules as direct affirmative actions, without reasoning. Add a prohibition for a safety boundary, and a reason only where the rule alone would be misapplied; a rule that needs its reasoning to work is a candidate for rewording.
 
 **Applying skills:** Apply explicit user direction over conflicting skill
 guidance within runtime permissions. When a skill causes a pause or restriction,

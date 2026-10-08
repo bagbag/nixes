@@ -1,4 +1,4 @@
 [agents]
-max_concurrent_threads_per_session = 16
+max_concurrent_threads_per_session = 8
 # Lets specialists (architect, review, verify) delegate discovery; the default blocks nested spawns.
 max_depth = 2

@@ -82,8 +82,8 @@ done
 mkdir -p "$dir"
 
 # --- one-shot window-fit check (opt-in modes only) --------------------------
-# autopilot wants a lean window (cheap, frequent compaction; handover+ORIENT
-# makes it free); supervisor arcs want a large one (the ladder assumes deep
+# autopilot wants a lean window (cheap, frequent compaction; board and beads
+# make recovery free); supervisor arcs want a large one (the ladder assumes deep
 # context). Warn once, judged against the real compaction point.
 fitflag="$dir/$session_id.fitwarn"
 if [[ ( "$mode" == "autopilot" || "$mode" == "supervisor" ) && ! -f "$fitflag" ]]; then
@@ -139,18 +139,18 @@ msg=""
 if (( current >= imminent_pct )); then
   case "$mode" in
     supervisor) msg="context-watch: auto-compaction is IMMINENT. Bring every coordination doc fully in sync NOW and keep it in sync with every further change: when compaction runs, nothing of value may exist only in this session." ;;
-    autopilot)  msg="context-watch: auto-compaction is IMMINENT. Refresh the board and handover NOW and keep them in sync with every further change (checkpoint-commit only when authorized and coherent); when compaction runs, ORIENT from the handover to re-ground." ;;
-    *)          msg="context-watch: auto-compaction is imminent — the conversation will be condensed automatically. Keep working; if you are maintaining any docs, notes, or a plan/handover file, bring them in sync now so nothing important survives only in this conversation." ;;
+    autopilot)  msg="context-watch: auto-compaction is IMMINENT. Refresh the board and beads NOW and keep them in sync with every further change (checkpoint-commit only when authorized and coherent); when compaction runs, re-ground from the board and beads." ;;
+    *)          msg="context-watch: auto-compaction is imminent — the conversation will be condensed automatically. Keep working; if you are maintaining any docs, notes, or a plan, bring them in sync now so nothing important survives only in this conversation." ;;
   esac
 elif (( current <= 60 )); then
   case "$mode" in
     supervisor) msg="context-watch: compacting early is an economy measure — it keeps speed and quality up and quota burn down. Recommend it to the user at the next natural pause (sync coordination docs first), and check what's bloating: inline reads a worker should have done, verbose tool output kept in-context." ;;
-    autopilot)  msg="context-watch: refresh the handover note at the next milestone and keep delegating reads to workers — small context keeps every turn faster, sharper, and cheaper." ;;
+    autopilot)  msg="context-watch: refresh the board at the next milestone and keep delegating reads to workers — small context keeps every turn faster, sharper, and cheaper." ;;
   esac
 else
   case "$mode" in
-    supervisor) msg="context-watch: context is deep now — it degrades speed and quality and burns quota every turn. Actively steer to a cheap-loss point and recommend compaction; bring every coordination doc fully in sync first (board, index, decision log)." ;;
-    autopilot)  msg="context-watch: run the handover protocol now — WRITE/refresh the board and handover (checkpoint-commit only when authorized and coherent), then continue working; when auto-compaction fires, ORIENT from the handover to re-ground." ;;
+    supervisor) msg="context-watch: context is deep now — it degrades speed and quality and burns quota every turn. Actively steer to a cheap-loss point and recommend compaction; bring every coordination doc fully in sync first (board, beads, index)." ;;
+    autopilot)  msg="context-watch: refresh the board and beads now (checkpoint-commit only when authorized and coherent), then continue working; when auto-compaction fires, re-ground from the board and beads." ;;
   esac
 fi
 

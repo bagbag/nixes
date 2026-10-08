@@ -15,7 +15,7 @@ from pathlib import Path
 import yaml
 
 
-EXPLICIT_ONLY_SKILLS = {"autopilot", "retro", "supervisor"}
+EXPLICIT_ONLY_SKILLS = {"autopilot", "beads-migrate", "goal-agent", "goal-lead", "retro", "supervisor"}
 IMPLICIT_SKILLS = {"architect", "define-goal", "explore-options", "second-opinion", "staged-review"}
 sys.dont_write_bytecode = True
 
@@ -125,7 +125,7 @@ def validate_skills(root: Path) -> None:
     if not worker_arcs.is_file() or not worker_arcs.read_text(encoding="utf-8").strip():
         raise ValueError(f"{worker_arcs}: missing shared worker-arc convention")
     worker_arcs_path = "$HOME/.agents/skills/shared/worker-arcs.md"
-    for name in ("autopilot", "supervisor"):
+    for name in ("autopilot", "goal-agent", "supervisor"):
         instructions = (skills_dir / name / "SKILL.md").read_text(encoding="utf-8")
         if instructions.count(worker_arcs_path) != 1:
             raise ValueError(
@@ -147,23 +147,20 @@ def validate_skills(root: Path) -> None:
             ".scratch/<topic-slug>/<arc-slug>/",
         ),
         skills_dir / "shared" / "project-memory.md": (
-            ".scratch/<topic-slug>/<arc-slug>/board.md",
-            "log.md",
+            ".scratch/<topic-slug>/<arc-slug>/",
+            "<topic-slug>/<arc-slug>",
             "history/",
             "docs/<topic-slug>/",
             "docs/goals.md",
             "docs/<topic-slug>/goals.md",
             "index.md",
         ),
-        skills_dir / "handover" / "SKILL.md": (
-            ".scratch/<topic-slug>/<arc-slug>/handover.md",
-        ),
         skills_dir / "supervisor" / "SKILL.md": (
-            ".scratch/<topic-slug>/<arc-slug>/board.md",
+            "arc epic `<topic-slug>/<arc-slug>`",
             "$HOME/.agents/skills/shared/project-memory.md",
         ),
         skills_dir / "autopilot" / "SKILL.md": (
-            ".scratch/<topic-slug>/<arc-slug>/board.md",
+            "arc epic `<topic-slug>/<arc-slug>`",
             "$HOME/.agents/skills/shared/project-memory.md",
         ),
     }
@@ -555,6 +552,26 @@ def validate_hooks(root: Path) -> None:
         if invalid.returncode == 0:
             raise ValueError("session-lead-mode accepted an invalid lead")
 
+        for mode in ("goal-agent", "goal-lead"):
+            session = f"{mode}-test"
+            subprocess.run(
+                ["bash", str(session_lead), "activate", mode],
+                check=True,
+                env={**os.environ, **state_env, "CLAUDE_CODE_SESSION_ID": session},
+            )
+            restored = run_hook(
+                hooks / "compact-reorient.sh",
+                {"hook_event_name": "SessionStart", "source": "compact", "session_id": session},
+                state_env,
+            )
+            restored_context = (
+                restored["hookSpecificOutput"].get("additionalContext", "")
+                if restored is not None
+                else ""
+            )
+            if f"`{mode}` skill remains active" not in restored_context:
+                raise ValueError(f"compact recovery did not restore the active {mode}")
+
         compact = run_hook(
             hooks / "compact-reorient.sh",
             {
@@ -633,8 +650,7 @@ def validate_hooks(root: Path) -> None:
                     "current task and newer user instructions",
                     "current approved checkpoint",
                     "next authorized work, deferrals and return boundary",
-                    "current-only board (or handover if no board exists)",
-                    "handover for recovery anchors and caveats",
+                    "arc's tracking: beads (`bd ready`, `bd list --label human`) where the repository has `.beads/`, otherwise its current-only board",
                     "canonical project goal",
                     "topic goal and milestone",
                     "next action with those commitments and existing authority",
@@ -729,10 +745,6 @@ def main() -> int:
     validate_multiline_and_optional_names(generator)
     validate_effort_overrides(generator)
     validate_hooks(root)
-    subprocess.run(
-        [sys.executable, "-B", str(root / "bin" / "test-worktree-fingerprint.py")],
-        check=True,
-    )
     print("shared agent and skill validation passed")
     return 0
 

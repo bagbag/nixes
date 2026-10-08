@@ -6,7 +6,7 @@ description: >-
   conversation.
 effort: medium
 claude-tools: Read, Grep, Glob, Bash, Skill
-claude-model: sonnet
+claude-model: haiku
 claude-hooks: readonly-bash
 codex-sandbox: read-only
 codex-model: ollama-cloud/deepseek-v4.1-flash

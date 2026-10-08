@@ -36,8 +36,8 @@ python3 home/patrick/agents/bin/expand-skills.py \
   --output "$output_dir/skills"
 ```
 
-To validate skills, generated formats, policies, hooks, and the handover
-fingerprint, use Python with PyYAML (the Nix build provides it):
+To validate skills, generated formats, policies and hooks, use Python with
+PyYAML (the Nix build provides it):
 
 ```sh
 python3 home/patrick/agents/bin/test-agent-configs.py \
@@ -67,15 +67,12 @@ roles, except reported fixes an assessor is certain are the only realistic,
 clean option. Claude's investigation shell guard is a deny-list; Codex uses its
 native sandbox setting. Role instructions define assigned write zones.
 
-Handover uses `python3 "$HOME/.agents/bin/worktree-fingerprint" <repo>` to
-capture Git-visible state. The helper includes staged entries, working files,
-and nonignored untracked contents without changing Git state.
-
 Workflow owners:
 
 - [Worker arcs](skills/shared/worker-arcs.md): invariant traceability and evidence.
-- [Handover](skills/handover/SKILL.md): file and environment continuity.
 - [Retro](skills/retro/SKILL.md): rule proposals and regression cases.
+- [Goal lead](skills/goal-lead/SKILL.md) and [goal agent](skills/goal-agent/SKILL.md): a decision lead and an implementation coordinator joined by the [goal relay](skills/shared/goal-relay.md).
+- [Work tracking](skills/shared/work-tracking.md): beads conventions for all lead modes; [beads-migrate](skills/beads-migrate/SKILL.md) moves a Markdown-tracked arc onto them.
 
 The `explore-options` skill coordinates `option-explorer` to develop a broad
 solution space into realistic alternatives. It progressively screens and deepens

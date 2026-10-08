@@ -8,7 +8,7 @@ description: >-
   capabilities. Review and recommendations belong to other roles.
 effort: medium
 claude-tools: Read, Grep, Glob, Bash, WebSearch, WebFetch, Skill
-claude-model: sonnet
+claude-model: haiku
 claude-hooks: readonly-bash
 codex-sandbox: read-only
 codex-model: ollama-cloud/deepseek-v4.1-flash

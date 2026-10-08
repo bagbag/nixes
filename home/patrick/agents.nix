@@ -45,9 +45,6 @@ in
   home.file.".codex/hooks.json".source = config.lib.file.mkOutOfStoreSymlink "${codexSrc}/hooks.json";
   home.file.".codex/agents".source = "${agentArtifacts}/codex";
 
-  home.file.".agents/bin/worktree-fingerprint".source =
-    "${agentsStoreSrc}/bin/worktree-fingerprint.py";
-
   # settings.json is written by Claude Code itself (atomic write: temp file
   # + rename, one readlink deep). home.file's mkOutOfStoreSymlink goes
   # through home-manager's per-generation store symlink farm, so the

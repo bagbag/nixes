@@ -18,9 +18,9 @@ case "$command" in
   activate)
     mode=${2:-}
     case "$mode" in
-      autopilot | supervisor) ;;
+      autopilot | goal-agent | goal-lead | supervisor) ;;
       *)
-        echo "usage: session-lead-mode activate <autopilot|supervisor>" >&2
+        echo "usage: session-lead-mode activate <autopilot|goal-agent|goal-lead|supervisor>" >&2
         exit 2
         ;;
     esac
@@ -42,7 +42,7 @@ case "$command" in
     [[ -f "$state" ]] || exit 0
     mode=$(<"$state")
     case "$mode" in
-      autopilot | supervisor) printf '%s\n' "$mode" ;;
+      autopilot | goal-agent | goal-lead | supervisor) printf '%s\n' "$mode" ;;
     esac
     ;;
   *)
