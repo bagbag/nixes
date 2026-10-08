@@ -60,6 +60,10 @@ released) · `review` · `needs-ratification` · `expert-claim` ·
 
 ### Acceptance
 
+- Scope package acceptance to touched files and affected consumers; put each
+  arc-wide gate (whole typecheck, full suite) in one gate task.
+- Keep `in_progress` for active work; hand finished work over (`review`) or
+  make it depend on what it waits for.
 - The worker comments its evidence (`bd comment`) and hands over:
   `bd update <id> --status open --assignee <acceptor> --add-label review`. The
   acceptor is the lead of whoever did the work.
