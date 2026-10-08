@@ -9,30 +9,30 @@ board.
   exists, or on internal detail that consumers never see and that sets no
   convention, and comments the choice on its package. A change to a general
   rule is a question.
-- **Writers:** goal-lead writes the topic contract (`docs/<topic-slug>/`) and
-  the epic's `--design` and `--acceptance`. goal-agent writes every other
-  owner a released ruling changes.
-- **Pending:** goal-lead comments each decision on its question as it is
-  made and adds `decided`; pending decisions bind nobody. Add consumer
-  examples, affected callers, withdrawn premises and `path:line` citations
-  where they apply.
+- **Writers:** goal-lead writes this arc's topic contract (`docs/<topic-slug>/`
+  of the arc's own topic) and the epic's `--design` and `--acceptance`.
+  goal-agent writes every other owner a released ruling changes, other topics'
+  docs included.
+- **Pending:** goal-lead records each decision in its question's `--design`
+  (work-tracking) with provenance (user or lead), owners and anchors, consumer
+  examples, affected callers, withdrawn premises and `path:line` citations,
+  and adds `decided`. Decisions bind on release.
 - **Release** of one ruling or a set of interdependent ones, in this order:
-  1. Create the intake `apply: <subject>` (label `intake`, assigned to
-     `goal-lead` while the release is in progress): each ruling with its
-     owner and anchor. Write the contract and epic changes.
-  2. Create the tasks it implies: changelog and upgrade duties, hints
-     (planning input), proposals (goal-agent confirms, refines or replaces them
-     through a question). Relate the intake to each task and question
-     (`bd dep relate`).
-  3. Publish: `bd update <intake> --assignee goal-agent`.
-  4. Answer the settled questions (`bd human respond`; remove `decided`).
+  1. Write the contract and epic changes.
+  2. On each question, relate the set's other questions and affected issues
+     outside its `blocks` edges (`bd dep relate`); comment planning input
+     (ordering, scope growth) and proposals (goal-agent confirms, refines or
+     replaces them through a question).
+  3. Hand each question over in one update (per id; not atomic across ids):
 
-  An intake assigned to `goal-lead` without `review` is an unfinished
-  release; resume it from its relations.
+     ```sh
+     bd update <id> --assignee goal-agent \
+       --remove-label human --remove-label decided
+     ```
 - **Contract:** goal-lead writes or advances the arc's contract with the user
-  (`define-goal`) and releases it like a ruling. goal-agent's intake returns
-  gaps, contradictions and refinement proposals as questions; only rulings
-  change the contract.
+  (`define-goal`) and releases it like a ruling, through a question carrying
+  the revision. goal-agent returns gaps, contradictions and refinement
+  proposals as questions; only rulings change the contract.
 - **Design gate:**
   - Applies to a slice that opens boundaries, public contracts, data flow,
     mechanisms or the clean end state, or whose contract item is marked
@@ -43,5 +43,10 @@ board.
   - goal-lead closes it once the user accepts, or hands it back with findings.
   - Other slices proceed on settled items; a consequential choice found
     mid-slice becomes a question that blocks its dependents.
-- **Intake review:** goal-agent hands the reconciled intake to goal-lead
-  (work-tracking acceptance); delivery proceeds meanwhile.
+- **Landing:** goal-agent writes each released ruling into its owners and the
+  affected issues' design and acceptance, then closes the question
+  (`bd close <id> --reason "landed in <owners>"`); its `blocks` edges hold
+  dependents until then. A conflict found while landing becomes a question
+  that blocks the released one (`bd dep add <released> --blocked-by
+  <conflict>`). The acceptor checks the landing when accepting an affected
+  issue.

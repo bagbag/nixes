@@ -23,7 +23,7 @@ user. Agent guidance comes from the session hooks, not `bd setup`; remote sync
 | Item | Shape | Ends |
 |---|---|---|
 | Package | task/bug/spike; contract, file zones, checks in `--design`; done criteria in `--acceptance`; spec in `--spec-id`; `blocks` deps; one `bd create --graph <plan.json>` per wave | acceptor closes it |
-| Question | type `decision`, label `human`, assigned to whoever answers (`user`; `goal-lead` in a goal pair); description = decision packet; `blocks` its dependents | the lead records the answer: `bd human respond <id> "<ruling> (user\|lead) → <owner>"` |
+| Question | type `decision`, label `human`, assigned to whoever answers (`user`; `goal-lead` in a goal pair); description = decision packet; `--design` = current decision, rewritten in place; comments = history; `blocks` its dependents | the lead records the answer: `bd human respond <id> "<ruling> (user\|lead) → <owner>"`; in a goal pair, goal-agent closes it once the ruling landed (relay) |
 | Deferral | `bd defer --reason "<revisit condition>"` | undeferred at its date or on named new evidence, or topic backlog at arc close |
 | Environment fact | memory `bd remember --key <key>`: temporary, repository-wide, needed by every session now; states its removal condition | `bd forget` |
 
@@ -39,6 +39,10 @@ change it).
 - The lead alone rules and creates memories; it records the user's answers
   from chat. A consequential ruling without a question gets one, answered at
   once. A lead ruling has exactly one realistic clean option.
+- Screen each ruling choice by choice (behaviour, failure handling, naming,
+  scope limits, documented non-features): an alternative any source calls
+  realistic or coherent sends that choice to its decider, revisions of earlier
+  rulings or conventions included.
 - The answered question is the decision record; relate it to the record it
   revises (`bd dep relate`). A contested ruling also gets the project's
   rationale record where one exists.
@@ -51,7 +55,7 @@ change it).
   - arc-only rule: the epic's `--design`.
 
 Labels: `human` (waits for a person) · `decided` (decision made, not
-released) · `review` · `needs-ratification` · `intake` · `expert-claim` ·
+released) · `review` · `needs-ratification` · `expert-claim` ·
 `export:<capability>` / `provides:<capability>`.
 
 ### Acceptance

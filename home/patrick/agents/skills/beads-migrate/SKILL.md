@@ -52,8 +52,8 @@ entry, with its reason, into `history.md`, both in the arc's `.scratch/`.
 
 With the user's confirmation, run the beads setup unless the repository
 already has `.beads/`, then import `import.jsonl`: the arc epic and its
-children, each with `external_ref` = old id, `source_system` = its tracker
-and the source anchor in `metadata.source`:
+children, each with `external_ref` = old id and `source_system` = its
+tracker's file name:
 
 | Old entry | Beads |
 |---|---|
@@ -65,8 +65,8 @@ and the source anchor in `metadata.source`:
 | Merged duplicates | one issue; the other old ids as `aliases: <ids>` in its description |
 | Deferral, backlog entry | status `deferred`, `defer_until` when dated, the revisit condition as a comment |
 | Ruling in force | held by its owner: history; otherwise a task writing it into its owner (work-tracking), or the implementing package's spec. The source note stays the decision record |
-| Unreleased ruling | decision comment on its question, label `decided` (relay) |
-| Released round not yet taken in | intake (relay) |
+| Unreleased ruling | decision in its question's `design`, label `decided` (relay) |
+| Released ruling not yet landed | its question, ruling in `design`, assigned to `goal-agent` (relay) |
 | Principle, constraint | the user's chosen owner: docs, skills, AGENTS.md or the epic `design` |
 | Arc-only rule | arc epic `design` |
 | Temporary environment fact | memory row `{"_type":"memory","key":…,"value":…}` |
@@ -76,10 +76,11 @@ and the source anchor in `metadata.source`:
 issue a stable id (`<prefix>-<old id>`), an explicit `priority` (omitted means
 0, critical), its labels including `topic:<topic-slug>` (import does not
 inherit them), its `dependencies` including `parent-child` to the epic, and
-its comments inline. Fields hold live content: `metadata` = `source`;
-comments = latest gate evidence, pause notes, revisit conditions; migration
-notes go to history; arc-wide criteria appear once, in the epic acceptance;
-retired rules are left out, not negated.
+its comments inline. Fields hold live content: `design` = how to do the
+remaining work; comments = latest gate evidence, pause notes, revisit
+conditions, authored by who recorded them; migration notes go to history;
+arc-wide criteria appear once, in the epic acceptance; retired rules are left
+out, not negated.
 
 Run `bd import --dry-run import.jsonl` first; it must report every issue as
 new. Import upserts by id and resets live state (status, assignee, notes), so
@@ -97,5 +98,7 @@ missing, prints `Skipped dependency`, and still succeeds.
   Give the user the replacement goal objective
   `$goal-agent for arc epic <title>`.
 - After the user confirms the reconciliation, move the replaced trackers to
-  `history/` with a one-line banner pointing to beads, remove the migrated
-  entries from their backlog docs, and report the counts, gaps and epic id.
+  `history/` with a one-line banner pointing to beads, replace the migrated
+  entries in backlog docs and topic deferral sections with a pointer to
+  `bd list --status deferred --label topic:<topic-slug>` (non-goals and
+  milestone exclusions stay), and report the counts, gaps and epic id.

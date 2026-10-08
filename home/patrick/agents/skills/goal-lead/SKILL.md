@@ -31,11 +31,11 @@ broad sweeps; keep your context for synthesis.
 
 Read the arc's goal and epic, then the questions
 (`bd list --label human --parent <epic>`), your review inbox
-(`bd ready --label review --assignee goal-lead`), unfinished releases
-(`bd list --label intake --assignee goal-lead --exclude-label review`),
-pending decisions (`bd list --label decided`), the contract and the epic's arc
-rules. Treat each constraint or principle the user states as a ruling: record
-and release it.
+(`bd ready --label review --assignee goal-lead`), pending decisions
+(`bd list --label decided`), released rulings not yet landed
+(`bd list --type decision --assignee goal-agent`), the contract and the
+epic's arc rules. Treat each constraint or principle the user states as a
+ruling: record and release it.
 
 ## 2. Open items
 
@@ -47,22 +47,25 @@ into one walkthrough.
 
 ## 3. Ground before asking
 
+- Re-derive the cleanest greenfield end state yourself before every question
+  to the user: name the root cause, derive the end state from it under the
+  user's quality criterion (consumer DX for a library), and size it. Treat
+  options, recommendations and "lead-rulable" verdicts from packets,
+  goal-agent, sweeps and reviewers as hints: verify their facts and derive the
+  option set yourself.
 - Read every relevant source first; verify each premise against current source
   and mark what stays unverified. Settle runtime claims with a probe or the
   docs.
+- For a library, in-repo usage is a sample: judge realistic consumer use; use
+  call-site counts to size a change.
 - When the user flags one instance, find all of its kind, earlier rulings
   included, and show the list before asking about scope.
-- Derive the cleanest end state for the user's quality criterion, with short
-  consumer code per option, and look past the options at hand. For a library,
-  in-repo usage is a sample: judge realistic consumer use; use call-site counts
-  to size a change.
 - Treat earlier rulings as revisable: name the ruling, the new evidence and the
   effect on finished work.
-- Start with a light read-only sweep and re-derive the end state yourself. Use
-  `explore-options` or `second-opinion` when the item warrants it or the user
-  asks; propose the reviewer setup first and spot-check decisive claims.
-- Treat proposals from goal-agent, reviewers and outside sources as evidence to
-  verify.
+- Start with a light read-only sweep; brief sweeps to name the root cause
+  before weighing the packet's options. Use `explore-options` or
+  `second-opinion` when the item warrants it or the user asks; propose the
+  reviewer setup first and spot-check decisive claims.
 
 <!-- @include shared/decision-discipline.md -->
 
@@ -70,21 +73,24 @@ into one walkthrough.
 
 - Rule yourself only when exactly one realistic clean option meets the user's
   principles; bring everything else to the user, local or reversible choices
-  included. List every lead ruling with its reason in the reply; re-screen them
-  honestly when the user asks.
+  included. Screen each ruling choice by choice (work-tracking). List every
+  lead ruling with its reason in the reply; re-screen them when the user asks.
 - State each ruling's scope.
-- Walk through in chat first: problem in plain words, derived end state, short
-  example per option, actual items instead of counts, unfamiliar terms
-  explained, replacements named. Then ask with the structured-question tool:
-  each independent choice its own question, at most four per round,
-  recommended option first and marked strong or lean, for/against and
-  footguns.
+- Walk through in chat first, one recommendation per question: problem in
+  plain words, root cause, the re-derived end state with short consumer code
+  and its size (production lines, files, callers), actual items instead of
+  counts, unfamiliar terms explained, replacements named. Name alternatives
+  only as sized trade-offs against it. Then ask with the structured-question
+  tool: each independent choice its own question, at most four per round,
+  recommendation first and marked strong or lean, for/against and footguns.
+- When the user answers with a criterion instead of an option, re-derive from
+  the root cause before asking again.
 - When the user declines a question to clarify, ask what they want clarified,
   answer, and ask again; confirm answers given inside the declined round. When
   a question is declined twice, re-check its premise.
-- Comment each decision on its question as it is made (relay), unless the
-  user wants the overall picture first; revise it until release, and by a new
-  ruling after. Answer provenance questions from the decision record
+- Record each decision on its question as it is made (relay), unless the
+  user wants the overall picture first; revise it in place until release, and
+  by a new ruling after. Answer provenance questions from the decision record
   (`bd show`, `bd history <id> --events`).
 
 ## 5. Release
@@ -99,15 +105,16 @@ into one walkthrough.
 - Name each ruling's owner (work-tracking) and, for a convention, an
   enforcing check where realistic. Use proposals when the user wants a design
   reviewed rather than ruled. Withdraw a wrong premise explicitly.
-- After a release, propose the next decisions by what unblocks the most
-  (`bd blocked`).
-- End replies that touch rulings with: pending decisions, open questions,
-  intakes not yet reviewed.
+- After a release, propose the next of your open questions by what unblocks
+  the most (`bd blocked`).
+- End replies that touch rulings with: pending decisions, open questions and
+  released rulings not yet landed, each counted by a command in that turn.
 
 ## 6. Acceptance and review
 
 Accept or reject what goal-agent hands you (work-tracking) after checking the
 evidence it names. Close a `design:` task once the user accepts it after your
-walkthrough (§4). For an intake, check that every ruling landed in its owner
-and every conflict became a question. Use `staged-review` when the user asks
-for an implementation review; decisions it raises become open items.
+walkthrough (§4). When accepting an issue that received a ruling, check that
+the ruling landed in its owners and every conflict became a question. Use
+`staged-review` when the user asks for an implementation review; decisions it
+raises become open items.

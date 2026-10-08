@@ -2,9 +2,10 @@
 name: goal-agent
 description: >-
   Explicit user-invoked implementation coordinator for an arc steered by a
-  goal lead's released rulings. Take in each intake, keep tracking consistent
-  with it, advance authorized work through workers, and return decisions to
-  the lead through beads. Not for the lead side or for isolated coding tasks.
+  goal lead's released rulings. Land each released ruling, keep tracking
+  consistent with it, advance authorized work through workers, and return
+  decisions to the lead through beads. Not for the lead side or for isolated
+  coding tasks.
 ---
 
 # Goal agent — coordinator under released rulings
@@ -24,9 +25,9 @@ delegating; this skill adds the relay.
 - You lead your workers; the user and goal-lead together are "the lead".
 - Git stays read-only; the lead owns staging, commits and every other Git
   mutation.
-- Authority: the owners of released rulings and the arc epic's rules. Where
-  worker-arcs returns a choice to the user, raise a question for the lead and
-  continue independent work.
+- Authority: the owners of released rulings, released questions' `--design`
+  and the arc epic's rules. Where worker-arcs returns a choice to the user,
+  raise a question for the lead and continue independent work.
 - Judge contracts by realistic consumer usage; in-repo callers are a sample.
 
 <!-- @include shared/goal-relay.md -->
@@ -34,29 +35,30 @@ delegating; this skill adds the relay.
 ## 2. Recover
 
 Read the project instructions, the goal objective and the arc epic; then your
-intakes (`bd ready --assignee goal-agent --label intake`), your in-progress
-issues and actual worker state before resuming or replacing workers. Interpret
-control messages by their target (yourself, one change, or workers; "keep
-workers running" stands).
+released rulings (`bd ready --type decision --assignee goal-agent`), your
+in-progress issues and actual worker state before resuming or replacing
+workers. Interpret control messages by their target (yourself, one change, or
+workers; "keep workers running" stands).
 
-## 3. Take in released rulings
+## 3. Land released rulings
 
-Check for intakes at every checkpoint and before each dispatch.
+Check your released questions (`bd ready --type decision --assignee
+goal-agent`) at every checkpoint and before each dispatch. Land a related
+set together once none of its questions is still `decided`. For each:
 
-1. Claim the intake; read it with its related questions and tasks
-   (`bd show <id>`).
-2. Apply rulings within their stated scope; linked reports are evidence, hints
+1. Read the ruling from its `--design` and comments (`bd show <id>`).
+2. Apply it within its stated scope; linked reports are evidence, hints
    planning input; a supersession is an authorized revision.
-3. Write each ruling into its owner (relay); relate the intake to the issues
-   it affects; compare with current source and return genuine conflicts as
-   questions.
+3. Write it into its owner (relay); add the changelog and upgrade duties it
+   implies to the affected issues' acceptance; compare with current source and
+   return genuine conflicts as questions that block it (relay's Landing).
 4. Update every consumer of a changed decision: issues, briefs, dependencies,
    docs, and active workers whose premise changed.
-5. Undefer or unblock work the rulings resolve; clear superseded authority and
-   expired holds from the board.
-6. Hand the intake to goal-lead for review and start ready work.
+5. Undefer work it resolves; clear superseded authority and expired holds from
+   the board.
+6. Close the question (relay's Landing) and start ready work.
 
-Contract intakes and consequential slices follow the relay's contract and
+Contract releases and consequential slices follow the relay's contract and
 design gate.
 
 ## 4. Holds and the queue
@@ -65,7 +67,8 @@ design gate.
   independent work and coherent partial slices that keep the approved
   semantics. A proposal grants no approval.
 - Every remainder is an issue with an assignee, a `blocks` dependency or a
-  deferral with its revisit condition; re-check them at each intake.
+  deferral with its revisit condition; re-check them whenever you land
+  rulings.
 - Choose next work from `bd ready --unassigned` by what it unblocks
   (`bd blocked`) and by progress toward the checkpoint; dispatch as many
   independent ready items as that justifies.
