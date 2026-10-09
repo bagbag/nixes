@@ -9,14 +9,19 @@ user. Agent guidance comes from the session hooks, not `bd setup`; remote sync
 
 ### Structure
 
-- **Arc epic** `<topic-slug>/<arc-slug>`, label `topic:<topic-slug>`:
+- **Arc epic** `<topic-slug>/<arc-slug>`, short explicit id
+  (`bd create --id <prefix>-<abbrev>`), label `topic:<topic-slug>`:
   description = the board (prose, no item lists), `--design` = arc rules
   (scope, sequencing, holds, exceptions; lead only), `--acceptance` = done
   criteria (lead only). Recover with `bd show <epic>` and the views below.
-- Every arc item is a direct child of the epic and inherits its topic label.
+- Every arc item is a direct child of the epic with its topic label:
+  `--parent <epic>` sets both; graph nodes set `parent_id` and list the label
+  in `labels`. Let beads mint item ids (`<epic>.N`, graph: hash).
   Group with labels and `bd dep relate`; `--parent` lists direct children only.
 - The epic closes only when no child is open or deferred: the arc's
   closure check.
+- Assignee = current holder (claimer, acceptor, answerer); unassigned open
+  items are the dispatch queue.
 
 ### Items
 
@@ -26,6 +31,13 @@ user. Agent guidance comes from the session hooks, not `bd setup`; remote sync
 | Question | type `decision`, label `human`, assigned to whoever answers (`user`; `goal-lead` in a goal pair); description = decision packet; `--design` = current decision, rewritten in place; comments = history; `blocks` its dependents | the lead records the answer: `bd human respond <id> "<ruling> (user\|lead) → <owner>"`; in a goal pair, goal-agent closes it once the ruling landed (relay) |
 | Deferral | `bd defer --reason "<revisit condition>"` | undeferred at its date or on named new evidence, or topic backlog at arc close |
 | Environment fact | memory `bd remember --key <key>`: temporary, repository-wide, needed by every session now; states its removal condition | `bd forget` |
+
+**Priority** ranks ready work; `blocks` edges own order. P0 interrupt
+(preempts in-flight work: broken shared build or environment, data loss,
+critical-path regression) · P1 the checkpoint's critical path · P2 default ·
+P3 in scope, needed by no current checkpoint. Backlog = `deferred`; P4
+unused. The board owner sets priority at creation and re-sets it when landing
+rulings or reaching a checkpoint.
 
 **Decision packet** (`##` sections): **Question** (the exact choice),
 **Current authority** (owners in force, conflicts), **Evidence**
@@ -40,9 +52,10 @@ change it).
   from chat. A consequential ruling without a question gets one, answered at
   once. A lead ruling has exactly one realistic clean option.
 - Screen each ruling choice by choice (behaviour, failure handling, naming,
-  scope limits, documented non-features): an alternative any source calls
-  realistic or coherent sends that choice to its decider, revisions of earlier
-  rulings or conventions included.
+  exposure (public, internal, expert path), scope limits, documented
+  non-features): an alternative any source calls realistic or coherent sends
+  that choice to its decider, revisions of earlier rulings or conventions
+  included.
 - The answered question is the decision record; relate it to the record it
   revises (`bd dep relate`). A contested ruling also gets the project's
   rationale record where one exists.
@@ -60,10 +73,13 @@ released) · `review` · `needs-ratification` · `expert-claim` ·
 
 ### Acceptance
 
-- Scope package acceptance to touched files and affected consumers; put each
-  arc-wide gate (whole typecheck, full suite) in one gate task.
-- Keep `in_progress` for active work; hand finished work over (`review`) or
-  make it depend on what it waits for.
+- Scope package acceptance to touched files and affected consumers; each
+  arc-wide gate (whole typecheck, full suite, fresh build) lives only in its
+  gate task, which re-checks closed packages.
+- Keep `in_progress` for active work. Hand over (`review`) once the package's
+  own acceptance has complete evidence; partial work stays open with the
+  remainder in `--acceptance`; waiting work depends (`blocks`) on what it
+  waits for.
 - The worker comments its evidence (`bd comment`) and hands over:
   `bd update <id> --status open --assignee <acceptor> --add-label review`. The
   acceptor is the lead of whoever did the work.

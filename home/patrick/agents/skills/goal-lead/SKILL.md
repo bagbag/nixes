@@ -56,8 +56,8 @@ into one walkthrough.
 - Read every relevant source first; verify each premise against current source
   and mark what stays unverified. Settle runtime claims with a probe or the
   docs.
-- For a library, in-repo usage is a sample: judge realistic consumer use; use
-  call-site counts to size a change.
+- For a library, judge consumer need by realistic consumer use; use in-repo
+  call-site counts only to size a change.
 - When the user flags one instance, find all of its kind, earlier rulings
   included, and show the list before asking about scope.
 - Treat earlier rulings as revisable: name the ruling, the new evidence and the

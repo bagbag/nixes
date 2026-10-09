@@ -28,7 +28,8 @@ delegating; this skill adds the relay.
 - Authority: the owners of released rulings, released questions' `--design`
   and the arc epic's rules. Where worker-arcs returns a choice to the user,
   raise a question for the lead and continue independent work.
-- Judge contracts by realistic consumer usage; in-repo callers are a sample.
+- Judge contracts by realistic consumer use; use in-repo call-site counts only
+  to size a change.
 
 <!-- @include shared/goal-relay.md -->
 

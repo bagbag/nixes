@@ -30,7 +30,8 @@ entry, with its reason, into `history.md`, both in the arc's `.scratch/`.
 - **Live** = the entry's own acceptance or decision remains. A finished
   dispatch, plan or review archives; its remaining criteria move to the live
   owner. An arc-wide gate clause copied into packages becomes one gate task.
-  Flag to the user any criterion that keeps most entries open.
+  Flag to the user any criterion that keeps most entries open and any uniform
+  priority.
 - **Rule provenance:** trace each standing rule and constraint to a user source
   (goal objective, lead notes, instructions). Present rules without a source,
   stricter than their source, or covered by current skills or global
@@ -60,7 +61,7 @@ tracker's file name:
 | Item awaiting a decision | question, type `decision`, label `human`; packet sections it lacks marked "not recorded" |
 | Report awaiting acknowledgment | comment on its live owner, or history |
 | Open issue, defect, investigation | `task`, `bug`, `spike`; label `human` when it waits for a person's action |
-| Planned or in-flight package | `task` with acceptance, `blocks` dependencies, assignee when in flight; label `review` and the acceptor when awaiting acceptance |
+| Planned or in-flight package | `task` with acceptance, `blocks` dependencies, assignee when in flight; label `review` and the acceptor when its acceptance has complete evidence; partial evidence: open, unassigned, remainder in acceptance |
 | Paused package | open `task` assigned to its worker, pause comment |
 | Merged duplicates | one issue; the other old ids as `aliases: <ids>` in its description |
 | Deferral, backlog entry | status `deferred`, `defer_until` when dated, the revisit condition as a comment |
@@ -72,21 +73,20 @@ tracker's file name:
 | Temporary environment fact | memory row `{"_type":"memory","key":…,"value":…}` |
 | Arc done criteria | arc epic `acceptance_criteria` |
 
-`import.jsonl` uses the `bd export` schema (`bd import --help`): give each
-issue a stable id (`<prefix>-<old id>`), an explicit `priority` (omitted means
-0, critical), its labels including `topic:<topic-slug>` (import does not
-inherit them), its `dependencies` including `parent-child` to the epic, and
-its comments inline. Fields hold live content: `design` = how to do the
-remaining work; comments = latest gate evidence, pause notes, revisit
-conditions, authored by who recorded them; migration notes go to history;
-arc-wide criteria appear once, in the epic acceptance; retired rules are left
-out, not negated.
+`import.jsonl` uses the `bd export` schema (`bd import --help`): give the
+epic its short id and each child `<epic>.<n>` in source order, an explicit
+`priority` from the source's sequencing (work-tracking; omitted means 0),
+its labels including `topic:<topic-slug>` (import does not inherit them), its
+`dependencies` including `parent-child` to the epic, and its comments inline.
+Fields hold live content: `design` = how to do the remaining work; comments =
+latest gate evidence, pause notes, revisit conditions, authored by who
+recorded them; migration notes go to history; arc-wide criteria appear once,
+in the epic acceptance; retired rules are left out, not negated.
 
 Run `bd import --dry-run import.jsonl` first; it must report every issue as
-new. Import upserts by id and resets live state (status, assignee, notes), so
-qualify an id that reports "updated" with the arc slug, and on a retry import
-only the entries still missing. Import skips a dependency whose target is
-missing, prints `Skipped dependency`, and still succeeds.
+new; otherwise choose another epic id. On a retry, import only the entries
+still missing. Import skips a dependency whose target is missing, prints
+`Skipped dependency`, and still succeeds.
 
 ## 3. Reconcile and retire
 
