@@ -95,6 +95,12 @@ in
   home.file.".agents/bin/session-lead-mode".source =
     config.lib.file.mkOutOfStoreSymlink "${agentsSrc}/bin/session-lead-mode.sh";
 
+  home.file.".agents/bin/board-health".source =
+    config.lib.file.mkOutOfStoreSymlink "${agentsSrc}/bin/board-health.py";
+
+  home.file.".agents/bin/worker-last-use".source =
+    config.lib.file.mkOutOfStoreSymlink "${agentsSrc}/bin/worker-last-use.py";
+
   # Skills are rendered from the shared source tree so included instructions
   # remain single-sourced while each deployed SKILL.md is self-contained.
   home.file.".claude/skills".source = "${agentArtifacts}/skills";

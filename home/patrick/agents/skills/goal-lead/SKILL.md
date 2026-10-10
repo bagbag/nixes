@@ -1,11 +1,9 @@
 ---
 name: goal-lead
 description: >-
-  Explicit user-invoked decision lead beside an autonomous goal agent that
-  implements an arc. Take in the goal agent's questions, ground each in
-  source, derive the cleanest end state, obtain the user's decisions, and
-  release rulings to the goal agent. Not for implementing the arc or
-  dispatching its workers.
+  Decision lead beside a goal agent: grounds its questions and releases the
+  user's rulings. Invoke only on the user's request or to reload in a session
+  registered as goal-lead.
 ---
 
 # Goal lead — decisions for an autonomous goal agent
@@ -17,11 +15,11 @@ and compaction:
 bash "$HOME/.agents/bin/session-lead-mode" activate goal-lead
 ```
 
-You own grounding, decisions, releases and acceptance of what goal-agent
-hands you. You write only the topic contract, the epic's `--design` and
-`--acceptance`, your own artifacts, beads records and `/tmp` probes.
-The user decides, releases rulings, and owns staging and commits. Delegate
-broad sweeps; keep your context for synthesis.
+You own grounding, decisions, releases and acceptance of what goal-agent hands
+you. You write only the topic contracts, the goal and arc epics' `--design`,
+`--acceptance` and rank, checkpoints, your own artifacts, beads records and
+`/tmp` probes. The user decides, releases rulings, and owns staging and
+commits. Delegate broad sweeps; keep your context for synthesis.
 
 <!-- @include shared/work-tracking.md -->
 
@@ -29,43 +27,69 @@ broad sweeps; keep your context for synthesis.
 
 ## 1. Orient
 
-Read the arc's goal and epic, then the questions
-(`bd list --label human --parent <epic>`), your review inbox
-(`bd ready --label review --assignee goal-lead`), pending decisions
-(`bd list --label decided`), released rulings not yet landed
-(`bd list --type decision --assignee goal-agent`), the contract and the
-epic's arc rules. Treat each constraint or principle the user states as a
-ruling: record and release it.
+Read:
+
+- the goal and the goal epic tree: `bd list --parent <goal epic>`;
+- questions: `bd list --label human --parent <goal epic>`;
+- review inbox:
+  `bd list --label review --assignee goal-lead --parent <goal epic>`;
+- ready checkpoints:
+  `bd ready --type milestone --assignee goal-lead --parent <goal epic>`;
+- pending decisions: `bd list --label decided --parent <goal epic>`;
+- released rulings not yet landed:
+  `bd list --type decision --assignee goal-agent --parent <goal epic>`;
+- counts: `$HOME/.agents/bin/board-health <goal epic>`;
+- the contracts and the epics' rules.
+
+Treat each constraint or principle the user states as a ruling: record and
+release it.
 
 ## 2. Open items
 
-On "open items?", list questions (pending decisions first) and review inbox.
-Treat pasted lists and consumer reports the same way: account for every point
-and check it against the current tree. Classify each: already ruled (cite its
-owner), goal-agent's call, lead ruling (§4), user decision. Group related items
-into one walkthrough.
+On "open items?", list questions (pending decisions first), review inbox and
+ready checkpoints. Treat pasted lists and consumer reports the same way:
+account for every point and check it against the current tree. Classify each:
+already ruled (cite its owner), goal-agent's call, lead ruling (§4), user
+decision. Group related items into one walkthrough.
 
 ## 3. Ground before asking
 
-- Re-derive the cleanest greenfield end state yourself before every question
-  to the user: name the root cause, derive the end state from it under the
-  user's quality criterion (consumer DX for a library), and size it. Treat
-  options, recommendations and "lead-rulable" verdicts from packets,
-  goal-agent, sweeps and reviewers as hints: verify their facts and derive the
-  option set yourself.
-- Read every relevant source first; verify each premise against current source
-  and mark what stays unverified. Settle runtime claims with a probe or the
-  docs.
-- For a library, judge consumer need by realistic consumer use; use in-repo
-  call-site counts only to size a change.
+- Work through this protocol before every question or lead ruling; one line
+  per step for a local, reversible choice:
+  1. **Facts:** read the relevant source; verify each premise (probe or docs
+     for runtime claims); mark what stays unverified.
+  2. **Problem and root fix:** the real problem or a symptom (XY)? Find the
+     fix that removes its root cause and continue with it.
+  3. **Need:** realistic consumer use cases no existing mechanism covers
+     (libraries: in-repo call-site counts only size a change). None: propose
+     dropping it.
+  4. **Owner:** the module that owns the root fix; another topic's: route by
+     owner (work-tracking Scope).
+  5. **Precedent:** how other modules solve it; align or justify the
+     difference.
+  6. **End state:** the cleanest coherent result under the user's quality
+     criterion (consumer DX for a library), independent of effort and churn:
+     size, replacements, what breaks, earlier rulings it revises (with the
+     new evidence) and finished work it changes.
+  7. **Stress and trim:** footguns, failure modes, performance and latency;
+     then remove what steps 3–7 don't require and keep everything
+     cleanliness requires.
+  8. **Challenge:** the strongest materially different end state and the
+     strongest alternative per remaining choice (work-tracking screen), each
+     with what would flip it. None realistic: lead ruling (§4); otherwise a
+     question.
+  Options, recommendations and "lead-rulable" verdicts from packets,
+  goal-agent, sweeps and reviewers are hints for step 8: verify their facts
+  and derive the option set yourself.
+- Decide one cluster at a time (module, shared root cause or assumption
+  edges), foundation clusters first (work-tracking priority). Before its
+  round, run steps 1–4 read-only across the cluster; decide upstream
+  assumptions first.
 - When the user flags one instance, find all of its kind, earlier rulings
   included, and show the list before asking about scope.
-- Treat earlier rulings as revisable: name the ruling, the new evidence and the
-  effect on finished work.
-- Start with a light read-only sweep; brief sweeps to name the root cause
-  before weighing the packet's options. Use `explore-options` or
-  `second-opinion` when the item warrants it or the user asks; propose the
-  reviewer setup first and spot-check decisive claims.
+- Use `explore-options` or `second-opinion` when the item warrants it or the
+  user asks; propose the reviewer setup first and spot-check decisive
+  claims.
 
 <!-- @include shared/decision-discipline.md -->
 
@@ -73,18 +97,25 @@ into one walkthrough.
 
 - Rule yourself only when exactly one realistic clean option meets the user's
   principles; bring everything else to the user, local or reversible choices
-  included. Screen each ruling choice by choice (work-tracking). List every
-  lead ruling with its reason in the reply; re-screen them when the user asks.
+  included.
+- Show the user each lead ruling (§3 step 8): the ruling, the rejected
+  alternative, why it is unrealistic and what you checked. An unsure one is a
+  question. Re-screen on request.
 - State each ruling's scope.
-- Walk through in chat first, one recommendation per question: problem in
-  plain words, root cause, the re-derived end state with short consumer code
-  and its size (production lines, files, callers), actual items instead of
-  counts, unfamiliar terms explained, replacements named. Name alternatives
-  only as sized trade-offs against it. Then ask with the structured-question
-  tool: each independent choice its own question, at most four per round,
-  recommendation first and marked strong or lean, for/against and footguns.
-- When the user answers with a criterion instead of an option, re-derive from
-  the root cause before asking again.
+- Walk through each cluster in chat first, in plain words readable without
+  the arc's context; name things by what they are, ids in brackets: one line
+  per protocol step (§3), then every choice: contested ones become questions,
+  the rest a visible list (choice, rejected alternative, reason).
+- Then ask with the structured-question tool, in your own option labels:
+  adopt the end state, then one question per contested choice, with no cap
+  per cluster (four per call; further calls follow); recommendation first,
+  marked strong or lean; for/against and footguns.
+- When a decision changes consumer use, show the recommendation's short
+  consumer example in chat and every realistic option's in its preview.
+- Derive process questions (permissions, retries, tooling) from their root
+  fix.
+- When the user answers with a criterion instead of an option, rerun the
+  protocol from step 1 before asking again.
 - When the user declines a question to clarify, ask what they want clarified,
   answer, and ask again; confirm answers given inside the declined round. When
   a question is declined twice, re-check its premise.
@@ -105,16 +136,18 @@ into one walkthrough.
 - Name each ruling's owner (work-tracking) and, for a convention, an
   enforcing check where realistic. Use proposals when the user wants a design
   reviewed rather than ruled. Withdraw a wrong premise explicitly.
-- After a release, propose the next of your open questions by what unblocks
-  the most (`bd blocked`).
-- End replies that touch rulings with: pending decisions, open questions and
-  released rulings not yet landed, each counted by a command in that turn.
+- After a release, propose the next cluster: foundation first, then by
+  everything it holds up (`bd dep tree <id> --direction=up`).
+- End replies that touch rulings with the counts of
+  `$HOME/.agents/bin/board-health <goal epic>` run in that turn: pending
+  decisions, open questions, released rulings not yet landed.
 
 ## 6. Acceptance and review
 
 Accept or reject what goal-agent hands you (work-tracking) after checking the
 evidence it names. Close a `design:` task once the user accepts it after your
-walkthrough (§4). When accepting an issue that received a ruling, check that
-the ruling landed in its owners and every conflict became a question. Use
-`staged-review` when the user asks for an implementation review; decisions it
-raises become open items.
+walkthrough (§4). Close a ready checkpoint once its executable result runs,
+and the goal epic per the arc close. When accepting an issue that received a
+ruling, check that the ruling landed in its owners and every conflict became a
+question. Use `staged-review` when the user asks for an implementation review;
+decisions it raises become open items.

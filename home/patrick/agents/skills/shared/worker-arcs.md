@@ -11,7 +11,7 @@ reconsideration and closure.
 
 ## 1. Frame
 
-Orient from the task's goal owners, the arc epic and current design
+Orient from the task's goal owners, the root epic and current design
 (`$HOME/.agents/skills/shared/project-memory.md`) before asking. Establish the
 arc's contribution to the canonical milestone:
 
@@ -133,7 +133,7 @@ tighten this.
   owner sections of rulings it relies on, the arc rules that apply (quoted),
   no-touch zones, material assumptions, STOP conditions, checks to run,
   permission to write tests and permission to run them (a hold on running does
-  not forbid writing), and the arc epic with an instruction to flag board/spec
+  not forbid writing), and the root epic with an instruction to flag board/spec
   contradictions. A substantial brief goes in a linked file.
 - Workers get their issue id and `--actor <worker>`; they claim, heartbeat,
   comment evidence and hand over only that issue. Read-only roles run
@@ -149,8 +149,8 @@ tighten this.
   as recorded decisions under reconsideration. Workers report material
   challenges; the lead resolves them.
 - Dispatch dependency-ready waves with disjoint ownership after
-  `bd swarm validate <epic>` passes; sequence shared contracts. Default to one
-  shared tree; use separate worktrees for inseparable zones with justified
+  `bd swarm validate <arc epic>` passes; sequence shared contracts. Default to
+  one shared tree; use separate worktrees for inseparable zones with justified
   merge cost. Use native liveness, wait and resume.
 - The lead owns destructive actions: workers inventory and adapt; the lead
   verifies exact targets, obtains confirmation and executes deletion, reset or

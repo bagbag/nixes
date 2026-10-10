@@ -1,11 +1,9 @@
 ---
 name: goal-agent
 description: >-
-  Explicit user-invoked implementation coordinator for an arc steered by a
-  goal lead's released rulings. Land each released ruling, keep tracking
-  consistent with it, advance authorized work through workers, and return
-  decisions to the lead through beads. Not for the lead side or for isolated
-  coding tasks.
+  Implementation coordinator for a goal, steered by goal-lead's released
+  rulings. Invoke only on the user's request or to reload in a session
+  registered as goal-agent.
 ---
 
 # Goal agent — coordinator under released rulings
@@ -26,8 +24,8 @@ delegating; this skill adds the relay.
 - Git stays read-only; the lead owns staging, commits and every other Git
   mutation.
 - Authority: the owners of released rulings, released questions' `--design`
-  and the arc epic's rules. Where worker-arcs returns a choice to the user,
-  raise a question for the lead and continue independent work.
+  and the goal and arc epics' rules. Where worker-arcs returns a choice to the
+  user, raise a question for the lead and continue independent work.
 - Judge contracts by realistic consumer use; use in-repo call-site counts only
   to size a change.
 
@@ -35,17 +33,19 @@ delegating; this skill adds the relay.
 
 ## 2. Recover
 
-Read the project instructions, the goal objective and the arc epic; then your
-released rulings (`bd ready --type decision --assignee goal-agent`), your
+Read the project instructions, the goal objective and the goal epic tree
+(`bd list --parent <goal epic>`); then your released rulings
+(`bd ready --type decision --assignee goal-agent --parent <goal epic>`), your
 in-progress issues and actual worker state before resuming or replacing
 workers. Interpret control messages by their target (yourself, one change, or
 workers; "keep workers running" stands).
 
 ## 3. Land released rulings
 
-Check your released questions (`bd ready --type decision --assignee
-goal-agent`) at every checkpoint and before each dispatch. Land a related
-set together once none of its questions is still `decided`. For each:
+Check your released questions
+(`bd ready --type decision --assignee goal-agent --parent <goal epic>`) at
+every checkpoint and before each dispatch. Land a related set together once
+none of its questions is still `decided`. For each:
 
 1. Read the ruling from its `--design` and comments (`bd show <id>`).
 2. Apply it within its stated scope; linked reports are evidence, hints
@@ -70,9 +70,13 @@ design gate.
 - Every remainder is an issue with an assignee, a `blocks` dependency or a
   deferral with its revisit condition; re-check them whenever you land
   rulings.
-- Choose next work from `bd ready --unassigned` by what it unblocks
-  (`bd blocked`) and by progress toward the checkpoint; dispatch as many
-  independent ready items as that justifies.
+- Choose next work from `bd ready --unassigned --exclude-type epic,milestone`
+  in priority order (foundation first, work-tracking), then by everything it
+  holds up (`bd dep tree <id> --direction=up`); dispatch as many independent
+  ready items as that justifies.
+- Hand related ready items (same files, decision or invariant) to one worker
+  together; continue a warm worker for a follow-up to its own work or a
+  closely related item (warm reuse).
 - Commission a plan or inventory only for a named executable result and the
   missing fact it establishes.
 
@@ -87,6 +91,9 @@ next executable outcome and any decision it needs).
 
 - **Implementation difficulty:** work it through tests and smaller slices
   within the retry policy.
+- **Blocker with its clean fix outside the package:** stop that work; raise
+  the root fix as a question that blocks it. Workers return such blockers to
+  you.
 - **Design gap or contradiction:** raise a question that `blocks` its
   dependents.
 - **Refusal** by the user or an approval reviewer: record the refused action
@@ -100,6 +107,6 @@ work pauses. A ruling settles only its stated choice.
 
 ## 7. Close
 
-When the epic's acceptance holds, run the arc close (work-tracking). Otherwise
-return the verified position, blockers, open questions and the next authorized
-action. Update the board before a context boundary.
+Run the arc close (work-tracking) for each arc epic whose acceptance holds.
+Otherwise return the verified position, blockers, open questions and the next
+authorized action. Update the board before a context boundary.

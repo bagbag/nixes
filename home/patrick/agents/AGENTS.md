@@ -111,22 +111,17 @@ Update status/version references everywhere they appear (watch the headline-vs-b
 
 Before writing a new helper, utility, or tool — or adding a dependency — search the codebase for one that already does the job. Duplicating something that should have been reused fragments the code and lets the copies drift out of sync. Reuse or extend what exists; add a new one only when nothing fits, and say why.
 
-**User-owned dependencies are part of the option space.** When a blocker appears
-to come from a framework or dependency the user owns or is actively developing,
-inspect its current source, skills, and unreleased changelog before designing an
-application workaround. Present the upstream root fix and the local workaround
-as explicit alternatives. Prefer the upstream fix when it produces the cleaner
-reusable contract. A temporary application workaround requires explicit
-approval and a recorded retirement condition.
-
-**Root cause before workaround.** When generated output, tooling, a dependency,
-or the execution environment behaves unexpectedly, isolate the owning failure
-before changing adjacent configuration or patching the result manually. Inspect
-the authoritative source and run the smallest useful reproduction first. A
-workaround is acceptable only when the root cause is known or explicitly
-unresolved, its consequences are understood, and its retirement condition is
-recorded. Do not hand-edit generated artifacts when the generator or source
-model is the real owner.
+**Fix at the root.** When generated output, tooling, a dependency, or the
+execution environment misbehaves, isolate the owning failure from the
+authoritative source and the smallest reproduction before changing adjacent
+configuration or patching results. For a framework or dependency the user owns
+or is actively developing, inspect its current source, skills and unreleased
+changelog; the root fix is the upstream change. When the clean fix lies
+outside your task (framework, tooling, another module, environment), stop that
+work, raise the root fix with its evidence to the decision owner, and continue
+independent work. Build a workaround only with the user's approval and a
+recorded retirement condition. Fix generated artifacts in their generator or
+source model.
 
 ## Comments and docs: lean and information-dense
 
@@ -190,12 +185,13 @@ at the same level, reassess the premise, seek an independent challenge when
 available, and escalate once; then bring any remaining blocker to the user.
 
 **Warm reuse:** continue an existing agent instead of spawning when its context
-covers the next task, its permissions allow the work, and it did not author what
-it would assess. Weigh context rebuild cost against tier: a warm stronger agent
-often handles a narrow follow-up more cheaply than a fresh one rereading its
-sources. Start fresh for independent judgments, changed premises, or after two
-failed attempts on the problem. Brief warm agents with the delta: new task,
-changes since, and superseded context.
+covers the next task, its permissions allow the work, and it did not author
+what it would assess. Weigh context rebuild cost against tier: a warm stronger
+agent often handles a narrow follow-up more cheaply than a fresh one rereading
+its sources. Continue only while the agent's last turn ended at most 30 minutes
+ago (`$HOME/.agents/bin/worker-last-use`). Start fresh for independent
+judgments, changed premises, or after two failed attempts on the problem. Brief
+warm agents with the delta: new task, changes since, and superseded context.
 
 Skills that coordinate multi-worker arcs use
 `$HOME/.agents/skills/shared/worker-arcs.md` for planning, briefing, dispatch,

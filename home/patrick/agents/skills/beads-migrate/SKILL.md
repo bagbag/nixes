@@ -30,13 +30,13 @@ entry, with its reason, into `history.md`, both in the arc's `.scratch/`.
 - **Live** = the entry's own acceptance or decision remains. A finished
   dispatch, plan or review archives; its remaining criteria move to the live
   owner. An arc-wide gate clause copied into packages becomes one gate task.
-  Flag to the user any criterion that keeps most entries open and any uniform
-  priority.
+  Flag to the user any criterion that keeps most entries open and any epic
+  without a rank.
 - **Rule provenance:** trace each standing rule and constraint to a user source
   (goal objective, lead notes, instructions). Present rules without a source,
   stricter than their source, or covered by current skills or global
   instructions for keep or drop.
-- **Rulings:** map those that live entries or the epic cite. Sweep the lead
+- **Rulings:** map those that live entries or the epics cite. Sweep the lead
   notes for library-wide rulings without a durable owner and present them to
   the user one by one.
 - History stays in files: classify live entries only and cite sources by path
@@ -52,9 +52,9 @@ entry, with its reason, into `history.md`, both in the arc's `.scratch/`.
 ## 2. Import live state
 
 With the user's confirmation, run the beads setup unless the repository
-already has `.beads/`, then import `import.jsonl`: the arc epic and its
-children, each with `external_ref` = old id and `source_system` = its
-tracker's file name:
+already has `.beads/`, then import `import.jsonl`: the root epic, its arc
+and sub-arc epics, checkpoints and their items, each with `external_ref` =
+old id and `source_system` = its tracker's file name:
 
 | Old entry | Beads |
 |---|---|
@@ -68,20 +68,25 @@ tracker's file name:
 | Ruling in force | held by its owner: history; otherwise a task writing it into its owner (work-tracking), or the implementing package's spec. The source note stays the decision record |
 | Unreleased ruling | decision in its question's `design`, label `decided` (relay) |
 | Released ruling not yet landed | its question, ruling in `design`, assigned to `goal-agent` (relay) |
-| Principle, constraint | the user's chosen owner: docs, skills, AGENTS.md or the epic `design` |
+| Principle, constraint | the user's chosen owner: docs, skills, AGENTS.md or the root epic `design` |
+| Goal-wide rule | goal epic `design` |
 | Arc-only rule | arc epic `design` |
 | Temporary environment fact | memory row `{"_type":"memory","key":…,"value":…}` |
 | Arc done criteria | arc epic `acceptance_criteria` |
+| Checkpoint, milestone | `milestone` depending on its contributing items (work-tracking) |
 
-`import.jsonl` uses the `bd export` schema (`bd import --help`): give the
-epic its short id and each child `<epic>.<n>` in source order, an explicit
-`priority` from the source's sequencing (work-tracking; omitted means 0),
-its labels including `topic:<topic-slug>` (import does not inherit them), its
-`dependencies` including `parent-child` to the epic, and its comments inline.
+`import.jsonl` uses the `bd export` schema (`bd import --help`): split the
+source by owner (work-tracking Structure and Scope): a goal epic over one arc
+epic per topic arc when the import spans several arcs, else the arc epic as
+root; sub-epics for sub-arcs. Give each epic its short
+id and each child `<epic>.<n>` in source order, an explicit `priority` = its
+epic's rank (work-tracking; omitted means 0), its labels including
+`topic:<topic-slug>` (import does not inherit them), its `dependencies`
+including `parent-child` to its epic, and its comments inline.
 Fields hold live content: `design` = how to do the remaining work; comments =
 latest gate evidence, pause notes, revisit conditions, authored by who
 recorded them; migration notes go to history; arc-wide criteria appear once,
-in the epic acceptance; retired rules are left out, not negated.
+in the arc epic's acceptance; retired rules are left out, not negated.
 
 Run `bd import --dry-run import.jsonl` first; it must report every issue as
 new; otherwise choose another epic id. On a retry, import only the entries
@@ -92,13 +97,12 @@ still missing. Import skips a dependency whose target is missing, prints
 
 - Compare per-source counts with `import.jsonl` and `history.md`. Read back
   each mapped dependency (`bd dep list <id>`) and resolve every skipped one.
-- Write the board summary into the arc epic's description (work-tracking).
-- For a goal pair: the owners and the epic's arc rules replace the old lead
-  notes as authority; the notes stay in `history/` as decision records.
-  Give the user the replacement goal objective
-  `$goal-agent for arc epic <title>`.
+- Write the board summary into the root epic's description (work-tracking).
+- For a goal pair: the owners and the epics' rules replace the old lead notes
+  as authority; the notes stay in `history/` as decision records. Give the
+  user the replacement goal objective `$goal-agent for goal epic <title>`.
 - After the user confirms the reconciliation, move the replaced trackers to
   `history/` with a one-line banner pointing to beads, replace the migrated
   entries in backlog docs and topic deferral sections with a pointer to
   `bd list --status deferred --label topic:<topic-slug>` (non-goals and
-  milestone exclusions stay), and report the counts, gaps and epic id.
+  milestone exclusions stay), and report the counts, gaps and epic ids.

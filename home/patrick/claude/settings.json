@@ -13,15 +13,11 @@
     "sessionUrl": false
   },
   "includeGitInstructions": false,
-  "model": "opus[1m]",
+  "model": "opus",
   "disableClaudeAiConnectors": true,
   "skillOverrides": {
-    "autopilot": "user-invocable-only",
     "beads-migrate": "user-invocable-only",
-    "goal-agent": "user-invocable-only",
-    "goal-lead": "user-invocable-only",
-    "retro": "user-invocable-only",
-    "supervisor": "user-invocable-only"
+    "retro": "user-invocable-only"
   },
   "hooks": {
     "SessionStart": [

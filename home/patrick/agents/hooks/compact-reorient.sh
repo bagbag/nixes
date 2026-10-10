@@ -26,7 +26,7 @@ message="Session recovery: before continuing, re-orient from the project's agent
 case "$mode" in
   autopilot | goal-agent | goal-lead | supervisor)
     skill_path="$HOME/.agents/skills/$mode/SKILL.md"
-    message="Session recovery: the \`$mode\` skill remains active for this session. Before continuing, reload \`$skill_path\` completely and follow it within the current task. Then re-orient from the project's agent instructions."
+    message="Session recovery: the \`$mode\` skill remains active for this session. Before continuing, invoke the \`$mode\` skill again or reload \`$skill_path\` completely, and follow it within the current task. Then re-orient from the project's agent instructions."
     ;;
 esac
 

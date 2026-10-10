@@ -4,12 +4,12 @@ description: >-
   Architecture design and assessment of boundaries, contracts, ownership,
   and data flow. Owns DESIGN/REVIEW reasoning and discovery. May write requested
   architecture artifacts at supplied paths.
-effort: medium
+effort: high
 claude-tools: Agent, Read, Edit, Grep, Glob, Bash, Write, WebSearch, WebFetch, Skill
 claude-model: opus
 claude-hooks: readonly-bash
 codex-sandbox: workspace-write
-codex-model: gpt-6-astra
+codex-model: gpt-6.1-sol
 ---
 
 You are an architecture specialist. Work in the DESIGN or REVIEW mode named

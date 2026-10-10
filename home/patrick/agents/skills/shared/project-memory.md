@@ -47,8 +47,8 @@
 
 ## Arc state
 
-- **Board:** the description of the arc epic `<topic-slug>/<arc-slug>`, one
-  per arc, short and replaced in place. Top: topic and arc slugs, mode,
+- **Board:** the description of the root epic (work-tracking), short and
+  replaced in place. Top: topic and arc slugs, mode,
   status, owner links. Then a first-screen summary sufficient to pick the next
   action: goal and checkpoint links, checkpoint evidence, verified position,
   next authorized work and return boundary, and the blockers, pending choices,
@@ -60,8 +60,8 @@
   `.scratch/<topic-slug>/<arc-slug>/` (plans, drafts, reviews, `evidence/`,
   `history/`). Lowercase kebab-case slugs. Keep `.scratch/` gitignored and
   free of secrets.
-- Workers get the epic id and their issue and flag board/spec contradictions;
-  board edits stay with the lead.
+- Workers get the root epic id and their issue and flag board/spec
+  contradictions; board edits stay with the lead.
 
 ## Synchronization
 
@@ -82,8 +82,8 @@
 
 ## Recovery and closure
 
-- Recover checkpoint, next work and authority from the epic and its views,
-  then from the goal owners.
+- Recover checkpoint, next work and authority from the root epic and its
+  views, then from the goal owners.
 - At arc close, run the work-tracking arc close. At phase boundaries or
   architecture resets, review affected owners and links (a topic inventory
   when cross-document changes or uncertain ownership warrant it): classify

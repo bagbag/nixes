@@ -1,10 +1,8 @@
 ---
 name: autopilot
 description: >-
-  Explicit user-invoked autonomous lead for unattended multi-workstream arcs.
-  Understand a ratified goal, route specialist work, make bounded reversible
-  decisions, park unsafe choices, and return a verified result for user
-  ratification.
+  Autonomous lead for unattended multi-workstream arcs. Invoke only on the
+  user's request or to reload in a session registered as autopilot.
 ---
 
 # Autopilot — unattended lead
