@@ -20,10 +20,8 @@ Another agent does the implementation, and the user stages and commits.
 
 - Before the first round, record the review base and target. For staged work
   the target is the index. For committed work, name the base (a commit, a
-  merge-base, or `HEAD`) explicitly, because comparing a clean index with
-  `HEAD` shows nothing.
-- Capture the tree identity first, then build the snapshot from it, so the two
-  cannot disagree:
+  merge-base, or `HEAD`) explicitly.
+- Capture the tree identity first, then build the snapshot from it:
 
   ```sh
   tree=$(git write-tree)
@@ -37,24 +35,21 @@ Another agent does the implementation, and the user stages and commits.
   Treat every snapshot as read-only evidence.
 - Take the delta from Git: `git diff --stat <previous-tree> <tree>` and
   `git diff <previous-tree> <tree>`. Round 1 diffs against the recorded base.
-  Unreferenced trees are eventually pruned by `git gc`, and `/tmp` is cleared
-  on reboot. If the previous tree is gone, diff against the previous snapshot
+  If the previous tree is gone, diff against the previous snapshot
   directory. If both are gone, say so and review against the recorded base.
 - List worktree-only changes separately, as pending staging: modified files
   (`git status --porcelain`: ` M`, `MM`), and untracked files that the delta or
-  the brief refers to. A commit from the index would not carry them,
-  so they cannot satisfy the brief.
+  the brief refers to. They cannot satisfy the brief.
 
 ## 2. Adjudicate against the snapshot
 
 - The snapshot owns the verdict. Grep and read it, not the working tree.
 - Account for every file in the delta: map each one to a brief item or name it
   as unbriefed, and review unbriefed changes on their merits.
-- Settle each brief item by checking the snapshot for the required content.
-  An unchanged file can mean "already correct" or "skipped", which are opposite
-  verdicts, so the diff alone cannot settle it.
+- Settle each brief item, including those whose files are unchanged, by
+  checking the snapshot for the required content, not the diff alone.
 - Treat the implementer's record as a list of claims. Verify each load-bearing
-  claim with a grep or a read. Records have reported omitted work as landed.
+  claim with a grep or a read.
 - Ground every finding in current source. Drop it if it is a false positive or
   an intentional design choice.
 - Check each claim a comment, TSDoc block, README, or CHANGELOG entry makes
@@ -67,8 +62,8 @@ reverts one site of the fix to prove that the pin fails without it.
 
 - Reuse the implementer's recorded test, typecheck and build results, and label
   them *implementer-reported*, with the command, the outcome, and the revision
-  they ran against. Do not re-run everything. Run a check when it answers a
-  question the record cannot: a defeat probe, a pin you suspect never executes,
+  they ran against. Run a check only when it answers a question the record
+  cannot: a defeat probe, a pin you suspect never executes,
   a claim the snapshot contradicts, or results recorded against different source
   than the reviewed tree. Label those results *reviewer-verified*.
 - For a behavioural fix, look for a pin whose shape covers every site the fix
@@ -77,12 +72,12 @@ reverts one site of the fix to prove that the pin fails without it.
   the pin pass without reaching the fix.
 - Run defeat probes directly, one per site, plus one for the constraint that
   makes the pin load-bearing. The unmutated pin must pass, and each mutation
-  must make it fail for the intended behavioural reason. Check the error text:
-  a compile or import failure proves nothing about coverage. Prefer a disposable
-  copy of the reviewed tree when the project runs there cheaply. Otherwise
-  mutate in place, and only on files whose worktree matches the index. Back up
-  the file, mutate it, run only the pin, restore from the backup, and verify
-  the restore against the backup's checksum and with `cmp`.
+  must make it fail for the intended behavioural reason. Check the error text;
+  a compile or import failure does not count as the pin failing. Prefer a
+  disposable copy of the reviewed tree when the project runs there cheaply.
+  Otherwise mutate in place, and only on files whose worktree matches the
+  index. Back up the file, mutate it, run only the pin, restore from the
+  backup, and verify the restore against the backup's checksum and with `cmp`.
 
 ## 4. Check the brief before issuing it
 
@@ -106,8 +101,8 @@ Write the round to `.scratch/<topic>/<arc>/round<N>/`:
 - The finding ledger carries every earlier finding ID forward with its status:
   open, fixed, withdrawn, or ruled no-change. Withdrawals and supersessions live
   there, not in edits to older files.
-- Carry the user's rulings forward in the verdict. Do not re-raise a closed item
-  unless new evidence changes its case, and name that evidence when you do.
+- Carry the user's rulings forward in the verdict. Re-raise a closed item only
+  when new evidence changes its case, and name that evidence.
 - Put supporting evidence in its own files, bannered as read-only evidence.
   Leave earlier rounds' evidence unedited.
 - The one exception is the previous entry point: give it a one-line banner

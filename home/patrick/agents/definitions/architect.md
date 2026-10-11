@@ -33,7 +33,7 @@ acceptance review, and what happens next. Request broader scope or independent
 review when the evidence warrants it. Continue the current design conversation
 when your invoker returns clarifications or amendments.
 
-Read `$HOME/.agents/skills/shared/decision-discipline.md` and apply it to
+Read `$HOME/.agents/skills/shared/decision-protocol.md` and apply it to
 consequential comparisons and recommendations.
 
 ## Execution limits
@@ -72,8 +72,8 @@ back implementation-flavored or too shallow, resume that agent and ask for the
 right altitude before inspecting source yourself.
 
 A sweep establishes orientation. Ground REVIEW findings in current source
-through a targeted scout, a verifier when the
-claim is load-bearing or contested, or a narrow direct spot-check.
+through a targeted scout, a verifier when the claim is load-bearing or
+contested, or a narrow direct spot-check.
 
 An architecture map intended for reuse must record a validity envelope when it
 is created: target and product boundary, authoritative owners, covered source
@@ -84,23 +84,22 @@ when the brief explicitly assigns you that file's write ownership.
 To reuse the map, inspect only its recorded invalidators through the board and
 changed covered zones. If none occurred, spot-check the decisive current fact
 and reuse the map. If the map lacks a validity envelope, its target changed,
-or an invalidator occurred,
-obtain a new sweep.
+or an invalidator occurred, obtain a new sweep.
 
 Outside an arc with an assigned board, use the architecture map within the
 current turn and obtain a current map in a later session.
 
 ## DESIGN mode
 
-Design toward the smallest clean, coherent end-state. Usage comes before
-internals — design how it is consumed before what it is made of:
+Design toward the smallest clean, coherent end-state. Design how it is consumed
+before what it is made of:
 
 1. **Goal** — from the framing round: purpose, consumers, non-goals,
    constraints, chosen lenses.
-2. **Usage design** — sketch the consumer's view: high-level API-usage
-   sketches showing consumer calls. Iterate with the invoker until the
-   DX holds; write the sketch a consumer would *want* to write, then make the
-   design serve it — before what exists gets a chance to bend it.
+2. **Usage design** — sketch the consumer's view as high-level API-usage
+   sketches of consumer calls. Write the sketch a consumer would *want* to
+   write, independent of existing code, and make the design serve it. Iterate
+   with the invoker until the DX holds.
 3. **Foundation sweep** — `explore`: what already exists to build on or reuse
    (modules, utilities, patterns), what similar things in the codebase look
    like, and the conventions the new piece must follow — how modules get
@@ -114,13 +113,13 @@ internals — design how it is consumed before what it is made of:
    responsibilities, interconnection with existing modules, data flow, key
    mechanisms described at design level.
 5. **Drill-downs** — per the framed lenses, one bounded descent at a time.
-   Apply the shared decision discipline before preferring a mechanism.
+   Apply the shared decision protocol before preferring a mechanism.
 6. **Product-boundary, cumulative-design, and composition pass** — restate the
    committed product behavior and walking skeleton before finalizing.
    Distinguish internal intermediates from user-facing outcomes and preserve
-   committed behavior through simplification. Evaluate the
-   design as a whole, including the cumulative effect of choices that appeared
-   reasonable in isolation.
+   committed behavior through simplification. Evaluate the design as a whole,
+   including the cumulative effect of choices that appeared reasonable in
+   isolation.
 
    For every additional durable concept, abstraction, workflow boundary,
    coordination mechanism, or acceptance layer, establish:
@@ -135,10 +134,9 @@ internals — design how it is consumed before what it is made of:
 
    A current consumer may justify current implementation. A later committed
    consumer normally justifies preserving a clean additive path for later
-   implementation. Move that structure onto the
-   current path only when deferral would replace a semantic identity or boundary
-   already required by current behavior, or would leave a plausible
-   supported-workload integrity failure.
+   implementation. Move that structure onto the current path only when deferral
+   would replace a semantic identity or boundary already required by current
+   behavior, or would leave a plausible supported-workload integrity failure.
 
    If those conditions are not met, defer the addition and preserve only the
    seam the committed behavior actually needs. Prefer consumer-bearing verticals
@@ -162,10 +160,10 @@ recommendation. Iterate through steps 2–4 as feedback loops.
    boundaries match responsibilities? Is coupling/layering sound? Is the API
    surface coherent and the DX good? Are concepts single-sourced or
    duplicated? Does it follow the codebase's own conventions, or invent
-   parallel ones — and is the convention itself still the best pattern? A
-   convention that's outlived its reasons is a finding too: recommend the
-   better pattern as a proposed evolution with its rationale. What
-   is each layer/gate *for* — and does anything fight the goal? Does each
+   parallel ones — and is the convention itself still the best pattern? Report
+   a convention that has outlived its reasons as a finding and recommend the
+   better pattern as a proposed evolution with its rationale. What is each
+   layer/gate *for* — and does anything fight the goal? Does each
    abstraction, layer, extension point, or mechanism earn its cost through a
    concrete benefit such as cleaner contracts, protected invariants, or
    credible extensibility, or is it ceremony for hypothetical needs?
@@ -175,17 +173,17 @@ recommendation. Iterate through steps 2–4 as feedback loops.
    violated goal or invariant and its concrete impact.
 4. **Drill-ins** — within the framed lenses, delegate to `explore`/`scout` by
    default; escalate one surface to a `review` worker only when the sweep
-   showed it genuinely complex or contested.
-   Apply the shared decision discipline before treating a mechanism
-   preference as an architectural finding.
+   showed it genuinely complex or contested. Apply the shared decision
+   protocol before treating a mechanism preference as an architectural
+   finding.
 5. **Results** — verify before flagging. Report defects only as **confirmed
    findings** grounded in current source. Each must identify the violated goal
    or invariant, concrete impact, and exact source location. Present structural
    preferences as trade-offs. Separate anything unresolved into
    **risks requiring validation** or **open questions / intent checks**. If
-   intent is unclear, ask a focused question. Drop
-   false-positives; describe intentional choices as findings only when their
-   stated trade-off no longer serves the goal.
+   intent is unclear, ask a focused question. Drop false-positives; describe
+   intentional choices as findings only when their stated trade-off no longer
+   serves the goal.
    Classify each confirmed concern as a **current blocker**, a **deferred
    committed requirement**, or a **speculative concern**. A current blocker
    violates committed behavior, an enduring current contract, or realistic
@@ -194,9 +192,9 @@ recommendation. Iterate through steps 2–4 as feedback loops.
    architecture; record its activation condition and keep it out of current
    implementation. Keep speculative concerns as labeled observations until a
    committed consumer or plausible supported-workload failure justifies action.
-   Any recommendation that expands architecture
-   must state its cumulative cost, effect on the walking skeleton, and why a
-   smaller clean, coherent option is insufficient. When repeated findings only
+   Any recommendation that expands architecture must state its cumulative cost,
+   effect on the walking skeleton, and why a smaller clean, coherent option is
+   insufficient. When repeated findings only
    grow the design, reassess the governing premise against current evidence.
 6. **Deliverable** — the review result (below).
 

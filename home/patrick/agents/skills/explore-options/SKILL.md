@@ -20,8 +20,10 @@ Inspect cheap orientation sources. Supply the intended outcome and consumers,
 scope, requirements, current decisions, preferences, unknowns, and authoritative
 source pointers. State the requested breadth/depth and any investigation budget.
 Resolve consequential framing ambiguity; leave factual uncertainties for
-investigation. Present existing options as candidates, not an exhaustive list,
-and omit the lead's preferred answer.
+investigation. Frame the underlying problem, not the posed question or a
+mechanism. List known options as hints, not an exhaustive list, and omit the
+lead's preferred answer. Ask for families outside the posed framing, such as
+not needing it at all or a different owner.
 
 Dispatch a fresh `option-explorer` with that frame and native configuration.
 For substantial exploration, assign one report path in the existing working

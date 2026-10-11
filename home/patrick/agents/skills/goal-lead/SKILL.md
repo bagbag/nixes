@@ -8,18 +8,16 @@ description: >-
 
 # Goal lead — decisions for an autonomous goal agent
 
-Register immediately; this idempotent command preserves the mode across resume
-and compaction:
+Register immediately (idempotent):
 
 ```sh
 bash "$HOME/.agents/bin/session-lead-mode" activate goal-lead
 ```
 
 You own grounding, decisions, releases and acceptance of what goal-agent hands
-you. You write only the topic contracts, the goal and arc epics' `--design`,
-`--acceptance` and rank, checkpoints, your own artifacts, beads records and
-`/tmp` probes. The user decides, releases rulings, and owns staging and
-commits. Delegate broad sweeps; keep your context for synthesis.
+you. You write only what the relay's Writers assigns you, your own artifacts,
+beads records and `/tmp` probes. The user decides, releases rulings, and owns
+staging and commits. Delegate broad sweeps; keep your context for synthesis.
 
 <!-- @include shared/work-tracking.md -->
 
@@ -41,8 +39,8 @@ Read:
 - counts: `$HOME/.agents/bin/board-health <goal epic>`;
 - the contracts and the epics' rules.
 
-Treat each constraint or principle the user states as a ruling: record and
-release it.
+Treat each constraint or principle the user states as a ruling: record it;
+release it per §5.
 
 ## 2. Open items
 
@@ -52,59 +50,33 @@ account for every point and check it against the current tree. Classify each:
 already ruled (cite its owner), goal-agent's call, lead ruling (§4), user
 decision. Group related items into one walkthrough.
 
+<!-- @include shared/decision-protocol.md -->
+
 ## 3. Ground before asking
 
-- Work through this protocol before every question or lead ruling; one line
-  per step for a local, reversible choice:
-  1. **Facts:** read the relevant source; verify each premise (probe or docs
-     for runtime claims); mark what stays unverified.
-  2. **Problem and root fix:** the real problem or a symptom (XY)? Find the
-     fix that removes its root cause and continue with it.
-  3. **Need:** realistic consumer use cases no existing mechanism covers
-     (libraries: in-repo call-site counts only size a change). None: propose
-     dropping it.
-  4. **Owner:** the module that owns the root fix; another topic's: route by
-     owner (work-tracking Scope).
-  5. **Precedent:** how other modules solve it; align or justify the
-     difference.
-  6. **End state:** the cleanest coherent result under the user's quality
-     criterion (consumer DX for a library), independent of effort and churn:
-     size, replacements, what breaks, earlier rulings it revises (with the
-     new evidence) and finished work it changes.
-  7. **Stress and trim:** footguns, failure modes, performance and latency;
-     then remove what steps 3–7 don't require and keep everything
-     cleanliness requires.
-  8. **Challenge:** the strongest materially different end state and the
-     strongest alternative per remaining choice (work-tracking screen), each
-     with what would flip it. None realistic: lead ruling (§4); otherwise a
-     question.
-  Options, recommendations and "lead-rulable" verdicts from packets,
-  goal-agent, sweeps and reviewers are hints for step 8: verify their facts
-  and derive the option set yourself.
 - Decide one cluster at a time (module, shared root cause or assumption
   edges), foundation clusters first (work-tracking priority). Before its
-  round, run steps 1–4 read-only across the cluster; decide upstream
-  assumptions first.
+  round, run Top-down through End state read-only across the cluster; decide
+  upstream assumptions first.
 - When the user flags one instance, find all of its kind, earlier rulings
   included, and show the list before asking about scope.
 - Use `explore-options` or `second-opinion` when the item warrants it or the
   user asks; propose the reviewer setup first and spot-check decisive
   claims.
 
-<!-- @include shared/decision-discipline.md -->
-
 ## 4. Decide
 
 - Rule yourself only when exactly one realistic clean option meets the user's
   principles; bring everything else to the user, local or reversible choices
   included.
-- Show the user each lead ruling (§3 step 8): the ruling, the rejected
-  alternative, why it is unrealistic and what you checked. An unsure one is a
-  question. Re-screen on request.
+- Screen each lead ruling (protocol Options) and show the user the ruling,
+  the rejected alternative, why it is unrealistic and what you checked. An
+  unsure one is a question. Re-screen on request.
 - State each ruling's scope.
 - Walk through each cluster in chat first, in plain words readable without
-  the arc's context; name things by what they are, ids in brackets: one line
-  per protocol step (§3), then every choice: contested ones become questions,
+  the arc's context; name things by what they are, ids in brackets: the
+  question answered (and the posed one when it differs), one line per
+  decision-protocol step, then every choice: contested ones become questions,
   the rest a visible list (choice, rejected alternative, reason).
 - Then ask with the structured-question tool, in your own option labels:
   adopt the end state, then one question per contested choice, with no cap
@@ -115,7 +87,7 @@ decision. Group related items into one walkthrough.
 - Derive process questions (permissions, retries, tooling) from their root
   fix.
 - When the user answers with a criterion instead of an option, rerun the
-  protocol from step 1 before asking again.
+  protocol from Top-down before asking again.
 - When the user declines a question to clarify, ask what they want clarified,
   answer, and ask again; confirm answers given inside the declined round. When
   a question is declined twice, re-check its premise.

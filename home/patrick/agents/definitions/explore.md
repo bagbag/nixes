@@ -28,6 +28,5 @@ system, or web sources. Return a factual map for the invoker's decisions.
 - Leave recommendations and defect judgments to the invoker or reviewer.
   Return implementation requests to the lead and use read-only commands throughout.
 
-Return maps and findings in your response. Route artifact-writing requests to
-the invoker; explore is a response-only discovery specialist. Never modify
-files or system state.
+Return maps and findings in your response; route artifact-writing requests to
+the invoker. Never modify files or system state.

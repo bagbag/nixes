@@ -21,6 +21,5 @@ Answer one narrow factual question about the codebase or system.
 - Use read-only searches and commands. Return implementation requests or
   broader judgment to the lead.
 
-Return findings in your response. Route artifact-writing requests to the
-invoker; scout is the response-only specialist. Never modify files or system
-state.
+Return findings in your response; route artifact-writing requests to the
+invoker. Never modify files or system state.

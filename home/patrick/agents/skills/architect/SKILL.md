@@ -18,14 +18,14 @@ workflow. Use `explore-options` when the uncertainty is which solution families
 deserve consideration. Reuse its result for architecture work; exploration adds
 no automatic architecture or review round and preserves applicable review gates.
 
-<!-- @include shared/decision-discipline.md -->
+<!-- @include shared/decision-protocol.md -->
 
 ## 1. Frame the work
 
 Infer DESIGN (new architecture) or REVIEW (existing architecture) from the
 request. Ask for the mode and target when genuinely ambiguous. Inspect cheap
-orientation sources so questions are specific; leave broad source discovery to
-the architect and use its findings for follow-up.
+orientation sources before asking; leave broad source discovery to the
+architect and use its findings for follow-up.
 
 Establish the target and boundary, goal and intended consumers, non-goals,
 constraints, chosen review lenses, authoritative source pointers, and known open
@@ -52,30 +52,20 @@ Use the lightest level that protects the decision:
   consequences and load-bearing uncertainties. Add a critic or verifier when a
   named unanswered question needs distinct expertise or independent evidence.
 
-Examine consequences for security, authority, isolation, concurrency,
-irreversible effects, and uncertain contract boundaries. Increase depth when the
-decision warrants it or when the scope of impact cannot be established; finding
-a defect first is not required. State the uncertainty and extra investigation.
-Investigation depth and reviewer count are separate choices; these risks do not
-automatically require additional agents. Reuse an independent assessment that
-covers the same target, sources, and current revision across overlapping review
-requirements.
-
 Dispatch the dedicated `architect` agent with the frame, mode, depth, expected
-result, and assigned paths. Native configuration owns model, permissions,
-reasoning discipline, and the output contract. Let the agent use that native
-configuration. If the agent is unavailable, report the dispatch limitation and
-return the fallback choice to the invoker.
+result, and assigned paths. Leave model, permissions, reasoning discipline,
+and the output contract to its native configuration. If the agent is
+unavailable, report the dispatch limitation and return the fallback choice to
+the invoker.
 
 Use the same architect for clarification, evolving design choices, and
 amendments while the premise and target remain stable. Start a fresh worker when
 they materially change or the user requests an independent architectural
-judgment. Preserve continuity with the current worker throughout an ongoing
-design conversation.
+judgment.
 
 For an independent architectural judgment, start with a clean conversation
-containing the frame and sources. Exclude earlier reviewer verdicts and desired
-answers to preserve independence. Keep the design author distinct from its
+containing the frame and sources; exclude earlier reviewer verdicts and desired
+answers. Keep the design author distinct from its
 independent reviewer.
 
 ## 3. Mediate and review
@@ -85,19 +75,11 @@ user, or to the invoking lead when delegated. Return decisions to the architect
 with the relevant rationale. Scope changes and changed premises require renewed
 alignment. If evidence warrants greater depth, state the increase and why.
 
-Arrange independent review at the chosen depth. Grounding findings must be
-verified against current sources; discovery summaries alone are insufficient.
-Use a fresh reviewer for the initial independent judgment, then retain it for
-focused amendment checks. Close the review when findings are resolved and agreed
-checks pass; reopen broader review on evidence of a materially changed premise
-or blast radius. A fresh architect in REVIEW mode can assess the architecture; a
+Arrange independent review at the chosen depth. Verify grounding findings
+against current sources, not discovery summaries alone.
+A fresh architect in REVIEW mode can assess the architecture; a
 second-opinion reviewer can challenge the proposed decision, premise,
-alternatives, and trade-offs. Add another independent role only for a named
-unanswered question or explicit user request.
-
-Apply the shared decision discipline to consequential comparisons and material
-reviewer disagreements. Preserve disagreement and return genuine trade-offs to
-the user with a recommendation.
+alternatives, and trade-offs.
 
 ## 4. Synthesize
 

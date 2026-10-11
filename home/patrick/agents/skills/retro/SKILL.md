@@ -4,16 +4,15 @@ description: >-
   Mine the current session for durable learnings and route each to the right
   config layer (global or project agent instructions, a skill, an agent prompt,
   project docs, settings/hooks) — propose-only, the user ratifies every item.
-  Best run at the end of a work arc or before compaction, while the friction
-  is still in context.
+  Best run at the end of a work arc or before compaction.
 ---
 
 # Retro — turn session friction into durable rules
 
 ## 1. What to mine for
 
-Review the session in the main conversation, where the corrections and their
-context are available. Look for concrete recurring friction:
+Review the session in the main conversation. Look for concrete recurring
+friction:
 
 - corrections the user made twice — propose the rule that would have prevented
   the second;
@@ -26,8 +25,7 @@ context are available. Look for concrete recurring friction:
   propose narrowing or removing the rule;
 - cost sinks: work a cheaper role or pattern would have done equally well.
 
-An honest empty is a valid outcome — a session without durable learnings
-reports that instead of inventing some.
+When the session has no durable learnings, report an empty result.
 
 ## 2. Route each learning to ONE layer
 

@@ -10,9 +10,9 @@ description: >-
 
 # Define Goal
 
-Own the user-facing alignment that must precede architecture and planning. The
-goal belongs to the user; this skill helps make it explicit, testable, and
-small enough to guide the next coherent milestone.
+Own the user-facing alignment that precedes architecture and planning. The
+goal belongs to the user; make it explicit, testable, and small enough to guide
+the next coherent milestone.
 
 ## Choose the mode
 
@@ -50,11 +50,11 @@ recommendation. Resolve the goal before committing to architecture.
 Ask: if this milestone succeeds, what has been delivered or learned about the
 reason the work exists?
 
-A safe fallback, no-op, placeholder, or universally fail-closed path may be
-valuable infrastructure evidence, but it is not product-milestone acceptance
-when it bypasses the defining value path. Keep acceptance open and name the
-missing contract, input, capability, or empirical validation instead of
-silently redefining success.
+A safe fallback, no-op, placeholder, or universally fail-closed path may serve
+as infrastructure evidence; when it bypasses the defining value path, it is not
+product-milestone acceptance. Keep acceptance open and name the missing
+contract, input, capability, or empirical validation instead of silently
+redefining success.
 
 If structural scope or process keeps growing without advancing executable value,
 use Refocus mode to derive a smaller coherent milestone and revise the

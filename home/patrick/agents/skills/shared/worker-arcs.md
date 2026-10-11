@@ -5,7 +5,7 @@ review, dispatch and containment. Mode skills own authority, horizon,
 recovery and ceilings; global instructions own safety, Git, role routing,
 reconsideration and closure.
 
-<!-- @include shared/decision-discipline.md -->
+<!-- @include shared/decision-protocol.md -->
 
 <!-- @include shared/work-tracking.md -->
 
@@ -102,15 +102,13 @@ tighten this.
 
 - **Coverage:** a planned later review of the same target (the user's staged
   review, an integration review) replaces earlier gates it makes redundant.
-  Reuse assessment of the same decision, sources and revision; add reviewers
-  only for a named open question or a user request.
 - **Independence** is relative to authorship, the lead's own results
   included; a role name or a passing self-check is not independent.
 - **Round:** a fresh assessor judges, the author repairs, the same assessor
   checks repairs and affected invariants. Assessors apply fixes that are the
   only realistic clean option in the reviewed files while the author is
-  inactive there; the lead inspects each diff. A changed premise or blast
-  radius reopens broader review; repair completion does not.
+  inactive there; the lead inspects each diff. Repair completion reopens no
+  broader review.
 - **Verdict:** assessors work from current rulings and supersessions (old
   briefs and verdicts yield) and comment on the package: verdict, confirmed
   defects, open questions, checks run, next action.
@@ -149,7 +147,7 @@ tighten this.
   as recorded decisions under reconsideration. Workers report material
   challenges; the lead resolves them.
 - Dispatch dependency-ready waves with disjoint ownership after
-  `bd swarm validate <arc epic>` passes; sequence shared contracts. Default to
+  `bd dep cycles` reports none; sequence shared contracts. Default to
   one shared tree; use separate worktrees for inseparable zones with justified
   merge cost. Use native liveness, wait and resume.
 - The lead owns destructive actions: workers inventory and adapt; the lead

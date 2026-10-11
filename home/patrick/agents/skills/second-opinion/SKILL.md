@@ -5,10 +5,10 @@ description: >-
   architecture, plan, blocker, or proposed solution. Use when the user says
   “ask a fresh reviewer,” “get a second/2nd opinion,” or requests independent
   reassessment or fresh sign-off. Includes alternatives needed to challenge the
-  proposal. Frame the question
-  neutrally, dispatch the dedicated source-grounded reviewer without inherited
-  conversational conclusions, and return its recommendation and disagreements
-  for user decision rather than automatically adopting the verdict.
+  proposal. Frame the question neutrally, dispatch the dedicated source-grounded
+  reviewer without inherited conversational conclusions, and return its
+  recommendation and disagreements for user decision rather than automatically
+  adopting the verdict.
 ---
 
 # Second Opinion
@@ -18,7 +18,7 @@ independent judgment and report. Use `explore-options` when the requested result
 is a broader solution space, rather than an independent assessment. Reuse relevant
 exploration without treating its author's recommendation as independent review.
 
-<!-- @include shared/decision-discipline.md -->
+<!-- @include shared/decision-protocol.md -->
 
 ## 1. Frame neutrally
 
@@ -54,8 +54,8 @@ The lead owns specialist follow-up: commission an architect when a concrete
 architectural question warrants that expertise. Give each reviewer a distinct
 question and keep the design author separate from its independent reviewer.
 
-Give the agent repository access and source pointers, while requiring it to
-verify the brief's factual claims independently against current sources. If the
+Give the agent repository access and source pointers; require it to verify
+the brief's factual claims independently against current sources. If the
 user says to let it expand, permit broader exploration while keeping the
 requested decision and product boundary explicit.
 
@@ -70,13 +70,7 @@ Preserve the requested review depth in the brief:
   cumulative architecture when the decision warrants it.
 
 Depth is an initial budget, not a hard ceiling. Test whether the decision is as
-bounded as framed. Examine consequences for security, authority, isolation,
-concurrency, irreversible effects, and uncertain contract boundaries. Increase
-depth when the decision warrants it or when the scope of impact cannot be
-established; finding a defect first is not required. State the uncertainty and
-extra investigation. Investigation depth and reviewer count are separate
-choices; these risks do not automatically require additional agents. Keep the
-report focused on the material decision.
+bounded as framed. Keep the report focused on the material decision.
 
 ## 3. Synthesize
 
@@ -85,20 +79,3 @@ current direction, preserve meaningful disagreements, and explain what changed
 or stayed persuasive. The opinion is not authorization: return the options, the
 lead's recommendation after considering them, and the remaining decisions to the
 user before proceeding.
-
-Use the same reviewer for focused clarification or amendment checks; close the
-review when findings are resolved and agreed checks pass. Reuse adequate
-assessment of the same target, sources, and revision across review requirements.
-Reopen broader review on evidence of a materially changed premise or blast
-radius. An additional fresh opinion needs a stated distinct purpose or explicit
-user request.
-
-### Reconcile material reviewer disagreement
-
-Apply the shared discipline only when disagreement could materially change the
-decision or downstream work. Give each warm reviewer the other's strongest
-argument and request a focused keep, amend, or withdraw reassessment. Reuse warm
-reviewers for one focused reconciliation while the premise and target remain
-stable. After resolving factual disputes, return remaining judgment differences
-to the user with options and a recommendation. Further neutral adjudication is
-optional for a named unanswered question or user request.

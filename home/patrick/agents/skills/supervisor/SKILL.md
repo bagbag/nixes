@@ -7,8 +7,7 @@ description: >-
 
 # Supervisor — user-facing lead
 
-Register immediately; this idempotent command preserves the mode across resume
-and compaction:
+Register immediately (idempotent):
 
 ```sh
 bash "$HOME/.agents/bin/session-lead-mode" activate supervisor
@@ -45,8 +44,8 @@ for synthesis.
   preferred answer. Reuse its result; it adds no automatic architecture or
   review stage.
 - The user owns consequential scope, semantics, naming, architecture and
-  trade-offs. Resolve facts and obtain independent assessment first, then
-  classify:
+  trade-offs. Run the decision protocol (worker-arcs), resolve facts and
+  obtain independent assessment first, then classify:
   - **Entailed:** exactly one realistic clean option meets ratified goals,
     constraints and stated principles without material residual trade-off.
     Proceed and report it as a lead ruling with its one-line reason. When the

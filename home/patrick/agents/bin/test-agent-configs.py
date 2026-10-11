@@ -349,28 +349,29 @@ def validate_rendered_skills(root: Path, expander) -> None:
             if skill_frontmatter_bytes(source) != skill_frontmatter_bytes(rendered):
                 raise ValueError(f"{source}: rendered frontmatter changed")
 
-        marker = "<!-- @include shared/decision-discipline.md -->"
+        marker = "<!-- @include shared/decision-protocol.md -->"
         include_owners = (
             source_skills / "architect" / "SKILL.md",
+            source_skills / "goal-lead" / "SKILL.md",
             source_skills / "second-opinion" / "SKILL.md",
             source_skills / "shared" / "worker-arcs.md",
         )
         for path in include_owners:
             if path.read_text(encoding="utf-8").count(marker) != 1:
-                raise ValueError(f"{path}: expected one decision-discipline include")
+                raise ValueError(f"{path}: expected one decision-protocol include")
 
         for name in ("autopilot", "supervisor"):
             path = source_skills / name / "SKILL.md"
             if marker in path.read_text(encoding="utf-8"):
-                raise ValueError(f"{path}: must inherit decision discipline via worker-arcs")
+                raise ValueError(f"{path}: must inherit the decision protocol via worker-arcs")
 
-        discipline = expander.expand_markdown(
-            source_skills / "shared" / "decision-discipline.md", source_skills.resolve()
+        protocol = expander.expand_markdown(
+            source_skills / "shared" / "decision-protocol.md", source_skills.resolve()
         ).strip()
         for source in include_owners:
             rendered = rendered_skills / source.relative_to(source_skills)
-            if rendered.read_text(encoding="utf-8").count(discipline) != 1:
-                raise ValueError(f"{rendered}: shared decision discipline was not preserved once")
+            if rendered.read_text(encoding="utf-8").count(protocol) != 1:
+                raise ValueError(f"{rendered}: shared decision protocol was not preserved once")
 
         for path in sorted(rendered_skills.glob("*/SKILL.md")):
             headings = [

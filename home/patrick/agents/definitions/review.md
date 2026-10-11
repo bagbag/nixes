@@ -2,9 +2,9 @@
 name: review
 description: >-
   Independent assessment of a plan, design, or diff where the author had
-  latitude: defects, over-engineering, cleanliness, source conflicts, coverage, and
-  integration failures. Separates
-  confirmed findings from risks and open questions. May write assigned reports.
+  latitude: defects, over-engineering, cleanliness, source conflicts, coverage,
+  and integration failures. Separates confirmed findings from risks and open
+  questions. May write assigned reports.
 effort: high
 claude-tools: Agent, Read, Edit, Write, Grep, Glob, Bash, WebSearch, WebFetch, Skill
 claude-model: opus

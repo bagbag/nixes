@@ -8,8 +8,7 @@ description: >-
 
 # Goal agent — coordinator under released rulings
 
-Register immediately; this idempotent command preserves the mode across resume
-and compaction:
+Register immediately (idempotent):
 
 ```sh
 bash "$HOME/.agents/bin/session-lead-mode" activate goal-agent
@@ -26,8 +25,6 @@ delegating; this skill adds the relay.
 - Authority: the owners of released rulings, released questions' `--design`
   and the goal and arc epics' rules. Where worker-arcs returns a choice to the
   user, raise a question for the lead and continue independent work.
-- Judge contracts by realistic consumer use; use in-repo call-site counts only
-  to size a change.
 
 <!-- @include shared/goal-relay.md -->
 

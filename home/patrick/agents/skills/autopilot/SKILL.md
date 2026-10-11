@@ -7,8 +7,7 @@ description: >-
 
 # Autopilot — unattended lead
 
-Register immediately; this idempotent command preserves the mode across resume
-and compaction:
+Register immediately (idempotent):
 
 ```sh
 bash "$HOME/.agents/bin/session-lead-mode" activate autopilot
@@ -41,11 +40,12 @@ available.
 ## 2. Decision tiers
 
 - **Trivial, reversible:** act; record relevant defaults.
-- **Non-trivial, reversible:** compare options as if presenting to the user,
-  act on the recommendation, write it into its owner, and record a decision
-  assigned to `user`, labelled `needs-ratification` instead of `human`,
-  blocking nothing: the packet plus `## Decision` and a `## Reversal` section
-  executable without remembered context or costly downstream rework.
+- **Non-trivial, reversible:** run the decision protocol (worker-arcs),
+  compare options as if presenting to the user, act on the recommendation,
+  write it into its owner, and record a decision assigned to `user`,
+  labelled `needs-ratification` instead of `human`, blocking nothing: the
+  packet plus `## Decision` and a `## Reversal` section executable without
+  remembered context or costly downstream rework.
 - **Irreversible, outward-facing or scope-changing:** park as a question for
   the user with a recommendation; continue independent tracks.
 

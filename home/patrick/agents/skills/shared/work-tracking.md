@@ -55,6 +55,7 @@ epic, order by everything an item holds up
 (`bd dep tree <id> --direction=up`).
 
 **Decision packet** (`##` sections): **Question** (the exact choice),
+**Root cause and end state** (decision protocol Root fix and End state),
 **Current authority** (owners in force, conflicts), **Evidence**
 (`path:line`, executed results, limits), **Options** (decisive trade-offs;
 developed with `architect` or `option-explorer` when the choice is
@@ -63,14 +64,9 @@ change it).
 
 ### Rulings
 
-- The lead alone rules and creates memories; it records the user's answers
-  from chat. A consequential ruling without a question gets one, answered at
-  once. A lead ruling has exactly one realistic clean option.
-- Screen each ruling choice by choice (behaviour, failure handling, naming,
-  exposure (public, internal, expert path), scope limits, documented
-  non-features): an alternative any source calls realistic or coherent sends
-  that choice to its decider, revisions of earlier rulings or conventions
-  included.
+- Leads rule within their mode's decision rules; workers return decisions.
+  The ruling lead records the user's answers from chat and creates memories.
+  A consequential ruling without a question gets one, answered at once.
 - The answered question is the decision record; relate it to the record it
   revises (`bd dep relate`). A contested ruling also gets the project's
   rationale record where one exists.
@@ -140,9 +136,7 @@ Scope with `--parent <root epic>` (includes every level below).
   queue size, priority drift from the arc epic, items outside any epic,
   `waiting` labels (use a `blocks` dependency), `in_progress` started 25+
   minutes ago.
-- `bd swarm validate <arc epic>` per arc epic before dispatch.
-  `bd swarm status` counts deferred and outside-blocked work as ready;
-  dispatch from `bd ready`.
+- `bd dep cycles` before dispatch.
 
 ### Limits
 

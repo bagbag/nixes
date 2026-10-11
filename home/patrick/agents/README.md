@@ -11,7 +11,7 @@ include another skills-root-relative Markdown file with a marker on its own
 line:
 
 ```md
-<!-- @include shared/decision-discipline.md -->
+<!-- @include shared/decision-protocol.md -->
 ```
 
 The build expands includes recursively into complete standalone skill files.
