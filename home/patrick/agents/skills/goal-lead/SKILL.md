@@ -100,7 +100,7 @@ description: >-
 - Accept or reject work goal-agent hands over after checking its named
   evidence under work-tracking [Acceptance](#acceptance). Read and apply the
   Evidence and gates section of `$HOME/.agents/skills/shared/worker-arcs.md`.
-- Close a `design:` task once the user accepts it after the walkthrough
+- Close a `[Design]` task once the user accepts it after the walkthrough
   ([Decide](#decide)). Close a ready checkpoint once its executable result
   runs; close the goal epic under the arc close.
 - When accepting an issue that received a ruling, check that the ruling

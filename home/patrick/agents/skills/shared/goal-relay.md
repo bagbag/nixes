@@ -99,7 +99,7 @@ none of its questions remains `decided`.
 
 - Apply to slices opening boundaries, public contracts, data flow, mechanisms
   or the clean end state, and to contract items marked "design first".
-- goal-agent creates `design: <slice>` with architecture where open, the package
+- goal-agent creates `[Design] <slice>` with architecture where open, the package
   graph and needed decisions. Make slice packages depend on it (`blocks`);
   hand it to goal-lead with `review`.
 - goal-lead closes the design item on user acceptance or returns it with findings.

@@ -157,11 +157,15 @@ def validate_skills(root: Path) -> None:
             "index.md",
         ),
         skills_dir / "supervisor" / "SKILL.md": (
-            "arc epic `<topic-slug>/<arc-slug>`",
+            "arc epic",
+            "readable title",
+            "`topic:<topic-slug>`",
             "$HOME/.agents/skills/shared/project-memory.md",
         ),
         skills_dir / "autopilot" / "SKILL.md": (
-            "arc epic `<topic-slug>/<arc-slug>`",
+            "arc epic",
+            "readable title",
+            "`topic:<topic-slug>`",
             "$HOME/.agents/skills/shared/project-memory.md",
         ),
     }

@@ -12,15 +12,21 @@ user. Agent guidance comes from session hooks, not `bd setup`. Remote sync
 
 | Entity | Shape and ownership |
 |---|---|
-| Root epic / board | Description holds board prose, no item lists. Use a short explicit id: `bd create --id <prefix>-<abbrev>`. Recover with `bd show <root epic>` and [Views](#views). |
-| Goal epic `<goal-slug>` | Root for multi-arc work. Lead owns `--design` (goal rules) and `--acceptance` (goal-doc owner link). Close under [Arc close](#arc-close). |
-| Arc epic `<topic-slug>/<arc-slug>` | Root or goal-epic child; label `topic:<topic-slug>`. Lead owns `--design` (scope, sequencing, holds, exceptions) and `--acceptance` (done criteria). |
+| Root epic / board | Description holds board prose, no item lists. Recover with `bd show <root epic>` and [Views](#views). |
+| Goal epic | Root for multi-arc work. Lead owns `--design` (goal rules) and `--acceptance` (goal-doc owner link). Close under [Arc close](#arc-close). |
+| Arc epic | Root or goal-epic child; label `topic:<topic-slug>`. Lead owns `--design` (scope, sequencing, holds, exceptions) and `--acceptance` (done criteria). |
 | Sub-arc epic | One per contract-named sub-arc: `--parent <arc epic>`; same shape as arc epic. Topics remain labels. |
-| Assignee | Current holder: claimer, acceptor or answerer. Unassigned open work items, excluding epics/checkpoints, form the dispatch queue. |
+| Assignee | Current holder: claimer, acceptor or answerer. Each mode defines which assignments form its dispatch queue. |
 
+- Let Beads generate every issue ID, including epics. Capture the returned ID
+  for references and dependencies. Confirm creation succeeds before creating
+  dependent items.
+- Give epics readable sentence-case titles that state their area or outcome; keep
+  the topic slug in the `topic:<topic-slug>` label and both slugs in artifact paths.
+- Mark design, gate and checkpoint items with a leading `[Design]`, `[Gate]` or
+  `[Checkpoint]`; use no other title prefixes.
 - Make each arc item a direct child of its owning (sub-)arc epic with its topic
   label. `--parent <epic>` sets both; graph nodes set `parent_id` and `labels`.
-  Let beads mint item ids (`<epic>.N`; graph: hash).
 - Group with labels and `bd dep relate`. `bd ready --parent` and
   `bd list --parent` include sub-epic items.
 - Place changes in their owning topic's arc epic. Open other-topic work through
@@ -58,7 +64,7 @@ closes each package under [Acceptance](#acceptance).
 
 #### Checkpoint
 
-- Use type `milestone`, child of the root epic, title `checkpoint: <result>`,
+- Use type `milestone`, child of the root epic, title `[Checkpoint] <result>`,
   assigned to the lead; put the executable result in `--acceptance`.
 - Depend on every contributing item through `blocks`, including across arcs.
   Once contributors close, the lead runs the result and closes the checkpoint.
@@ -170,7 +176,8 @@ Scope with `--parent <root epic>` to include every descendant level.
 
 | Command | View |
 |---|---|
-| `bd ready --unassigned --exclude-type epic,milestone` | Next work. |
+| `bd ready --unassigned --exclude-type epic,milestone` | Unassigned candidates for modes that dispatch them. |
+| `bd ready --assignee goal-agent --parent <goal epic> --exclude-type epic,milestone` | Goal-agent dispatch queue. |
 | `bd list --label review --assignee <you>` | Awaiting your acceptance, including blocked items. |
 | `bd list --label human --parent <root epic>` | Awaiting a person. |
 | `bd dep list <checkpoint>` | Checkpoint contributors. |

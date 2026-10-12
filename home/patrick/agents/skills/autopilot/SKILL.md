@@ -56,7 +56,7 @@ description: >-
   and exact Git authority, including checkpoint commits.
 - Ratify architecture and plan choices where possible. Begin only after
   scope, authority, done criteria and workspace are ratified.
-- Create the arc epic `<topic-slug>/<arc-slug>` under
+- Create the arc epic (readable title, label `topic:<topic-slug>`) under
   `$HOME/.agents/skills/shared/project-memory.md`; see
   [Project memory](../shared/project-memory.md#project-memory-shared-convention).
   Link goal and contract owners and record the whole-repository baseline gate,

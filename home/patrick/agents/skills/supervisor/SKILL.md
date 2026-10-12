@@ -40,7 +40,7 @@ description: >-
   topic. Check cheap facts, reflect the frame, settle uncertainty with more
   than one realistic answer with the user, and state the assumptions you
   rule on.
-- Create or resume the arc epic `<topic-slug>/<arc-slug>` under
+- Create or resume the arc epic (readable title, label `topic:<topic-slug>`) under
   `$HOME/.agents/skills/shared/project-memory.md`; see
   [Project memory](../shared/project-memory.md#project-memory-shared-convention).
 - Use `define-goal` when purpose or value path is unclear or reframed,

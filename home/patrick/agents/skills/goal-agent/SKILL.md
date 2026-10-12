@@ -70,8 +70,10 @@ description: >-
 - Track every remainder as an issue with an assignee, a `blocks` dependency or
   a deferral with its revisit condition. Re-check remainders whenever you land
   rulings.
-- Choose next work from `bd ready --unassigned --exclude-type epic,milestone`
-  by per-item [Priority](../shared/work-tracking.md#priority), including
+- Choose next work only from ready items assigned to goal-agent within the
+  current goal: `bd ready --assignee goal-agent --parent <goal epic> --exclude-type epic,milestone`.
+  Keep unassigned items in their existing state until handed over to goal-agent.
+  Rank by per-item [Priority](../shared/work-tracking.md#priority), including
   committed nonblocking consumers and what it holds up
   (`bd dep tree <id> --direction=up`). Dispatch as many independent ready items
   as that justifies.
