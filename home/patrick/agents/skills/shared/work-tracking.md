@@ -51,8 +51,10 @@ closes each package under [Acceptance](#acceptance).
 - Put the [Decision packet](#decision-packet) in the description, the current
   decision in `--design` (rewrite in place), and history in comments. Make the
   question block its dependents.
-- The lead records an answer:
-  `bd human respond <id> "<ruling> (user|lead) → <owner>"`.
+- Record the answer in `--design` with a provenance comment
+  `<ruling> (user|lead) → <owner>`. Keep the question open until its ruling
+  is in force; its holder then closes it:
+  `bd close <id> --reason "landed in <owners>"`.
 
 #### Checkpoint
 

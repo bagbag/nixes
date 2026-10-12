@@ -93,6 +93,18 @@ Workflow owners:
 Work tracking owns ruling destinations and the ruling-record format. The goal
 relay owns the cross-role landing contract; goal-agent owns its execution steps.
 
+Work tracking deliberately avoids some beads features (bd 1.3.1); re-check
+before adopting them:
+
+- `external:` dependencies never block: no production code calls
+  `ResolveExternalProjectPath`, so upstream waits use a local human gate.
+- `bd human respond`/`dismiss` close on answer; questions close once their
+  ruling is in force.
+- `bd close --suggest-next` lists only what one close unblocked; next steps
+  follow priority and decision clusters.
+- `bd lint` requires ADR sections in every `decision` description; open
+  questions carry a decision packet instead.
+
 The `explore-options` skill coordinates `option-explorer` to develop a broad
 solution space into realistic alternatives. It progressively screens and deepens
 approaches, reports material exclusions, and leaves decisions to the invoker.
