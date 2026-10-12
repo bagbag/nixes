@@ -1,61 +1,92 @@
 ## Decision protocol
 
-Run before every consequential question, ruling or recommendation; one line
+Run before each consequential question, ruling or recommendation. Use one line
 per step for a local, reversible choice.
 
-1. **Top-down:** from the goal and the user's principles, describe how it
-   should work: what it is, which module owns it, how a consumer uses it.
-2. **Bottom-up:** establish how it works today from authoritative sources;
-   verify each premise (probe or docs for runtime claims) and state what
-   stays unverified.
-3. **Root fix:** the gaps between the two are the problem; the posed question
-   may be one symptom of them (XY problem). Answer the question whose answer
-   settles the others, and find the fix that removes their cause.
-4. **End state:** the cleanest coherent result as if designed fresh
-   (greenfield), under the user's quality criterion (consumer DX for a
-   library), independent of effort and churn: consumer example, size, what it
-   replaces and breaks.
-   - Question the need for every part, existing and proposed: keep only what a
-     realistic consumer needs (in-repo call-site counts only size a change).
-   - Separate required properties from mechanisms; compare mechanisms by those
-     properties.
-   - Prefer what the platform and existing modules already provide; for
-     coordination, use the platform's own state, lifecycle, failure and retry
-     semantics before adding parallel state. Align with how other modules
-     solve it or justify the difference.
-   - Check footguns, failure modes, performance and latency.
-   - Existing design, documents and earlier decisions are inputs: keep what
-     still serves the goal; name each revision with its evidence and the
-     finished work it changes.
-5. **Options:** compare materially different options, including ones outside
-   the posed framing: ranking, decisive trade-offs, strongest downside, and
-   what would change the recommendation. Screen the chosen option choice by
-   choice (behaviour, failure handling, naming, exposure, scope limits,
-   documented non-features): a choice is contested when any source names a
-   second realistic or coherent option, revisions of earlier rulings or
-   conventions included.
-6. **Decide:** rule what your mode's decision rules allow; bring contested
-   choices, with the options and a recommendation, to the decider.
+1. **Top-down:** derive intended behavior from the goal and user principles:
+   concept, owning module, consumer use.
+2. **Bottom-up:** establish current behavior from authoritative sources. Verify
+   each premise; use probes or documentation for runtime claims. Mark unverified
+   claims.
+3. **Root fix:** identify gaps between intended and current behavior. Resolve
+   the question that settles dependent questions; fix the cause of symptoms.
+4. **End state:** derive the smallest clean, coherent result as if designed
+   fresh, under the user's quality criterion (consumer DX for a library),
+   independent of effort and churn. Show consumer use, size, replacements and
+   breakage. Apply the global instructions' six Cleanliness tests and the
+   [End-state criteria](#end-state-criteria).
+5. **Options:** compare materially different approaches, including alternatives
+   outside the posed framing: rank, decisive trade-offs, strongest downside,
+   conditions changing the recommendation. Screen each choice in the selected
+   option: behavior, failure handling, naming, exposure, scope limits and
+   documented non-features. Construct its strongest alternative. Treat any
+   realistic, coherent alternative as contested, even when worse or revising
+   an earlier ruling or convention; include alternatives from other sources.
+6. **Decide:** apply [Decision authority](#decision-authority). Bring contested
+   choices, options and a recommendation to the decider.
 
-Challenge proposals, options and verdicts from others: verify their facts,
-test them against the derived end state, and form your own option set. Rerun
-from Top-down when a later step, an answer or new evidence changes the
-problem; record the changed premise and its effect.
+### Decision authority
 
-### Reviewers
+The decider is the user unless the active mode or role definition names
+another; modes and roles may adapt the handling. Apply the stricter row when
+uncertain.
 
-- Scale depth to stakes and to uncertainty about impact; depth and reviewer
-  count are separate choices.
-- A fresh reviewer gives the initial independent judgment and checks the
-  amendments. Reuse an independent assessment of the same target, sources and
-  revision; reopen on a changed premise or blast radius; add a reviewer only
-  for a named unanswered question or a user request.
-- Reconcile material disagreement once: give each reviewer the other's
-  strongest argument in a neutral frame; a changed position names new
-  evidence, a corrected premise or a reweighting. Return remaining judgment
-  differences to the decider.
-- A hybrid is a new option: test whether it keeps its parents' benefits or
-  only combines their costs.
-- Agreement after shared framing or a lead-authored amendment is correlated
-  evidence. Distinguish facts from preferences; preserve material
-  disagreement and return trade-offs with a recommendation.
+| Choice | Handling |
+|---|---|
+| Trivial: reversible, consumer-invisible, sets no convention | Decide; mention in one line. |
+| Entailed: no other realistic, coherent alternative; meets ratified goals, constraints and principles without material residual trade-off | Decide; report with one-line reason. |
+| Other reversible: semantics, naming, contracts, conventions, trade-offs | Ask the decider. |
+| Irreversible, outward-facing or scope-changing | Ask the decider; act only on confirmation. |
+
+Reviewer agreement is evidence, not authority; it settles no product, semantic,
+risk or scope trade-off.
+
+### End-state criteria
+
+- Question existing and proposed parts; retain only what realistic consumers
+  need. Use in-repo call-site counts to size changes, not to establish consumer
+  need.
+- Separate required properties from mechanisms; compare mechanisms by those
+  properties.
+- Reuse platform and module capabilities. For coordination, use platform state,
+  lifecycle, failure and retry semantics before parallel state. Follow analogous
+  module patterns or state the reason for divergence.
+- Justify each added durable concept, abstraction, workflow boundary,
+  coordination mechanism or acceptance layer by its current or committed
+  consumer, the realistic failure or contract instability it prevents, and why
+  existing types, transactions, constraints or focused invariants fall short;
+  accept cleaner contracts, protected integrity, proven variation or credible
+  extensibility as benefits.
+- Implement for a current consumer. For a later committed consumer, keep a clean
+  additive path and defer, unless deferral would replace a semantic identity or
+  boundary required now or leave a plausible integrity failure.
+- Check footguns, failure modes, performance and latency.
+- Reassess existing designs, documents and decisions against the goal. Retain
+  supported commitments; name each revision, its evidence and affected finished
+  work.
+
+### Concern classes
+
+| Class | Definition | Handling |
+|---|---|---|
+| Current blocker | Violates committed behavior, an enduring current contract or realistic integrity under supported workloads. | Blocks acceptance. |
+| Deferred committed requirement | Later committed behavior, addable without replacing current architecture. | Record its activation condition; keep out of current scope. |
+| Speculative concern | No committed consumer or plausible supported-workload failure. | Labeled observation until evidence justifies action. |
+
+A recommendation expanding structure states its cumulative cost, its effect on
+the walking skeleton and why a smaller coherent option fails. When findings
+repeatedly add structure without executable progress, re-derive the premise.
+
+### Others' input
+
+- At any step, verify others' proposals, options and verdicts against sources
+  and the derived end state; form your own option set.
+- Assess each hybrid independently for retained benefits and combined costs.
+- Treat agreement after shared framing or a lead-authored amendment as correlated
+  evidence. Distinguish facts from preferences; preserve material disagreement
+  and return trade-offs with a recommendation.
+
+### Changed premises
+
+- On a changed problem from a later step, answer or new evidence, restart at
+  Top-down and record the changed premise and its effect.

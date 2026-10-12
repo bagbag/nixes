@@ -10,63 +10,61 @@ description: >-
 
 # Define Goal
 
-Own the user-facing alignment that precedes architecture and planning. The
-goal belongs to the user; make it explicit, testable, and small enough to guide
-the next coherent milestone.
+The goal belongs to the user. Align it before architecture and planning:
+explicit, testable, sized for the next coherent milestone. A goal authorizes no
+execution.
 
-## Choose the mode
+## Mode
 
-- **Establish** — define a new project or substantial arc.
-- **Advance** — turn a ratified direction into the next milestone or wave.
-- **Refocus** — recover when implementation, reviews, or accumulated scope have
-  drifted from the purpose.
+- **Establish:** a new project or substantial arc.
+- **Advance:** the next milestone or wave from a ratified direction.
+- **Refocus:** recover from drift by implementation, reviews or accumulated
+  scope.
 
 ## Build the contract
 
-Orient cheaply from the user's framing and current project owners before asking
-questions. Follow `$HOME/.agents/skills/shared/project-memory.md` for project/topic
-goal and checkpoint ownership. Produce or refine the owning contract without
-duplicating its parent:
+- Orient from the user's framing and current owners. Read
+  `$HOME/.agents/skills/shared/project-memory.md`; follow its
+  [Durable owners](../shared/project-memory.md#durable-owners) for contract
+  ownership and [Arc state](../shared/project-memory.md#arc-state) for
+  checkpoints and board. Refine the owning contract without duplicating its
+  parent.
+- Fields:
+  - intended user and defining outcome;
+  - problem or burden reduced;
+  - value path and load-bearing hypotheses;
+  - next observable milestone and why it matters;
+  - smallest coherent walking skeleton proving it;
+  - non-goals and safe deferrals;
+  - constraints and quality criterion;
+  - acceptance evidence;
+  - unresolved empirical assumptions with the cheapest useful test.
+- For a narrow path-validation checkpoint, state what it delivers or teaches,
+  which capabilities wait and when the user assesses expansion.
+- Interview in rounds: user and outcome first, then value path, milestone,
+  walking skeleton, non-goals and acceptance. Keep the contract open while a
+  field is unresolved. Bring consequential alternatives with trade-offs and a
+  marked recommendation. Ratify the complete contract before architecture.
 
-- intended user and defining outcome;
-- problem or burden being reduced;
-- defining value path and any load-bearing hypothesis;
-- next observable milestone and why it matters;
-- smallest coherent walking skeleton needed to prove it;
-- explicit non-goals and safe deferrals;
-- constraints and quality criterion;
-- acceptance evidence; and
-- unresolved empirical assumptions with the cheapest useful test.
+## Challenge acceptance
 
-For a narrow path-validation checkpoint, name what it must deliver or teach,
-which broader capabilities wait, and when the user assesses expansion.
-
-Resolve factual uncertainty before presenting choices. Bring genuine
-consequential alternatives to the user with honest trade-offs and a marked
-recommendation. Resolve the goal before committing to architecture.
-
-## Challenge the milestone
-
-Ask: if this milestone succeeds, what has been delivered or learned about the
-reason the work exists?
-
-A safe fallback, no-op, placeholder, or universally fail-closed path may serve
-as infrastructure evidence; when it bypasses the defining value path, it is not
-product-milestone acceptance. Keep acceptance open and name the missing
-contract, input, capability, or empirical validation instead of silently
-redefining success.
-
-If structural scope or process keeps growing without advancing executable value,
-use Refocus mode to derive a smaller coherent milestone and revise the
-existing contract.
+- Check what success delivers or teaches about why the work exists.
+- Count a safe fallback, no-op, placeholder or universally fail-closed path
+  that bypasses the value path as infrastructure evidence; keep product
+  acceptance open and name the missing contract, input, capability or
+  validation. Change success criteria only through the user.
+- When structure or process grows without executable value, Refocus: derive a
+  smaller coherent milestone and revise the contract.
 
 ## Ratify and record
 
-Reuse a ratified contract while its premise and scope remain current. Present
-new or materially changed commitments for user ratification. On Establish,
-Advance or Refocus, record ratified commitments governing future work in their
-durable owner before dependent planning or dispatch. Reuse existing ratification
-for unchanged commitments. Boards link canonical goal owners and hold
-arc-specific proposals, execution authority and progress.
-A goal does not authorize execution. In a proposal-only or read-only task,
-return the contract and proposed owner for approval rather than writing files.
+- Reuse a ratified contract while premise and scope hold; present new or
+  materially changed commitments for user ratification.
+- Record ratified commitments in their durable owner before dependent planning
+  or dispatch. Boards link goal owners and hold arc proposals, authority and
+  progress under `$HOME/.agents/skills/shared/work-tracking.md`. In a goal
+  pair, follow [Contract](../shared/goal-relay.md#contract) and
+  [Release](../shared/goal-relay.md#release) in
+  `$HOME/.agents/skills/shared/goal-relay.md`.
+- In a proposal-only or read-only task, return the contract and proposed owner
+  instead of writing files.

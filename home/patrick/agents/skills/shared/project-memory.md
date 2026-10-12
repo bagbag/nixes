@@ -2,92 +2,95 @@
 
 ## Durable owners
 
-- Project goals in `docs/goals.md`; topic contracts in `docs/<topic-slug>/`
-  (`docs/<topic-slug>/goals.md` by default). Reuse suitable existing owners;
-  organize by product or technical boundary; a small project may use one
-  document. Execution topics may reference owners elsewhere; directory
-  symmetry is not required. Each level adds specificity and links its parent;
-  entry points link the owners. A fresh reader understands commitments and
-  milestones without scratch.
-- One canonical owner holds project purpose, defining value, enduring
-  constraints and ratified cross-topic priorities; a substantial topic owns
-  its distinct outcome, milestone commitments, scope and acceptance.
-- Goals state outcomes, not execution permission. Distinguish product
-  non-goals, milestone exclusions and committed deferrals; the eventual
-  outcome, the approved checkpoint and the work authorized now. A checkpoint
-  may validate a narrow executable path before broader delivery; keep
-  integrity and authority constraints and later acceptance requirements in
-  their approved sequence. Milestones may span arcs; closing an arc retires no
-  commitment. Keep independently active milestones distinguishable within
-  their owners.
+| Content | Owner |
+|---|---|
+| Project purpose, defining value, enduring constraints, ratified cross-topic priorities | One canonical project owner; `docs/goals.md` by default. |
+| Substantial topic outcome, milestone commitments, scope, acceptance | Existing suitable owner under `docs/<topic-slug>/`; `docs/<topic-slug>/goals.md` by default. |
+| Ruling destinations | Work-tracking's [Rulings](../shared/work-tracking.md#rulings) mapping. |
+| Outstanding work | Deferred issues under work-tracking; retain a roadmap document's project-assigned purpose. |
+
+- Reuse suitable owners; organize by product or technical boundary. Use one
+  document for small projects or topics. Each level adds specificity and links
+  its parent; entry points link owners. Execution topics may reference owners
+  elsewhere; directory symmetry is optional.
+- Keep commitments and milestones understandable without scratch. Separate
+  product non-goals, milestone exclusions, committed deferrals, eventual
+  outcomes, approved checkpoints and currently authorized work.
+- Goals state outcomes, not execution permission. A child plan narrows a parent
+  commitment only through a newer user decision. Closing an arc retires no
+  milestone commitment; distinguish independently active milestones.
+- For a narrow path-validation checkpoint, retain integrity, authority and later
+  acceptance requirements in their approved sequence.
 - Record ratified goal and sequencing changes in their owner before dependent
-  work consumes them, also when the product goal is unchanged; the board links
-  the checkpoint. A child plan narrows a parent commitment only through a newer
-  user decision. Cross-topic and cross-project work links its owners and
-  dependencies; priority conflicts return to the decision owner. When goals,
-  sequencing or authority change, reconcile affected owners, plans and next
-  actions; park only dependent work.
-- Rulings live in their owners (work-tracking).
-- Outstanding work is deferred issues (work-tracking): problem or intended
-  outcome, area, reason, revisit condition, and the findings, reproduction
-  details and active containment needed to resume without scratch. Labels
-  distinguish defects, investigations and unapproved proposals; keep
-  investigations and proposals only with a concrete revisit reason. Recording
-  an item or reaching its revisit condition authorizes nothing. Reconcile
-  entries when setting scope, when revisit conditions change and at arc close;
-  close resolved ones with disposition and evidence. A project-defined roadmap
-  document keeps what the project assigns it.
-- Structure: one document for a small topic; `index.md` (owners, product
-  state, milestones, read order) and topical subfolders by enduring boundary
-  when size or ownership warrants; `history/` for superseded material, clearly
-  labelled; one owning section per concept, referenced by name and anchor;
-  English names (domain and legal prose may keep its language).
-- Source and executable checks establish implementation reality; label
+  work, including sequencing changes with unchanged product goals. Link
+  checkpoints from the board.
+- Link owners and dependencies for cross-topic/project work; return priority
+  conflicts to the decision owner. On changed goals, sequencing or authority,
+  reconcile affected owners, plans and next actions; park only dependent work.
+
+## Outstanding work
+
+- Record problem or intended outcome, area, reason, revisit condition, findings,
+  reproduction details and active containment sufficient to resume without
+  scratch.
+- Label defects, investigations and unapproved proposals distinctly. Retain
+  investigations and proposals only with a concrete revisit reason.
+- Recording an item or reaching its revisit condition authorizes nothing.
+- Reconcile at scope setting, changed revisit conditions and arc close. Close
+  resolved items with disposition and evidence.
+
+## Document structure
+
+- For larger topics or distinct owners, use `index.md` for owners, product state,
+  milestones and read order; use topical subfolders by enduring boundary.
+- Give each concept one owning section; reference it by name and anchor.
+- Place superseded material in clearly labelled `history/`.
+- Use English names; domain and legal prose may retain its language.
+- Establish implementation reality from source and executable checks. Label
   unproven mechanisms "design intent — validation-pending".
 
 ## Arc state
 
-- **Board:** the description of the root epic (work-tracking), short and
-  replaced in place. Top: topic and arc slugs, mode,
-  status, owner links. Then a first-screen summary sufficient to pick the next
-  action: goal and checkpoint links, checkpoint evidence, verified position,
-  next authorized work and return boundary, and the blockers, pending choices,
-  deferrals and parallel tracks shaping it. Then authority, containment and
-  evidence qualifications. Link plans and reports; distinguish executed
-  evidence from author reports and intent.
-- One active lead per topic, or one goal pair (goal-agent owns the board). A
-  lead may run several arcs, each with its own epic and
-  `.scratch/<topic-slug>/<arc-slug>/` (plans, drafts, reviews, `evidence/`,
-  `history/`). Lowercase kebab-case slugs. Keep `.scratch/` gitignored and
-  free of secrets.
-- Workers get the root epic id and their issue and flag board/spec
-  contradictions; board edits stay with the lead.
+**Board:** root epic description under work-tracking; short, replaced in place.
+
+| Order | Fields |
+|---|---|
+| Top | Topic/arc slugs, mode, status, owner links. |
+| First-screen summary | Goal/checkpoint links and evidence; verified position; next authorized work and return boundary; blockers, pending choices, deferrals, parallel tracks. |
+| Qualifications | Authority, containment, evidence limits; links to plans and reports. |
+
+- Distinguish executed evidence from author reports and intent. Keep the summary
+  sufficient to select the next action.
+- Use one active lead per topic; it owns the board unless its mode assigns the
+  board elsewhere. A lead may run several arcs, each with its own epic and
+  `.scratch/<topic-slug>/<arc-slug>/` for plans, drafts, reviews, `evidence/`
+  and `history/`.
+- Use lowercase kebab-case slugs. Keep `.scratch/` gitignored and free of secrets.
+- Give workers the root epic id and their issue; require board/spec contradiction
+  reports. Board edits stay with the lead.
 
 ## Synchronization
 
-- Update beads as work changes state. Refresh the board at plan or decision
-  changes, material completion, failed checks, changed blockers and before
-  recovery boundaries.
-- Record decisions and reconcile the plan before dependent dispatch. Trivial
-  defaults go in their package; consequential decisions are rulings
-  (work-tracking).
-- Append evidence to its report and link it from the issue or board.
-- Promote ratified conclusions that future implementation, operation or
-  maintenance needs into their canonical owners in the same pass as the
-  reality-changing work, keeping working artifacts as evidence. Link evidence
-  where it changes interpretation; scratch links are optional context, and
-  contracts stay complete without them.
-- Before removing sole provenance from a legacy tracker, preserve it in its
-  owner or `history/`.
+| Event | Action |
+|---|---|
+| Work changes state | Update beads. |
+| Plan/decision change, material completion, failed check, changed blocker, recovery boundary | Refresh the board. |
+| Decision before dependent dispatch | Record it and reconcile the plan; put trivial defaults in the package and consequential rulings in work-tracking. |
+| New evidence | Append to its report; link from issue or board. |
+| Ratified conclusion changes reality | Promote needed implementation/operation/maintenance conclusions into their canonical owner in the same pass; retain working evidence. |
+| Removal of sole legacy provenance | Preserve in its owner or `history/` first. |
+
+Link evidence where it changes interpretation. Scratch links provide optional
+context; keep contracts complete without them.
 
 ## Recovery and closure
 
-- Recover checkpoint, next work and authority from the root epic and its
-  views, then from the goal owners.
-- At arc close, run the work-tracking arc close. At phase boundaries or
-  architecture resets, review affected owners and links (a topic inventory
-  when cross-document changes or uncertain ownership warrant it): classify
-  each as canonical, narrow reference, `history/` or redundant. Check status
-  and milestones, single ownership, resolving links and index authority;
-  reconcile terminology, versions, migration identities and implementation
-  claims across owners and entry points.
+- Recover checkpoint, next work and authority from the root epic and its views,
+  then from goal owners.
+- At arc close, run work-tracking's Arc close.
+- At phase boundaries or architecture resets, review affected owners and links;
+  inventory the topic for cross-document changes or uncertain ownership.
+- Classify each document as canonical, narrow reference, `history/` or redundant.
+  Check status, milestones, single ownership, resolving links and index authority.
+  Reconcile terminology, versions, migration identities and implementation claims
+  across owners and entry points.

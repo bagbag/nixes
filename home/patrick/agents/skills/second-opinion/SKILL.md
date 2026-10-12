@@ -13,69 +13,46 @@ description: >-
 
 # Second Opinion
 
-Own the user-facing orchestration. The dedicated `second-opinion` agent owns the
-independent judgment and report. Use `explore-options` when the requested result
-is a broader solution space, rather than an independent assessment. Reuse relevant
-exploration without treating its author's recommendation as independent review.
+Own user-facing orchestration; the `second-opinion` agent owns the judgment and
+report. Use `explore-options` for a broader solution space; treat its result as
+context, not independent review. Apply [Reviewers](#reviewers) throughout.
+
+## Frame
+
+- Inspect the cheapest orientation sources. Brief neutrally: the exact
+  decision, proposal or claim; committed goal, product boundary, constraints
+  and non-goals; authoritative sources and current empirical facts; opinion or
+  strict sign-off.
+- Keep long briefs in the arc's `.scratch/`. For a substantive report, assign a
+  path, expected content and exclusive write ownership; keep short opinions in
+  the response.
+
+## Dispatch
+
+- Start each requested opinion with a new `second-opinion` agent and only the
+  neutral brief; native configuration owns model, sandbox and output contract.
+- Give repository access and source pointers; require verification of the
+  brief's factual claims. On the user's request, permit broader exploration
+  while keeping the decision and product boundary explicit.
+- The reviewer may challenge architectural decisions; you own specialist
+  follow-up. Commission an architect when a concrete architectural question
+  warrants it; give each reviewer a distinct question.
+- Preserve the requested depth in the brief. Depth is an initial budget; the
+  reviewer tests whether the decision is as bounded as framed and keeps the
+  report on the material decision:
+  - **Quick:** decisive authority and source seams; verdict, material
+    disagreement, decision-changing findings.
+  - **Standard:** relevant option space, sources, trade-offs, refinements.
+  - **Thorough:** adjacent consequences, alternatives, cumulative architecture.
+
+## Return
+
+- Spot-check load-bearing evidence; apply the [Decision protocol](#decision-protocol)
+  to premises and alternatives.
+- Return the options, your recommendation after considering them, preserved
+  disagreements with what changed or stayed persuasive, and remaining decisions
+  for the user. The opinion authorizes nothing.
 
 <!-- @include shared/decision-protocol.md -->
 
-## 1. Frame neutrally
-
-Inspect the cheapest relevant orientation sources first. Give the reviewer:
-
-- the exact decision, proposal, or claim;
-- the committed goal, product boundary, constraints, and non-goals;
-- authoritative repository sources and current empirical facts; and
-- whether the user wants an independent opinion or strict sign-off.
-
-Omit the lead's recommendation, desired answer, and earlier reviewer verdicts.
-When reviewing a concrete proposal, include it as the object of review without
-endorsing it. Keep long dispatch briefs in the active arc's `.scratch/`
-directory.
-
-For a substantive report, assign a concrete output path and instruct the
-reviewer to write it directly. Include the expected content or format and write
-ownership; use the active arc's working-artifact location when available. Short
-bounded opinions may remain in the response.
-
-## 2. Dispatch fresh
-
-Start the initial opinion with a new `second-opinion` agent and a clean
-conversation containing only the neutral brief. The native agent definition owns
-its model, sandbox, reasoning discipline, and output contract. An explicit
-request for a new second opinion or fresh sign-off always starts a new
-independent reviewer. Reusing an earlier assessment for another workflow gate
-does not fulfill that request; clarifications and repairs stay with the
-reviewer.
-
-The reviewer may challenge architectural decisions as part of its assessment.
-The lead owns specialist follow-up: commission an architect when a concrete
-architectural question warrants that expertise. Give each reviewer a distinct
-question and keep the design author separate from its independent reviewer.
-
-Give the agent repository access and source pointers; require it to verify
-the brief's factual claims independently against current sources. If the
-user says to let it expand, permit broader exploration while keeping the
-requested decision and product boundary explicit.
-
-Preserve the requested review depth in the brief:
-
-- **Quick:** inspect only decisive authority and source seams; return the
-  recommendation or verdict, material disagreement, and at most the few
-  findings that could change the decision.
-- **Standard:** inspect the relevant option space, sources, trade-offs, and
-  refinements.
-- **Thorough:** expand across adjacent consequences, alternatives, and
-  cumulative architecture when the decision warrants it.
-
-Depth is an initial budget, not a hard ceiling. Test whether the decision is as
-bounded as framed. Keep the report focused on the material decision.
-
-## 3. Synthesize
-
-Spot-check load-bearing evidence. Compare the independent opinion with the
-current direction, preserve meaningful disagreements, and explain what changed
-or stayed persuasive. The opinion is not authorization: return the options, the
-lead's recommendation after considering them, and the remaining decisions to the
-user before proceeding.
+<!-- @include shared/reviewers.md -->

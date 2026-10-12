@@ -10,83 +10,66 @@ description: >-
 
 # Architect
 
-Own the user-facing orchestration. The dedicated `architect` agent owns source
-discovery, DESIGN/REVIEW reasoning, and the specialist result. Standalone use
-means coordinating that agent directly for the user, independently of
-supervisor. An existing lead may dispatch the same agent within its own
-workflow. Use `explore-options` when the uncertainty is which solution families
-deserve consideration. Reuse its result for architecture work; exploration adds
-no automatic architecture or review round and preserves applicable review gates.
+- Own user-facing orchestration; the `architect` agent owns discovery,
+  DESIGN/REVIEW reasoning and the result. Coordinate it directly in standalone
+  use; a lead may dispatch it within its workflow.
+- Use `explore-options` when uncertainty concerns solution families; reuse its
+  result.
+- End at design or review; the user or invoking lead decides implementation and
+  next phases.
 
-<!-- @include shared/decision-protocol.md -->
+## Frame
 
-## 1. Frame the work
+- Infer DESIGN (new architecture) or REVIEW (existing) from the request; ask for
+  mode or target only when genuinely ambiguous.
+- Read cheap orientation sources; leave broad discovery to the architect.
+- Frame target and boundary, goal and consumers, non-goals, constraints, review
+  lenses, source pointers, open decisions, requested result and paths; pass
+  factual claims and prior decisions as context to verify.
+- Resolve user-owned framing choices first. Under a lead, use its frame and
+  return material ambiguity to it.
+- For substantive results, assign an output path in the arc (ask the user when
+  standalone), expected content and artifact ownership; keep short answers in
+  the response.
 
-Infer DESIGN (new architecture) or REVIEW (existing architecture) from the
-request. Ask for the mode and target when genuinely ambiguous. Inspect cheap
-orientation sources before asking; leave broad source discovery to the
-architect and use its findings for follow-up.
-
-Establish the target and boundary, goal and intended consumers, non-goals,
-constraints, chosen review lenses, authoritative source pointers, and known open
-decisions. Present factual claims and prior decisions as context to verify
-against the cited sources. Include the requested result and any supplied output
-paths. For substantive results, supply the architect a concrete output path,
-expected content or format, and ownership of that artifact. In an existing arc,
-use its assigned working-artifact location. In standalone use, resolve a missing
-path with the user. Short bounded answers may remain in the response.
-
-Resolve user-owned framing choices before substantive work. When an existing
-lead has already established the frame, use it and return material ambiguities
-to that lead for focused clarification.
-
-## 2. Set depth and dispatch
+## Depth
 
 Use the lightest level that protects the decision:
 
-- **Quick:** one bounded question or review lens; targeted orientation and a
-  concise result. Add a board or independent review only when warranted.
-- **Standard:** a module, feature, or API with interacting choices; obtain one
-  independent assessment covering reasoning and grounding.
-- **High-stakes:** expand the same assessment around concrete costly-to-reverse
-  consequences and load-bearing uncertainties. Add a critic or verifier when a
-  named unanswered question needs distinct expertise or independent evidence.
+- **Quick:** one bounded question or lens; concise result. Add a board or
+  independent review only when warranted.
+- **Standard:** interacting choices across a module, feature or API; one
+  independent assessment of reasoning and grounding.
+- **High-stakes:** extend that assessment to costly-to-reverse consequences and
+  load-bearing uncertainties; add a critic or verifier for a named unanswered
+  question needing distinct expertise or evidence.
 
-Dispatch the dedicated `architect` agent with the frame, mode, depth, expected
-result, and assigned paths. Leave model, permissions, reasoning discipline,
-and the output contract to its native configuration. If the agent is
-unavailable, report the dispatch limitation and return the fallback choice to
-the invoker.
+Apply [Reviewers](#reviewers) for depth, count, reuse, independence and
+disagreement. Explain any evidence-based increase in depth.
 
-Use the same architect for clarification, evolving design choices, and
-amendments while the premise and target remain stable. Start a fresh worker when
-they materially change or the user requests an independent architectural
-judgment.
+## Dispatch and mediate
 
-For an independent architectural judgment, start with a clean conversation
-containing the frame and sources; exclude earlier reviewer verdicts and desired
-answers. Keep the design author distinct from its
-independent reviewer.
+- Dispatch with frame, mode, depth, expected result and paths; native
+  configuration owns model, permissions and output contract. When the agent is
+  unavailable, report it and return the fallback choice to the invoker.
+- Reuse the architect while premise and target stay stable; start fresh after
+  material change or for independent judgment ([Reviewers](#reviewers)).
+- Relay focused questions and consequential alternatives to the user, or the
+  invoking lead when delegated; return decisions and rationale to the
+  architect. Realign on scope or premise changes.
 
-## 3. Mediate and review
+## Assess and return
 
-Relay the architect's focused questions and consequential alternatives to the
-user, or to the invoking lead when delegated. Return decisions to the architect
-with the relevant rationale. Scope changes and changed premises require renewed
-alignment. If evidence warrants greater depth, state the increase and why.
+- Arrange independent review at the chosen depth: a fresh architect in REVIEW
+  mode assesses the architecture; `second-opinion` challenges decision,
+  premise, alternatives and trade-offs. Verify grounding against current
+  sources, not summaries alone. Apply the [Decision protocol](#decision-protocol)
+  to premises and alternatives; reassess when evidence changes the problem.
+- Spot-check load-bearing claims. Return the result, artifact paths,
+  recommendation and alternatives, with concerns under
+  [Concern classes](#concern-classes) and unknowns separate; keep the response
+  proportional to the decision.
 
-Arrange independent review at the chosen depth. Verify grounding findings
-against current sources, not discovery summaries alone.
-A fresh architect in REVIEW mode can assess the architecture; a
-second-opinion reviewer can challenge the proposed decision, premise,
-alternatives, and trade-offs.
+<!-- @include shared/decision-protocol.md -->
 
-## 4. Synthesize
-
-Spot-check load-bearing claims, explain the recommendation and alternatives, and
-return the result and any artifact paths. Separate confirmed current blockers
-from deferred committed requirements, speculative concerns, and unknowns. Keep
-the response proportional to the decision.
-
-End at the design or review. The result does not authorize implementation or the
-next phase; the user or invoking lead owns that decision.
+<!-- @include shared/reviewers.md -->

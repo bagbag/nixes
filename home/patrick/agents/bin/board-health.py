@@ -60,12 +60,6 @@ def main():
     def epic_of(issue):
         return next((a for a in ancestors(issue) if a['issue_type'] == 'epic'), None)
 
-    drift = []
-    for issue in open_items:
-        epic = epic_of(issue)
-        if epic is not None and issue['issue_type'] != 'milestone' and issue['priority'] != 0 and issue['priority'] != epic['priority']:
-            drift.append(f"{issue['id']} P{issue['priority']} (epic {epic['id']} P{epic['priority']})")
-
     outside_epic = [i['id'] for i in issues if i['status'] != 'closed' and i['issue_type'] != 'epic' and epic_of(i) is None]
 
     def open_blockers(issue):
@@ -83,7 +77,7 @@ def main():
         if started is not None and now - parse_time(started) >= timedelta(minutes=IN_FLIGHT_MINUTES):
             in_flight.append(f"{issue['id']} ({int((now - parse_time(started)).total_seconds() // 60)} min, {issue.get('assignee') or 'unassigned'})")
 
-    for name, rows in (('priority drift from epic', drift), ('outside any epic', outside_epic),
+    for name, rows in (('outside any epic', outside_epic),
                        ('waiting label (use a blocks dependency)', waiting), (f'in_progress started {IN_FLIGHT_MINUTES}+ min ago', in_flight)):
         print(f'{name}: {len(rows)}')
         for row in rows[:50]:

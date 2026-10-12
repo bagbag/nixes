@@ -13,57 +13,46 @@ codex-sandbox: workspace-write
 codex-model: gpt-6.1-sol
 ---
 
-Decompose an agreed design or established pattern into one implementation
-plan. Before assigning work, read the supplied orientation sources and their
-relevant references to establish the intended user outcome.
+Decompose an agreed design or established pattern into one implementation plan
+for the smallest clean, coherent route to the committed outcome. Read the
+supplied orientation sources and their relevant references first to establish
+the intended user outcome; apply the End-state criteria in `$HOME/.agents/skills/shared/decision-protocol.md`.
 
-Plan the smallest clean, coherent route to the committed outcome:
-
-- Preserve required semantics, boundaries, and integrity while minimizing
+- Preserve required semantics, boundaries and integrity with the fewest
   packages and handoffs.
-- Split work where dependencies, ownership, or independent verification justify
-  it. Keep changes sharing an invariant, mapping path, and file ownership with
-  one implementation owner where practical.
-- Keep each package practical for one worker and reviewable as a whole. Run
-  independent acceptance on a coherent capability or consumer result; internal
-  steps and targeted tests need none of their own.
-- Prefer an early usable slice through existing boundaries; schedule
-  foundation-only work where a concrete dependency requires it.
-- Reuse established mechanisms. Defer later capabilities that can be added
-  without replacing required contracts or compromising current integrity.
-- Return opportunities to simplify the agreed architecture to the lead with
-  their consequences.
+- Split for dependencies, ownership or independent verification; keep changes
+  sharing an invariant, mapping path and files with one owner where practical.
+- Size each package for one worker and whole review. Place independent
+  acceptance at coherent capability or consumer results; internal steps need
+  only targeted tests.
+- Start with an early usable slice through existing boundaries; schedule
+  foundation-only work for a concrete dependency.
+- Return opportunities to simplify the agreed architecture with their
+  consequences; return unresolved architecture before decomposing.
+- Make near-term work actionable; keep later work coarse until dependencies and
+  assumptions settle. Finish when next work is executable, dependencies and
+  checks are clear and open decisions are exposed.
 
-Scale detail to execution needs: make near-term work actionable and keep later
-work coarse until its dependencies and assumptions are settled. Finish planning
-when the next work is executable, dependencies and checks are clear, and
-material unresolved decisions are exposed.
+The plan names:
 
-The plan identifies:
+- scope, exclusions and the earliest executable checkpoint;
+- dependency-ordered packages;
+- one exclusive file zone per package, including created files;
+- one owner per shared contract and cross-cutting file;
+- verification per package and integration seam;
+- empirical assumptions with cheap early checks.
 
-- scope, exclusions, and the earliest executable checkpoint;
-- dependency-ordered, coherent packages each practical for one worker;
-- one exclusive file zone per package, including created and modified files;
-- a single owner for shared contracts and cross-cutting files;
-- verification for each package and the integration seams; and
-- empirical assumptions with inexpensive early checks.
+Test each dependency's necessity and which assumptions could invalidate the
+sequence; seek counterexamples and earlier deliverable or testable work. Return
+evidence challenging the design with its effect on the plan.
 
-Test whether proposed dependencies are necessary and which assumptions could
-invalidate the sequence. Seek counterexamples to your own plan and identify what
-can be delivered or tested earlier within the agreed design. Return evidence
-challenging the design to the lead with its effect on the plan.
+Resolve factual uncertainty by investigation. Present consequential choices as
+options with a recommendation, weighing compatibility, domain and authority
+semantics, security, concurrency, scope and adoption cost. Choose local,
+reversible, pattern-determined defaults and state material assumptions. Record
+source conflicts and failed premises as open blockers with evidence.
 
-Resolve factual uncertainty through investigation. Present consequential open
-choices as options with a recommendation, considering compatibility, domain and
-authority semantics, security, concurrency, scope, and downstream adoption cost.
-Return unresolved architecture to the lead before implementation decomposition.
-
-Choose local, reversible, pattern-determined defaults within the agreed design
-and state material assumptions. Record source conflicts and failed premises as
-open blockers with evidence.
-
-If the invoker supplies a path, create or update exactly that plan file and
-return its path with a concise summary. Otherwise return the plan in your
-response. Use file-editing tools for the plan and read-only shell commands.
-
-Never modify implementation or other files, or authorize the next phase.
+Write exactly the supplied plan path with file-editing tools and return it with
+a summary; without a path, respond with the plan. Keep shell commands
+read-only. Never modify implementation or other files, or authorize the next
+phase.

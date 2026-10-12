@@ -18,6 +18,22 @@ The build expands includes recursively into complete standalone skill files.
 Missing targets, escaping paths, cycles, frontmatter markers, and malformed or
 unresolved markers fail validation.
 
+Keep role and authority limits before each skill's workflow; place whole-file
+shared references after it and link them from the relevant phases. Includes
+retain their heading levels; use one H1 and flat reference sections.
+
+Load shared content per reader; every file in `skills/shared/` stays readable
+on its own:
+
+- Include content a skill acts on in every run; the rendered skill carries it,
+  so reloading the skill after compaction restores it.
+- Reference `$HOME/.agents/skills/shared/<file>` by path for readers without
+  includes (agent definitions, `AGENTS.md`) and for conditional or
+  single-section needs.
+- Links only navigate loaded content: in-file anchors for included files,
+  `../shared/` links for files the skill reads by path. Validation rejects
+  other links and unresolved anchors.
+
 Nix generates the Claude Code and Codex representations into the store, and
 Home Manager links them at activation. It also renders the shared skill tree
 into the store; generated files do not live in Git. Skill changes therefore
@@ -74,12 +90,13 @@ Workflow owners:
 - [Goal lead](skills/goal-lead/SKILL.md) and [goal agent](skills/goal-agent/SKILL.md): a decision lead and an implementation coordinator joined by the [goal relay](skills/shared/goal-relay.md).
 - [Work tracking](skills/shared/work-tracking.md): beads conventions for all lead modes; [beads-migrate](skills/beads-migrate/SKILL.md) moves a Markdown-tracked arc onto them.
 
+Work tracking owns ruling destinations and the ruling-record format. The goal
+relay owns the cross-role landing contract; goal-agent owns its execution steps.
+
 The `explore-options` skill coordinates `option-explorer` to develop a broad
 solution space into realistic alternatives. It progressively screens and deepens
 approaches, reports material exclusions, and leaves decisions to the invoker.
-Supervisor and autopilot use it when broader exploration is needed, within their
-existing authority and budgets. Its result feeds the next needed task without
-adding an automatic architecture or review round.
+Worker arcs name when leads use it; the skill owns how its result is reused.
 
 The `architect` skill coordinates the architecture specialist without requiring
 supervisor. The agent owns design and review; `second-opinion` independently
@@ -88,14 +105,13 @@ decomposes an agreed design into implementation work when decomposition or
 integration needs specialist judgment; leads can write pattern-determined plans
 and continuation deltas directly.
 
-The shared worker-arc contract owns review and acceptance: substantive
-implementation is reviewed by someone who did not author it, with focused
-repair checks and lead integration verification. Load-bearing runtime claims
-require independent reproduction of decisive checks, or suitable independent
-evidence for the same relevant code and environment; author logs alone are
-insufficient. One qualifying assessment or execution can satisfy overlapping
-gates. Reuse it while applicable, and rerun when changes or failures invalidate
-it. Explicit requests for a fresh opinion still receive a new reviewer.
+The [worker-arc contract](skills/shared/worker-arcs.md) owns review gates and
+acceptance evidence. The [decision protocol](skills/shared/decision-protocol.md)
+owns default decision authority, end-state criteria and concern classes; agent
+definitions read it at runtime. Lead-only shared files:
+[reviewers](skills/shared/reviewers.md) (selection, briefing, independence,
+disagreement) and [asking](skills/shared/asking.md) (how leads question the
+user).
 
 Tool-specific names are optional and default to the canonical `name`. Shared
 `explore` overrides that default as Claude Code's `Explore` and Codex's

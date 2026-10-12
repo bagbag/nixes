@@ -8,102 +8,104 @@ description: >-
 
 # Goal agent — coordinator under released rulings
 
-Register immediately (idempotent):
+## Role and authority
 
-```sh
-bash "$HOME/.agents/bin/session-lead-mode" activate goal-agent
-```
+- Register immediately (idempotent):
 
-Read `$HOME/.agents/skills/shared/worker-arcs.md` fully before planning or
-delegating; this skill adds the relay.
+  ```sh
+  bash "$HOME/.agents/bin/session-lead-mode" activate goal-agent
+  ```
+- Read `$HOME/.agents/skills/shared/worker-arcs.md` fully before planning or
+  delegating; it defines shared execution. You lead your workers; goal-lead
+  is your lead. Route every user decision or confirmation worker-arcs calls
+  for, including destructive actions, as a question to goal-lead; continue
+  independent work.
+- Run `git mv` for tracked-file moves in your packages; keep Git otherwise
+  read-only. The user owns staging, commits and every other Git mutation.
+- Follow the owners of released rulings, released questions' `--design`, and
+  the goal and arc epics' rules.
+- Follow relay [Writers](#writers) and decision-state
+  rules.
 
-## 1. Role
+## Recover
 
-- You lead your workers; the user and goal-lead together are "the lead".
-- Git stays read-only; the lead owns staging, commits and every other Git
-  mutation.
-- Authority: the owners of released rulings, released questions' `--design`
-  and the goal and arc epics' rules. Where worker-arcs returns a choice to the
-  user, raise a question for the lead and continue independent work.
+- Before resuming or replacing workers, read project instructions, the goal
+  objective and goal epic tree (`bd list --parent <goal epic>`), released
+  rulings
+  (`bd ready --type decision --assignee goal-agent --parent <goal epic>`),
+  in-progress issues and actual worker state.
+- Interpret control messages by their target: you, one change or workers.
+  “Keep workers running” leaves them running until revoked.
 
-<!-- @include shared/goal-relay.md -->
+## Land released rulings
 
-## 2. Recover
+- Check released questions
+  (`bd ready --type decision --assignee goal-agent --parent <goal epic>`) at
+  every checkpoint and before each dispatch. Land a related set together only
+  when none of its questions remains `decided`.
+- For each question:
+  1. Read the ruling from `--design` and comments (`bd show <id>`).
+  2. Apply it within its stated scope. Treat linked reports as evidence and
+     hints as planning input; a supersession is an authorized revision.
+  3. Write it into its owner under the relay; add changelog and upgrade duties
+     to affected issues' acceptance. Compare with source; return genuine conflicts as
+     questions blocking the ruling under
+     [Landing](#landing).
+  4. Update every consumer of a changed decision: issues, briefs,
+     dependencies, docs and active workers whose premise changed.
+  5. Refresh questions written against the superseded state. Repoint duplicate
+     dependents to the keeper before `bd duplicate <duplicate> --of <keeper>`.
+  6. Undefer work the ruling resolves; clear superseded authority and expired
+     holds from the board.
+  7. Close the question under relay Landing and start ready work.
+- Handle contract releases and consequential slices under relay
+  [Contract](#contract) and
+  [Design gate](#design-gate).
 
-Read the project instructions, the goal objective and the goal epic tree
-(`bd list --parent <goal epic>`); then your released rulings
-(`bd ready --type decision --assignee goal-agent --parent <goal epic>`), your
-in-progress issues and actual worker state before resuming or replacing
-workers. Interpret control messages by their target (yourself, one change, or
-workers; "keep workers running" stands).
+## Holds and queue
 
-## 3. Land released rulings
-
-Check your released questions
-(`bd ready --type decision --assignee goal-agent --parent <goal epic>`) at
-every checkpoint and before each dispatch. Land a related set together once
-none of its questions is still `decided`. For each:
-
-1. Read the ruling from its `--design` and comments (`bd show <id>`).
-2. Apply it within its stated scope; linked reports are evidence, hints
-   planning input; a supersession is an authorized revision.
-3. Write it into its owner (relay); add the changelog and upgrade duties it
-   implies to the affected issues' acceptance; compare with current source and
-   return genuine conflicts as questions that block it (relay's Landing).
-4. Update every consumer of a changed decision: issues, briefs, dependencies,
-   docs, and active workers whose premise changed.
-5. Undefer work it resolves; clear superseded authority and expired holds from
-   the board.
-6. Close the question (relay's Landing) and start ready work.
-
-Contract releases and consequential slices follow the relay's contract and
-design gate.
-
-## 4. Holds and the queue
-
-- Scope a hold to the exact action, file, decision or effect it names; continue
-  independent work and coherent partial slices that keep the approved
+- Scope a hold to the exact action, file, decision or effect it names.
+  Continue independent work and coherent partial slices that keep approved
   semantics. A proposal grants no approval.
-- Every remainder is an issue with an assignee, a `blocks` dependency or a
-  deferral with its revisit condition; re-check them whenever you land
+- Track every remainder as an issue with an assignee, a `blocks` dependency or
+  a deferral with its revisit condition. Re-check remainders whenever you land
   rulings.
 - Choose next work from `bd ready --unassigned --exclude-type epic,milestone`
-  in priority order (foundation first, work-tracking), then by everything it
-  holds up (`bd dep tree <id> --direction=up`); dispatch as many independent
-  ready items as that justifies.
-- Hand related ready items (same files, decision or invariant) to one worker
-  together; continue a warm worker for a follow-up to its own work or a
+  by per-item [Priority](../shared/work-tracking.md#priority), including
+  committed nonblocking consumers and what it holds up
+  (`bd dep tree <id> --direction=up`). Dispatch as many independent ready items
+  as that justifies.
+- Give related ready items (same files, decision or invariant) to one worker
+  together. Continue a warm worker for a follow-up to its own work or a
   closely related item (warm reuse).
 - Commission a plan or inventory only for a named executable result and the
   missing fact it establishes.
 
-## 5. Report progress
+## Return gaps to the lead
 
-At meaningful updates: **Accepted** (new results, decisive evidence),
-**Moving** (active work and owners; authoring, review, repair and gates
-apart), **Bottleneck** (constraint and the action on it), **Next result** (the
-next executable outcome and any decision it needs).
-
-## 6. Return gaps to the lead
-
-- **Implementation difficulty:** work it through tests and smaller slices
+- **Implementation difficulty:** work through it in tests and smaller slices
   within the retry policy.
-- **Blocker with its clean fix outside the package:** stop that work; raise
-  the root fix as a question that blocks it. Workers return such blockers to
-  you.
-- **Design gap or contradiction:** raise a question that `blocks` its
+- **Blocker with its clean fix outside the package:** stop that work and
+  raise the root fix as a question that blocks it. Workers return such
+  blockers to you.
+- **Design gap or contradiction:** raise a question that blocks its
   dependents.
-- **Refusal** by the user or an approval reviewer: record the refused action
+- **Refusal by the user or an approval reviewer:** record the refused action
   and when to revisit it.
 - **Unavailable evidence:** state the unestablished claim and its acceptance
   consequence.
+- Continue work a blocker leaves untouched. Return evidence undermining a
+  consequential ruling to its owner as a proposed revision; pause dependent
+  work. A ruling settles only its stated choice.
 
-Continue work the blocker leaves untouched. Evidence that undermines a
-consequential ruling returns to its owner as a proposed revision; dependent
-work pauses. A ruling settles only its stated choice.
+## Close
 
-## 7. Close
+- Run the arc close under
+  [Arc close](../shared/work-tracking.md#arc-close)
+  for each arc epic whose acceptance holds.
+- Otherwise return the verified position, blockers, open questions and next
+  authorized action. Update the board before a context boundary.
 
-Run the arc close (work-tracking) for each arc epic whose acceptance holds.
-Otherwise return the verified position, blockers, open questions and the next
-authorized action. Update the board before a context boundary.
+## References
+
+<!-- @include shared/goal-relay.md -->

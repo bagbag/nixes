@@ -9,40 +9,37 @@ description: >-
 
 # Explore options
 
-Own framing, dispatch, and the user-facing decision. The dedicated
-`option-explorer` agent owns the exploration method and source investigation.
-Use this skill to develop alternatives; use `second-opinion` to independently
-challenge a proposal and `architect` to develop or assess architecture.
+Own framing, dispatch and the user-facing decision; the `option-explorer` agent
+owns exploration. Use `second-opinion` to challenge a proposal and `architect`
+to develop or assess architecture.
 
-## Brief and dispatch
+## Frame and dispatch
 
-Inspect cheap orientation sources. Supply the intended outcome and consumers,
-scope, requirements, current decisions, preferences, unknowns, and authoritative
-source pointers. State the requested breadth/depth and any investigation budget.
-Resolve consequential framing ambiguity; leave factual uncertainties for
-investigation. Frame the underlying problem, not the posed question or a
-mechanism. List known options as hints, not an exhaustive list, and omit the
-lead's preferred answer. Ask for families outside the posed framing, such as
-not needing it at all or a different owner.
-
-Dispatch a fresh `option-explorer` with that frame and native configuration.
-For substantial exploration, assign one report path in the existing working
-arc and exclusive write ownership; short bounded results may remain in the
-response. The assignment permits investigation and its report, not implementation.
-If the agent is unavailable, report the limitation rather than substituting an
-undisclosed self-review. Resume the same agent for clarifications and changed
-facts while the decision remains the same.
+- Read cheap orientation sources. Brief outcome and consumers, scope,
+  requirements, current decisions, preferences, unknowns, source pointers,
+  breadth, depth and budget.
+- Frame the underlying problem, not the posed question or mechanism. Give known
+  options as non-exhaustive hints; omit your preferred answer. Ask for families
+  outside the framing, including whether the work is needed or belongs to
+  another owner.
+- Resolve consequential framing ambiguity; leave factual uncertainty to the
+  investigation.
+- Dispatch a fresh `option-explorer` with native configuration. For substantial
+  exploration, assign one report path in the arc with exclusive ownership;
+  keep short bounded results in the response. Authorize investigation and the
+  report only. Resume the same agent for clarifications and changed facts on
+  the same decision.
+- When the agent is unavailable, report the limitation instead of an
+  undisclosed self-review.
 
 ## Synthesize and route
 
-Spot-check decisive claims. Present the viable options, honest trade-offs, marked
-recommendation or conditional choice, and remaining decisions. Briefly account
-for materially distinct discarded options; link the report for deeper detail.
-Keep alternatives open when new evidence changes their case. The user or
-invoking lead owns choices under the existing authority contract.
-
-Reuse the exploration instead of repeating it in a new role. Continue to an
-architect, planner, experiment, or implementation only when the next task needs
-it and is authorized. Exploration adds no automatic review round and does not
-replace applicable independent-review requirements; an exploration author is
-not an independent reviewer of their own proposal.
+- Spot-check decisive claims. Present viable options, trade-offs, a marked or
+  conditional recommendation and remaining decisions; account briefly for
+  distinct discarded options and link the report.
+- Keep alternatives open when new evidence changes their case. The user or
+  invoking lead owns choices.
+- Reuse the exploration in later roles. Continue to an architect, planner,
+  experiment or implementation only when needed and authorized. Exploration
+  adds no review round and replaces no independent-review gate; its author
+  never reviews its own proposal.

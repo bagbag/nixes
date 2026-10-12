@@ -12,109 +12,113 @@ description: >-
 
 # Staged review
 
-A round reviews what changed since the last round, checks it against the brief
-that round issued, and hands the next implementer a single authoritative file.
-Another agent does the implementation, and the user stages and commits.
+A round reviews the delta since the previous round, checks it against that
+round's brief, and gives the next implementer one authoritative file. Another
+agent implements; the user stages and commits.
 
-## 1. Scope and snapshot
+## Authority and evidence
 
-- Before the first round, record the review base and target. For staged work
-  the target is the index. For committed work, name the base (a commit, a
-  merge-base, or `HEAD`) explicitly.
-- Capture the tree identity first, then build the snapshot from it:
+- Treat the captured target snapshot as the source of the verdict. Read and
+  search that snapshot, not the working tree.
+- Treat every snapshot as read-only evidence.
+- Label reused check results *implementer-reported*, with command, outcome and
+  revision. Label checks you run *reviewer-verified*.
+- Ground findings in current source; drop false positives and intentional
+  choices. Verify claims in comments, TSDoc, README and CHANGELOG against the
+  code, including line references and signatures.
 
-  ```sh
-  tree=$(git write-tree)
-  idx=$(mktemp -u)
-  GIT_INDEX_FILE=$idx git read-tree "$tree"
-  GIT_INDEX_FILE=$idx git checkout-index -a --prefix=/tmp/<repo>-r<N>-index/
-  rm -f "$idx"
-  ```
+## Scope and snapshot
 
-  Use a directory that does not exist yet, and record `$tree` in the verdict.
-  Treat every snapshot as read-only evidence.
-- Take the delta from Git: `git diff --stat <previous-tree> <tree>` and
-  `git diff <previous-tree> <tree>`. Round 1 diffs against the recorded base.
-  If the previous tree is gone, diff against the previous snapshot
-  directory. If both are gone, say so and review against the recorded base.
-- List worktree-only changes separately, as pending staging: modified files
-  (`git status --porcelain`: ` M`, `MM`), and untracked files that the delta or
-  the brief refers to. They cannot satisfy the brief.
+1. Before round one, record the review base and target. Use the index as the
+   staged target. For committed work, name the base explicitly: a commit, a
+   merge-base or `HEAD`.
+2. Capture the tree identity first, then create the snapshot from it:
 
-## 2. Adjudicate against the snapshot
+   ```sh
+   tree=$(git write-tree)
+   idx=$(mktemp -u)
+   GIT_INDEX_FILE=$idx git read-tree "$tree"
+   GIT_INDEX_FILE=$idx git checkout-index -a --prefix=/tmp/<repo>-r<N>-index/
+   rm -f "$idx"
+   ```
 
-- The snapshot owns the verdict. Grep and read it, not the working tree.
-- Account for every file in the delta: map each one to a brief item or name it
-  as unbriefed, and review unbriefed changes on their merits.
-- Settle each brief item, including those whose files are unchanged, by
-  checking the snapshot for the required content, not the diff alone.
-- Treat the implementer's record as a list of claims. Verify each load-bearing
-  claim with a grep or a read.
-- Ground every finding in current source. Drop it if it is a false positive or
-  an intentional design choice.
-- Check each claim a comment, TSDoc block, README, or CHANGELOG entry makes
-  against the code it describes, including line references and signatures.
+   Use a directory that does not exist yet and record `$tree` in the verdict.
+3. Take the delta with `git diff --stat <previous-tree> <tree>` and
+   `git diff <previous-tree> <tree>`. For round one, diff against the recorded
+   base. If the previous tree is gone, diff against its snapshot directory. If
+   both are gone, say so and review against the recorded base.
+4. List worktree-only changes separately as pending staging: modified files
+   (`git status --porcelain`: ` M`, `MM`) and untracked files referenced by the
+   delta or brief. They cannot satisfy the brief.
 
-## 3. Verify pins
+## Adjudicate the brief
 
-A *pin* is the test that locks a fix in place. A *defeat probe* deliberately
-reverts one site of the fix to prove that the pin fails without it.
+- Account for every file in the delta: map it to a brief item or mark it
+  unbriefed, then review unbriefed changes on their merits.
+- Settle every brief item, including items whose files are unchanged, by
+  checking required content in the snapshot, not only the diff.
+- Treat the implementer's record as claims; verify every load-bearing claim by
+  searching or reading the snapshot.
 
-- Reuse the implementer's recorded test, typecheck and build results, and label
-  them *implementer-reported*, with the command, the outcome, and the revision
-  they ran against. Run a check only when it answers a question the record
-  cannot: a defeat probe, a pin you suspect never executes,
-  a claim the snapshot contradicts, or results recorded against different source
-  than the reviewed tree. Label those results *reviewer-verified*.
-- For a behavioural fix, look for a pin whose shape covers every site the fix
-  touches. A final assertion that proves execution reached the last site is
-  stronger than any number of probe runs. Name any short-circuit that would let
-  the pin pass without reaching the fix.
-- Run defeat probes directly, one per site, plus one for the constraint that
-  makes the pin load-bearing. The unmutated pin must pass, and each mutation
-  must make it fail for the intended behavioural reason. Check the error text;
-  a compile or import failure does not count as the pin failing. Prefer a
-  disposable copy of the reviewed tree when the project runs there cheaply.
-  Otherwise mutate in place, and only on files whose worktree matches the
-  index. Back up the file, mutate it, run only the pin, restore from the
-  backup, and verify the restore against the backup's checksum and with `cmp`.
+## Verify pins
 
-## 4. Check the brief before issuing it
+Reuse recorded tests, typechecks and builds. Run a check only when the record
+cannot answer a question: a defeat probe, a pin suspected not to execute, a
+claim contradicted by the snapshot, or results from another revision.
 
-- Check every proposed edit against the skills, style guides, and project
-  instructions that govern the target file. When a previous brief item
-  contradicts one of them, withdraw it explicitly instead of charging the
-  implementer for skipping it.
-- Classify each open question as ruled (one clean option under the user's
-  stated criteria) or as a user decision with lettered options, a
-  recommendation, and the case for and against each option.
+- For a behavioral fix, check that a pin covers every changed site. Prefer a
+  final assertion proving execution reached the last site; name any short
+  circuit that could let the pin pass without reaching the fix.
+- Run defeat probes directly: one per site and one for the constraint that
+  makes the pin load-bearing. The unmutated pin must pass; each mutation must
+  fail for the intended behavioral reason. Check the error text; compile or
+  import failure does not count.
+- Prefer a disposable copy of the reviewed tree when the project runs there
+  cheaply. Otherwise mutate in place only files whose worktree matches the
+  index: back up the file, mutate it, run only the pin, restore the backup, and
+  verify restoration with its checksum and `cmp`.
 
-## 5. Artifacts
+## Before issuing
 
-Write the round to `.scratch/<topic>/<arc>/round<N>/`:
+- Check each proposed edit in the final brief against the skills, style guides
+  and project instructions governing the target. Withdraw a brief item explicitly
+  when it contradicts a governing source; do not charge the implementer for
+  skipping it.
+- Classify each open question in the final brief as ruled when the user's
+  criteria leave one clean option, or as a user decision with lettered options,
+  a recommendation, and the case for and against each.
 
-- `verdict-round<N>.md` is the only file marked **START HERE**. It holds the
-  scope (base, target, tree ids, delta counts), the verdict, the finding ledger,
-  per-item brief conformance, checks labelled by source, what was not verified
-  and why, the decisions, and a numbered implementation brief with an explicit
-  "not in this brief" list.
-- The finding ledger carries every earlier finding ID forward with its status:
-  open, fixed, withdrawn, or ruled no-change. Withdrawals and supersessions live
-  there, not in edits to older files.
-- Carry the user's rulings forward in the verdict. Re-raise a closed item only
-  when new evidence changes its case, and name that evidence.
-- Put supporting evidence in its own files, bannered as read-only evidence.
-  Leave earlier rounds' evidence unedited.
-- The one exception is the previous entry point: give it a one-line banner
-  saying it is superseded and pointing at the new verdict. Then grep the arc for
-  `START HERE` and confirm that exactly one file is active.
+## Write and close the round
 
-## 6. Close
+- Write the round under `.scratch/<topic>/<arc>/round<N>/` and follow the
+  artifact schema in [Round artifacts](#round-artifacts).
+- Carry every earlier finding ID and its status (open, fixed, withdrawn or
+  ruled no-change) in the finding ledger. Record withdrawals and supersessions
+  there, not by editing older files.
+- Carry user rulings forward. Re-raise a closed item only when new evidence
+  changes its case, and name that evidence.
+- When the user asks for a commit after review, compare `git write-tree` with
+  the last reviewed tree first. Report anything staged after review and get the
+  user's confirmation before committing it.
+- Report the verdict, blockers, decisions and recommendations, work the user
+  still owns (staging and committing), pending-staging list and whether another
+  round is needed.
 
-Report the verdict, any blockers, the decisions with their recommendations,
-the work the user still owns (staging and committing), the pending-staging
-list, and whether another round is needed.
+## Round artifacts
 
-When the user asks for a commit after a review, compare `git write-tree` with
-the last reviewed tree first. Report anything staged after the review and get
-the user's confirmation before committing it.
+- `verdict-round<N>.md` is the only file marked **START HERE**. Include scope
+  (base, target, tree IDs and delta counts), verdict, finding ledger, per-item
+  brief conformance, checks labelled by source, unverified items and reasons,
+  decisions, and a numbered implementation brief with an explicit
+  **Not in this brief** list.
+- Put supporting evidence in separate files and banner them as read-only
+  evidence. Leave earlier rounds' evidence unchanged.
+- The one exception to leaving older files unchanged: give the previous entry
+  point a one-line superseded banner pointing to the new verdict. Search the
+  arc for `START HERE` and confirm exactly one active entry point.
+
+## Definitions
+
+- **Pin:** a test that locks a fix in place.
+- **Defeat probe:** a deliberate reversal of one fix site that proves its pin
+  fails without the fix.

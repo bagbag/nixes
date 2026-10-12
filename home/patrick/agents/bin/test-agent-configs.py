@@ -6,6 +6,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -332,6 +333,117 @@ def validate_skill_expander(root: Path, expander) -> None:
             raise ValueError("skill expander accepted an include cycle")
 
 
+SHARED_READ = re.compile(r"\$HOME/\.agents/skills/(shared/[\w.-]+\.md)")
+MARKDOWN_LINK = re.compile(r"\]\((?P<target>[^)#\s]*)(?:#(?P<anchor>[^)\s]+))?\)")
+
+
+def heading_anchors(text: str) -> set[str]:
+    anchors = set()
+    for heading in re.findall(r"^#+ (.+)$", text, re.M):
+        slug = re.sub(r"[^\w\- ]", "", heading.strip().lower())
+        anchors.add(slug.replace(" ", "-"))
+    return anchors
+
+
+def include_closure(path: Path, skills: Path, expander) -> set[Path]:
+    found: set[Path] = set()
+    pending = [path]
+    while pending:
+        text = pending.pop().read_text(encoding="utf-8")
+        for line in text.splitlines():
+            match = expander.INCLUDE_MARKER.match(line)
+            if match:
+                target = (skills / match.group("path").strip()).resolve()
+                if target not in found:
+                    found.add(target)
+                    pending.append(target)
+    return found
+
+
+def check_skill_loading(skills: Path, expander) -> None:
+    """Links target loaded content: in-file anchors for included files,
+    file links only to files the reader includes or reads by $HOME path."""
+    skills = skills.resolve()
+    rendered: dict[Path, str] = {}
+
+    def render(path: Path) -> str:
+        if path not in rendered:
+            rendered[path] = expander.expand_markdown(path, skills)
+        return rendered[path]
+
+    for skill in sorted(skills.glob("*/SKILL.md")):
+        included = include_closure(skill, skills, expander)
+        available = set(included)
+        pending = [skill, *included]
+        while pending:
+            for name in SHARED_READ.findall(pending.pop().read_text(encoding="utf-8")):
+                target = (skills / name).resolve()
+                if not target.is_file():
+                    raise ValueError(f"{skill}: reads missing {name}")
+                for loaded in (target, *include_closure(target, skills, expander)):
+                    if loaded not in available:
+                        available.add(loaded)
+                        pending.append(loaded)
+
+        for match in MARKDOWN_LINK.finditer(skill.read_text(encoding="utf-8")):
+            raw, anchor = match.group("target"), match.group("anchor")
+            if not raw or "://" in raw:
+                continue
+            target = (skill.parent / raw).resolve()
+            if target in included:
+                raise ValueError(f"{skill}: link into included {raw}; use an in-file anchor")
+            if target not in available:
+                raise ValueError(
+                    f"{skill}: link to {raw}, which it neither includes nor reads by $HOME path"
+                )
+
+    for path in sorted(skills.rglob("*.md")):
+        text = render(path.resolve())
+        own = heading_anchors(text)
+        for match in MARKDOWN_LINK.finditer(text):
+            raw, anchor = match.group("target"), match.group("anchor")
+            if not anchor or "://" in raw:
+                continue
+            target = (path.parent / raw).resolve() if raw else None
+            if target is not None and not target.is_file():
+                raise ValueError(f"{path}: link to missing {raw}")
+            anchors = own if target is None else heading_anchors(render(target))
+            if anchor not in anchors:
+                raise ValueError(f"{path}: unresolved anchor {raw}#{anchor}")
+
+
+def validate_skill_loading(root: Path, expander) -> None:
+    check_skill_loading(root / "skills", expander)
+    with tempfile.TemporaryDirectory() as directory:
+        skills = Path(directory)
+        (skills / "shared").mkdir()
+        (skills / "sample").mkdir()
+        (skills / "shared" / "part.md").write_text("## Part\n", encoding="utf-8")
+        (skills / "shared" / "other.md").write_text("## Other\n", encoding="utf-8")
+        skill = skills / "sample" / "SKILL.md"
+        frontmatter = "---\nname: sample\ndescription: Sample.\n---\n"
+        cases = {
+            "included file link": "[P](../shared/part.md#part)\n<!-- @include shared/part.md -->\n",
+            "unloaded file link": "[O](../shared/other.md#other)\n",
+            "unresolved anchor": "[P](#missing)\n<!-- @include shared/part.md -->\n",
+        }
+        for name, body in cases.items():
+            skill.write_text(frontmatter + body, encoding="utf-8")
+            try:
+                check_skill_loading(skills, expander)
+            except ValueError:
+                pass
+            else:
+                raise ValueError(f"loading validation accepted {name}")
+        skill.write_text(
+            frontmatter
+            + "Read `$HOME/.agents/skills/shared/other.md`: [O](../shared/other.md#other).\n"
+            + "[P](#part)\n<!-- @include shared/part.md -->\n",
+            encoding="utf-8",
+        )
+        check_skill_loading(skills, expander)
+
+
 def validate_rendered_skills(root: Path, expander) -> None:
     with tempfile.TemporaryDirectory() as directory:
         temporary_root = Path(directory)
@@ -651,7 +763,7 @@ def validate_hooks(root: Path) -> None:
                     "current task and newer user instructions",
                     "current approved checkpoint",
                     "next authorized work, deferrals and return boundary",
-                    "arc's tracking: beads (`bd ready`, `bd list --label human`) where the repository has `.beads/`, otherwise its current-only board",
+                    "arc's tracking: beads (`bd ready`, `bd list --label human`) where the repository has `.beads/`",
                     "canonical project goal",
                     "topic goal and milestone",
                     "next action with those commitments and existing authority",
@@ -742,6 +854,7 @@ def main() -> int:
     validate_policy_semantics()
     validate_skill_expander(root, expander)
     validate_rendered_skills(root, expander)
+    validate_skill_loading(root, expander)
     validate_generated_agents(root, generator)
     validate_multiline_and_optional_names(generator)
     validate_effort_overrides(generator)

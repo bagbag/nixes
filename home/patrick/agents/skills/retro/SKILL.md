@@ -7,56 +7,64 @@ description: >-
   Best run at the end of a work arc or before compaction.
 ---
 
-# Retro — turn session friction into durable rules
+# Retro — capture durable learnings
 
-## 1. What to mine for
+Propose every learning for user ratification. Apply only approved edits.
 
-Review the session in the main conversation. Look for concrete recurring
-friction:
+## Collect evidence
 
-- corrections the user made twice — propose the rule that would have prevented
-  the second;
-- structured questions the user answered past the options ("Other",
-  counter-proposals) — find the mis-framing behind them;
-- rules the user had to state that no config layer carries;
-- surprises that cost cycles: tool behavior, environment quirks, assumptions
-  that proved wrong;
-- rules that fired WRONG — noise, over-asking, a rule the user overrode:
-  propose narrowing or removing the rule;
-- cost sinks: work a cheaper role or pattern would have done equally well.
+- Review the session in the main conversation for concrete recurring friction
+  and durable learnings. Use [Learning signals](#learning-signals).
+- If the session yields no durable learning, report an empty result.
 
-When the session has no durable learnings, report an empty result.
+## Route each learning
 
-## 2. Route each learning to ONE layer
+- Assign each learning to one most-specific layer that covers future
+  recurrences. Search that layer first and strengthen an existing rule with
+  the new evidence before adding one; see [Routing targets](#routing-targets).
 
-Pick the most specific layer that covers all future recurrences — and reuse
-before adding: grep the target layer first and strengthen an existing rule
-with the new evidence.
+## Propose and ratify
 
-- **Global agent instructions** — cross-project behavior of the main agent.
-- **Project agent instructions** — this project's conventions.
-- **A skill** — a working-style pattern with its own trigger.
-- **A custom-agent definition** — behavior of one role.
-- **Project docs** — domain knowledge and decisions (respect the project's
-  existing doc shape).
-- **settings/hooks** — anything that must happen mechanically rather than by
-  memory.
+- Batch related proposals while keeping each independently reviewable.
+- For every item, show the learning, triggering evidence, destination, exact
+  proposed edit, expected observable behavior and validation method. Reuse
+  existing cases.
+- Use executable checks for deterministic hooks and generators where
+  practical. For judgment-heavy rules, retain scenarios in the existing
+  working artifact; distinguish expected behavior, observed results and
+  reliability that remains untested.
+- Write guidance under the global instructions' Skill instructions rule;
+  preserve execution and authority boundaries.
 
-## 3. Ratification round — propose-only
+## Apply and validate
 
-Batch related proposals; keep each independently reviewable. Include:
+- Edit the canonical source when skills are rendered or store-backed; treat
+  installed generated output as immutable.
+- Run applicable checks and report results and limits. For rendered or
+  store-backed skills, run the owner-provided validation and build.
+- Report whether activation remains necessary. Activate only when existing
+  authorization covers it.
 
-- learning, triggering evidence, exact edit and destination;
-- expected observable behavior and validation method, reusing existing cases.
+## Learning signals
 
-Use executable checks for deterministic hooks/generators where practical.
-For judgment-heavy rules, retain scenarios in the existing working artifact;
-distinguish expected behavior, observed results and reliability still untested.
-Phrase guidance as positive actions; preserve execution and authority boundaries.
+- A correction made twice: propose the rule that would have prevented the
+  second correction.
+- A structured question answered beyond its options (such as "Other" or a
+  counterproposal): identify the framing that missed the user's choice.
+- A rule the user had to state that no configuration layer carries.
+- A surprise that cost cycles: tool behavior, environment quirks or an
+  assumption that proved wrong.
+- A rule that fired wrong through noise, over-asking or a user override:
+  propose narrowing or removing it.
+- Work a cheaper role or pattern could have done equally well.
 
-Apply approved items, run applicable checks, and report results and limits.
+## Routing targets
 
-When skills are rendered or store-backed, edit their canonical template source,
-then run the owner-provided validation and build. Report whether activation
-is still needed, and perform it only within existing authorization. Treat
-installed generated output as immutable.
+| Layer | Use for |
+|---|---|
+| Global agent instructions | Main-agent behavior across projects |
+| Project agent instructions | This project's conventions |
+| Skill | A working-style pattern with its own trigger |
+| Custom-agent definition | Behavior of one role |
+| Project docs | Domain knowledge and decisions, in the existing document shape |
+| Settings or hooks | Behavior that must happen mechanically rather than by memory |
