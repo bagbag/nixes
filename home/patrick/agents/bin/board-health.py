@@ -9,6 +9,7 @@ import sys
 from datetime import datetime, timedelta, timezone
 
 IN_FLIGHT_MINUTES = 25
+CLAIM_MINUTES = 5
 
 
 def load_issues():
@@ -16,15 +17,21 @@ def load_issues():
     return json.loads(out)
 
 
-def started_at(issue_id):
+def issue_details(issue_id):
     out = subprocess.run(['bd', 'show', issue_id, '--json'], check=True, capture_output=True, text=True).stdout
     issue = json.loads(out)
     issue = issue[0] if isinstance(issue, list) else issue
-    return issue.get('started_at')
+    return issue
 
 
 def parse_time(value):
-    return datetime.fromisoformat(value.replace('Z', '+00:00'))
+    if not isinstance(value, str):
+        return None
+    try:
+        moment = datetime.fromisoformat(value.replace('Z', '+00:00'))
+    except ValueError:
+        return None
+    return moment if moment.tzinfo is not None else moment.replace(tzinfo=timezone.utc)
 
 
 def main():
@@ -70,15 +77,35 @@ def main():
 
     now = datetime.now(timezone.utc)
     in_flight = []
+    stale = []
+    unknown = []
     for issue in open_items:
         if issue['status'] != 'in_progress':
             continue
-        started = started_at(issue['id'])
-        if started is not None and now - parse_time(started) >= timedelta(minutes=IN_FLIGHT_MINUTES):
-            in_flight.append(f"{issue['id']} ({int((now - parse_time(started)).total_seconds() // 60)} min, {issue.get('assignee') or 'unassigned'})")
+        details = issue_details(issue['id'])
+        started = parse_time(details.get('started_at'))
+        heartbeat = parse_time(details.get('heartbeat_at'))
+        owner = details.get('assignee') or issue.get('assignee') or 'unassigned'
+        if started is not None and now - started >= timedelta(minutes=IN_FLIGHT_MINUTES):
+            in_flight.append(f"{issue['id']} ({int((now - started).total_seconds() // 60)} min, {owner})")
+
+        activity = heartbeat or started
+        if activity is None:
+            unknown.append(f"{issue['id']} ({owner}; timestamps unavailable)")
+        elif now - activity >= timedelta(minutes=CLAIM_MINUTES):
+            age = int((now - activity).total_seconds() // 60)
+            if heartbeat is not None:
+                evidence = f"heartbeat {details['heartbeat_at']}"
+            else:
+                state = 'missing' if not details.get('heartbeat_at') else 'invalid'
+                evidence = f"heartbeat {state}; started {details['started_at']}"
+            stale.append(f"{issue['id']} ({owner}; {evidence}; {age} min)")
 
     for name, rows in (('outside any epic', outside_epic),
-                       ('waiting label (use a blocks dependency)', waiting), (f'in_progress started {IN_FLIGHT_MINUTES}+ min ago', in_flight)):
+                       ('waiting label (use a blocks dependency)', waiting),
+                       (f'in_progress started {IN_FLIGHT_MINUTES}+ min ago', in_flight),
+                       (f'possible stale in_progress (activity {CLAIM_MINUTES}+ min ago)', stale),
+                       ('in_progress activity unknown', unknown)):
         print(f'{name}: {len(rows)}')
         for row in rows[:50]:
             print(f'  {row}')

@@ -846,6 +846,83 @@ def validate_hooks(root: Path) -> None:
         raise ValueError("compact-reorient did not emit recovery context")
 
 
+def validate_board_health(root: Path) -> None:
+    import contextlib
+    import io
+    from datetime import datetime, timedelta, timezone
+    from unittest.mock import patch
+
+    spec = importlib.util.spec_from_file_location("board_health", root / "bin" / "board-health.py")
+    if spec is None or spec.loader is None:
+        raise RuntimeError("cannot load board-health")
+    health = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(health)
+    now = datetime(2026, 10, 13, 9, 40, tzinfo=timezone.utc)
+
+    class Clock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return now
+
+    old = (now - timedelta(minutes=40)).isoformat()
+    cutoff = (now - timedelta(minutes=5)).isoformat()
+    recent = (now - timedelta(minutes=1)).isoformat()
+    details = {
+        "healthy": {"started_at": old, "heartbeat_at": recent},
+        "expired": {"started_at": old, "heartbeat_at": cutoff, "updated_at": recent},
+        "missing": {"started_at": old},
+        "unknown": {},
+        "invalid": {"started_at": "invalid", "heartbeat_at": "invalid"},
+        "new": {"started_at": recent},
+        "offset": {"started_at": old, "heartbeat_at": "2026-10-13T11:39:00+02:00"},
+        "closed": {"started_at": old},
+        "outside": {"started_at": old},
+    }
+    issues = [{"id": "root", "issue_type": "epic", "status": "open"}]
+    for name in details:
+        issues.append({"id": name, "issue_type": "task", "status": "closed" if name == "closed" else "in_progress",
+                       "parent": "other" if name == "outside" else "root", "assignee": "goal-agent"})
+    calls = []
+
+    def run(command, **kwargs):
+        calls.append(command)
+        if "list" in command:
+            payload = issues
+        elif "show" in command:
+            name = command[command.index("show") + 1]
+            payload = [{**next(i for i in issues if i["id"] == name), **details[name]}]
+        else:
+            raise ValueError(f"unexpected board operation: {command}")
+        return subprocess.CompletedProcess(command, 0, json.dumps(payload))
+
+    output = io.StringIO()
+    with patch.object(health.subprocess, "run", run), patch.object(health, "datetime", Clock), \
+            patch.object(sys, "argv", ["board-health", "root"]), contextlib.redirect_stdout(output):
+        health.main()
+    sections = {}
+    current = None
+    for line in output.getvalue().splitlines():
+        if line.startswith("  "):
+            sections[current].append(line.strip())
+        else:
+            current = line.rsplit(": ", 1)[0]
+            sections[current] = []
+    stale = sections.get("possible stale in_progress (activity 5+ min ago)", [])
+    unknown = sections.get("in_progress activity unknown", [])
+    if {row.split()[0] for row in stale} != {"expired", "missing"}:
+        raise ValueError(f"incorrect stale-activity report: {stale}")
+    if {row.split()[0] for row in unknown} != {"unknown", "invalid"}:
+        raise ValueError(f"incorrect unknown-activity report: {unknown}")
+    if "heartbeat" not in stale[0] or "goal-agent" not in stale[0] or "5 min" not in stale[0]:
+        raise ValueError("stale report lost heartbeat, owner or age")
+    if "heartbeat missing" not in stale[1] or "started" not in stale[1]:
+        raise ValueError("missing heartbeat lost start fallback")
+    if {row.split()[0] for row in sections["in_progress started 25+ min ago"]} != {"healthy", "expired", "missing", "offset"}:
+        raise ValueError("start-age context changed")
+    if len(calls) != 8 or any("list" not in c and "show" not in c for c in calls):
+        raise ValueError("board-health performed extra operations")
+
+
 def main() -> int:
     root = (
         Path(sys.argv[1]).resolve()
@@ -863,6 +940,7 @@ def main() -> int:
     validate_multiline_and_optional_names(generator)
     validate_effort_overrides(generator)
     validate_hooks(root)
+    validate_board_health(root)
     print("shared agent and skill validation passed")
     return 0
 

@@ -184,7 +184,7 @@ Scope with `--parent <root epic>` to include every descendant level.
 | `bd list --type decision --all --label topic:<slug>` | Decision log. |
 | `bd list --status deferred --label topic:<slug>` | Topic backlog. |
 | `bd gate list` | Upstream waits. |
-| `$HOME/.agents/bin/board-health [<root epic>]` | Lead counts, dispatch queue size, items outside epics, `waiting` labels (use `blocks`), `in_progress` started 25+ minutes ago. |
+| `$HOME/.agents/bin/board-health [<root epic>]` | Lead counts, dispatch queue size, items outside epics, `waiting` labels (use `blocks`), `in_progress` start age, expired/missing heartbeats and unknown activity. |
 | `bd dep cycles` | Dependency-cycle check before dispatch. |
 
 ### Limits
