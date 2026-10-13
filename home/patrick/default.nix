@@ -7,7 +7,7 @@
 }:
 let
   pnpmConfigPath =
-    if pkgs.stdenv.isDarwin then "Library/Preferences/pnpm/config.yaml" else ".config/pnpm/config.yaml";
+    if pkgs.stdenv.hostPlatform.isDarwin then "Library/Preferences/pnpm/config.yaml" else ".config/pnpm/config.yaml";
   # pnpm defaults PNPM_HOME to ~/Library/pnpm on darwin, which is not on PATH;
   # pin it to the directory the session exports so global installs succeed.
   pnpmHome = "${config.home.homeDirectory}/.local/share/pnpm";
@@ -88,7 +88,7 @@ in
         user.name = "Patrick Hein";
         user.email = "bagbag98@googlemail.com";
         credential.helper =
-          if pkgs.stdenv.isDarwin then
+          if pkgs.stdenv.hostPlatform.isDarwin then
             "osxkeychain"
           else
             "${config.programs.git.package}/bin/git-credential-libsecret";
@@ -108,7 +108,7 @@ in
     '';
   };
 
-  dconf.settings = lib.mkIf pkgs.stdenv.isLinux {
+  dconf.settings = lib.mkIf pkgs.stdenv.hostPlatform.isLinux {
     "org/gnome/TextEditor" = {
       restore-session = true;
       show-line-numbers = true;

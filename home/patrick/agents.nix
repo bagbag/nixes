@@ -7,7 +7,7 @@
 let
   # Out-of-store symlinks point at the live working tree, so edits (by hand,
   # /remember, or skill-creator) apply immediately without a rebuild.
-  flakeRoot = if pkgs.stdenv.isDarwin then "/etc/nix-darwin" else "/etc/nixos";
+  flakeRoot = if pkgs.stdenv.hostPlatform.isDarwin then "/etc/nix-darwin" else "/etc/nixos";
   claudeSrc = "${flakeRoot}/home/patrick/claude";
   codexSrc = "${flakeRoot}/home/patrick/codex";
   agentsSrc = "${flakeRoot}/home/patrick/agents";
