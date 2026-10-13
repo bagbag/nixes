@@ -26,18 +26,20 @@ Propose every learning for user ratification. Apply only approved edits.
 ## Propose and ratify
 
 - Batch related proposals while keeping each independently reviewable.
-- For every item, show the learning, triggering evidence, destination, exact
-  proposed edit, expected observable behavior and validation method. Reuse
-  existing cases.
+- Ask for wanted behavior (trigger, scope, depth, affected modes); infer the
+  instruction text from the answers.
+- For every item, show the learning, triggering evidence, destination,
+  inferred edit, expected observable behavior and validation method; ask one
+  go/no-go on behavior and destination. Reuse existing cases.
 - Use executable checks for deterministic hooks and generators where
   practical. For judgment-heavy rules, retain scenarios in the existing
   working artifact; distinguish expected behavior, observed results and
   reliability that remains untested.
-- Write guidance under the global instructions' Skill instructions rule;
-  preserve execution and authority boundaries.
 
 ## Apply and validate
 
+- Pass every edit against the global instructions' Skill instructions rule
+  before applying; preserve execution and authority boundaries.
 - Edit the canonical source when skills are rendered or store-backed; treat
   installed generated output as immutable.
 - Run applicable checks and report results and limits. For rendered or

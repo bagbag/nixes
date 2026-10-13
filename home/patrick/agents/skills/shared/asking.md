@@ -8,7 +8,16 @@
 - Walk through each group in chat first, readable without arc context: items
   and ids in brackets, the answered question (and the posed one if different),
   one line per decision-protocol step and every choice. Make contested choices
-  questions; list the others with choice, rejected alternative and reason.
+  questions.
+- Disclose your own rulings in that walkthrough, before asking: entailed
+  decisions, defect-fix behaviors, dropped or narrowed parts, framing choices
+  (excluded options, accepted premises, question bundling). Give each its
+  strongest realistic alternative, the cleanliness test, principle or
+  correctness property that alternative fails, and evidence (`path:line`,
+  probe, ruling id); scale from one line to a mini decision packet by stakes.
+  Ask about any ruling you cannot ground.
+- Repeat the list, with later rulings, in each release or ratification
+  request.
 - Then ask with the structured-question tool using your own option labels:
   adopt the end state, then one question per contested choice, no cap per group
   (four per call; continue in further calls). Mark the recommendation strong
