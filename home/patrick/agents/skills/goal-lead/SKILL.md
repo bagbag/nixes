@@ -42,8 +42,8 @@ description: >-
   Classify each as already ruled (cite its owner), goal-agent's call, lead
   ruling ([Decide](#decide)) or user decision. Group related items into one
   walkthrough.
-- Select one cluster of unblocked decision questions (module or shared root
-  cause) by per-item [Priority](#priority):
+- Select one round of decision questions under
+  [Asking the user](#asking-the-user):
   `bd ready --type decision --assignee goal-lead --parent <goal epic>`.
   Decide prerequisites before their dependent questions; inspect what each
   holds up with `bd dep tree <id> --direction=up`.
@@ -51,8 +51,11 @@ description: >-
 ## Ground
 
 - Before each round, run Top-down through End state read-only across the
-  selected cluster using
+  selected round using
   [Decision protocol](#decision-protocol).
+- Ground questions headed into a detailed walkthrough yourself; delegate only
+  sweeps beyond them. Treat issue and doc text as claims and re-verify them in
+  current source before asking.
 - Use `explore-options` or `second-opinion` when warranted or requested.
   Propose the reviewer setup under [Reviewers](#reviewers) first and
   spot-check decisive claims.
@@ -63,7 +66,7 @@ description: >-
   choice to the user.
 - State each ruling's scope and what you checked; make an unsure choice a
   question.
-- Ask each cluster under [Asking the user](#asking-the-user).
+- Ask each round under [Asking the user](#asking-the-user).
 - Record user-stated constraints and principles as rulings under the relay.
   Record each decision on its question under relay
   [Pending](#pending) and work-tracking

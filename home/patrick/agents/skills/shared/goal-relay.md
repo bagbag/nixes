@@ -45,7 +45,7 @@ For a settled decision, goal-lead may apply small, fully specified edits
 ### Write timing
 
 - goal-lead records each decision on its question when it is made. When the
-  user asks for the overall picture first, record that cluster's decisions
+  user asks for the overall picture first, record that round's decisions
   after the walkthrough.
 - goal-lead writes ruling-bearing changes to canonical contract owners and epic
   `--design` / `--acceptance` only in the approved [Release](#release).
@@ -113,7 +113,8 @@ none of its questions remains `decided`.
   goal-agent performs the role-specific steps in its Land released rulings phase.
 - Keep the released question open; its `blocks` edges hold dependents until
   landing completes.
-- A landing conflict becomes a question blocking the released ruling:
-  `bd dep add <released> --blocked-by <conflict>`.
+- A gap, conflict or follow-up found while landing becomes a new question
+  blocking the released one; the released question keeps its ruling and
+  labels: `bd dep add <released> --blocked-by <new question>`.
 - Close after landing: `bd close <id> --reason "landed in <owners>"`.
 - The acceptor checks landing when accepting an affected issue.

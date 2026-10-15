@@ -194,6 +194,9 @@ Scope with `--parent <root epic>` to include every descendant level.
   five minutes without it. Board owner reclaims with `bd reclaim --id <id>`
   once `worker-last-use` no longer lists the worker (idle 30+ minutes) and the
   platform shows the worker ended. Use `$HOME/.agents/bin/worker-last-use`.
-- Pass `--actor <mode or worker>` on writes. `bd close` refuses actors other
-  than the assignee; inspect changes with `bd history <id> --events`.
+- Pass `--actor <mode or worker>` on writes; inspect changes with
+  `bd history <id> --events`.
+- Holder-only operations such as `bd close` refuse actors other than the
+  assignee. For such an action within your authority, reassign the item to
+  yourself first and comment why.
 - Give `bd create` a description and `bd close` a reason of 20+ characters.

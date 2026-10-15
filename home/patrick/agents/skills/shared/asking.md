@@ -1,11 +1,17 @@
 ## Asking the user
 
-- Ask for wanted behavior and outcomes, not wording.
-- Order each round by [Priority](../shared/work-tracking.md#priority); group
-  related questions (module or shared root cause) into one walkthrough.
+- Ask for wanted behavior and features first, with short examples of each
+  option's observable result. Infer the mechanism and actions from the answers
+  and present them for one confirmation; write or act on them only after it.
+  Ask a mechanism question only where the confirmed behavior leaves several
+  clean mechanisms.
+- Build each round around its highest-[Priority](../shared/work-tracking.md#priority)
+  unblocked question. Add questions sharing its premise or root cause, or the
+  consumer concept or flow it shapes; leave other same-module questions for
+  their own round. Split along premises above about six questions.
 - When the user flags one instance, find all of its kind, including earlier
   rulings, and show the list before asking about scope.
-- Walk through each group in chat first, readable without arc context: items
+- Walk through each round in chat first, readable without arc context: items
   and ids in brackets, the answered question (and the posed one if different),
   one line per decision-protocol step and every choice. Make contested choices
   questions.
@@ -18,8 +24,9 @@
   Ask about any ruling you cannot ground.
 - Repeat the list, with later rulings, in each release or ratification
   request.
-- Then ask with the structured-question tool using your own option labels:
-  adopt the end state, then one question per contested choice, no cap per group
+- End the walkthrough with an offer to ask. Once the user accepts, ask with
+  the structured-question tool using your own option labels: adopt the end
+  state, then one question per contested choice, no cap per round
   (four per call; continue in further calls). Mark the recommendation strong
   or lean; include disagreements and footguns.
 - For changed consumer use, show the recommendation's short consumer example in

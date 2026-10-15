@@ -65,8 +65,10 @@ description: >-
 ## Holds and queue
 
 - Scope a hold to the exact action, file, decision or effect it names.
-  Continue independent work and coherent partial slices that keep approved
-  semantics. A proposal grants no approval.
+  Distinguish source authoring, execution, review and final acceptance;
+  continue authorized work outside the held scope. Resolve unclear or stale
+  authority against current rulings, issue comments and evidence. Preserve
+  explicit holds and exhausted retry limits. A proposal grants no approval.
 - Track every remainder as an issue with an assignee, a `blocks` dependency or
   a deferral with its revisit condition. Re-check remainders whenever you land
   rulings.
@@ -77,6 +79,13 @@ description: >-
   committed nonblocking consumers and what it holds up
   (`bd dep tree <id> --direction=up`). Dispatch as many independent ready items
   as that justifies.
+- Before declaring the goal blocked, cross-check all owned open items across
+  its branches with full ready, list and dependency views. Identify each
+  remaining candidate's next action, authority and exact blocker, including
+  work authorized by earlier releases. Resolve unknowns through bounded
+  inspection. Reuse evidence while its source and authority remain current;
+  establish exhaustion from action-specific blockers, beyond unchanged queue
+  IDs or counts.
 - Give related ready items (same files, decision or invariant) to one worker
   together. Continue a warm worker for a follow-up to its own work or a
   closely related item (warm reuse).
