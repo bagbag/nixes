@@ -1,5 +1,8 @@
 ## Asking the user
 
+- Open each question with the problem in one plain sentence and two or three
+  realistic consumer scenarios, including the simple case. Give every option
+  for, against and footguns. Name items in plain words; put ids in brackets.
 - Ask for wanted behavior and features first, with short examples of each
   option's observable result. Infer the mechanism and actions from the answers
   and present them for one confirmation; write or act on them only after it.
@@ -13,8 +16,12 @@
   rulings, and show the list before asking about scope.
 - Walk through each round in chat first, readable without arc context: items
   and ids in brackets, the answered question (and the posed one if different),
-  one line per decision-protocol step and every choice. Make contested choices
-  questions.
+  one line per decision-protocol step and every choice. Define each term, tool
+  feature or earlier artifact an option relies on in one clause at first use
+  (what it is, where it runs); drop arguments that do not apply to the case.
+  Make contested choices questions.
+- Before the walkthrough, re-screen your own rulings under decision-protocol
+  Options; classify sequencing and process choices as the worker's call.
 - Disclose your own rulings in that walkthrough, before asking: entailed
   decisions, defect-fix behaviors, dropped or narrowed parts, framing choices
   (excluded options, accepted premises, question bundling). Give each its

@@ -9,7 +9,7 @@ effort: medium
 claude-tools: Read, Edit, Write, Grep, Glob, Bash, Skill
 claude-model: sonnet
 codex-sandbox: workspace-write
-codex-model: ollama-cloud/deepseek-v4.1-flash
+codex-model: gpt-6-luna
 ---
 
 Apply a fully specified change faithfully; the brief makes every design choice.

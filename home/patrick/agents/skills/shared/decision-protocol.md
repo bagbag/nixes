@@ -6,14 +6,20 @@ per step for a local, reversible choice.
 1. **Top-down:** derive intended behavior from the goal and user principles:
    concept, owning module, consumer use.
 2. **Bottom-up:** establish current behavior from authoritative sources. Verify
-   each premise; use probes or documentation for runtime claims. Mark unverified
-   claims.
+   each premise; use probes or documentation for runtime claims. Probe the
+   production path with its real source types, not a stand-in. Show the
+   decider only measured figures and verified claims; mark the rest unverified.
 3. **Root fix:** identify gaps between intended and current behavior. Resolve
    the question that settles dependent questions; fix the cause of symptoms.
+   For each mechanism the framing assumes (conversion, wrapper, listener,
+   observer), ask why it exists and whether an upstream owner can produce the
+   right result at its source; a mechanism whose need disappears is the root
+   fix.
 4. **End state:** derive the smallest clean, coherent result as if designed
    fresh, under the user's quality criterion (consumer DX for a library),
-   independent of effort and churn. Show consumer use, size, replacements and
-   breakage. Apply the global instructions' six Cleanliness tests and the
+   independent of effort, churn, earlier rulings, docs and their reasoning;
+   list the revisions it implies as information, not cost. Show consumer use,
+   size, replacements and breakage. Apply the global instructions' six Cleanliness tests and the
    [End-state criteria](#end-state-criteria).
 5. **Options:** compare materially different approaches, including alternatives
    outside the posed framing: rank, decisive trade-offs, strongest downside,
@@ -44,8 +50,11 @@ risk or scope trade-off.
 ### End-state criteria
 
 - Question existing and proposed parts; retain only what realistic consumers
-  need. Use in-repo call-site counts to size changes, not to establish consumer
-  need.
+  need, including external library consumers without in-repo call sites. Use
+  in-repo call-site counts to size changes, not to establish consumer need.
+- For each option, name the consumer or failure each part (log, option,
+  status, mechanism) serves, drop parts without one, and roughly estimate its size in
+  lines and files.
 - Separate required properties from mechanisms; compare mechanisms by those
   properties.
 - Reuse platform and module capabilities. For coordination, use platform state,

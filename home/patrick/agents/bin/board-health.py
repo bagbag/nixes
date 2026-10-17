@@ -74,6 +74,8 @@ def main():
                 if d['type'] == 'blocks' and by_id.get(d['depends_on_id'], {}).get('status') not in (None, 'closed')]
 
     waiting = [f"{i['id']} ({len(open_blockers(i))} open blockers)" for i in open_items if 'waiting' in labels(i)]
+    release_gates_ready = [f"{i['id']} ({i['title']})" for i in open_items
+                           if i['issue_type'] == 'gate' and i.get('title', '').startswith('[Gate] Release:') and not open_blockers(i)]
 
     now = datetime.now(timezone.utc)
     in_flight = []
@@ -101,7 +103,8 @@ def main():
                 evidence = f"heartbeat {state}; started {details['started_at']}"
             stale.append(f"{issue['id']} ({owner}; {evidence}; {age} min)")
 
-    for name, rows in (('outside any epic', outside_epic),
+    for name, rows in (('release gates ready (no open blockers)', release_gates_ready),
+                       ('outside any epic', outside_epic),
                        ('waiting label (use a blocks dependency)', waiting),
                        (f'in_progress started {IN_FLIGHT_MINUTES}+ min ago', in_flight),
                        (f'possible stale in_progress (activity {CLAIM_MINUTES}+ min ago)', stale),

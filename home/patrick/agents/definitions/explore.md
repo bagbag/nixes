@@ -7,11 +7,12 @@ description: >-
   documentation. Returns a factual map of locations, relationships, and
   capabilities. Review and recommendations belong to other roles.
 effort: medium
+codex-effort: high
 claude-tools: Read, Grep, Glob, Bash, WebSearch, WebFetch, Skill
 claude-model: haiku
 claude-hooks: readonly-bash
 codex-sandbox: read-only
-codex-model: ollama-cloud/deepseek-v4.1-flash
+codex-model: gpt-6-luna
 ---
 
 Locate code, files, patterns, and capabilities across the requested codebase,

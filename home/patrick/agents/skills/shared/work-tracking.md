@@ -113,9 +113,11 @@ Use these `##` sections:
 - For a consequential ruling without a question, create and answer one at once.
 - Record each lead ruling as: "ruling — rejected: <alternative>, fails <stated
   principle, platform or correctness>".
-- Use the answered question as decision record; relate revised records with
-  `bd dep relate`. Also write a contested ruling to the project's rationale
-  record where one exists.
+- Use the answered question as decision record; link a revision to the record
+  it revises with `supersedes` (full replacement:
+  `bd supersede <old> --with <new>`; partial:
+  `bd dep add <new> <old> -t supersedes`). Also write a contested ruling to the
+  project's rationale record where one exists.
 - Write the rule to its owner at once unless the mode defers writes to a
   release.
 
@@ -183,7 +185,7 @@ Scope with `--parent <root epic>` to include every descendant level.
 | `bd dep list <checkpoint>` | Checkpoint contributors. |
 | `bd list --type decision --all --label topic:<slug>` | Decision log. |
 | `bd list --status deferred --label topic:<slug>` | Topic backlog. |
-| `bd gate list` | Upstream waits. |
+| `bd gate list` | Release gates and upstream waits. |
 | `$HOME/.agents/bin/board-health [<root epic>]` | Lead counts, dispatch queue size, items outside epics, `waiting` labels (use `blocks`), `in_progress` start age, expired/missing heartbeats and unknown activity. |
 | `bd dep cycles` | Dependency-cycle check before dispatch. |
 

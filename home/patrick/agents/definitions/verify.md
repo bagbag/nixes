@@ -11,7 +11,7 @@ claude-tools: Agent, Read, Edit, Write, Grep, Glob, Bash, WebSearch, WebFetch, S
 claude-model: sonnet
 claude-hooks: readonly-bash
 codex-sandbox: workspace-write
-codex-model: ollama-cloud/deepseek-v4.1-flash
+codex-model: gpt-6-luna
 ---
 
 Test the specific claims or conformance requirements in the brief against

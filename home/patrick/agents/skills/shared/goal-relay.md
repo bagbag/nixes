@@ -38,7 +38,7 @@ For a settled decision, goal-lead may apply small, fully specified edits
 | State | Record and authority |
 |---|---|
 | Unanswered | Question assigned to goal-lead, labelled `human`. |
-| Decided / pending release | Decision in `--design`, labelled `decided`; goal-lead retains it until release. Decisions bind on release. |
+| Decided / pending release | Decision in `--design`, labelled `decided`; when gated, blocked by its release gate. goal-lead retains it until release. Decisions bind on release. |
 | Released | Approved handoff to goal-agent; `human` and `decided` removed. Question remains open and blocks dependents until landing. |
 | Landed | Owners and affected issue state reconciled; question closed. |
 
@@ -67,6 +67,23 @@ first, followed by:
 Use work-tracking's [Rulings](../shared/work-tracking.md#rulings) record format
 and destination mapping.
 
+### Release gates
+
+- Gate a decided question or set that waits on prerequisites or spans rounds;
+  a ruling released in the round it is decided needs no gate.
+- Create one human gate per set under the owning arc epic and make every
+  question in the set depend on it:
+
+  ```sh
+  bd gate create --type human --title "[Gate] Release: <set>" \
+    --blocks <first id> --reason "<set scope, prerequisites, plan link>"
+  bd dep add <other id> <gate>
+  bd update <gate> --parent <arc epic> --assignee goal-lead
+  ```
+- Make prerequisites (reviews, sign-offs, prerequisite questions) block the
+  gate: `bd dep add <gate> <prerequisite>`. A gate without open blockers is
+  ready for the release ask.
+
 ### Release
 
 Release one ruling or an interdependent set once the user approves that set.
@@ -74,19 +91,24 @@ Conditional approval covers that round's items. Preserve this order:
 
 1. goal-lead writes the ruling-bearing changes to canonical contract owners and
    epic `--design` / `--acceptance` ([Write timing](#write-timing)).
-2. Relate each question to the set's other questions and affected issues outside
-   its `blocks` edges: `bd dep relate`. Comment planning input (ordering, scope
-   growth) and proposals; goal-agent confirms, refines or replaces proposals
-   through a question.
-3. Hand each question over with one update per id:
+2. Record each revision of an earlier ruling: `bd supersede <old> --with <new>`
+   when the new ruling replaces it entirely; otherwise
+   `bd dep add <new> <old> -t supersedes` and name the revised part in the new
+   ruling's `--design`. Add `blocks` only where landing order matters. Relate
+   the set's questions to affected issues outside their edges with
+   `bd dep relate`. Comment planning input (ordering, scope growth) and
+   proposals; goal-agent confirms, refines or replaces proposals through a
+   question.
+3. Resolve the set's gate: `bd gate resolve <gate>`.
+4. Hand each question over with one update per id:
 
    ```sh
    bd update <id> --assignee goal-agent \
      --remove-label human --remove-label decided
    ```
 
-Handoff is not atomic across ids. goal-agent lands a related set together once
-none of its questions remains `decided`.
+Handoff is not atomic across ids. goal-agent lands a gated set together once
+its gate is resolved and none of its questions remains `decided`.
 
 ### Contract
 

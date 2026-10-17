@@ -56,6 +56,9 @@ description: >-
 - Ground questions headed into a detailed walkthrough yourself; delegate only
   sweeps beyond them. Treat issue and doc text as claims and re-verify them in
   current source before asking.
+- Brief subagents with one question's scope and a stop condition; they reason
+  through the design to choose their sources. Re-derive every choice yourself
+  and treat their results as evidence, not conclusions.
 - Use `explore-options` or `second-opinion` when warranted or requested.
   Propose the reviewer setup under [Reviewers](#reviewers) first and
   spot-check decisive claims.
