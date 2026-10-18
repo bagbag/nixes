@@ -1,7 +1,10 @@
 ## Work tracking (beads)
 
-Keep issue-specific packets, block reasons, evidence and verdicts in the
-issue; link shared briefs and reports from `.scratch/` files. The session hook
+Write board text in plain sentences readable without session context; refer to
+skill and goal rules instead of restating them. Keep issue-specific packets,
+block reasons, evidence and verdicts in the issue; link shared briefs and
+reports from `.scratch/` files; keep coordination state (workers, leases,
+incidents) in the mode's checkpoint file. The session hook
 injects `bd remember` facts; `bd <command> --help` covers commands not listed
 here.
 
@@ -79,6 +82,7 @@ item's `--acceptance`, then close it with `bd supersede <id> --with <owner>`, or
 | Item | Lifecycle |
 |---|---|
 | Deferral | `bd defer --reason "<revisit condition>"`; undefer at its date or on named new evidence; detach to topic backlog at arc close. |
+| User hold | Created only by a user instruction or ruling: `bd defer --reason "user <date>: '<words>'"` on each affected item, scoped to those words. Undefer when a later user instruction or released ruling covers the item. Raise your own caution as a question. |
 | Environment fact | `bd remember --key <key>` for temporary repository-wide facts needed by every current session; state a removal condition; remove with `bd forget`. |
 
 ### Priority
@@ -223,6 +227,8 @@ Scope `bd ready` with `--parent <root epic>` and lists with
 ### Limits
 
 - `bd ready` returns 100 rows; use `--limit 0` for inventories.
+- Read inventories with one `bd list --all --limit 0 --json` instead of
+  per-item `bd show`.
 - Edit fields with `bd update --title/--description/--design/--acceptance`;
   `bd edit` opens an editor and blocks.
 - Heartbeat between long steps with `bd heartbeat <id>`; claims lapse after

@@ -67,8 +67,10 @@ description: >-
 - Scope a hold to the exact action, file, decision or effect it names.
   Distinguish source authoring, execution, review and final acceptance;
   continue authorized work outside the held scope. Resolve unclear or stale
-  authority against current rulings, issue comments and evidence. Preserve
-  explicit holds and exhausted retry limits. A proposal grants no approval.
+  authority against current rulings, issue comments and evidence. Keep user
+  holds (work-tracking
+  [Deferrals](../shared/work-tracking.md#deferrals-and-environment-facts)) and
+  exhausted retry limits. A proposal grants no approval.
 - Track every remainder as an issue with an assignee, a `blocks` dependency or
   a deferral with its revisit condition. Re-check remainders whenever you land
   rulings.

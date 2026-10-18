@@ -122,7 +122,8 @@ its gate is resolved and none of its questions remains `decided`.
   or the clean end state, and to contract items marked "design first".
 - goal-agent creates `[Design] <slice>` with architecture where open, the package
   graph and needed decisions. Make slice packages depend on it (`blocks`);
-  hand it to goal-lead with `review`.
+  hand it to goal-lead under work-tracking
+  [Acceptance](../shared/work-tracking.md#acceptance).
 - goal-lead closes the design item on user acceptance or returns it with findings.
 - Continue other slices on settled items; turn consequential mid-slice choices
   into questions blocking their dependents.

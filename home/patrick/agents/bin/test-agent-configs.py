@@ -828,6 +828,50 @@ def validate_hooks(root: Path) -> None:
     if readonly_search is not None:
         raise ValueError("readonly-guard blocked a read-only search")
 
+    with tempfile.TemporaryDirectory() as state_dir:
+        actor_env = {
+            "AGENT_SESSION_LEAD_STATE_DIR": state_dir,
+            "AGENT_SESSION_LEAD_COMMAND": str(root / "bin" / "session-lead-mode.sh"),
+        }
+        Path(state_dir, "lead-session.mode").write_text("goal-lead\n")
+        cases = [
+            ("lead-session", "bd update x --status open", True),
+            ("lead-session", "cd repo; bd comment x note", True),
+            ("lead-session", "bd update x --status open --actor goal-lead", False),
+            ("lead-session", "BEADS_ACTOR=goal-lead bd close x", False),
+            ("lead-session", "bd list --status open", False),
+            ("lead-session", 'echo "bd close x"', False),
+            ("plain-session", "bd update x --status open", False),
+            ("plain-session", "xargs -P 6 -I{} sh -c 'bd show {} --json' < ids", True),
+            ("plain-session", "parallel bd show {} ::: a b", True),
+            ("plain-session", "bd list --json > board.json &", True),
+            ("plain-session", "xargs bd show --json < ids", False),
+            ("plain-session", "while read id; do bd history $id; done < ids", False),
+            ("plain-session", "bd list --json 2>&1 | head", False),
+            ("plain-session", "bd list > log 2>&1 &", True),
+            ("lead-session", 'bd create --title "Don\'t" --actor goal-lead --description "it\'s"', False),
+            ("lead-session", "bd -C up show x", False),
+            ("lead-session", "bd comment --help", False),
+            ("lead-session", "bd dep cycles", False),
+            ("lead-session", "bd dep add a b", True),
+            ("lead-session", "bd epic close-eligible --dry-run", False),
+            ("lead-session", "bd export --json > board.jsonl", False),
+            ("lead-session", "bd config list", False),
+            ("lead-session", "bd config set audit.enabled false", True),
+        ]
+        for session, command, denied in cases:
+            result = run_hook(
+                hooks / "bd-guard.sh",
+                {
+                    "hook_event_name": "PreToolUse",
+                    "session_id": session,
+                    "tool_input": {"command": command},
+                },
+                actor_env,
+            )
+            if (result is not None) != denied:
+                raise ValueError(f"bd-guard misjudged {command!r} in {session}")
+
     compact = run_hook(
         hooks / "compact-reorient.sh",
         {
