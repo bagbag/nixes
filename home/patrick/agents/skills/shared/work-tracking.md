@@ -52,6 +52,10 @@ user. Agent guidance comes from session hooks, not `bd setup`. Remote sync
 Create packages with one `bd create --graph <plan.json>` per wave. The acceptor
 closes each package under [Acceptance](#acceptance).
 
+When an open item becomes redundant, move its leftover work into the owning
+item's `--acceptance`, then close it with `bd supersede <id> --with <owner>`, or
+`bd duplicate <id> --of <canonical>` for an exact duplicate.
+
 #### Question
 
 - Use type `decision`, assigned to the answerer (`user` unless the mode names

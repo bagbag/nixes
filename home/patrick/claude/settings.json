@@ -26,7 +26,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "if command -v bd >/dev/null 2>&1; then bd prime --hook-json; fi",
+            "command": "if command -v bd >/dev/null 2>&1; then bd prime --memories-only --hook-json; fi",
             "timeout": 10
           }
         ]
