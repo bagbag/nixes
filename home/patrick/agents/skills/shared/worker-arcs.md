@@ -75,8 +75,7 @@ contribution:
   anti-regression STOPs for reversed decisions still encoded in old sources.
   Treat legacy FINAL labels as recorded decisions under reconsideration;
   workers report material challenges for lead resolution.
-- Assign artifact paths under the arc's `.scratch/` unless another owner is named.
-  References grant reading, not writing. Lead prepares directories when worker
+- References grant reading, not writing. Lead prepares directories when worker
   permissions require it.
 
 ## Dispatch
@@ -147,10 +146,6 @@ unknowns are empirical or further yield is cosmetic.
 - For a reversed decision or accepted work that proves wrong, record the
   ruling, stop consumers, map affected code and docs, reopen owners with warm
   workers, re-verify dependents and record error/containment.
-- For claims needing legal, regulatory, medical, scientific or other expert
-  validation, create `expert-claim` issues: claim, owner, status, evidence,
-  affected behavior. Fail closed only where behavior depends on an unresolved
-  load-bearing claim; mode authority determines asking, ratifying or parking.
 
 ## Report
 

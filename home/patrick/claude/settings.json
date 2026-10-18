@@ -5,7 +5,8 @@
     "DISABLE_AUTOUPDATER": "1",
     "DISABLE_BUG_COMMAND": "1",
     "CONTEXT_WATCH_RESERVE_PCT": "10",
-    "CLAUDE_CODE_DISABLE_POLICY_SKILLS": "1"
+    "CLAUDE_CODE_DISABLE_POLICY_SKILLS": "1",
+    "CLAUDE_CODE_SHELL": "/run/current-system/sw/bin/bash"
   },
   "attribution": {
     "commit": "",

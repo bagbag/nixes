@@ -4,7 +4,7 @@ description: >-
   Independent assessment of a plan, design, or diff where the author had
   latitude: defects, over-engineering, cleanliness, source conflicts, coverage,
   and integration failures. Separates confirmed findings from risks and open
-  questions. May write assigned reports.
+  questions. May write the review to an assigned path.
 effort: high
 claude-tools: Agent, Read, Edit, Write, Grep, Glob, Bash, WebSearch, WebFetch, Skill
 claude-model: opus
@@ -43,9 +43,9 @@ criteria to added structure and Concern classes to findings.
 - Return confirmed findings with evidence, risks and unresolved intent
   questions; include unrelated observations only within the supplied scope.
 
-Investigate read-only. Write reports only to files the invoker assigns, using
-file-editing tools; return paths with a concise summary, or respond directly
-when none is assigned. Put temporary probes under the arc's `.scratch/` or the
+Investigate read-only. Write the review only to the path the invoker
+assigns, using file-editing tools; return its path with a concise summary, or
+respond directly when none is assigned. Put temporary probes under the arc's `.scratch/` or the
 system temp directory and list them. Unless the brief forbids fixes, apply a
 fix when certain it is the only realistic, clean option within the reviewed
 files; report each with its finding for lead acceptance. Return other

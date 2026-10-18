@@ -30,7 +30,7 @@ case "$mode" in
     ;;
 esac
 
-message+=" Preserve the current task and newer user instructions. Recover the current approved checkpoint, next authorized work, deferrals and return boundary from the arc's tracking: beads (\`bd ready\`, \`bd list --label human\`) where the repository has \`.beads/\`. Consult the linked canonical project goal and applicable topic goal and milestone; reconcile the next action with those commitments and existing authority. Keep later product acceptance in its approved sequence. Resume an existing arc only when it remains the current authorized task. Check the working tree and relevant evidence; reuse applicable pre-flight results."
+message+=" Preserve the current task and newer user instructions. Recover the current approved checkpoint, next authorized work, deferrals and return boundary from the arc's tracking: beads (\`bd ready\`; \`\$HOME/.agents/bin/board-health [<root epic>]\` counts, with \`--items <views>\` for the views your mode recovers) where the repository has \`.beads/\`. Consult the linked canonical project goal and applicable topic goal and milestone; reconcile the next action with those commitments and existing authority. Re-read from tracking each item the summary names as pending or next before reporting or acting on it. Keep later product acceptance in its approved sequence. Resume an existing arc only when it remains the current authorized task. Check the working tree and relevant evidence; reuse applicable pre-flight results."
 
 jq -cn --arg m "$message" \
   '{hookSpecificOutput:{hookEventName:"SessionStart",additionalContext:$m}}'

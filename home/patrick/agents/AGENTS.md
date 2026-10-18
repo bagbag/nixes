@@ -163,9 +163,12 @@ supports them; otherwise put the role, constraints, and expected report directly
 in the brief. Model bindings belong in native agent configuration, never in plans
 or worker briefs.
 
-For artifact-producing assignments, supply allowed output paths and instruct
-the specialist to write those files directly. Provide the required permissions
-and keep each artifact within its assigned file ownership.
+For artifact-producing assignments, assign output paths under
+`.scratch/<topic-slug>/<arc-slug>/`, named after subject and kind
+(`union-dispatch-review.md`), unless the assignment names the artifact's
+canonical owner (`docs/`, a skill, source); instruct the specialist to write
+those files directly. Provide the required permissions and
+keep each artifact within its assigned file ownership.
 Scout and explore are response-only discovery roles; use an artifact-writing
 specialist when a file is required.
 

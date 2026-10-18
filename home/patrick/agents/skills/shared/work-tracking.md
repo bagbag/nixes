@@ -1,8 +1,9 @@
 ## Work tracking (beads)
 
-Use session-hook `bd prime` for command guidance. Keep issue-specific packets,
-block reasons, evidence and verdicts in the issue; link shared briefs and reports
-from `.scratch/` files.
+Keep issue-specific packets, block reasons, evidence and verdicts in the
+issue; link shared briefs and reports from `.scratch/` files. The session hook
+injects `bd remember` facts; `bd <command> --help` covers commands not listed
+here.
 
 Without `.beads/`, follow `$HOME/.agents/skills/shared/beads-setup.md` with the
 user. Agent guidance comes from session hooks, not `bd setup`. Remote sync
@@ -27,8 +28,9 @@ user. Agent guidance comes from session hooks, not `bd setup`. Remote sync
   `[Checkpoint]`; use no other title prefixes.
 - Make each arc item a direct child of its owning (sub-)arc epic with its topic
   label. `--parent <epic>` sets both; graph nodes set `parent_id` and `labels`.
-- Group with labels and `bd dep relate`. `bd ready --parent` and
-  `bd list --parent` include sub-epic items.
+- Group with epics and `topic:` labels. `bd ready --parent` covers every
+  descendant; list scoped items with
+  `$HOME/.agents/bin/board-health <root epic> --items <views>`.
 - Place changes in their owning topic's arc epic. Open other-topic work through
   the lead and user under that topic's arc epic within the goal epic; add
   cross-epic `blocks` dependencies from waiting items.
@@ -52,15 +54,14 @@ closes each package under [Acceptance](#acceptance).
 
 #### Question
 
-- Use type `decision`, label `human`, assigned to the answerer (`user` unless
-  the mode names another).
+- Use type `decision`, assigned to the answerer (`user` unless the mode names
+  another).
 - Put the [Decision packet](#decision-packet) in the description, the current
   decision in `--design` (rewrite in place), and history in comments. Make the
   question block its dependents.
 - Record the answer in `--design` with a provenance comment
-  `<ruling> (user|lead) → <owner>`. Keep the question open until its ruling
-  is in force; its holder then closes it:
-  `bd close <id> --reason "landed in <owners>"`.
+  `<ruling> (user|lead) → <owner>`. Its holder closes the question once its
+  ruling is in force: `bd close <id> --reason "landed in <owners>"`.
 
 #### Checkpoint
 
@@ -129,25 +130,50 @@ Use these `##` sections:
 | Goal-wide rule | Goal epic `--design`. |
 | Arc-only rule | Arc epic `--design`. |
 
-### Labels
+### Statuses and labels
 
-`human` = waits for a person; `review` ([Acceptance](#acceptance));
-`expert-claim` (worker-arcs Contain); `export:<capability>` /
-`provides:<capability>` ([Upstream waits](#upstream-waits)). Mode labels:
-`decided` (goal relay), `needs-ratification` (autopilot).
+Statuses carry the lifecycle; labels only classify.
+
+| Status | Meaning |
+|---|---|
+| `open` | Available; for a question, unanswered. |
+| `in_progress` | Claimed by its assignee. |
+| `decided` | Answered question, release pending (goal relay). |
+| `released` | Released ruling, landing pending (goal relay). |
+| `in_review` | Handed to its acceptor ([Acceptance](#acceptance)). |
+| `needs_ratification` | Ruling in force, awaiting the user's ratification (autopilot). |
+| `deferred` | [Deferral](#deferrals-and-environment-facts). |
+
+- Assign work waiting on a person's action to `user`; express waiting on other
+  work with `blocks`.
+- Labels classify, e.g. `topic:<topic-slug>` and `export:<capability>` /
+  `provides:<capability>` ([Upstream waits](#upstream-waits)).
+
+### Dependencies
+
+Use the first matching row.
+
+| Relation | Use |
+|---|---|
+| B can't start before A | `blocks`: `bd dep add B A` |
+| B is part of A | `--parent A` |
+| B found while working on A | `discovered-from`: `bd create … --deps discovered-from:A` |
+| See also: shared context, alternatives, a ruling's affected issue | `relates-to`: `bd dep relate A B` |
+| B revises ruling A | `supersedes` ([Rulings](#rulings)) |
+| Release set or external wait | gate ([Upstream waits](#upstream-waits)) |
 
 ### Acceptance
 
 1. Scope package acceptance to touched files and affected consumers. Put each
    arc-wide gate (whole typecheck, full suite, fresh build) only in its gate task;
    that task re-checks closed packages.
-2. Keep active work `in_progress`. Hand over with `review` only when the package's
+2. Keep active work `in_progress`. Hand over for review only when the package's
    acceptance has complete evidence. Keep partial work open, remainder in
    `--acceptance`; block waiting work on what it needs.
 3. Worker comments evidence with `bd comment`, then hands over to its lead:
-   `bd update <id> --status open --assignee <acceptor> --add-label review`.
+   `bd update <id> --status in_review --assignee <acceptor>`.
 4. Acceptor closes with the verdict as reason, or comments findings and returns:
-   `--assignee <worker> --remove-label review`.
+   `--status open --assignee <worker>`.
 
 Dependents wait on the package itself.
 
@@ -156,7 +182,7 @@ Dependents wait on the package itself.
 1. The delivering upstream issue carries `export:<capability>`. With user
    approval, the waiting lead files a missing issue or labels/comments an
    existing one:
-   `bd -C <upstream path> create … --label export:<capability>,human`;
+   `bd -C <upstream path> create … --assignee user --label export:<capability>`;
    description names the waiting issue.
 2. Create the local wait:
    `bd gate create --type=human --blocks <issue> --reason "waits for <project>:<capability>"`.
@@ -174,24 +200,27 @@ Dependents wait on the package itself.
 
 ### Views
 
-Scope with `--parent <root epic>` to include every descendant level.
+Scope `bd ready` with `--parent <root epic>` and lists with
+`board-health <root epic> --items <views>`.
 
 | Command | View |
 |---|---|
 | `bd ready --unassigned --exclude-type epic,milestone` | Unassigned candidates for modes that dispatch them. |
 | `bd ready --assignee goal-agent --parent <goal epic> --exclude-type epic,milestone` | Goal-agent dispatch queue. |
-| `bd list --label review --assignee <you>` | Awaiting your acceptance, including blocked items. |
-| `bd list --label human --parent <root epic>` | Awaiting a person. |
+| `bd list --status in_review --assignee <you>` | Awaiting your acceptance, including blocked items. |
+| `$HOME/.agents/bin/board-health <root epic> --items <view>[,<view>]` | Items behind the named counts: `decided`, `questions`, `ratification`, `released`, `inbox`, `dispatch`. |
 | `bd dep list <checkpoint>` | Checkpoint contributors. |
 | `bd list --type decision --all --label topic:<slug>` | Decision log. |
 | `bd list --status deferred --label topic:<slug>` | Topic backlog. |
 | `bd gate list` | Release gates and upstream waits. |
-| `$HOME/.agents/bin/board-health [<root epic>]` | Lead counts, dispatch queue size, items outside epics, `waiting` labels (use `blocks`), `in_progress` start age, expired/missing heartbeats and unknown activity. |
+| `$HOME/.agents/bin/board-health [<root epic>]` | Lead counts, dispatch queue size, items outside epics, lifecycle labels (use statuses, assignment or `blocks`), `in_progress` start age, expired/missing heartbeats and unknown activity. |
 | `bd dep cycles` | Dependency-cycle check before dispatch. |
 
 ### Limits
 
 - `bd ready` returns 100 rows; use `--limit 0` for inventories.
+- Edit fields with `bd update --title/--description/--design/--acceptance`;
+  `bd edit` opens an editor and blocks.
 - Heartbeat between long steps with `bd heartbeat <id>`; claims lapse after
   five minutes without it. Board owner reclaims with `bd reclaim --id <id>`
   once `worker-last-use` no longer lists the worker (idle 30+ minutes) and the

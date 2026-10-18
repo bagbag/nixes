@@ -25,9 +25,9 @@ to develop or assess architecture.
 - Resolve consequential framing ambiguity; leave factual uncertainty to the
   investigation.
 - Dispatch a fresh `option-explorer` with native configuration. For substantial
-  exploration, assign one report path in the arc with exclusive ownership;
-  keep short bounded results in the response. Authorize investigation and the
-  report only. Resume the same agent for clarifications and changed facts on
+  exploration, assign one path in the arc with exclusive ownership;
+  keep short bounded results in the response. Authorize investigation and
+  that file only. Resume the same agent for clarifications and changed facts on
   the same decision.
 - When the agent is unavailable, report the limitation instead of an
   undisclosed self-review.

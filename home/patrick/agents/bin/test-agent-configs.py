@@ -767,7 +767,7 @@ def validate_hooks(root: Path) -> None:
                     "current task and newer user instructions",
                     "current approved checkpoint",
                     "next authorized work, deferrals and return boundary",
-                    "arc's tracking: beads (`bd ready`, `bd list --label human`) where the repository has `.beads/`",
+                    "arc's tracking: beads (`bd ready`; `$HOME/.agents/bin/board-health [<root epic>]` counts, with `--items <views>` for the views your mode recovers) where the repository has `.beads/`",
                     "canonical project goal",
                     "topic goal and milestone",
                     "next action with those commitments and existing authority",
@@ -867,9 +867,13 @@ def validate_board_health(root: Path) -> None:
     old = (now - timedelta(minutes=40)).isoformat()
     cutoff = (now - timedelta(minutes=5)).isoformat()
     recent = (now - timedelta(minutes=1)).isoformat()
+    future = (now + timedelta(minutes=4)).isoformat()
     details = {
         "healthy": {"started_at": old, "heartbeat_at": recent},
-        "expired": {"started_at": old, "heartbeat_at": cutoff, "updated_at": recent},
+        "expired": {"started_at": old, "heartbeat_at": cutoff, "lease_expires_at": now.isoformat(), "updated_at": recent},
+        # bd's lease, not the heartbeat age, decides expiry when present.
+        "leased": {"started_at": old, "heartbeat_at": cutoff, "lease_expires_at": future},
+        "lapsed": {"started_at": old, "heartbeat_at": recent, "lease_expires_at": recent},
         "missing": {"started_at": old},
         "unknown": {},
         "invalid": {"started_at": "invalid", "heartbeat_at": "invalid"},
@@ -879,18 +883,30 @@ def validate_board_health(root: Path) -> None:
         "outside": {"started_at": old},
     }
     issues = [{"id": "root", "issue_type": "epic", "status": "open"}]
-    for name in details:
+    for name, timestamps in details.items():
         issues.append({"id": name, "issue_type": "task", "status": "closed" if name == "closed" else "in_progress",
-                       "parent": "other" if name == "outside" else "root", "assignee": "goal-agent"})
+                       "parent": "other" if name == "outside" else "root", "assignee": "goal-agent", **timestamps})
+    # A question two levels below the root: `bd list --parent root` would miss it.
+    issues.append({"id": "sub", "issue_type": "epic", "status": "open", "parent": "root"})
+    issues.append({"id": "question", "title": "Which option?", "issue_type": "decision", "status": "open",
+                   "parent": "sub", "assignee": "goal-lead"})
+    issues.append({"id": "pick", "title": "Picked default", "issue_type": "decision", "status": "needs_ratification",
+                   "parent": "sub", "assignee": "user"})
+    issues.append({"id": "ruled", "title": "Ruled option", "issue_type": "decision", "status": "decided",
+                   "parent": "sub", "assignee": "goal-lead"})
+    # Status, not the holder's name, marks a released question.
+    issues.append({"id": "landing", "title": "Landing ruling", "issue_type": "decision", "status": "released",
+                   "parent": "sub", "assignee": "relay-worker"})
+    issues.append({"id": "handed", "title": "Handed package", "issue_type": "task", "status": "in_review",
+                   "parent": "sub", "assignee": "goal-lead"})
+    issues.append({"id": "legacy", "title": "Legacy label", "issue_type": "task", "status": "open",
+                   "parent": "sub", "assignee": "goal-agent", "labels": ["review"]})
     calls = []
 
     def run(command, **kwargs):
         calls.append(command)
         if "list" in command:
             payload = issues
-        elif "show" in command:
-            name = command[command.index("show") + 1]
-            payload = [{**next(i for i in issues if i["id"] == name), **details[name]}]
         else:
             raise ValueError(f"unexpected board operation: {command}")
         return subprocess.CompletedProcess(command, 0, json.dumps(payload))
@@ -907,20 +923,48 @@ def validate_board_health(root: Path) -> None:
         else:
             current = line.rsplit(": ", 1)[0]
             sections[current] = []
-    stale = sections.get("possible stale in_progress (activity 5+ min ago)", [])
+    stale = sections.get("possible stale in_progress (lease expired, or no heartbeat for 5+ min)", [])
     unknown = sections.get("in_progress activity unknown", [])
-    if {row.split()[0] for row in stale} != {"expired", "missing"}:
+    if {row.split()[0] for row in stale} != {"expired", "lapsed", "missing"}:
         raise ValueError(f"incorrect stale-activity report: {stale}")
     if {row.split()[0] for row in unknown} != {"unknown", "invalid"}:
         raise ValueError(f"incorrect unknown-activity report: {unknown}")
     if "heartbeat" not in stale[0] or "goal-agent" not in stale[0] or "5 min" not in stale[0]:
         raise ValueError("stale report lost heartbeat, owner or age")
-    if "heartbeat missing" not in stale[1] or "started" not in stale[1]:
+    if "heartbeat missing" not in stale[2] or "started" not in stale[2]:
         raise ValueError("missing heartbeat lost start fallback")
-    if {row.split()[0] for row in sections["in_progress started 25+ min ago"]} != {"healthy", "expired", "missing", "offset"}:
+    if {row.split()[0] for row in sections["in_progress started 25+ min ago"]} != {"healthy", "expired", "leased", "lapsed", "missing", "offset"}:
         raise ValueError("start-age context changed")
-    if len(calls) != 8 or any("list" not in c and "show" not in c for c in calls):
-        raise ValueError("board-health performed extra operations")
+    if len(calls) != 1 or "list" not in calls[0]:
+        raise ValueError(f"board-health must read the board with one bd list call: {calls}")
+    if "\n  question  " in output.getvalue():
+        raise ValueError("board-health listed items without --items")
+
+    items_output = io.StringIO()
+    with patch.object(health.subprocess, "run", run), patch.object(health, "datetime", Clock), \
+            patch.object(sys, "argv", ["board-health", "root", "--items", "decided,questions,ratification,released,inbox"]), \
+            contextlib.redirect_stdout(items_output):
+        health.main()
+    for expected in ("pending decisions (decided): 1\n  ruled  Ruled option\n",
+                     "released, not landed: 1\n  landing  Landing ruling\n",
+                     "awaiting ratification (needs_ratification): 1\n  pick  Picked default\n",
+                     "review inbox (goal-lead): 1\n  handed  Handed package\n",
+                     "lifecycle labels (use statuses, assignment or blocks): 1\n  legacy (review)\n"):
+        if expected not in items_output.getvalue():
+            raise ValueError(f"--items lacks {expected!r}: {items_output.getvalue()}")
+    if "open questions (unanswered): 1\n  question  Which option?\n" not in items_output.getvalue():
+        raise ValueError(f"--items did not list the nested question: {items_output.getvalue()}")
+    if "dispatch queue (unassigned open): 0\n" not in items_output.getvalue() or "\n  outside  " in items_output.getvalue():
+        raise ValueError(f"--items listed an unrequested view: {items_output.getvalue()}")
+    with patch.object(health.subprocess, "run", run), patch.object(sys, "argv", ["board-health", "root", "--items", "inbox,bogus"]), \
+            contextlib.redirect_stderr(io.StringIO()):
+        try:
+            health.main()
+        except SystemExit as error:
+            if error.code != 2:
+                raise ValueError(f"unknown view exited {error.code}, expected a usage error") from None
+        else:
+            raise ValueError("board-health accepted an unknown view")
 
 
 def main() -> int:

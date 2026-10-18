@@ -1,15 +1,20 @@
 #!/usr/bin/env python3
 """Report goal-relay counts and board drift for a beads board.
 
-Usage: board-health [<root epic>]   (run inside the repository; scope = everything below the root epic)
+Usage: board-health [<root epic>] [--items VIEW[,VIEW...]]   (run inside the repository; scope = everything below the root epic)
+
+--items lists the items behind the named counts. Views: decided, questions, ratification, released, inbox, dispatch.
 """
+import argparse
 import json
 import subprocess
 import sys
 from datetime import datetime, timedelta, timezone
 
 IN_FLIGHT_MINUTES = 25
+LIFECYCLE_LABELS = ('human', 'decided', 'review', 'needs-ratification', 'waiting')
 CLAIM_MINUTES = 5
+VIEWS = ('decided', 'questions', 'ratification', 'released', 'inbox', 'dispatch')
 
 
 def load_issues():
@@ -17,11 +22,14 @@ def load_issues():
     return json.loads(out)
 
 
-def issue_details(issue_id):
-    out = subprocess.run(['bd', 'show', issue_id, '--json'], check=True, capture_output=True, text=True).stdout
-    issue = json.loads(out)
-    issue = issue[0] if isinstance(issue, list) else issue
-    return issue
+def parse_views(value):
+    views = [view for view in value.split(',') if view]
+    if not views:
+        raise argparse.ArgumentTypeError(f"no view given; choose from {', '.join(VIEWS)}")
+    unknown = [view for view in views if view not in VIEWS]
+    if unknown:
+        raise argparse.ArgumentTypeError(f"unknown view {', '.join(map(repr, unknown))}; choose from {', '.join(VIEWS)}")
+    return set(views)
 
 
 def parse_time(value):
@@ -44,7 +52,12 @@ def main():
             yield by_id[parent]
             parent = by_id[parent].get('parent')
 
-    scope_root = sys.argv[1] if len(sys.argv) > 1 else None
+    parser = argparse.ArgumentParser(prog='board-health')
+    parser.add_argument('root', nargs='?')
+    parser.add_argument('--items', type=parse_views, default=set(), metavar='VIEW[,VIEW...]',
+                        help=f"list the items behind these counts: {', '.join(VIEWS)}")
+    args = parser.parse_args()
+    scope_root = args.root
     if scope_root is not None and scope_root not in by_id:
         sys.exit(f'board-health: unknown epic {scope_root}')
 
@@ -54,15 +67,23 @@ def main():
     def labels(issue):
         return issue.get('labels') or []
 
-    counts = {
-        'pending decisions (decided)': [i for i in open_items if 'decided' in labels(i)],
-        'open questions (human)': [i for i in open_items if 'human' in labels(i)],
-        'released, not landed': [i for i in open_items if i['issue_type'] == 'decision' and i.get('assignee') == 'goal-agent'],
-        'review inbox (goal-lead)': [i for i in open_items if 'review' in labels(i) and i.get('assignee') == 'goal-lead'],
-        'dispatch queue (unassigned open)': [i for i in open_items if not i.get('assignee') and i['status'] == 'open'],
-    }
-    for name, items in counts.items():
+    counts = (
+        ('decided', 'pending decisions (decided)', [i for i in open_items if i['status'] == 'decided']),
+        ('questions', 'open questions (unanswered)', [i for i in open_items if i['issue_type'] == 'decision'
+                                                      and i['status'] in ('open', 'in_progress')]),
+        ('ratification', 'awaiting ratification (needs_ratification)',
+         [i for i in open_items if i['status'] == 'needs_ratification']),
+        ('released', 'released, not landed', [i for i in open_items if i['status'] == 'released']),
+        ('inbox', 'review inbox (goal-lead)',
+         [i for i in open_items if i['status'] == 'in_review' and i.get('assignee') == 'goal-lead']),
+        ('dispatch', 'dispatch queue (unassigned open)',
+         [i for i in open_items if not i.get('assignee') and i['status'] == 'open']),
+    )
+    for view, name, items in counts:
         print(f'{name}: {len(items)}')
+        if view in args.items:
+            for item in items:
+                print(f"  {item['id']}  {item.get('title', '')}")
 
     def epic_of(issue):
         return next((a for a in ancestors(issue) if a['issue_type'] == 'epic'), None)
@@ -73,7 +94,8 @@ def main():
         return [d['depends_on_id'] for d in issue.get('dependencies') or []
                 if d['type'] == 'blocks' and by_id.get(d['depends_on_id'], {}).get('status') not in (None, 'closed')]
 
-    waiting = [f"{i['id']} ({len(open_blockers(i))} open blockers)" for i in open_items if 'waiting' in labels(i)]
+    lifecycle_labels = [f"{i['id']} ({', '.join(l for l in labels(i) if l in LIFECYCLE_LABELS)})"
+                        for i in open_items if any(l in LIFECYCLE_LABELS for l in labels(i))]
     release_gates_ready = [f"{i['id']} ({i['title']})" for i in open_items
                            if i['issue_type'] == 'gate' and i.get('title', '').startswith('[Gate] Release:') and not open_blockers(i)]
 
@@ -84,30 +106,35 @@ def main():
     for issue in open_items:
         if issue['status'] != 'in_progress':
             continue
-        details = issue_details(issue['id'])
-        started = parse_time(details.get('started_at'))
-        heartbeat = parse_time(details.get('heartbeat_at'))
-        owner = details.get('assignee') or issue.get('assignee') or 'unassigned'
+        started = parse_time(issue.get('started_at'))
+        heartbeat = parse_time(issue.get('heartbeat_at'))
+        lease = parse_time(issue.get('lease_expires_at'))
+        owner = issue.get('assignee') or 'unassigned'
         if started is not None and now - started >= timedelta(minutes=IN_FLIGHT_MINUTES):
             in_flight.append(f"{issue['id']} ({int((now - started).total_seconds() // 60)} min, {owner})")
 
         activity = heartbeat or started
         if activity is None:
             unknown.append(f"{issue['id']} ({owner}; timestamps unavailable)")
-        elif now - activity >= timedelta(minutes=CLAIM_MINUTES):
+            continue
+        # bd's lease is the claim expiry; the heartbeat-age rule covers claims without one.
+        expired = lease <= now if lease is not None else now - activity >= timedelta(minutes=CLAIM_MINUTES)
+        if expired:
             age = int((now - activity).total_seconds() // 60)
             if heartbeat is not None:
-                evidence = f"heartbeat {details['heartbeat_at']}"
+                evidence = f"heartbeat {issue['heartbeat_at']}"
             else:
-                state = 'missing' if not details.get('heartbeat_at') else 'invalid'
-                evidence = f"heartbeat {state}; started {details['started_at']}"
+                state = 'missing' if not issue.get('heartbeat_at') else 'invalid'
+                evidence = f"heartbeat {state}; started {issue['started_at']}"
+            if lease is not None:
+                evidence += f"; lease expired {issue['lease_expires_at']}"
             stale.append(f"{issue['id']} ({owner}; {evidence}; {age} min)")
 
     for name, rows in (('release gates ready (no open blockers)', release_gates_ready),
                        ('outside any epic', outside_epic),
-                       ('waiting label (use a blocks dependency)', waiting),
+                       ('lifecycle labels (use statuses, assignment or blocks)', lifecycle_labels),
                        (f'in_progress started {IN_FLIGHT_MINUTES}+ min ago', in_flight),
-                       (f'possible stale in_progress (activity {CLAIM_MINUTES}+ min ago)', stale),
+                       (f'possible stale in_progress (lease expired, or no heartbeat for {CLAIM_MINUTES}+ min)', stale),
                        ('in_progress activity unknown', unknown)):
         print(f'{name}: {len(rows)}')
         for row in rows[:50]:

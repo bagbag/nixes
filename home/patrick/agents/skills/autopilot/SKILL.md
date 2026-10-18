@@ -22,8 +22,8 @@ description: >-
   - **Trivial:** decide; record relevant defaults.
   - **Entailed or other reversible:** run the decision protocol, compare
     options as if presenting them to the user, act on the recommendation,
-    write it into its owner, and record a decision assigned to `user`,
-    labelled `needs-ratification` instead of `human`, blocking nothing.
+    write it into its owner, and record a decision assigned to `user` with
+    status `needs_ratification`, blocking nothing.
     Include the packet, `## Decision` and `## Reversal` sections, executable
     without remembered context or costly downstream rework.
   - **Irreversible, outward-facing or scope-changing:** park as a question for
@@ -96,10 +96,10 @@ description: >-
 ## Return
 
 - At the done criteria or budget boundary, report from the epic: verified
-  outcomes with actual gate numbers; ratification items
-  (`bd list --label needs-ratification --parent <epic>`); parked decisions
-  (`bd list --label human --parent <epic>`) with recommendations; failure and
-  park diagnoses; and workspace disposition (merge or discard for a branch).
+  outcomes with actual gate numbers; ratification items and parked decisions
+  with recommendations (`$HOME/.agents/bin/board-health <epic> --items ratification,questions`);
+  failure and park diagnoses; and workspace disposition (merge or discard for a
+  branch).
 - Keep incompleteness explicit. The
   user decides ratification, reversal and next work. Record ratification
   answers. When the user reverses a decision, present its `## Reversal` plan

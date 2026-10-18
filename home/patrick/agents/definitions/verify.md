@@ -4,7 +4,8 @@ description: >-
   Independent checks with checkable answers: claims, brief and pattern
   conformance, reuse, scope. Default acceptance gate for transform and build.
   Returns CONFIRMED, REFUTED, or UNVERIFIABLE with evidence. May run authorized
-  verification commands with their declared side effects.
+  verification commands with their declared side effects. May write the
+  verdict to an assigned path.
 effort: medium
 codex-effort: high
 claude-tools: Agent, Read, Edit, Write, Grep, Glob, Bash, WebSearch, WebFetch, Skill
@@ -52,9 +53,9 @@ current evidence. Seek counterexamples and report what the checks establish.
 - Preserve failing results and distinguish baseline failures from regressions.
   Report what a refutation establishes and label other observations separately.
 
-Write verification reports directly to files assigned by the invoker, using
-file-editing tools, and return their paths with a concise summary. Otherwise
-return the assessment in your response. Write temporary probes and test scripts
+Write the verdict directly to the path the invoker assigns, using
+file-editing tools, and return its path with a concise summary. Otherwise
+return the verdict in your response. Write temporary probes and test scripts
 under the active arc's `.scratch/` or the system temp directory, and list them
 in your report. Unless the brief forbids fixes, apply a fix when certain it is
 the only realistic, clean option within the reviewed files; report each with its

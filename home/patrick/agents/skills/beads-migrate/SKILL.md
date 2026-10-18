@@ -89,16 +89,16 @@ including its writer ownership, question states and handoff procedure.
 
 | Old entry | Beads |
 |---|---|
-| Item awaiting a decision | [Question](#question), type `decision`, label `human`; use [Decision packet](#decision-packet), marking missing sections "not recorded" |
+| Item awaiting a decision | [Question](#question), type `decision`, status `open`; use [Decision packet](#decision-packet), marking missing sections "not recorded" |
 | Report awaiting acknowledgment | comment on its live owner, or history |
-| Open issue, defect, investigation | `task`, `bug`, `spike`; label `human` when it waits for a person's action |
-| Planned or in-flight package | [Package](#package), with [Acceptance](#acceptance) and `blocks` dependencies; with complete evidence, label `review` and assign the acceptor; otherwise leave open and unassigned, with the remainder in acceptance |
-| Paused package | `task` with pause comment; with complete evidence, label `review` and assign the acceptor; otherwise open and unassigned, with the remainder in acceptance |
+| Open issue, defect, investigation | `task`, `bug`, `spike`; assigned to `user` when it waits for a person's action |
+| Planned or in-flight package | [Package](#package), with [Acceptance](#acceptance) and `blocks` dependencies; with complete evidence, status `in_review`, assigned to the acceptor; otherwise leave open and unassigned, with the remainder in acceptance |
+| Paused package | `task` with pause comment; with complete evidence, status `in_review`, assigned to the acceptor; otherwise open and unassigned, with the remainder in acceptance |
 | Merged duplicates | one issue; put other old IDs as `aliases: <ids>` in its description |
 | Deferral or backlog entry | [Deferrals and environment facts](#deferrals-and-environment-facts): status `deferred`, `defer_until` when dated, revisit condition as a comment |
 | Ruling in force | if held by its owner, history; otherwise a task writing it into its owner ([Rulings](#rulings)) or the implementing package spec. Keep the source note as the decision record |
-| Unreleased ruling | decision in its question's `design`, label `decided` (Goal relay) |
-| Released ruling not yet landed | its question, ruling in `design`, assigned to `goal-agent` (Goal relay) |
+| Unreleased ruling | decision in its question's `design`, status `decided` (Goal relay) |
+| Released ruling not yet landed | its question, ruling in `design`, status `released`, assigned to `goal-agent` (Goal relay) |
 | Principle or constraint | user's chosen owner: docs, skills, `AGENTS.md` or root epic `design` |
 | Goal-wide rule | goal epic `design` |
 | Arc-only rule | arc epic `design` |

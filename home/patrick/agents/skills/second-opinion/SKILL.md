@@ -23,9 +23,9 @@ context, not independent review. Apply [Reviewers](#reviewers) throughout.
   decision, proposal or claim; committed goal, product boundary, constraints
   and non-goals; authoritative sources and current empirical facts; opinion or
   strict sign-off.
-- Keep long briefs in the arc's `.scratch/`. For a substantive report, assign a
-  path, expected content and exclusive write ownership; keep short opinions in
-  the response.
+- Write long briefs to a file. For a substantive assessment, assign a path,
+  expected content and exclusive write ownership; keep short opinions in the
+  response.
 
 ## Dispatch
 

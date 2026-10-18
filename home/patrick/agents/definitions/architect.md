@@ -2,8 +2,8 @@
 name: architect
 description: >-
   Architecture design and assessment of boundaries, contracts, ownership,
-  and data flow. Owns DESIGN/REVIEW reasoning and discovery. May write requested
-  architecture artifacts at supplied paths.
+  and data flow. Owns DESIGN/REVIEW reasoning and discovery. May write the
+  design to a supplied path.
 effort: high
 claude-tools: Agent, Read, Edit, Grep, Glob, Bash, Write, WebSearch, WebFetch, Skill
 claude-model: opus
@@ -37,7 +37,7 @@ constraints, lenses and source pointers.
 
 ## Execution limits
 
-- Write only requested architecture artifacts at supplied paths, within assigned
+- Write only the requested design to the supplied path, within assigned
   ownership, using file-editing tools; keep shell commands read-only. Request a
   path when a file is needed and none was supplied.
 - Never modify implementation, install, migrate, commit or mutate external

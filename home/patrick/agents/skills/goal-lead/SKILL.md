@@ -25,16 +25,13 @@ description: >-
 
 ## Recover and prepare
 
-- Read the goal and goal epic tree (`bd list --parent <goal epic>`), questions
-  (`bd list --label human --parent <goal epic>`), review inbox
-  (`bd list --label review --assignee goal-lead --parent <goal epic>`), ready
-  checkpoints
-  (`bd ready --type milestone --assignee goal-lead --parent <goal epic>`),
-  pending decisions (`bd list --label decided --parent <goal epic>`), released
-  rulings not yet landed
-  (`bd list --type decision --assignee goal-agent --parent <goal epic>`),
-  counts (`$HOME/.agents/bin/board-health <goal epic>`), contracts and epic
-  rules.
+- Read the goal and arc epics
+  (`bd list --parent <goal epic> --type epic`); counts and the pending
+  decisions, questions and review inbox
+  (`$HOME/.agents/bin/board-health <goal epic> --items decided,questions,inbox`);
+  ready checkpoints
+  (`bd ready --type milestone --assignee goal-lead --parent <goal epic>`);
+  contracts and epic rules.
 - On “open items?”, list pending decisions first, then
   [Questions](#question), review
   inbox and ready checkpoints. Treat pasted lists and consumer reports the

@@ -37,9 +37,9 @@ For a settled decision, goal-lead may apply small, fully specified edits
 
 | State | Record and authority |
 |---|---|
-| Unanswered | Question assigned to goal-lead, labelled `human`. |
-| Decided / pending release | Decision in `--design`, labelled `decided`; when gated, blocked by its release gate. goal-lead retains it until release. Decisions bind on release. |
-| Released | Approved handoff to goal-agent; `human` and `decided` removed. Question remains open and blocks dependents until landing. |
+| Unanswered | Question `open`, assigned to goal-lead. |
+| Decided / pending release | Decision in `--design`, status `decided`; when gated, blocked by its release gate. goal-lead retains it until release. Decisions bind on release. |
+| Released | Approved handoff: status `released`, assigned to goal-agent. Question blocks dependents until landing. |
 | Landed | Owners and affected issue state reconciled; question closed. |
 
 ### Write timing
@@ -56,8 +56,8 @@ For a settled decision, goal-lead may apply small, fully specified edits
 ### Pending
 
 goal-lead records each decision in its question's `--design` at the
-[Write timing](#write-timing) and adds `decided`. Put a plain one-line summary
-first, followed by:
+[Write timing](#write-timing) and sets status `decided`. Put a plain one-line
+summary first, followed by:
 
 - provenance (`user` or `lead`);
 - for lead rulings, rejected alternative and checks;
@@ -103,8 +103,7 @@ Conditional approval covers that round's items. Preserve this order:
 4. Hand each question over with one update per id:
 
    ```sh
-   bd update <id> --assignee goal-agent \
-     --remove-label human --remove-label decided
+   bd update <id> --assignee goal-agent --status released
    ```
 
 Handoff is not atomic across ids. goal-agent lands a gated set together once
@@ -133,10 +132,11 @@ its gate is resolved and none of its questions remains `decided`.
 - Require owner writes, affected issues' design/acceptance updates, refreshed
   questions against superseded state and reconciled duplicates before closure.
   goal-agent performs the role-specific steps in its Land released rulings phase.
-- Keep the released question open; its `blocks` edges hold dependents until
-  landing completes.
-- A gap, conflict or follow-up found while landing becomes a new question
-  blocking the released one; the released question keeps its ruling and
-  labels: `bd dep add <released> --blocked-by <new question>`.
+- Keep the released question in status `released`; its `blocks` edges hold
+  dependents until landing completes.
+- A gap, conflict or follow-up found while landing becomes a new question,
+  discovered from and blocking the released one; the released question keeps
+  its ruling and status: `bd create … --deps discovered-from:<released>`, then
+  `bd dep add <released> --blocked-by <new question>`.
 - Close after landing: `bd close <id> --reason "landed in <owners>"`.
 - The acceptor checks landing when accepting an affected issue.

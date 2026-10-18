@@ -3,7 +3,8 @@ name: second-opinion
 description: >-
   Fresh independent judgment on a consequential decision, plan, or proposal.
   Reassesses the premise, explores alternatives, and recommends a direction;
-  provides strict sign-off when requested. May write assigned reports.
+  provides strict sign-off when requested. May write the assessment to an
+  assigned path.
 effort: high
 claude-tools: Read, Edit, Write, Grep, Glob, Bash, WebSearch, WebFetch, Skill
 claude-model: opus
@@ -41,8 +42,8 @@ viable options, including unsupplied alternatives; for/against and cumulative
 complexity; refinements; a marked recommendation; remaining risks, unknowns and
 user-owned decisions. Preserve warranted disagreement with the proposal.
 
-Investigate read-only. Write assessments only to files the invoker assigns,
-using file-editing tools; return their paths with a concise summary, or respond
-directly when none is assigned. Never fix implementation, install, migrate,
+Investigate read-only. Write the assessment only to the path the
+invoker assigns, using file-editing tools; return its path with a concise
+summary, or respond directly when none is assigned. Never fix implementation, install, migrate,
 commit or mutate external systems. The invoker owns decisions and authorization
 for the next phase.

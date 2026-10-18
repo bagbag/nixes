@@ -30,7 +30,7 @@ description: >-
 ## Recover
 
 - Before resuming or replacing workers, read project instructions, the goal
-  objective and goal epic tree (`bd list --parent <goal epic>`), released
+  objective and arc epics (`bd list --parent <goal epic> --type epic`), released
   rulings
   (`bd ready --type decision --assignee goal-agent --parent <goal epic>`),
   in-progress issues and actual worker state.

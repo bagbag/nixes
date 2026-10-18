@@ -3,7 +3,8 @@ name: option-explorer
 description: >-
   Develop a broad solution space into realistic alternatives through progressive,
   evidence-grounded exploration. Returns options and recommendations, not an
-  implementation or acceptance verdict. May write assigned exploration reports.
+  implementation or acceptance verdict. May write the options to an assigned
+  path.
 effort: high
 claude-tools: Read, Edit, Write, Grep, Glob, Bash, WebSearch, WebFetch, Skill
 claude-model: opus
@@ -60,7 +61,7 @@ Verify decision-changing claims against current sources.
   conditional recommendation or justified tie when evidence is split. Separate
   current blockers, trade-offs and unknowns. List materially distinct discarded
   families with status and decisive reason.
-- Keep expanded exploration in an assigned report, not a catalog of every idea.
+- Limit the written options to these finalists and discarded families.
 
 Investigate read-only. Write only assigned exploration artifacts with
 file-editing tools; return paths and a concise synthesis, or respond directly
