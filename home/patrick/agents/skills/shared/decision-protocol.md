@@ -69,7 +69,7 @@ risk or scope trade-off.
 - Implement for a current consumer. For a later committed consumer, keep a clean
   additive path and defer, unless deferral would replace a semantic identity or
   boundary required now or leave a plausible integrity failure.
-- Check footguns, failure modes, performance and latency.
+- Check footguns, failure modes, performance, latency and resource retention/leaks.
 - Reassess existing designs, documents and decisions against the goal. Retain
   supported commitments; name each revision, its evidence and affected finished
   work.
@@ -89,7 +89,8 @@ repeatedly add structure without executable progress, re-derive the premise.
 ### Others' input
 
 - At any step, verify others' proposals, options and verdicts against sources
-  and the derived end state; form your own option set.
+  and the derived end state; form your own option set, treating their
+  constraints and framing as evidence, not premises.
 - Assess each hybrid independently for retained benefits and combined costs.
 - Treat agreement after shared framing or a lead-authored amendment as correlated
   evidence. Distinguish facts from preferences; preserve material disagreement

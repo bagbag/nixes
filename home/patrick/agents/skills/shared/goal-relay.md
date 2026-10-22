@@ -91,10 +91,11 @@ Conditional approval covers that round's items. Preserve this order:
 
 1. goal-lead writes the ruling-bearing changes to canonical contract owners and
    epic `--design` / `--acceptance` ([Write timing](#write-timing)).
-2. Record each revision of an earlier ruling: `bd supersede <old> --with <new>`
-   when the new ruling replaces it entirely; otherwise
-   `bd dep add <new> <old> -t supersedes` and name the revised part in the new
-   ruling's `--design`. Add `blocks` only where landing order matters. Relate
+2. Record revisions under work-tracking
+   [Rulings](../shared/work-tracking.md#rulings). Search all records, closed
+   decisions included, and canonical docs for the revised concept and names;
+   supersede, relate or comment each hit with its revised clause. Add
+   `blocks` only where landing order matters. Relate
    the set's questions to affected issues outside their edges with
    `bd dep relate`. Comment planning input (ordering, scope growth) and
    proposals; goal-agent confirms, refines or replaces proposals through a

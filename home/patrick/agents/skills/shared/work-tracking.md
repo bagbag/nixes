@@ -109,10 +109,10 @@ Use these `##` sections:
 | Section | Content |
 |---|---|
 | Question | Exact choice. |
-| Root cause and end state | Decision protocol's Root fix and End state. |
-| Current authority | Owners in force and conflicts. |
+| Root cause and end state | Decision protocol's Root fix and End state, designed fresh, with its consumer code; constraints go to Current authority. |
+| Current authority | Rulings, rules and pending approvals in force: owner, conflicts, and whether the end state meets or breaks each. Options a missing approval blocks stay in the option set. |
 | Evidence | `path:line`, executed results, limits. |
-| Options | Decisive trade-offs; use `architect` or `option-explorer` for consequential choices or open option spaces. |
+| Options | Decisive trade-offs, always including the end-state option and the authority it breaks; use `architect` or `option-explorer` for consequential choices or open option spaces. |
 | Recommendation | Recommended option and conditions changing it. |
 
 ### Rulings
@@ -122,11 +122,13 @@ Use these `##` sections:
 - For a consequential ruling without a question, create and answer one at once.
 - Record each lead ruling as: "ruling — rejected: <alternative>, fails <stated
   principle, platform or correctness>".
-- Use the answered question as decision record; link a revision to the record
-  it revises with `supersedes` (full replacement:
-  `bd supersede <old> --with <new>`; partial:
-  `bd dep add <new> <old> -t supersedes`). Also write a contested ruling to the
-  project's rationale record where one exists.
+- Use the answered question as decision record; write a contested ruling to
+  the project's rationale record where one exists.
+- Record a revision as a new record restating the rule in full:
+  - Full replacement: move the old record's `blocks` and `relates-to` edges to
+    the new one, remove the pair's edge, then `bd supersede <old> --with <new>`.
+  - One rule of a multi-rule record: restate and name it, link
+    `bd dep add <old> <new> -t supersedes`; its other rules stay in force.
 - Write the rule to its owner at once unless the mode defers writes to a
   release.
 

@@ -31,7 +31,8 @@
   Ask about any ruling you cannot ground.
 - Repeat the list, with later rulings, in each release or ratification
   request.
-- End the walkthrough with an offer to ask. Once the user accepts, ask with
+- End every walkthrough, step-back, challenge and explanation with an offer to
+  ask. Once the user accepts, ask with
   the structured-question tool using your own option labels: adopt the end
   state, then one question per contested choice, no cap per round
   (four per call; continue in further calls). Mark the recommendation strong
@@ -40,6 +41,8 @@
   chat and every realistic option's example in its preview. Derive process
   questions from the root fix.
 - Step up an abstraction level when all options feel wrong.
+- Confirm an ambiguous answer term's reading in one line before building
+  questions on it.
 - When the user answers with a criterion instead of an option, rerun the
   decision protocol from Top-down before asking again.
 - When the user declines a question to clarify, ask what they want clarified,
