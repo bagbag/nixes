@@ -61,10 +61,9 @@ execution.
 - Reuse a ratified contract while premise and scope hold; present new or
   materially changed commitments for user ratification.
 - Record ratified commitments in their durable owner before dependent planning
-  or dispatch. Boards link goal owners and hold arc proposals, authority and
-  progress under `$HOME/.agents/skills/shared/work-tracking.md`. In a goal
-  pair, follow [Contract](../shared/goal-relay.md#contract) and
-  [Release](../shared/goal-relay.md#release) in
-  `$HOME/.agents/skills/shared/goal-relay.md`.
+  or dispatch. Boards link goal owners under
+  `$HOME/.agents/skills/shared/work-tracking.md`. A lead releases a contract
+  revision like any ruling, under Release in
+  `$HOME/.agents/skills/role/protocols/decide.md`.
 - In a proposal-only or read-only task, return the contract and proposed owner
   instead of writing files.

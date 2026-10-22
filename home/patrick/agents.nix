@@ -88,6 +88,9 @@ in
   home.file.".claude/hooks/bd-guard.sh".source =
     config.lib.file.mkOutOfStoreSymlink "${agentsSrc}/hooks/bd-guard.sh";
 
+  home.file.".claude/hooks/session-register.sh".source =
+    config.lib.file.mkOutOfStoreSymlink "${agentsSrc}/hooks/session-register.sh";
+
   home.file.".codex/hooks/compact-reorient.sh".source =
     config.lib.file.mkOutOfStoreSymlink "${agentsSrc}/hooks/compact-reorient.sh";
 
@@ -97,12 +100,15 @@ in
   home.file.".codex/hooks/bd-guard.sh".source =
     config.lib.file.mkOutOfStoreSymlink "${agentsSrc}/hooks/bd-guard.sh";
 
-  # Stable, tool-neutral session-lead registry shared by Codex and Claude Code.
+  home.file.".codex/hooks/session-register.sh".source =
+    config.lib.file.mkOutOfStoreSymlink "${agentsSrc}/hooks/session-register.sh";
+
+  # Stable, tool-neutral session role registry shared by Codex and Claude Code.
   home.file.".agents/bin/session-lead-mode".source =
     config.lib.file.mkOutOfStoreSymlink "${agentsSrc}/bin/session-lead-mode.sh";
 
-  home.file.".agents/bin/board-health".source =
-    config.lib.file.mkOutOfStoreSymlink "${agentsSrc}/bin/board-health.py";
+  home.file.".agents/bin/board".source =
+    config.lib.file.mkOutOfStoreSymlink "${agentsSrc}/bin/board.py";
 
   home.file.".agents/bin/worker-last-use".source =
     config.lib.file.mkOutOfStoreSymlink "${agentsSrc}/bin/worker-last-use.py";

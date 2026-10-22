@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
-# compact-reorient: restore session-scoped lead instructions after compaction
-# or resume in Codex and Claude Code.
+# compact-reorient: restore the session's registered role after compaction or
+# resume in Codex and Claude Code. role/SKILL.md owns the role -> protocol
+# file mapping and project-memory.md the recovery steps; this hook names the
+# role and points there.
 set -euo pipefail
 
 command -v jq >/dev/null 2>&1 || exit 0
@@ -16,21 +18,23 @@ esac
 
 session_lead=${AGENT_SESSION_LEAD_COMMAND:-$HOME/.agents/bin/session-lead-mode}
 session_id=$(jq -r '.session_id // empty' <<<"$input")
+registration='{}'
 if [[ -n "$session_id" ]]; then
-  mode=$(bash "$session_lead" get "$session_id" 2>/dev/null || true)
-else
-  mode=$(bash "$session_lead" get 2>/dev/null || true)
+  registration=$(bash "$session_lead" show "$session_id" 2>/dev/null || true)
+  [[ -n "$registration" ]] || registration='{}'
 fi
+role=$(jq -r '.role // ""' <<<"$registration")
 
 message="Session recovery: before continuing, re-orient from the project's agent instructions."
-case "$mode" in
-  autopilot | goal-agent | goal-lead | supervisor)
-    skill_path="$HOME/.agents/skills/$mode/SKILL.md"
-    message="Session recovery: the \`$mode\` skill remains active for this session. Before continuing, invoke the \`$mode\` skill again or reload \`$skill_path\` completely, and follow it within the current task. Then re-orient from the project's agent instructions."
-    ;;
-esac
+if [[ -n "$role" ]]; then
+  pulls=$(jq -r '(.pulls // []) | join(", ")' <<<"$registration")
+  actor=$(jq -r '.actor // ""' <<<"$registration")
+  message="Session recovery: this session is registered as role \`$role\`"
+  [[ -z "$pulls" ]] || message+=" pulling $pulls"
+  message+=" with board actor \`$actor\`. Before continuing, reload \`\$HOME/.agents/skills/role/SKILL.md\` completely and every protocol file it lists for \`$role\`, and follow them within the current task. Then re-orient from the project's agent instructions."
+fi
 
-message+=" Preserve the current task and newer user instructions. Recover the current approved checkpoint, next authorized work, deferrals and return boundary from the arc's tracking: beads (\`bd ready\`; \`\$HOME/.agents/bin/board-health [<root epic>]\` counts, with \`--items <views>\` for the views your mode recovers) where the repository has \`.beads/\`. Consult the linked canonical project goal and applicable topic goal and milestone; reconcile the next action with those commitments and existing authority. Re-read from tracking each item the summary names as pending or next before reporting or acting on it. Keep later product acceptance in its approved sequence. Resume an existing arc only when it remains the current authorized task. Check the working tree and relevant evidence; reuse applicable pre-flight results."
+message+=" Recover under \`\$HOME/.agents/skills/shared/project-memory.md\` Recovery and closure."
 
 jq -cn --arg m "$message" \
   '{hookSpecificOutput:{hookEventName:"SessionStart",additionalContext:$m}}'

@@ -5,6 +5,7 @@ description: >-
   config layer (global or project agent instructions, a skill, an agent prompt,
   project docs, settings/hooks) — propose-only, the user ratifies every item.
   Best run at the end of a work arc or before compaction.
+disable-model-invocation: true
 ---
 
 # Retro — capture durable learnings

@@ -33,11 +33,21 @@ on its own:
 - Links only navigate loaded content: in-file anchors for included files,
   `../shared/` links for files the skill reads by path. Validation rejects
   other links and unresolved anchors.
+- Role protocol files (`skills/role/protocols/`) are read by
+  `$HOME/.agents/skills/role/protocols/<name>.md` path; they read shared
+  files by path and link them as `../../shared/`. Skills name protocol paths
+  in code spans instead of linking them.
 
 Nix generates the Claude Code and Codex representations into the store, and
 Home Manager links them at activation. It also renders the shared skill tree
 into the store; generated files do not live in Git. Skill changes therefore
 require `darwin-rebuild switch` before they become active.
+Hooks, the `bin/` scripts (`board`, `session-lead-mode`), the hook
+registrations and the global instructions (`AGENTS.md`) are linked out of
+store to the working tree, so their edits are live at once; rendered skills,
+agent definitions and newly added links change only at the switch.
+After a switch that changes Codex hook entries, re-trust the changed hooks in
+Codex; untrusted hooks do not run.
 
 To inspect generated output manually:
 
@@ -85,13 +95,40 @@ native sandbox setting. Role instructions define assigned write zones.
 
 Workflow owners:
 
-- [Worker arcs](skills/shared/worker-arcs.md): invariant traceability and evidence.
+- [Role](skills/role/SKILL.md): the user-invoked session entry. It registers
+  the session's role (lead, agent with pulls, solo, autopilot) through
+  `bin/session-lead-mode` and owns the role-to-protocol mapping.
+- [Protocols](skills/role/protocols/): [decide](skills/role/protocols/decide.md)
+  (rounds, release, acceptance of designs and user-judged outcomes),
+  [plan](skills/role/protocols/plan.md) (released rulings into work, framing,
+  cutting, briefing, dispatch, integration),
+  [work](skills/role/protocols/work.md) (one design or implementation item),
+  [review](skills/role/protocols/review.md) (independent review, review policy,
+  evidence and gates) and
+  [unattended](skills/role/protocols/unattended.md) (autopilot authority and
+  parking). Sessions read them by path; compaction recovery names them again.
+- [Work tracking](skills/shared/work-tracking.md): board model, holds,
+  routing, record shapes and `board` views; [board-migrate](skills/board-migrate/SKILL.md)
+  moves a project from any starting state onto it, deriving the work from the gap to the target.
+- Challenge skills, user-invoked only: [step-back](skills/step-back/SKILL.md),
+  [recheck-rulings](skills/recheck-rulings/SKILL.md),
+  [question-me](skills/question-me/SKILL.md) and
+  [release-round](skills/release-round/SKILL.md). Role protocols never
+  reference them.
 - [Retro](skills/retro/SKILL.md): rule proposals and regression cases.
-- [Goal lead](skills/goal-lead/SKILL.md) and [goal agent](skills/goal-agent/SKILL.md): a decision lead and an implementation coordinator joined by the [goal relay](skills/shared/goal-relay.md).
-- [Work tracking](skills/shared/work-tracking.md): beads conventions for all lead modes; [beads-migrate](skills/beads-migrate/SKILL.md) moves a Markdown-tracked arc onto them.
 
-Work tracking owns ruling destinations and the ruling-record format. The goal
-relay owns the cross-role landing contract; goal-agent owns its execution steps.
+`bin/board.py` (installed as `$HOME/.agents/bin/board`, not on `PATH`) is the
+agents' only board interface: views and hand-offs from one `bd export`
+snapshot, and `board bd <args>` for every other bd command. It starts a stopped
+server on server-mode boards (bd's auto-start is off) and takes the actor from
+`session-lead-mode actor`, the owner of the session identity
+(`CODEX_SESSION_ID`/`CODEX_THREAD_ID`, else `CLAUDE_CODE_SESSION_ID`). Hooks
+add: bd-guard denies bare `bd` and sets Claude subagents' own actors (without
+it they act as their session, so in-session reviews by them are not
+independent); session-register keeps workers from registering; the
+session-start hook starts the server before `bd prime`. `board check` encodes the work-tracking
+conventions mechanically; change both in the same change, so drifted boards
+surface in `board health` and move through `/board-migrate`.
 
 Work tracking deliberately avoids some beads features (bd 1.3.1); re-check
 before adopting them:
@@ -99,31 +136,42 @@ before adopting them:
 - `external:` dependencies never block: no production code calls
   `ResolveExternalProjectPath`, so upstream waits use a local human gate.
 - `bd human respond`/`dismiss` close on answer; questions close once their
-  ruling is in force.
+  released ruling is planned.
 - `bd close --suggest-next` lists only what one close unblocked; next steps
   follow priority and decision clusters.
-- `bd lint` requires ADR sections in every `decision` description; open
-  questions carry a decision packet instead.
+- Claim leases, `bd heartbeat` and `bd reclaim`: nothing reads the 5-minute
+  leases, and `bd reclaim` would free every held item. Holds end only as
+  work tracking's [Actors and holds](skills/shared/work-tracking.md#actors-and-holds)
+  describes.
+
+`bd lint` checks `decision` descriptions for the record sections (built-in
+Rationale and Alternatives Considered; configured Question, Decision, Rule
+owner); work tracking's
+[Questions and rulings](skills/shared/work-tracking.md#questions-and-rulings)
+owns the record lifecycle. Closed records keep their shape (board-migrate
+Invariants).
 
 The `explore-options` skill coordinates `option-explorer` to develop a broad
 solution space into realistic alternatives. It progressively screens and deepens
 approaches, reports material exclusions, and leaves decisions to the invoker.
-Worker arcs name when leads use it; the skill owns how its result is reused.
+Sessions name triggers in their protocols; the skill owns how its result is
+reused.
 
-The `architect` skill coordinates the architecture specialist without requiring
-supervisor. The agent owns design and review; `second-opinion` independently
+The `architect` skill coordinates the architecture specialist without
+requiring a role. The agent owns design and review; `second-opinion` independently
 challenges decisions. The lead selects each for a concrete question. `plan`
 decomposes an agreed design into implementation work when decomposition or
 integration needs specialist judgment; leads can write pattern-determined plans
 and continuation deltas directly.
 
-The [worker-arc contract](skills/shared/worker-arcs.md) owns review gates and
+The [review protocol](skills/role/protocols/review.md) owns review gates and
 acceptance evidence. The [decision protocol](skills/shared/decision-protocol.md)
 owns default decision authority, end-state criteria and concern classes; agent
-definitions read it at runtime. Lead-only shared files:
+definitions read it at runtime. Shared files:
 [reviewers](skills/shared/reviewers.md) (selection, briefing, independence,
-disagreement) and [asking](skills/shared/asking.md) (how leads question the
-user).
+disagreement) and [asking](skills/shared/asking.md) (how deciding sessions
+walk the user through a round).
+[Question format](skills/shared/question-format.md) is tool-neutral; asking, role and question-me include it.
 
 Tool-specific names are optional and default to the canonical `name`. Shared
 `explore` overrides that default as Claude Code's `Explore` and Codex's

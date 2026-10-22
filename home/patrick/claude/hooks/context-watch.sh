@@ -2,11 +2,11 @@
 # context-watch: warn a session as it approaches auto-compaction.
 #
 # Every session gets baseline "compaction is near" warnings. Sessions that opt
-# into a mode get richer, mode-specific guidance. The supervisor and autopilot
-# skills register their session-scoped lead mode on invocation.
+# into a mode get richer, mode-specific guidance. `/role` registers the
+# session's role (solo and autopilot have modes here) in session-lead-mode.
 #
 #   default:    no opt-in — last-warning rungs only (compaction imminent).
-#   supervisor: 35 42 50, then +5 up to 80 -> recommend compaction.
+#   solo: 35 42 50, then +5 up to 80 -> recommend compaction.
 #   autopilot:  no fixed rungs — steered entirely by the last-warnings.
 #   every mode: last-warning rungs at the compaction point -5/-2/-1.
 # Rungs are one-shot, re-armed when usage drops (e.g. after compaction).
@@ -47,7 +47,7 @@ event=$(jq -r '.hook_event_name // "PostToolUse"' <<<"$input")
 mode=default
 active_mode=$(bash "$session_lead" get "$session_id" 2>/dev/null || true)
 case "$active_mode" in
-  autopilot | supervisor) mode=$active_mode ;;
+  autopilot | solo) mode=$active_mode ;;
 esac
 
 # --- window (percentage base) -----------------------------------------------
@@ -71,7 +71,7 @@ imminent_pct=$(( compact_pct - 5 ))
 
 # --- rungs ------------------------------------------------------------------
 case "$mode" in
-  supervisor) rungs=(35 42 50 55 60 65 70 75 80) ;;
+  solo) rungs=(35 42 50 55 60 65 70 75 80) ;;
   *)          rungs=() ;;   # autopilot + default: steered by the last-warnings
 esac
 for off in 5 2 1; do
@@ -82,16 +82,16 @@ done
 mkdir -p "$dir"
 
 # --- one-shot window-fit check (opt-in modes only) --------------------------
-# autopilot wants a lean window (cheap, frequent compaction; board and beads
-# make recovery free); supervisor arcs want a large one (the ladder assumes deep
+# autopilot wants a lean window (cheap, frequent compaction; checkpoint file and
+# board make recovery free); solo arcs want a large one (the ladder assumes deep
 # context). Warn once, judged against the real compaction point.
 fitflag="$dir/$session_id.fitwarn"
-if [[ ( "$mode" == "autopilot" || "$mode" == "supervisor" ) && ! -f "$fitflag" ]]; then
+if [[ ( "$mode" == "autopilot" || "$mode" == "solo" ) && ! -f "$fitflag" ]]; then
   fitmsg=""
   if [[ "$mode" == "autopilot" ]] && (( eff_acw > 400000 )); then
-    fitmsg="context-watch: this autopilot session compacts around ${eff_acw} tokens — a large window makes every turn slower and costlier as context grows. Record the effective window on the board, and recommend launching this routine with the lean default (no claude-full, no window override) in the ratification report."
-  elif [[ "$mode" == "supervisor" ]] && (( eff_acw < 500000 )); then
-    fitmsg="context-watch: this supervisor session compacts early (~${eff_acw} tokens) — a long arc will auto-compact repeatedly. Tell the user: relaunch via claude-full for this arc, or keep the board/docs continuously synced."
+    fitmsg="context-watch: this autopilot session compacts around ${eff_acw} tokens — a large window makes every turn slower and costlier as context grows. Record the effective window in the checkpoint file, and recommend launching this routine with the lean default (no claude-full, no window override) in the ratification report."
+  elif [[ "$mode" == "solo" ]] && (( eff_acw < 500000 )); then
+    fitmsg="context-watch: this solo session compacts early (~${eff_acw} tokens) — a long arc will auto-compact repeatedly. Tell the user: relaunch via claude-full for this arc, or keep the board/docs continuously synced."
   fi
   if [[ -n "$fitmsg" ]]; then
     : >"$fitflag"
@@ -138,19 +138,19 @@ echo "$current" >"$state"
 msg=""
 if (( current >= imminent_pct )); then
   case "$mode" in
-    supervisor) msg="context-watch: auto-compaction is IMMINENT. Bring every coordination doc fully in sync NOW and keep it in sync with every further change: when compaction runs, nothing of value may exist only in this session." ;;
-    autopilot)  msg="context-watch: auto-compaction is IMMINENT. Refresh the board and beads NOW and keep them in sync with every further change (checkpoint-commit only when authorized and coherent); when compaction runs, re-ground from the board and beads." ;;
+    solo) msg="context-watch: auto-compaction is IMMINENT. Bring every coordination doc fully in sync NOW and keep it in sync with every further change: when compaction runs, nothing of value may exist only in this session." ;;
+    autopilot)  msg="context-watch: auto-compaction is IMMINENT. Refresh the checkpoint file and board NOW and keep them in sync with every further change (checkpoint-commit only when authorized and coherent); when compaction runs, re-ground from them." ;;
     *)          msg="context-watch: auto-compaction is imminent — the conversation will be condensed automatically. Keep working; if you are maintaining any docs, notes, or a plan, bring them in sync now so nothing important survives only in this conversation." ;;
   esac
 elif (( current <= 60 )); then
   case "$mode" in
-    supervisor) msg="context-watch: compacting early is an economy measure — it keeps speed and quality up and quota burn down. Recommend it to the user at the next natural pause (sync coordination docs first), and check what's bloating: inline reads a worker should have done, verbose tool output kept in-context." ;;
-    autopilot)  msg="context-watch: refresh the board at the next milestone and keep delegating reads to workers — small context keeps every turn faster, sharper, and cheaper." ;;
+    solo) msg="context-watch: compacting early is an economy measure — it keeps speed and quality up and quota burn down. Recommend it to the user at the next natural pause (sync coordination docs first), and check what's bloating: inline reads a worker should have done, verbose tool output kept in-context." ;;
+    autopilot)  msg="context-watch: refresh the checkpoint file and board at the next milestone and keep delegating reads to workers — small context keeps every turn faster, sharper, and cheaper." ;;
   esac
 else
   case "$mode" in
-    supervisor) msg="context-watch: context is deep now — it degrades speed and quality and burns quota every turn. Actively steer to a cheap-loss point and recommend compaction; bring every coordination doc fully in sync first (board, beads, index)." ;;
-    autopilot)  msg="context-watch: refresh the board and beads now (checkpoint-commit only when authorized and coherent), then continue working; when auto-compaction fires, re-ground from the board and beads." ;;
+    solo) msg="context-watch: context is deep now — it degrades speed and quality and burns quota every turn. Actively steer to a cheap-loss point and recommend compaction; bring every coordination doc fully in sync first (checkpoint file, board)." ;;
+    autopilot)  msg="context-watch: refresh the checkpoint file and board now (checkpoint-commit only when authorized and coherent), then continue working; when auto-compaction fires, re-ground from them." ;;
   esac
 fi
 

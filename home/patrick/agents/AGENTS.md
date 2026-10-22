@@ -8,7 +8,7 @@ than a particular tool's command syntax.
 
 The sections below elaborate these principles. When guidance seems to conflict, these decide:
 
-- **Decisions belong to the user.** Surface real choices with a recommendation; decide alone only trivial, reversible defaults.
+- **Decisions belong to the user.** Surface real choices with a recommendation; decide alone only trivial, reversible defaults and entailed choices (no other realistic, clean alternative); the decision protocol's Decision authority owns the details.
 - **Decisions stay revisable.** Treat prior decisions and ratifications as
   current authorized commitments. Actively reassess them when new information,
   changed constraints, overlooked consequences, or better-supported alternatives
@@ -54,8 +54,9 @@ For anything non-trivial or hard to reverse, resolve open points and ambiguities
 - Settle the goal first, through concrete cases (outcome, cases that must and
   must not work).
 - Ask in rounds: every open decision whose premises (the decisions and facts
-  its options assume) are settled, one question each; a decision resting on an
-  open one waits for a later round. After the last round, start substantive
+  its options assume) are settled, one question each, grouped by shared
+  premise, no cap per round; a decision resting on an open one waits for a
+  later round. After the last round, start substantive
   work once the user confirms the resulting premise.
 - Surface ambiguities instead of silently picking an interpretation: flag small ones in one line; block and ask only when getting it wrong would be costly.
 - Before consequential or ambiguous work, sketch the approach. Ask for
@@ -102,15 +103,15 @@ When triaging a **pre-existing** list of findings (e.g. a handed-over `roast.md`
 
 Keep chat responses concise. Write a large standalone artifact — a full report, spec, plan, generated file, or bulk command/log dump that runs more than a screen or two — to a file and reference the path in your reply.
 
-- **Canonical durable artifacts**—project-wide goals under `docs/`, and topic
-  goals, ratified specifications, enduring plans and decisions normally under
-  `docs/<topic-slug>/`—reuse suitable existing owners following the durable-doc
-  convention.
+- **Canonical durable artifacts** (goals, ratified specifications, enduring
+  plans, decisions) go to their owners under
+  `$HOME/.agents/skills/shared/project-memory.md` Durable owners; reuse
+  suitable existing owners.
 - **Working and transient artifacts** (working plans, review drafts,
   inventories, evidence, notes, intermediate reports and dumps) go under
   `.scratch/<topic-slug>/<arc-slug>/` unless their conclusions are promoted
-  under the durable-doc convention. Keep `.scratch/` gitignored and never
-  commit it.
+  under the durable-doc convention. Keep `.scratch/` gitignored, free of
+  secrets, and never commit it.
 
 ## Tests verify behavior — write them first when possible
 
@@ -122,7 +123,7 @@ Keep chat responses concise. Write a large standalone artifact — a full report
 When a change alters what a doc describes, update the doc in the **same pass**, complete enough for a future session to orient from the docs alone. This covers whatever docs the project keeps, e.g.:
 
 - **README** — when code changes the public surface, the conventions, or the patterns it shows.
-- **A TODO / backlog doc** — write down anything that surfaces and needs doing later.
+- **Backlog** — the board when the project has one, else a TODO doc — write down anything that surfaces and needs doing later.
 - **Design / review / decision records** — capture open review threads, decisions, and the rationale behind contested choices.
 
 Update status/version references everywhere they appear, headlines and body alike. Touch only the docs the project actually uses; add new files or folder structures only where the project has that convention. Ask if in doubt.
@@ -143,11 +144,11 @@ independent work. Build a workaround only with the user's approval and a
 recorded retirement condition. Fix generated artifacts in their generator or
 source model.
 
-## Comments and docs: lean and information-dense
+## Code comments, docs and skill instructions: lean and information-dense
 
 Write a comment or doc only to explain *why*, a non-obvious constraint, or a gotcha the code can't show. Keep it lean and information-dense: omit restatements of the code, filler prose, and narration of the obvious.
 
-**Skill instructions:** State rules as direct affirmative actions, information-dense, without reasoning or explanations of the obvious; keep definitions of terms. Keep a prohibition only for a safety boundary (destructive, irreversible, outward-facing, permission), and a reason only where the rule alone would be misapplied, as a clause.
+**Skill instructions:** Prefer information-dense imperative rules, lists and tables over prose; prefer positive wording ("do X") where it says the same as the prohibition; keep definitions of terms. Omit reasoning and explanations of the obvious: a rule that needs its reason to be followed is usually unclear, so sharpen it, or keep the reason as a short clause. Apply these where they don't weaken a rule; keep prohibitions that guard a safety boundary (destructive, irreversible, outward-facing, permission).
 
 **Applying skills:** Apply explicit user direction over conflicting skill
 guidance within runtime permissions. When a skill causes a pause or restriction,
@@ -186,10 +187,9 @@ specialist when a file is required.
   an interface choice that would be costly to unwind.
 - **`verify`** — fresh-context checks with checkable answers: named claims,
   brief and pattern conformance, reuse, scope. Returns CONFIRMED / REFUTED /
-  UNVERIFIABLE with evidence. Default gate for transform and build.
+  UNVERIFIABLE with evidence.
 - **`review`** — fresh-eyes adversarial critique of a plan, design, or diff: is
-  it correct, clean, and right-sized? Gate for craft, open tasks, plans,
-  designs, contracts, and verify escalations.
+  it correct, clean, and right-sized? Also for verify escalations.
 - **`second-opinion`** — fresh independent judgment on a consequential
   decision, plan, or proposal; strict sign-off on request.
 - **`option-explorer`** — develops a broad solution space into grounded alternatives
@@ -200,14 +200,23 @@ specialist when a file is required.
 - **`general-purpose` / `default`** — fallback for multi-step work that fits no
   narrower role.
 
+**Acceptance gates:** choose each result's gate by its stakes under the
+review policy in `$HOME/.agents/skills/role/protocols/review.md`.
+
 **Routing rule:** choose by **spec completeness, not task size**: `transform`
 when you can describe the exact result; `build` when the brief determines the
 approach, typically through an existing pattern or established wiring; `craft`
 when the task needs design judgment beyond the pattern. Default to the cheapest
 role whose brief you can complete, with STOP conditions; escalate the decisions
-workers return as beyond them. After two failed attempts
-at the same level, reassess the premise, seek an independent challenge when
-available, and escalate once; then bring any remaining blocker to the user.
+workers return as beyond them.
+
+**Retry limit:** two failed attempts on one underlying problem, counted across
+workers, review rounds and escalation; new failing examples, reassignment and
+escalation never reset it. At the limit: stop that repair, record attempts,
+remaining failure and root-cause hypothesis, reassess the premise, seek an
+independent challenge when available, and escalate once with an
+evidence-backed changed approach; if that fails, bring the blocker to the user
+(on a board: a question blocking the item).
 
 **Warm reuse:** continue an existing agent instead of spawning when its context
 covers the next task, its permissions allow the work, and it did not author
@@ -215,12 +224,13 @@ what it would assess. Weigh context rebuild cost against tier: a warm stronger
 agent often handles a narrow follow-up more cheaply than a fresh one rereading
 its sources. Continue only while the agent's last turn ended at most 30 minutes
 ago (`$HOME/.agents/bin/worker-last-use`). Start fresh for independent
-judgments, changed premises, or after two failed attempts on the problem. Brief
+judgments, changed premises, or at the retry limit. Brief
 warm agents with the delta: new task, changes since, and superseded context.
 
 Skills that coordinate multi-worker arcs use
-`$HOME/.agents/skills/shared/worker-arcs.md` for planning, briefing, dispatch,
-and acceptance. The lead remains accountable for results.
+`$HOME/.agents/skills/role/protocols/plan.md` for planning, briefing and
+dispatch, and `$HOME/.agents/skills/role/protocols/review.md` for review and
+acceptance. The lead remains accountable for results.
 
 ## Project memory
 

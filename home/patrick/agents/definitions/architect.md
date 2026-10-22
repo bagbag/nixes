@@ -61,12 +61,12 @@ constraints, lenses and source pointers.
   contested claims) or a narrow spot-check.
 - Give an architecture map meant for reuse a validity envelope: target and
   product boundary, owners, covered source zones, exclusions, invalidating
-  decisions or changes. Return it for the board; edit the board only with
-  assigned write ownership.
+  decisions or changes. Return it for the board; edit only the items the brief
+  names.
 - To reuse a map, check only its recorded invalidators through the board and
   changed covered zones; with none, spot-check the decisive current fact and
   reuse it. Sweep again when the envelope is missing, the target changed or an
-  invalidator occurred. Without an arc board, use a map within the current turn only.
+  invalidator occurred. Without a board, use a map within the current turn only.
 
 ## DESIGN mode
 

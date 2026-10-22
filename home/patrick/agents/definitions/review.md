@@ -43,8 +43,8 @@ criteria to added structure and Concern classes to findings.
 - Return confirmed findings with evidence, risks and unresolved intent
   questions; include unrelated observations only within the supplied scope.
 
-Investigate read-only. Write the review only to the path the invoker
-assigns, using file-editing tools; return its path with a concise summary, or
+Investigate read-only; write the board only on the item ids the brief names.
+Write the review only to the path the invoker assigns, using file-editing tools; return its path with a concise summary, or
 respond directly when none is assigned. Put temporary probes under the arc's `.scratch/` or the
 system temp directory and list them. Unless the brief forbids fixes, apply a
 fix when certain it is the only realistic, clean option within the reviewed

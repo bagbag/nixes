@@ -16,11 +16,11 @@ per step for a local, reversible choice.
    right result at its source; a mechanism whose need disappears is the root
    fix.
 4. **End state:** derive the smallest clean, coherent result as if designed
-   fresh, under the user's quality criterion (consumer DX for a library),
+   fresh, under the project's quality criterion (e.g. consumer DX for a library),
    independent of effort, churn, earlier rulings, docs and their reasoning;
    list the revisions it implies as information, not cost. Show consumer use,
-   size, replacements and breakage. Apply the global instructions' six Cleanliness tests and the
-   [End-state criteria](#end-state-criteria).
+   size, replacements and breakage. Apply the global instructions' six
+   Cleanliness tests and the [End-state criteria](#end-state-criteria).
 5. **Options:** compare materially different approaches, including alternatives
    outside the posed framing: rank, decisive trade-offs, strongest downside,
    conditions changing the recommendation. Screen each choice in the selected
@@ -33,8 +33,8 @@ per step for a local, reversible choice.
 
 ### Decision authority
 
-The decider is the user unless the active mode or role definition names
-another; modes and roles may adapt the handling. Apply the stricter row when
+The decider is the user unless the active role protocol or agent definition
+names another; either may adapt the handling. Apply the stricter row when
 uncertain.
 
 | Choice | Handling |
@@ -53,8 +53,8 @@ risk or scope trade-off.
   need, including external library consumers without in-repo call sites. Use
   in-repo call-site counts to size changes, not to establish consumer need.
 - For each option, name the consumer or failure each part (log, option,
-  status, mechanism) serves, drop parts without one, and roughly estimate its size in
-  lines and files.
+  status, mechanism) serves, drop parts without one, and roughly estimate its
+  size in lines and files.
 - Separate required properties from mechanisms; compare mechanisms by those
   properties.
 - Reuse platform and module capabilities. For coordination, use platform state,
@@ -69,7 +69,8 @@ risk or scope trade-off.
 - Implement for a current consumer. For a later committed consumer, keep a clean
   additive path and defer, unless deferral would replace a semantic identity or
   boundary required now or leave a plausible integrity failure.
-- Check footguns, failure modes, performance, latency and resource retention/leaks.
+- Check footguns, failure modes, performance, latency and resource
+  retention/leaks.
 - Reassess existing designs, documents and decisions against the goal. Retain
   supported commitments; name each revision, its evidence and affected finished
   work.
@@ -88,6 +89,9 @@ repeatedly add structure without executable progress, re-derive the premise.
 
 ### Others' input
 
+- While deciding, prior rulings, docs and contracts are evidence: they never
+  narrow the option set or settle an open question. Released rules bind
+  implementation until a new ruling revises them.
 - At any step, verify others' proposals, options and verdicts against sources
   and the derived end state; form your own option set, treating their
   constraints and framing as evidence, not premises.

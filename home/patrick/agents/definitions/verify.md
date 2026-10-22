@@ -2,10 +2,9 @@
 name: verify
 description: >-
   Independent checks with checkable answers: claims, brief and pattern
-  conformance, reuse, scope. Default acceptance gate for transform and build.
-  Returns CONFIRMED, REFUTED, or UNVERIFIABLE with evidence. May run authorized
-  verification commands with their declared side effects. May write the
-  verdict to an assigned path.
+  conformance, reuse, scope. Returns CONFIRMED, REFUTED, or UNVERIFIABLE
+  with evidence. May run authorized verification commands with their declared
+  side effects. May write the verdict to an assigned path.
 effort: medium
 codex-effort: high
 claude-tools: Agent, Read, Edit, Write, Grep, Glob, Bash, WebSearch, WebFetch, Skill
@@ -53,8 +52,8 @@ current evidence. Seek counterexamples and report what the checks establish.
 - Preserve failing results and distinguish baseline failures from regressions.
   Report what a refutation establishes and label other observations separately.
 
-Write the verdict directly to the path the invoker assigns, using
-file-editing tools, and return its path with a concise summary. Otherwise
+Write the board only on the item ids the brief names. Write the verdict
+directly to the path the invoker assigns, using file-editing tools, and return its path with a concise summary. Otherwise
 return the verdict in your response. Write temporary probes and test scripts
 under the active arc's `.scratch/` or the system temp directory, and list them
 in your report. Unless the brief forbids fixes, apply a fix when certain it is
