@@ -39,8 +39,8 @@ Propose every learning for user ratification. Apply only approved edits.
 
 ## Apply and validate
 
-- Pass every edit against the global instructions' Skill instructions rule
-  before applying; preserve execution and authority boundaries.
+- Pass every edit against the `skill-authoring` skill before applying;
+  preserve execution and authority boundaries.
 - Edit the canonical source when skills are rendered or store-backed; treat
   installed generated output as immutable.
 - Run applicable checks and report results and limits. For rendered or

@@ -71,6 +71,8 @@ risk or scope trade-off.
   boundary required now or leave a plausible integrity failure.
 - Check footguns, failure modes, performance, latency and resource
   retention/leaks.
+- Keep implicit behavior ("magic") only where it is the realistic default and
+  a real DX win; make the rest explicit.
 - Reassess existing designs, documents and decisions against the goal. Retain
   supported commitments; name each revision, its evidence and affected finished
   work.

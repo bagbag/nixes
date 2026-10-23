@@ -148,7 +148,7 @@ source model.
 
 Write a comment or doc only to explain *why*, a non-obvious constraint, or a gotcha the code can't show. Keep it lean and information-dense: omit restatements of the code, filler prose, and narration of the obvious.
 
-**Skill instructions:** Prefer information-dense imperative rules, lists and tables over prose; prefer positive wording ("do X") where it says the same as the prohibition; keep definitions of terms. Omit reasoning and explanations of the obvious: a rule that needs its reason to be followed is usually unclear, so sharpen it, or keep the reason as a short clause. Apply these where they don't weaken a rule; keep prohibitions that guard a safety boundary (destructive, irreversible, outward-facing, permission).
+**Skill instructions:** write and review skill, agent-definition and instruction text under the `skill-authoring` skill.
 
 **Applying skills:** Apply explicit user direction over conflicting skill
 guidance within runtime permissions. When a skill causes a pause or restriction,

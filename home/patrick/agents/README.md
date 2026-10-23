@@ -111,11 +111,17 @@ Workflow owners:
   routing, record shapes and `board` views; [board-migrate](skills/board-migrate/SKILL.md)
   moves a project from any starting state onto it, deriving the work from the gap to the target.
 - Challenge skills, user-invoked only: [step-back](skills/step-back/SKILL.md),
-  [recheck-rulings](skills/recheck-rulings/SKILL.md),
+  [challenge-rulings](skills/challenge-rulings/SKILL.md),
+  [ground](skills/ground/SKILL.md),
+  [ask-advisor](skills/ask-advisor/SKILL.md),
   [question-me](skills/question-me/SKILL.md) and
-  [release-round](skills/release-round/SKILL.md). Role protocols never
-  reference them.
+  [release-round](skills/release-round/SKILL.md). Their argument names the
+  focus and follow-ups (Claude runs one skill per message). Role protocols
+  never reference them.
 - [Retro](skills/retro/SKILL.md): rule proposals and regression cases.
+- [Skill authoring](skills/skill-authoring/SKILL.md): invocation policy,
+  trigger descriptions, frontmatter and style for skills, definitions and
+  instructions; loaded while writing, user-invoked to review.
 
 `bin/board.py` (installed as `$HOME/.agents/bin/board`, not on `PATH`) is the
 agents' only board interface: views and hand-offs from one `bd export`
