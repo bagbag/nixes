@@ -1068,29 +1068,41 @@ def validate_board(root: Path) -> None:
                 (cid["[Design] Prefixed title"], "title-prefix", "kinds"),
                 (cid["[Gate] Release: round 3"], "title-prefix", "kinds"),
                 (cid["[Gate] Release: round 3"], "release-gate", "kinds"),
-                (gate, "release-gate", "kinds"),
                 (cid["Labelled status"], "label-status", "statuses-and-labels"),
                 (cid["Released ruling"], "released-blocks", "questions-and-rulings"),
-                (cid["Unformatted ruling"], "record-format", "questions-and-rulings"),
                 (cid["Unnamed wait"], "unnamed-blocker", "dependencies"),
             ]
             for item_id, name, anchor in expected_lines:
                 if f"  {item_id}  {name}  work-tracking.md#{anchor}" not in report:
                     raise ValueError(f"board check missed {name} on {item_id}:\n{report}")
             deviation_lines = [row for row in report.splitlines() if "  work-tracking.md#" in row]
-            if code != 1 or len(deviation_lines) != len(expected_lines) or "convention deviations: 10\n" not in report:
+            if code != 1 or len(deviation_lines) != len(expected_lines) or "convention deviations: 8\n" not in report:
                 raise ValueError(f"board check reported extra deviations or the wrong exit code {code}:\n{report}")
             # Gate blockers carry their own reason; closed dependents of a released ruling block nothing.
-            for clean in ("Clean task", "User action", "Waits on ruling", "Gated question", "Closed waiter"):
+            # A human gate on a question is the user's go, not a release gate; records are linted at release only.
+            for clean in ("Clean task", "User action", "Waits on ruling", "Gated question", "Closed waiter", "Gate: human",
+                          "Unformatted ruling"):
                 if any(f"  {cid[clean]}  " in row for row in deviation_lines):
                     raise ValueError(f"board check flagged conforming {clean}")
             flag = report.split("flag, not a deviation")[1]
             if f"  {cid['Squashed text']}  squashed" not in flag or f"  {cid['Clean task']}  " in flag:
                 raise ValueError(f"board check missed or misplaced the squashed-text flag:\n{report}")
-            if "convention deviations: 10 — run /board-migrate" not in health_check:
+            if "convention deviations: 8 — run /board-migrate" not in health_check:
                 raise ValueError("board health lacks the deviation hint")
-            _, scoped_check, _ = invoke(["check", "--root", cid["Goal"]], Fake(checked))
-            if f"  {gate}  release-gate" in scoped_check or f"  {cid['Legacy holder']}  holder" not in scoped_check:
+            # The user view lists gates titled with the user's words and items assigned to the user.
+            waiting = [{**issue, "title": "user 2026-10-23: 'wait for my go'"} if issue["title"] == "Gate: human" else issue
+                       for issue in checked]
+            user_view = invoke(["health", "--items", "user"], Fake(waiting))[1]
+            if "waiting on the user (gates titled user, items assigned to user): 2\n" not in user_view \
+                    or gate not in user_view or cid["User action"] not in user_view:
+                raise ValueError(f"board health user view:\n{user_view}")
+            # A gate is a wait, not work: it needs no epic.
+            if gate in invoke(["health", "--items", "outside"], Fake(checked))[1]:
+                raise ValueError("board health listed a gate outside any epic")
+            # The human gate sits outside the Goal epic; a lifecycle label on it is out of scope.
+            outside = [{**issue, "labels": ["human"]} if issue["title"] == "Gate: human" else issue for issue in checked]
+            _, scoped_check, _ = invoke(["check", "--root", cid["Goal"]], Fake(outside))
+            if f"  {gate}  label-status" in scoped_check or f"  {cid['Legacy holder']}  holder" not in scoped_check:
                 raise ValueError("board check ignored --root")
 
             # feature and chore are retired: live ones are flagged and never routed.

@@ -76,8 +76,8 @@ dispatched or claimable; the checkpoint file is current; the report is given.
    items, briefs, dependencies and active workers whose premise changed. Refresh questions written against
    the superseded state. Repoint duplicate dependents to the keeper before
    `board bd duplicate <duplicate> --of <keeper>`.
-4. Undefer items the ruling resolves; clear superseded authority and user
-   holds it covers.
+4. Undefer items the ruling resolves; clear superseded authority and resolve
+   the gates it covers.
 5. Close: `board bd close <id> --reason "planned in <ids>"`.
 
 ## Frame
@@ -151,7 +151,7 @@ Establish the outcome's contribution to its milestone:
 
 - Rank by per-item [Priority](../../shared/work-tracking.md#priority),
   including committed nonblocking consumers (`board holders`).
-- Scope a user hold to the exact action, file, decision or effect it names;
+- Scope a user's stop to the exact action, file, decision or effect it names;
   continue authorized work outside it. Distinguish source authoring,
   execution, review and final acceptance. A proposal grants no approval.
 - Track every remainder as an item, a `blocks` edge or a deferral with its

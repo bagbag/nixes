@@ -52,7 +52,7 @@ findings or stops.
 **Entry:** open questions, a pasted list or consumer report, or the user asks
 for open items.
 
-1. **Collect.** List open items (`board health --items decided,questions,ratification,review`). Account for every point of a pasted list or report and check it against the
+1. **Collect.** List open items (`board health --items decided,questions,ratification,review,user`). Account for every point of a pasted list or report and check it against the
    current tree. Classify each as already ruled (cite its owner), the planning
    session's call, your ruling or user decision. For open items, list decided
    records awaiting release first, then open questions, then
@@ -131,8 +131,9 @@ release.
    record `board supersede <old> --with <new>`, with
    `--partial` when one rule of it changes.
    Output: released and superseded ids.
-7. **Next.** List waiting questions, `in_review` designs and finished epics
-   whose acceptance names the user;
+7. **Next.** List waiting questions, `in_review` designs, finished epics
+   whose acceptance names the user and what waits on the user
+   (`board health --items user`);
    recommend one next step by priority and what it unblocks; wait for the
    user.
    Output: the list and the recommendation.

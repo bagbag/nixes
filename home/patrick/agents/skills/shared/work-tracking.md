@@ -47,7 +47,7 @@ the user.
 | `design` | Design item: architecture, package graph and needed decisions for a slice. |
 | `decision` | Question, later the ruling's record ([Questions and rulings](#questions-and-rulings)). |
 | `epic` | Outcome ([Epics](#epics)). |
-| `gate` | Upstream wait only ([Upstream waits](#upstream-waits)). |
+| `gate` | Upstream wait or the user's go ([Dependencies](#dependencies)). |
 
 Titles carry no prefixes; `milestone`, `feature`, `chore` and `check` stay
 unused (a check others wait on is a task, [Work items](#work-items)). Review
@@ -195,6 +195,7 @@ order and context coincide, keep `blocks`.
 | B found while working on A | `discovered-from`: `board bd create … --deps discovered-from:A` |
 | Shared context, alternatives, a ruling's affected item | `relates-to`: `board bd dep relate A B` |
 | B revises ruling A | `supersedes` ([Questions and rulings](#questions-and-rulings)) |
+| B waits on the user's go (no open decision) | On the user's instruction only; raise your own caution as a question. `board bd gate create --type=human --blocks B --title "user <date>: '<words>'"`; more items: `board bd dep add <item> <gate>`; lift on the user's word or a covering released ruling: `board bd gate resolve <gate>`. |
 | External wait | gate ([Upstream waits](#upstream-waits)) |
 
 ### Hand-over and acceptance
@@ -215,8 +216,7 @@ order and context coincide, keep `blocks`.
 | Item | Lifecycle |
 |---|---|
 | Deferral | `board bd defer <id> --reason "<revisit condition>"`; undefer at its date or on named new evidence. Deferred items are the project backlog. |
-| User hold | Created only by a user instruction or ruling: `board bd defer <id> --reason "user <date>: '<words>'"` on each affected item, scoped to those words. Undefer when a later user instruction or released ruling covers the item. Raise your own caution as a question. |
-| Environment fact | `board bd remember --key <key>` for temporary repository-wide facts needed by every current session; state a removal condition; remove with `board bd forget`. |
+| Environment fact | `board bd remember --key <key>` for temporary repository-wide facts needed by every current session, a user's broad stop (area, paths, kind of action) included with its words and date; state a removal condition; remove with `board bd forget`. |
 
 ### Priority
 

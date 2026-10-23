@@ -250,7 +250,7 @@ def by_priority(issue: dict):
 
 # Views
 
-HEALTH_VIEWS = ('questions', 'decided', 'ratification', 'released', 'review', 'ready', 'held', 'blocked',
+HEALTH_VIEWS = ('questions', 'decided', 'ratification', 'released', 'review', 'user', 'ready', 'held', 'blocked',
                 'outside', 'labels')
 LIFECYCLE_LABELS = ('human', 'decided', 'review', 'needs-ratification', 'waiting')
 
@@ -268,10 +268,13 @@ def health(board: Board, args) -> None:
         'ratification': ('awaiting ratification', [i for i in items if i['status'] == 'needs_ratification']),
         'released': ('released rulings to plan', [i for i in decisions if i['status'] == 'released']),
         'review': ('in review', [i for i in items if i['status'] == 'in_review']),
+        'user': ('waiting on the user (gates titled user, items assigned to user)',
+                 [i for i in items if (i.get('issue_type') == 'gate' and i.get('title', '').startswith('user '))
+                  or i.get('assignee') == 'user']),
         'ready': ('claimable now (unassigned, unblocked)', [i for i in items if board.claimable(i)]),
         'held': ('held (assigned, not closed)', [i for i in items if i.get('assignee')]),
         'blocked': ('waiting on open blockers', [i for i in items if board.open_blockers(i['id'])]),
-        'outside': ('outside any epic', [i for i in items if epic_of(i) is None]),
+        'outside': ('outside any epic', [i for i in items if epic_of(i) is None and i.get('issue_type') != 'gate']),
         'labels': ('lifecycle labels (use statuses, assignment or blocks)',
                    [i for i in items if set(i.get('labels') or []) & set(LIFECYCLE_LABELS)]),
     }
@@ -386,11 +389,8 @@ CHECK_CLASSES = {  # class -> work-tracking anchor
     'release-gate': 'kinds',
     'label-status': 'statuses-and-labels',
     'released-blocks': 'questions-and-rulings',
-    'record-format': 'questions-and-rulings',
     'unnamed-blocker': 'dependencies',
 }
-RECORD_STATUSES = ('decided', 'released', 'needs_ratification')
-RECORD_SECTIONS = ('Question', 'Alternatives Considered', 'Decision', 'Rationale', 'Rule owner')
 # Squashed text (words run together): a flag, never a deviation. Calibrated on
 # the retro's samples (tools/ctx): clean board text 0 per 1,000 words, prompt
 # text 8.8, squashed board text 210.
@@ -419,22 +419,14 @@ def deviations(board: Board, root: str | None) -> list[tuple[str, str, str]]:
         prefix = next((p for p in TITLE_PREFIXES if title.startswith(p)), None)
         if prefix:
             found.append((item_id, 'title-prefix', f'title starts with {prefix}'))
-        if kind == 'gate':
-            gated = [d for d in board.dependents.get(item_id, []) if board.by_id.get(d, {}).get('issue_type') == 'decision']
-            if title.startswith('[Gate] Release') or gated:
-                found.append((item_id, 'release-gate', f"gates {', '.join(gated)}" if gated else 'release gate title'))
+        if kind == 'gate' and title.startswith('[Gate] Release'):
+            found.append((item_id, 'release-gate', 'release gate title'))
         labels = sorted(set(issue.get('labels') or []) & set(LIFECYCLE_LABELS))
         if labels:
             found.append((item_id, 'label-status', f"labels {', '.join(labels)}"))
         if kind == 'decision' and issue['status'] == 'released':
             found += [(item_id, 'released-blocks', f'released, still blocks {d}')
                       for d in board.dependents.get(item_id, []) if board.is_open(d)]
-        if kind == 'decision' and issue['status'] in RECORD_STATUSES:
-            description = issue.get('description') or ''
-            missing = [name for name in RECORD_SECTIONS
-                       if not re.search(rf'^##\s*{re.escape(name)}\s*$', description, re.MULTILINE | re.IGNORECASE)]
-            if missing:
-                found.append((item_id, 'record-format', f"lacks sections {', '.join(missing)}"))
         text = board.text(issue)
         # A gate carries its own reason (bd gate create --reason); a closed blocker holds nothing up.
         found += [(item_id, 'unnamed-blocker', f'waits on {b} without naming it') for b in blockers

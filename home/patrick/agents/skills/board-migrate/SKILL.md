@@ -45,17 +45,17 @@ between what exists and the target.
 - **Nothing lost.** Reconcile counts per source with what the target holds
   plus what history holds.
 - **Rules have a user source.** Trace every standing rule and constraint to a
-  user source (goal, instructions, decision record). Present rules without a
-  source, stricter than their source, or already covered by skills or global
-  instructions for keep or drop.
+  user source (goal, instructions, decision record). Route findings to the
+  deciding session uninvestigated: a released record whose rules lack a user
+  source or exceed it stays released, with a non-blocking question "Ratify or revise the flagged rules of <id>?"
+  naming the finding. Ask the user only migration-scope choices.
 - **One owner.** Write each rule into its owner under project-memory
   [Durable owners](../shared/project-memory.md#durable-owners); the board
   keeps the decision record. Epic text holds no rules, status or history.
 - **Plain text.** Write board text in plain sentences; rewrite shorthand or
-  squashed text of live entries when migrating them. Bring live decision
-  records past decision time into the record format
-  ([Questions and rulings](#questions-and-rulings)), the packet into a
-  comment; restate only the record's own ruling, later revisions by id.
+  squashed text of live entries when migrating them. Leave decision records
+  past decision time as written; Live or history and text rewrites skip them.
+  State missing provenance, dates and reasons as "not recorded".
 
 ## Steps
 
@@ -68,8 +68,12 @@ Give each step's output compactly; detail only findings and stops.
    backlog pointers), epic texts holding rules, status or history, rules
    without an owner (including rules in force that live only in closed
    records), acceptance repeated across items (one task others wait on, or
-   the epic acceptance) and entries without a deliberate priority (rank under
-   [Priority](#priority)). Classify every doc under `docs/` as current owner, proposal (to
+   the epic acceptance), entries without a deliberate priority (rank under
+   [Priority](#priority)), user stops stated in comments or deferral reasons
+   (convert those in force under [Dependencies](#dependencies) or
+   [Deferrals and environment facts](#deferrals-and-environment-facts), drop
+   lifted ones) and `board bd memories` past their removal condition (to the
+   user). Classify every doc under `docs/` as current owner, proposal (to
    the board) or history (to `history/`). Delegate sweeps of large sources by
    range.
    Output: sources with counts of live entries by kind; deviations by class.
@@ -121,7 +125,8 @@ replaced trackers sit in `history/`, and sessions are told to enter with
 
 ## Tool facts (bd 1.3.1)
 
-- Comments are permanent (no edit or delete).
+- Comments are permanent (no edit or delete). `board bd show --json` omits
+  them; read them with `board bd comments <id> --json`.
 - Merge duplicates after import: `board bd duplicate <dup> --of <keeper>`.
 - `board bd import --dry-run <file>` first; it must report every issue as new,
   otherwise choose other ids. On retry, import only missing entries.
