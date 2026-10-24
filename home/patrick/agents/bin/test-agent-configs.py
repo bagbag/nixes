@@ -804,11 +804,12 @@ def validate_bd_guard(root: Path) -> None:
 
     # Bare bd is denied with or without a session; board bd and mentions pass.
     bare = ["bd show x", "cd repo && bd ready", "xargs -I{} sh -c 'bd show {}' < ids", "if bd close x; then :; fi",
-            "/nix/store/x/bin/bd list", "BEADS_ACTOR=a bd close x", 'bash -c "cd x && bd ready"']
+            "/nix/store/x/bin/bd list", "BEADS_ACTOR=a bd close x", 'bash -c "cd x && bd ready"', "X=$(cat ids) bd show x"]
     passing = ["board bd show x", "$HOME/.agents/bin/board bd close x", "cd x && board bd ready",
                "xargs -I{} board bd show {} < ids", 'echo "bd close x"', 'git commit -m "bd close"', "rg pattern skills",
                'board handover x "tests pass; bd lint clean"', 'git commit -m "x (bd 1.3.1)"', 'echo "x && bd ready"',
-               "rg 'a|bd ' skills", "sh -c 'board bd show x'",
+               "rg 'a|bd ' skills", "sh -c 'board bd show x'", "g=$($HOME/.agents/bin/board bd show x)",
+               "B=$HOME/.agents/bin/board\n$B bd show x", "B=board;$B bd show x",
                'codex exec "line one\nslug \'demo\'. Run it." | grep -E "^(x|bd )"']
     for command in bare:
         for payload in ({}, {"session_id": SESSION}, {"session_id": SESSION, "turn_id": "t"}):
@@ -1069,14 +1070,13 @@ def validate_board(root: Path) -> None:
                 (cid["[Gate] Release: round 3"], "title-prefix", "kinds"),
                 (cid["[Gate] Release: round 3"], "release-gate", "kinds"),
                 (cid["Labelled status"], "label-status", "statuses-and-labels"),
-                (cid["Released ruling"], "released-blocks", "questions-and-rulings"),
                 (cid["Unnamed wait"], "unnamed-blocker", "dependencies"),
             ]
             for item_id, name, anchor in expected_lines:
                 if f"  {item_id}  {name}  work-tracking.md#{anchor}" not in report:
                     raise ValueError(f"board check missed {name} on {item_id}:\n{report}")
             deviation_lines = [row for row in report.splitlines() if "  work-tracking.md#" in row]
-            if code != 1 or len(deviation_lines) != len(expected_lines) or "convention deviations: 8\n" not in report:
+            if code != 1 or len(deviation_lines) != len(expected_lines) or "convention deviations: 7\n" not in report:
                 raise ValueError(f"board check reported extra deviations or the wrong exit code {code}:\n{report}")
             # Gate blockers carry their own reason; closed dependents of a released ruling block nothing.
             # A human gate on a question is the user's go, not a release gate; records are linted at release only.
@@ -1087,7 +1087,7 @@ def validate_board(root: Path) -> None:
             flag = report.split("flag, not a deviation")[1]
             if f"  {cid['Squashed text']}  squashed" not in flag or f"  {cid['Clean task']}  " in flag:
                 raise ValueError(f"board check missed or misplaced the squashed-text flag:\n{report}")
-            if "convention deviations: 8 — run /board-migrate" not in health_check:
+            if "convention deviations: 7 — run /board-migrate" not in health_check:
                 raise ValueError("board health lacks the deviation hint")
             # The user view lists gates titled with the user's words and items assigned to the user.
             waiting = [{**issue, "title": "user 2026-10-23: 'wait for my go'"} if issue["title"] == "Gate: human" else issue
@@ -1133,15 +1133,11 @@ def validate_board(root: Path) -> None:
             if f"  {cid['Unnamed wait']}  unnamed-blocker" in report or f"  {cid['User action']}  squashed" in report:
                 raise ValueError(f"board check counted a closed blocker or squashed comments:\n{report}")
 
-            closed_dependent = [{**issue, "status": "closed"} if issue["title"] == "Waits on ruling" else issue
-                                for issue in checked]
             # Closed items are immutable history: no class or flag looks at them.
             closed_all = [{**issue, "status": "closed"} if issue["title"] != "Goal" else issue for issue in checked]
             code, report, _ = invoke(["check"], Fake(closed_all))
             if code != 0 or "convention deviations: 0\n" not in report or "squashed text on open items: 0" not in report:
                 raise ValueError(f"board check looked at closed items:\n{report}")
-            if "  released-blocks  " in invoke(["check"], Fake(closed_dependent))[1]:
-                raise ValueError("board check counted a closed dependent of a released ruling")
 
             conforming = [issue for issue in checked if issue["title"] in ("Goal", "Clean task", "User action")]
             code, report, _ = invoke(["check"], Fake(conforming))
@@ -1206,6 +1202,14 @@ def validate_board(root: Path) -> None:
             invoke(["claim"], fake, worker)
             if fake.writes()[-1] != ["update", ids["Spike perf"], "--claim", "--json"]:
                 raise ValueError(f"board claim did not move on after a lost race: {fake.writes()}")
+
+            # At equal priority a released ruling goes before an older task.
+            subprocess.run(["bash", str(registry), "activate", "agent", "--pulls", "plan,implement"], check=True,
+                           env={**os.environ, **session_env(state_dir), **as_session("0000-plan0001")})
+            fake = Fake(variant(**{"Old store ruling": {"status": "closed"}}))
+            invoke(["claim"], fake, "plan0001")
+            if fake.writes() != [["update", ids["Released ruling"], "--assignee", "plan0001", "--if-assignee", "", "--json"]]:
+                raise ValueError(f"board claim did not take the released ruling before the equal-priority spike: {fake.writes()}")
 
             fake = Fake(fixture)
             code, _, _ = invoke(["claim"], fake, "lead0001")
@@ -1302,17 +1306,14 @@ def validate_board(root: Path) -> None:
             code, _, _ = invoke(["release", store, ids["Open cache question"]], fake, "lead0001")
             batch = [(args, stdin) for args, stdin in fake.calls if args[0] == "batch"]
             question = ids["Open cache question"]
+            # A released ruling keeps blocking the items it changes: release only sets the status.
             expected_ops = [f'update {store} status=released assignee=""',
-                            f"dep remove {ids['Implement store A']} {store}",
-                            f"dep add {ids['Implement store A']} {store} relates-to",
                             f'update {question} status=released assignee=""']
-            if code or len(batch) != 1 or len(fake.writes()) != 1 \
-                    or not all(op in batch[0][1].splitlines() for op in expected_ops) \
-                    or f"dep add {ids['Closed waiter']} {question} relates-to" not in batch[0][1]:
-                raise ValueError(f"board release must write one batch: {fake.calls}")
+            if code or len(batch) != 1 or len(fake.writes()) != 1 or batch[0][1].splitlines() != expected_ops:
+                raise ValueError(f"board release must write one batch of status updates: {fake.calls}")
 
-            # A full supersede relates the old record's open items to the new one, skipping closed and
-            # already linked items; --partial only adds the edge. Both drop the pair's existing link first.
+            # A full supersede blocks the old record's open items on the new one until it is planned,
+            # skipping closed and already linked items; --partial only adds the edge. Both drop the pair's existing link first.
             old, new = ids["Old store ruling"], ids["Store choice"]
             old_issue = next(i for i in fixture if i["id"] == old)
             linked = variant(**{"Old store ruling": {"dependencies": [*(old_issue.get("dependencies") or []), *(
@@ -1323,7 +1324,7 @@ def validate_board(root: Path) -> None:
             if code or fake.writes() != [["batch", "-m", f"board supersede {old} --with {new}", "--json"],
                                          ["supersede", old, "--with", new]] \
                     or next(stdin for args, stdin in fake.calls if args[0] == "batch") \
-                    != f"dep remove {new} {old}\ndep add {ids['Ready task']} {new} relates-to\n":
+                    != f"dep remove {new} {old}\ndep add {ids['Ready task']} {new} blocks\n":
                 raise ValueError(f"board supersede: {fake.calls}\n{output}")
             fake = Fake(fixture)
             code, _, _ = invoke(["supersede", old, "--with", new, "--partial"], fake, "lead0001")

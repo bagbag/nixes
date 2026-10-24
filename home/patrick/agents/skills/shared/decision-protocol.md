@@ -14,7 +14,12 @@ per step for a local, reversible choice.
    For each mechanism the framing assumes (conversion, wrapper, listener,
    observer), ask why it exists and whether an upstream owner can produce the
    right result at its source; a mechanism whose need disappears is the root
-   fix.
+   fix. For a proposed guard or check, show the concrete failure it catches
+   (code and error) and fix what it finds at the cause; the guard only
+   prevents recurrence. A failure an option triggers (compiler depth limit,
+   crash, performance cliff) is a clue to a defect: name its suspected cause,
+   propose tracking the root-cause search (a board item where one exists) and
+   still weigh it against the option.
 4. **End state:** derive the smallest clean, coherent result as if designed
    fresh, under the project's quality criterion (e.g. consumer DX for a library),
    independent of effort, churn, earlier rulings, docs and their reasoning;
@@ -28,7 +33,19 @@ per step for a local, reversible choice.
    documented non-features. Construct its strongest alternative. Treat any
    realistic, coherent alternative as contested, even when worse or revising
    an earlier ruling or convention; include alternatives from other sources.
-6. **Decide:** apply [Decision authority](#decision-authority). Bring contested
+   When realistic scenarios favor different options, add "support both" (a
+   default plus an opt-in) as an option.
+6. **Premises:** list what the recommendation rests on: facts, consumer
+   needs, absences (a gap, an unhandled case, a missing rule or owner),
+   current contracts and earlier rulings. Give each its evidence: `path:line`,
+   probe output, or the contract or ruling re-derived on its merits with its
+   current status (superseded, closed, revised by a later ruling). Verify an
+   absence by searching its owner docs and, where a board exists,
+   `board related <terms> --docs <paths>`. Verify each unverified premise now
+   or ask it first as its own question; base no ruling or recommendation on an
+   assumption. Turn each released ruling the end state revises into a
+   question.
+7. **Decide:** apply [Decision authority](#decision-authority). Bring contested
    choices, options and a recommendation to the decider.
 
 ### Decision authority
@@ -49,9 +66,11 @@ risk or scope trade-off.
 
 ### End-state criteria
 
-- Question existing and proposed parts; retain only what realistic consumers
-  need, including external library consumers without in-repo call sites. Use
-  in-repo call-site counts to size changes, not to establish consumer need.
+- Question existing and proposed parts; keep each part that one realistic
+  consumer scenario needs, including external library consumers without
+  in-repo call sites. Smallness ranks options serving the same uses; it never
+  drops a part such a scenario needs. Use in-repo call-site counts to size
+  changes, not to establish consumer need.
 - For each option, name the consumer or failure each part (log, option,
   status, mechanism) serves, drop parts without one, and roughly estimate its
   size in lines and files.

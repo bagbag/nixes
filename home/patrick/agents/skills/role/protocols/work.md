@@ -21,7 +21,7 @@ findings or stops.
    Output: `claimed <id> (<kind>)`, plus the items you still hold.
 2. **Read.** The item (`board bd show <id>`), its brief, the project instructions,
    and every released ruling linked to it with that ruling's owner section;
-   released rulings bind although they no longer block. Bring a better
+   linked rulings bind, planned (closed) ones included. Bring a better
    evidence-backed alternative to a ruling as a question (global Challenge on
    receipt). When a ruling or landed change has removed the item's outcome,
    close it as moot, naming that ruling or change.

@@ -21,9 +21,11 @@ findings or stops.
 - The user decides and releases rulings and owns staging and commits. Write
   decision records, rule owners, your own artifacts and `/tmp` probes; leave
   implementation to work items.
-- Delegate sweeps beyond the round; keep your context for synthesis. Brief
-  subagents with one question's scope and a stop condition. Re-derive every
-  choice yourself and treat their results as evidence, not conclusions.
+- Decide in the round every contract consumers see: API shape, names,
+  defaults, error and failure behavior, limits. Leave only internals and
+  sequencing to work items.
+- Brief subagents with one question's scope and a stop condition. Re-derive
+  every choice yourself and treat their results as evidence, not conclusions.
 - When the user keeps a choice you challenged, follow it and record the
   concern beside it. Reconsider pushback on its merits. Own an error and
   correct your framing with the user.
@@ -64,18 +66,20 @@ for open items.
    prerequisites before their dependents (`board bd dep tree <id> --direction=up`).
    Claim the round: `board claim <ids>`.
    Output: round ids.
-3. **Related.** Run `board related <terms>` per question.
-   Extend an open item on the same decision instead of adding one. Comment on or hand off overlaps
-   with items other sessions hold.
+3. **Related.** Run `board related <terms>` per question, for its own terms
+   and for the modules and APIs its options build on.
+   Extend an open item on the same decision instead of adding one. Comment
+   on or hand off overlaps with items other sessions hold.
    Output: board check table: question, related hits, action.
-4. **Ground.** Run the decision protocol from Top-down through End state
+4. **Ground.** Run the decision protocol from Top-down through Premises
    read-only across the round. Ground questions headed into a detailed
    walkthrough yourself. Treat item and doc text as claims and re-verify them
    in current source. Use `explore-options` or `second-opinion` when warranted
    or requested; propose the reviewer setup under
    [Reviewers](../../shared/reviewers.md#reviewers) first and spot-check
    decisive claims.
-   Output: one line per question: verified claims, unverified claims.
+   Output: one line per question: premises with their evidence, premises
+   still to ask.
 5. **Walk through and ask** under
    [Asking the user](../../shared/asking.md#asking-the-user).
    Output: the walkthrough and the questions.
@@ -83,7 +87,9 @@ for open items.
    [Questions and rulings](../../shared/work-tracking.md#questions-and-rulings)
    and set status `decided`; when the user asks for the overall picture first,
    record the round after the walkthrough. Record user-stated constraints and
-   principles as rulings. Revise a record in place until release; record later
+   principles as rulings. Check each record against the wording of the chosen
+   option; a rule the option did not state is your ruling (disclose it) or a
+   new question. Revise a record in place until release; record later
    changes as new records. Close ratified `needs_ratification` records under
    the same reference.
    Output: `decided <ids>`.
@@ -104,14 +110,16 @@ release.
    your rulings; verify citations and counts (`verify` for large sets).
    Output: one line per record: unchanged, or the change.
 2. **Board check.** Run `board related <terms>` across the
-   set, closed items and canonical docs included (`--docs`), and act on every hit class:
+   set, closed items and canonical docs included (`--docs <doc paths>`), and
+   act on every hit class:
 
    | Hit | Action |
    |---|---|
    | Earlier ruling it revises or contradicts, closed included | Name it under Prior rulings; supersede it in step 6. |
    | Open question it duplicates or answers | Merge, or answer and close. |
    | Open question its own premise rests on | Hold the record; it blocks release. |
-   | Open or deferred item assuming the old state, or one it unblocks | Relate it; comment the revised clause. |
+   | Open item assuming the old state | Block it on the record (`board bd dep add <item> <record>`); comment the revised clause. |
+   | Deferred item assuming the old state, or one it unblocks | Relate it; comment the revised clause. |
    | Item another session holds on the same concepts | Comment or hand off. |
    | Doc, README or skill stating the old rule | Owner write in step 5, or a task. |
 

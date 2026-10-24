@@ -1,12 +1,14 @@
 ## Question format
 
-- Ask one question per decision. Open with the problem in one plain sentence
-  and two or three realistic consumer scenarios, including the simple case.
-  Name items in plain words; put ids in brackets.
-- Give every option its for, against and footguns. Put the recommendation
-  first, marked strong or lean, with any reviewer disagreement.
-- For code, API or shape choices, show the recommendation's short consumer
-  example in chat and each option's example in its preview.
+- Ask one question per decision. Present each in chat first: the problem in
+  one plain sentence; realistic consumer scenarios (the simple case and each
+  case where the options' outcomes differ); every option's for, against and
+  footguns, with a short consumer example for code, API or shape choices; the
+  recommendation first, marked strong or lean, with any reviewer
+  disagreement. Name items in plain words; put ids in brackets.
+- Keep the asked question short: one sentence that points to its chat entry
+  by number or id, short option labels with a one-line description each, and
+  each option's code example as its preview.
 - Ask with the runtime's structured-question tool where it has one, using your
   own option labels, four questions per call and further calls for the rest.
   Otherwise number the questions and letter the options so the user can answer

@@ -72,7 +72,7 @@ fi
 
 # A command word, possibly quoted: after a separator, keyword, interpreter,
 # assignment or `-c '` (sh -c '...').
-position='(^|[;&|(`]|\$\(|-c[[:space:]]+['\''"]|(xargs|then|do|else|if|while|until|time|env|command|exec|nohup|bash|sh|zsh|python3?|!)[[:space:]]|[[:alnum:]_]+=[^[:space:]]*[[:space:]])'
+position='(^|[;&|(`]|\$\(|-c[[:space:]]+['\''"]|(xargs|then|do|else|if|while|until|time|env|command|exec|nohup|bash|sh|zsh|python3?|!)[[:space:]]|[[:alnum:]_]+=([^[:space:];&|()]|\$\([^)]*\))*[[:space:]])'
 word='([[:space:];&|)'\''"]|$)'
 # Bare bd: quoted text is data, except `sh -c '...'` bodies, which run.
 bare="$position[[:space:]]*([^[:space:];&|()'\"]*/)?bd$word"

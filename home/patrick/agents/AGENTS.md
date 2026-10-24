@@ -157,12 +157,14 @@ the actual requirement from your interpretation.
 
 ## Orchestration and delegation
 
-Use subagents when the user or an applicable skill/instruction requests them and
-when delegation materially improves context isolation, speed, or independent
-review. Keep single-command checks inline. Configure named agents where the tool
-supports them; otherwise put the role, constraints, and expected report directly
-in the brief. Model bindings belong in native agent configuration, never in plans
-or worker briefs.
+Use subagents when the user or an applicable skill/instruction requests them,
+for discovery of uncertain scope (its raw output stays out of your context), and
+for independent review or verification of work you or your workers wrote (it
+needs a fresh context). Do the rest inline, including reviews the user asks of
+you: grounding, step-backs, judging results and single-command checks.
+Configure named agents where the tool supports them; otherwise put the role,
+constraints, and expected report directly in the brief. Model bindings belong
+in native agent configuration, never in plans or worker briefs.
 
 For artifact-producing assignments, assign output paths under
 `.scratch/<topic-slug>/<arc-slug>/`, named after subject and kind

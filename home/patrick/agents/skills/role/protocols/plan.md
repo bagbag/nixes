@@ -69,9 +69,11 @@ dispatched or claimable; the checkpoint file is current; the report is given.
    rule owner section. A ruling settles only its stated choice; linked reports
    are evidence and hints are planning input; a supersession is an authorized
    revision.
-2. Relate each affected open item (`board bd dep relate <ruling> <item>`) and add the
-   ruling id and owner anchor to its `--design`. Create missing work items.
-   Add changelog and upgrade duties to affected items' acceptance.
+2. Block each open item the ruling changes on it (`board bd dep add <item>
+   <ruling>`); relate items it only informs (`board bd dep relate <ruling>
+   <item>`). Add the ruling id and owner anchor to each item's `--design`.
+   Create missing work items. Add changelog and upgrade duties to affected
+   items' acceptance. Closing the ruling in step 5 unblocks them.
 3. For a revision, update every consumer of the changed decision: related
    items, briefs, dependencies and active workers whose premise changed. Refresh questions written against
    the superseded state. Repoint duplicate dependents to the keeper before

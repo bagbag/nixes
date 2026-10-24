@@ -119,7 +119,7 @@ claims them.
 | `open` | Unanswered and unclaimed. Blocks its dependents. |
 | `in_progress` | Unanswered; claimed by the session running its round. Blocks its dependents. |
 | `decided` | Answered, release pending. Still blocks. |
-| `released` | Binding. Blocks nothing; waits for a `plan` session to create or relate its work and close it. |
+| `released` | Binding. Blocks the open items it changes until a `plan` session plans it and closes it; claimed before equal-priority work. |
 | `needs_ratification` | Autopilot ruling in force, awaiting the user's ratification through a deciding session. Blocks nothing. |
 | closed | Planned, superseded or withdrawn. |
 
@@ -162,7 +162,7 @@ Use these `##` sections:
 | Question | Exact choice. |
 | Root cause and end state | Decision protocol's Root fix and End state, designed fresh, with its consumer code. |
 | Prior rulings (evidence) | Rulings, rules, docs and pending approvals touching the question: owner, and whether the end state keeps or revises each. They narrow no option; options a missing approval blocks stay in the set. |
-| Evidence | `path:line`, executed results, limits. |
+| Premises and evidence | Each premise with `path:line` or executed results, or the question that asks it; limits. |
 | Options | Decisive trade-offs, always including the end-state option and the prior rulings it revises; use `architect` or `option-explorer` for consequential choices or open option spaces. |
 | Recommendation | Recommended option and conditions changing it. |
 
@@ -190,10 +190,10 @@ order and context coincide, keep `blocks`.
 
 | Relation | Use |
 |---|---|
-| B can't start before A | `blocks`: `board bd dep add B A`, with a one-line reason naming A in B. |
+| B can't start before A, including released ruling A changing B | `blocks`: `board bd dep add B A`, with a one-line reason naming A in B. |
 | B is part of outcome A | `--parent A` |
 | B found while working on A | `discovered-from`: `board bd create … --deps discovered-from:A` |
-| Shared context, alternatives, a ruling's affected item | `relates-to`: `board bd dep relate A B` |
+| Shared context, alternatives, a ruling's context-only item | `relates-to`: `board bd dep relate A B` |
 | B revises ruling A | `supersedes` ([Questions and rulings](#questions-and-rulings)) |
 | B waits on the user's go (no open decision) | On the user's instruction only; raise your own caution as a question. `board bd gate create --type=human --blocks B --title "user <date>: '<words>'"`; more items: `board bd dep add <item> <gate>`; lift on the user's word or a covering released ruling: `board bd gate resolve <gate>`. |
 | External wait | gate ([Upstream waits](#upstream-waits)) |

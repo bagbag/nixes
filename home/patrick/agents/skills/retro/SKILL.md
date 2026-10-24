@@ -14,8 +14,9 @@ Propose every learning for user ratification. Apply only approved edits.
 
 ## Collect evidence
 
-- Review the session in the main conversation for concrete recurring friction
-  and durable learnings. Use [Learning signals](#learning-signals).
+- Review the whole session for concrete recurring friction and durable
+  learnings. After a compaction, read the session transcript file, not only
+  the summary. Use [Learning signals](#learning-signals).
 - If the session yields no durable learning, report an empty result.
 
 ## Route each learning

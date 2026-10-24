@@ -248,6 +248,12 @@ def by_priority(issue: dict):
     return (issue.get('priority', 9), issue.get('created_at') or '', issue['id'])
 
 
+def claim_order(board: Board, issue: dict):
+    # At equal priority a released ruling goes first: it blocks the work it changes until planned.
+    priority, created, item_id = by_priority(issue)
+    return (priority, board.kind(issue) != 'plan', created, item_id)
+
+
 # Views
 
 HEALTH_VIEWS = ('questions', 'decided', 'ratification', 'released', 'review', 'user', 'ready', 'held', 'blocked',
@@ -388,7 +394,6 @@ CHECK_CLASSES = {  # class -> work-tracking anchor
     'title-prefix': 'kinds',
     'release-gate': 'kinds',
     'label-status': 'statuses-and-labels',
-    'released-blocks': 'questions-and-rulings',
     'unnamed-blocker': 'dependencies',
 }
 # Squashed text (words run together): a flag, never a deviation. Calibrated on
@@ -424,9 +429,6 @@ def deviations(board: Board, root: str | None) -> list[tuple[str, str, str]]:
         labels = sorted(set(issue.get('labels') or []) & set(LIFECYCLE_LABELS))
         if labels:
             found.append((item_id, 'label-status', f"labels {', '.join(labels)}"))
-        if kind == 'decision' and issue['status'] == 'released':
-            found += [(item_id, 'released-blocks', f'released, still blocks {d}')
-                      for d in board.dependents.get(item_id, []) if board.is_open(d)]
         text = board.text(issue)
         # A gate carries its own reason (bd gate create --reason); a closed blocker holds nothing up.
         found += [(item_id, 'unnamed-blocker', f'waits on {b} without naming it') for b in blockers
@@ -652,7 +654,8 @@ def claim(board: Board, args) -> int:
             raise BoardError(f'no registered role for session {session_actor(actor)}; run /role first')
         kinds = session_kinds(entry)
         scoped = board.scoped(args.root)
-        candidates = sorted((issue for issue in scoped if board.claimable(issue) in kinds), key=by_priority)
+        candidates = sorted((issue for issue in scoped if board.claimable(issue) in kinds),
+                            key=lambda issue: claim_order(board, issue))
         for issue in candidates:
             if issue['status'] == 'in_review' and authorship(issue)[0] == actor:
                 continue  # your own hand-over needs another reviewer
@@ -765,12 +768,8 @@ def release(board: Board, args) -> None:
     if unlinted:
         raise BoardError('release refused, record text fails bd lint (write the record first):\n  ' + '\n  '.join(unlinted))
 
-    operations = []
-    for issue in rulings:
-        operations.append(f"update {issue['id']} status=released assignee=\"\"")
-        for waiting in board.dependents.get(issue['id'], []):
-            # A released ruling never blocks; the link stays as context for the work protocol.
-            operations += [f"dep remove {waiting} {issue['id']}", f"dep add {waiting} {issue['id']} relates-to"]
+    # A released ruling keeps blocking the items it changes; planning closes it and unblocks them.
+    operations = [f"update {issue['id']} status=released assignee=\"\"" for issue in rulings]
     bd_checked('batch', '-m', f"board release {' '.join(args.ids)}", '--json', stdin='\n'.join(operations) + '\n')
     for issue in rulings:
         print(f"released {issue['id']}: {issue.get('title', '')}")
@@ -789,10 +788,10 @@ def supersede(board: Board, args) -> None:
         operations.append(f'dep add {args.old} {args.new} supersedes')
         items = []
     else:
-        # The new record restates the whole rule: the old record's open items now follow it.
+        # The new record restates the whole rule: the old record's open items wait for its planning.
         items = sorted(i for i in board.related.get(args.old, set()) | set(board.dependents.get(args.old, []))
                        if i != args.new and board.is_open(i) and i not in board.linked.get(args.new, set()))
-        operations += [f'dep add {item} {args.new} relates-to' for item in items]
+        operations += [f'dep add {item} {args.new} blocks' for item in items]
     if operations:
         bd_checked('batch', '-m', f'board supersede {args.old} --with {args.new}', '--json',
                    stdin='\n'.join(operations) + '\n')
