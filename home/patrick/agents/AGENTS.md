@@ -82,7 +82,12 @@ Get explicit confirmation before running git commands that modify the working tr
 
 ## Sandbox and permissions
 
-When the sandbox blocks an action the task authorizes, retry it with elevated sandbox permissions. A refusal by the user or an approval reviewer is a decision: record it, continue independent work, and reach the same effect another way only with the decider's approval.
+Request elevated sandbox permissions through the runtime's approval path for an action the task authorizes once the sandbox blocks it, or on the first attempt when it is known to need them. An approved elevation never replaces a confirmation the user must give.
+
+- A refusal by the user or an approval reviewer is a decision: record it, continue independent work, and reach the same effect another way only with the decider's approval.
+- When the approval service fails before deciding, retry the unchanged request once where the runtime permits.
+- When elevation is unavailable, the action stays blocked or that retry fails, report a blocker with the command, error and attempts (on a board: a question blocking the item); continue independent work.
+- Failures after the sandbox admits the action follow the Retry limit.
 
 ## Filesystem: confirm before destructive operations
 
@@ -151,9 +156,10 @@ Write a comment or doc only to explain *why*, a non-obvious constraint, or a got
 **Skill instructions:** write and review skill, agent-definition and instruction text under the `skill-authoring` skill.
 
 **Applying skills:** Apply explicit user direction over conflicting skill
-guidance within runtime permissions. When a skill causes a pause or restriction,
-name and link to its source, quote the governing instruction, and distinguish
-the actual requirement from your interpretation.
+guidance within runtime permissions. When a skill, project instruction or
+approval gate causes a pause or restriction, check it against the exact command
+and its actual effects; name and link to its source, quote the governing
+instruction, and distinguish the actual requirement from your interpretation.
 
 ## Orchestration and delegation
 
@@ -218,14 +224,16 @@ escalation never reset it. At the limit: stop that repair, record attempts,
 remaining failure and root-cause hypothesis, reassess the premise, seek an
 independent challenge when available, and escalate once with an
 evidence-backed changed approach; if that fails, bring the blocker to the user
-(on a board: a question blocking the item).
+(on a board: a question blocking the item). The stop covers only that repair
+and ends when the problem is solved or its question is answered.
 
 **Warm reuse:** continue an existing agent instead of spawning when its context
 covers the next task, its permissions allow the work, and it did not author
 what it would assess. Weigh context rebuild cost against tier: a warm stronger
 agent often handles a narrow follow-up more cheaply than a fresh one rereading
 its sources. Continue only while the agent's last turn ended at most 30 minutes
-ago (`$HOME/.agents/bin/worker-last-use`). Start fresh for independent
+ago (`$HOME/.agents/bin/worker-last-use`, a recency hint: if continuation
+fails, start fresh). Start fresh for independent
 judgments, changed premises, or at the retry limit. Brief
 warm agents with the delta: new task, changes since, and superseded context.
 

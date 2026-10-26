@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """List a session's workers active within the warm-reuse window, by minutes since their last transcript event (Codex and Claude Code).
 
-Usage: worker-last-use [<parent session id>]   (default: current session from the environment)
-A worker not listed has been idle longer than the window.
+Unknown sessions and worker IDs are errors, not evidence that no warm workers exist.
+Transcript recency does not establish native worker liveness.
 """
+import argparse
 import glob
 import json
 import os
-import sys
 import time
 from datetime import datetime, timezone
 
@@ -64,7 +64,8 @@ def codex_workers(parent):
 
 
 def claude_workers(parent):
-    for path in glob.glob(os.path.expanduser(f'~/.claude/projects/*/{parent}/subagents/agent-*.jsonl')):
+    escaped = glob.escape(parent)
+    for path in glob.glob(os.path.expanduser(f'~/.claude/projects/*/{escaped}/subagents/agent-*.jsonl')):
         if not recent(path):
             continue
         meta_path = path.removesuffix('.jsonl') + '.meta.json'
@@ -76,16 +77,58 @@ def claude_workers(parent):
         yield minutes_since(timestamp), meta.get('description') or agent_id, meta.get('agentType') or '?', agent_id
 
 
-def main():
-    parent = sys.argv[1] if len(sys.argv) > 1 else (os.environ.get('CLAUDE_CODE_SESSION_ID') or os.environ.get('CODEX_THREAD_ID') or os.environ.get('CODEX_SESSION_ID'))
+def identify_parent(parent):
+    """Recognize parent metadata and reject a known worker's own identifier."""
+    escaped = glob.escape(parent)
+    known = False
+    for path in glob.glob(os.path.expanduser(f'~/.codex/sessions/*/*/*/rollout-*-{escaped}.jsonl')):
+        try:
+            with open(path) as file:
+                meta = json.loads(file.readline()).get('payload', {})
+        except (OSError, ValueError):
+            continue
+        if meta.get('id') != parent:
+            continue
+        worker_parent = meta.get('parent_thread_id')
+        if worker_parent and meta.get('agent_role'):
+            raise ValueError(f'{parent!r} is a worker ID; pass its parent session ID {worker_parent!r}')
+        known = True
+
+    claude_id = glob.escape(parent.removeprefix('agent-'))
+    worker_paths = glob.glob(os.path.expanduser(f'~/.claude/projects/*/*/subagents/agent-{claude_id}.jsonl'))
+    if worker_paths:
+        parents = sorted({os.path.basename(os.path.dirname(os.path.dirname(path))) for path in worker_paths})
+        raise ValueError(f'{parent!r} is a worker ID; pass its parent session ID: {", ".join(parents)}')
+    if glob.glob(os.path.expanduser(f'~/.claude/projects/*/{escaped}.jsonl')):
+        known = True
+    if any(os.path.isdir(path) for path in glob.glob(os.path.expanduser(f'~/.claude/projects/*/{escaped}/subagents'))):
+        known = True
+    return known
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument('parent', nargs='?', metavar='PARENT_SESSION_ID',
+                        help='parent session ID (defaults to the current session from the environment)')
+    arguments = parser.parse_args(argv)
+    parent = arguments.parent or (os.environ.get('CLAUDE_CODE_SESSION_ID') or os.environ.get('CODEX_THREAD_ID') or os.environ.get('CODEX_SESSION_ID'))
     if not parent:
-        sys.exit('worker-last-use: pass the parent session id')
+        parser.error('pass the parent session ID')
+    if parent in ('.', '..') or '/' in parent or '\\' in parent:
+        parser.error('pass a parent session ID, not a path')
+    try:
+        known = identify_parent(parent)
+    except ValueError as error:
+        parser.error(str(error))
     rows = sorted(row for row in [*codex_workers(parent), *claude_workers(parent)] if row[0] <= WARM_MINUTES)
+    if not known and not rows:
+        parser.error(f'parent session {parent!r} was not found; warm-worker availability is unknown')
     if not rows:
-        print(f'no worker active within {WARM_MINUTES} min')
+        print(f'parent {parent}: no worker active within {WARM_MINUTES} min')
     for minutes, name, role, worker_id in rows:
         print(f'{minutes:>6} min  {role:<16} {name}  [{worker_id}]')
+    return 0
 
 
 if __name__ == '__main__':
-    main()
+    raise SystemExit(main())

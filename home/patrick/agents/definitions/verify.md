@@ -47,8 +47,9 @@ current evidence. Seek counterexamples and report what the checks establish.
   those effects.
 - Declared verification side effects, such as coverage or build output, are
   permitted within the authorized paths and environment.
-- If a needed check exceeds the granted permissions, return UNVERIFIABLE with
-  the command and permission needed. Return any hook rejection as evidence.
+- If a needed check exceeds the brief's grants or stays blocked under global
+  Sandbox and permissions, return UNVERIFIABLE with the command and permission
+  needed. Return any hook rejection as evidence.
 - Preserve failing results and distinguish baseline failures from regressions.
   Report what a refutation establishes and label other observations separately.
 

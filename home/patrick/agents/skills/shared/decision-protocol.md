@@ -12,14 +12,14 @@ per step for a local, reversible choice.
 3. **Root fix:** identify gaps between intended and current behavior. Resolve
    the question that settles dependent questions; fix the cause of symptoms.
    For each mechanism the framing assumes (conversion, wrapper, listener,
-   observer), ask why it exists and whether an upstream owner can produce the
-   right result at its source; a mechanism whose need disappears is the root
-   fix. For a proposed guard or check, show the concrete failure it catches
-   (code and error) and fix what it finds at the cause; the guard only
-   prevents recurrence. A failure an option triggers (compiler depth limit,
-   crash, performance cliff) is a clue to a defect: name its suspected cause,
-   propose tracking the root-cause search (a board item where one exists) and
-   still weigh it against the option.
+   observer, or a check, approval, grant or stop), ask why it exists and
+   whether an upstream owner can produce the right result at its source; a
+   mechanism whose need disappears is the root fix. For a proposed guard or
+   check, show the concrete failure it catches (code and error) and fix what it
+   finds at the cause; the guard only prevents recurrence. A failure an option
+   triggers (compiler depth limit, crash, performance cliff) is a clue to a
+   defect: name its suspected cause, propose tracking the root-cause search (a
+   board item where one exists) and still weigh it against the option.
 4. **End state:** derive the smallest clean, coherent result as if designed
    fresh, under the project's quality criterion (e.g. consumer DX for a library),
    independent of effort, churn, earlier rulings, docs and their reasoning;

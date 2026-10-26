@@ -206,6 +206,10 @@ Establish the outcome's contribution to its milestone:
   and running tests separately; a running hold does not forbid writing.
   Forbid assessor fixes in a review brief while the author is still active in
   the reviewed files.
+- When evidence mixes material the brief doesn't grant, including conclusions
+  that would anchor an independent assessor, pass only the granted paths and
+  fields, preparing a filtered view when needed; never the mixed source with
+  instructions to filter it.
 - Give the goal epic id and require board/spec contradiction reports. Link a
   `.scratch/` file for a substantial brief.
 - Relay project-specific rules, excluding generic role discipline. Add

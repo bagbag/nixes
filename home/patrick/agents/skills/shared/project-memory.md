@@ -63,9 +63,10 @@
   (work-tracking [Epics](../shared/work-tracking.md#epics)).
 - The planning session keeps a plain-prose checkpoint file,
   `.scratch/<topic-slug>/<arc-slug>/checkpoint.md`, replaced in place:
-  verified position, next authorized work and return boundary, blockers,
-  pending choices, parallel tracks, and links to plans and reports. Distinguish
-  executed evidence from author reports and intent.
+  verified position, next authorized work and return boundary, blockers by
+  board id, pending choices, parallel tracks, and links to plans and reports.
+  Distinguish executed evidence from author reports and intent. It holds no
+  operating rules.
 - Arcs may run in parallel. Each arc has its own outcome epic and
   `.scratch/<topic-slug>/<arc-slug>/` for plans, drafts, reviews, `evidence/`
   and `history/`.

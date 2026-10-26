@@ -1416,6 +1416,103 @@ def validate_board(root: Path) -> None:
             raise ValueError("board bd ran an agent's dolt start")
 
 
+def validate_worker_last_use(root: Path) -> None:
+    """Exercise only synthetic transcripts, never the invoking session's workers."""
+    from datetime import datetime, timedelta, timezone
+
+    helper = root / "bin" / "worker-last-use.py"
+    bootstrap = """import os, runpy, sys
+from unittest.mock import patch
+fixture_root, helper, *arguments = sys.argv[1:]
+with patch('os.path.expanduser', lambda path: os.path.join(fixture_root, path[2:]) if path.startswith('~/') else path):
+    sys.argv = [helper, *arguments]
+    runpy.run_path(helper, run_name='__main__')
+"""
+    parent = "00000000-0000-0000-0000-000000000001"
+    worker = "00000000-0000-0000-0000-000000000002"
+    expired = "00000000-0000-0000-0000-000000000003"
+    unknown = "00000000-0000-0000-0000-000000000004"
+    claude_parent = "00000000-0000-0000-0000-000000000005"
+    failures = []
+
+    def check(condition, label, result):
+        if not condition:
+            failures.append(f"{label}: exit={result.returncode}, stdout={result.stdout!r}, stderr={result.stderr!r}")
+
+    with tempfile.TemporaryDirectory() as directory:
+        fixture_root = Path(directory)
+        sessions = fixture_root / ".codex" / "sessions" / "2026" / "10" / "25"
+        sessions.mkdir(parents=True)
+
+        def transcript(identity, age=0, **metadata):
+            moment = datetime.now(timezone.utc) - timedelta(minutes=age)
+            path = sessions / f"rollout-2026-10-25T00-00-00-{identity}.jsonl"
+            rows = [{"type": "session_meta", "payload": {"id": identity, **metadata}},
+                    {"type": "event_msg", "timestamp": moment.isoformat()}]
+            path.write_text("\n".join(json.dumps(row) for row in rows) + "\n", encoding="utf-8")
+            os.utime(path, (moment.timestamp(), moment.timestamp()))
+            return path
+
+        transcript(parent)
+        warm_path = transcript(worker, age=5, parent_thread_id=parent, agent_role="verify", agent_nickname="Warm fixture")
+        transcript(expired, age=35, parent_thread_id=parent, agent_role="review", agent_nickname="Expired fixture")
+        env = {**os.environ, "CLAUDE_CODE_SESSION_ID": "", "CODEX_THREAD_ID": parent, "CODEX_SESSION_ID": ""}
+
+        def invoke(*arguments, **overrides):
+            return subprocess.run([sys.executable, "-B", "-c", bootstrap, str(fixture_root), str(helper), *arguments],
+                                  text=True, capture_output=True, env={**env, **overrides})
+
+        result = invoke("--help")
+        check(result.returncode == 0 and "usage:" in result.stdout.lower() and "parent" in result.stdout.lower()
+              and "no worker active" not in result.stdout, "--help displays usage", result)
+        result = invoke(parent)
+        check(result.returncode == 0 and "Warm fixture" in result.stdout and worker in result.stdout
+              and "Expired fixture" not in result.stdout, "recognized parent lists only warm workers", result)
+        result = invoke()
+        check(result.returncode == 0 and "Warm fixture" in result.stdout, "environment parent default", result)
+        for identity in (worker, expired):
+            result = invoke(identity)
+            check(result.returncode != 0 and parent in result.stderr and "parent session" in result.stderr.lower()
+                  and "no worker active" not in result.stdout, "worker ID cannot masquerade as an empty parent", result)
+        result = invoke(unknown)
+        check(result.returncode != 0 and unknown in result.stderr and "no worker active" not in result.stdout,
+              "unknown parent is not a cold-worker result", result)
+        for arguments in (("--invalid-option",), (parent, "extra")):
+            result = invoke(*arguments)
+            check(result.returncode != 0 and "usage:" in result.stderr.lower(), "invalid CLI arguments", result)
+        result = invoke(CODEX_THREAD_ID="")
+        check(result.returncode != 0 and "parent session" in result.stderr.lower(), "missing parent argument", result)
+        old = (datetime.now(timezone.utc) - timedelta(minutes=35)).timestamp()
+        os.utime(warm_path, (old, old))
+        result = invoke(parent)
+        check(result.returncode == 0 and "no worker active within 30 min" in result.stdout and parent in result.stdout,
+              "recognized parent with no warm workers is explicit", result)
+
+        project = fixture_root / ".claude" / "projects" / "fixture-project"
+        workers = project / claude_parent / "subagents"
+        workers.mkdir(parents=True)
+        (project / f"{claude_parent}.jsonl").write_text("{}\n", encoding="utf-8")
+        child = workers / "agent-child-fixture.jsonl"
+        child.write_text(json.dumps({"timestamp": datetime.now(timezone.utc).isoformat()}) + "\n", encoding="utf-8")
+        result = invoke(claude_parent)
+        check(result.returncode == 0 and "child-fixture" in result.stdout, "Claude parent listing", result)
+        result = invoke("*")
+        check(result.returncode != 0 and "no worker active" not in result.stdout and "child-fixture" not in result.stdout,
+              "unknown glob-like ID cannot select another parent's workers", result)
+        result = invoke("child-fixture")
+        check(result.returncode != 0 and claude_parent in result.stderr and "no worker active" not in result.stdout,
+              "Claude worker ID points to its parent", result)
+        result = invoke(CLAUDE_CODE_SESSION_ID=claude_parent)
+        check(result.returncode == 0 and "child-fixture" in result.stdout, "Claude environment precedence", result)
+        # A matching child records its parent even when that parent's transcript was removed.
+        (project / f"{claude_parent}.jsonl").unlink()
+        result = invoke(claude_parent)
+        check(result.returncode == 0 and "child-fixture" in result.stdout, "child metadata can identify a parent", result)
+
+    if failures:
+        raise ValueError("worker-last-use regressions:\n" + "\n".join(failures))
+
+
 def main() -> int:
     root = (
         Path(sys.argv[1]).resolve()
@@ -1432,6 +1529,7 @@ def main() -> int:
     validate_generated_agents(root, generator)
     validate_multiline_and_optional_names(generator)
     validate_effort_overrides(generator)
+    validate_worker_last_use(root)
     validate_hooks(root)
     validate_board(root)
     print("shared agent and skill validation passed")

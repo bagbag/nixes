@@ -92,6 +92,9 @@ may tighten it.
   decisive check as a non-author for missing or contradictory output,
   surprising or disputed claims, or security, data-integrity or persistence
   changes. Let gates fail; fix causes, not results.
+- For test gates, confirm the required cases executed and record passed, failed
+  and skipped counts alongside the exit code. Skipped or setup-blocked
+  cases do not satisfy a required gate.
 - Comment each gate's command and outcome on its item; rerun decisive checks
   after relevant changes. Authors run implementation gates; the planning
   session runs an outcome's acceptance at its close and cuts checks others

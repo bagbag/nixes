@@ -123,6 +123,12 @@ claims them.
 | `needs_ratification` | Autopilot ruling in force, awaiting the user's ratification through a deciding session. Blocks nothing. |
 | closed | Planned, superseded or withdrawn. |
 
+- In role `agent`, put every user-facing question in Beads, including
+  clarifications, blockers and approvals a governing rule reserves for the
+  user; quote that rule in an approval question. Reuse the existing question
+  or create one; report its id and status in chat. Never ask the user in the
+  agent session or through a question tool; deciding sessions handle user
+  rounds.
 - One decision per record. While open, the description holds the
   [Decision packet](#decision-packet). At decision time, move the packet into
   the first comment and rewrite the description into these `##` sections,
@@ -272,9 +278,9 @@ order and context coincide, keep `blocks`.
 
 - Board mode: `.beads/metadata.json` with `"dolt_mode": "server"` marks a
   server-mode board; otherwise it is embedded.
-- On a server-mode board, run every `board` command with elevated sandbox
-  permissions from the first attempt; `board` starts a stopped server. Never
-  use `board bd --readonly`.
+- On a server-mode board, every `board` command needs elevated sandbox
+  permissions (global Sandbox and permissions); `board` starts a stopped
+  server. Never use `board bd --readonly`.
 - On an embedded board, run `board` commands one at a time and never
   interrupt a running one.
 - `board bd ready` returns 100 rows; use `--limit 0` for inventories. Read
@@ -286,3 +292,5 @@ order and context coincide, keep `blocks`.
   characters.
 - Inspect changes with `board bd history <id> --events` and board-wide changes
   with `board bd events tail --since <seq>`.
+- `board bd show --json` omits dependents unless you pass
+  `--include-dependents`; plain `board bd show` lists them under BLOCKS.

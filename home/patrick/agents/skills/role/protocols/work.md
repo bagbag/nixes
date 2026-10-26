@@ -40,9 +40,12 @@ findings or stops.
 5. **Evidence.** Run the item's gates under the review protocol's
    [Evidence and gates](review.md#evidence-and-gates); comment each command
    and outcome.
-   Output: one line per gate: command, result.
+   Output: one line per gate: command, exit code, and passed/failed/skipped
+   counts for tests.
 6. **Hand over.** With complete evidence, hand over under
    [Hand-over and acceptance](../../shared/work-tracking.md#hand-over-and-acceptance).
+   In the handover evidence, map each addressed finding ID to its repaired
+   scope, evidence and the gates its acceptor reproduces.
    With partial work, follow its step 2 and unclaim the item
    (`board unclaim <id>`).
    Output: `handed over <id>` or `kept <id> open: <remainder>`.
