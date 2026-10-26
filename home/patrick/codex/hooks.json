@@ -55,6 +55,17 @@
           }
         ]
       }
+    ],
+    "SubagentStop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$HOME/.codex/hooks/worker-ended.sh\"",
+            "timeout": 10
+          }
+        ]
+      }
     ]
   }
 }

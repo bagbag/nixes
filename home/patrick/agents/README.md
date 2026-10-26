@@ -132,7 +132,19 @@ server on server-mode boards (bd's auto-start is off) and takes the actor from
 add: bd-guard denies bare `bd` and sets Claude subagents' own actors (without
 it they act as their session, so in-session reviews by them are not
 independent); session-register keeps workers from registering; the
-session-start hook starts the server before `bd prime`. `board check` encodes the work-tracking
+session-start hook starts the server before `bd prime`, and on Claude
+refreshes the session's registered process (`session-lead-mode alive`);
+worker-ended (SubagentStop) lists stopped workers in the registry. On Codex
+the SubagentStop payload schema requires `agent_id`, `agent_type` and
+`session_id`, but whether they equal the `CODEX_THREAD_ID` and
+`CODEX_SESSION_ID` behind actors is unverified on a live run, so the Codex
+worker mark may never match.
+`board position` marks holders GONE when their session's process ended;
+`board mine` marks the caller's own stopped workers' holds WORKER STOPPED (a
+continued worker stops after every turn, so other sessions never judge by
+it). Codex records no process (the nearest `codex` ancestor can be a shared
+app-server or a per-command sandbox helper), so Codex sessions keep the idle
+hint. `board check` encodes the work-tracking
 conventions mechanically; change both in the same change, so drifted boards
 surface in `board health` and move through `/board-migrate`.
 

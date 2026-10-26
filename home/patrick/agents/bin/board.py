@@ -14,6 +14,7 @@ import argparse
 import json
 import os
 import re
+import shutil
 import socket
 import subprocess
 import sys
@@ -24,14 +25,15 @@ IDLE_HOURS = 1  # held items without an update for longer are hinted as idle; co
 POSITION_ROWS = 50  # rows per position section unless --all
 SESSION_HOURS = 24  # position lists sessions registered this recently (plus any holding items)
 PULLS = ('plan', 'design', 'implement', 'review')
-KINDS = (*PULLS, 'question', 'accept', 'ratify')
+KINDS = (*PULLS, 'question', 'accept', 'ratify', 'milestone')
 WORK_TYPES = ('task', 'bug', 'spike')
 # Kinds a bare `board claim` takes per role (agent: its pulls).
 ROLE_KINDS = {'lead': ('question',), 'agent': None, 'solo': ('question', 'plan', 'ratify', 'accept'),
               'autopilot': ('question', 'plan', 'accept')}
 # Kinds each role handles, by bare claim or by id; `board position` counts sessions from these.
-ROLE_HANDLES = {'lead': ('question', 'accept', 'ratify'), 'agent': None,
-                'solo': ('question', 'plan', 'ratify', 'accept'), 'autopilot': ('question', 'plan', 'accept')}
+# A ready milestone is accepted with the user: claimed by id only, never by autopilot.
+ROLE_HANDLES = {'lead': ('question', 'accept', 'ratify', 'milestone'), 'agent': None,
+                'solo': ('question', 'plan', 'ratify', 'accept', 'milestone'), 'autopilot': ('question', 'plan', 'accept')}
 TEXT_FIELDS = ('title', 'description', 'design', 'acceptance_criteria', 'notes', 'close_reason')
 REGISTRY = Path(__file__).resolve().parent / 'session-lead-mode.sh'
 
@@ -135,9 +137,57 @@ def session_actor(actor: str) -> str:
     return actor.split('/', 1)[0]
 
 
+_processes: dict[int, str | None] = {}  # pid -> start time, 'GONE', or None (unknown); per run
+
+
+def worker_stopped(entry: dict | None, holder: str) -> bool:
+    """The holding worker's last stop is recorded (SubagentStop). Continued workers stop again and again,
+    so this directs only the owning session (`board mine`), never another session's judgment."""
+    worker = holder.split('/', 1)[1] if '/' in holder else None
+    return bool(entry and worker and worker[-8:] in (entry.get('ended_workers') or []))
+
+
+def process_started(pid: int) -> str | None:
+    """The process's start time as `ps -o lstart=` prints it in UTC (whitespace-normalized; session-lead-mode
+    stores the same form), or None when ps fails for any reason."""
+    try:
+        result = subprocess.run([shutil.which('ps') or '/bin/ps', '-o', 'lstart=', '-p', str(pid)], capture_output=True,
+                                text=True, env={**os.environ, 'LC_ALL': 'C', 'TZ': 'UTC0'})
+    except OSError:
+        return None
+    started = ' '.join(result.stdout.split())
+    return started if result.returncode == 0 and started else None
+
+
+def liveness(entry: dict | None) -> str | None:
+    """'GONE' when the session's registered pid no longer exists or now names a process started at another
+    time, 'alive' when it matches, None when unknown (no entry, no pid, ps failed): unknown keeps the idle hint."""
+    if entry is None:
+        return None
+    pid, started = entry.get('pid'), entry.get('pid_started')
+    if not isinstance(pid, int) or pid <= 1 or not isinstance(started, str):
+        return None
+    if pid not in _processes:
+        try:
+            os.kill(pid, 0)
+            _processes[pid] = process_started(pid)
+        except ProcessLookupError:
+            _processes[pid] = 'GONE'
+        except PermissionError:  # exists, owned by another user
+            _processes[pid] = process_started(pid)
+        except OSError:
+            _processes[pid] = None
+    current = _processes[pid]
+    if current is None:
+        return None
+    return 'GONE' if current == 'GONE' or current != ' '.join(started.split()) else 'alive'
+
+
 class Board:
     def __init__(self, issues: list[dict]):
         self.issues = issues
+        self._milestone_work: dict[str, set[str]] = {}
+        self._in_milestone: dict[str, list[str]] | None = None
         self.by_id = {issue['id']: issue for issue in issues}
         self.parent: dict[str, str] = {}
         self.children: dict[str, list[str]] = {}
@@ -178,7 +228,43 @@ class Board:
             return self.issues
         if root not in self.by_id:
             raise BoardError(f'unknown root {root}')
+        if self.by_id[root].get('issue_type') == 'milestone':
+            work = self.milestone_work(root) | {root}
+            return [issue for issue in self.issues if issue['id'] in work]
         return [issue for issue in self.issues if root in self.ancestors(issue['id'])]
+
+    def milestone_work(self, milestone_id: str) -> set[str]:
+        """Open items the milestone waits on (work-tracking.md#milestones): its open blockers, the open
+        descendants of every reached epic, and transitively the open blockers of every reached item."""
+        if milestone_id not in self._milestone_work:
+            work: set[str] = set()
+            visited: set[tuple[str, bool]] = set()  # an item reached as a blocker may be reached again as a descendant
+            pending = [(blocker, False) for blocker in self.blockers.get(milestone_id, [])]
+            while pending:
+                visit = pending.pop()
+                item_id, descendant = visit
+                if visit in visited or not self.is_open(item_id):
+                    continue
+                visited.add(visit)
+                work.add(item_id)
+                pending += [(blocker, False) for blocker in self.blockers.get(item_id, [])]
+                if descendant or self.by_id[item_id].get('issue_type') == 'epic':
+                    pending += [(child, True) for child in self.children.get(item_id, [])]
+            self._milestone_work[milestone_id] = work
+        return self._milestone_work[milestone_id]
+
+    def milestones(self) -> list[dict]:
+        return [issue for issue in self.issues if issue.get('issue_type') == 'milestone' and issue['status'] != 'closed']
+
+    @property
+    def in_milestone(self) -> dict[str, list[str]]:
+        """Item id -> the open milestones it is work of."""
+        if self._in_milestone is None:
+            self._in_milestone = {}
+            for milestone in self.milestones():
+                for item_id in self.milestone_work(milestone['id']):
+                    self._in_milestone.setdefault(item_id, []).append(milestone['id'])
+        return self._in_milestone
 
     def is_open(self, item_id: str) -> bool:
         return item_id in self.by_id and self.by_id[item_id]['status'] != 'closed'
@@ -197,8 +283,8 @@ class Board:
             return 'review' if kind in WORK_TYPES else 'accept' if kind == 'design' else None
         if status != 'open':
             return None
-        if kind == 'design':
-            return 'design'
+        if kind in ('design', 'milestone'):
+            return kind
         return 'implement' if kind in WORK_TYPES else None
 
     def claimable(self, issue: dict) -> str | None:
@@ -249,9 +335,10 @@ def by_priority(issue: dict):
 
 
 def claim_order(board: Board, issue: dict):
-    # At equal priority a released ruling goes first: it blocks the work it changes until planned.
+    # P0 first, then milestone work (work-tracking.md#milestones), each by priority; at equal priority
+    # a released ruling goes first: it blocks the work it changes until planned.
     priority, created, item_id = by_priority(issue)
-    return (priority, board.kind(issue) != 'plan', created, item_id)
+    return (priority != 0, item_id not in board.in_milestone, priority, board.kind(issue) != 'plan', created, item_id)
 
 
 # Views
@@ -292,6 +379,14 @@ def health(board: Board, args) -> None:
         if view in args.items:
             for issue in sorted(rows, key=by_priority):
                 print(line(issue, issue.get('assignee') or ''))
+    scope = {issue['id'] for issue in board.scoped(args.root)}
+    for milestone in (m for m in board.milestones() if m['id'] in scope):
+        work = [board.by_id[item_id] for item_id in board.milestone_work(milestone['id'])]
+        work = [issue for issue in work if issue.get('issue_type') != 'epic']
+        state = 'not ready' if board.open_blockers(milestone['id']) else 'ready'
+        print(f"milestone {milestone['id']} ({milestone.get('title', '')}): open work {len(work)}, "
+              f"ready {sum(1 for i in work if board.claimable(i))}, held {sum(1 for i in work if i.get('assignee'))}, "
+              f"blocked {sum(1 for i in work if board.open_blockers(i['id']))}; milestone {state}")
     found = deviations(board, args.root)
     if found:
         print(f'convention deviations: {len(found)} — run /board-migrate')
@@ -336,18 +431,24 @@ def position(board: Board, args) -> None:
             [f"  {entry.get('actor')}  {entry.get('role')}  {entry.get('tool') or 'tool unknown'}"
              f"  handles {','.join(session_kinds(entry, ROLE_HANDLES)) or '-'}  registered {age(parse_time(entry.get('registered_at')))} ago"
              f"  holds {sum(1 for issue in held if session_actor(issue['assignee']) == entry.get('actor'))}"
+             + {'alive': '  process alive', 'GONE': '  GONE'}.get(liveness(entry) or '', '')
              for entry in sessions], limit)
 
-    idle = []
+    idle, gone = [], []
     rows = []
     for issue in held:
         activity = board.last_activity(issue)
-        is_idle = activity is None or (now - activity).total_seconds() > IDLE_HOURS * 3600
-        row = line(issue, holder_label(issue['assignee'], known), f'updated {age(activity)} ago' + (' IDLE' if is_idle else ''))
-        rows.append(row)
+        state = liveness(known.get(session_actor(issue['assignee'])))
+        is_idle = state != 'GONE' and (activity is None or (now - activity).total_seconds() > IDLE_HOURS * 3600)
+        marker = ' GONE' if state == 'GONE' else ' IDLE' if is_idle else ''
+        rows.append(line(issue, holder_label(issue['assignee'], known), f'updated {age(activity)} ago' + marker))
         if is_idle:
             idle.append(issue['id'])
+        elif marker:
+            gone.append(issue['id'])
     section('held items', rows, limit)
+    if gone:
+        print(f"  GONE = the holding session's process ended. Free {', '.join(gone)}: board take <id> | board unclaim <id>")
     if idle:
         print(f'  idle = no update for {IDLE_HOURS} h; quiet long jobs look idle too. '
               'If that session is gone: board take <id> | board unclaim <id>')
@@ -361,6 +462,10 @@ def position(board: Board, args) -> None:
     section('open questions holding work',
             [line(issue, f'holds {waiting}', issue.get('assignee') or 'unassigned')
              for waiting, issue in sorted(questions, key=lambda pair: (-pair[0], by_priority(pair[1])))], limit)
+
+    section('ready milestones', [line(issue, issue.get('assignee') or 'unassigned') for issue in
+                                 sorted((i for i in items if board.kind(i) == 'milestone' and not board.open_blockers(i['id'])),
+                                        key=by_priority)], limit)
 
     finished = [issue for issue in items if issue.get('issue_type') == 'epic' and board.children.get(issue['id'])
                 and not any(board.is_open(child) for child in board.children[issue['id']])]
@@ -387,7 +492,7 @@ def holders(board: Board, args) -> None:
 # Conformance with skills/shared/work-tracking.md: mechanical classes only.
 ACTOR = re.compile(r'[0-9a-f]{8}(/.+)?')
 TITLE_PREFIXES = ('[Design]', '[Gate]', '[Checkpoint]', '[Review]')
-RETIRED_TYPES = ('milestone', 'feature', 'chore', 'check')
+RETIRED_TYPES = ('feature', 'chore', 'check')
 CHECK_CLASSES = {  # class -> work-tracking anchor
     'holder': 'actors-and-holds',
     'retired-type': 'kinds',
@@ -430,9 +535,10 @@ def deviations(board: Board, root: str | None) -> list[tuple[str, str, str]]:
         if labels:
             found.append((item_id, 'label-status', f"labels {', '.join(labels)}"))
         text = board.text(issue)
-        # A gate carries its own reason (bd gate create --reason); a closed blocker holds nothing up.
+        # A gate carries its own reason (bd gate create --reason); a milestone's blockers are its members
+        # (work-tracking.md#milestones); a closed blocker holds nothing up.
         found += [(item_id, 'unnamed-blocker', f'waits on {b} without naming it') for b in blockers
-                  if b not in text and board.is_open(b)
+                  if kind != 'milestone' and b not in text and board.is_open(b)
                   and board.by_id.get(b, {}).get('issue_type') != 'gate']
     return found
 
@@ -549,9 +655,15 @@ def related(board: Board, args) -> None:
 
 
 def queue(board: Board, args) -> None:
-    ready = sorted((issue for issue in board.scoped(args.root) if board.claimable(issue)), key=by_priority)
+    ready = sorted((issue for issue in board.scoped(args.root) if board.claimable(issue)),
+                   key=lambda issue: claim_order(board, issue))
+
+    def marker(issue: dict) -> str:
+        milestones = board.in_milestone.get(issue['id'])
+        return f"m:{','.join(milestones)}" if milestones else ''
+
     for kind in KINDS:
-        section(kind, [line(issue, f"p{issue.get('priority', '?')}")
+        section(kind, [line(issue, f"p{issue.get('priority', '?')}", marker(issue))
                        for issue in ready if board.claimable(issue) == kind], args.limit)
 
 
@@ -604,9 +716,22 @@ def mine(board: Board, args) -> None:
     actor = caller()
     scoped = {issue['id'] for issue in board.scoped(args.root)}
     you = f' (you: {actor})' if actor != session_actor(actor) else ''
-    section(f'held by session {session_actor(actor)}{you}',
-            [line(issue, issue['assignee'], f'updated {age(board.last_activity(issue))} ago')
-             for issue in held_by_session(board, actor) if issue['id'] in scoped])
+    try:
+        entry = registry_by_actor(registrations()).get(session_actor(actor))
+    except BoardError:
+        entry = None  # no marks without the registry; the holds still list
+    rows, stopped = [], []
+    for issue in held_by_session(board, actor):
+        if issue['id'] in scoped:
+            mark = worker_stopped(entry, issue['assignee'])
+            rows.append(line(issue, issue['assignee'], f'updated {age(board.last_activity(issue))} ago'
+                             + (' WORKER STOPPED' if mark else '')))
+            if mark:
+                stopped.append(issue['id'])
+    section(f'held by session {session_actor(actor)}{you}', rows)
+    if stopped:
+        print(f"  WORKER STOPPED = the holding worker finished its last turn ({', '.join(stopped)}): "
+              'continue the worker, hand the item over, or free it (board unclaim <id>)')
 
 
 def claim_one(issue: dict, actor: str) -> tuple[bool, str]:
@@ -641,6 +766,11 @@ def claim(board: Board, args) -> int:
                 failed.append(item_id)
                 print(f'{item_id}: held by {holder}; the user or a deciding session frees it with board take or board unclaim once its session is gone',
                       file=sys.stderr)
+                continue
+            if board.kind(issue) == 'milestone' and board.open_blockers(item_id):
+                # Accepting a milestone needs its work done (work-tracking.md#milestones).
+                failed.append(item_id)
+                print(f"{item_id}: milestone not ready, waits on {', '.join(board.open_blockers(item_id))}", file=sys.stderr)
                 continue
             ok, message = claim_one(issue, actor)
             if ok:
@@ -812,7 +942,8 @@ def main(argv: list[str] | None = None) -> int:
             return 1
     parser = argparse.ArgumentParser(prog='board', description=__doc__.split('\n\n')[0])
     scope = argparse.ArgumentParser(add_help=False)
-    scope.add_argument('--root', metavar='EPIC', help='limit to items below this epic (default: whole board)')
+    scope.add_argument('--root', metavar='EPIC', help="limit to items below this epic, or to a milestone's work "
+                       '(default: whole board)')
     listing = argparse.ArgumentParser(add_help=False)
     listing.add_argument('--limit', type=int, default=50, help='rows per section (default 50)')
     commands = parser.add_subparsers(dest='command', required=True)
@@ -833,8 +964,8 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_argument('--items', type=views, default=set(), metavar='VIEW[,VIEW...]',
                      help=f"list the items behind these counts: {', '.join(HEALTH_VIEWS)}")
     sub.set_defaults(run=health)
-    sub = commands.add_parser('position', parents=[scope], help='ready work vs sessions, held and idle items, '
-                              'questions holding work, finished epics')
+    sub = commands.add_parser('position', parents=[scope], help='ready work vs sessions, held items with gone and idle '
+                              'marks, questions holding work, ready milestones, finished epics')
     sub.add_argument('--all', action='store_true', help=f'show every row (default: {POSITION_ROWS} per section)')
     sub.set_defaults(run=position)
     commands.add_parser('holders', parents=[scope, listing], help='items by open downstream work').set_defaults(run=holders)

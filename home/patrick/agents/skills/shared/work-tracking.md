@@ -35,9 +35,11 @@ the user.
 - Nothing frees a hold automatically. Free another doer's hold only with
   `board take <id>` (reassign to you with a comment) or
   `board unclaim <id>`. Free another session's hold only as
-  the user or a [deciding session](../role/SKILL.md#roles) that judges the
-  holding session gone; the idle hint of `board position` informs
-  that judgment.
+  the user or a [deciding session](../role/SKILL.md#roles) once the holding
+  session is gone: `board position` marks a holder gone when its registered
+  process has ended, and hints idle holders otherwise. Your own stopped
+  workers' holds show in `board mine`: continue the worker, hand the item
+  over or free it.
 
 ### Kinds
 
@@ -47,10 +49,11 @@ the user.
 | `design` | Design item: architecture, package graph and needed decisions for a slice. |
 | `decision` | Question, later the ruling's record ([Questions and rulings](#questions-and-rulings)). |
 | `epic` | Outcome ([Epics](#epics)). |
+| `milestone` | Release checkpoint ([Milestones](#milestones)). |
 | `gate` | Upstream wait or the user's go ([Dependencies](#dependencies)). |
 
-Titles carry no prefixes; `milestone`, `feature`, `chore` and `check` stay
-unused (a check others wait on is a task, [Work items](#work-items)). Review
+Titles carry no prefixes; `feature`, `chore` and `check` stay unused (a check
+others wait on is a task, [Work items](#work-items)). Review
 is a status, not a kind: create a standalone review as an unassigned task
 directly in review,
 `board bd create … -t task --status in_review`.
@@ -65,8 +68,8 @@ Sessions claim unassigned ready items by kind:
 | Pull `design` | Open `design` items. |
 | Pull `implement` | Open `task`, `bug` and `spike` items. |
 | Pull `review` | `in_review` tasks, bugs and spikes, standalone reviews included; first choice while a review-pulling session is active. |
-| Lead | By id: its round's open decisions, `needs_ratification` records and `in_review` design items; closes finished epics whose acceptance names the user. A bare `board claim` takes open decisions. |
-| Solo | Open and `released` decisions, `needs_ratification` records and `in_review` design items itself; every other kind through one worker per item. |
+| Lead | By id: its round's open decisions, `needs_ratification` records, `in_review` design items and ready milestones; closes finished epics whose acceptance names the user. A bare `board claim` takes open decisions. |
+| Solo | Open and `released` decisions, `needs_ratification` records, `in_review` design items and ready milestones itself; every other kind through one worker per item. |
 | Autopilot | Open and `released` decisions and `in_review` design items itself; every other kind through one worker per item. |
 
 Questions, autopilot's parked ones included, stay unassigned until a session
@@ -98,7 +101,8 @@ claims them.
 - Root a project's board at a goal epic with finite outcome epics below it.
   Nest deeper only for independently closable sub-outcomes. Place an item
   under the outcome it contributes to; loose items sit under the goal epic.
-  Topics are labels (`topic:<topic-slug>`).
+  Topics are labels (`topic:<topic-slug>`). `board bd create --graph` copies
+  no labels from the parent: give each node its `topic:` label.
 - Title: the outcome. Description: two to four sentences on what will be true,
   why, scope and the owner link. `--acceptance`: checkable done criteria.
   Epics carry no rules, holds, status, item lists or history; history goes to
@@ -111,6 +115,27 @@ claims them.
   [deciding session](../role/SKILL.md#roles) walks the user through an epic
   whose acceptance names the user and closes it on acceptance; it or the user
   closes the goal epic once the user confirms the goal is reached.
+
+### Milestones
+
+- Track each release checkpoint as one `milestone` item (`1.0-beta`) under
+  the goal epic. Its acceptance names the checkpoint's evidence and the user;
+  the goal owner states which work belongs to it.
+- Add members with `board bd dep add <milestone> <member>`; a member edge
+  needs no named reason, the goal owner's criterion is its reason. Everything
+  a member waits on belongs to the milestone too. Block the milestone by the
+  last release step as well.
+- A member epic brings its descendants: its whole outcome ships in the
+  milestone. File work that ships later under another outcome.
+- Membership orders work and never cuts it: `board claim` and `queue` take
+  P0 items first, then milestone work, then the rest, each by priority.
+  `--root <milestone>` scopes a view to the milestone's work.
+- Place each new item: a member when the goal owner's criterion covers it. An
+  item discovered from milestone work joins unless it is a pure addition. Move
+  work in or out by adding or removing its edge.
+- When the milestone turns ready, a deciding session walks the user through
+  it, closes it on acceptance and reconciles the goal owner under
+  project-memory.
 
 ### Questions and rulings
 
@@ -196,7 +221,7 @@ order and context coincide, keep `blocks`.
 
 | Relation | Use |
 |---|---|
-| B can't start before A, including released ruling A changing B | `blocks`: `board bd dep add B A`, with a one-line reason naming A in B. |
+| B can't start before A, including released ruling A changing B | `blocks`: `board bd dep add B A`, with a one-line reason naming A in B ([Milestones](#milestones) members excepted). |
 | B is part of outcome A | `--parent A` |
 | B found while working on A | `discovered-from`: `board bd create … --deps discovered-from:A` |
 | Shared context, alternatives, a ruling's context-only item | `relates-to`: `board bd dep relate A B` |
@@ -208,7 +233,9 @@ order and context coincide, keep `blocks`.
 
 1. Scope an item's acceptance under the review protocol's Evidence and gates
    (`$HOME/.agents/skills/role/protocols/review.md#evidence-and-gates`).
-2. Keep active work `in_progress`. Hand over only with complete evidence for
+2. Keep active work `in_progress` with its current resume point in `notes`
+   (`board bd update <id> --notes "<point>"`), replaced as the work moves;
+   comments keep the history. Hand over only with complete evidence for
    the item's acceptance; keep partial work open with the remainder in
    `--acceptance`, and block waiting work on what it needs.
 3. Hand over with the evidence: `board handover <id> "<evidence>"`.
@@ -221,7 +248,7 @@ order and context coincide, keep `blocks`.
 
 | Item | Lifecycle |
 |---|---|
-| Deferral | `board bd defer <id> --reason "<revisit condition>"`; undefer at its date or on named new evidence. Deferred items are the project backlog. |
+| Deferral | `board bd defer <id> --reason "<revisit condition>"` (the reason lands in `notes`), plus `--until <date>` when the condition is a date (bd wakes the item then); undefer on named new evidence. Deferred items are the project backlog. |
 | Environment fact | `board bd remember --key <key>` for temporary repository-wide facts needed by every current session, a user's broad stop (area, paths, kind of action) included with its words and date; state a removal condition; remove with `board bd forget`. |
 
 ### Priority
@@ -258,15 +285,16 @@ order and context coincide, keep `blocks`.
 
 ### Views
 
-`board` views read one board snapshot per run; most take `--root <epic>`. Other queries: `board bd query`, `search`, `find-duplicates`,
+`board` views read one board snapshot per run; most take `--root <epic>` or
+`--root <milestone>`. Other queries: `board bd query`, `search`, `find-duplicates`,
 `blocked`, `lint`, `dep tree`.
 
 | Command | View |
 |---|---|
-| `board queue` | Ready work plus released rulings to plan. |
-| `board position` | Ready work against registered sessions and their pulls; held and idle items with holder, role, tool and age; open questions holding work; finished epics not closed. |
-| `board mine` | Items your session and its workers hold. |
-| `board health` | Counts; dispatchable counts include only unblocked items. |
+| `board queue` | Ready work plus released rulings to plan, milestone work marked. |
+| `board position` | Ready work against registered sessions and their pulls; held items with holder, role, tool, age and gone or idle marks; open questions holding work; ready milestones; finished epics not closed. |
+| `board mine` | Items your session and its workers hold; holds of stopped workers marked. |
+| `board health` | Counts, with each open milestone's progress; dispatchable counts include only unblocked items. |
 | `board holders` | Items by open downstream count. |
 | `board check` | Deviations from these conventions on live items, each naming the section it breaks; closed items are never checked; squashed text in editable fields as a flag. `board health` names their count; a board with deviations moves through `/board-migrate`. |
 | `board related <terms> [--docs <paths>]` | Items (closed included) and canonical docs mentioning the terms, with holders. |

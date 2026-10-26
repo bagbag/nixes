@@ -7,6 +7,7 @@ import importlib.util
 import json
 import os
 import re
+import shutil
 import socket
 import subprocess
 import sys
@@ -697,6 +698,83 @@ def validate_session_registry(root: Path) -> None:
         if sorted(entry["actor"] for entry in listed) != sorted([SESSION_ACTOR, other[-8:]]):
             raise ValueError(f"session-lead-mode list: {listed}")
 
+    # Process identity: the nearest ancestor named claude (a symlink to bash stands in); Codex records none.
+    with tempfile.TemporaryDirectory() as state_dir, tempfile.TemporaryDirectory() as bin_dir:
+        env = session_env(state_dir)
+        fake_claude = Path(bin_dir) / "claude"
+        fake_claude.symlink_to(shutil.which("bash") or "/bin/bash")
+        entry_file = Path(state_dir) / f"{SESSION}.json"
+
+        ps = shutil.which("ps") or "/bin/ps"
+        try:
+            ps_runs = subprocess.run([ps, "-o", "lstart=", "-p", str(os.getpid())], capture_output=True).returncode == 0
+        except OSError:
+            ps_runs = False
+        if not ps_runs:
+            raise ValueError(f"{ps} cannot read process start times here (a build sandbox refuses the setuid /bin/ps)")
+
+        def under_claude(*args: str, tool: str = "claude") -> tuple[int, subprocess.CompletedProcess]:
+            # The stand-in prints its own UTC start after the script (which also keeps bash from exec'ing it);
+            # the local zone differs, so a stored local time would not match.
+            process = subprocess.Popen([str(fake_claude), "-c", f'bash "{script}" "$@"; LC_ALL=C TZ=UTC0 "{ps}" -o lstart= -p $$',
+                                        "claude", *args], text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                       env={**os.environ, **env, **as_session(SESSION, tool), "TZ": "Asia/Tokyo"})
+            out, err = process.communicate()
+            return process.pid, subprocess.CompletedProcess(args, process.returncode, out, err)
+
+        for command in (("alive",), ("worker-ended", "a43f14ee58a40ea36")):
+            if under_claude(*command)[1].returncode != 0 or entry_file.exists():
+                raise ValueError(f"session-lead-mode {command[0]} must be a silent no-op for an unregistered session")
+            if run(*command, env=env).returncode != 0 or any(Path(state_dir).iterdir()):
+                raise ValueError(f"session-lead-mode {command[0]} must be a silent no-op outside an agent session")
+        pid, activated = under_claude("activate", "lead")
+        entry = json.loads(entry_file.read_text(encoding="utf-8"))
+        if entry.get("pid") != pid or entry.get("pid_started") != " ".join(activated.stdout.split()) \
+                or not entry.get("pid_started") or entry.get("ended_workers") != []:
+            raise ValueError(f"activate did not record the claude process {pid}: {entry}")
+        entry_file.write_text(json.dumps({**entry, "pid": 1, "pid_started": "stale"}), encoding="utf-8")
+        pid, refreshed_run = under_claude("alive")
+        refreshed = json.loads(entry_file.read_text(encoding="utf-8"))
+        if refreshed.get("pid") != pid or refreshed.get("pid_started") != " ".join(refreshed_run.stdout.split()) \
+                or refreshed["role"] != "lead":
+            raise ValueError(f"alive did not refresh the process identity: {refreshed}")
+        for _ in range(2):
+            run("worker-ended", "a43f14ee58a40ea36", env={**env, **as_session(SESSION)}).check_returncode()
+        run("worker-ended", "01a1641b-acfc-74a1-b69b-1e2fb53ded8a", env={**env, **as_session(SESSION)}).check_returncode()
+        if json.loads(run("show", SESSION, env=env).stdout)["ended_workers"] != ["8a40ea36", "b53ded8a"]:
+            raise ValueError("worker-ended must keep one entry per worker, by the agent id's last 8 characters")
+        under_claude("activate", "solo")
+        if json.loads(run("show", SESSION, env=env).stdout)["ended_workers"] != ["8a40ea36", "b53ded8a"]:
+            raise ValueError("a role change dropped the session's ended workers")
+        if run("worker-ended", "short", env={**env, **as_session(SESSION)}).returncode == 0:
+            raise ValueError("worker-ended accepted an invalid agent id")
+        under_claude("activate", "lead", tool="codex")
+        shown = json.loads(run("show", SESSION, env=env).stdout)
+        if shown["pid"] is not None or shown["pid_started"] is not None:
+            raise ValueError(f"a Codex session recorded a process identity: {shown}")
+        listed = json.loads(run("list", env=env).stdout)
+        if not {"pid", "pid_started", "ended_workers"} <= listed.keys():
+            raise ValueError(f"session-lead-mode list lacks the liveness fields: {listed}")
+
+        # worker-ended hook: the payload's worker joins its session's entry; it never fails.
+        hook = root / "hooks" / "worker-ended.sh"
+        hook_env = {**env, "AGENT_SESSION_LEAD_COMMAND": str(script)}
+        stop = {"hook_event_name": "SubagentStop", "session_id": SESSION, "agent_id": "a1b2c3d4e5f60718",
+                "agent_type": "build"}
+        # Skipped payloads carry their own ids and run with the session in the environment too.
+        for payload in ({**stop, "agent_id": "internal-0000aaaa", "agent_type": ""},
+                        {key: value for key, value in stop.items() if key != "agent_id"} | {"agent_type": "general-purpose"},
+                        {**stop, "agent_id": "elsewhere-0000bbbb", "session_id": "abcdefgh-unknown"}):
+            run_hook(hook, payload, {**hook_env, **as_session(SESSION)})
+        run_hook(hook, {**stop, "agent_id": "nocommand-0000cccc"},
+                 {**hook_env, "AGENT_SESSION_LEAD_COMMAND": str(Path(bin_dir) / "missing")})
+        # The payload's session wins over an outer Codex session in the environment.
+        run_hook(hook, stop, {**hook_env, "CODEX_SESSION_ID": "elsewhere-1"})
+        if json.loads(run("show", SESSION, env=env).stdout)["ended_workers"] != ["8a40ea36", "b53ded8a", "e5f60718"]:
+            raise ValueError("worker-ended hook did not record exactly the payload's worker in the payload's session")
+        if sorted(path.name for path in Path(state_dir).iterdir()) != [f"{SESSION}.json"]:
+            raise ValueError("worker-ended hook wrote an entry for an unregistered session")
+
     with tempfile.TemporaryDirectory() as state_home:
         env = {key: value for key, value in os.environ.items() if key != "AGENT_SESSION_STATE_DIR"}
         subprocess.run(["bash", str(script), "activate", "lead"], check=True,
@@ -1065,7 +1143,6 @@ def validate_board(root: Path) -> None:
                         raise ValueError("the squash heuristic missed dictionary-split words")
             expected_lines = [
                 (cid["Legacy holder"], "holder", "actors-and-holds"),
-                (cid["Old milestone"], "retired-type", "kinds"),
                 (cid["[Design] Prefixed title"], "title-prefix", "kinds"),
                 (cid["[Gate] Release: round 3"], "title-prefix", "kinds"),
                 (cid["[Gate] Release: round 3"], "release-gate", "kinds"),
@@ -1076,18 +1153,25 @@ def validate_board(root: Path) -> None:
                 if f"  {item_id}  {name}  work-tracking.md#{anchor}" not in report:
                     raise ValueError(f"board check missed {name} on {item_id}:\n{report}")
             deviation_lines = [row for row in report.splitlines() if "  work-tracking.md#" in row]
-            if code != 1 or len(deviation_lines) != len(expected_lines) or "convention deviations: 7\n" not in report:
+            if code != 1 or len(deviation_lines) != len(expected_lines) or "convention deviations: 6\n" not in report:
                 raise ValueError(f"board check reported extra deviations or the wrong exit code {code}:\n{report}")
             # Gate blockers carry their own reason; closed dependents of a released ruling block nothing.
             # A human gate on a question is the user's go, not a release gate; records are linted at release only.
+            # milestone is a kind again (work-tracking.md#milestones), not a retired type.
             for clean in ("Clean task", "User action", "Waits on ruling", "Gated question", "Closed waiter", "Gate: human",
-                          "Unformatted ruling"):
+                          "Unformatted ruling", "Old milestone"):
                 if any(f"  {cid[clean]}  " in row for row in deviation_lines):
                     raise ValueError(f"board check flagged conforming {clean}")
+            # A milestone's blockers are its members: unnamed in its text, they are no deviation.
+            members_edges = [{**issue, "dependencies": [*issue["dependencies"], *(
+                {"issue_id": issue["id"], "depends_on_id": cid[title], "type": "blocks"} for title in ("Squashed text", "Labelled status"))]}
+                if issue["title"] == "Old milestone" else issue for issue in checked]
+            if any(f"  {cid['Old milestone']}  " in row for row in invoke(["check"], Fake(members_edges))[1].splitlines()):
+                raise ValueError("board check flagged a milestone's member edges")
             flag = report.split("flag, not a deviation")[1]
             if f"  {cid['Squashed text']}  squashed" not in flag or f"  {cid['Clean task']}  " in flag:
                 raise ValueError(f"board check missed or misplaced the squashed-text flag:\n{report}")
-            if "convention deviations: 7 — run /board-migrate" not in health_check:
+            if "convention deviations: 6 — run /board-migrate" not in health_check:
                 raise ValueError("board health lacks the deviation hint")
             # The user view lists gates titled with the user's words and items assigned to the user.
             waiting = [{**issue, "title": "user 2026-10-23: 'wait for my go'"} if issue["title"] == "Gate: human" else issue
@@ -1260,6 +1344,92 @@ def validate_board(root: Path) -> None:
             if invoke(["claim", ids["Released ruling"]], fake, "lead0001")[0] == 0 or fake.writes():
                 raise ValueError("board claim took an item held by user")
 
+            # Milestones (work-tracking.md#milestones): synthetic issues appended to the fixture.
+            def synthetic(item_id, title, kind="task", priority=2, status="open", blocks=(), parent=None, **extra):
+                deps = [{"issue_id": item_id, "depends_on_id": b, "type": "blocks"} for b in blocks]
+                deps += [{"issue_id": item_id, "depends_on_id": parent, "type": "parent-child"}] if parent else []
+                return {"id": item_id, "title": title, "issue_type": kind, "priority": priority, "status": status,
+                        "created_at": "2026-10-22T15:29:00Z", "updated_at": "2026-10-22T15:29:00Z",
+                        "dependencies": deps, **extra}
+
+            beta = synthetic("ms-1", "Beta", "milestone", 1, blocks=("ms-ready", "ms-member", "ms-epic"), parent=goal)
+            members = [
+                synthetic("ms-ready", "Ready member", parent=goal),
+                synthetic("ms-member", "Blocked member", blocks=("ms-blocker", "ms-closed"), parent=goal),
+                synthetic("ms-blocker", "Member's blocker", priority=3, parent=goal),
+                synthetic("ms-closed", "Closed blocker", priority=3, status="closed", blocks=("ms-closed-blocker",)),
+                synthetic("ms-closed-blocker", "Behind a closed blocker", priority=3),
+                synthetic("ms-epic", "Member outcome", "epic", parent=goal),
+                synthetic("ms-sub", "Task with a subtask", parent="ms-epic"),
+                synthetic("ms-child", "Epic child", priority=3, blocks=("ms-child-blocker",), parent="ms-sub"),
+                synthetic("ms-done-child", "Closed epic child", priority=3, status="closed", parent="ms-epic"),
+                synthetic("ms-child-blocker", "Child's blocker", priority=3),
+                synthetic("ms-p1", "P1 outsider", priority=1, parent=goal),
+            ]
+            milestone_board = fixture + [beta, *members]
+            work = board.Board(milestone_board).milestone_work("ms-1")
+            if work != {"ms-ready", "ms-member", "ms-blocker", "ms-epic", "ms-sub", "ms-child", "ms-child-blocker"}:
+                raise ValueError(f"milestone work misses the closure or takes closed items and what they wait on: {sorted(work)}")
+            # A descendant reached first as a blocker still brings its own descendants, whatever the edge order.
+            for order in (("ord-e", "ord-m"), ("ord-m", "ord-e")):
+                shape = [synthetic("ord-w", "W", "milestone", blocks=order), synthetic("ord-e", "E", "epic"),
+                         synthetic("ord-m", "M", blocks=("ord-t",)), synthetic("ord-t", "T", parent="ord-e"),
+                         synthetic("ord-s", "S", parent="ord-t")]
+                if board.Board(shape).milestone_work("ord-w") != {"ord-e", "ord-m", "ord-t", "ord-s"}:
+                    raise ValueError(f"milestone work depends on edge order {order}: {sorted(board.Board(shape).milestone_work(shape[0]['id']))}")
+            built = board.Board(milestone_board)
+            if built.kind(beta) != "milestone" or built.claimable(beta) is not None:
+                raise ValueError("a milestone with open work must not be claimable")
+
+            fake = Fake(milestone_board)
+            invoke(["claim"], fake, worker)
+            if fake.writes() != [["update", "ms-ready", "--claim", "--json"]]:
+                raise ValueError(f"board claim did not take the P2 milestone member before P1 outsiders: {fake.writes()}")
+            fake = Fake(milestone_board + [synthetic("ms-p0", "P0 outsider", priority=0, parent=goal)])
+            invoke(["claim"], fake, worker)
+            if fake.writes() != [["update", "ms-p0", "--claim", "--json"]]:
+                raise ValueError(f"board claim did not take the P0 outsider before milestone work: {fake.writes()}")
+
+            _, queued, _ = invoke(["queue"], Fake(milestone_board))
+            implement_rows = queued.split("implement:")[1].split("review:")[0].splitlines()[1:]
+            if not implement_rows[0].startswith("  ms-ready ") or "m:ms-1" not in implement_rows[0] \
+                    or any("m:" in row for row in implement_rows if "ms-p1" in row) or "milestone: 0\n" not in queued:
+                raise ValueError(f"board queue must order and mark milestone work and hide the unready milestone:\n{queued}")
+            _, scoped_queue, _ = invoke(["queue", "--root", "ms-1"], Fake(milestone_board))
+            if "implement: 4\n" not in scoped_queue or "ms-p1" in scoped_queue or ids["Ready task"] in scoped_queue:
+                raise ValueError(f"board queue --root <milestone> must scope to its work:\n{scoped_queue}")
+            _, milestone_health, _ = invoke(["health"], Fake(milestone_board))
+            if "milestone ms-1 (Beta): open work 6, ready 4, held 0, blocked 2; milestone not ready\n" not in milestone_health \
+                    or "milestone ms-1 (Beta)" not in invoke(["health", "--root", "ms-1"], Fake(milestone_board))[1]:
+                raise ValueError(f"board health lacks the milestone line:\n{milestone_health}")
+
+            # A ready milestone is claimed by id only: no bare claim takes it.
+            done = [beta, *({**m, "status": "closed"} if m["id"] in work else m for m in members)]
+            ready_board = fixture + done
+            if board.Board(ready_board).claimable(beta) != "milestone":
+                raise ValueError("a ready milestone must have kind milestone")
+            if "milestone ms-1 (Beta): open work 0, ready 0, held 0, blocked 0; milestone ready\n" \
+                    not in invoke(["health"], Fake(ready_board))[1]:
+                raise ValueError("board health did not report the ready milestone")
+            ready_position = invoke(["position"], Fake(ready_board))[1]
+            if "milestone: 1 ready, 2 sessions" not in ready_position \
+                    or "ready milestones: 1\n  ms-1  open  milestone  unassigned  Beta" not in ready_position \
+                    or "ready milestones: 0\n" not in invoke(["position"], Fake(milestone_board))[1]:
+                raise ValueError("board position must count ready milestones against lead and solo sessions")
+            for session in ("lead0001", "solo0001", "auto0001"):
+                fake = Fake(ready_board)
+                invoke(["claim"], fake, session)
+                if any("ms-1" in write for write in fake.writes()):
+                    raise ValueError(f"{session}'s bare claim took the ready milestone: {fake.writes()}")
+            fake = Fake(ready_board)
+            invoke(["claim", "ms-1"], fake, "lead0001")
+            if fake.writes() != [["update", "ms-1", "--claim", "--json"]]:
+                raise ValueError(f"a lead did not claim the named ready milestone: {fake.writes()}")
+            fake = Fake(milestone_board)
+            code, _, errors = invoke(["claim", "ms-1"], fake, "lead0001")
+            if code != 1 or fake.writes() or "not ready" not in errors:
+                raise ValueError(f"board claim <id> took a milestone with open work: {fake.writes()}")
+
             # Within one session an item hands down to the caller; other sessions stay refused.
             fake = Fake(fixture)
             code, _, _ = invoke(["claim", ids["Held task"]], fake, worker)
@@ -1367,6 +1537,84 @@ def validate_board(root: Path) -> None:
             fake = Fake(variant(**{"Handed task": {"assignee": "aaaa1111"}}))
             if invoke(["return", ids["Handed task"], "x"], fake, "lead0001")[0] != 1 or fake.writes():
                 raise ValueError("board return accepted a review the caller does not hold")
+
+    # Liveness in position: a registered process that ended is GONE; a live process or an entry without one
+    # keeps the idle hint. A stopped worker is marked only for its own session, in board mine.
+    ps = shutil.which("ps") or "/bin/ps"
+    reaped = subprocess.Popen(["true"])
+    reaped.wait()
+    with tempfile.TemporaryDirectory() as state_dir, patch.dict(os.environ, session_env(state_dir)):
+        own_start = " ".join(real_run([ps, "-o", "lstart=", "-p", str(os.getpid())], capture_output=True, text=True,
+                                      env={**os.environ, "LC_ALL": "C", "TZ": "UTC0"}).stdout.split()) if Path(ps).exists() else ""
+        holders = {"gone0001": {"pid": reaped.pid, "pid_started": "Thu Jan  1 00:00:00 2026"},
+                   "live0001": {"pid": os.getpid(), "pid_started": own_start},
+                   "stal0001": {"pid": os.getpid(), "pid_started": "Thu Jan  1 00:00:00 2026"},
+                   "idle0001": {}, "work0001": {"pid": os.getpid(), "pid_started": own_start, "ended_workers": ["87650000"]}}
+        for actor, fields in holders.items():
+            Path(state_dir, f"0000-{actor}.json").write_text(json.dumps(
+                {"session": f"0000-{actor}", "role": "lead", "pulls": [], "actor": actor, "tool": "claude",
+                 "registered_at": "2026-10-22T15:00:00Z", **fields}), encoding="utf-8")
+        held_task = next(issue for issue in fixture if issue["title"] == "Held task")
+        holds = {"gone0001": "fx-gone", "live0001": "fx-live", "stal0001": "fx-stale", "idle0001": "fx-idle",
+                 "work0001/build-87650000": "fx-ended", "work0001/build-11112222": "fx-running",
+                 "live0001/build-87650000": "fx-other"}
+        crowd = fixture + [{**held_task, "id": item_id, "assignee": holder} for holder, item_id in holds.items()]
+        _, fresh, _ = invoke(["position"], Fake(crowd))
+        _, stale, _ = invoke(["position"], Fake(crowd), now="2026-10-22T17:30:00+00:00")
+
+        def row(text, key):
+            return next(r for r in text.splitlines() if r.startswith(f"  {key} "))
+
+        expected = {"fx-gone": "GONE", "fx-stale": "GONE", "fx-ended": "", "fx-live": "", "fx-idle": "",
+                    "fx-running": "", "fx-other": ""} if own_start else {}
+        for item_id, marker in expected.items():
+            if not row(fresh, item_id).endswith(f"ago{' ' + marker if marker else ''}  {held_task['title']}"):
+                raise ValueError(f"board position marked {item_id} wrongly (expected {marker or 'nothing'}):\n{fresh}")
+            if row(stale, item_id).endswith(f"ago IDLE  {held_task['title']}") != (not marker):
+                raise ValueError(f"board position idle hint on {item_id} (expected {not marker}):\n{stale}")
+        if own_start and ("Free fx-gone, fx-stale: board take <id> | board unclaim <id>" not in fresh
+                          or not row(fresh, "live0001").endswith("  process alive")
+                          or not row(fresh, "gone0001").endswith("  GONE") or "idle =" in fresh):
+            raise ValueError(f"board position liveness footer or session rows:\n{fresh}")
+        if not own_start and "GONE" in fresh:
+            raise ValueError(f"without ps, nothing is marked gone:\n{fresh}")
+        if "WORKER" in fresh + stale:
+            raise ValueError(f"board position judged another session's worker by its stop:\n{fresh}")
+
+        # Start times compare in UTC whatever the zone; a dead pid is GONE without ps; any ps failure is unknown,
+        # and a pid owned by another user (PermissionError) is still checked.
+        live, dead = {"pid": os.getpid(), "pid_started": own_start}, {"pid": reaped.pid, "pid_started": "x"}
+        with tempfile.TemporaryDirectory() as directory:
+            failing = Path(directory) / "ps"
+            failing.write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
+            failing.chmod(0o755)
+            for which, kill, expected in ((None, None, ("alive", "GONE")), (str(failing), None, (None, "GONE")),
+                                          (str(Path(directory) / "missing"), None, (None, "GONE")),
+                                          (None, PermissionError, ("alive", "GONE"))):
+                def denied(pid, signal, error=kill, real_kill=os.kill):
+                    if error and pid == os.getpid():
+                        raise error
+                    return real_kill(pid, signal)
+                board._processes.clear()
+                with patch.dict(os.environ, {"TZ": "Asia/Tokyo"}), \
+                        patch.object(board.shutil, "which", (lambda name, path=which: path) if which else shutil.which), \
+                        patch.object(board.os, "kill", denied):
+                    if own_start and (board.liveness(live), board.liveness(dead)) != expected:
+                        raise ValueError(f"liveness with ps {which}, kill error {kill}: "
+                                         f"{board.liveness(live), board.liveness(dead)} != {expected}")
+            board._processes.clear()
+
+        # board mine: the caller's own stopped workers only.
+        for caller_actor in ("work0001", "work0001/build-11112222"):
+            _, own, _ = invoke(["mine"], Fake(crowd), caller_actor)
+            if not row(own, "fx-ended").endswith("ago WORKER STOPPED  " + held_task["title"]) \
+                    or "WORKER STOPPED" in row(own, "fx-running") \
+                    or "WORKER STOPPED = the holding worker finished its last turn (fx-ended): continue the worker, " \
+                       "hand the item over, or free it (board unclaim <id>)" not in own:
+                raise ValueError(f"board mine did not mark the session's stopped worker:\n{own}")
+        _, other, _ = invoke(["mine"], Fake(crowd), "live0001")
+        if "fx-other" not in other or "WORKER STOPPED" in other:
+            raise ValueError(f"board mine marked a worker stopped in another session's list:\n{other}")
 
     # The actor comes from BEADS_ACTOR, else the Codex session[/thread], else the Claude session.
     for env, expected in (({"BEADS_ACTOR": "outer123", "CODEX_SESSION_ID": "x" * 8}, "outer123"),

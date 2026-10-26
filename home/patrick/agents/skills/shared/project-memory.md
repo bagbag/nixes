@@ -27,8 +27,11 @@
   acceptance requirements in their approved sequence.
 - Record ratified goal and sequencing changes in their owner before dependent
   work, including sequencing changes with unchanged product goals. Track an
-  approved checkpoint as its outcome epic's acceptance, or as a task when it
-  spans outcomes.
+  approved checkpoint as its outcome epic's acceptance, as a task when it
+  spans outcomes, or as a milestone item when it is a release checkpoint
+  (work-tracking [Milestones](../shared/work-tracking.md#milestones)). When a
+  milestone closes, retire its criterion in the goal owner and state the next
+  milestone's before re-placing the remaining work.
 - Link owners and dependencies for cross-topic/project work; return priority
   conflicts to the decision owner. On changed goals, sequencing or authority,
   reconcile affected owners, plans and next actions; park only dependent work.

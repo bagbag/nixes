@@ -51,7 +51,7 @@ findings or stops.
    Output: `handed over <id>` or `kept <id> open: <remainder>`.
 7. **Remainders.** Record every gap and follow-up as a new item or question
    discovered from this item; planning sessions (plan protocol Entry) place
-   them.
+   them under [Milestones](../../shared/work-tracking.md#milestones).
    Output: new ids, or `none`.
 
 ## Shared working tree

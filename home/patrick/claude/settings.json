@@ -24,6 +24,11 @@
             "type": "command",
             "command": "if command -v bd >/dev/null 2>&1; then bd dolt start >/dev/null 2>&1; bd prime --memories-only --hook-json; fi",
             "timeout": 10
+          },
+          {
+            "type": "command",
+            "command": "bash \"$HOME/.agents/bin/session-lead-mode\" alive",
+            "timeout": 10
           }
         ]
       },
@@ -87,6 +92,17 @@
           {
             "type": "command",
             "command": "bash \"$HOME/.claude/hooks/context-watch.sh\"",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$HOME/.claude/hooks/worker-ended.sh\"",
             "timeout": 10
           }
         ]

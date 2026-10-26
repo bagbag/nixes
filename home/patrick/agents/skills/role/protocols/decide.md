@@ -58,8 +58,8 @@ for open items.
    current tree. Classify each as already ruled (cite its owner), the planning
    session's call, your ruling or user decision. For open items, list decided
    records awaiting release first, then open questions, then
-   `needs_ratification` records, then `in_review` designs and finished epics
-   whose acceptance names the user (`board position`).
+   `needs_ratification` records, then `in_review` designs, ready milestones
+   and finished epics whose acceptance names the user (`board position`).
    Output: one row per point: id, class.
 2. **Select.** Choose one round under
    [Asking the user](../../shared/asking.md#asking-the-user); decide
@@ -139,8 +139,8 @@ release.
    record `board supersede <old> --with <new>`, with
    `--partial` when one rule of it changes.
    Output: released and superseded ids.
-7. **Next.** List waiting questions, `in_review` designs, finished epics
-   whose acceptance names the user and what waits on the user
+7. **Next.** List waiting questions, `in_review` designs, ready milestones,
+   finished epics whose acceptance names the user and what waits on the user
    (`board health --items user`);
    recommend one next step by priority and what it unblocks; wait for the
    user.
@@ -155,11 +155,12 @@ reported.
 
 ## Accept
 
-**Entry:** an `in_review` design item, or a finished epic whose acceptance
-names the user (`board position`).
+**Entry:** an `in_review` design item, a ready milestone, or a finished epic
+whose acceptance names the user (`board position`).
 
-1. **Claim** a design item: `board claim <id>`.
-   Output: `claimed <id>; author <actor>`, or `epic <id>`.
+1. **Claim** a design item or milestone: `board claim <id>`.
+   Output: `claimed <id>; author <actor>`, `claimed <id> (milestone)`, or
+   `epic <id>`.
 2. **Evidence.** Check the named evidence under the review protocol's
    [Evidence and gates](review.md#evidence-and-gates).
    Output: one line per gate: command, result.
@@ -169,12 +170,13 @@ names the user (`board position`).
 4. **Close or return.** Close on the user's acceptance
    (`board bd close <id> --reason "<verdict>"`). Otherwise return a design
    with the findings (`board return <id> "<findings>"`); for an epic, create
-   the findings as items under it. When the item received a ruling, check
+   the findings as items under it; for a milestone, create them as members
+   and unclaim it (`board unclaim <id>`). When the item received a ruling, check
    that the rule sits in its owner and every conflict became a question.
    Output: `closed <id>`, `returned <id>` or `findings <ids>`.
 
-**Stop:** the user rejects the design or result: return the design, or file
-the findings under the epic. A required gate cannot run: return it naming the
-unestablished claim.
+**Stop:** the user rejects the design or result: return the design, file the
+findings under the epic, or add them to the milestone. A required gate cannot
+run: return it naming the unestablished claim.
 
-**Exit:** the item is closed or returned.
+**Exit:** the item is closed or returned, or the milestone has new members.

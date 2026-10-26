@@ -16,6 +16,8 @@ let
     pkgs.runCommand "agent-artifacts"
       {
         nativeBuildInputs = [
+          # The build sandbox refuses the setuid /bin/ps; the registry liveness tests need a ps.
+          pkgs.ps
           pkgs.jq
           (pkgs.python3.withPackages (p: [ p.pyyaml ]))
         ];
@@ -91,6 +93,9 @@ in
   home.file.".claude/hooks/session-register.sh".source =
     config.lib.file.mkOutOfStoreSymlink "${agentsSrc}/hooks/session-register.sh";
 
+  home.file.".claude/hooks/worker-ended.sh".source =
+    config.lib.file.mkOutOfStoreSymlink "${agentsSrc}/hooks/worker-ended.sh";
+
   home.file.".codex/hooks/compact-reorient.sh".source =
     config.lib.file.mkOutOfStoreSymlink "${agentsSrc}/hooks/compact-reorient.sh";
 
@@ -102,6 +107,9 @@ in
 
   home.file.".codex/hooks/session-register.sh".source =
     config.lib.file.mkOutOfStoreSymlink "${agentsSrc}/hooks/session-register.sh";
+
+  home.file.".codex/hooks/worker-ended.sh".source =
+    config.lib.file.mkOutOfStoreSymlink "${agentsSrc}/hooks/worker-ended.sh";
 
   # Stable, tool-neutral session role registry shared by Codex and Claude Code.
   home.file.".agents/bin/session-lead-mode".source =

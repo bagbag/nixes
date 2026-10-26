@@ -119,6 +119,8 @@ Establish the outcome's contribution to its milestone:
 
 - Cut items under [Work items](../../shared/work-tracking.md#work-items).
   Split, merge or reorder them for a cleaner end state or independent work.
+- Place each new item in or out of the open milestone under
+  [Milestones](../../shared/work-tracking.md#milestones).
 - Use a separate plan for cross-item reasoning, blast-radius integration
   checkpoints and cheap assumption tests that items cannot hold. Assign `plan`
   for material decomposition or integration uncertainty.
@@ -151,7 +153,8 @@ Establish the outcome's contribution to its milestone:
 
 ## Queue
 
-- Rank by per-item [Priority](../../shared/work-tracking.md#priority),
+- Order work under [Milestones](../../shared/work-tracking.md#milestones);
+  rank by per-item [Priority](../../shared/work-tracking.md#priority),
   including committed nonblocking consumers (`board holders`).
 - Scope a user's stop to the exact action, file, decision or effect it names;
   continue authorized work outside it. Distinguish source authoring,

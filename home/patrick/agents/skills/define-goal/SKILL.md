@@ -33,7 +33,8 @@ execution.
   - intended user and defining outcome;
   - problem or burden reduced;
   - value path and load-bearing hypotheses;
-  - next observable milestone and why it matters;
+  - next observable milestone and why it matters; for a release checkpoint,
+    the criterion its work meets;
   - smallest coherent walking skeleton proving it;
   - non-goals and safe deferrals;
   - constraints and quality criterion;

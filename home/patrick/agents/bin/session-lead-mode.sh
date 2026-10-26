@@ -5,6 +5,11 @@
 # win, so a Codex session started from Claude is itself (a Claude session
 # started from Codex is not: it inherits CODEX_SESSION_ID). The
 # session-register hook keeps workers from registering.
+# activate and alive record the Claude Code process (pid, pid_started) so
+# board position can tell a gone session; worker-ended (SubagentStop hook)
+# lists stopped workers. Codex records no process: the nearest `codex`
+# ancestor can be an app-server daemon shared by many sessions or a
+# per-command `codex sandbox` helper, so Codex holds keep the idle hint.
 set -euo pipefail
 
 state_dir=${AGENT_SESSION_STATE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/agent-sessions}
@@ -17,6 +22,8 @@ usage: session-lead-mode activate <lead|agent|solo|autopilot> [--pulls plan,desi
        session-lead-mode get <id>
        session-lead-mode show <id>
        session-lead-mode list
+       session-lead-mode alive
+       session-lead-mode worker-ended <agent-id>
 `--pulls` applies only to agent, which needs at least one pull.
 EOF
   exit 2
@@ -49,15 +56,61 @@ valid_session_id() {
 }
 
 # The agent session running this command (work-tracking.md#actors-and-holds).
-from_environment() {
+environment_session() {
   if [[ -n ${CODEX_SESSION_ID-} ]]; then
     session=$CODEX_SESSION_ID tool=codex thread=${CODEX_THREAD_ID-}
   elif [[ -n ${CLAUDE_CODE_SESSION_ID-} ]]; then
     session=$CLAUDE_CODE_SESSION_ID tool=claude
   else
-    fail "no agent session: run inside Claude Code or Codex"
+    return 1
   fi
+}
+
+from_environment() {
+  environment_session || fail "no agent session: run inside Claude Code or Codex"
   valid_session_id "$session"
+}
+
+# Hook-run commands (alive, worker-ended) end silently without a registered
+# session: a failing SubagentStop hook would keep the worker running.
+registered_session() {
+  environment_session && [[ "$session" =~ ^[A-Za-z0-9._-]{8,}$ ]] || exit 0
+  target="$state_dir/$session.json"
+  [[ -f "$target" ]] || exit 0
+}
+
+ps_command=$(command -v ps || echo /bin/ps)
+
+# "<pid>\n<UTC start time>" of the Claude Code process running this command, or
+# nothing (Codex, no agent ancestor, ps unavailable).
+process_identity() {
+  local pid=$$ name started
+  while [[ "$pid" =~ ^[0-9]+$ ]] && ((pid > 1)); do
+    name=$(LC_ALL=C "$ps_command" -o comm= -p "$pid" 2>/dev/null) || return 0
+    case ${name##*/} in
+      claude)
+        # UTC, as board.py compares it: a time-zone change must not read as a new process.
+        started=$(LC_ALL=C TZ=UTC0 "$ps_command" -o lstart= -p "$pid" 2>/dev/null) || return 0
+        [[ -n "$started" ]] || return 0
+        read -r -a started <<<"$started"
+        printf '%s\n%s\n' "$pid" "${started[*]}"
+        return 0
+        ;;
+      codex) return 0 ;;
+    esac
+    pid=$(LC_ALL=C "$ps_command" -o ppid= -p "$pid" 2>/dev/null) || return 0
+    pid=${pid//[[:space:]]/}
+  done
+}
+
+# Sets pid and pid_started from process_identity; both empty without one.
+# jq callers bind them and merge `identity` (pid fields, or none).
+identity_filter='def identity: if $pid == "" then {} else {pid: ($pid | tonumber), pid_started: $pid_started} end;'
+read_identity() {
+  local identity=''
+  [[ "$tool" != claude ]] || identity=$(process_identity)
+  pid='' pid_started=''
+  [[ -z "$identity" ]] || pid=${identity%%$'\n'*} pid_started=${identity#*$'\n'}
 }
 
 case "$command" in
@@ -85,6 +138,10 @@ case "$command" in
     umask 077
     mkdir -p "$state_dir"
     target="$state_dir/$session.json"
+    # A role change keeps the session's stopped workers.
+    ended='[]'
+    [[ ! -f "$target" ]] || ended=$(jq -c '.ended_workers // []' "$target" 2>/dev/null) || ended='[]'
+    read_identity
     temporary=$(mktemp "$state_dir/.$session.XXXXXX")
     jq -n \
       --arg session "$session" \
@@ -92,10 +149,32 @@ case "$command" in
       --arg actor "${session: -8}" \
       --arg tool "$tool" \
       --arg registered_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+      --arg pid "$pid" \
+      --arg pid_started "$pid_started" \
+      --argjson ended "$ended" \
       --args \
-      '{session: $session, role: $role, pulls: $ARGS.positional, actor: $actor,
-        tool: $tool, registered_at: $registered_at}' \
+      "$identity_filter"'{session: $session, role: $role, pulls: $ARGS.positional, actor: $actor,
+        tool: $tool, registered_at: $registered_at} + identity + {ended_workers: $ended}' \
       "${selected[@]}" >"$temporary"
+    mv -f "$temporary" "$target"
+    ;;
+  alive)
+    [[ -z "$role$pulls" ]] || usage
+    registered_session
+    read_identity
+    umask 077
+    temporary=$(mktemp "$state_dir/.$session.XXXXXX")
+    jq --arg pid "$pid" --arg pid_started "$pid_started" \
+      "$identity_filter"'del(.pid, .pid_started) + identity' "$target" >"$temporary"
+    mv -f "$temporary" "$target"
+    ;;
+  worker-ended)
+    [[ -z "$pulls" && "$role" =~ ^[A-Za-z0-9._-]{8,}$ ]] || usage
+    registered_session
+    umask 077
+    temporary=$(mktemp "$state_dir/.$session.XXXXXX")
+    jq --arg worker "${role: -8}" '.ended_workers = ((.ended_workers // []) - [$worker] + [$worker])' \
+      "$target" >"$temporary"
     mv -f "$temporary" "$target"
     ;;
   actor)
@@ -116,20 +195,21 @@ case "$command" in
       if [[ "$command" == get ]]; then
         jq -r '.role' "$registration"
       else
-        jq -c '{role, pulls, actor, tool, session, registered_at}' "$registration"
+        jq -c '{role, pulls, actor, tool, session, registered_at, pid, pid_started, ended_workers: (.ended_workers // [])}' "$registration"
       fi
       exit 0
     fi
     [[ "$command" == get ]] ||
       jq -nc --arg actor "${session: -8}" --arg session "$session" \
-        '{role: null, pulls: [], actor: $actor, tool: null, session: $session, registered_at: null}'
+        '{role: null, pulls: [], actor: $actor, tool: null, session: $session, registered_at: null,
+          pid: null, pid_started: null, ended_workers: []}'
     ;;
   list)
     [[ -z "$role$session$pulls$tool" ]] || usage
     [[ -d "$state_dir" ]] || exit 0
     shopt -s nullglob
     files=("$state_dir"/*.json)
-    ((${#files[@]} == 0)) || jq -c '{role, pulls, actor, tool, session, registered_at}' "${files[@]}"
+    ((${#files[@]} == 0)) || jq -c '{role, pulls, actor, tool, session, registered_at, pid, pid_started, ended_workers: (.ended_workers // [])}' "${files[@]}"
     ;;
   *) usage ;;
 esac
