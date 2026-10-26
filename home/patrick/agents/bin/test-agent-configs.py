@@ -722,15 +722,15 @@ def validate_session_registry(root: Path) -> None:
             out, err = process.communicate()
             return process.pid, subprocess.CompletedProcess(args, process.returncode, out, err)
 
-        for command in (("alive",), ("worker-ended", "a43f14ee58a40ea36")):
-            if under_claude(*command)[1].returncode != 0 or entry_file.exists():
+        for command in (("alive",), ("worker-ended", "a43f14ee58a40ea36"), ("worker-started", "a43f14ee58a40ea36")):
+            if under_claude(*command)[1].returncode != 0 or any(Path(state_dir).iterdir()):
                 raise ValueError(f"session-lead-mode {command[0]} must be a silent no-op for an unregistered session")
             if run(*command, env=env).returncode != 0 or any(Path(state_dir).iterdir()):
                 raise ValueError(f"session-lead-mode {command[0]} must be a silent no-op outside an agent session")
         pid, activated = under_claude("activate", "lead")
         entry = json.loads(entry_file.read_text(encoding="utf-8"))
         if entry.get("pid") != pid or entry.get("pid_started") != " ".join(activated.stdout.split()) \
-                or not entry.get("pid_started") or entry.get("ended_workers") != []:
+                or not entry.get("pid_started") or "ended_workers" in entry:
             raise ValueError(f"activate did not record the claude process {pid}: {entry}")
         entry_file.write_text(json.dumps({**entry, "pid": 1, "pid_started": "stale"}), encoding="utf-8")
         pid, refreshed_run = under_claude("alive")
@@ -748,6 +748,26 @@ def validate_session_registry(root: Path) -> None:
             raise ValueError("a role change dropped the session's ended workers")
         if run("worker-ended", "short", env={**env, **as_session(SESSION)}).returncode == 0:
             raise ValueError("worker-ended accepted an invalid agent id")
+        # Workers stopping together each keep their mark (a shared read-modify-write lost most of them).
+        parallel = [f"agent-{index:016x}" for index in range(20)]
+        stops = [subprocess.Popen(["bash", str(script), "worker-ended", worker], env={**os.environ, **env, **as_session(SESSION)},
+                                  stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL) for worker in parallel]
+        if any(stop.wait() != 0 for stop in stops) or not {worker[-8:] for worker in parallel} \
+                <= set(json.loads(run("show", SESSION, env=env).stdout)["ended_workers"]):
+            raise ValueError("worker-ended lost the marks of workers stopping together")
+        # A started or resumed worker is no longer marked; starting an unmarked worker is a no-op.
+        for worker in parallel + ["agent-never-stopped"]:
+            run("worker-started", worker, env={**env, **as_session(SESSION)}).check_returncode()
+        if json.loads(run("show", SESSION, env=env).stdout)["ended_workers"] != ["8a40ea36", "b53ded8a"]:
+            raise ValueError("worker-started did not clear exactly the started workers' marks")
+        # The legacy ended_workers field is never read, and alive drops it.
+        entry = json.loads(entry_file.read_text(encoding="utf-8"))
+        entry_file.write_text(json.dumps({**entry, "ended_workers": ["deadbeef"]}), encoding="utf-8")
+        if "deadbeef" in json.loads(run("show", SESSION, env=env).stdout)["ended_workers"]:
+            raise ValueError("show read the legacy ended_workers field")
+        under_claude("alive")
+        if "ended_workers" in json.loads(entry_file.read_text(encoding="utf-8")):
+            raise ValueError("alive kept the legacy ended_workers field")
         under_claude("activate", "lead", tool="codex")
         shown = json.loads(run("show", SESSION, env=env).stdout)
         if shown["pid"] is not None or shown["pid_started"] is not None:
@@ -756,24 +776,29 @@ def validate_session_registry(root: Path) -> None:
         if not {"pid", "pid_started", "ended_workers"} <= listed.keys():
             raise ValueError(f"session-lead-mode list lacks the liveness fields: {listed}")
 
-        # worker-ended hook: the payload's worker joins its session's entry; it never fails.
-        hook = root / "hooks" / "worker-ended.sh"
+        # worker-status hook: SubagentStop marks the payload's worker in its session, SubagentStart unmarks it;
+        # it never fails.
+        hook = root / "hooks" / "worker-status.sh"
         hook_env = {**env, "AGENT_SESSION_LEAD_COMMAND": str(script)}
         stop = {"hook_event_name": "SubagentStop", "session_id": SESSION, "agent_id": "a1b2c3d4e5f60718",
                 "agent_type": "build"}
         # Skipped payloads carry their own ids and run with the session in the environment too.
         for payload in ({**stop, "agent_id": "internal-0000aaaa", "agent_type": ""},
                         {key: value for key, value in stop.items() if key != "agent_id"} | {"agent_type": "general-purpose"},
-                        {**stop, "agent_id": "elsewhere-0000bbbb", "session_id": "abcdefgh-unknown"}):
+                        {**stop, "agent_id": "elsewhere-0000bbbb", "session_id": "abcdefgh-unknown"},
+                        {**stop, "agent_id": "otherevent-0000dddd", "hook_event_name": "Stop"}):
             run_hook(hook, payload, {**hook_env, **as_session(SESSION)})
         run_hook(hook, {**stop, "agent_id": "nocommand-0000cccc"},
                  {**hook_env, "AGENT_SESSION_LEAD_COMMAND": str(Path(bin_dir) / "missing")})
         # The payload's session wins over an outer Codex session in the environment.
         run_hook(hook, stop, {**hook_env, "CODEX_SESSION_ID": "elsewhere-1"})
         if json.loads(run("show", SESSION, env=env).stdout)["ended_workers"] != ["8a40ea36", "b53ded8a", "e5f60718"]:
-            raise ValueError("worker-ended hook did not record exactly the payload's worker in the payload's session")
-        if sorted(path.name for path in Path(state_dir).iterdir()) != [f"{SESSION}.json"]:
-            raise ValueError("worker-ended hook wrote an entry for an unregistered session")
+            raise ValueError("worker-status hook did not record exactly the payload's worker in the payload's session")
+        run_hook(hook, {**stop, "hook_event_name": "SubagentStart"}, hook_env)
+        if json.loads(run("show", SESSION, env=env).stdout)["ended_workers"] != ["8a40ea36", "b53ded8a"]:
+            raise ValueError("worker-status hook did not unmark the started worker")
+        if sorted(path.name for path in Path(state_dir).iterdir()) != [f"{SESSION}.ended", f"{SESSION}.json"]:
+            raise ValueError("worker-status hook wrote an entry for an unregistered session")
 
     with tempfile.TemporaryDirectory() as state_home:
         env = {key: value for key, value in os.environ.items() if key != "AGENT_SESSION_STATE_DIR"}
@@ -1549,7 +1574,9 @@ def validate_board(root: Path) -> None:
         holders = {"gone0001": {"pid": reaped.pid, "pid_started": "Thu Jan  1 00:00:00 2026"},
                    "live0001": {"pid": os.getpid(), "pid_started": own_start},
                    "stal0001": {"pid": os.getpid(), "pid_started": "Thu Jan  1 00:00:00 2026"},
-                   "idle0001": {}, "work0001": {"pid": os.getpid(), "pid_started": own_start, "ended_workers": ["87650000"]}}
+                   "idle0001": {}, "work0001": {"pid": os.getpid(), "pid_started": own_start}}
+        Path(state_dir, "0000-work0001.ended").mkdir()
+        Path(state_dir, "0000-work0001.ended", "87650000").touch()
         for actor, fields in holders.items():
             Path(state_dir, f"0000-{actor}.json").write_text(json.dumps(
                 {"session": f"0000-{actor}", "role": "lead", "pulls": [], "actor": actor, "tool": "claude",

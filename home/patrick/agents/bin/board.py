@@ -141,8 +141,8 @@ _processes: dict[int, str | None] = {}  # pid -> start time, 'GONE', or None (un
 
 
 def worker_stopped(entry: dict | None, holder: str) -> bool:
-    """The holding worker's last stop is recorded (SubagentStop). Continued workers stop again and again,
-    so this directs only the owning session (`board mine`), never another session's judgment."""
+    """The holding worker is marked stopped. Only its owning session (`board mine`) acts on it: only the owner
+    knows whether it continues the worker."""
     worker = holder.split('/', 1)[1] if '/' in holder else None
     return bool(entry and worker and worker[-8:] in (entry.get('ended_workers') or []))
 

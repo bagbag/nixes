@@ -35,11 +35,10 @@ the user.
 - Nothing frees a hold automatically. Free another doer's hold only with
   `board take <id>` (reassign to you with a comment) or
   `board unclaim <id>`. Free another session's hold only as
-  the user or a [deciding session](../role/SKILL.md#roles) once the holding
-  session is gone: `board position` marks a holder gone when its registered
-  process has ended, and hints idle holders otherwise. Your own stopped
-  workers' holds show in `board mine`: continue the worker, hand the item
-  over or free it.
+  the user or a [deciding session](../role/SKILL.md#roles) once
+  `board position` marks the holder gone, or you judge an idle-marked holder
+  gone. For your own workers' holds marked stopped in `board mine`: continue
+  the worker, hand the item over or free it.
 
 ### Kinds
 
@@ -121,15 +120,13 @@ claims them.
 - Track each release checkpoint as one `milestone` item (`1.0-beta`) under
   the goal epic. Its acceptance names the checkpoint's evidence and the user;
   the goal owner states which work belongs to it.
-- Add members with `board bd dep add <milestone> <member>`; a member edge
-  needs no named reason, the goal owner's criterion is its reason. Everything
-  a member waits on belongs to the milestone too. Block the milestone by the
-  last release step as well.
-- A member epic brings its descendants: its whole outcome ships in the
-  milestone. File work that ships later under another outcome.
-- Membership orders work and never cuts it: `board claim` and `queue` take
-  P0 items first, then milestone work, then the rest, each by priority.
-  `--root <milestone>` scopes a view to the milestone's work.
+- Add members with `board bd dep add <milestone> <member>`, without a reason
+  line. Everything a member waits on belongs to the milestone too. Block the
+  milestone by the last release step as well.
+- A member epic brings all its descendants; file work that ships later under
+  another outcome.
+- Membership orders work and never cuts it: P0 items first, then milestone
+  work, then the rest, each by priority.
 - Place each new item: a member when the goal owner's criterion covers it. An
   item discovered from milestone work joins unless it is a pure addition. Move
   work in or out by adding or removing its edge.
@@ -235,7 +232,7 @@ order and context coincide, keep `blocks`.
    (`$HOME/.agents/skills/role/protocols/review.md#evidence-and-gates`).
 2. Keep active work `in_progress` with its current resume point in `notes`
    (`board bd update <id> --notes "<point>"`), replaced as the work moves;
-   comments keep the history. Hand over only with complete evidence for
+   record history as comments. Hand over only with complete evidence for
    the item's acceptance; keep partial work open with the remainder in
    `--acceptance`, and block waiting work on what it needs.
 3. Hand over with the evidence: `board handover <id> "<evidence>"`.
@@ -248,7 +245,7 @@ order and context coincide, keep `blocks`.
 
 | Item | Lifecycle |
 |---|---|
-| Deferral | `board bd defer <id> --reason "<revisit condition>"` (the reason lands in `notes`), plus `--until <date>` when the condition is a date (bd wakes the item then); undefer on named new evidence. Deferred items are the project backlog. |
+| Deferral | `board bd defer <id> --reason "<revisit condition>"`, plus `--until <date>` for a date condition (bd undefers it then); undefer other conditions on named new evidence. Deferred items are the project backlog. |
 | Environment fact | `board bd remember --key <key>` for temporary repository-wide facts needed by every current session, a user's broad stop (area, paths, kind of action) included with its words and date; state a removal condition; remove with `board bd forget`. |
 
 ### Priority

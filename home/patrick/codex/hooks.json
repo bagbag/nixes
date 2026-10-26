@@ -56,12 +56,23 @@
         ]
       }
     ],
+    "SubagentStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$HOME/.codex/hooks/worker-status.sh\"",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
     "SubagentStop": [
       {
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"$HOME/.codex/hooks/worker-ended.sh\"",
+            "command": "bash \"$HOME/.codex/hooks/worker-status.sh\"",
             "timeout": 10
           }
         ]

@@ -6,8 +6,9 @@
 # started from Codex is not: it inherits CODEX_SESSION_ID). The
 # session-register hook keeps workers from registering.
 # activate and alive record the Claude Code process (pid, pid_started) so
-# board position can tell a gone session; worker-ended (SubagentStop hook)
-# lists stopped workers. Codex records no process: the nearest `codex`
+# board position can tell a gone session. worker-ended and worker-started keep
+# one marker file per stopped worker in <session>.ended/: workers stopping
+# together would overwrite each other's marks in one shared file. Codex records no process: the nearest `codex`
 # ancestor can be an app-server daemon shared by many sessions or a
 # per-command `codex sandbox` helper, so Codex holds keep the idle hint.
 set -euo pipefail
@@ -24,6 +25,7 @@ usage: session-lead-mode activate <lead|agent|solo|autopilot> [--pulls plan,desi
        session-lead-mode list
        session-lead-mode alive
        session-lead-mode worker-ended <agent-id>
+       session-lead-mode worker-started <agent-id>
 `--pulls` applies only to agent, which needs at least one pull.
 EOF
   exit 2
@@ -71,12 +73,21 @@ from_environment() {
   valid_session_id "$session"
 }
 
-# Hook-run commands (alive, worker-ended) end silently without a registered
+# Hook-run commands (alive, worker-ended, worker-started) end silently without a registered
 # session: a failing SubagentStop hook would keep the worker running.
 registered_session() {
   environment_session && [[ "$session" =~ ^[A-Za-z0-9._-]{8,}$ ]] || exit 0
   target="$state_dir/$session.json"
   [[ -f "$target" ]] || exit 0
+}
+
+# A registry entry as show and list print it; ended_workers comes from the
+# entry's marker files, not from the legacy JSON field.
+entry_json() {
+  local markers=("${1%.json}.ended"/*)
+  ((${#markers[@]} > 0)) && [[ -e "${markers[0]}" ]] || markers=()
+  jq -c --args '{role, pulls, actor, tool, session, registered_at, pid, pid_started,
+    ended_workers: [$ARGS.positional[] | split("/") | last]}' "${markers[@]}" <"$1"
 }
 
 ps_command=$(command -v ps || echo /bin/ps)
@@ -138,9 +149,6 @@ case "$command" in
     umask 077
     mkdir -p "$state_dir"
     target="$state_dir/$session.json"
-    # A role change keeps the session's stopped workers.
-    ended='[]'
-    [[ ! -f "$target" ]] || ended=$(jq -c '.ended_workers // []' "$target" 2>/dev/null) || ended='[]'
     read_identity
     temporary=$(mktemp "$state_dir/.$session.XXXXXX")
     jq -n \
@@ -151,10 +159,9 @@ case "$command" in
       --arg registered_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
       --arg pid "$pid" \
       --arg pid_started "$pid_started" \
-      --argjson ended "$ended" \
       --args \
       "$identity_filter"'{session: $session, role: $role, pulls: $ARGS.positional, actor: $actor,
-        tool: $tool, registered_at: $registered_at} + identity + {ended_workers: $ended}' \
+        tool: $tool, registered_at: $registered_at} + identity' \
       "${selected[@]}" >"$temporary"
     mv -f "$temporary" "$target"
     ;;
@@ -165,17 +172,20 @@ case "$command" in
     umask 077
     temporary=$(mktemp "$state_dir/.$session.XXXXXX")
     jq --arg pid "$pid" --arg pid_started "$pid_started" \
-      "$identity_filter"'del(.pid, .pid_started) + identity' "$target" >"$temporary"
+      "$identity_filter"'del(.pid, .pid_started, .ended_workers) + identity' "$target" >"$temporary"
     mv -f "$temporary" "$target"
     ;;
-  worker-ended)
+  worker-ended | worker-started)
     [[ -z "$pulls" && "$role" =~ ^[A-Za-z0-9._-]{8,}$ ]] || usage
     registered_session
-    umask 077
-    temporary=$(mktemp "$state_dir/.$session.XXXXXX")
-    jq --arg worker "${role: -8}" '.ended_workers = ((.ended_workers // []) - [$worker] + [$worker])' \
-      "$target" >"$temporary"
-    mv -f "$temporary" "$target"
+    marker="$state_dir/$session.ended/${role: -8}"
+    if [[ "$command" == worker-ended ]]; then
+      umask 077
+      mkdir -p "${marker%/*}"
+      : >"$marker"
+    else
+      rm -f "$marker"
+    fi
     ;;
   actor)
     [[ -z "$role$pulls" ]] || usage
@@ -195,7 +205,7 @@ case "$command" in
       if [[ "$command" == get ]]; then
         jq -r '.role' "$registration"
       else
-        jq -c '{role, pulls, actor, tool, session, registered_at, pid, pid_started, ended_workers: (.ended_workers // [])}' "$registration"
+        entry_json "$registration"
       fi
       exit 0
     fi
@@ -209,7 +219,9 @@ case "$command" in
     [[ -d "$state_dir" ]] || exit 0
     shopt -s nullglob
     files=("$state_dir"/*.json)
-    ((${#files[@]} == 0)) || jq -c '{role, pulls, actor, tool, session, registered_at, pid, pid_started, ended_workers: (.ended_workers // [])}' "${files[@]}"
+    for registration in "${files[@]}"; do
+      entry_json "$registration"
+    done
     ;;
   *) usage ;;
 esac
