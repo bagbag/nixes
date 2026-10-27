@@ -123,13 +123,14 @@ claims them.
 - Add members with `board bd dep add <milestone> <member>`, without a reason
   line. Everything a member waits on belongs to the milestone too. Block the
   milestone by the last release step as well.
+- When release checks must run on the finished scope, members block a
+  `<release> scope` milestone instead, and it blocks the first checks.
 - A member epic brings all its descendants; file work that ships later under
   another outcome.
 - Membership orders work and never cuts it: P0 items first, then milestone
   work, then the rest, each by priority.
-- Place each new item: a member when the goal owner's criterion covers it. An
-  item discovered from milestone work joins unless it is a pure addition. Move
-  work in or out by adding or removing its edge.
+- Place each new item: a member when the goal owner's criterion covers it.
+  Move work in or out by adding or removing its edge.
 - When the milestone turns ready, a deciding session walks the user through
   it, closes it on acceptance and reconciles the goal owner under
   project-memory.

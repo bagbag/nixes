@@ -87,7 +87,8 @@ for open items.
    [Questions and rulings](../../shared/work-tracking.md#questions-and-rulings)
    and set status `decided`; when the user asks for the overall picture first,
    record the round after the walkthrough. Record user-stated constraints and
-   principles as rulings. Check each record against the wording of the chosen
+   principles as rulings, and in the Decision any review the user wants of
+   the planning result before it is applied. Check each record against the wording of the chosen
    option; a rule the option did not state is your ruling (disclose it) or a
    new question. Revise a record in place until release; record later
    changes as new records. Close ratified `needs_ratification` records under
