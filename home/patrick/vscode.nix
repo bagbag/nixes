@@ -47,7 +47,6 @@
         # --- UI & Themes ---
         vscode-icons-team.vscode-icons
         zhuangtongfa.material-theme
-        kamikillerto.vscode-colorize
 
         # --- Utils ---
         adpyke.codesnap
@@ -97,6 +96,11 @@
         "explorer.fileNesting.enabled" = true;
         "files.insertFinalNewline" = true;
         "files.trimFinalNewlines" = true;
+        "files.watcherExclude" = {
+          "**/.beads/**" = true;
+          "**/.scratch/**" = true;
+          "**/.pnpm-store/**" = true;
+        };
         "git.confirmSync" = false;
         "gitlens.hovers.currentLine.over" = "line";
         "html.format.maxPreserveNewLines" = 2;
@@ -112,6 +116,11 @@
         "markdown.validate.enabled" = true;
         "prettier.printWidth" = 999;
         "scm.defaultViewMode" = "tree";
+        "search.exclude" = {
+          "**/.beads" = true;
+          "**/.scratch" = true;
+          "**/.pnpm-store" = true;
+        };
         "scss.lint.duplicateProperties" = "warning";
         "scss.lint.float" = "warning";
         "scss.lint.idSelector" = "warning";
@@ -133,7 +142,8 @@
         "typescript.preferences.preferTypeOnlyAutoImports" = true;
         "typescript.preferences.quoteStyle" = "single";
         "typescript.referencesCodeLens.enabled" = true;
-        "typescript.tsserver.experimental.enableProjectDiagnostics" = true;
+        "typescript.tsserver.experimental.enableProjectDiagnostics" = false;
+        "typescript.tsserver.maxTsServerMemory" = 8192;
         "vsicons.presets.angular" = true;
         "window.dialogStyle" = "custom";
         "workbench.colorTheme" = "One Dark Pro Mix";
