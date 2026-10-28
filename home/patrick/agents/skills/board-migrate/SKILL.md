@@ -1,10 +1,9 @@
 ---
 name: board-migrate
 description: >-
-  User-invoked migration of a project's work tracking to the current board
-  conventions, from any starting state: no board (TODO, REVIEW or roadmap
-  files), Markdown trackers and lead notes, a beads board in older
-  conventions, or a mix. Derives the gap to the target and closes it.
+  Move a project's TODO/REVIEW files, trackers or older board onto the
+  current board.
+argument-hint: "[project or arc]"
 disable-model-invocation: true
 ---
 
@@ -74,9 +73,13 @@ Give each step's output compactly; detail only findings and stops.
    [Deferrals and environment facts](#deferrals-and-environment-facts), drop
    lifted ones) and `board bd memories` past their removal condition (to the
    user). Classify every doc under `docs/` as current owner, proposal (to
-   the board) or history (to `history/`). Delegate sweeps of large sources by
-   range.
-   Output: sources with counts of live entries by kind; deviations by class.
+   the board) or history (to `history/`). Include untracked files and
+   record each source's hash. Where a board exists, save one
+   `board bd export` as `board-baseline.jsonl` in the plan's directory (step
+   2) and derive every board mapping from it. Delegate sweeps of large
+   sources by range.
+   Output: sources with counts of live entries by kind and hashes; the
+   baseline path; deviations by class.
 2. **Gap plan.** Triage live items first: list moot ones for closing with
    their reason. Map every remaining entry and deviation to its target owner or
    to history, with source path or id. Write it to
@@ -89,7 +92,12 @@ Give each step's output compactly; detail only findings and stops.
 3. **Confirm.** Show the plan summary, counts and rule findings; the user's
    confirmation authorizes every step below, including retiring trackers.
    Output: the user's confirmation, quoted.
-4. **Apply.** Set up beads under the included setup when `.beads/` is absent.
+4. **Apply.** Before the first write, ask the user to pause sessions that
+   write the board or the sources; re-check every source hash and diff a
+   fresh `board bd export` against `board-baseline.jsonl` (no board: hashes
+   only), and stop on drift. Report when the paused
+   sessions may resume. Set up beads under the included setup when `.beads/`
+   is absent.
    Apply only from the change set, directly, or for large boards through
    outcome-sized tasks under Cut work in
    `$HOME/.agents/skills/role/protocols/plan.md`. Mechanical fixes (edge

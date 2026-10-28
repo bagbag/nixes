@@ -1,9 +1,8 @@
 ---
 name: role
 description: >-
-  Enter or re-enter this session's workflow role (lead, agent, solo or
-  autopilot), register it and load its protocols. User-invoked; an optional
-  argument names the role and, for agent, its pulls.
+  Enter a workflow role: lead, agent, solo or autopilot.
+argument-hint: "[role] [pulls]"
 disable-model-invocation: true
 ---
 

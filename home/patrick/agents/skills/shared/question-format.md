@@ -1,10 +1,19 @@
 ## Question format
 
-- Ask one question per decision. Present each in chat first: the problem in
-  one plain sentence; realistic consumer scenarios (the simple case and each
-  case where the options' outcomes differ); every option's for, against and
-  footguns, with a short consumer example for code, API or shape choices; the
-  recommendation first, marked strong or lean, with any reviewer
+- Ask top-down: direction first (goal, outcome, principle), then the
+  criteria and behavior it leaves open, then the remaining specific
+  decisions; each level is a round whose answers set the next level's
+  premises, and levels the context already settles are skipped. Show each
+  option's observable result with concrete cases; where the user cannot state
+  a rule, ask a few cases and derive it. Name the decisions each answer
+  settles, derive them, and present them for one confirmation; write or act
+  on them only after it. Ask a
+  mechanism question only where the answers leave several clean mechanisms.
+- Ask one question per remaining decision. Present each in chat first: the
+  problem in one plain sentence; realistic consumer scenarios (the simple case
+  and each case where the options' outcomes differ); every option's for,
+  against and footguns, with a short consumer example for code, API or shape
+  choices; the recommendation first, marked strong or lean, with any reviewer
   disagreement. Name items in plain words; put ids in brackets.
 - Keep the asked question short: one sentence that points to its chat entry
   by number or id, short option labels with a one-line description each, and
@@ -12,7 +21,7 @@
 - Ask with the runtime's structured-question tool where it has one, using your
   own option labels, four questions per call and further calls for the rest.
   Otherwise number the questions and letter the options so the user can answer
-  "1b, 2a".
+  "1b, 2a", or "yes" to accept every recommendation.
 - Confirm an ambiguous answer term's reading in one line before building on
   it.
 - When the user answers with a criterion instead of an option, restart under

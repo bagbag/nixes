@@ -20,12 +20,13 @@ per step for a local, reversible choice.
    triggers (compiler depth limit, crash, performance cliff) is a clue to a
    defect: name its suspected cause, propose tracking the root-cause search (a
    board item where one exists) and still weigh it against the option.
-4. **End state:** derive the smallest clean, coherent result as if designed
-   fresh, under the project's quality criterion (e.g. consumer DX for a library),
-   independent of effort, churn, earlier rulings, docs and their reasoning;
-   list the revisions it implies as information, not cost. Show consumer use,
-   size, replacements and breakage. Apply the global instructions' six
-   Cleanliness tests and the [End-state criteria](#end-state-criteria).
+4. **End state:** derive the smallest complete, clean, coherent result as if
+   designed fresh, under the project's quality criterion (e.g. consumer DX for
+   a library), independent of effort, churn, earlier rulings, docs and their
+   reasoning; list the revisions it implies as information, not cost. Show
+   consumer use, size, replacements and breakage. Apply the global
+   instructions' six Cleanliness tests and the
+   [End-state criteria](#end-state-criteria).
 5. **Options:** compare materially different approaches, including alternatives
    outside the posed framing: rank, decisive trade-offs, strongest downside,
    conditions changing the recommendation. Screen each choice in the selected

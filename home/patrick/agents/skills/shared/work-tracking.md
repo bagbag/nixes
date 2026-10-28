@@ -2,8 +2,8 @@
 
 **Commands:** `board` in every skill command is `$HOME/.agents/bin/board`
 (not on `PATH`): type `$HOME/.agents/bin/board bd show <id>`, never bare
-`board` or bare `bd`. Run every bd command as `board bd <args>`
-(`board bd <command> --help`).
+`board`, bare `bd` or a shell variable (`$B claim`). Run every bd command as
+`board bd <args>` (`board bd <command> --help`).
 
 Keep item-specific packets, block reasons, evidence and verdicts in the item;
 link shared briefs and reports from `.scratch/` files. Reference rulings and
@@ -294,7 +294,7 @@ order and context coincide, keep `blocks`.
 | `board mine` | Items your session and its workers hold; holds of stopped workers marked. |
 | `board health` | Counts, with each open milestone's progress; dispatchable counts include only unblocked items. |
 | `board holders` | Items by open downstream count. |
-| `board check` | Deviations from these conventions on live items, each naming the section it breaks; closed items are never checked; squashed text in editable fields as a flag. `board health` names their count; a board with deviations moves through `/board-migrate`. |
+| `board check` | Deviations from these conventions on live items, each naming the section it breaks; closed items are never checked; as flags, squashed text in editable fields and waits whose blocker the waiting item's text does not name. `board health` names their count; a board with deviations moves through `/board-migrate`. |
 | `board related <terms> [--docs <paths>]` | Items (closed included) and canonical docs mentioning the terms, with holders. |
 | `board bd list --type decision --all --label topic:<slug>` | Decision log. |
 | `board bd list --status deferred --label topic:<slug>` | Topic backlog. |

@@ -1,10 +1,11 @@
 ---
 name: explore-options
 description: >-
-  Develop a broad solution space and progressively refine realistic alternatives.
-  Use for brainstorming approaches, opening the design space, or finding options
-  beyond the choices already presented. Not for routine implementation choices,
-  independent sign-off, or checking an already selected design.
+  Widen the solution space beyond the options on the table and refine
+  realistic alternatives. Use when brainstorming approaches, opening the
+  design space or when every presented option feels wrong; not for routine
+  implementation choices, independent sign-off (second-opinion) or checking
+  a chosen design.
 ---
 
 # Explore options

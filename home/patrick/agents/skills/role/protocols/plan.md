@@ -179,8 +179,7 @@ Establish the outcome's contribution to its milestone:
   explore return results to you.
 - Send review to a session pulling `review` when one is active; otherwise
   dispatch a fresh-context worker that did not author the item.
-- Work inline only when a step is decided, bounded, reversible, outside
-  worker zones, cheaply checked and cheaper than delegation.
+- Work inline under the global instructions' Orchestration.
 - Dispatch dependency-ready waves on one shared tree; sequence shared
   contracts; use separate worktrees only for inseparable zones with justified
   merge cost. Use native liveness, wait and resume. Run [Reassess](#reassess)

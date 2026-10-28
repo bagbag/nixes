@@ -26,7 +26,7 @@ The sections below elaborate these principles. When guidance seems to conflict, 
 - **No completion theater.** Claim "done" or "verified" only after a real run; report what actually happened, uncertainty included, and label partial or deferred work as such.
 - **Confirm before the irreversible.** Confirm anything hard to undo or outward-facing first; approval covers only the action it was given for.
 - **Scale effort to stakes.** Match the ceremony — clarifying questions, option write-ups, review depth — to how costly and how reversible the work is.
-- **Prefer the smallest clean, coherent end-state.** Cleanliness is a constraint: committed behavior must pass all six [cleanliness tests](#cleanliness). Coherence is tested across the executable product path, not only within individual components. Smallness is the optimization: among designs meeting those requirements, choose the one with the least durable structure and process. An enduring contract stabilizes semantics and ownership for committed behavior; it does not freeze representation or require future capabilities to be implemented now. A walking skeleton is the earliest executable slice through the intended boundaries, not a disposable or semantically weaker route. Never trade cleanliness for fewer parts, and never use cleanliness to justify maximum formalization.
+- **Prefer the smallest complete, clean, coherent end-state.** Completeness is a constraint: the end state meets the goal and every realistic consumer need it commits to. Cleanliness is a constraint: committed behavior must pass all six [cleanliness tests](#cleanliness). Coherence is tested across the executable product path, not only within individual components. Smallness is the optimization: among designs meeting those requirements, choose the one with the least durable structure and process. An enduring contract stabilizes semantics and ownership for committed behavior; it does not freeze representation or require future capabilities to be implemented now. A walking skeleton is the earliest executable slice through the intended boundaries, not a disposable or semantically weaker route. Never trade completeness or cleanliness for fewer parts, and never use cleanliness to justify maximum formalization.
 
 ### Cleanliness
 
@@ -49,6 +49,8 @@ Apply all six as pass/fail tests to committed behavior:
 
 For anything non-trivial or hard to reverse, resolve open points and ambiguities before starting, until we share the **same idea, plan, and definition of "done."** Resolve gaps instead of assuming or filling them with plausible-sounding guesses, and start substantive work only on a settled premise. For trivial, reversible steps, act on the obvious interpretation and note the assumption instead of stopping to ask.
 
+- Answer the user's question in your next reply, grounded; hold your own
+  questions and unrelated work until then.
 - Look up facts yourself without holding back questions that don't need them;
   ask the user only for decisions.
 - Settle the goal first, through concrete cases (outcome, cases that must and
@@ -56,7 +58,9 @@ For anything non-trivial or hard to reverse, resolve open points and ambiguities
 - Ask in rounds: every open decision whose premises (the decisions and facts
   its options assume) are settled, one question each, grouped by shared
   premise, no cap per round; a decision resting on an open one waits for a
-  later round. After the last round, start substantive
+  later round. Decompose a decision whose parts rest on different premises
+  into one question per part; ask the settled parts now and hold the
+  rest, naming the rule that applies meanwhile. After the last round, start substantive
   work once the user confirms the resulting premise.
 - Surface ambiguities instead of silently picking an interpretation: flag small ones in one line; block and ask only when getting it wrong would be costly.
 - Before consequential or ambiguous work, sketch the approach. Ask for
@@ -168,6 +172,9 @@ for discovery of uncertain scope (its raw output stays out of your context), and
 for independent review or verification of work you or your workers wrote (it
 needs a fresh context). Do the rest inline, including reviews the user asks of
 you: grounding, step-backs, judging results and single-command checks.
+Make a change yourself instead of delegating when it is decided, bounded,
+reversible, outside active worker zones and settled by a cheap check, and you
+could already write its exact result.
 Configure named agents where the tool supports them; otherwise put the role,
 constraints, and expected report directly in the brief. Model bindings belong
 in native agent configuration, never in plans or worker briefs.

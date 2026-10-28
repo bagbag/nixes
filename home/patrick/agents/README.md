@@ -18,8 +18,9 @@ The build expands includes recursively into complete standalone skill files.
 Missing targets, escaping paths, cycles, frontmatter markers, and malformed or
 unresolved markers fail validation.
 
-Keep role and authority limits before each skill's workflow; place whole-file
-shared references after it and link them from the relevant phases. Includes
+Keep role and authority limits and the `shared/rerun.md` include before each
+skill's workflow; place other whole-file shared references after it and link
+them from the relevant phases. Includes
 retain their heading levels; use one H1 and flat reference sections.
 
 Load shared content per reader; every file in `skills/shared/` stays readable
@@ -110,14 +111,15 @@ Workflow owners:
 - [Work tracking](skills/shared/work-tracking.md): board model, holds,
   routing, record shapes and `board` views; [board-migrate](skills/board-migrate/SKILL.md)
   moves a project from any starting state onto it, deriving the work from the gap to the target.
-- Challenge skills, user-invoked only: [step-back](skills/step-back/SKILL.md),
-  [challenge-rulings](skills/challenge-rulings/SKILL.md),
-  [ground](skills/ground/SKILL.md),
+- Challenge skills: [step-back](skills/step-back/SKILL.md),
+  [challenge-rulings](skills/challenge-rulings/SKILL.md) and
+  [ground](skills/ground/SKILL.md) are model-invocable; the Check step of
+  [asking](skills/shared/asking.md) invokes them;
   [ask-advisor](skills/ask-advisor/SKILL.md),
-  [question-me](skills/question-me/SKILL.md) and
-  [release-round](skills/release-round/SKILL.md). Their argument names the
-  focus and follow-ups (Claude runs one skill per message). Role protocols
-  never reference them.
+  [question-me](skills/question-me/SKILL.md),
+  [release-round](skills/release-round/SKILL.md) and
+  [explain](skills/explain/SKILL.md) are user-invoked only. Their
+  argument names the focus and follow-ups.
 - [Retro](skills/retro/SKILL.md): rule proposals and regression cases.
 - [Skill authoring](skills/skill-authoring/SKILL.md): invocation policy,
   trigger descriptions, frontmatter and style for skills, definitions and
@@ -187,7 +189,8 @@ definitions read it at runtime. Shared files:
 [reviewers](skills/shared/reviewers.md) (selection, briefing, independence,
 disagreement) and [asking](skills/shared/asking.md) (how deciding sessions
 walk the user through a round).
-[Question format](skills/shared/question-format.md) is tool-neutral; asking, role and question-me include it.
+[Question format](skills/shared/question-format.md) is tool-neutral; asking, role, question-me and retro include it.
+The skills a user re-runs by mention include [rerun](skills/shared/rerun.md).
 
 Tool-specific names are optional and default to the canonical `name`. Shared
 `explore` overrides that default as Claude Code's `Explore` and Codex's

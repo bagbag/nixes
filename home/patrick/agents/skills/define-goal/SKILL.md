@@ -1,11 +1,12 @@
 ---
 name: define-goal
 description: >-
-  Establish, advance, or repair a project goal contract. Use when starting a
-  substantial project or phase, defining the next milestone, the intended user
-  outcome or value path is unclear, architecture and reviews disagree about
-  success, scope grows without executable progress, or a technically valid plan
-  may bypass why the work exists.
+  Pin down what success means before building: establish, advance or repair
+  the goal contract (outcome, milestone, value path). Use when starting a
+  project or phase, defining the next milestone, or when the goal or value
+  path is unclear, architecture and reviews disagree about success, scope
+  grows without progress, or a valid plan may bypass why the work exists;
+  not for architecture or implementation plans.
 ---
 
 # Define Goal

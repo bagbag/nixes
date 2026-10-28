@@ -1,14 +1,11 @@
 ---
 name: second-opinion
 description: >-
-  Obtain a fresh independent second opinion on a consequential decision,
-  architecture, plan, blocker, or proposed solution. Use when the user says
-  “ask a fresh reviewer,” “get a second/2nd opinion,” or requests independent
-  reassessment or fresh sign-off. Includes alternatives needed to challenge the
-  proposal. Frame the question neutrally, dispatch the dedicated source-grounded
-  reviewer without inherited conversational conclusions, and return its
-  recommendation and disagreements for user decision rather than automatically
-  adopting the verdict.
+  Get an independent verdict from a fresh reviewer on a consequential
+  decision, architecture, plan, blocker or proposed solution. Use when the
+  user asks for a second or 2nd opinion, a fresh reviewer, fresh eyes,
+  independent reassessment or sign-off; the verdict returns to the user. Not
+  for widening the options (explore-options).
 ---
 
 # Second Opinion

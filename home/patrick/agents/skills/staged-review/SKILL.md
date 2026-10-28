@@ -1,13 +1,11 @@
 ---
 name: staged-review
 description: >-
-  Run iterative review rounds over a repository's staged or committed change
-  set by snapshotting the index and diffing it against the previous round's
-  snapshot. Use when the user asks to review, re-review, or run "round N" of a
-  review of staged changes, or to review an implementation against the brief a
-  previous round issued. Produces one authoritative verdict per round with a
-  brief for the implementing agent. Not for a one-off review of a single diff or
-  pull request.
+  Review a staged or committed change set in rounds, each against the
+  previous snapshot and brief, with one authoritative verdict and brief per
+  round. Use when the user asks to review, re-review or run "round N" of
+  staged changes, or to review an implementation against a previous round's
+  brief; not for a one-off diff or PR.
 ---
 
 # Staged review

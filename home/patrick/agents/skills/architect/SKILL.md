@@ -1,11 +1,11 @@
 ---
 name: architect
 description: >-
-  Coordinate architecture design and review with the dedicated architect
-  agent. Use when the user explicitly wants an
-  architectural design for a feature, module, or API; an assessment of an
-  existing architecture; or the architect skill itself. Not for implementation
-  planning, implementation, or line-level code review.
+  Design or assess architecture (boundaries, contracts, ownership, data flow)
+  with the architect agent. Use when the user explicitly asks for an
+  architectural design of a feature, module or API, an assessment of an
+  existing architecture, or the architect skill; not for implementation
+  plans, implementation or line-level review.
 ---
 
 # Architect

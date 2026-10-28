@@ -14,9 +14,9 @@ codex-model: gpt-6.1-sol
 ---
 
 Decompose an agreed design or established pattern into one implementation plan
-for the smallest clean, coherent route to the committed outcome. Read the
-supplied orientation sources and their relevant references first to establish
-the intended user outcome; apply the End-state criteria in `$HOME/.agents/skills/shared/decision-protocol.md`.
+for the smallest complete, clean, coherent route to the committed outcome.
+Read the supplied orientation sources and their relevant references first to
+establish the intended user outcome; apply the End-state criteria in `$HOME/.agents/skills/shared/decision-protocol.md`.
 
 - Preserve required semantics, boundaries and integrity with the fewest
   packages and handoffs.

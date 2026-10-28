@@ -1,10 +1,8 @@
 ---
 name: retro
 description: >-
-  Mine the current session for durable learnings and route each to the right
-  config layer (global or project agent instructions, a skill, an agent prompt,
-  project docs, settings/hooks) — propose-only, the user ratifies every item.
-  Best run at the end of a work arc or before compaction.
+  Turn this session's lessons into proposed rule changes for me to ratify.
+argument-hint: "[focus]"
 disable-model-invocation: true
 ---
 
@@ -12,42 +10,36 @@ disable-model-invocation: true
 
 Propose every learning for user ratification. Apply only approved edits.
 
-## Collect evidence
+## Steps
 
-- Review the whole session for concrete recurring friction and durable
-  learnings. After a compaction, read the session transcript file, not only
-  the summary. Use [Learning signals](#learning-signals).
-- If the session yields no durable learning, report an empty result.
-
-## Route each learning
-
-- Assign each learning to one most-specific layer that covers future
-  recurrences. Search that layer first and strengthen an existing rule with
-  the new evidence before adding one; see [Routing targets](#routing-targets).
-
-## Propose and ratify
-
-- Batch related proposals while keeping each independently reviewable.
-- Ask for wanted behavior (trigger, scope, depth, affected modes); infer the
-  instruction text from the answers.
-- For every item, show the learning, triggering evidence, destination,
-  inferred edit, expected observable behavior and validation method; ask one
-  go/no-go on behavior and destination. Reuse existing cases.
-- Use executable checks for deterministic hooks and generators where
-  practical. For judgment-heavy rules, retain scenarios in the existing
-  working artifact; distinguish expected behavior, observed results and
-  reliability that remains untested.
-
-## Apply and validate
-
-- Pass every edit against the `skill-authoring` skill before applying;
-  preserve execution and authority boundaries.
-- Edit the canonical source when skills are rendered or store-backed; treat
-  installed generated output as immutable.
-- Run applicable checks and report results and limits. For rendered or
-  store-backed skills, run the owner-provided validation and build.
-- Report whether activation remains necessary. Activate only when existing
-  authorization covers it.
+1. **Collect.** Review the whole session for concrete recurring friction and
+   durable learnings. After a compaction, read the session transcript file,
+   not only the summary. Use [Learning signals](#learning-signals).
+   Output: each learning with its triggering evidence, or an empty result.
+2. **Route.** Assign each learning to one most-specific layer that covers
+   future recurrences. Search that layer first and strengthen an existing rule
+   with the new evidence before adding one; see
+   [Routing targets](#routing-targets).
+   Output: per learning, its destination and the rule it strengthens or adds.
+3. **Propose.** Batch related proposals while keeping each independently
+   reviewable. Ask under [Question format](#question-format), covering trigger,
+   scope, depth and affected modes; infer the instruction text from the
+   answers. For every item, show the learning, triggering evidence,
+   destination, inferred edit, expected observable behavior and validation
+   method; ask one go/no-go on behavior and destination. Reuse existing cases.
+   Output: the user's go/no-go per item.
+4. **Apply.** Pass every approved edit against the `skill-authoring` skill;
+   preserve execution and authority boundaries. Edit the canonical source when
+   skills are rendered or store-backed; treat installed generated output as
+   immutable.
+   Output: the applied edits.
+5. **Validate.** Use executable checks for deterministic hooks and generators
+   where practical. For judgment-heavy rules, retain scenarios in the existing
+   working artifact; distinguish expected behavior, observed results and
+   reliability that remains untested. For rendered or store-backed skills, run
+   the owner-provided validation and build. Activate only when existing
+   authorization covers it.
+   Output: check results and limits; whether activation remains necessary.
 
 ## Learning signals
 
@@ -72,3 +64,5 @@ Propose every learning for user ratification. Apply only approved edits.
 | Custom-agent definition | Behavior of one role |
 | Project docs | Domain knowledge and decisions, in the existing document shape |
 | Settings or hooks | Behavior that must happen mechanically rather than by memory |
+
+<!-- @include shared/question-format.md -->

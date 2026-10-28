@@ -499,7 +499,6 @@ CHECK_CLASSES = {  # class -> work-tracking anchor
     'title-prefix': 'kinds',
     'release-gate': 'kinds',
     'label-status': 'statuses-and-labels',
-    'unnamed-blocker': 'dependencies',
 }
 # Squashed text (words run together): a flag, never a deviation. Calibrated on
 # the retro's samples (tools/ctx): clean board text 0 per 1,000 words, prompt
@@ -518,7 +517,6 @@ def deviations(board: Board, root: str | None) -> list[tuple[str, str, str]]:
     found = []
     for issue in board.scoped(root):
         item_id, kind, title = issue['id'], issue.get('issue_type'), issue.get('title', '')
-        blockers = board.blockers.get(item_id, [])
         if issue['status'] == 'closed':
             continue  # closed items are immutable history
         holder = issue.get('assignee')
@@ -534,13 +532,21 @@ def deviations(board: Board, root: str | None) -> list[tuple[str, str, str]]:
         labels = sorted(set(issue.get('labels') or []) & set(LIFECYCLE_LABELS))
         if labels:
             found.append((item_id, 'label-status', f"labels {', '.join(labels)}"))
-        text = board.text(issue)
-        # A gate carries its own reason (bd gate create --reason); a milestone's blockers are its members
-        # (work-tracking.md#milestones); a closed blocker holds nothing up.
-        found += [(item_id, 'unnamed-blocker', f'waits on {b} without naming it') for b in blockers
-                  if kind != 'milestone' and b not in text and board.is_open(b)
-                  and board.by_id.get(b, {}).get('issue_type') != 'gate']
     return found
+
+
+def unnamed_waits(board: Board, root: str | None) -> list[tuple[str, str]]:
+    """(id, detail) per open blocker a live item's text does not name: a flag, never a deviation, because bd keeps
+    no reason on the edge and legacy waits have none to recover."""
+    flagged = []
+    for issue in board.scoped(root):
+        if issue['status'] == 'closed' or issue.get('issue_type') == 'milestone':
+            continue  # a milestone's blockers are its members (work-tracking.md#milestones)
+        text = board.text(issue)
+        # A gate carries its own reason (bd gate create --reason); a closed blocker holds nothing up.
+        flagged += [(issue['id'], f'waits on {b} without naming it') for b in board.blockers.get(issue['id'], [])
+                    if b not in text and board.is_open(b) and board.by_id.get(b, {}).get('issue_type') != 'gate']
+    return flagged
 
 
 def word_list() -> set[str]:
@@ -624,6 +630,8 @@ def check(board: Board, args) -> int:
     note = '' if len(words) > len(EXTRA_WORDS) else f'; no word list at {WORD_LIST}, letter-digit runs only'
     section(f'flag, not a deviation: squashed text on open items{note}',
             [f'  {item_id}  squashed  {detail}' for item_id, detail in flags], limit)
+    section('flag, not a deviation: unnamed waits on open items (work-tracking.md#dependencies)',
+            [f'  {item_id}  unnamed-blocker  {detail}' for item_id, detail in unnamed_waits(board, args.root)], limit)
     return 1 if found else 0
 
 

@@ -19,7 +19,8 @@ findings or stops.
   bring every other choice to the user. State each ruling's scope and what you
   checked; make an unsure choice a question.
 - The user decides and releases rulings and owns staging and commits. Write
-  decision records, rule owners, your own artifacts and `/tmp` probes; leave
+  decision records, rule owners, your own artifacts, `/tmp` probes and inline
+  changes under the global instructions' Orchestration; leave other
   implementation to work items.
 - Decide in the round every contract consumers see: API shape, names,
   defaults, error and failure behavior, limits. Leave only internals and
@@ -81,7 +82,8 @@ for open items.
    Output: one line per question: premises with their evidence, premises
    still to ask.
 5. **Walk through and ask** under
-   [Asking the user](../../shared/asking.md#asking-the-user).
+   [Asking the user](../../shared/asking.md#asking-the-user), from its Check
+   step.
    Output: the walkthrough and the questions.
 6. **Record.** Record each decision when made under
    [Questions and rulings](../../shared/work-tracking.md#questions-and-rulings)
@@ -107,8 +109,11 @@ deferred by the user.
 **Entry:** decided records without open blockers, and the user asks for a
 release.
 
-1. **Re-check.** Compare each record with current items and source; re-screen
-   your rulings; verify citations and counts (`verify` for large sets).
+1. **Re-check.** Compare each record with current items and source and with
+   the set's other records for coherence; verify citations and counts
+   (`verify` for large sets). Where something changed since the decision,
+   run the Check step of [Asking the user](../../shared/asking.md#asking-the-user)
+   on the changed part.
    Output: one line per record: unchanged, or the change.
 2. **Board check.** Run `board related <terms>` across the
    set, closed items and canonical docs included (`--docs <doc paths>`), and
@@ -132,7 +137,8 @@ release.
 4. **Approval.** Offer each set for release separately. Conditional approval
    covers only that round's items, once steps 1-3 hold.
    Output: the user's approval, quoted.
-5. **Owner writes.** Write each rule into its one owner and name path and
+5. **Owner writes.** Write each rule into its one owner, replacing the text it
+   supersedes (old text to `history/` under project-memory), and name path and
    anchor in the record's `## Rule owner`. For a convention, add an enforcing
    check where realistic. Withdraw a wrong premise explicitly.
    Output: one line per rule: owner path and anchor.

@@ -19,7 +19,7 @@ import yaml
 
 
 # User-only: Claude `disable-model-invocation: true` plus Codex's implicit-invocation policy.
-USER_ONLY_SKILLS = {"ask-advisor", "board-migrate", "challenge-rulings", "ground", "question-me", "release-round", "retro", "role", "step-back"}
+USER_ONLY_SKILLS = {"ask-advisor", "board-migrate", "question-me", "release-round", "retro", "role", "explain"}
 EXPLICIT_ONLY_SKILLS = USER_ONLY_SKILLS
 ROLE_PROTOCOLS = ("decide", "plan", "work", "review", "unattended")
 RETIRED_SKILL_PATHS = (
@@ -29,7 +29,8 @@ RETIRED_SKILL_PATHS = (
 RETIRED_REFERENCES = re.compile(
     r"skills/(goal-lead|goal-agent|supervisor|autopilot|beads-migrate)/|worker-arcs\.md|goal-relay\.md|board-health"
 )
-IMPLICIT_SKILLS = {"architect", "define-goal", "explore-options", "second-opinion", "staged-review"}
+IMPLICIT_SKILLS = {"architect", "challenge-rulings", "define-goal", "explore-options", "ground", "second-opinion", "staged-review",
+                   "step-back"}
 sys.dont_write_bytecode = True
 
 
@@ -907,12 +908,13 @@ def validate_bd_guard(root: Path) -> None:
 
     # Bare bd is denied with or without a session; board bd and mentions pass.
     bare = ["bd show x", "cd repo && bd ready", "xargs -I{} sh -c 'bd show {}' < ids", "if bd close x; then :; fi",
-            "/nix/store/x/bin/bd list", "BEADS_ACTOR=a bd close x", 'bash -c "cd x && bd ready"', "X=$(cat ids) bd show x"]
+            "/nix/store/x/bin/bd list", "BEADS_ACTOR=a bd close x", '"$B"; bd show x', 'bash -c "cd x && bd ready"', "X=$(cat ids) bd show x"]
     passing = ["board bd show x", "$HOME/.agents/bin/board bd close x", "cd x && board bd ready",
                "xargs -I{} board bd show {} < ids", 'echo "bd close x"', 'git commit -m "bd close"', "rg pattern skills",
                'board handover x "tests pass; bd lint clean"', 'git commit -m "x (bd 1.3.1)"', 'echo "x && bd ready"',
                "rg 'a|bd ' skills", "sh -c 'board bd show x'", "g=$($HOME/.agents/bin/board bd show x)",
                "B=$HOME/.agents/bin/board\n$B bd show x", "B=board;$B bd show x",
+               '"$HOME/.agents/bin/board" bd show x', 'cd x && "$B" bd show x', 'python3 a.py && "${B}" bd ready',
                'codex exec "line one\nslug \'demo\'. Run it." | grep -E "^(x|bd )"']
     for command in bare:
         for payload in ({}, {"session_id": SESSION}, {"session_id": SESSION, "turn_id": "t"}):
@@ -953,7 +955,8 @@ def validate_bd_guard(root: Path) -> None:
     injected = ["board bd close x", "cd repo && board bd close x", "$HOME/.agents/bin/board claim",
                 'bash "$HOME/.agents/bin/board" claim x', "~/.agents/bin/board release a b",
                 "xargs -I{} sh -c 'board bd show {}' < ids", f"board bd update x --actor {worker_actor}",
-                'board bd comments add x "drop the --actor goal-agent habit and BEADS_ACTOR=goal-lead"']
+                'board bd comments add x "drop the --actor goal-agent habit and BEADS_ACTOR=goal-lead"',
+                'cd x && "${B}" bd ready', "sh -c '$B bd show x'"]
     for command in injected:
         if rewritten(guard(command, session_id=SESSION, **worker), False) != worker_prefix + command:
             raise ValueError(f"bd-guard did not inject the worker actor into {command!r}")
@@ -978,6 +981,7 @@ def validate_bd_guard(root: Path) -> None:
         "BD_ACTOR=other $HOME/.agents/bin/board claim",
         'board bd create --title "Don\'t" --actor goal-lead --description "it\'s"',
         'board bd close x --actor "goal-lead"',
+        'cd x && "${B}" bd ready --actor goal-lead',
     ]
     for command in differing:
         for payload in ({}, {"turn_id": "t"}):
@@ -1172,13 +1176,12 @@ def validate_board(root: Path) -> None:
                 (cid["[Gate] Release: round 3"], "title-prefix", "kinds"),
                 (cid["[Gate] Release: round 3"], "release-gate", "kinds"),
                 (cid["Labelled status"], "label-status", "statuses-and-labels"),
-                (cid["Unnamed wait"], "unnamed-blocker", "dependencies"),
             ]
             for item_id, name, anchor in expected_lines:
                 if f"  {item_id}  {name}  work-tracking.md#{anchor}" not in report:
                     raise ValueError(f"board check missed {name} on {item_id}:\n{report}")
             deviation_lines = [row for row in report.splitlines() if "  work-tracking.md#" in row]
-            if code != 1 or len(deviation_lines) != len(expected_lines) or "convention deviations: 6\n" not in report:
+            if code != 1 or len(deviation_lines) != len(expected_lines) or "convention deviations: 5\n" not in report:
                 raise ValueError(f"board check reported extra deviations or the wrong exit code {code}:\n{report}")
             # Gate blockers carry their own reason; closed dependents of a released ruling block nothing.
             # A human gate on a question is the user's go, not a release gate; records are linted at release only.
@@ -1191,12 +1194,16 @@ def validate_board(root: Path) -> None:
             members_edges = [{**issue, "dependencies": [*issue["dependencies"], *(
                 {"issue_id": issue["id"], "depends_on_id": cid[title], "type": "blocks"} for title in ("Squashed text", "Labelled status"))]}
                 if issue["title"] == "Old milestone" else issue for issue in checked]
-            if any(f"  {cid['Old milestone']}  " in row for row in invoke(["check"], Fake(members_edges))[1].splitlines()):
+            if f"  {cid['Old milestone']}  " in invoke(["check"], Fake(members_edges))[1]:
                 raise ValueError("board check flagged a milestone's member edges")
             flag = report.split("flag, not a deviation")[1]
             if f"  {cid['Squashed text']}  squashed" not in flag or f"  {cid['Clean task']}  " in flag:
                 raise ValueError(f"board check missed or misplaced the squashed-text flag:\n{report}")
-            if "convention deviations: 6 — run /board-migrate" not in health_check:
+            # bd keeps no reason on an edge: an unnamed wait is a flag, not a deviation.
+            unnamed = report.split("flag, not a deviation")[2]
+            if f"  {cid['Unnamed wait']}  unnamed-blocker" not in unnamed or f"  {cid['Old milestone']}  " in unnamed:
+                raise ValueError(f"board check missed or misplaced the unnamed-wait flag:\n{report}")
+            if "convention deviations: 5 — run /board-migrate" not in health_check:
                 raise ValueError("board health lacks the deviation hint")
             # The user view lists gates titled with the user's words and items assigned to the user.
             waiting = [{**issue, "title": "user 2026-10-23: 'wait for my go'"} if issue["title"] == "Gate: human" else issue
@@ -1245,7 +1252,8 @@ def validate_board(root: Path) -> None:
             # Closed items are immutable history: no class or flag looks at them.
             closed_all = [{**issue, "status": "closed"} if issue["title"] != "Goal" else issue for issue in checked]
             code, report, _ = invoke(["check"], Fake(closed_all))
-            if code != 0 or "convention deviations: 0\n" not in report or "squashed text on open items: 0" not in report:
+            if code != 0 or "convention deviations: 0\n" not in report or "squashed text on open items: 0" not in report \
+                    or "unnamed waits on open items (work-tracking.md#dependencies): 0" not in report:
                 raise ValueError(f"board check looked at closed items:\n{report}")
 
             conforming = [issue for issue in checked if issue["title"] in ("Goal", "Clean task", "User action")]
