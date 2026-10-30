@@ -28,8 +28,8 @@ Protocol files:
 - unattended: `$HOME/.agents/skills/role/protocols/unattended.md`
 
 Pulls: **plan**, **design**, **implement**, **review**; each claims the kinds
-in work-tracking [Routing](../shared/work-tracking.md#routing)
-(`$HOME/.agents/skills/shared/work-tracking.md`).
+in board-core [Routing](../shared/board-core.md#routing)
+(`$HOME/.agents/skills/shared/board-core.md`).
 
 An agent session runs each claimed item under the protocol for its kind:
 
@@ -53,7 +53,8 @@ Give each step's output as one line.
    role, keep it and go to step 4.
    Output: `role: <role> (known)`.
 2. **Ask.** Ask for what neither the argument nor step 1 gives, under
-   [Question format](#question-format): the role among the four; for agent,
+   [Question format](../shared/question-format.md)
+   (`$HOME/.agents/skills/shared/question-format.md`): the role among the four; for agent,
    the pulls as a multiple choice.
    Output: the question.
 3. **Register.**
@@ -72,10 +73,13 @@ Give each step's output as one line.
    Output: held ids, or `none held`.
 6. **Continue** under the loaded protocols within the current task. As an
    agent, loop: with the `plan` pull, run the plan protocol through its
-   Exit; then `board claim`, run the claimed item's
-   protocol from the table above through its Exit, skipping its Claim step,
-   and claim again. When the claim returns no item, report the session's
-   results and stop.
+   Exit; then dispatch ready items of your pulls to workers in parallel under
+   the plan protocol's [Dispatch](protocols/plan.md#dispatch)
+   (`$HOME/.agents/skills/role/protocols/plan.md`), each running
+   its protocol from the table above through its Exit, and refill as it says.
+   Without workers in the runtime, `board claim` one item, run its protocol
+   through its Exit, skipping its Claim step, and claim again. When no item is
+   claimable and no worker runs, report the session's results and stop.
    Output per item: `<id> → <protocol>: <exit result>`.
 
 ## Stop
@@ -87,5 +91,3 @@ Give each step's output as one line.
 
 The role is registered, its protocols are loaded and the session's holds are
 listed.
-
-<!-- @include shared/question-format.md -->

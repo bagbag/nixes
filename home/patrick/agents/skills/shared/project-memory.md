@@ -29,7 +29,7 @@
   work, including sequencing changes with unchanged product goals. Track an
   approved checkpoint as its outcome epic's acceptance, as a task when it
   spans outcomes, or as a milestone item when it is a release checkpoint
-  (work-tracking [Milestones](../shared/work-tracking.md#milestones)). When a
+  (board-coordination [Milestones](../shared/board-coordination.md#milestones)). When a
   milestone closes, retire its criterion in the goal owner and state the next
   milestone's before re-placing the remaining work.
 - Link owners and dependencies for cross-topic/project work; return priority
@@ -63,7 +63,7 @@
 ## Arc state
 
 - `$HOME/.agents/bin/board position` computes the position; epics hold no status
-  (work-tracking [Epics](../shared/work-tracking.md#epics)).
+  (board-coordination [Epics](../shared/board-coordination.md#epics)).
 - The planning session keeps a plain-prose checkpoint file,
   `.scratch/<topic-slug>/<arc-slug>/checkpoint.md`, replaced in place:
   verified position, next authorized work and return boundary, blockers by
@@ -103,7 +103,7 @@ context; keep contracts complete without them.
   current authorized task; keep later product acceptance in its approved
   sequence. Check the working tree and relevant evidence; reuse applicable
   pre-flight results.
-- Close finished epics under work-tracking [Epics](../shared/work-tracking.md#epics).
+- Close finished epics under board-coordination [Epics](../shared/board-coordination.md#epics).
 - At phase boundaries or architecture resets, review affected owners and links;
   inventory the topic for cross-document changes or uncertain ownership.
 - Classify each document as canonical, narrow reference, `history/` or redundant.

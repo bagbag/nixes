@@ -64,7 +64,7 @@ execution.
   materially changed commitments for user ratification.
 - Record ratified commitments in their durable owner before dependent planning
   or dispatch. Boards link goal owners under
-  `$HOME/.agents/skills/shared/work-tracking.md`. A lead releases a contract
+  `$HOME/.agents/skills/shared/board-core.md`. A lead releases a contract
   revision like any ruling, under Release in
   `$HOME/.agents/skills/role/protocols/decide.md`.
 - In a proposal-only or read-only task, return the contract and proposed owner

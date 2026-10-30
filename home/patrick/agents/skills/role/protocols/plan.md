@@ -2,10 +2,11 @@
 
 Turning released rulings and outcomes into work, cutting and ordering items,
 and dispatching workers. Read
-`$HOME/.agents/skills/shared/work-tracking.md`,
+`$HOME/.agents/skills/shared/board-core.md`,
+`$HOME/.agents/skills/shared/board-coordination.md`,
 `$HOME/.agents/skills/shared/decision-protocol.md`,
 `$HOME/.agents/skills/shared/project-memory.md` and
-`$HOME/.agents/skills/role/protocols/review.md` before step 1.
+`$HOME/.agents/skills/shared/acceptance.md` before step 1.
 
 ## Entry
 
@@ -69,9 +70,10 @@ dispatched or claimable; the checkpoint file is current; the report is given.
    rule owner section. A ruling settles only its stated choice; linked reports
    are evidence and hints are planning input; a supersession is an authorized
    revision.
-2. Block each open item the ruling changes on it (`board bd dep add <item>
-   <ruling>`); relate items it only informs (`board bd dep relate <ruling>
-   <item>`). Add the ruling id and owner anchor to each item's `--design`.
+2. Block each open item the ruling changes on it
+   (`board block <item>… --on <ruling> --reason "<what changes>"`); relate
+   items it only informs (`board bd dep relate <ruling> <item>`). Add the
+   ruling id and owner anchor to each item's `--design`.
    Create missing work items. Add changelog and upgrade duties to affected
    items' acceptance. Closing the ruling in step 5 unblocks them.
 3. For a revision, update every consumer of the changed decision: related
@@ -97,7 +99,7 @@ Establish the outcome's contribution to its milestone:
 
 - Create or resume the outcome epic (readable title stating the outcome, label
   `topic:<topic-slug>`) under
-  [Epics](../../shared/work-tracking.md#epics) and
+  [Epics](../../shared/board-coordination.md#epics) and
   `$HOME/.agents/skills/shared/project-memory.md`.
 - Use `define-goal` when the milestone is unclear, purpose shifts, success is
   contested or scope grows without value-path progress.
@@ -117,10 +119,10 @@ Establish the outcome's contribution to its milestone:
 
 ## Cut work
 
-- Cut items under [Work items](../../shared/work-tracking.md#work-items).
+- Cut items under [Work items](../../shared/board-core.md#work-items).
   Split, merge or reorder them for a cleaner end state or independent work.
 - Place each new item in or out of the open milestone under
-  [Milestones](../../shared/work-tracking.md#milestones).
+  [Milestones](../../shared/board-coordination.md#milestones).
 - Use a separate plan for cross-item reasoning, blast-radius integration
   checkpoints and cheap assumption tests that items cannot hold. Assign `plan`
   for material decomposition or integration uncertainty.
@@ -149,12 +151,12 @@ Establish the outcome's contribution to its milestone:
   independent plan assessment before dispatch: coverage, grounding,
   dependencies, integration, verification, silent failures. Self-check
   pattern-determined plans. Select gates under the review protocol's
-  [Review policy](review.md#review-policy).
+  [Review policy](../../shared/acceptance.md#review-policy).
 
 ## Queue
 
-- Order work under [Milestones](../../shared/work-tracking.md#milestones);
-  rank by per-item [Priority](../../shared/work-tracking.md#priority),
+- Order work under [Milestones](../../shared/board-coordination.md#milestones);
+  rank by per-item [Priority](../../shared/board-core.md#priority),
   including committed nonblocking consumers (`board holders`).
 - Scope a user's stop to the exact action, file, decision or effect it names;
   continue authorized work outside it. Distinguish source authoring,
@@ -170,6 +172,10 @@ Establish the outcome's contribution to its milestone:
   blockers or serve authorized parallel tracks, within authority and
   priority. Among equally ready items, prefer needed patterns, then smaller
   items. Repairs name the work they unblock; return there at closure.
+- Keep a worker on every independent ready item up to the runtime's limit.
+  When a worker ends, finish the bookkeeping the next dispatch depends on (its
+  hand-over and closure, the board state and file zones a new worker relies
+  on), then refill before other bookkeeping.
 - Give each worker one item, or related small items (same files, decision or
   invariant) together. Brief: the item ids, the protocol path for its kind
   (`$HOME/.agents/skills/role/SKILL.md`, claimed-item table) and only the
@@ -225,7 +231,7 @@ Establish the outcome's contribution to its milestone:
   integration check. Add planning or opinions only for distinct questions.
 - Run cross-item checks through intended interfaces. At each integration
   checkpoint, execute the combined consumer path and cross-boundary
-  invariants under [Evidence and gates](review.md#evidence-and-gates).
+  invariants under [Evidence and gates](../../shared/acceptance.md#evidence-and-gates).
 - Out-of-contract work and cleaner out-of-scope repairs stay proposals until
   the role's authority covers them.
 
@@ -236,7 +242,7 @@ cumulative changes affect the frame, scope or boundaries: assess the combined
 end state for missing general mechanisms, asymmetric cases, duplicate owners,
 silent failures, dead weight and doc drift; name the next executable outcome
 and blockers. Close each finished epic `board position`
-lists under work-tracking [Epics](../../shared/work-tracking.md#epics); leave
+lists under board-coordination [Epics](../../shared/board-coordination.md#epics); leave
 open one whose acceptance names the user and list it in the report. Bring
 material changes to the decider before dependent dispatch. End rethinking
 when remaining unknowns are empirical or further

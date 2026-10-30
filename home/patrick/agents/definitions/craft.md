@@ -1,7 +1,8 @@
 ---
 name: craft
 description: >-
-  Implementation requiring design judgment within an agreed scope. Chooses
+  Implementation requiring complex design judgment within an agreed scope, or an
+  interface choice costly to unwind. Chooses
   local reversible approaches and returns consequential contract or scope
   decisions to the lead.
 effort: medium

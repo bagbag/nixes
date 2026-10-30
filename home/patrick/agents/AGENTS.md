@@ -165,6 +165,10 @@ approval gate causes a pause or restriction, check it against the exact command
 and its actual effects; name and link to its source, quote the governing
 instruction, and distinguish the actual requirement from your interpretation.
 
+**Reading instructions:** read each skill, protocol or instruction file in its
+own tool call, never concatenated or batched with other output in one command
+or `exec` block.
+
 ## Orchestration and delegation
 
 Use subagents when the user or an applicable skill/instruction requests them,
@@ -188,35 +192,10 @@ keep each artifact within its assigned file ownership.
 Scout and explore are response-only discovery roles; use an artifact-writing
 specialist when a file is required.
 
-- **`scout`** — one narrow factual lookup requiring search or reading: where X
-  is defined, who calls Y, what config Z says. A single-command check stays inline.
-- **`explore` / `explorer`** — broad read-only sweeps across files, naming conventions, or
-  the web. It locates and maps; it does not review or audit.
-- **`transform`** — fully specified changes with an exact, describable result:
-  renames, pattern sweeps, transcription, formatting, doc sync, or small code
-  changes mirroring existing code.
-- **`build`** — implementation whose approach the brief determines, usually via
-  an existing pattern. Makes and discloses local, reversible choices; returns
-  consequential ones.
-- **`craft`** — implementation that turns on consequential design judgment or
-  an interface choice that would be costly to unwind.
-- **`verify`** — fresh-context checks with checkable answers: named claims,
-  brief and pattern conformance, reuse, scope. Returns CONFIRMED / REFUTED /
-  UNVERIFIABLE with evidence.
-- **`review`** — fresh-eyes adversarial critique of a plan, design, or diff: is
-  it correct, clean, and right-sized? Also for verify escalations.
-- **`second-opinion`** — fresh independent judgment on a consequential
-  decision, plan, or proposal; strict sign-off on request.
-- **`option-explorer`** — develops a broad solution space into grounded alternatives
-  through progressive exploration; returns options and recommendations for a decision.
-- **`architect`** — architecture design and assessment. Returns options and recommendations to the lead.
-- **`plan`** — implementation planning for a multi-step arc: scope, work
-  packages, exclusive file zones, dependencies, checks, and open decisions.
-- **`general-purpose` / `default`** — fallback for multi-step work that fits no
-  narrower role.
+Each role's description in the runtime's agent list says what it takes.
 
 **Acceptance gates:** choose each result's gate by its stakes under the
-review policy in `$HOME/.agents/skills/role/protocols/review.md`.
+review policy in `$HOME/.agents/skills/shared/acceptance.md`.
 
 **Routing rule:** choose by **spec completeness, not task size**: `transform`
 when you can describe the exact result; `build` when the brief determines the
@@ -246,8 +225,8 @@ warm agents with the delta: new task, changes since, and superseded context.
 
 Skills that coordinate multi-worker arcs use
 `$HOME/.agents/skills/role/protocols/plan.md` for planning, briefing and
-dispatch, and `$HOME/.agents/skills/role/protocols/review.md` for review and
-acceptance. The lead remains accountable for results.
+dispatch, and `$HOME/.agents/skills/role/protocols/review.md` with
+`$HOME/.agents/skills/shared/acceptance.md` for review and acceptance. The lead remains accountable for results.
 
 ## Project memory
 

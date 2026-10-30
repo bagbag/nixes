@@ -6,8 +6,10 @@
   premises, and levels the context already settles are skipped. Show each
   option's observable result with concrete cases; where the user cannot state
   a rule, ask a few cases and derive it. Name the decisions each answer
-  settles, derive them, and present them for one confirmation; write or act
-  on them only after it. Ask a
+  settles and derive them. Present them for one confirmation per board item
+  or design and per kind, never together with board actions, acceptance or
+  release; ask each you are unsure is the only realistic clean option as its
+  own question. Write or act on them only after that. Ask a
   mechanism question only where the answers leave several clean mechanisms.
 - Ask one question per remaining decision. Present each in chat first: the
   problem in one plain sentence; realistic consumer scenarios (the simple case

@@ -3,9 +3,9 @@ name: explore
 claude-name: Explore
 codex-name: explorer
 description: >-
-  Broad read-only discovery across files, naming conventions, or official
-  documentation. Returns a factual map of locations, relationships, and
-  capabilities. Review and recommendations belong to other roles.
+  Broad read-only discovery across files, naming conventions, or the web.
+  Returns a factual map of locations, relationships, and capabilities.
+  Review and recommendations belong to other roles.
 effort: medium
 codex-effort: high
 claude-tools: Read, Grep, Glob, Bash, WebSearch, WebFetch, Skill

@@ -5,9 +5,10 @@ acceptance of designs and user-judged outcomes. Read
 `$HOME/.agents/skills/shared/decision-protocol.md`,
 `$HOME/.agents/skills/shared/asking.md`,
 `$HOME/.agents/skills/shared/reviewers.md`,
-`$HOME/.agents/skills/shared/work-tracking.md`,
+`$HOME/.agents/skills/shared/board-core.md`,
+`$HOME/.agents/skills/shared/board-coordination.md`,
 `$HOME/.agents/skills/shared/project-memory.md` and
-`$HOME/.agents/skills/role/protocols/review.md` before the first round.
+`$HOME/.agents/skills/shared/acceptance.md` before the first round.
 
 Give each step's output as one line when it passes; add detail only for
 findings or stops.
@@ -21,7 +22,12 @@ findings or stops.
 - The user decides and releases rulings and owns staging and commits. Write
   decision records, rule owners, your own artifacts, `/tmp` probes and inline
   changes under the global instructions' Orchestration; leave other
-  implementation to work items.
+  implementation to work items. Run a spike a round question waits on
+  yourself when one probe run likely settles it; leave experiments needing
+  several passes or variants to a spike item.
+- Decide board bookkeeping yourself (comments, relations, blocks, follow-up
+  items for decided work) and report it in one line; ask only when it changes
+  scope, milestone membership or an item another session holds.
 - Decide in the round every contract consumers see: API shape, names,
   defaults, error and failure behavior, limits. Leave only internals and
   sequencing to work items.
@@ -39,6 +45,11 @@ findings or stops.
 - Create a `design` item blocking a slice's items at the user's request;
   propose one for a slice meeting the plan protocol's
   [Frame](plan.md#frame) design-item triggers.
+- Create a challenge of decided records at the user's request; propose one
+  when designs will build on them. It is a standalone review
+  ([Kinds](../../shared/board-core.md#kinds)) that blocks the records
+  (`board block <record>… --on <challenge> --reason "<scope>"`), run under the
+  review protocol's [Challenge](review.md#challenge).
 - Use `staged-review` when the user asks for an implementation review; turn
   the decisions it raises into questions.
 - While the user is away, raise blocked choices as unassigned questions and
@@ -85,10 +96,9 @@ for open items.
    [Asking the user](../../shared/asking.md#asking-the-user), from its Check
    step.
    Output: the walkthrough and the questions.
-6. **Record.** Record each decision when made under
-   [Questions and rulings](../../shared/work-tracking.md#questions-and-rulings)
-   and set status `decided`; when the user asks for the overall picture first,
-   record the round after the walkthrough. Record user-stated constraints and
+6. **Record.** Record each decision when made with `board record <id> <file>`
+   under [Rulings](../../shared/board-coordination.md#rulings); when the user
+   asks for the overall picture first, record the round after the walkthrough. Record user-stated constraints and
    principles as rulings, and in the Decision any review the user wants of
    the planning result before it is applied. Check each record against the wording of the chosen
    option; a rule the option did not state is your ruling (disclose it) or a
@@ -124,7 +134,7 @@ release.
    | Earlier ruling it revises or contradicts, closed included | Name it under Prior rulings; supersede it in step 6. |
    | Open question it duplicates or answers | Merge, or answer and close. |
    | Open question its own premise rests on | Hold the record; it blocks release. |
-   | Open item assuming the old state | Block it on the record (`board bd dep add <item> <record>`); comment the revised clause. |
+   | Open item assuming the old state | `board block <item> --on <record> --reason "<revised clause>"`. |
    | Deferred item assuming the old state, or one it unblocks | Relate it; comment the revised clause. |
    | Item another session holds on the same concepts | Comment or hand off. |
    | Doc, README or skill stating the old rule | Owner write in step 5, or a task. |
@@ -142,10 +152,11 @@ release.
    anchor in the record's `## Rule owner`. For a convention, add an enforcing
    check where realistic. Withdraw a wrong premise explicitly.
    Output: one line per rule: owner path and anchor.
-6. **Release.** `board release <ids>`, then per revised
-   record `board supersede <old> --with <new>`, with
-   `--partial` when one rule of it changes.
-   Output: released and superseded ids.
+6. **Release.** `board release <ids>`, which supersedes the records opened
+   through `board revise`; supersede other revised records with
+   `board supersede <old> --with <new>`, plus `--partial "<rule>"` for one
+   rule.
+   Output: released and superseded ids, and the ids sent back from review.
 7. **Next.** List waiting questions, `in_review` designs, ready milestones,
    finished epics whose acceptance names the user and what waits on the user
    (`board health --items user`);
@@ -169,7 +180,7 @@ whose acceptance names the user (`board position`).
    Output: `claimed <id>; author <actor>`, `claimed <id> (milestone)`, or
    `epic <id>`.
 2. **Evidence.** Check the named evidence under the review protocol's
-   [Evidence and gates](review.md#evidence-and-gates).
+   [Evidence and gates](../../shared/acceptance.md#evidence-and-gates).
    Output: one line per gate: command, result.
 3. **Walk through** the design or outcome result with the user under
    [Asking the user](../../shared/asking.md#asking-the-user).

@@ -1,14 +1,27 @@
-## Work tracking (beads)
+## Board core (beads)
 
 **Commands:** `board` in every skill command is `$HOME/.agents/bin/board`
-(not on `PATH`): type `$HOME/.agents/bin/board bd show <id>`, never bare
-`board`, bare `bd` or a shell variable (`$B claim`). Run every bd command as
-`board bd <args>` (`board bd <command> --help`).
+(not on `PATH`): type `$HOME/.agents/bin/board show <id>`, never bare `board`
+or bare `bd`. Run every other bd command as `board bd <args>`
+(`board bd <command> --help`); `board help` lists every board command with an
+example. Read items with `board show`; raw `board bd show` and comment
+listings are refused except with `--refs`, `--children`, `--as-of` or
+`--long`. When board output stops early, run the command it prints before
+relying on the missing part.
 
-Keep item-specific packets, block reasons, evidence and verdicts in the item;
-link shared briefs and reports from `.scratch/` files. Reference rulings and
-rule owners by id and anchor instead of restating their text. The session hook
-injects `board bd remember` facts.
+**Content:** make each item complete without its linked files.
+
+- Keep the work content in the item: what to do, packets, designs, findings,
+  evidence summaries, verdicts, block reasons. Reference rulings, rule owners
+  and items by id and anchor instead of restating their text.
+- Keep working drafts and data files in `.scratch/`; move a draft's result
+  into the item before hand-over or closure.
+- Name each data file the work consumes or produces (dumps, diagnostics, logs,
+  fixtures, generated output) in the item with path, size or hash, and how to
+  obtain it: the regenerating command and commit, or its location and
+  holder.
+
+The session hook injects `board bd remember` facts.
 
 Without `.beads/`: a project with existing trackers or backlog files moves onto
 the board through `/board-migrate`; otherwise follow
@@ -47,8 +60,8 @@ the user.
 | `task`, `bug`, `spike` | Work item. |
 | `design` | Design item: architecture, package graph and needed decisions for a slice. |
 | `decision` | Question, later the ruling's record ([Questions and rulings](#questions-and-rulings)). |
-| `epic` | Outcome ([Epics](#epics)). |
-| `milestone` | Release checkpoint ([Milestones](#milestones)). |
+| `epic` | Outcome ([Epics](../shared/board-coordination.md#epics)). |
+| `milestone` | Release checkpoint ([Milestones](../shared/board-coordination.md#milestones)). |
 | `gate` | Upstream wait or the user's go ([Dependencies](#dependencies)). |
 
 Titles carry no prefixes; `feature`, `chore` and `check` stay unused (a check
@@ -87,53 +100,13 @@ claims them.
   checks, ruling ids with owner anchors), `--acceptance` (done criteria),
   `--spec-id` (specification reference), `blocks` edges.
 - Before creating an item or question, search with
-  `board related <terms>` and `board bd find-duplicates`; extend an open item on the same decision, files or
-  migration instead.
+  `board related --like <draft>` (or `board related <terms>`); extend an open
+  item on the same decision, files or migration instead.
 - Create items with one `board bd create --graph <plan.json>` per wave. Let Beads
   generate every id; confirm creation before creating dependents.
 - When an open item becomes redundant, move its leftover work into the owning
   item's `--acceptance`, then `board bd supersede <id> --with <owner>`, or
   `board bd duplicate <id> --of <canonical>` for an exact duplicate.
-
-### Epics
-
-- Root a project's board at a goal epic with finite outcome epics below it.
-  Nest deeper only for independently closable sub-outcomes. Place an item
-  under the outcome it contributes to; loose items sit under the goal epic.
-  Topics are labels (`topic:<topic-slug>`). `board bd create --graph` copies
-  no labels from the parent: give each node its `topic:` label.
-- Title: the outcome. Description: two to four sentences on what will be true,
-  why, scope and the owner link. `--acceptance`: checkable done criteria.
-  Epics carry no rules, holds, status, item lists or history; history goes to
-  comments, rules to their owners.
-- An outcome's own verification is its epic acceptance; name the user there
-  when the outcome needs the user's judgment.
-- The planning session closes an epic as soon as its criteria hold and no
-  child is open (`board bd epic close-eligible --dry-run`), detaching deferred
-  children first (`board bd update <id> --parent ""`). A
-  [deciding session](../role/SKILL.md#roles) walks the user through an epic
-  whose acceptance names the user and closes it on acceptance; it or the user
-  closes the goal epic once the user confirms the goal is reached.
-
-### Milestones
-
-- Track each release checkpoint as one `milestone` item (`1.0-beta`) under
-  the goal epic. Its acceptance names the checkpoint's evidence and the user;
-  the goal owner states which work belongs to it.
-- Add members with `board bd dep add <milestone> <member>`, without a reason
-  line. Everything a member waits on belongs to the milestone too. Block the
-  milestone by the last release step as well.
-- When release checks must run on the finished scope, members block a
-  `<release> scope` milestone instead, and it blocks the first checks.
-- A member epic brings all its descendants; file work that ships later under
-  another outcome.
-- Membership orders work and never cuts it: P0 items first, then milestone
-  work, then the rest, each by priority.
-- Place each new item: a member when the goal owner's criterion covers it.
-  Move work in or out by adding or removing its edge.
-- When the milestone turns ready, a deciding session walks the user through
-  it, closes it on acceptance and reconciles the goal owner under
-  project-memory.
 
 ### Questions and rulings
 
@@ -153,34 +126,15 @@ claims them.
   agent session or through a question tool; deciding sessions handle user
   rounds.
 - One decision per record. While open, the description holds the
-  [Decision packet](#decision-packet). At decision time, move the packet into
-  the first comment and rewrite the description into these `##` sections,
-  which `board bd lint` checks before release: `Question`,
-  `Alternatives Considered`, `Decision`, `Rationale` (with provenance: user or
-  the ruling session's role, and date) and `Rule owner`.
+  [Decision packet](#decision-packet).
 - Make the question block the items it holds up, creating missing ones, and
   depend on each open question its options assume (`board bd dep add <id> <other>`).
 - Implementation steps, file lists and test lists become work items, never
   ruling text.
-- Record each ruling you make as "ruling — rejected: <alternative>, fails
-  <cleanliness test, principle or correctness property>". For a consequential
-  ruling without a question, create and answer one at once.
-- Record a revision as a new record restating the rule in full; supersede the
-  old record when the revision takes effect (release; autopilot: when it
-  records the revision). Full replacement:
-  `board supersede <old> --with <new>`. One rule of a record:
-  name it and add `--partial`; the rest stays in force. A revision question
-  blocks only the work items whose part it would change.
-- On the user's ratification, the claiming deciding session closes a
-  `needs_ratification` record with the ratification as reason; a reversal
-  becomes a revision record.
-- Answer provenance questions from the record (`board bd show`,
+- Answer provenance questions from the record (`board show`,
   `board bd history <id> --events`).
-- Owner text contradicting a newer released ruling is a missed owner write:
-  the ruling binds; fix the owner.
-- Write each rule into its owner under project-memory
-  [Durable owners](../shared/project-memory.md#durable-owners)
-  (`$HOME/.agents/skills/shared/project-memory.md`).
+- Deciding and planning sessions record rulings under
+  [Rulings](../shared/board-coordination.md#rulings).
 
 ### Decision packet
 
@@ -189,6 +143,7 @@ Use these `##` sections:
 | Section | Content |
 |---|---|
 | Question | Exact choice. |
+| Consumer scenarios | The simple case and each realistic case where the options' outcomes differ, with who hits it. |
 | Root cause and end state | Decision protocol's Root fix and End state, designed fresh, with its consumer code. |
 | Prior rulings (evidence) | Rulings, rules, docs and pending approvals touching the question: owner, and whether the end state keeps or revises each. They narrow no option; options a missing approval blocks stay in the set. |
 | Premises and evidence | Each premise with `path:line` or executed results, or the question that asks it; limits. |
@@ -205,7 +160,7 @@ Statuses carry the lifecycle; labels only classify (`topic:<topic-slug>`,
 | `open` | Available; for a question, unanswered. |
 | `in_progress` | Claimed by its holder. |
 | `in_review` | Handed over for acceptance ([Hand-over and acceptance](#hand-over-and-acceptance)). |
-| `deferred` | [Deferral](#deferrals-and-environment-facts). |
+| `deferred` | [Deferral](../shared/board-coordination.md#deferrals-and-environment-facts). |
 
 Question statuses: [Questions and rulings](#questions-and-rulings). Assign
 only a task waiting on a human action to `user`; express waiting on other work
@@ -213,24 +168,25 @@ with `blocks`.
 
 ### Dependencies
 
-Use the first matching row. Beads allows one edge kind per pair: remove a
-`relates-to` edge before adding `blocks` or `supersedes` to the same pair; when
-order and context coincide, keep `blocks`.
+Use the first matching row. Beads allows one edge kind per pair:
+`board block` and `board supersede` replace an existing link; before adding
+another edge by hand, remove the pair's `relates-to` edge. When order and
+context coincide, keep `blocks`.
 
 | Relation | Use |
 |---|---|
-| B can't start before A, including released ruling A changing B | `blocks`: `board bd dep add B A`, with a one-line reason naming A in B ([Milestones](#milestones) members excepted). |
+| B can't start before A, including released ruling A changing B | `blocks`: `board block B --on A --reason "<why>"` ([Milestones](../shared/board-coordination.md#milestones) members: `board bd dep add`). |
 | B is part of outcome A | `--parent A` |
 | B found while working on A | `discovered-from`: `board bd create … --deps discovered-from:A` |
 | Shared context, alternatives, a ruling's context-only item | `relates-to`: `board bd dep relate A B` |
-| B revises ruling A | `supersedes` ([Questions and rulings](#questions-and-rulings)) |
+| B revises ruling A | `board revise A` links B at creation; release supersedes A ([Rulings](../shared/board-coordination.md#rulings)) |
 | B waits on the user's go (no open decision) | On the user's instruction only; raise your own caution as a question. `board bd gate create --type=human --blocks B --title "user <date>: '<words>'"`; more items: `board bd dep add <item> <gate>`; lift on the user's word or a covering released ruling: `board bd gate resolve <gate>`. |
-| External wait | gate ([Upstream waits](#upstream-waits)) |
+| External wait | gate ([Upstream waits](../shared/board-coordination.md#upstream-waits)) |
 
 ### Hand-over and acceptance
 
-1. Scope an item's acceptance under the review protocol's Evidence and gates
-   (`$HOME/.agents/skills/role/protocols/review.md#evidence-and-gates`).
+1. Scope an item's acceptance under Acceptance [Evidence and gates](../shared/acceptance.md#evidence-and-gates)
+   (`$HOME/.agents/skills/shared/acceptance.md#evidence-and-gates`).
 2. Keep active work `in_progress` with its current resume point in `notes`
    (`board bd update <id> --notes "<point>"`), replaced as the work moves;
    record history as comments. Hand over only with complete evidence for
@@ -241,13 +197,9 @@ order and context coincide, keep `blocks`.
    closes it with the verdict as reason (`board bd close <id> --reason …`) or
    returns it to the queue, open and unassigned:
    `board return <id> "<findings>"`.
-
-### Deferrals and environment facts
-
-| Item | Lifecycle |
-|---|---|
-| Deferral | `board bd defer <id> --reason "<revisit condition>"`, plus `--until <date>` for a date condition (bd undefers it then); undefer other conditions on named new evidence. Deferred items are the project backlog. |
-| Environment fact | `board bd remember --key <key>` for temporary repository-wide facts needed by every current session, a user's broad stop (area, paths, kind of action) included with its words and date; state a removal condition; remove with `board bd forget`. |
+5. `board block` returns an unheld item in review to the queue when it gains
+   an open blocker; amend your returned item to the blocker before handing it
+   over again.
 
 ### Priority
 
@@ -266,36 +218,23 @@ order and context coincide, keep `blocks`.
   `board holders`; include committed nonblocking consumers
   when ranking it.
 
-### Upstream waits
-
-1. The delivering upstream issue carries `export:<capability>`. With user
-   approval, the waiting session files a missing issue or labels/comments an
-   existing one:
-   `board bd -C <upstream path> create … --assignee user --label export:<capability>`;
-   description names the waiting issue.
-2. Create the local wait:
-   `board bd gate create --type=human --blocks <issue> --reason "waits for <project>:<capability>"`.
-   Make further waiting issues depend on the same gate.
-3. Upstream runs `board bd ship <capability>` at issue closure. The waiting
-   session resolves the gate once
-   `board bd -C <upstream path> list --label provides:<capability> --status closed`
-   shows the capability.
-
 ### Views
 
-`board` views read one board snapshot per run; most take `--root <epic>` or
-`--root <milestone>`. Other queries: `board bd query`, `search`, `find-duplicates`,
+`board` views read one board snapshot per run; all but `board show` take
+`--root <epic>` or `--root <milestone>`, `--limit <rows>` and
+`--offset <rows>`. Output stops at 35,000 characters. Other queries: `board bd query`, `search`,
 `blocked`, `lint`, `dep tree`.
 
 | Command | View |
 |---|---|
+| `board show <id>… [--section <name>] [--comments] [--full]` | Items with links, fields and newest comments; `--json --field <field>` for scripts. |
 | `board queue` | Ready work plus released rulings to plan, milestone work marked. |
 | `board position` | Ready work against registered sessions and their pulls; held items with holder, role, tool, age and gone or idle marks; open questions holding work; ready milestones; finished epics not closed. |
 | `board mine` | Items your session and its workers hold; holds of stopped workers marked. |
 | `board health` | Counts, with each open milestone's progress; dispatchable counts include only unblocked items. |
 | `board holders` | Items by open downstream count. |
 | `board check` | Deviations from these conventions on live items, each naming the section it breaks; closed items are never checked; as flags, squashed text in editable fields and waits whose blocker the waiting item's text does not name. `board health` names their count; a board with deviations moves through `/board-migrate`. |
-| `board related <terms> [--docs <paths>]` | Items (closed included) and canonical docs mentioning the terms, with holders. |
+| `board related <terms>\|--like <draft> [--docs <paths>]` | Items (closed included) and canonical docs mentioning the terms, rarest matches first, with holders; `--like` takes the terms from a draft file. |
 | `board bd list --type decision --all --label topic:<slug>` | Decision log. |
 | `board bd list --status deferred --label topic:<slug>` | Topic backlog. |
 | `board bd dep cycles` | Dependency-cycle check before dispatch. |
@@ -311,12 +250,10 @@ order and context coincide, keep `blocks`.
   interrupt a running one.
 - `board bd ready` returns 100 rows; use `--limit 0` for inventories. Read
   inventories with one `board bd export` or
-  `board bd list --all --limit 0 --json` instead of per-item `board bd show`.
+  `board bd list --all --limit 0 --json` instead of per-item `board show`.
 - Edit fields with `board bd update --title/--description/--design/--acceptance`;
   `board bd edit` opens an editor and blocks.
 - Give `board bd create` a description and `board bd close` a reason of 20+
   characters.
 - Inspect changes with `board bd history <id> --events` and board-wide changes
   with `board bd events tail --since <seq>`.
-- `board bd show --json` omits dependents unless you pass
-  `--include-dependents`; plain `board bd show` lists them under BLOCKS.

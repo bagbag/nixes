@@ -1,9 +1,9 @@
 # Work protocol
 
 Doing one claimed design or implementation item. Read
-`$HOME/.agents/skills/shared/work-tracking.md`,
+`$HOME/.agents/skills/shared/board-core.md`,
 `$HOME/.agents/skills/shared/decision-protocol.md` and
-`$HOME/.agents/skills/role/protocols/review.md` (Evidence and gates) before
+`$HOME/.agents/skills/shared/acceptance.md` before
 step 1.
 
 ## Entry
@@ -19,7 +19,7 @@ findings or stops.
 1. **Claim.** `board claim` for your pulls or
    `board claim <id>` for a named item.
    Output: `claimed <id> (<kind>)`, plus the items you still hold.
-2. **Read.** The item (`board bd show <id>`), its brief, the project instructions,
+2. **Read.** The item (`board show <id>`), its brief, the project instructions,
    and every released ruling linked to it with that ruling's owner section;
    linked rulings bind, planned (closed) ones included. Bring a better
    evidence-backed alternative to a ruling as a question (global Challenge on
@@ -31,19 +31,21 @@ findings or stops.
    Output: `areas: <list>`.
 4. **Do.** Design items: architecture where open, the package graph, and
    needed decisions as questions blocking their dependents; no implementation.
-   Implementation items: tests alongside the change. Rule trivial and entailed
-   choices under
+   Before raising the questions and again before handing over, invoke
+   `step-back`, then `ground`, on the design; repeat until a pass changes
+   nothing. Implementation items: tests alongside the change. Rule trivial
+   and entailed choices under
    [Decision authority](../../shared/decision-protocol.md#decision-authority)
    and comment them on the item; raise every other choice as a question
    blocking the affected part, and continue unaffected parts.
-   Output: one line per completed part.
+   Output: one line per completed part; for a design, what each pass changed.
 5. **Evidence.** Run the item's gates under the review protocol's
-   [Evidence and gates](review.md#evidence-and-gates); comment each command
+   [Evidence and gates](../../shared/acceptance.md#evidence-and-gates); comment each command
    and outcome.
    Output: one line per gate: command, exit code, and passed/failed/skipped
    counts for tests.
 6. **Hand over.** With complete evidence, hand over under
-   [Hand-over and acceptance](../../shared/work-tracking.md#hand-over-and-acceptance).
+   [Hand-over and acceptance](../../shared/board-core.md#hand-over-and-acceptance).
    In the handover evidence, map each addressed finding ID to its repaired
    scope, evidence and the gates its acceptor reproduces.
    With partial work, follow its step 2 and unclaim the item
@@ -51,7 +53,7 @@ findings or stops.
    Output: `handed over <id>` or `kept <id> open: <remainder>`.
 7. **Remainders.** Record every gap and follow-up as a new item or question
    discovered from this item; planning sessions (plan protocol Entry) place
-   them under [Milestones](../../shared/work-tracking.md#milestones).
+   them under [Milestones](../../shared/board-coordination.md#milestones).
    Output: new ids, or `none`.
 
 ## Shared working tree

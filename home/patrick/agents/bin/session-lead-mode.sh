@@ -57,7 +57,7 @@ valid_session_id() {
   [[ "$1" =~ ^[A-Za-z0-9._-]{8,}$ ]] || fail "invalid session id '$1'"
 }
 
-# The agent session running this command (work-tracking.md#actors-and-holds).
+# The agent session running this command (board-core.md#actors-and-holds).
 environment_session() {
   if [[ -n ${CODEX_SESSION_ID-} ]]; then
     session=$CODEX_SESSION_ID tool=codex thread=${CODEX_THREAD_ID-}

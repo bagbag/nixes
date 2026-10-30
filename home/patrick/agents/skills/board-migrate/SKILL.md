@@ -14,7 +14,8 @@ between what exists and the target.
 
 ## Target
 
-- Board model: [Work tracking](#work-tracking-beads), included below.
+- Board model: [Board core](#board-core-beads) and
+  [Board coordination](#board-coordination-beads), included below.
 - Owners of knowledge, outstanding work, arc state and history:
   `$HOME/.agents/skills/shared/project-memory.md`.
 - Sessions enter through `/role`; read `$HOME/.agents/skills/role/SKILL.md` for
@@ -133,8 +134,8 @@ replaced trackers sit in `history/`, and sessions are told to enter with
 
 ## Tool facts (bd 1.3.1)
 
-- Comments are permanent (no edit or delete). `board bd show --json` omits
-  them; read them with `board bd comments <id> --json`.
+- Comments are permanent (no edit or delete). Read them as JSON with
+  `board show <id> --json --field comments`.
 - Merge duplicates after import: `board bd duplicate <dup> --of <keeper>`.
 - `board bd import --dry-run <file>` first; it must report every issue as new,
   otherwise choose other ids. On retry, import only missing entries.
@@ -151,4 +152,6 @@ replaced trackers sit in `history/`, and sessions are told to enter with
 
 <!-- @include shared/beads-setup.md -->
 
-<!-- @include shared/work-tracking.md -->
+<!-- @include shared/board-core.md -->
+
+<!-- @include shared/board-coordination.md -->

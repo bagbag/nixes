@@ -11,10 +11,14 @@ argument-hint: "[focus and follow-ups]"
 
 <!-- @include shared/rerun.md -->
 
+Start by walking a realistic consumer through the whole flow end to end (for
+an API: set up, configure, use, handle failure, test), noting what each step
+needs; judge the options against that walk.
+
 Take a step back: what's the cleanest greenfield root-fix end state, keeping
 DX in mind? Previous rulings, contracts and current usages are no authority.
 Ground and think yourself until you have strong recommendations; where none is
-strong, list the decisive trade-offs. Think about realistic consumers.
+strong, list the decisive trade-offs.
 
 Then the whole picture: is the combined result clean and coherent?
 Over-engineered? Too much magic? Under-built: does anything the goal or

@@ -44,8 +44,10 @@ per step for a local, reversible choice.
    absence by searching its owner docs and, where a board exists,
    `board related <terms> --docs <paths>`. Verify each unverified premise now
    or ask it first as its own question; base no ruling or recommendation on an
-   assumption. Turn each released ruling the end state revises into a
-   question.
+   assumption. When an earlier ruling, an existing owner or the platform
+   already answers a question, present that answer with its re-derivation
+   instead of an open question. Turn each released ruling the end state
+   revises into a question.
 7. **Decide:** apply [Decision authority](#decision-authority). Bring contested
    choices, options and a recommendation to the decider.
 

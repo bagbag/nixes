@@ -2,8 +2,9 @@
 name: plan
 claude-name: Plan
 description: >-
-  Implementation planning from an agreed design or established pattern:
-  packages, ownership, dependencies, integration, and verification. May write
+  Implementation planning for a multi-step arc from an agreed design or
+  established pattern: packages, ownership, dependencies, integration, and
+  verification. May write
   the plan to a supplied path.
 effort: high
 claude-tools: Read, Edit, Grep, Glob, Bash, Write, WebSearch, WebFetch, Skill

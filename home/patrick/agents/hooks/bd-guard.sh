@@ -9,7 +9,7 @@
 # - Prefixes a Claude subagent's board commands with `export BEADS_ACTOR=<actor>; `:
 #   its id reaches only this payload; board derives every other actor from the
 #   environment. A bare `VAR=x` prefix would reach only the first command of
-#   `cd x && board ...`. Format: work-tracking.md#actors-and-holds.
+#   `cd x && board ...`. Format: board-core.md#actors-and-holds.
 # - Denies an explicit --actor, BEADS_ACTOR or BD_ACTOR that differs from the
 #   derived actor; it would hold items outside the session's `board mine`.
 set -euo pipefail
@@ -80,6 +80,11 @@ word='([[:space:];&|)'\''"]|$)'
 bare="$position[[:space:]]*([^[:space:];&|()'\"]*/)?bd$word"
 bodies=$(grep -Eo -- "-c[[:space:]]+('[^']*'|\"[^\"]*\")" <<<"$cmd" | sed -E 's/^-c[[:space:]]+.(.*).$/\1/' || true)
 if grep -Eq "$bare" <<<"$stripped" || { [[ -n "$bodies" ]] && grep -Eq "$bare" <<<"$bodies"; }; then
+  # board bd refuses raw item reads (show, view, comment listings): name their replacement directly.
+  reads="$position[[:space:]]*([^[:space:];&|()'\"]*/)?bd[[:space:]]+(show|view|comments[[:space:]]+([^a[:space:];&|-]|a[^d[:space:]]|ad[^d[:space:]]|add[^[:space:];&|]))"
+  if grep -Eq "$reads" <<<"$stripped" || { [[ -n "$bodies" ]] && grep -Eq "$reads" <<<"$bodies"; }; then
+    deny 'read items with `$HOME/.agents/bin/board show <ids> [--section …] [--field …] [--comments] [--full]`; other bd commands run as `$HOME/.agents/bin/board bd <same args>`.'
+  fi
   deny 'run bd as `$HOME/.agents/bin/board bd <same args>`: it sets your actor and starts the board server.'
 fi
 # Board call: the CLI by name, or any command word running bd ("$B" bd).

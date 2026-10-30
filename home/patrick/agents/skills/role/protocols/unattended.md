@@ -16,10 +16,10 @@ Read `$HOME/.agents/skills/role/protocols/review.md` too.
   - **Trivial:** decide; record relevant defaults.
   - **Entailed or other reversible:** run the decision protocol, compare
     options as if presenting them to the user, act on the recommendation,
-    write it into its owner, and record an unassigned decision with status
-    `needs_ratification`, blocking nothing; lint it (`board bd lint <id>`). Add a `## Reversal` section to
-    the record, executable without remembered context or costly downstream
-    rework. For a revision, run `board supersede` when
+    write it into its owner, and record an unassigned decision blocking
+    nothing with `board record <id> <file> --status needs_ratification`. Give
+    it a `## Reversal` section executable without remembered context or costly
+    downstream rework. For a revision, run `board supersede` when
     recording it; its `## Reversal` runs `board bd reopen <old>` and
     `board bd dep remove <old> <new>`.
   - **Irreversible, outward-facing or scope-changing:** park as an unassigned
@@ -71,7 +71,7 @@ findings or stops.
      user's tree and branches untouched. Make authorized checkpoint commits as
      coherent Conventional Commits after the preflight-selected gates.
    - Beyond the recheck triggers in
-     [Evidence and gates](review.md#evidence-and-gates), have a non-author
+     [Evidence and gates](../../shared/acceptance.md#evidence-and-gates), have a non-author
      rerun the decisive check of every result later work builds on. Satisfy
      review and verification gates before dependent work. When retry and
      escalation fail, park with a diagnosis.

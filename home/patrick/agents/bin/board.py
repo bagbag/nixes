@@ -1,28 +1,37 @@
 #!/usr/bin/env python3
 """board: the agents' interface to a beads board (bd 1.3.1).
 
-Run inside the repository. Views and hand-offs read one `bd export` snapshot;
-`board bd <args>` runs any other bd command. Every bd call carries the caller's
+Run inside the repository. Views, `board show` and the write helpers read one
+`bd export` snapshot; `board bd <args>` runs any other bd command (raw item
+reads excepted: `board show` renders them within the read budget). Every bd call carries the caller's
 actor (`derived_actor`) and, on a server-mode board, finds the server running.
 
-Routing: skills/shared/work-tracking.md#routing; `ROLE_KINDS` and `Board.kind`
+Routing: skills/shared/board-core.md#routing; `ROLE_KINDS` and `Board.kind`
 implement it.
 """
 from __future__ import annotations
 
 import argparse
+import contextlib
+import io
 import json
+import math
 import os
 import re
 import shutil
+import shlex
 import socket
 import subprocess
 import sys
+import tempfile
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 IDLE_HOURS = 1  # held items without an update for longer are hinted as idle; confirm in use
-POSITION_ROWS = 50  # rows per position section unless --all
+ROWS = 50  # rows per view section unless --limit (0: all)
+READ_BUDGET = 35_000  # characters per command output; Codex cuts a call's output above ~40,000 from the middle
+PREVIEW = 600  # characters a cut section still prints
+SHOWN_COMMENTS = 3
 SESSION_HOURS = 24  # position lists sessions registered this recently (plus any holding items)
 PULLS = ('plan', 'design', 'implement', 'review')
 KINDS = (*PULLS, 'question', 'accept', 'ratify', 'milestone')
@@ -35,6 +44,15 @@ ROLE_KINDS = {'lead': ('question',), 'agent': None, 'solo': ('question', 'plan',
 ROLE_HANDLES = {'lead': ('question', 'accept', 'ratify', 'milestone'), 'agent': None,
                 'solo': ('question', 'plan', 'ratify', 'accept', 'milestone'), 'autopilot': ('question', 'plan', 'accept')}
 TEXT_FIELDS = ('title', 'description', 'design', 'acceptance_criteria', 'notes', 'close_reason')
+SHOW_FIELDS = TEXT_FIELDS[1:]
+# A decision record's `##` sections (board-coordination.md#rulings). bd lint accepts the words anywhere in the text,
+# so board checks the headings itself.
+RECORD_SECTIONS = ('Question', 'Alternatives Considered', 'Decision', 'Rationale', 'Rule owner')
+# A pending revision is a `tracks` edge from the new decision to the record it revises: bd 1.3.1 rejects custom
+# dependency types, `tracks` never blocks, no other board use exists, and `supersede` replaces the pair's edge, so the
+# link lives exactly until release. The partial rule's name sits in the new record's metadata.
+REVISES = 'tracks'
+REVISES_RULE = 'board.revises_rule'
 REGISTRY = Path(__file__).resolve().parent / 'session-lead-mode.sh'
 
 
@@ -195,9 +213,12 @@ class Board:
         self.dependents: dict[str, list[str]] = {}  # blocker id -> waiting ids
         self.linked: dict[str, set[str]] = {}  # id -> ids sharing any non-parent edge
         self.related: dict[str, set[str]] = {}  # relates-to, both ends
+        self.edges: dict[str, list[tuple[str, str, bool]]] = {}  # id -> (other id, type, outgoing)
         for issue in issues:
             for dep in issue.get('dependencies') or []:
                 waiting, target, kind = dep['issue_id'], dep['depends_on_id'], dep['type']
+                self.edges.setdefault(waiting, []).append((target, kind, True))
+                self.edges.setdefault(target, []).append((waiting, kind, False))
                 if kind == 'parent-child':
                     self.parent[waiting] = target
                     self.children.setdefault(target, []).append(waiting)
@@ -207,7 +228,7 @@ class Board:
                 if kind == 'blocks':
                     self.blockers.setdefault(waiting, []).append(target)
                     self.dependents.setdefault(target, []).append(waiting)
-                elif kind == 'relates-to':
+                elif kind in ('relates-to', 'related'):
                     self.related.setdefault(waiting, set()).add(target)
                     self.related.setdefault(target, set()).add(waiting)
 
@@ -234,7 +255,7 @@ class Board:
         return [issue for issue in self.issues if root in self.ancestors(issue['id'])]
 
     def milestone_work(self, milestone_id: str) -> set[str]:
-        """Open items the milestone waits on (work-tracking.md#milestones): its open blockers, the open
+        """Open items the milestone waits on (board-coordination.md#milestones): its open blockers, the open
         descendants of every reached epic, and transitively the open blockers of every reached item."""
         if milestone_id not in self._milestone_work:
             work: set[str] = set()
@@ -265,6 +286,17 @@ class Board:
                 for item_id in self.milestone_work(milestone['id']):
                     self._in_milestone.setdefault(item_id, []).append(milestone['id'])
         return self._in_milestone
+
+    def between(self, a: str, b: str) -> list[tuple[str, str, str]]:
+        """(from, to, type) of every edge between the pair, either direction."""
+        return [(a, other, kind) if outgoing else (other, a, kind) for other, kind, outgoing in self.edges.get(a, [])
+                if other == b]
+
+    def revises(self, item_id: str) -> list[str]:
+        """Records a decision revises (pending until release)."""
+        if self.by_id.get(item_id, {}).get('issue_type') != 'decision':
+            return []
+        return [other for other, kind, outgoing in self.edges.get(item_id, []) if outgoing and kind == REVISES]
 
     def is_open(self, item_id: str) -> bool:
         return item_id in self.by_id and self.by_id[item_id]['status'] != 'closed'
@@ -323,7 +355,7 @@ def line(issue: dict, *extra: str) -> str:
 
 def section(title: str, rows: list[str], limit: int | None = None) -> None:
     print(f'{title}: {len(rows)}')
-    shown = rows if limit is None else rows[:limit]
+    shown = rows[:limit] if limit else rows  # None or 0: every row
     for row in shown:
         print(row)
     if len(shown) < len(rows):
@@ -335,7 +367,7 @@ def by_priority(issue: dict):
 
 
 def claim_order(board: Board, issue: dict):
-    # P0 first, then milestone work (work-tracking.md#milestones), each by priority; at equal priority
+    # P0 first, then milestone work (board-coordination.md#milestones), each by priority; at equal priority
     # a released ruling goes first: it blocks the work it changes until planned.
     priority, created, item_id = by_priority(issue)
     return (priority != 0, item_id not in board.in_milestone, priority, board.kind(issue) != 'plan', created, item_id)
@@ -377,8 +409,11 @@ def health(board: Board, args) -> None:
             counts = {kind: sum(1 for i in rows if board.claimable(i) == kind) for kind in KINDS}
             print('  by kind: ' + ', '.join(f'{pull} {count}' for pull, count in counts.items()))
         if view in args.items:
-            for issue in sorted(rows, key=by_priority):
-                print(line(issue, issue.get('assignee') or ''))
+            listed = [line(issue, issue.get('assignee') or '') for issue in sorted(rows, key=by_priority)]
+            for row in listed[:args.limit] if args.limit else listed:
+                print(row)
+            if args.limit and len(listed) > args.limit:
+                print(f'  ... {len(listed) - args.limit} more')
     scope = {issue['id'] for issue in board.scoped(args.root)}
     for milestone in (m for m in board.milestones() if m['id'] in scope):
         work = [board.by_id[item_id] for item_id in board.milestone_work(milestone['id'])]
@@ -389,7 +424,9 @@ def health(board: Board, args) -> None:
               f"blocked {sum(1 for i in work if board.open_blockers(i['id']))}; milestone {state}")
     found = deviations(board, args.root)
     if found:
-        print(f'convention deviations: {len(found)} — run /board-migrate')
+        stuck = sum(1 for _, kind, _ in found if kind == 'review-blocked')  # fixed by board return, not a migration
+        hints = (['run /board-migrate'] if stuck < len(found) else []) + ([f'{stuck} in review while blocked: board check'] if stuck else [])
+        print(f"convention deviations: {len(found)} — {'; '.join(hints)}")
 
 
 def registry_by_actor(entries: list[dict]) -> dict[str, dict]:
@@ -426,7 +463,7 @@ def position(board: Board, args) -> None:
         work = sum(1 for issue in ready if board.claimable(issue) == kind)
         pulling = sum(1 for entry in sessions if kind in session_kinds(entry, ROLE_HANDLES))
         print(f'  {kind}: {work} ready, {pulling} sessions')
-    limit = None if args.all else POSITION_ROWS
+    limit = args.limit
     section(f'sessions (registered within {SESSION_HOURS} h or holding items)',
             [f"  {entry.get('actor')}  {entry.get('role')}  {entry.get('tool') or 'tool unknown'}"
              f"  handles {','.join(session_kinds(entry, ROLE_HANDLES)) or '-'}  registered {age(parse_time(entry.get('registered_at')))} ago"
@@ -489,16 +526,17 @@ def holders(board: Board, args) -> None:
             [line(issue, f'holds {count}', issue.get('assignee') or 'unassigned') for count, issue in rows], args.limit)
 
 
-# Conformance with skills/shared/work-tracking.md: mechanical classes only.
+# Conformance with skills/shared/board-core.md and board-coordination.md: mechanical classes only.
 ACTOR = re.compile(r'[0-9a-f]{8}(/.+)?')
 TITLE_PREFIXES = ('[Design]', '[Gate]', '[Checkpoint]', '[Review]')
 RETIRED_TYPES = ('feature', 'chore', 'check')
-CHECK_CLASSES = {  # class -> work-tracking anchor
+CHECK_CLASSES = {  # class -> board-core anchor
     'holder': 'actors-and-holds',
     'retired-type': 'kinds',
     'title-prefix': 'kinds',
     'release-gate': 'kinds',
     'label-status': 'statuses-and-labels',
+    'review-blocked': 'hand-over-and-acceptance',
 }
 # Squashed text (words run together): a flag, never a deviation. Calibrated on
 # the retro's samples (tools/ctx): clean board text 0 per 1,000 words, prompt
@@ -532,7 +570,45 @@ def deviations(board: Board, root: str | None) -> list[tuple[str, str, str]]:
         labels = sorted(set(issue.get('labels') or []) & set(LIFECYCLE_LABELS))
         if labels:
             found.append((item_id, 'label-status', f"labels {', '.join(labels)}"))
+        waits = board.open_blockers(item_id) if issue['status'] == 'in_review' else []
+        if waits:
+            found.append((item_id, 'review-blocked', f"in review while waiting on {', '.join(waits)}: "
+                                                     f'claim it and board return {item_id} "<amend to the blocker>"'))
     return found
+
+
+# Passive forms first: "revised by <id>" means <id> revises this record.
+REVISION_WORDS = re.compile(r'\b(?:(?P<passive>(?:revised|superseded|replaced)\s+by)|'
+                            r'(?P<active>revis(?:es|ing|ion of)|supersed(?:es|ing)|replac(?:es|ing)))\b', re.IGNORECASE)
+ITEM_ID = re.compile(r'[A-Za-z0-9][\w-]*(?:\.[\w-]+)*')
+REJECTED = re.compile(r'^##\s+alternatives considered\b.*?(?=^##\s|\Z)', re.IGNORECASE | re.MULTILINE | re.DOTALL)
+WINDOW = 60  # characters after the verb searched for the record it names
+
+
+def unlinked_revisions(board: Board, root: str | None) -> list[tuple[str, str]]:
+    """(id, detail) per live decision whose editable text says it revises, supersedes or replaces another decision
+    (or is revised by one) without a supersedes or revise edge between them. Comments are history (moved packets
+    quote old records); rejected alternatives describe what the record does not do."""
+    flagged = []
+    for issue in board.scoped(root):
+        if issue['status'] == 'closed' or issue.get('issue_type') != 'decision':
+            continue
+        text = '\n'.join(REJECTED.sub('', str(issue.get(f) or '')) for f in ('title', 'description', 'design', 'notes'))
+        named: dict[str, tuple[str, bool]] = {}  # other id -> (verb, other revises this one)
+        covered = 0
+        for match in REVISION_WORDS.finditer(text):
+            if match.start() < covered:
+                continue  # inside the previous verb's window ("revised by the superseding rulings: <id>")
+            covered = match.end() + WINDOW
+            for other in ITEM_ID.findall(text[match.end():covered]):
+                if other != issue['id'] and board.by_id.get(other, {}).get('issue_type') == 'decision':
+                    named.setdefault(other, (' '.join(match.group(0).lower().split()), bool(match.group('passive'))))
+        for other, (word, passive) in named.items():
+            if not any(kind in ('supersedes', REVISES) for _, _, kind in board.between(issue['id'], other)):
+                old, new = (issue['id'], other) if passive else (other, issue['id'])
+                flagged.append((issue['id'], f'{word} {other} without a supersedes or revise link: board supersede '
+                                             f'{old} --with {new} [--partial "<rule>"]'))
+    return flagged
 
 
 def unnamed_waits(board: Board, root: str | None) -> list[tuple[str, str]]:
@@ -541,7 +617,7 @@ def unnamed_waits(board: Board, root: str | None) -> list[tuple[str, str]]:
     flagged = []
     for issue in board.scoped(root):
         if issue['status'] == 'closed' or issue.get('issue_type') == 'milestone':
-            continue  # a milestone's blockers are its members (work-tracking.md#milestones)
+            continue  # a milestone's blockers are its members (board-coordination.md#milestones)
         text = board.text(issue)
         # A gate carries its own reason (bd gate create --reason); a closed blocker holds nothing up.
         flagged += [(issue['id'], f'waits on {b} without naming it') for b in board.blockers.get(issue['id'], [])
@@ -617,40 +693,78 @@ def squash_flags(board: Board, root: str | None, words: set[str]) -> list[tuple[
 
 
 def check(board: Board, args) -> int:
-    limit = None if args.all else POSITION_ROWS
+    limit = args.limit
     found = deviations(board, args.root)
     print(f'convention deviations: {len(found)}')
     for name, anchor in CHECK_CLASSES.items():
-        rows = [f'  {item_id}  {name}  work-tracking.md#{anchor}  {detail}'
+        rows = [f'  {item_id}  {name}  board-core.md#{anchor}  {detail}'
                 for item_id, kind, detail in found if kind == name]
         if rows:
-            section(f'{name} (work-tracking.md#{anchor})', rows, limit)
+            section(f'{name} (board-core.md#{anchor})', rows, limit)
     words = word_list()
     flags = squash_flags(board, args.root, words)
     note = '' if len(words) > len(EXTRA_WORDS) else f'; no word list at {WORD_LIST}, letter-digit runs only'
     section(f'flag, not a deviation: squashed text on open items{note}',
             [f'  {item_id}  squashed  {detail}' for item_id, detail in flags], limit)
-    section('flag, not a deviation: unnamed waits on open items (work-tracking.md#dependencies)',
+    section('flag, not a deviation: unnamed waits on open items (board-core.md#dependencies)',
             [f'  {item_id}  unnamed-blocker  {detail}' for item_id, detail in unnamed_waits(board, args.root)], limit)
+    section('flag, not a deviation: revisions without a supersedes or revise link (board-coordination.md#rulings)',
+            [f'  {item_id}  unlinked-revision  {detail}' for item_id, detail in unlinked_revisions(board, args.root)], limit)
     return 1 if found else 0
 
 
+STOPWORDS = set("""a about after all also an and any are as at be because been before being both but by can could do
+does each either for from had has have how if in into is it its may might more most must no not of on once only or other
+our out over own same should so such than that the their them then there these they this those through to under until up
+use used uses using via was we were what when where whether which while who why will with without would you your""".split())
+COMMON_SHARE = 0.2  # a --like word on more of the board's items than this says nothing about the draft
+LIKE_TERMS = 15
+
+
+def lowered(board: Board, issue: dict) -> str:
+    cache = board.__dict__.setdefault('_lowered', {})
+    if issue['id'] not in cache:
+        cache[issue['id']] = board.text(issue).lower()
+    return cache[issue['id']]
+
+
 def related(board: Board, args) -> None:
-    terms = [term.lower() for term in args.terms]
+    """Ranks by inverse document frequency: a rare shared word says more than a template word every item carries."""
+    scoped = board.scoped(args.root)
+    texts = [(issue, lowered(board, issue)) for issue in scoped]
+    total = max(len(texts), 1)
+    frequency: dict[str, int] = {}
+
+    def weight(term: str) -> float:
+        if term not in frequency:
+            frequency[term] = sum(1 for _, text in texts if term in text)
+        return math.log((total + 1) / (frequency[term] + 1))
+
+    terms = list(dict.fromkeys(term.lower() for term in args.terms))
+    chosen = []
+    if args.like is not None:
+        words = dict.fromkeys(w for w in re.findall(r'[a-z][a-z0-9_.-]*[a-z0-9]', args.like.lower())
+                              if len(w) >= 3 and w not in STOPWORDS and w not in terms)
+        for word in words:
+            weight(word)  # fills frequency
+        # A word on no item matches nothing; one on many items is template text.
+        candidates = [w for w in words if 0 < frequency[w] <= COMMON_SHARE * total]
+        chosen = sorted(candidates, key=lambda w: (-weight(w), w))[:LIKE_TERMS]
+        terms += chosen
     rows = []
-    for issue in board.issues:
-        text = board.text(issue).lower()
+    for issue, text in texts:
         hits = [term for term in terms if term in text]
         if hits:
-            rows.append((len(hits), issue))
-    rows.sort(key=lambda pair: (-pair[0], pair[1]['status'] == 'closed', by_priority(pair[1])))
-    section(f"items matching {', '.join(args.terms)} (all text fields, closed included)",
-            [line(issue, f'{count}/{len(terms)} terms', issue.get('assignee') or 'unassigned') for count, issue in rows],
+            rows.append((sum(weight(term) for term in hits), len(hits), issue))
+    rows.sort(key=lambda row: (-row[0], -row[1], by_priority(row[2])))
+    like = f"; from --like: {', '.join(chosen) or 'no distinctive words'}" if args.like is not None else ''
+    section(f"items matching {', '.join(terms)}, rarest matches first (all text fields, closed included{like})",
+            [line(issue, f'{count}/{len(terms)} terms', issue.get('assignee') or 'unassigned') for _, count, issue in rows],
             args.limit)
     if args.docs:
         matches = []
-        for root in args.docs:
-            path = Path(root)
+        for root in (part for value in args.docs for part in value.split(',') if part.strip()):
+            path = Path(root.strip())
             files = sorted(path.rglob('*.md')) if path.is_dir() else [path]
             for file in files:
                 try:
@@ -673,6 +787,232 @@ def queue(board: Board, args) -> None:
     for kind in KINDS:
         section(kind, [line(issue, f"p{issue.get('priority', '?')}", marker(issue))
                        for issue in ready if board.claimable(issue) == kind], args.limit)
+
+
+# board show: items rendered from the snapshot, unwrapped, within READ_BUDGET (`--full` lifts it).
+
+LINK_KINDS = {  # (type, outgoing) -> label from the shown item's side; order is print order
+    ('blocks', True): 'blocked by', ('blocks', False): 'blocks', ('parent-child', True): 'parent',
+    ('parent-child', False): 'children', ('relates-to', True): 'relates to', ('relates-to', False): 'relates to',
+    ('related', True): 'relates to', ('related', False): 'relates to', ('supersedes', False): 'supersedes',
+    ('supersedes', True): 'superseded by', ('discovered-from', True): 'discovered from',
+    ('discovered-from', False): 'discovered here',
+}
+LINK_ORDER = ('blocked by', 'blocks', 'parent', 'children', 'relates to', 'supersedes', 'superseded by',
+              'discovered from', 'discovered here', 'revises', 'revision pending')
+HEADING = re.compile(r'^(#{2,3})\s+(.+?)\s*#*\s*$')
+
+
+def normalized(name: str) -> str:
+    return ' '.join(name.replace('_', ' ').lower().split())
+
+
+def comment_list(issue: dict) -> list[dict]:
+    return [{'author': c.get('author'), 'created_at': c.get('created_at'), 'text': c.get('text') or ''}
+            for c in sorted(issue.get('comments') or [], key=lambda c: c.get('created_at') or '')]
+
+
+def link_lines(board: Board, issue: dict) -> list[str]:
+    grouped: dict[str, list[str]] = {}
+    for other, kind, outgoing in board.edges.get(issue['id'], []):
+        if kind == REVISES and issue.get('issue_type') == 'decision' and outgoing:
+            label = 'revises'
+        elif kind == REVISES and not outgoing and board.by_id.get(other, {}).get('issue_type') == 'decision':
+            label = 'revision pending'
+        else:
+            label = LINK_KINDS.get((kind, outgoing), kind if outgoing else f'{kind} (from)')
+        target = board.by_id.get(other, {})
+        new = issue if label == 'revises' else target if label == 'revision pending' else {}
+        rule = (new.get('metadata') or {}).get(REVISES_RULE) if isinstance(new.get('metadata'), dict) else None
+        grouped.setdefault(label, []).append(f"  {label}: {other}  {target.get('status', 'not on board')}  "
+                                             f"{target.get('title', '')}" + (f'  (partial: {rule})' if rule else ''))
+    order = [*LINK_ORDER, *sorted(set(grouped) - set(LINK_ORDER))]
+    return [row for label in order for row in sorted(set(grouped.get(label, [])))]  # relates-to may be stored twice
+
+
+def field_units(issue: dict, field: str) -> list[tuple[str, str]]:
+    """(section name, text) chunks of one field: its preamble under the field name, then one per heading."""
+    text = str(issue.get(field) or '').strip('\n')
+    if not text.strip():
+        return []
+    units, name, chunk = [], field, [f'{field}:']
+    for row in text.splitlines():
+        heading = HEADING.match(row)
+        if heading:
+            if name == field and len(chunk) == 1:  # no preamble: the field label leads its first heading
+                name = heading.group(2)
+                chunk.append(row)
+                continue
+            units.append((name, '\n'.join(chunk)))
+            name, chunk = heading.group(2), [row]
+        else:
+            chunk.append(row)
+    units.append((name, '\n'.join(chunk)))
+    return units
+
+
+def section_text(issue: dict, field: str, title: str) -> str:
+    """A heading's text through the next heading of the same or a higher level."""
+    rows, level, out = str(issue.get(field) or '').splitlines(), None, []
+    for row in rows:
+        heading = HEADING.match(row)
+        if level is not None and heading and len(heading.group(1)) <= level:
+            break
+        if level is None and heading and heading.group(2) == title:
+            level = len(heading.group(1))
+        if level is not None:
+            out.append(row)
+    return '\n'.join(out)
+
+
+def show_sections(board: Board, issue: dict, query: str) -> list[tuple[str, str]]:
+    candidates = [(field, f'{field}:\n' + str(issue.get(field)).strip('\n')) for field in SHOW_FIELDS
+                  if str(issue.get(field) or '').strip()]
+    links = link_lines(board, issue)
+    if links:
+        candidates.append(('links', 'links:\n' + '\n'.join(links)))
+    for field in SHOW_FIELDS:
+        candidates += [(name, section_text(issue, field, name)) for name, _ in field_units(issue, field)[1:]
+                       if name != field]
+    wanted = normalized(query)
+    matches = [c for c in candidates if normalized(c[0]) == wanted] \
+        or [c for c in candidates if normalized(c[0]).startswith(wanted)]
+    names = sorted({name for name, _ in matches})
+    if not matches:
+        raise BoardError(f"{issue['id']}: no section {query!r}; sections: " + ', '.join(dict.fromkeys(n for n, _ in candidates)))
+    if len(names) > 1:
+        raise BoardError(f"{issue['id']}: section {query!r} is ambiguous:\n" + '\n'.join(
+            f'  board show {issue["id"]} --section {shlex.quote(name)}' for name in names))
+    return matches
+
+
+class Budget:
+    """Prints units whole while the budget lasts; a unit that doesn't fit prints its first PREVIEW characters and
+    the command that prints the rest. Past the budget, one line per item names the remaining sections."""
+
+    def __init__(self, limit: int | None):
+        self.remaining, self.skipped = limit, {}
+
+    def out(self, text: str) -> None:
+        """Always printed (headers, counts, footers); still spends the budget."""
+        print(text)
+        if self.remaining is not None:
+            self.remaining -= len(text) + 1
+
+    def emit(self, text: str, rest: str, name: str | None = None, item: str | None = None) -> None:
+        if self.remaining is None or len(text) + 1 <= self.remaining - 300:  # 300: room for the closing lines
+            self.out(text)
+        elif self.remaining >= PREVIEW + 500:
+            cut = text[:PREVIEW]
+            self.out(f'{cut}\n… {len(text) - len(cut)} more chars: {rest}')
+        else:
+            self.skipped.setdefault(item, []).append((name, rest))
+
+    def flush(self, item: str) -> None:
+        skipped = self.skipped.pop(item, [])
+        if skipped:
+            names = ', '.join(f'"{name}"' for name, _ in skipped[:20]) + (', …' if len(skipped) > 20 else '')
+            self.out(f'… {len(skipped)} more sections of {item} ({names}): {skipped[0][1]}')
+
+
+def show(board: Board, args) -> int:
+    missing = [item_id for item_id in args.ids if item_id not in board.by_id]
+    if missing:
+        raise BoardError(f"unknown {', '.join(missing)}")
+    issues = [board.by_id[item_id] for item_id in args.ids]
+    known = {key for issue in board.issues for key in issue} | set(TEXT_FIELDS) | {'comments'}
+    unknown = [field for field in args.fields if field not in known]
+    if unknown:
+        raise BoardError(f"unknown field {', '.join(unknown)}; fields: {', '.join(sorted(known - {'_type'}))}")
+    if args.json:
+        if not args.fields:
+            raise BoardError('--json needs --field <field> (repeatable)')
+        print(json.dumps({issue['id']: {field: comment_list(issue) if field == 'comments' else issue.get(field)
+                                        for field in args.fields} for issue in issues}, indent=2, ensure_ascii=False))
+        return 0
+    budget = Budget(None if args.full else READ_BUDGET)
+    full = ' --full'
+    for issue in issues:
+        item_id = issue['id']
+        q = shlex.quote
+        header = [item_id, issue['status'], issue.get('issue_type', ''), f"p{issue.get('priority', '?')}",
+                  issue.get('assignee') or 'unassigned']
+        if item_id in board.parent:
+            header.append(f'parent {board.parent[item_id]}')
+        if issue.get('labels'):
+            header.append('labels ' + ','.join(issue['labels']))
+        budget.out('  '.join(header) + '\n' + issue.get('title', ''))
+        selected = bool(args.sections or args.fields or args.comments)
+        for query in args.sections:
+            for name, text in show_sections(board, issue, query):
+                budget.emit(text, f'board show {item_id} --section {q(name)}{full}', name, item_id)
+        for field in args.fields:
+            value = comment_list(issue) if field == 'comments' else issue.get(field)
+            text = f'{field}:\n' + (value.strip('\n') if isinstance(value, str) else json.dumps(value, ensure_ascii=False))
+            budget.emit(text, f'board show {item_id} --field {q(field)}{full}', field, item_id)
+        if not selected:
+            links = link_lines(board, issue)
+            if links:
+                budget.emit('links:\n' + '\n'.join(links), f'board show {item_id} --section links', 'links', item_id)
+            for field in SHOW_FIELDS:
+                for name, text in field_units(issue, field):
+                    budget.emit(text, f'board show {item_id} --section {q(name)}', name, item_id)
+        comments = comment_list(issue)
+        if args.comments or not selected:
+            shown = comments if args.comments else comments[-SHOWN_COMMENTS:]
+            if comments:
+                budget.out(f'comments: {len(comments)}' + (f', newest {len(shown)}' if len(shown) < len(comments) else ''))
+            for note in reversed(shown):
+                budget.emit(f"--- {note['author']} {note['created_at']}\n{note['text']}",
+                            f'board show {item_id} --comments --full', f"comment {note['created_at']}", item_id)
+            if len(shown) < len(comments):
+                budget.out(f'… {len(comments) - len(shown)} older: board show {item_id} --comments')
+        budget.flush(item_id)
+    return 0
+
+
+def budgeted(run, board: Board, args, argv: list[str]) -> int:
+    """Runs a view within READ_BUDGET. Rows are the indented lines; --offset skips that many, keeping the heading of
+    the section it lands in. A cut names the --offset that prints the next rows."""
+    output = io.StringIO()
+    with contextlib.redirect_stdout(output):
+        code = run(board, args) or 0
+    lines = output.getvalue().splitlines()
+    kept, size, row, pending, cut, heading = [], 0, 0, [], None, None
+    for text in lines:
+        is_row = text.startswith('  ')
+        if row < args.offset:
+            if is_row:
+                row += 1
+                pending = [heading] if heading else []  # the section heading prints again before its next shown row
+            else:
+                heading = text
+                pending.append(text)
+            continue
+        block = [*pending, text] if is_row else [text]
+        cost = sum(len(item) + 1 for item in block)
+        if size + cost > READ_BUDGET - 300:
+            cut = row
+            break
+        kept += block
+        size += cost
+        pending = []
+        row += is_row
+    if pending and cut is None:
+        kept += pending
+    print('\n'.join(kept))
+    if cut is not None:
+        words, skip = [], False
+        for word in argv:
+            if skip:
+                skip = False
+            elif word == '--offset':
+                skip = True
+            elif not word.startswith('--offset='):
+                words.append(word)
+        total = sum(1 for text in lines if text.startswith('  '))
+        print(f'… {total - cut} more rows: board {shlex.join([*words, "--offset", str(cut)])}')
+    return code
 
 
 # Writes
@@ -736,7 +1076,7 @@ def mine(board: Board, args) -> None:
                              + (' WORKER STOPPED' if mark else '')))
             if mark:
                 stopped.append(issue['id'])
-    section(f'held by session {session_actor(actor)}{you}', rows)
+    section(f'held by session {session_actor(actor)}{you}', rows, args.limit)
     if stopped:
         print(f"  WORKER STOPPED = the holding worker finished its last turn ({', '.join(stopped)}): "
               'continue the worker, hand the item over, or free it (board unclaim <id>)')
@@ -776,7 +1116,7 @@ def claim(board: Board, args) -> int:
                       file=sys.stderr)
                 continue
             if board.kind(issue) == 'milestone' and board.open_blockers(item_id):
-                # Accepting a milestone needs its work done (work-tracking.md#milestones).
+                # Accepting a milestone needs its work done (board-coordination.md#milestones).
                 failed.append(item_id)
                 print(f"{item_id}: milestone not ready, waits on {', '.join(board.open_blockers(item_id))}", file=sys.stderr)
                 continue
@@ -876,17 +1216,172 @@ def return_item(board: Board, args) -> None:
     print(f'returned {args.id} to the queue')
 
 
+SHOW_PASSTHROUGH = ('--refs', '--children', '--as-of', '--long', '--watch', '--current', '--thread', '-w', '-h', '--help')
+GLOBAL_VALUES = ('-C', '--directory', '--db', '--database', '--actor', '--dolt-auto-commit', '--mem-profile')
+SHOW_USAGE = 'use board show <ids> [--section …] [--field …] [--comments] [--full]'
+
+
 def passthrough(argv: list[str]) -> int:
     if argv[:1] == ['dolt'] and argv[1:2] in (['start'], ['restart']):
         raise BoardError('board starts the server before every bd call; rerun the failing command with elevated sandbox permissions')
+    at = 0
+    while at < len(argv) and argv[at].startswith('-'):
+        at += 2 if argv[at] in GLOBAL_VALUES else 1
+    command, rest = (argv[at], argv[at + 1:]) if at < len(argv) else ('', [])
+    flags = {arg.split('=', 1)[0] for arg in rest}
+    # Raw show output is padded and wraps; it cut most agent reads mid-item. board show renders and budgets it.
+    if (command in ('show', 'view') and not flags & set(SHOW_PASSTHROUGH)) \
+            or (command == 'comments' and rest[:1] != ['add'] and not flags & {'-h', '--help'}):
+        print(f'board: {SHOW_USAGE}', file=sys.stderr)
+        return 2
+    if command in ('list', 'create', 'query') and any(
+            pair in (('--type', 'question'), ('-t', 'question')) for pair in zip(rest, rest[1:])) \
+            or any(arg in ('--type=question', '-t=question') or re.search(r'\btype\s*=\s*"?question\b', arg)
+                   for arg in rest if command in ('list', 'create', 'query')):
+        print('board: questions are type decision (--type decision; open ones have status open)', file=sys.stderr)
+        return 2
     directory = next((argv[i + 1] for i, arg in enumerate(argv[:-1]) if arg in ('-C', '--directory')),
                      next((arg.split('=', 1)[1] for arg in argv if arg.startswith('--directory=')), None))
     ensure_server(Path(directory) if directory else None)
     os.execvpe('bd', ['bd', *argv], bd_env())
 
 
-def release(board: Board, args) -> None:
+def with_file(text: str, run):
+    """Long text goes to bd through a file, never argv."""
+    with tempfile.NamedTemporaryFile('w', suffix='.md', encoding='utf-8', delete=False) as handle:
+        handle.write(text)
+    try:
+        return run(handle.name)
+    finally:
+        os.unlink(handle.name)
+
+
+def comment_long(item_id: str, text: str) -> None:
+    with_file(text, lambda path: bd_checked('comments', 'add', item_id, '-f', path))
+
+
+def missing_sections(text: str, sections=RECORD_SECTIONS) -> list[str]:
+    headings = [normalized(match.group(1)) for match in re.finditer(r'^##\s+(.+?)\s*$', text, re.MULTILINE)]
+    return [name for name in sections if not any(heading.startswith(normalized(name)) for heading in headings)]
+
+
+def record(board: Board, args) -> None:
+    actor = caller()
+    issue = held(board, args.id, actor)
+    if issue.get('issue_type') != 'decision':
+        raise BoardError(f'{args.id}: {issue.get("issue_type")}, not a decision')
+    if issue['status'] not in ('open', 'in_progress', 'decided', 'needs_ratification'):
+        raise BoardError(f"{args.id}: {issue['status']}; a released record changes through board revise")
+    try:
+        text = Path(args.file).read_text(encoding='utf-8')
+    except (OSError, UnicodeDecodeError) as error:
+        raise BoardError(f'cannot read {args.file}: {error}') from None
+    # Autopilot's unratified rulings carry how to reverse them (unattended protocol).
+    required = RECORD_SECTIONS + (('Reversal',) if args.status == 'needs_ratification' else ())
+    missing = missing_sections(text, required)
+    if missing:
+        raise BoardError(f"{args.file} lacks the record section(s) {', '.join('## ' + name for name in missing)}")
+    old = str(issue.get('description') or '').strip()
+    moved = ''
+    if old and missing_sections(old):
+        packet = f'Decision packet (moved from the description at decision time, {utcnow().date().isoformat()}):\n\n{old}'
+        # A rerun after a failed update finds the packet already moved.
+        if not any((c.get('text') or '').endswith(f'\n\n{old}') and (c.get('text') or '').startswith('Decision packet (moved')
+                   for c in issue.get('comments') or []):
+            comment_long(args.id, packet)
+        moved = '; packet moved to a comment'
+    # An unratified autopilot record waits unheld for the user's ratification; a decided one stays held to release.
+    unheld = ['--assignee', ''] if args.status == 'needs_ratification' else []
+    bd_checked('update', args.id, '--body-file', args.file, '--status', args.status, *unheld, '--json')
+    lint = json.loads(bd_checked('lint', args.id, '--json') or '{}')
+    unlinted = [', '.join(result.get('missing') or []) for result in lint.get('results') or [] if result.get('missing')]
+    if unlinted:
+        raise BoardError(f"{args.id}: recorded ({args.status}{moved}), but bd lint reports missing {'; '.join(unlinted)}")
+    print(f"recorded {args.id} ({args.status}{moved}): {issue.get('title', '')}")
+
+
+def block_one(board: Board, item_id: str, blocker: str, reason: str, actor: str) -> tuple[str, bool]:
+    """Blocks one item with its reason as a comment. (result line, returned from review)."""
+    issue = board.by_id[item_id]
+    edges = board.between(item_id, blocker)
+    other = [kind for a, _, kind in edges if kind not in ('relates-to', 'related') and not (kind == 'blocks' and a == item_id)]
+    if other:
+        raise BoardError(f"{item_id}: already linked to {blocker} by {', '.join(other)}; bd keeps one edge per pair")
+    # bd allows one edge per pair: a relates-to link between the two gives way to the wait.
+    operations = [f'dep remove {a} {b}' for a, b, kind in edges if kind in ('relates-to', 'related')]
+    if not any(kind == 'blocks' for _, _, kind in edges):
+        operations.append(f'dep add {item_id} {blocker} blocks')
+    holder = issue.get('assignee')
+    reviewing = issue['status'] == 'in_review' and board.is_open(blocker)
+    returning = reviewing and not holder
+    if returning:
+        # An unheld review waiting on an open blocker would be accepted against a moving premise (hand-over).
+        operations.append(f'update {item_id} status=open assignee=""')
+    if operations:
+        bd_checked('batch', '-m', f'board block {item_id} --on {blocker}', '--json', stdin='\n'.join(operations) + '\n')
+    # The comment names the wait for board check (unnamed waits read comments too); an append to a field would
+    # rewrite it and lose a concurrent edit.
+    comment(item_id, f'Blocked by {blocker}: {reason}')
+    result = f'blocked {item_id} on {blocker}'
+    if returning:
+        comment(item_id, f'board block: returned from review; amend to {blocker}: {reason}')
+        result += '; returned from review to open'
+    elif reviewing and holder != actor:
+        print(f'{item_id}: in review held by {holder}; it stays there, tell its holder about {blocker}', file=sys.stderr)
+        result += f'; stays in review with {holder}'
+    return result, returning
+
+
+def block_items(board: Board, ids: list[str], blocker: str, reason: str, actor: str) -> tuple[list[str], list[str]]:
+    """Blocks each item, one result line each; (returned from review, failed)."""
+    returned, failed = [], []
+    for item_id in ids:
+        try:
+            if item_id == blocker:
+                raise BoardError(f'{item_id}: cannot block an item on itself')
+            require_open(board, [item_id])
+            result, back = block_one(board, item_id, blocker, reason, actor)
+            print(result)
+            returned += [item_id] if back else []
+        except BoardError as error:
+            failed.append(item_id)
+            print(f'{item_id}: not blocked: {error}', file=sys.stderr)
+    return returned, failed
+
+
+def block(board: Board, args) -> int:
+    actor = caller()
+    if args.blocker not in board.by_id:
+        raise BoardError(f'unknown blocker {args.blocker}')
+    _, failed = block_items(board, args.ids, args.blocker, args.reason, actor)
+    return 1 if failed else 0
+
+
+def revise(board: Board, args) -> None:
     caller()
+    old = board.by_id.get(args.old)
+    if old is None or old.get('issue_type') != 'decision':
+        raise BoardError(f'{args.old}: unknown or not a decision')
+    if old['status'] in ('open', 'in_progress'):
+        raise BoardError(f"{args.old}: {old['status']}, not yet a ruling; amend the question instead")
+    parent = args.parent or board.parent.get(args.old)
+    labels = [label for value in args.labels for label in value.split(',') if label] if args.labels \
+        else [label for label in old.get('labels') or [] if label.startswith('topic:')]
+    command = ['create', '--type', 'decision', '--title', args.title, '--body-file', args.body_file,
+               '--priority', str(args.priority if args.priority is not None else old.get('priority', 2)),
+               '--deps', f'{REVISES}:{args.old}']
+    command += ['--parent', parent] if parent else []
+    command += ['--labels', ','.join(labels)] if labels else []
+    command += ['--metadata', json.dumps({REVISES_RULE: args.partial})] if args.partial is not None else []
+    created = json.loads(bd_checked(*command, '--json') or '{}')
+    new = created.get('id') if isinstance(created, dict) else None
+    if not new:
+        raise BoardError(f'bd create returned no id: {created!r}')
+    print(new)
+
+
+def release(board: Board, args) -> int:
+    actor = caller()
     rulings = require_open(board, args.ids)
     problems = []
     for issue in rulings:
@@ -909,35 +1404,85 @@ def release(board: Board, args) -> None:
     # A released ruling keeps blocking the items it changes; planning closes it and unblocks them.
     operations = [f"update {issue['id']} status=released assignee=\"\"" for issue in rulings]
     bd_checked('batch', '-m', f"board release {' '.join(args.ids)}", '--json', stdin='\n'.join(operations) + '\n')
+    returned, failed = [], []
     for issue in rulings:
         print(f"released {issue['id']}: {issue.get('title', '')}")
+        for old in board.revises(issue['id']):
+            metadata = issue.get('metadata') if isinstance(issue.get('metadata'), dict) else {}
+            rule = metadata.get(REVISES_RULE)
+            try:
+                back, lost = supersede_pair(board, old, issue['id'], rule, actor)
+            except BoardError as error:
+                failed.append(old)
+                print(f"{old}: not superseded by {issue['id']}: {error}; finish with board supersede {old} --with {issue['id']}"
+                      + (f' --partial {shlex.quote(rule)}' if rule is not None else ''), file=sys.stderr)
+                continue
+            returned += back
+            failed += lost
+    if returned:
+        print(f"returned from review: {', '.join(returned)}")
+    return 1 if failed else 0
 
 
-def supersede(board: Board, args) -> None:
-    caller()
+def supersede_pair(board: Board, old: str, new: str, rule: str | None, actor: str) -> tuple[list[str], list[str]]:
+    """Supersedes old by new, wholly or (rule not None) one rule; (returned from review, failed items)."""
+    # bd allows one edge per pair: drop an existing link between the two records (a revise link included) first.
+    operations = [f'dep remove {a} {b}' for a, b, kind in board.between(old, new) if kind != 'parent-child']
+    if rule is not None:
+        operations.append(f'dep add {old} {new} supersedes')
+    if operations:
+        bd_checked('batch', '-m', f'board supersede {old} --with {new}', '--json', stdin='\n'.join(operations) + '\n')
+    if rule is not None:
+        if rule:
+            comment(old, f'board supersede: rule "{rule}" superseded by {new}.')
+        print(f"{old}: one rule{f' ({rule})' if rule else ''} superseded by {new}")
+        return [], []
+    # The new record restates the whole rule: the old record's open items wait for its planning.
+    items = sorted(i for i in board.related.get(old, set()) | set(board.dependents.get(old, []))
+                   if i != new and board.is_open(i)
+                   and all(kind in ('relates-to', 'related') for _, _, kind in board.between(i, new)))
+    returned, failed = block_items(board, items, new, f'supersedes {old}; replan against it', actor)
+    bd_checked('supersede', old, '--with', new)
+    print(f"superseded {old} by {new}; blocked {', '.join(i for i in items if i not in failed) or 'none'}")
+    return returned, failed
+
+
+def supersede(board: Board, args) -> int:
+    actor = caller()
     if args.old not in board.by_id:
         raise BoardError(f'unknown {args.old}')
-    require_open(board, [args.new])
-    # bd allows one edge per pair: drop an existing link between the two records first.
-    operations = [f'dep remove {a} {b}' for a, b in ((args.old, args.new), (args.new, args.old))
-                  if any(dep['depends_on_id'] == b and dep['type'] != 'parent-child'
-                         for dep in board.by_id[a].get('dependencies') or [])]
-    if args.partial:
-        operations.append(f'dep add {args.old} {args.new} supersedes')
-        items = []
-    else:
-        # The new record restates the whole rule: the old record's open items wait for its planning.
-        items = sorted(i for i in board.related.get(args.old, set()) | set(board.dependents.get(args.old, []))
-                       if i != args.new and board.is_open(i) and i not in board.linked.get(args.new, set()))
-        operations += [f'dep add {item} {args.new} blocks' for item in items]
-    if operations:
-        bd_checked('batch', '-m', f'board supersede {args.old} --with {args.new}', '--json',
-                   stdin='\n'.join(operations) + '\n')
-    if args.partial:
-        print(f'{args.old}: one rule superseded by {args.new}')
-        return
-    bd_checked('supersede', args.old, '--with', args.new)
-    print(f"superseded {args.old} by {args.new}; related {', '.join(items) or 'none'}")
+    if args.partial is None:
+        require_open(board, [args.new])  # a full replacement blocks items on the new record until it is planned
+    elif args.new not in board.by_id:
+        raise BoardError(f'unknown {args.new}')  # a closed record still supersedes one rule: the edge is the record
+    returned, failed = supersede_pair(board, args.old, args.new, args.partial, actor)
+    if returned:
+        print(f"returned from review: {', '.join(returned)}")
+    return 1 if failed else 0
+
+
+EXAMPLES = {
+    'health': 'board health --items ready,blocked',
+    'position': 'board position --limit 20',
+    'holders': 'board holders --root <epic>',
+    'check': 'board check --all',
+    'related': 'board related --like draft.md tenancy --docs docs,README.md',
+    'queue': 'board queue --root <epic>',
+    'mine': 'board mine',
+    'show': 'board show <id> --section Decision',
+    'claim': 'board claim',
+    'record': 'board record <id> .scratch/<topic>/<arc>/record.md',
+    'block': 'board block <item> <item> --on <blocker> --reason "waits for the cache ruling"',
+    'revise': 'board revise <old> --title "May X replace Y?" --body-file packet.md --partial "Rule 2"',
+    'release': 'board release <id> <id>',
+    'supersede': 'board supersede <old> --with <new> --partial "Rule 2"',
+    'bd': 'board bd list --status open --json',
+    'handover': 'board handover <id> "pnpm test: exit 0, 412 passed; typecheck exit 0"',
+    'return': 'board return <id> "test x fails: <finding>"',
+    'take': 'board take <id>',
+    'unclaim': 'board unclaim <id>',
+    'help': 'board help',
+}
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -953,8 +1498,16 @@ def main(argv: list[str] | None = None) -> int:
     scope.add_argument('--root', metavar='EPIC', help="limit to items below this epic, or to a milestone's work "
                        '(default: whole board)')
     listing = argparse.ArgumentParser(add_help=False)
-    listing.add_argument('--limit', type=int, default=50, help='rows per section (default 50)')
+    listing.add_argument('--offset', type=int, default=0, metavar='N', help='skip the first N rows (paging a cut output)')
+    listing.add_argument('--limit', type=int, default=ROWS, help=f'rows per section (default {ROWS}, 0: all); the output '
+                       f'stays within {READ_BUDGET} characters')
     commands = parser.add_subparsers(dest='command', required=True)
+
+    def add(name: str, text: str, run, parents=()):
+        sub = commands.add_parser(name, help=text, description=text, parents=list(parents), epilog=f'example: {EXAMPLES[name]}',
+                                  formatter_class=argparse.RawDescriptionHelpFormatter)
+        sub.set_defaults(run=run)
+        return sub
 
     def nonempty(value: str) -> str:
         if not value.strip():
@@ -968,54 +1521,93 @@ def main(argv: list[str] | None = None) -> int:
             raise argparse.ArgumentTypeError(f"choose from {', '.join(HEALTH_VIEWS)}")
         return chosen
 
-    sub = commands.add_parser('health', parents=[scope], help='counts')
+    sub = add('health', 'counts', health, [scope, listing])
     sub.add_argument('--items', type=views, default=set(), metavar='VIEW[,VIEW...]',
                      help=f"list the items behind these counts: {', '.join(HEALTH_VIEWS)}")
-    sub.set_defaults(run=health)
-    sub = commands.add_parser('position', parents=[scope], help='ready work vs sessions, held items with gone and idle '
-                              'marks, questions holding work, ready milestones, finished epics')
-    sub.add_argument('--all', action='store_true', help=f'show every row (default: {POSITION_ROWS} per section)')
-    sub.set_defaults(run=position)
-    commands.add_parser('holders', parents=[scope, listing], help='items by open downstream work').set_defaults(run=holders)
-    sub = commands.add_parser('check', parents=[scope], help='deviations from the work-tracking conventions')
-    sub.add_argument('--all', action='store_true', help=f'show every row (default: {POSITION_ROWS} per section)')
-    sub.set_defaults(run=check)
-    sub = commands.add_parser('related', parents=[listing], help='items and doc lines mentioning terms')
-    sub.add_argument('terms', nargs='+')
-    sub.add_argument('--docs', nargs='+', default=[], metavar='PATH', help='canonical docs (files or directories of .md)')
-    sub.set_defaults(run=related)
-    commands.add_parser('queue', parents=[scope, listing], help='claimable work by pull').set_defaults(run=queue)
-    sub = commands.add_parser('claim', parents=[scope], help='claim the next item routed to your role, or the given ids')
-    sub.add_argument('ids', nargs='*')
-    sub.set_defaults(run=claim)
-    sub = commands.add_parser('release', help='release decided rulings in one bd batch')
+    sub = add('position', 'ready work vs sessions, held items with gone and idle marks, questions holding work, '
+              'ready milestones, finished epics', position, [scope, listing])
+    sub.add_argument('--all', dest='limit', action='store_const', const=0, help='every row (--limit 0)')
+    add('holders', 'items by open downstream work', holders, [scope, listing])
+    sub = add('check', 'deviations from the board conventions', check, [scope, listing])
+    sub.add_argument('--all', dest='limit', action='store_const', const=0, help='every row (--limit 0)')
+    sub = add('related', 'items and doc lines mentioning terms', related, [scope, listing])
+    sub.add_argument('terms', nargs='*')
+
+    def draft(value: str) -> str:
+        try:
+            return sys.stdin.read() if value == '-' else Path(value).read_text(encoding='utf-8')
+        except (OSError, UnicodeDecodeError) as error:
+            raise argparse.ArgumentTypeError(f'cannot read {value}: {error}') from None
+
+    sub.add_argument('--like', type=draft, metavar='FILE|-', help=f'terms from a draft: its {LIKE_TERMS} rarest board words')
+    sub.add_argument('--docs', nargs='+', default=[], metavar='PATH',
+                     help='canonical docs (files or directories of .md), separated by spaces or commas')
+    add('queue', 'claimable work by pull', queue, [scope, listing])
+    add('mine', 'items held by this session and its workers', mine, [scope, listing])
+    sub = add('show', 'items with links, fields and newest comments, within the read budget', show)
     sub.add_argument('ids', nargs='+')
-    sub.set_defaults(run=release)
-    sub = commands.add_parser('supersede', help="supersede a ruling; a full replacement relates the old record's open items")
+    sub.add_argument('--section', dest='sections', action='append', default=[], metavar='NAME',
+                     help='a field or a ##/### heading (case-insensitive prefix; repeatable)')
+    sub.add_argument('--field', dest='fields', action='append', default=[], metavar='FIELD',
+                     help='a named field, comments included (repeatable)')
+    sub.add_argument('--comments', action='store_true', help='every comment, newest first')
+    sub.add_argument('--full', action='store_true', help=f'no {READ_BUDGET}-character budget')
+    sub.add_argument('--json', action='store_true', help='with --field: {id: {field: value}}, unbudgeted')
+    sub = add('claim', 'claim the next item routed to your role, or the given ids', claim, [scope])
+    sub.add_argument('ids', nargs='*')
+    sub = add('record', 'write the decision record you hold from a file and set it decided', record)
+    sub.add_argument('id')
+    sub.add_argument('file')
+    sub.add_argument('--status', choices=('decided', 'needs_ratification'), default='decided',
+                     help='needs_ratification: an autopilot ruling; requires ## Reversal and frees the hold')
+    sub = add('block', 'make items wait on a blocker, with the reason commented on each item', block)
+    sub.add_argument('ids', nargs='+', metavar='item')
+    sub.add_argument('--on', dest='blocker', required=True)
+    sub.add_argument('--reason', required=True, type=nonempty)
+    sub = add('revise', 'open a revision question linked to the record it revises; prints its id', revise)
+    sub.add_argument('old')
+    sub.add_argument('--title', required=True, type=nonempty)
+    sub.add_argument('--body-file', required=True)
+    sub.add_argument('--partial', metavar='RULE', help='revise one named rule; the rest stays in force')
+    sub.add_argument('-p', '--priority', type=int, choices=range(5), help="default: the old record's")
+    sub.add_argument('--parent', help="default: the old record's parent")
+    sub.add_argument('-l', '--labels', action='append', default=[], help="default: the old record's topic: labels")
+    sub = add('release', 'release decided rulings in one bd batch; supersedes the records they revise', release)
+    sub.add_argument('ids', nargs='+')
+    sub = add('supersede', "supersede a ruling; a full replacement blocks the old record's open items", supersede)
     sub.add_argument('old')
     sub.add_argument('--with', dest='new', required=True)
-    sub.add_argument('--partial', action='store_true', help='one rule of the old record: add the edge only')
-    sub.set_defaults(run=supersede)
-    commands.add_parser('mine', parents=[scope], help="items held by this session and its workers").set_defaults(run=mine)
-    commands.add_parser('bd', help='run any bd command with your actor (board bd <args>)')
-    sub = commands.add_parser('handover', help='comment the evidence and hand your item over for review')
+    sub.add_argument('--partial', metavar='RULE', nargs='?', const='', help='one rule of the old record: add the edge only')
+    add('bd', 'run any bd command with your actor (board bd <args>)', None)
+    sub = add('handover', 'comment the evidence and hand your item over for review', handover)
     sub.add_argument('id')
     sub.add_argument('evidence', type=nonempty)
-    sub.set_defaults(run=handover)
-    sub = commands.add_parser('return', help='return a claimed review to the work queue with its findings')
+    sub = add('return', 'return a claimed review to the work queue with its findings', return_item)
     sub.add_argument('id')
     sub.add_argument('findings', type=nonempty)
-    sub.set_defaults(run=return_item)
     for name, run, text in (('take', take, 'reassign held items to yourself (with a comment)'),
                             ('unclaim', unclaim, "free a hold, yours or another's (with a comment)")):
-        sub = commands.add_parser(name, help=text)
-        sub.add_argument('ids', nargs='+')
-        sub.set_defaults(run=run)
+        add(name, text, run).add_argument('ids', nargs='+')
+    add('help', 'every command with an example', None)
 
-    args = parser.parse_args(argv)
+    args, extra = parser.parse_known_args(argv)
+    if args.command == 'related' and not args.terms and args.like is None:
+        commands.choices['related'].error('give terms, --like <draft>, or both')
+    if extra:
+        hint = next((word for word in extra if word in HEALTH_VIEWS), None)
+        commands.choices[args.command].error(f"unrecognized arguments: {' '.join(extra)}"
+                                             + (f'; for that list run board health --items {hint}' if hint else ''))
+    if args.run is None:
+        print(parser.format_usage().strip() + '\n')
+        for name, sub in commands.choices.items():
+            print(sub.format_usage().strip() + f'\n  {sub.description or ""}'.rstrip() + f'\n  example: {EXAMPLES[name]}')
+        return 0
     args.root = getattr(args, 'root', None)
     try:
-        return args.run(Board.load(), args) or 0
+        board = Board.load()
+        if args.run in (health, position, holders, check, related, queue, mine):
+            return budgeted(args.run, board, args, argv)
+        return args.run(board, args) or 0
     except BoardError as error:
         print(f'board: {error}', file=sys.stderr)
         return 1

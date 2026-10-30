@@ -4,7 +4,7 @@ Run for every question round and every approval request (ratification, apply);
 a release runs the decide protocol's Release Re-check instead. Give each step's output compactly.
 
 1. **Scope.** Compose the round under the global instructions' Ask in rounds.
-   On a large board, scope it by [Priority](../shared/work-tracking.md#priority)
+   On a large board, scope it by [Priority](../shared/board-core.md#priority)
    first: the highest-priority unblocked question and every ready question
    sharing its premise, root cause, consumer concept or flow. When the user
    flagged one instance, find all of its kind, including earlier rulings.
@@ -13,10 +13,11 @@ a release runs the decide protocol's Release Re-check instead. Give each step's 
    order; before an approval request, invoke challenge-rulings last. Invoke
    each through the runtime's skill mechanism (Claude's Skill tool; in Codex,
    read its `SKILL.md`). Scale each pass to stakes: one line for a local,
-   reversible round. When ground or challenge-rulings changes a premise or
-   ruling, step back again on what
-   changed; stop when a pass changes nothing. A pass that would revise a user's
-   ruling raises it as a question under decision-protocol Changed premises.
+   reversible round. Repeat step-back and ground over the whole set until a
+   pass changes nothing, also after challenge-rulings changes something; a
+   changed premise, ruling, option or question set counts as a change. A pass
+   that would revise a user's ruling raises it as a question under
+   decision-protocol Changed premises.
    Derive process questions from the root fix; step up an abstraction level
    when all options feel wrong. Classify sequencing and process choices as the
    planning session's call.

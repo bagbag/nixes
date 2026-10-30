@@ -1,8 +1,9 @@
 ---
 name: scout
 description: >-
-  One narrow factual lookup requiring source search or reading. Returns the
-  answer with source locations. Keep single-command checks in the invoking
+  One narrow factual lookup requiring source search or reading (where X is
+  defined, who calls Y, what config Z says). Returns the answer with source
+  locations. Keep single-command checks in the invoking
   conversation.
 effort: medium
 claude-tools: Read, Grep, Glob, Bash, Skill

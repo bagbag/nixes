@@ -1,7 +1,8 @@
 # Review protocol
 
 Independent assessment and acceptance of handed-over work. Read
-`$HOME/.agents/skills/shared/work-tracking.md`,
+`$HOME/.agents/skills/shared/board-core.md`,
+`$HOME/.agents/skills/shared/acceptance.md`,
 `$HOME/.agents/skills/shared/decision-protocol.md` and
 `$HOME/.agents/skills/shared/reviewers.md` before step 1.
 
@@ -15,7 +16,8 @@ under the decide protocol.
 ## Steps
 
 Give each step's output as one line when it passes; add detail only for
-findings or stops.
+findings or stops. A challenge follows [Challenge](#challenge) in place of
+steps 3-7.
 
 1. **Claim.** `board claim` for your pull or
    `board claim <id>` for a named item; it prints the author
@@ -23,7 +25,7 @@ findings or stops.
    worker of the same session suffices. `author unknown (<holder>)` names a
    hand-over by a retired role holder (e.g. goal-agent): you are independent.
    An item no one ever held is a standalone review
-   ([Kinds](../../shared/work-tracking.md#kinds)): it has no author and needs
+   ([Kinds](../../shared/board-core.md#kinds)): it has no author and needs
    no independence check.
    Output: `claimed <id>; author <actor>; independent`, or
    `claimed <id>; standalone review`.
@@ -31,9 +33,9 @@ findings or stops.
    and their owners, the author's evidence comments, and the changes in its
    zone. Current rulings and supersessions win over older briefs and verdicts.
    Output: ids and owners read.
-3. **Gate.** Select the gate under [Review policy](#review-policy).
+3. **Gate.** Select the gate under [Review policy](../../shared/acceptance.md#review-policy).
    Output: gate and reason.
-4. **Evidence.** Apply [Evidence and gates](#evidence-and-gates) to every
+4. **Evidence.** Apply [Evidence and gates](../../shared/acceptance.md#evidence-and-gates) to every
    required gate.
    Output: one line per gate: command, result, accepted or reproduced.
 5. **Assess.** Check correctness, the global Cleanliness tests and the
@@ -70,41 +72,20 @@ findings or stops.
 The item is closed, returned to the queue or blocked by a question, and the
 output lines above are posted.
 
-## Review policy
+## Challenge
 
-Use one acceptance gate per coherent target, sized to stakes; a role protocol
-may tighten it.
+A standalone review of decided records or a contract draft, before release.
 
-| Claim | Gate |
-|---|---|
-| Settled by a cheap check | Inline check by the acceptor. |
-| Checkable beyond that; repair closure | `verify`. |
-| Consequential contract, design, plan, cross-cutting change | `review`, reproducing decisive checks; add `verify` only for remaining open claims. |
-
-- Reuse a planned later review of the same target (staged or integration
-  review) where it replaces a redundant earlier gate.
-- Select and brief reviewers under
-  [Reviewers](../../shared/reviewers.md#reviewers).
-
-## Evidence and gates
-
-- Accept author gate results with recorded command and output. Reproduce the
-  decisive check as a non-author for missing or contradictory output,
-  surprising or disputed claims, or security, data-integrity or persistence
-  changes. Let gates fail; fix causes, not results.
-- For test gates, confirm the required cases executed and record passed, failed
-  and skipped counts alongside the exit code. Skipped or setup-blocked
-  cases do not satisfy a required gate.
-- Comment each gate's command and outcome on its item; rerun decisive checks
-  after relevant changes. Authors run implementation gates; the planning
-  session runs an outcome's acceptance at its close and cuts checks others
-  wait on as tasks.
-- Scope evidence to the item's own changes and their affected consumers;
-  attribute failures in others' areas to their holders instead of fixing
-  them.
-- Run targeted gates after isolated changes; whole-repository gates after
-  cross-cutting changes, at agreed milestones and at final acceptance. With a
-  red baseline, target the touched surfaces the broken gate would cover.
+1. **Assess.** Invoke `step-back` on the records and the owners and items
+   they rest on, then `challenge-rulings` on the records' rulings; check contradictions with each other
+   and with released rulings, integrity and security holes, and gaps a
+   realistic consumer hits.
+   Output: verdict; each finding with its evidence.
+2. **Close.** Create each finding as a question discovered from the
+   challenge (`--deps discovered-from:<id>`) and block the record it concerns
+   on it (`board block <record> --on <question> --reason "<finding>"`), then
+   close the challenge with the verdict.
+   Output: `closed <id>`, plus the question ids.
 
 ## Assessor conduct
 

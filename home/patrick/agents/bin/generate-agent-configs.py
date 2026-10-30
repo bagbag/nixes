@@ -116,7 +116,7 @@ def render_codex_agent(source: Path) -> tuple[str, str]:
             GENERATED_MARKER,
             f"name = {toml_string(name)}",
             "description = "
-            + toml_multiline_literal(textwrap.fill(metadata["description"], width=88)),
+            + toml_multiline_literal(textwrap.fill(metadata["description"], width=88, break_on_hyphens=False)),
             f"model = {toml_string(metadata['codex-model'])}",
             "model_reasoning_effort = "
             + toml_string(resolve_effort(source, metadata, "codex")),
@@ -137,7 +137,7 @@ def render_claude_agent(source: Path) -> tuple[str, str]:
         "description: >-",
         *(
             f"  {line}"
-            for line in textwrap.wrap(metadata["description"], width=76)
+            for line in textwrap.wrap(metadata["description"], width=76, break_on_hyphens=False)
         ),
     ]
     if "claude-tools" in metadata:
