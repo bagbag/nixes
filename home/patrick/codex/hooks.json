@@ -54,6 +54,15 @@
             "timeout": 10
           }
         ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$HOME/.codex/hooks/session-activity.sh\"",
+            "timeout": 10
+          }
+        ]
       }
     ],
     "SubagentStart": [
@@ -61,7 +70,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"$HOME/.codex/hooks/worker-status.sh\"",
+            "command": "bash \"$HOME/.codex/hooks/session-activity.sh\"",
             "timeout": 10
           }
         ]
@@ -72,7 +81,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"$HOME/.codex/hooks/worker-status.sh\"",
+            "command": "bash \"$HOME/.codex/hooks/session-activity.sh\"",
             "timeout": 10
           }
         ]

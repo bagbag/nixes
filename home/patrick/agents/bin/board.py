@@ -24,10 +24,16 @@ import socket
 import subprocess
 import sys
 import tempfile
+import tomllib
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-IDLE_HOURS = 1  # held items without an update for longer are hinted as idle; confirm in use
+IDLE_HOURS = 1  # holds without activity (holder's tool call, else item update) for longer are hinted as idle
+WORKER_CAP = 6  # concurrent workers per session; a Codex session's agents thread limits lower it
+WORKER_ACTIVE_MINUTES = 15  # a running worker with a tool call this recently counts as active
+CODEX_SYSTEM_CONFIG = Path('/etc/codex/config.toml')  # Codex's system layer, under $CODEX_HOME/config.toml
+CAPACITY_ROLES = ('agent', 'solo', 'autopilot')  # roles that dispatch workers
+WORKER_KINDS = ('design', 'implement', 'review')  # kinds workers take; an agent's pulls narrow them
 ROWS = 50  # rows per view section unless --limit (0: all)
 READ_BUDGET = 35_000  # characters per command output; Codex cuts a call's output above ~40,000 from the middle
 PREVIEW = 600  # characters a cut section still prints
@@ -158,11 +164,67 @@ def session_actor(actor: str) -> str:
 _processes: dict[int, str | None] = {}  # pid -> start time, 'GONE', or None (unknown); per run
 
 
-def worker_stopped(entry: dict | None, holder: str) -> bool:
-    """The holding worker is marked stopped. Only its owning session (`board mine`) acts on it: only the owner
-    knows whether it continues the worker."""
-    worker = holder.split('/', 1)[1] if '/' in holder else None
-    return bool(entry and worker and worker[-8:] in (entry.get('ended_workers') or []))
+def holder_worker(holder: str) -> str | None:
+    """The holding worker's marker name (its id's last 8 characters), None for a session hold."""
+    return holder.split('/', 1)[1][-8:] if '/' in holder else None
+
+
+def hooks_live(entry: dict | None) -> bool:
+    """The session's activity hooks run: its own activity file exists. Without it, a missing worker marker or a
+    marker's age proves nothing (a worker spawned before the hooks, or hooks not yet trusted)."""
+    return bool(entry and entry.get('active_at'))
+
+
+def worker_stopped(entry: dict | None, issue: dict) -> bool:
+    """The holding worker has no running marker, and the session's own activity is newer than the item's
+    `updated_at`: every claim updates it (later updates only raise it), so the hooks ran after this claim and a
+    running worker would have a marker. Not `started_at`: it can predate the hold (a reclaim, a reviewer's claim).
+    Only its owning session (`board mine`) acts on it: only the owner knows whether it continues the worker."""
+    worker = holder_worker(issue.get('assignee') or '')
+    if not (entry and worker) or worker in (entry.get('workers') or {}):
+        return False
+    active, claimed = parse_time(entry.get('active_at')), parse_time(issue.get('updated_at'))
+    return bool(active and claimed and active > claimed)
+
+
+def holder_activity(entry: dict | None, holder: str) -> datetime | None:
+    """The holder's last tool call: a running worker's marker, else (a session hold, a stopped worker) the session's
+    own; None without activity data (the session's hooks not live)."""
+    if not hooks_live(entry):
+        return None
+    worker = holder_worker(holder)
+    moment = parse_time((entry.get('workers') or {}).get(worker)) if worker else None
+    return moment or parse_time(entry.get('active_at'))
+
+
+def active_workers(entry: dict | None) -> list[str]:
+    """The session's running workers with a tool call within WORKER_ACTIVE_MINUTES."""
+    since = utcnow() - timedelta(minutes=WORKER_ACTIVE_MINUTES)
+    return [worker for worker, moment in ((entry or {}).get('workers') or {}).items()
+            if (parse_time(moment) or since) > since]
+
+
+def worker_cap(entry: dict) -> int:
+    """WORKER_CAP, lowered for a Codex session by the effective `agents.max_threads` or
+    `agents.max_concurrent_threads_per_session`: Codex's layers, the system config (CODEX_SYSTEM_CONFIG; tests set
+    AGENT_CODEX_SYSTEM_CONFIG) overridden per key by `$CODEX_HOME/config.toml` (default ~/.codex)."""
+    cap = WORKER_CAP
+    if entry.get('tool') != 'codex':
+        return cap
+    layers = (Path(os.environ.get('AGENT_CODEX_SYSTEM_CONFIG') or CODEX_SYSTEM_CONFIG),
+              Path(os.environ.get('CODEX_HOME') or Path.home() / '.codex') / 'config.toml')
+    agents: dict = {}
+    for path in layers:
+        try:
+            layer = tomllib.loads(path.read_text(encoding='utf-8')).get('agents')
+        except (OSError, ValueError):  # a missing or unreadable layer sets nothing
+            continue
+        agents.update(layer if isinstance(layer, dict) else {})
+    for key in ('max_threads', 'max_concurrent_threads_per_session'):
+        value = agents.get(key)
+        if isinstance(value, int) and not isinstance(value, bool) and value > 0:
+            cap = min(cap, value)
+    return cap
 
 
 def process_started(pid: int) -> str | None:
@@ -468,17 +530,22 @@ def position(board: Board, args) -> None:
             [f"  {entry.get('actor')}  {entry.get('role')}  {entry.get('tool') or 'tool unknown'}"
              f"  handles {','.join(session_kinds(entry, ROLE_HANDLES)) or '-'}  registered {age(parse_time(entry.get('registered_at')))} ago"
              f"  holds {sum(1 for issue in held if session_actor(issue['assignee']) == entry.get('actor'))}"
+             f"  workers {len(active_workers(entry))}/{worker_cap(entry)}"
              + {'alive': '  process alive', 'GONE': '  GONE'}.get(liveness(entry) or '', '')
              for entry in sessions], limit)
 
     idle, gone = [], []
     rows = []
     for issue in held:
-        activity = board.last_activity(issue)
-        state = liveness(known.get(session_actor(issue['assignee'])))
+        entry = known.get(session_actor(issue['assignee']))
+        updated = board.last_activity(issue)
+        recorded = holder_activity(entry, issue['assignee'])
+        activity = recorded or updated
+        state = liveness(entry)
         is_idle = state != 'GONE' and (activity is None or (now - activity).total_seconds() > IDLE_HOURS * 3600)
         marker = ' GONE' if state == 'GONE' else ' IDLE' if is_idle else ''
-        rows.append(line(issue, holder_label(issue['assignee'], known), f'updated {age(activity)} ago' + marker))
+        rows.append(line(issue, holder_label(issue['assignee'], known), f'updated {age(updated)} ago'
+                         + (f', active {age(recorded)} ago' if recorded else '') + marker))
         if is_idle:
             idle.append(issue['id'])
         elif marker:
@@ -487,7 +554,8 @@ def position(board: Board, args) -> None:
     if gone:
         print(f"  GONE = the holding session's process ended. Free {', '.join(gone)}: board take <id> | board unclaim <id>")
     if idle:
-        print(f'  idle = no update for {IDLE_HOURS} h; quiet long jobs look idle too. '
+        print(f'  idle = no activity for {IDLE_HOURS} h (the holder\'s last tool call, else the item\'s last update); '
+              'a single long-running tool call looks idle too. '
               'If that session is gone: board take <id> | board unclaim <id>')
 
     questions = []
@@ -1071,7 +1139,7 @@ def mine(board: Board, args) -> None:
     rows, stopped = [], []
     for issue in held_by_session(board, actor):
         if issue['id'] in scoped:
-            mark = worker_stopped(entry, issue['assignee'])
+            mark = worker_stopped(entry, issue)
             rows.append(line(issue, issue['assignee'], f'updated {age(board.last_activity(issue))} ago'
                              + (' WORKER STOPPED' if mark else '')))
             if mark:
@@ -1080,6 +1148,34 @@ def mine(board: Board, args) -> None:
     if stopped:
         print(f"  WORKER STOPPED = the holding worker finished its last turn ({', '.join(stopped)}): "
               'continue the worker, hand the item over, or free it (board unclaim <id>)')
+
+
+def capacity(board: Board, args) -> None:
+    """The session's refill hint: printed for the session itself (no worker caller) in a dispatching role while
+    fewer than its cap of workers were active and worker work (WORKER_KINDS, an agent's within its pulls) is
+    claimable. A session's own hand-overs count: another of its workers may review them. The snapshot predates a write, so the
+    items the command named or claimed are left out (one read per command). Never fails the command it follows."""
+    actor = derived_actor()
+    if not actor or actor != session_actor(actor):
+        return
+    try:
+        entry = registry_by_actor(registrations()).get(actor)
+        if entry is None or entry.get('role') not in CAPACITY_ROLES:
+            return
+        active, cap = len(active_workers(entry)), worker_cap(entry)
+        if active >= cap:
+            return
+        pulls = entry.get('pulls') or ()
+        kinds = tuple(kind for kind in WORKER_KINDS if entry.get('role') != 'agent' or kind in pulls)
+        changed = {*(getattr(args, 'ids', None) or ()), getattr(args, 'id', None), *getattr(args, 'claimed', ())}
+        counts = {kind: sum(1 for issue in board.scoped(args.root)
+                            if board.claimable(issue) == kind and issue['id'] not in changed) for kind in kinds}
+    except BoardError:
+        return
+    ready = sorted(((kind, count) for kind, count in counts.items() if count), key=lambda pair: -pair[1])
+    if ready:
+        print(f"capacity: {active} of {cap} workers active in the last {WORKER_ACTIVE_MINUTES} min; "
+              f"ready for your pulls: {', '.join(f'{kind} {count}' for kind, count in ready)} → refill (plan Dispatch)")
 
 
 def claim_one(issue: dict, actor: str) -> tuple[bool, str]:
@@ -1143,6 +1239,7 @@ def claim(board: Board, args) -> int:
                 break
         if not claimed:
             print(f"nothing claimable for {entry.get('role')} ({','.join(kinds)})")
+    args.claimed = [issue['id'] for issue in claimed]
     for issue in claimed:
         by = f'; {author_label(issue)}' if issue['status'] == 'in_review' else ''
         print(f"claimed {issue['id']} ({board.kind(issue) or issue.get('issue_type')}{by}): {issue.get('title', '')}")
@@ -1606,8 +1703,12 @@ def main(argv: list[str] | None = None) -> int:
     try:
         board = Board.load()
         if args.run in (health, position, holders, check, related, queue, mine):
-            return budgeted(args.run, board, args, argv)
-        return args.run(board, args) or 0
+            code = budgeted(args.run, board, args, argv)
+        else:
+            code = args.run(board, args) or 0
+        if args.run in (claim, handover, return_item, block, mine, queue):
+            capacity(board, args)
+        return code
     except BoardError as error:
         print(f'board: {error}', file=sys.stderr)
         return 1

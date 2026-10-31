@@ -12,7 +12,9 @@ import socket
 import subprocess
 import sys
 import tempfile
+import time
 import tomllib
+from datetime import datetime, timezone
 from pathlib import Path
 
 import yaml
@@ -723,7 +725,8 @@ def validate_session_registry(root: Path) -> None:
             out, err = process.communicate()
             return process.pid, subprocess.CompletedProcess(args, process.returncode, out, err)
 
-        for command in (("alive",), ("worker-ended", "a43f14ee58a40ea36"), ("worker-started", "a43f14ee58a40ea36")):
+        for command in (("alive",), ("session-active",), ("worker-started", "a43f14ee58a40ea36"),
+                        ("worker-active", "a43f14ee58a40ea36"), ("worker-ended", "a43f14ee58a40ea36")):
             if under_claude(*command)[1].returncode != 0 or any(Path(state_dir).iterdir()):
                 raise ValueError(f"session-lead-mode {command[0]} must be a silent no-op for an unregistered session")
             if run(*command, env=env).returncode != 0 or any(Path(state_dir).iterdir()):
@@ -739,67 +742,138 @@ def validate_session_registry(root: Path) -> None:
         if refreshed.get("pid") != pid or refreshed.get("pid_started") != " ".join(refreshed_run.stdout.split()) \
                 or refreshed["role"] != "lead":
             raise ValueError(f"alive did not refresh the process identity: {refreshed}")
+
+        def shown_entry() -> dict:
+            return json.loads(run("show", SESSION, env=env).stdout)
+
+        def utc(path: Path) -> str:
+            return datetime.fromtimestamp(path.stat().st_mtime, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+        workers_dir = Path(state_dir) / f"{SESSION}.workers"
+        fresh = shown_entry()
+        if (fresh["active_at"], fresh["workers"]) != (None, {}) or "active_workers" in fresh:
+            raise ValueError(f"a session without activity showed some: {fresh}")
+        # One marker per running worker, named by the agent id's last 8 characters, mtime = last activity;
+        # worker-active creates a missed one; worker-ended deletes it.
         for _ in range(2):
-            run("worker-ended", "a43f14ee58a40ea36", env={**env, **as_session(SESSION)}).check_returncode()
-        run("worker-ended", "01a1641b-acfc-74a1-b69b-1e2fb53ded8a", env={**env, **as_session(SESSION)}).check_returncode()
-        if json.loads(run("show", SESSION, env=env).stdout)["ended_workers"] != ["8a40ea36", "b53ded8a"]:
-            raise ValueError("worker-ended must keep one entry per worker, by the agent id's last 8 characters")
+            run("worker-started", "a43f14ee58a40ea36", env={**env, **as_session(SESSION)}).check_returncode()
+        run("worker-active", "01a1641b-acfc-74a1-b69b-1e2fb53ded8a", env={**env, **as_session(SESSION)}).check_returncode()
+        if sorted(path.name for path in workers_dir.iterdir()) != ["8a40ea36", "b53ded8a"]:
+            raise ValueError("worker-started/worker-active must keep one marker per worker, by the agent id's last 8 characters")
+        old = time.time() - 16 * 60
+        os.utime(workers_dir / "b53ded8a", (old, old))
+        listed = shown_entry()
+        if listed["workers"] != {"8a40ea36": utc(workers_dir / "8a40ea36"), "b53ded8a": utc(workers_dir / "b53ded8a")}:
+            raise ValueError(f"workers must map each running worker to its last activity: {listed}")
+        run("worker-active", "01a1641b-acfc-74a1-b69b-1e2fb53ded8a", env={**env, **as_session(SESSION)}).check_returncode()
+        if shown_entry()["workers"]["b53ded8a"] == listed["workers"]["b53ded8a"]:
+            raise ValueError("worker-active did not refresh the worker's activity")
         under_claude("activate", "solo")
-        if json.loads(run("show", SESSION, env=env).stdout)["ended_workers"] != ["8a40ea36", "b53ded8a"]:
-            raise ValueError("a role change dropped the session's ended workers")
-        if run("worker-ended", "short", env={**env, **as_session(SESSION)}).returncode == 0:
-            raise ValueError("worker-ended accepted an invalid agent id")
-        # Workers stopping together each keep their mark (a shared read-modify-write lost most of them).
+        if sorted(shown_entry()["workers"]) != ["8a40ea36", "b53ded8a"]:
+            raise ValueError("a role change dropped the session's running workers")
+        for command in ("worker-started", "worker-active", "worker-ended"):
+            if run(command, "short", env={**env, **as_session(SESSION)}).returncode == 0:
+                raise ValueError(f"{command} accepted an invalid agent id")
+        run("worker-ended", "a43f14ee58a40ea36", env={**env, **as_session(SESSION)}).check_returncode()
+        run("worker-ended", "agent-never-started", env={**env, **as_session(SESSION)}).check_returncode()
+        if sorted(shown_entry()["workers"]) != ["b53ded8a"]:
+            raise ValueError("worker-ended did not delete exactly the stopped worker's marker")
+        # Workers starting and stopping together keep each other's markers (one file per worker).
         parallel = [f"agent-{index:016x}" for index in range(20)]
-        stops = [subprocess.Popen(["bash", str(script), "worker-ended", worker], env={**os.environ, **env, **as_session(SESSION)},
-                                  stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL) for worker in parallel]
-        if any(stop.wait() != 0 for stop in stops) or not {worker[-8:] for worker in parallel} \
-                <= set(json.loads(run("show", SESSION, env=env).stdout)["ended_workers"]):
-            raise ValueError("worker-ended lost the marks of workers stopping together")
-        # A started or resumed worker is no longer marked; starting an unmarked worker is a no-op.
-        for worker in parallel + ["agent-never-stopped"]:
-            run("worker-started", worker, env={**env, **as_session(SESSION)}).check_returncode()
-        if json.loads(run("show", SESSION, env=env).stdout)["ended_workers"] != ["8a40ea36", "b53ded8a"]:
-            raise ValueError("worker-started did not clear exactly the started workers' marks")
+
+        def together(command: str, workers: list[str]) -> bool:
+            processes = [subprocess.Popen(["bash", str(script), command, worker], env={**os.environ, **env, **as_session(SESSION)},
+                                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL) for worker in workers]
+            return all(process.wait() == 0 for process in processes)
+
+        if not together("worker-started", parallel) \
+                or sorted(shown_entry()["workers"]) != sorted([worker[-8:] for worker in parallel] + ["b53ded8a"]):
+            raise ValueError("worker-started lost the markers of workers starting together")
+        if not together("worker-ended", parallel) or sorted(shown_entry()["workers"]) != ["b53ded8a"]:
+            raise ValueError("worker-ended lost or kept markers of workers stopping together")
+        if any(path.name.startswith(".") for path in Path(state_dir).iterdir() if path.name != f"{SESSION}.json"):
+            raise ValueError("session-lead-mode left temporary files")
+        # session-active: the session's own last tool call.
+        run("session-active", env={**env, **as_session(SESSION)}).check_returncode()
+        if shown_entry()["active_at"] != utc(Path(state_dir) / f"{SESSION}.active"):
+            raise ValueError("session-active did not record the session's activity")
+        # Migration: the legacy <session>.ended/ folder (stopped workers, now a missing marker) goes on read and write.
+        for trigger in (lambda: run("show", SESSION, env=env), lambda: run("list", env=env),
+                        lambda: run("worker-active", "agent-0000ffff", env={**env, **as_session(SESSION)})):
+            legacy = Path(state_dir) / f"{SESSION}.ended"
+            legacy.mkdir()
+            (legacy / "deadbeef").touch()
+            trigger()
+            if legacy.exists():
+                raise ValueError("a registry read or write kept the legacy .ended folder")
+        if "deadbeef" in shown_entry()["workers"]:
+            raise ValueError("a legacy ended marker read as a running worker")
+        run("worker-ended", "agent-0000ffff", env={**env, **as_session(SESSION)}).check_returncode()
         # The legacy ended_workers field is never read, and alive drops it.
         entry = json.loads(entry_file.read_text(encoding="utf-8"))
         entry_file.write_text(json.dumps({**entry, "ended_workers": ["deadbeef"]}), encoding="utf-8")
-        if "deadbeef" in json.loads(run("show", SESSION, env=env).stdout)["ended_workers"]:
-            raise ValueError("show read the legacy ended_workers field")
+        if "ended_workers" in shown_entry():
+            raise ValueError("show printed the legacy ended_workers field")
         under_claude("alive")
         if "ended_workers" in json.loads(entry_file.read_text(encoding="utf-8")):
             raise ValueError("alive kept the legacy ended_workers field")
         under_claude("activate", "lead", tool="codex")
-        shown = json.loads(run("show", SESSION, env=env).stdout)
+        shown = shown_entry()
         if shown["pid"] is not None or shown["pid_started"] is not None:
             raise ValueError(f"a Codex session recorded a process identity: {shown}")
         listed = json.loads(run("list", env=env).stdout)
-        if not {"pid", "pid_started", "ended_workers"} <= listed.keys():
-            raise ValueError(f"session-lead-mode list lacks the liveness fields: {listed}")
+        if not {"pid", "pid_started", "active_at", "workers"} <= listed.keys() or {"ended_workers", "active_workers"} & listed.keys():
+            raise ValueError(f"session-lead-mode list lacks the liveness and activity fields: {listed}")
+        unregistered = json.loads(run("show", "abcdefgh-unknown", env=env).stdout)
+        if (unregistered["active_at"], unregistered["workers"]) != (None, {}):
+            raise ValueError(f"show of an unregistered session: {unregistered}")
 
-        # worker-status hook: SubagentStop marks the payload's worker in its session, SubagentStart unmarks it;
-        # it never fails.
-        hook = root / "hooks" / "worker-status.sh"
+        # session-activity hook: SubagentStart and a worker's tool call (agent_id) create or touch the worker's
+        # marker, SubagentStop deletes it, the session's own tool call touches its activity file; it never fails.
+        hook = root / "hooks" / "session-activity.sh"
         hook_env = {**env, "AGENT_SESSION_LEAD_COMMAND": str(script)}
-        stop = {"hook_event_name": "SubagentStop", "session_id": SESSION, "agent_id": "a1b2c3d4e5f60718",
-                "agent_type": "build"}
+        start = {"hook_event_name": "SubagentStart", "session_id": SESSION, "agent_id": "a1b2c3d4e5f60718",
+                 "agent_type": "build"}
+        tool_call = {"hook_event_name": "PreToolUse", "session_id": SESSION, "tool_name": "Read", "tool_input": {}}
+        (Path(state_dir) / f"{SESSION}.active").unlink()
         # Skipped payloads carry their own ids and run with the session in the environment too.
-        for payload in ({**stop, "agent_id": "internal-0000aaaa", "agent_type": ""},
-                        {key: value for key, value in stop.items() if key != "agent_id"} | {"agent_type": "general-purpose"},
-                        {**stop, "agent_id": "elsewhere-0000bbbb", "session_id": "abcdefgh-unknown"},
-                        {**stop, "agent_id": "otherevent-0000dddd", "hook_event_name": "Stop"}):
+        for payload in ({**start, "agent_id": "internal-0000aaaa", "agent_type": ""},
+                        {**start, "hook_event_name": "SubagentStop", "agent_id": "internal-0000aaaa", "agent_type": ""},
+                        {**tool_call, "agent_id": "internal-0000aaaa", "agent_type": ""},
+                        {key: value for key, value in start.items() if key != "agent_type"} | {"agent_id": "notype-0000eeee"},
+                        {**start, "agent_id": "elsewhere-0000bbbb", "session_id": "abcdefgh-unknown"},
+                        {**tool_call, "agent_id": "elsewhere-0000bbbb", "session_id": "abcdefgh-unknown"},
+                        {**start, "agent_id": "otherevent-0000dddd", "hook_event_name": "Stop"}):
             run_hook(hook, payload, {**hook_env, **as_session(SESSION)})
-        run_hook(hook, {**stop, "agent_id": "nocommand-0000cccc"},
+        run_hook(hook, {**start, "agent_id": "nocommand-0000cccc"},
                  {**hook_env, "AGENT_SESSION_LEAD_COMMAND": str(Path(bin_dir) / "missing")})
+        for raw in ("", "not json", "[]"):
+            if subprocess.run(["bash", str(hook)], input=raw, text=True, capture_output=True,
+                              env={**os.environ, **hook_env}).returncode != 0:
+                raise ValueError(f"session-activity hook failed on input {raw!r}")
+        if sorted(shown_entry()["workers"]) != ["b53ded8a"] or shown_entry()["active_at"] is not None:
+            raise ValueError(f"session-activity hook recorded a skipped payload: {shown_entry()}")
         # The payload's session wins over an outer Codex session in the environment.
-        run_hook(hook, stop, {**hook_env, "CODEX_SESSION_ID": "elsewhere-1"})
-        if json.loads(run("show", SESSION, env=env).stdout)["ended_workers"] != ["8a40ea36", "b53ded8a", "e5f60718"]:
-            raise ValueError("worker-status hook did not record exactly the payload's worker in the payload's session")
-        run_hook(hook, {**stop, "hook_event_name": "SubagentStart"}, hook_env)
-        if json.loads(run("show", SESSION, env=env).stdout)["ended_workers"] != ["8a40ea36", "b53ded8a"]:
-            raise ValueError("worker-status hook did not unmark the started worker")
-        if sorted(path.name for path in Path(state_dir).iterdir()) != [f"{SESSION}.ended", f"{SESSION}.json"]:
-            raise ValueError("worker-status hook wrote an entry for an unregistered session")
+        run_hook(hook, start, {**hook_env, "CODEX_SESSION_ID": "elsewhere-1"})
+        if sorted(shown_entry()["workers"]) != ["b53ded8a", "e5f60718"]:
+            raise ValueError("session-activity hook did not mark exactly the payload's worker in the payload's session")
+        os.utime(workers_dir / "e5f60718", (old, old))
+        # A worker's tool call (any tool, agent_type key absent as on a Codex payload) refreshes or creates its
+        # marker; a call without agent_id is the session's own.
+        run_hook(hook, {**tool_call, "agent_id": "a1b2c3d4e5f60718"}, hook_env)
+        run_hook(hook, {**tool_call, "tool_name": "apply_patch", "agent_id": "codexwkr-00009999"}, hook_env)
+        if shown_entry()["workers"].get("e5f60718") == datetime.fromtimestamp(old, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ") or "00009999" not in shown_entry()["workers"]:
+            raise ValueError("a worker's tool call did not refresh or create its marker")
+        if shown_entry()["active_at"] is not None:
+            raise ValueError("a worker's tool call counted as the session's own activity")
+        run_hook(hook, tool_call, hook_env)
+        if shown_entry()["active_at"] is None:
+            raise ValueError("the session's own tool call did not record its activity")
+        run_hook(hook, {**start, "hook_event_name": "SubagentStop"}, hook_env)
+        if "e5f60718" in shown_entry()["workers"]:
+            raise ValueError("session-activity hook did not delete the stopped worker's marker")
+        if sorted(path.name for path in Path(state_dir).iterdir()) != [f"{SESSION}.active", f"{SESSION}.json", f"{SESSION}.workers"]:
+            raise ValueError("session-activity hook wrote an entry for an unregistered session")
 
     with tempfile.TemporaryDirectory() as state_home:
         env = {key: value for key, value in os.environ.items() if key != "AGENT_SESSION_STATE_DIR"}
@@ -1014,8 +1088,31 @@ def validate_bd_guard(root: Path) -> None:
                     raise ValueError(f"{shell} did not pass the actor to board in {command!r}: {output!r}")
 
 
+def validate_hook_registrations(root: Path) -> None:
+    """The Claude and Codex hook configs beside the agents root (absent from the store copy the build checks):
+    session-activity runs on SubagentStart, SubagentStop and every tool's PreToolUse (a group without matcher),
+    and every registered hook script exists under the agents' or the tool's own hooks/."""
+    configs = {"claude": root.parent / "claude" / "settings.json", "codex": root.parent / "codex" / "hooks.json"}
+    for tool, path in configs.items():
+        if not path.is_file():
+            continue
+        events = json.loads(path.read_text(encoding="utf-8"))["hooks"]
+        command = f'bash "$HOME/.{tool}/hooks/session-activity.sh"'
+        for event in ("SubagentStart", "SubagentStop", "PreToolUse"):
+            groups = [group for group in events.get(event, []) if "matcher" not in group
+                      and any(hook.get("command") == command and "if" not in hook for hook in group.get("hooks", []))]
+            if len(groups) != 1:
+                raise ValueError(f"{path}: {event} needs one all-tools group running {command}")
+        for group in (group for groups in events.values() for group in groups):
+            for hook in group.get("hooks", []):
+                for name in re.findall(rf'\$HOME/\.{tool}/hooks/([\w.-]+)', hook.get("command", "")):
+                    if not any((directory / "hooks" / name).is_file() for directory in (root, path.parent)):
+                        raise ValueError(f"{path} runs hooks/{name}, which does not exist")
+
+
 def validate_hooks(root: Path) -> None:
     hooks = root / "hooks"
+    validate_hook_registrations(root)
     validate_session_registry(root)
     validate_session_register(root)
     validate_compact_reorient(root)
@@ -1876,7 +1973,9 @@ def validate_board(root: Path) -> None:
                 raise ValueError("board return accepted a review the caller does not hold")
 
     # Liveness in position: a registered process that ended is GONE; a live process or an entry without one
-    # keeps the idle hint. A stopped worker is marked only for its own session, in board mine.
+    # keeps the idle hint, judged by the holder's activity (a running worker's marker, else the session's own
+    # activity file), else the item's update. A stopped worker (no marker) is marked only for its own session,
+    # in board mine.
     ps = shutil.which("ps") or "/bin/ps"
     reaped = subprocess.Popen(["true"])
     reaped.wait()
@@ -1886,9 +1985,26 @@ def validate_board(root: Path) -> None:
         holders = {"gone0001": {"pid": reaped.pid, "pid_started": "Thu Jan  1 00:00:00 2026"},
                    "live0001": {"pid": os.getpid(), "pid_started": own_start},
                    "stal0001": {"pid": os.getpid(), "pid_started": "Thu Jan  1 00:00:00 2026"},
-                   "idle0001": {}, "work0001": {"pid": os.getpid(), "pid_started": own_start}}
-        Path(state_dir, "0000-work0001.ended").mkdir()
-        Path(state_dir, "0000-work0001.ended", "87650000").touch()
+                   "idle0001": {}, "actv0001": {}, "work0001": {"pid": os.getpid(), "pid_started": own_start},
+                   "noac0001": {}}
+
+        def touched(path, moment):
+            path.touch()
+            stamp = datetime.fromisoformat(moment).timestamp()
+            os.utime(path, (stamp, stamp))
+
+        Path(state_dir, "0000-work0001.workers").mkdir()
+        touched(Path(state_dir, "0000-work0001.workers", "11112222"), "2026-10-22T15:20:00+00:00")
+        touched(Path(state_dir, "0000-work0001.workers", "33334444"), "2026-10-22T13:00:00+00:00")  # running, quiet
+        touched(Path(state_dir, "0000-actv0001.active"), "2026-10-22T15:29:00+00:00")
+        touched(Path(state_dir, "0000-work0001.active"), "2026-10-22T15:25:00+00:00")
+        # A session without its activity file (hooks not live): a marker neither ages its worker's hold nor does a
+        # missing one mark it stopped.
+        Path(state_dir, "0000-noac0001.workers").mkdir()
+        touched(Path(state_dir, "0000-noac0001.workers", "77778888"), "2026-10-22T13:00:00+00:00")
+        # The same worker id runs in another session: markers are per session.
+        Path(state_dir, "0000-live0001.workers").mkdir()
+        touched(Path(state_dir, "0000-live0001.workers", "87650000"), "2026-10-22T15:20:00+00:00")
         for actor, fields in holders.items():
             Path(state_dir, f"0000-{actor}.json").write_text(json.dumps(
                 {"session": f"0000-{actor}", "role": "lead", "pulls": [], "actor": actor, "tool": "claude",
@@ -1896,24 +2012,40 @@ def validate_board(root: Path) -> None:
         held_task = next(issue for issue in fixture if issue["title"] == "Held task")
         holds = {"gone0001": "fx-gone", "live0001": "fx-live", "stal0001": "fx-stale", "idle0001": "fx-idle",
                  "work0001/build-87650000": "fx-ended", "work0001/build-11112222": "fx-running",
-                 "live0001/build-87650000": "fx-other"}
-        crowd = fixture + [{**held_task, "id": item_id, "assignee": holder} for holder, item_id in holds.items()]
+                 "work0001/build-33334444": "fx-quiet", "actv0001": "fx-active", "live0001/build-87650000": "fx-other",
+                 "noac0001/build-55556666": "fx-nohook", "noac0001/build-77778888": "fx-nohook-marked",
+                 "work0001/build-99990000": "fx-late", "work0001/build-99991111": "fx-upd"}
+        # Item updates (every claim is one) against work0001's last own activity (15:25): a hold updated after it
+        # may belong to a worker whose first tool call is still to come; one updated before it has no running
+        # worker. started_at can predate the hold and is ignored.
+        claims = {"fx-ended": {"updated_at": "2026-10-22T15:00:00Z"}, "fx-late": {"updated_at": "2026-10-22T15:27:00Z"},
+                  "fx-upd": {"started_at": "2026-10-22T09:00:00Z", "updated_at": "2026-10-22T15:28:00Z"}}
+        crowd = fixture + [{**held_task, "id": item_id, "assignee": holder, **claims.get(item_id, {})}
+                           for holder, item_id in holds.items()]
         _, fresh, _ = invoke(["position"], Fake(crowd))
         _, stale, _ = invoke(["position"], Fake(crowd), now="2026-10-22T17:30:00+00:00")
 
         def row(text, key):
             return next(r for r in text.splitlines() if r.startswith(f"  {key} "))
 
-        expected = {"fx-gone": "GONE", "fx-stale": "GONE", "fx-ended": "", "fx-live": "", "fx-idle": "",
-                    "fx-running": "", "fx-other": ""} if own_start else {}
-        for item_id, marker in expected.items():
+        # item -> (mark at 15:30, IDLE at 17:30)
+        expected = {"fx-gone": ("GONE", False), "fx-stale": ("GONE", False), "fx-ended": ("", True),
+                    "fx-live": ("", True), "fx-idle": ("", True), "fx-running": ("", True), "fx-quiet": ("IDLE", True),
+                    "fx-active": ("", True), "fx-other": ("", True), "fx-nohook": ("", True),
+                    "fx-nohook-marked": ("", True), "fx-late": ("", True), "fx-upd": ("", True)} if own_start else {}
+        for item_id, (marker, idle_later) in expected.items():
             if not row(fresh, item_id).endswith(f"ago{' ' + marker if marker else ''}  {held_task['title']}"):
                 raise ValueError(f"board position marked {item_id} wrongly (expected {marker or 'nothing'}):\n{fresh}")
-            if row(stale, item_id).endswith(f"ago IDLE  {held_task['title']}") != (not marker):
-                raise ValueError(f"board position idle hint on {item_id} (expected {not marker}):\n{stale}")
+            if row(stale, item_id).endswith(f"ago IDLE  {held_task['title']}") != idle_later:
+                raise ValueError(f"board position idle hint on {item_id} (expected {idle_later}):\n{stale}")
+        if own_start and (", active 10 min ago" not in row(fresh, "fx-running") or ", active 1 min ago" not in row(fresh, "fx-active") or "active" in row(fresh, "fx-idle")
+                          or ", active 5 min ago" not in row(fresh, "fx-ended")):
+            raise ValueError(f"board position activity ages:\n{fresh}")
         if own_start and ("Free fx-gone, fx-stale: board take <id> | board unclaim <id>" not in fresh
                           or not row(fresh, "live0001").endswith("  process alive")
-                          or not row(fresh, "gone0001").endswith("  GONE") or "idle =" in fresh):
+                          or not row(fresh, "gone0001").endswith("  GONE")
+                          or "  workers 1/6  " not in row(fresh, "work0001")
+                          or "idle = no activity for 1 h (the holder's last tool call, else the item's last update)" not in fresh):
             raise ValueError(f"board position liveness footer or session rows:\n{fresh}")
         if not own_start and "GONE" in fresh:
             raise ValueError(f"without ps, nothing is marked gone:\n{fresh}")
@@ -1947,13 +2079,125 @@ def validate_board(root: Path) -> None:
         for caller_actor in ("work0001", "work0001/build-11112222"):
             _, own, _ = invoke(["mine"], Fake(crowd), caller_actor)
             if not row(own, "fx-ended").endswith("ago WORKER STOPPED  " + held_task["title"]) \
-                    or "WORKER STOPPED" in row(own, "fx-running") \
+                    or "WORKER STOPPED" in row(own, "fx-running") or "WORKER STOPPED" in row(own, "fx-quiet") \
+                    or "WORKER STOPPED" in row(own, "fx-late") or "WORKER STOPPED" in row(own, "fx-upd") \
                     or "WORKER STOPPED = the holding worker finished its last turn (fx-ended): continue the worker, " \
                        "hand the item over, or free it (board unclaim <id>)" not in own:
                 raise ValueError(f"board mine did not mark the session's stopped worker:\n{own}")
         _, other, _ = invoke(["mine"], Fake(crowd), "live0001")
         if "fx-other" not in other or "WORKER STOPPED" in other:
             raise ValueError(f"board mine marked a worker stopped in another session's list:\n{other}")
+        _, unhooked, _ = invoke(["mine"], Fake(crowd), "noac0001")
+        if "fx-nohook " not in unhooked or "WORKER STOPPED" in unhooked or ", active" in unhooked:
+            raise ValueError(f"board mine judged workers of a session whose activity hooks are not live:\n{unhooked}")
+        if ", active" in row(fresh, "fx-nohook-marked"):
+            raise ValueError(f"board position aged a hold by a session without live hooks:\n{fresh}")
+
+    # Capacity line: last, for the session itself in a dispatching role, while fewer than its cap of workers were
+    # active in the last 15 min and work it pulls is claimable; a Codex session's agents thread limits lower the cap.
+    with tempfile.TemporaryDirectory() as state_dir, tempfile.TemporaryDirectory() as codex_home, \
+            patch.dict(os.environ, {**session_env(state_dir), "CODEX_HOME": codex_home,
+                                    "AGENT_CODEX_SYSTEM_CONFIG": str(Path(codex_home, "system.toml"))}):
+        # Markers carry real mtimes: judge them at the real time.
+        real_now = datetime.now(timezone.utc).isoformat()
+        registry = root / "bin" / "session-lead-mode.sh"
+        for args, session, tool in ((("solo",), "0000-solo0001", "claude"), (("lead",), "0000-lead0001", "claude"),
+                                    (("autopilot",), "0000-auto0001", "claude"),
+                                    (("agent", "--pulls", "implement,review"), "0000-cdx00001", "codex"),
+                                    (("agent", "--pulls", "plan,design,review"), "0000-cdx00002", "codex")):
+            subprocess.run(["bash", str(registry), "activate", *args], check=True,
+                           env={**os.environ, **as_session(session, tool)})
+        snapshot = board.Board([issue for issue in fixture if issue.get("_type", "issue") == "issue"])
+
+        def ready_for(kinds, skip=()):
+            counts = [(kind, sum(1 for issue in snapshot.issues if snapshot.claimable(issue) == kind
+                                 and issue["id"] not in skip)) for kind in kinds]
+            return ", ".join(f"{kind} {count}" for kind, count in sorted((pair for pair in counts if pair[1]),
+                                                                          key=lambda pair: -pair[1]))
+
+        def capacity_of(argv, actor, issues=fixture):
+            _, out, _ = invoke(argv, Fake(issues), actor, now=real_now)
+            last = out.rstrip("\n").splitlines()[-1] if out.strip() else ""
+            if sum(1 for text in out.splitlines() if text.startswith("capacity: ")) > 1:
+                raise ValueError(f"board {argv[0]} printed more than one capacity line:\n{out}")
+            return last if last.startswith("capacity: ") else None
+
+        worker_kinds = ("design", "implement", "review")  # a solo or autopilot session's own kinds never count
+        line = f"capacity: 0 of 6 workers active in the last 15 min; ready for your pulls: {ready_for(worker_kinds)} → refill (plan Dispatch)"
+        for argv in (["queue"], ["mine"]):
+            if capacity_of(argv, "solo0001") != line:
+                raise ValueError(f"board {argv[0]} capacity line for a solo session: {capacity_of(argv, 'solo0001')!r}")
+        if capacity_of(["queue"], "auto0001") != line:
+            raise ValueError(f"autopilot capacity line: {capacity_of(['queue'], 'auto0001')!r}")
+        worker_ids = {issue["id"] for issue in snapshot.issues if snapshot.claimable(issue) in worker_kinds}
+        own_only = [{**issue, "assignee": "zzzz9999"} if issue["id"] in worker_ids else issue for issue in fixture]
+        if ready_for(("plan",)) == "" or capacity_of(["queue"], "solo0001", own_only) is not None:
+            raise ValueError("board printed a capacity line for work only the solo session itself takes")
+        if not (capacity_of(["queue"], "cdx00002") or "").endswith(
+                f"ready for your pulls: {ready_for(('design', 'review'))} → refill (plan Dispatch)"):
+            raise ValueError(f"an agent's capacity line counted work outside its pulls: {capacity_of(['queue'], 'cdx00002')!r}")
+        for actor in ("lead0001", "solo0001/build-1234abcd", "unregistered1"):
+            if capacity_of(["queue"], actor) is not None:
+                raise ValueError(f"board printed a capacity line for {actor}")
+        claimable_ids = {issue["id"] for issue in snapshot.issues if snapshot.claimable(issue)}
+        drained = [{**issue, "assignee": "zzzz9999"} if issue["id"] in claimable_ids else issue for issue in fixture]
+        if capacity_of(["queue"], "solo0001", drained) is not None:
+            raise ValueError("board printed a capacity line without ready work")
+        # Active workers count against the cap; a quiet (stale) marker does not.
+        workers = Path(state_dir, "0000-solo0001.workers")
+        workers.mkdir()
+        for index in range(5):
+            Path(workers, f"{index:08x}").touch()
+        stale = Path(workers, "0000beef")
+        stale.touch()
+        os.utime(stale, (time.time() - 16 * 60,) * 2)
+        if not (capacity_of(["queue"], "solo0001") or "").startswith("capacity: 5 of 6 workers active"):
+            raise ValueError(f"capacity line with 5 active workers: {capacity_of(['queue'], 'solo0001')!r}")
+        stale.touch()
+        if capacity_of(["queue"], "solo0001") is not None:
+            raise ValueError("board printed a capacity line at the cap")
+        # Codex cap: agents.max_threads or agents.max_concurrent_threads_per_session lower it, never raise it.
+        config = Path(codex_home, "config.toml")
+        agent = f"ready for your pulls: {ready_for(('implement', 'review'))} → refill (plan Dispatch)"
+        for text, cap in (("", 6), ("[agents]\nmax_threads = 4\n", 4), ("[agents]\nmax_threads = 12\n", 6),
+                          ("[agents]\nmax_threads = 5\nmax_concurrent_threads_per_session = 3\n", 3),
+                          ("[agents]\nmax_threads = true\n", 6), ("not toml = = =\n", 6)):
+            config.write_text(text, encoding="utf-8")
+            if capacity_of(["queue"], "cdx00001") != f"capacity: 0 of {cap} workers active in the last 15 min; {agent}":
+                raise ValueError(f"Codex cap from {text!r}: {capacity_of(['queue'], 'cdx00001')!r}")
+        # Codex's layers: the system config, overridden per key by the user's.
+        system = Path(codex_home, "system.toml")
+        for system_text, user_text, cap in (
+                ("[agents]\nmax_concurrent_threads_per_session = 8\n", "", 6),
+                ("[agents]\nmax_concurrent_threads_per_session = 3\n", "", 3),
+                ("[agents]\nmax_concurrent_threads_per_session = 3\n", "[agents]\nmax_concurrent_threads_per_session = 5\n", 5),
+                ("[agents]\nmax_threads = 4\n", "[agents]\nmax_concurrent_threads_per_session = 5\n", 4),
+                ("not toml = = =\n", "[agents]\nmax_threads = 2\n", 2)):
+            system.write_text(system_text, encoding="utf-8")
+            config.write_text(user_text, encoding="utf-8")
+            if capacity_of(["queue"], "cdx00001") != f"capacity: 0 of {cap} workers active in the last 15 min; {agent}":
+                raise ValueError(f"Codex cap from system {system_text!r} and user {user_text!r}: "
+                                 f"{capacity_of(['queue'], 'cdx00001')!r}")
+        system.unlink()
+        config.write_text("[agents]\nmax_threads = 4\n", encoding="utf-8")
+        if not (capacity_of(["queue"], "auto0001") or "").startswith("capacity: 0 of 6 "):
+            raise ValueError("a Claude session's cap read the Codex config")
+        _, positions, _ = invoke(["position"], Fake(fixture), now=real_now)
+        if "  workers 0/4" not in next(text for text in positions.splitlines() if text.startswith("  cdx00001 ")) \
+                or "  workers 6/6" not in next(text for text in positions.splitlines() if text.startswith("  solo0001 ")):
+            raise ValueError(f"board position workers column:\n{positions}")
+        # Writes: the line follows them, without the items the command named or claimed (the snapshot predates them).
+        handed = ids["Held task"]
+        held = [{**issue, "assignee": "cdx00001"} if issue["id"] == handed else issue for issue in fixture]
+        if capacity_of(["handover", handed, "done"], "cdx00001", held) != \
+                f"capacity: 0 of 4 workers active in the last 15 min; {agent}":
+            raise ValueError("board handover capacity line")
+        fake = Fake(fixture)
+        _, out, _ = invoke(["claim"], fake, "cdx00001", now=real_now)
+        taken = next(args[1] for args in fake.writes() if args[0] == "update")
+        if out.rstrip("\n").splitlines()[-1] != "capacity: 0 of 4 workers active in the last 15 min; " \
+                f"ready for your pulls: {ready_for(('implement', 'review'), {taken})} → refill (plan Dispatch)":
+            raise ValueError(f"board claim capacity line must leave out the claimed item:\n{out}")
 
     # The actor comes from BEADS_ACTOR, else the Codex session[/thread], else the Claude session.
     for env, expected in (({"BEADS_ACTOR": "outer123", "CODEX_SESSION_ID": "x" * 8}, "outer123"),

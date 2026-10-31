@@ -93,8 +93,8 @@ in
   home.file.".claude/hooks/session-register.sh".source =
     config.lib.file.mkOutOfStoreSymlink "${agentsSrc}/hooks/session-register.sh";
 
-  home.file.".claude/hooks/worker-status.sh".source =
-    config.lib.file.mkOutOfStoreSymlink "${agentsSrc}/hooks/worker-status.sh";
+  home.file.".claude/hooks/session-activity.sh".source =
+    config.lib.file.mkOutOfStoreSymlink "${agentsSrc}/hooks/session-activity.sh";
 
   home.file.".codex/hooks/compact-reorient.sh".source =
     config.lib.file.mkOutOfStoreSymlink "${agentsSrc}/hooks/compact-reorient.sh";
@@ -108,8 +108,8 @@ in
   home.file.".codex/hooks/session-register.sh".source =
     config.lib.file.mkOutOfStoreSymlink "${agentsSrc}/hooks/session-register.sh";
 
-  home.file.".codex/hooks/worker-status.sh".source =
-    config.lib.file.mkOutOfStoreSymlink "${agentsSrc}/hooks/worker-status.sh";
+  home.file.".codex/hooks/session-activity.sh".source =
+    config.lib.file.mkOutOfStoreSymlink "${agentsSrc}/hooks/session-activity.sh";
 
   # Stable, tool-neutral session role registry shared by Codex and Claude Code.
   home.file.".agents/bin/session-lead-mode".source =

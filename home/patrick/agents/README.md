@@ -136,15 +136,22 @@ it they act as their session, so in-session reviews by them are not
 independent); session-register keeps workers from registering; the
 session-start hook starts the server before `bd prime`, and on Claude
 refreshes the session's registered process (`session-lead-mode alive`);
-worker-status marks a worker stopped on SubagentStop and unmarks it on
-SubagentStart (spawn or resume), one marker file per worker. On Codex it is
-unverified on a live run whether the payload ids match the actors and whether
-a resume fires SubagentStart.
-`board position` marks holders GONE when their session's process ended;
-`board mine` marks the caller's own stopped workers' holds WORKER STOPPED
-(only the owner knows whether it continues the worker). Codex records no process (the nearest `codex` ancestor can be a shared
-app-server or a per-command sandbox helper), so Codex sessions keep the idle
-hint. `board check` encodes the work-tracking
+session-activity records activity as file mtimes: SubagentStart and a
+worker's tool calls create or touch the worker's marker, SubagentStop deletes
+it, and the session's own tool calls touch `<session>.active`. Probed on
+Codex 0.166 (2026-10-31): SubagentStart fires on first spawn, the matcher-less
+PreToolUse group fires for shell and apply_patch calls, a worker's payload
+`session_id` is its parent's, and its `agent_id` equals its
+`CODEX_THREAD_ID`, which the worker actor's suffix comes from.
+`board position` marks holders GONE when their session's process ended
+(Claude; Codex records no process: the nearest `codex` ancestor can be a
+shared app-server or a per-command sandbox helper), derives idle from the
+holder's last tool call (else the item's update) and shows
+`workers <active>/<cap>`. `board mine` marks holds of the caller's workers
+without a marker WORKER STOPPED once the session's `.active` exists (only the
+owner knows whether it continues the worker). `claim`, `handover`, `return`,
+`block`, `mine` and `queue` print a capacity line for dispatching sessions
+below the worker cap with ready work. `board check` encodes the work-tracking
 conventions mechanically; change both in the same change, so drifted boards
 surface in `board health` and move through `/board-migrate`.
 

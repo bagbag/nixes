@@ -6,9 +6,12 @@
 # started from Codex is not: it inherits CODEX_SESSION_ID). The
 # session-register hook keeps workers from registering.
 # activate and alive record the Claude Code process (pid, pid_started) so
-# board position can tell a gone session. worker-ended and worker-started keep
-# one marker file per stopped worker in <session>.ended/: workers stopping
-# together would overwrite each other's marks in one shared file. Codex records no process: the nearest `codex`
+# board position can tell a gone session. The session-activity hook records
+# activity as file mtimes: session-active touches <session>.active for the
+# session's own tool calls; worker-started and worker-active create or touch
+# one marker file per running worker in <session>.workers/ and worker-ended
+# deletes it, so a stopped worker has none (one file per worker: workers
+# stopping together would overwrite each other's marks in one shared file). Codex records no process: the nearest `codex`
 # ancestor can be an app-server daemon shared by many sessions or a
 # per-command `codex sandbox` helper, so Codex holds keep the idle hint.
 set -euo pipefail
@@ -24,8 +27,10 @@ usage: session-lead-mode activate <lead|agent|solo|autopilot> [--pulls plan,desi
        session-lead-mode show <id>
        session-lead-mode list
        session-lead-mode alive
-       session-lead-mode worker-ended <agent-id>
+       session-lead-mode session-active
        session-lead-mode worker-started <agent-id>
+       session-lead-mode worker-active <agent-id>
+       session-lead-mode worker-ended <agent-id>
 `--pulls` applies only to agent, which needs at least one pull.
 EOF
   exit 2
@@ -73,7 +78,7 @@ from_environment() {
   valid_session_id "$session"
 }
 
-# Hook-run commands (alive, worker-ended, worker-started) end silently without a registered
+# Hook-run commands (alive, session-active, worker-*) end silently without a registered
 # session: a failing SubagentStop hook would keep the worker running.
 registered_session() {
   environment_session && [[ "$session" =~ ^[A-Za-z0-9._-]{8,}$ ]] || exit 0
@@ -81,13 +86,36 @@ registered_session() {
   [[ -f "$target" ]] || exit 0
 }
 
-# A registry entry as show and list print it; ended_workers comes from the
-# entry's marker files, not from the legacy JSON field.
+# The legacy <session>.ended/ folder marked stopped workers, which a missing
+# marker now expresses; readers and writers drop it.
+drop_legacy_markers() {
+  rm -rf -- "${1%.json}.ended" 2>/dev/null || true
+}
+
+# A file's mtime as UTC ISO time, or failure when it is missing (date -r
+# reads a file's mtime on BSD and GNU).
+modified_at() {
+  date -u -r "$1" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null
+}
+
+# A registry entry as show and list print it. active_at: the session's last
+# own tool call; workers: running workers (agent ids' last 8 characters) and
+# their last tool call. board judges what counts as recent.
 entry_json() {
-  local markers=("${1%.json}.ended"/*)
-  ((${#markers[@]} > 0)) && [[ -e "${markers[0]}" ]] || markers=()
-  jq -c --args '{role, pulls, actor, tool, session, registered_at, pid, pid_started,
-    ended_workers: [$ARGS.positional[] | split("/") | last]}' "${markers[@]}" <"$1"
+  local times=() marker modified active_at=''
+  drop_legacy_markers "$1"
+  if modified=$(modified_at "${1%.json}.active"); then
+    active_at=$modified
+  fi
+  for marker in "${1%.json}.workers"/*; do
+    modified=$(modified_at "$marker") || continue  # none, or removed meanwhile
+    times+=("${marker##*/}" "$modified")
+  done
+  jq -c --arg active_at "$active_at" --args \
+    '{role, pulls, actor, tool, session, registered_at, pid, pid_started,
+      active_at: (if $active_at == "" then null else $active_at end),
+      workers: ([range(0; $ARGS.positional | length; 2) as $i | {($ARGS.positional[$i]): $ARGS.positional[$i + 1]}] | add // {})}' \
+    "${times[@]}" <"$1"
 }
 
 ps_command=$(command -v ps || echo /bin/ps)
@@ -175,16 +203,25 @@ case "$command" in
       "$identity_filter"'del(.pid, .pid_started, .ended_workers) + identity' "$target" >"$temporary"
     mv -f "$temporary" "$target"
     ;;
-  worker-ended | worker-started)
+  session-active)
+    [[ -z "$role$pulls" ]] || usage
+    registered_session
+    umask 077
+    touch "$state_dir/$session.active"
+    ;;
+  worker-started | worker-active | worker-ended)
     [[ -z "$pulls" && "$role" =~ ^[A-Za-z0-9._-]{8,}$ ]] || usage
     registered_session
-    marker="$state_dir/$session.ended/${role: -8}"
+    drop_legacy_markers "$target"
+    marker="$state_dir/$session.workers/${role: -8}"
     if [[ "$command" == worker-ended ]]; then
+      rm -f "$marker"
+    else
+      # A stopped worker makes no tool calls, so a heartbeat may create the
+      # marker: it covers a worker whose SubagentStart was missed.
       umask 077
       mkdir -p "${marker%/*}"
-      : >"$marker"
-    else
-      rm -f "$marker"
+      touch "$marker"
     fi
     ;;
   actor)
@@ -212,7 +249,7 @@ case "$command" in
     [[ "$command" == get ]] ||
       jq -nc --arg actor "${session: -8}" --arg session "$session" \
         '{role: null, pulls: [], actor: $actor, tool: null, session: $session, registered_at: null,
-          pid: null, pid_started: null, ended_workers: []}'
+          pid: null, pid_started: null, active_at: null, workers: {}}'
     ;;
   list)
     [[ -z "$role$session$pulls$tool" ]] || usage
