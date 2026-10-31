@@ -4,22 +4,49 @@ description: >-
   Rethink the direction from scratch: the cleanest end state, then gaps,
   over-engineering and magic in the whole. Use before presenting a plan,
   design or approval request, or when the user says "step back".
-argument-hint: "[focus and follow-ups]"
+argument-hint: "[lenses] [focus and follow-ups]"
 ---
 
 # Step back
 
 <!-- @include shared/rerun.md -->
 
-Start by walking a realistic consumer through the whole flow end to end (for
-an API: set up, configure, use, handle failure, test), noting what each step
-needs; judge the options against that walk.
+Lens names at the start of the argument select lenses (`/step-back root-fix
+bloat`); the rest of the argument is the focus. Without lenses, run the base
+pass: the stance on the current focus, judged by the default criteria.
 
-Take a step back: what's the cleanest greenfield root-fix end state, keeping
-DX in mind? Previous rulings, contracts and current usages are no authority.
-Ground and think yourself until you have strong recommendations; where none is
-strong, list the decisive trade-offs.
+## Stance
 
-Then the whole picture: is the combined result clean and coherent?
-Over-engineered? Too much magic? Under-built: does anything the goal or
-realistic consumers need fall short?
+Judge greenfield: previous rulings, contracts and current usages are no
+authority. Find the cleanest end state, keeping DX in mind; then judge the
+whole picture: is the combined result clean and coherent? Ground and think
+yourself until you have strong recommendations; where none is strong, list the
+decisive trade-offs.
+
+## Where
+
+Default: the current focus. Each selected lens widens it.
+
+- **goal:** one level up; judge the design against the goal behind it.
+- **decisions:** every decision in the discussion together, not only the
+  latest.
+- **foundations:** what the design builds on: earlier rulings, conventions and
+  contracts; re-judge them too.
+
+## What
+
+Default: consumer, root-fix, bloat and gaps. Selected lenses become the deep
+focus; keep the other default criteria to a line each.
+
+- **consumer:** walk a realistic consumer through the whole flow end to end
+  (for an API: set up, configure, use, handle failure, test), noting what each
+  step needs; judge the options against that walk.
+- **root-fix:** does it fix the root cause, not a symptom? Trace the cause;
+  the root may lie outside this module or repo, and changes there are allowed.
+- **bloat:** over-engineered? Too much magic?
+- **gaps:** under-built: does anything the goal or realistic consumers need
+  fall short?
+- **clean:** the six cleanliness tests, one by one.
+- **overfit:** tailored to this case, or does it hold for the neighbouring
+  cases?
+- **mechanics:** how each part actually works end to end, and what breaks.

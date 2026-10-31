@@ -15,8 +15,10 @@
   problem in one plain sentence; realistic consumer scenarios (the simple case
   and each case where the options' outcomes differ); every option's for,
   against and footguns, with a short consumer example for code, API or shape
-  choices; the recommendation first, marked strong or lean, with any reviewer
-  disagreement. Name items in plain words; put ids in brackets.
+  choices; the recommendation first, marked under the decision protocol's
+  Recommendation strength, with any reviewer disagreement. Name items in plain
+  words; put ids in brackets; title each question by the decision it settles,
+  in words a reader without the discussion follows.
 - Keep the asked question short: one sentence that points to its chat entry
   by number or id, short option labels with a one-line description each, and
   each option's code example as its preview.

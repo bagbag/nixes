@@ -10,7 +10,12 @@ disable-model-invocation: true
 
 <!-- @include shared/rerun.md -->
 
-Question me now:
+Question me now. In a deciding session (lead or solo), run these steps
+through the decide protocol's Round in `protocol`
+(`$HOME/.agents/skills/role/protocols/decide.md`): resume the open round, or
+start one with `--discussion` and step 1's decisions as points; add
+`--no-board <dir>` when they concern a topic outside this repository's board
+or it has none.
 
 1. **Collect** every open decision in this discussion, plus related items
    building on the same premises and related open board items (search the
@@ -24,8 +29,6 @@ Question me now:
    [Asking the user](../shared/asking.md#asking-the-user)
    (`$HOME/.agents/skills/shared/asking.md`).
    Output: each invocation and what it changed.
-3. **Ask** the decisions whose premises are settled under
-   [Question format](#question-format).
+3. **Ask** the decisions whose premises are settled under asking.md's
+   [Question format](../shared/asking.md#question-format).
    Output: the questions; the held decisions, each with what it waits on.
-
-<!-- @include shared/question-format.md -->

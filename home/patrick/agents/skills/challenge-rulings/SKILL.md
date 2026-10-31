@@ -13,6 +13,9 @@ argument-hint: "[focus and follow-ups]"
 
 Are you sure all your own rulings are the only realistic clean option? Name
 each ruling's strongest alternative and its footguns; re-check every choice you
-left to another role; downgrade anything unsure to a question. Where the
+left to another role; downgrade anything unsure to a question. Check each
+strong recommendation against the decision protocol's Recommendation strength
+(`$HOME/.agents/skills/shared/decision-protocol.md`) and its evidence; make it
+a lean where a criterion fails. Where the
 evidence points away from a user's ruling the set rests on, bring it as a
 question with that evidence.

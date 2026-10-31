@@ -26,6 +26,7 @@ usage: session-lead-mode activate <lead|agent|solo|autopilot> [--pulls plan,desi
        session-lead-mode get <id>
        session-lead-mode show <id>
        session-lead-mode list
+       session-lead-mode state-dir
        session-lead-mode alive
        session-lead-mode session-active
        session-lead-mode worker-started <agent-id>
@@ -250,6 +251,11 @@ case "$command" in
       jq -nc --arg actor "${session: -8}" --arg session "$session" \
         '{role: null, pulls: [], actor: $actor, tool: null, session: $session, registered_at: null,
           pid: null, pid_started: null, active_at: null, workers: {}}'
+    ;;
+  state-dir)
+    # The one owner of the location: the protocol engine and the console mod ask here.
+    [[ -z "$role$pulls" ]] || usage
+    printf '%s\n' "$state_dir"
     ;;
   list)
     [[ -z "$role$session$pulls$tool" ]] || usage

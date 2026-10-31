@@ -20,13 +20,13 @@ per step for a local, reversible choice.
    triggers (compiler depth limit, crash, performance cliff) is a clue to a
    defect: name its suspected cause, propose tracking the root-cause search (a
    board item where one exists) and still weigh it against the option.
-4. **End state:** derive the smallest complete, clean, coherent result as if
-   designed fresh, under the project's quality criterion (e.g. consumer DX for
-   a library), independent of effort, churn, earlier rulings, docs and their
-   reasoning; list the revisions it implies as information, not cost. Show
-   consumer use, size, replacements and breakage. Apply the global
-   instructions' six Cleanliness tests and the
-   [End-state criteria](#end-state-criteria).
+4. **End state:** derive the end state of the global end-state principle
+   (Core principles) as if designed fresh, under the project's quality
+   criterion (e.g. consumer DX for a library), independent of effort, churn,
+   earlier rulings, docs and their reasoning; list the revisions it implies as
+   information, not cost. Show consumer use, size, replacements and breakage.
+   Apply the global instructions' six Cleanliness tests and the [End-state
+   criteria](#end-state-criteria).
 5. **Options:** compare materially different approaches, including alternatives
    outside the posed framing: rank, decisive trade-offs, strongest downside,
    conditions changing the recommendation. Screen each choice in the selected
@@ -71,9 +71,9 @@ risk or scope trade-off.
 
 - Question existing and proposed parts; keep each part that one realistic
   consumer scenario needs, including external library consumers without
-  in-repo call sites. Smallness ranks options serving the same uses; it never
-  drops a part such a scenario needs. Use in-repo call-site counts to size
-  changes, not to establish consumer need.
+  in-repo call sites. Among options serving the same uses, prefer fewer
+  speculative parts. Use in-repo call-site counts to size changes, not to
+  establish consumer need.
 - For each option, name the consumer or failure each part (log, option,
   status, mechanism) serves, drop parts without one, and roughly estimate its
   size in lines and files.
@@ -110,6 +110,28 @@ risk or scope trade-off.
 A recommendation expanding structure states its cumulative cost, its effect on
 the walking skeleton and why a smaller coherent option fails. When findings
 repeatedly add structure without executable progress, re-derive the premise.
+
+### Recommendation strength
+
+A recommendation is strong only when every criterion holds; name the evidence
+for each when asked or recorded:
+
+- **No assumptions** (`noAssumptions`): every premise checked in current
+  source, a run or an item; name where.
+- **Alternatives fail** (`alternativesFail`): each other option fails a named
+  criterion (a cleanliness test, the goal, correctness, a consumer need).
+- **Not a preference** (`notPreference`): the choice does not depend on what
+  the user values.
+- **Consumer walk** (`consumerWalk`): a realistic consumer walk supports it;
+  does not apply to internal choices.
+- **Rulings hold** (`rulingsHold`): released rulings hold, or each revision is
+  raised as its own question; does not apply when none touches it.
+
+Otherwise it is a lean that names its cause: `preference` (what the choice
+depends on) or `evidence` (the unchecked fact and how to check it). Ground
+evidence leans before asking; mark one left unverified. Write the marks as
+`strong: <option>`, `lean (unverified: <fact>): <option>` or
+`lean (your call: <what it depends on>): <option>`.
 
 ### Others' input
 

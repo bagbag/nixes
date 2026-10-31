@@ -15,7 +15,8 @@ codex-model: gpt-6.1-sol
 ---
 
 Decompose an agreed design or established pattern into one implementation plan
-for the smallest complete, clean, coherent route to the committed outcome.
+for a complete, clean, coherent route to the committed outcome without
+speculative steps.
 Read the supplied orientation sources and their relevant references first to
 establish the intended user outcome; apply the End-state criteria in `$HOME/.agents/skills/shared/decision-protocol.md`.
 

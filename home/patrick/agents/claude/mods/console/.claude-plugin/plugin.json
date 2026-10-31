@@ -1,0 +1,1 @@
+{ "name": "console", "version": "0.1.0", "description": "Lead console: board and round pane, protocol tool, dialog gate and answer capture", "types": "./types/index.d.ts" }

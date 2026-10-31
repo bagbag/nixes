@@ -103,7 +103,7 @@ Design consumption before composition; iterate steps 2–4 with the invoker.
    codebase conventions and whether each convention still serves (report
    outdated ones with the better pattern); purpose of each layer or gate; cost
    of each abstraction, extension point or mechanism; convergence on the
-   smallest complete, clean, coherent end state. Bring complexity and scope
+   global end-state principle (Core principles). Bring complexity and scope
    trade-offs to the invoker.
 4. **Drill-ins:** delegate to `explore`/`scout`; escalate one surface to
    `review` when the sweep shows it complex or contested. Run the decision

@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """board: the agents' interface to a beads board (bd 1.3.1).
 
-Run inside the repository. Views, `board show` and the write helpers read one
-`bd export` snapshot; `board bd <args>` runs any other bd command (raw item
+Run inside the repository. Each command reads the snapshot its view needs
+(`Board.load`): non-closed items for status views, `bd export` where closed
+items or comments are read, only the named items for `board show`.
+`board bd <args>` runs any other bd command (raw item
 reads excepted: `board show` renders them within the read budget). Every bd call carries the caller's
 actor (`derived_actor`) and, on a server-mode board, finds the server running.
 
@@ -51,6 +53,10 @@ ROLE_HANDLES = {'lead': ('question', 'accept', 'ratify', 'milestone'), 'agent': 
                 'solo': ('question', 'plan', 'ratify', 'accept', 'milestone'), 'autopilot': ('question', 'plan', 'accept')}
 TEXT_FIELDS = ('title', 'description', 'design', 'acceptance_criteria', 'notes', 'close_reason')
 SHOW_FIELDS = TEXT_FIELDS[1:]
+# Fields `board show --field` accepts besides those on the shown items (a read of few items would otherwise hide
+# the ones its items leave unset).
+ITEM_FIELDS = {*TEXT_FIELDS, 'comments', 'assignee', 'closed_at', 'started_at', 'external_ref', 'source_system', 'spec_id',
+               'lease_expires_at', 'heartbeat_at', 'await_type'}
 # A decision record's `##` sections (board-coordination.md#rulings). bd lint accepts the words anywhere in the text,
 # so board checks the headings itself.
 RECORD_SECTIONS = ('Question', 'Alternatives Considered', 'Decision', 'Rationale', 'Rule owner')
@@ -64,6 +70,10 @@ REGISTRY = Path(__file__).resolve().parent / 'session-lead-mode.sh'
 
 class BoardError(Exception):
     pass
+
+
+def ids_of(records: list[dict]) -> set[str]:
+    return {record['id'] for record in records}
 
 
 def utcnow() -> datetime:
@@ -127,6 +137,19 @@ def bd_checked(*args: str, stdin: str | None = None) -> str:
     if result.returncode != 0:
         raise BoardError(f"`bd {' '.join(args)}` failed: {(result.stderr or result.stdout).strip()}")
     return result.stdout
+
+
+def bd_show(ids: list[str], *flags: str) -> list[dict]:
+    """Full records of the ids that exist (bd reports unknown ids on stderr, or fails when none exists)."""
+    result = bd('show', '--json', '--include-comments', '--brief-deps', *flags, '--', *ids)
+    if result.returncode != 0:
+        try:
+            if 'no issues found' in json.loads(result.stdout).get('error', ''):
+                return []
+        except (ValueError, AttributeError):
+            pass
+        raise BoardError(f"`bd show` failed: {(result.stderr or result.stdout).strip()}")
+    return json.loads(result.stdout or '[]')
 
 
 def registrations() -> list[dict]:
@@ -264,7 +287,11 @@ def liveness(entry: dict | None) -> str | None:
 
 
 class Board:
-    def __init__(self, issues: list[dict]):
+    def __init__(self, issues: list[dict], complete: bool = True):
+        """complete: the snapshot holds closed items too. Without them (status reads) a dependency target that is
+        missing counts as closed; with them a missing one is unknown and counts as open (fail closed)."""
+        self.complete = complete
+        self._hydrated: set[str] = set()
         self.issues = issues
         self._milestone_work: dict[str, set[str]] = {}
         self._in_milestone: dict[str, list[str]] | None = None
@@ -295,9 +322,60 @@ class Board:
                     self.related.setdefault(target, set()).add(waiting)
 
     @classmethod
-    def load(cls) -> 'Board':
-        lines = bd_checked('export').splitlines()
-        return cls([issue for issue in map(json.loads, filter(str.strip, lines)) if issue.get('_type', 'issue') == 'issue'])
+    def load(cls, scope: str = 'status', ids: list[str] | None = None) -> 'Board':
+        """The one place that picks the bd read, sized to the view:
+        status: non-closed items with dependencies, no comments (`hydrate` adds the held items' comments);
+        all: `bd export`, closed items and comments included;
+        ids: only the named items with their comments and both edge directions (`board show`)."""
+        if scope == 'all':
+            lines = bd_checked('export').splitlines()
+            return cls([issue for issue in map(json.loads, filter(str.strip, lines)) if issue.get('_type', 'issue') == 'issue'])
+        if scope == 'status':
+            issues = json.loads(bd_checked('list', '--json', '--limit', '0', '--include-gates') or '[]')
+            for issue in issues:  # bd export orders an item's edges by target; list does not, and blocker order is printed
+                issue['dependencies'] = sorted(issue.get('dependencies') or [], key=lambda d: (d['depends_on_id'], d['type']))
+            return cls(issues, complete=False)
+        records = bd_show(ids or [], '--include-dependents')
+        edges, stubs = set(), {}
+        for record in records:
+            for stub, outgoing, key in [(d, True, 'dependencies') for d in record.get('dependencies') or []] \
+                    + [(d, False, 'dependents') for d in record.get('dependents') or []]:
+                edges.add((record['id'], stub['id'], stub['dependency_type']) if outgoing
+                          else (stub['id'], record['id'], stub['dependency_type']))
+                stubs[stub['id']] = stub
+        for record in records:  # the export's edge shape: the item's own entries, both directions
+            record['dependencies'] = [{'issue_id': a, 'depends_on_id': b, 'type': kind}
+                                      for a, b, kind in sorted(edges) if record['id'] in (a, b)]
+            record.pop('dependents', None)
+        board = cls(records, complete=False)
+        # A revision pending names its new record's partial rule, kept in that record's metadata.
+        newer = sorted({a for a, b, kind in edges if kind == REVISES and b in ids_of(records)
+                        and board.by_id[b].get('issue_type') == 'decision'} - ids_of(records))
+        full = {record['id']: record for record in bd_show(newer)} if newer else {}
+        for other_id, stub in stubs.items():
+            board.by_id.setdefault(other_id, full.get(other_id, stub))
+        return board
+
+    def hydrate(self, ids) -> None:
+        """Adds what a status read leaves out, for the given items, in one bd call: comments, and an epic's
+        `epic_total_children` (its closed children are not in the read)."""
+        todo = [item_id for item_id in dict.fromkeys(ids) if item_id in self.by_id and item_id not in self._hydrated]
+        if not self.complete and todo:
+            epics = any(self.by_id[item_id].get('issue_type') == 'epic' for item_id in todo)
+            for record in bd_show(todo, *(['--include-dependents'] if epics else [])):  # only then bd counts an epic's children
+                self.by_id[record['id']]['comments'] = record.get('comments') or []
+                if 'epic_total_children' in record:
+                    self.by_id[record['id']]['epic_total_children'] = record['epic_total_children']
+        self._hydrated.update(todo)
+
+    def held_ids(self) -> list[str]:
+        """Held items: `last_activity` needs their comments (comments do not bump updated_at)."""
+        return [issue['id'] for issue in self.issues if issue['status'] != 'closed' and issue.get('assignee')]
+
+    def finished_epic(self, issue: dict) -> bool:
+        """An epic with children, none of them open (needs `hydrate` of childless epics on a status read)."""
+        return issue.get('issue_type') == 'epic' and bool(self.children.get(issue['id']) or issue.get('epic_total_children')) \
+            and not any(self.is_open(child) for child in self.children.get(issue['id'], []))
 
     def ancestors(self, item_id: str):
         seen = set()
@@ -309,9 +387,9 @@ class Board:
     def scoped(self, root: str | None) -> list[dict]:
         if root is None:
             return self.issues
-        if root not in self.by_id:
+        if root not in self.by_id and (self.complete or root not in self.edges):  # a closed root: only its edges show
             raise BoardError(f'unknown root {root}')
-        if self.by_id[root].get('issue_type') == 'milestone':
+        if self.by_id.get(root, {}).get('issue_type') == 'milestone':
             work = self.milestone_work(root) | {root}
             return [issue for issue in self.issues if issue['id'] in work]
         return [issue for issue in self.issues if root in self.ancestors(issue['id'])]
@@ -364,10 +442,11 @@ class Board:
         return item_id in self.by_id and self.by_id[item_id]['status'] != 'closed'
 
     def open_blockers(self, item_id: str) -> list[str]:
-        # A blocker missing from the snapshot counts as open (fail closed);
-        # `external:` references never block in bd 1.3.1.
+        # In a complete snapshot a missing blocker counts as open (fail closed); a status read holds no closed
+        # items, so there it counts as closed. `external:` references never block in bd 1.3.1.
         return [blocker for blocker in self.blockers.get(item_id, [])
-                if self.is_open(blocker) or (blocker not in self.by_id and not blocker.startswith('external:'))]
+                if self.is_open(blocker)
+                or (self.complete and blocker not in self.by_id and not blocker.startswith('external:'))]
 
     def kind(self, issue: dict) -> str | None:
         status, kind = issue['status'], issue.get('issue_type')
@@ -442,14 +521,15 @@ HEALTH_VIEWS = ('questions', 'decided', 'ratification', 'released', 'review', 'u
 LIFECYCLE_LABELS = ('human', 'decided', 'review', 'needs-ratification', 'waiting')
 
 
-def health(board: Board, args) -> None:
-    items = [issue for issue in board.scoped(args.root) if issue['status'] != 'closed' and issue.get('issue_type') != 'epic']
+def health_views(board: Board, root: str | None) -> dict[str, tuple[str, list[dict]]]:
+    """view -> (heading, open items), the counts `board health` prints."""
+    items = [issue for issue in board.scoped(root) if issue['status'] != 'closed' and issue.get('issue_type') != 'epic']
     decisions = [issue for issue in items if issue.get('issue_type') == 'decision']
 
     def epic_of(issue):
         return next((a for a in board.ancestors(issue['id']) if board.by_id.get(a, {}).get('issue_type') == 'epic'), None)
 
-    views = {
+    return {
         'questions': ('open questions', [i for i in decisions if i['status'] in ('open', 'in_progress')]),
         'decided': ('decided, not released', [i for i in decisions if i['status'] == 'decided']),
         'ratification': ('awaiting ratification', [i for i in items if i['status'] == 'needs_ratification']),
@@ -465,6 +545,47 @@ def health(board: Board, args) -> None:
         'labels': ('lifecycle labels (use statuses, assignment or blocks)',
                    [i for i in items if set(i.get('labels') or []) & set(LIFECYCLE_LABELS)]),
     }
+
+
+def milestone_states(board: Board, root: str | None) -> list[dict]:
+    scope = {issue['id'] for issue in board.scoped(root)}
+    states = []
+    for milestone in (m for m in board.milestones() if m['id'] in scope):
+        work = [board.by_id[item_id] for item_id in board.milestone_work(milestone['id'])]
+        work = [issue for issue in work if issue.get('issue_type') != 'epic']
+        states.append({'id': milestone['id'], 'title': milestone.get('title', ''), 'openWork': len(work),
+                       'ready': sum(1 for i in work if board.claimable(i)), 'held': sum(1 for i in work if i.get('assignee')),
+                       'blocked': sum(1 for i in work if board.open_blockers(i['id'])),
+                       'milestoneReady': not board.open_blockers(milestone['id'])})
+    return states
+
+
+def item_json(board: Board, issue: dict, **extra) -> dict:
+    """An item row of a --json view."""
+    return {'id': issue['id'], 'type': issue.get('issue_type'), 'status': issue['status'], 'priority': issue.get('priority'),
+            'holder': issue.get('assignee') or None, 'title': issue.get('title', ''),
+            'blockedBy': board.open_blockers(issue['id']), **extra}
+
+
+# health views under the console's count names (contract-rulings R-B5); the others keep their view name.
+JSON_COUNTS = {'released': 'toPlan', 'review': 'inReview', 'user': 'forUser'}
+
+
+def health_json(board: Board, args) -> dict:
+    views = health_views(board, args.root)
+    ready = views['ready'][1]
+    found = deviations(board, args.root)
+    counts = {JSON_COUNTS.get(view, view): len(rows) for view, (_, rows) in views.items()}
+    return {'counts': counts,
+            'claimable': {kind: sum(1 for i in ready if board.claimable(i) == kind) for kind in KINDS},
+            'items': {JSON_COUNTS.get(view, view): [item_json(board, issue) for issue in sorted(views[view][1], key=by_priority)]
+                      for view in HEALTH_VIEWS if view in args.items},
+            'milestones': milestone_states(board, args.root),
+            'deviations': {'count': len(found), 'reviewBlocked': sum(1 for _, kind, _ in found if kind == 'review-blocked')}}
+
+
+def health(board: Board, args) -> None:
+    views = health_views(board, args.root)
     for view, (name, rows) in views.items():
         print(f'{name}: {len(rows)}')
         if view == 'ready':
@@ -476,14 +597,10 @@ def health(board: Board, args) -> None:
                 print(row)
             if args.limit and len(listed) > args.limit:
                 print(f'  ... {len(listed) - args.limit} more')
-    scope = {issue['id'] for issue in board.scoped(args.root)}
-    for milestone in (m for m in board.milestones() if m['id'] in scope):
-        work = [board.by_id[item_id] for item_id in board.milestone_work(milestone['id'])]
-        work = [issue for issue in work if issue.get('issue_type') != 'epic']
-        state = 'not ready' if board.open_blockers(milestone['id']) else 'ready'
-        print(f"milestone {milestone['id']} ({milestone.get('title', '')}): open work {len(work)}, "
-              f"ready {sum(1 for i in work if board.claimable(i))}, held {sum(1 for i in work if i.get('assignee'))}, "
-              f"blocked {sum(1 for i in work if board.open_blockers(i['id']))}; milestone {state}")
+    for state in milestone_states(board, args.root):
+        print(f"milestone {state['id']} ({state['title']}): open work {state['openWork']}, "
+              f"ready {state['ready']}, held {state['held']}, "
+              f"blocked {state['blocked']}; milestone {'ready' if state['milestoneReady'] else 'not ready'}")
     found = deviations(board, args.root)
     if found:
         stuck = sum(1 for _, kind, _ in found if kind == 'review-blocked')  # fixed by board return, not a migration
@@ -506,12 +623,35 @@ def holder_label(holder: str, known: dict[str, dict]) -> str:
     return f"{holder} ({entry.get('role')}{pulls}, {entry.get('tool') or 'tool unknown'})"
 
 
-def position(board: Board, args) -> None:
-    items = [issue for issue in board.scoped(args.root) if issue['status'] != 'closed']
-    entries = registrations()
-    known = registry_by_actor(entries)
-    now = utcnow()
+def session_activity(entry: dict) -> datetime | None:
+    """The session's last tool call, its own or a running worker's; None without activity data (hooks not live)."""
+    if not hooks_live(entry):
+        return None
+    moments = [parse_time(entry.get('active_at')), *(parse_time(m) for m in (entry.get('workers') or {}).values())]
+    return max((m for m in moments if m is not None), default=None)
 
+
+def session_state(entry: dict, now: datetime) -> str | None:
+    """'gone' (its registered process ended), 'active' or 'idle' (last activity within IDLE_HOURS or not), None
+    unknown (no activity data). The console's 'stopped' has no session-level board state: a stopped worker is
+    marked on its item (board mine)."""
+    if liveness(entry) == 'GONE':
+        return 'gone'
+    latest = session_activity(entry)
+    if latest is None:
+        return None
+    return 'active' if (now - latest).total_seconds() <= IDLE_HOURS * 3600 else 'idle'
+
+
+def position_data(board: Board, args) -> dict:
+    """What `board position` shows: ready work per kind against the sessions handling it, sessions, held items with
+    their marks, questions holding work, ready milestones and finished epics."""
+    items = [issue for issue in board.scoped(args.root) if issue['status'] != 'closed']
+    # One bd call for the held items' comments and the epics with no open child (all their children may be closed).
+    board.hydrate([*board.held_ids(), *(issue['id'] for issue in items if issue.get('issue_type') == 'epic'
+                                        and not any(board.is_open(child) for child in board.children.get(issue['id'], [])))])
+    known = registry_by_actor(registrations())
+    now = utcnow()
     ready = [issue for issue in items if board.claimable(issue)]
     held = sorted((issue for issue in items if issue.get('assignee') and issue.get('issue_type') != 'epic'),
                   key=lambda issue: (issue['assignee'], by_priority(issue)))
@@ -519,36 +659,88 @@ def position(board: Board, args) -> None:
     sessions = [entry for entry in known.values()
                 if entry.get('actor') in holding
                 or (parse_time(entry.get('registered_at')) or now) > now - timedelta(hours=SESSION_HOURS)]
-
-    print('ready work by kind vs sessions handling it:')
-    for kind in KINDS:
-        work = sum(1 for issue in ready if board.claimable(issue) == kind)
-        pulling = sum(1 for entry in sessions if kind in session_kinds(entry, ROLE_HANDLES))
-        print(f'  {kind}: {work} ready, {pulling} sessions')
-    limit = args.limit
-    section(f'sessions (registered within {SESSION_HOURS} h or holding items)',
-            [f"  {entry.get('actor')}  {entry.get('role')}  {entry.get('tool') or 'tool unknown'}"
-             f"  handles {','.join(session_kinds(entry, ROLE_HANDLES)) or '-'}  registered {age(parse_time(entry.get('registered_at')))} ago"
-             f"  holds {sum(1 for issue in held if session_actor(issue['assignee']) == entry.get('actor'))}"
-             f"  workers {len(active_workers(entry))}/{worker_cap(entry)}"
-             + {'alive': '  process alive', 'GONE': '  GONE'}.get(liveness(entry) or '', '')
-             for entry in sessions], limit)
-
-    idle, gone = [], []
-    rows = []
+    kinds = {kind: {'ready': sum(1 for issue in ready if board.claimable(issue) == kind),
+                    'sessions': sum(1 for entry in sessions if kind in session_kinds(entry, ROLE_HANDLES))}
+             for kind in KINDS}
+    holds = []
     for issue in held:
         entry = known.get(session_actor(issue['assignee']))
         updated = board.last_activity(issue)
         recorded = holder_activity(entry, issue['assignee'])
         activity = recorded or updated
-        state = liveness(entry)
-        is_idle = state != 'GONE' and (activity is None or (now - activity).total_seconds() > IDLE_HOURS * 3600)
-        marker = ' GONE' if state == 'GONE' else ' IDLE' if is_idle else ''
+        gone = liveness(entry) == 'GONE'
+        idle = not gone and (activity is None or (now - activity).total_seconds() > IDLE_HOURS * 3600)
+        holds.append((issue, entry, updated, recorded, 'gone' if gone else 'idle' if idle else None))
+    questions = sorted(((board.downstream(issue['id']), issue) for issue in items
+                        if issue.get('issue_type') == 'decision' and issue['status'] not in ('released', 'deferred')),
+                       key=lambda pair: (-pair[0], by_priority(pair[1])))
+    return {
+        'kinds': kinds, 'known': known, 'now': now,
+        'sessions': [(entry, sum(1 for issue in held if session_actor(issue['assignee']) == entry.get('actor')))
+                     for entry in sessions],
+        'held': holds,
+        'questions': [(waiting, issue) for waiting, issue in questions if waiting],
+        'milestones': sorted((i for i in items if board.kind(i) == 'milestone' and not board.open_blockers(i['id'])),
+                             key=by_priority),
+        'finished': sorted((issue for issue in items if board.finished_epic(issue)), key=by_priority),
+    }
+
+
+def iso(moment: datetime | None) -> str | None:
+    return moment.astimezone(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ') if moment else None
+
+
+def session_json(board: Board, args, entry: dict, holds: int, now: datetime) -> dict:
+    state = session_state(entry, now)
+    kinds = session_kinds(entry)
+    return {'session': entry.get('session'), 'role': entry.get('role'), 'actor': entry.get('actor'),
+            'pulls': entry.get('pulls') or [], 'tool': entry.get('tool'),
+            'handles': list(session_kinds(entry, ROLE_HANDLES)), 'registeredAt': entry.get('registered_at'), 'holds': holds,
+            # Without live activity hooks no worker marker is trustworthy.
+            'workers': {'active': len(active_workers(entry)), 'cap': worker_cap(entry)} if hooks_live(entry) else None,
+            'process': {'alive': 'alive', 'GONE': 'gone'}.get(liveness(entry) or ''),
+            'state': state, 'idleSince': iso(session_activity(entry)) if state == 'idle' else None,
+            # what its bare `board claim` would take
+            'claimable': sum(1 for issue in board.scoped(args.root) if board.claimable(issue) in kinds)}
+
+
+def position_json(board: Board, args) -> dict:
+    data = position_data(board, args)
+    return {
+        'ready': data['kinds'],
+        'sessions': [session_json(board, args, entry, count, data['now']) for entry, count in data['sessions']],
+        'held': [item_json(board, issue, updatedAt=iso(updated), activeAt=iso(recorded), mark=mark)
+                 for issue, _, updated, recorded, mark in data['held']],
+        'questionsHoldingWork': [item_json(board, issue, holds=waiting) for waiting, issue in data['questions']],
+        'readyMilestones': [item_json(board, issue) for issue in data['milestones']],
+        'finishedEpics': [item_json(board, issue) for issue in data['finished']],
+    }
+
+
+def position(board: Board, args) -> None:
+    data = position_data(board, args)
+    known = data['known']
+    print('ready work by kind vs sessions handling it:')
+    for kind, counts in data['kinds'].items():
+        print(f"  {kind}: {counts['ready']} ready, {counts['sessions']} sessions")
+    limit = args.limit
+    section(f'sessions (registered within {SESSION_HOURS} h or holding items)',
+            [f"  {entry.get('actor')}  {entry.get('role')}  {entry.get('tool') or 'tool unknown'}"
+             f"  handles {','.join(session_kinds(entry, ROLE_HANDLES)) or '-'}  registered {age(parse_time(entry.get('registered_at')))} ago"
+             f"  holds {count}"
+             f"  workers {len(active_workers(entry))}/{worker_cap(entry)}"
+             + {'alive': '  process alive', 'GONE': '  GONE'}.get(liveness(entry) or '', '')
+             for entry, count in data['sessions']], limit)
+
+    idle, gone = [], []
+    rows = []
+    for issue, _, updated, recorded, mark in data['held']:
+        marker = {'gone': ' GONE', 'idle': ' IDLE'}.get(mark or '', '')
         rows.append(line(issue, holder_label(issue['assignee'], known), f'updated {age(updated)} ago'
                          + (f', active {age(recorded)} ago' if recorded else '') + marker))
-        if is_idle:
+        if mark == 'idle':
             idle.append(issue['id'])
-        elif marker:
+        elif mark == 'gone':
             gone.append(issue['id'])
     section('held items', rows, limit)
     if gone:
@@ -558,23 +750,11 @@ def position(board: Board, args) -> None:
               'a single long-running tool call looks idle too. '
               'If that session is gone: board take <id> | board unclaim <id>')
 
-    questions = []
-    for issue in items:
-        if issue.get('issue_type') == 'decision' and issue['status'] not in ('released', 'deferred'):
-            waiting = board.downstream(issue['id'])
-            if waiting:
-                questions.append((waiting, issue))
     section('open questions holding work',
-            [line(issue, f'holds {waiting}', issue.get('assignee') or 'unassigned')
-             for waiting, issue in sorted(questions, key=lambda pair: (-pair[0], by_priority(pair[1])))], limit)
-
-    section('ready milestones', [line(issue, issue.get('assignee') or 'unassigned') for issue in
-                                 sorted((i for i in items if board.kind(i) == 'milestone' and not board.open_blockers(i['id'])),
-                                        key=by_priority)], limit)
-
-    finished = [issue for issue in items if issue.get('issue_type') == 'epic' and board.children.get(issue['id'])
-                and not any(board.is_open(child) for child in board.children[issue['id']])]
-    section('finished epics not closed', [line(issue) for issue in sorted(finished, key=by_priority)], limit)
+            [line(issue, f'holds {waiting}', issue.get('assignee') or 'unassigned') for waiting, issue in data['questions']],
+            limit)
+    section('ready milestones', [line(issue, issue.get('assignee') or 'unassigned') for issue in data['milestones']], limit)
+    section('finished epics not closed', [line(issue) for issue in data['finished']], limit)
 
 
 def session_kinds(entry: dict, table: dict = ROLE_KINDS) -> tuple[str, ...]:
@@ -796,8 +976,9 @@ def lowered(board: Board, issue: dict) -> str:
     return cache[issue['id']]
 
 
-def related(board: Board, args) -> None:
-    """Ranks by inverse document frequency: a rare shared word says more than a template word every item carries."""
+def related_data(board: Board, args) -> tuple[list[str], list[str], list[tuple[int, dict]], list[tuple[Path, int, str]]]:
+    """(terms, words chosen from --like, [(matched terms, item)] rarest matches first, [(doc, line number, text)]).
+    Ranks by inverse document frequency: a rare shared word says more than a template word every item carries."""
     scoped = board.scoped(args.root)
     texts = [(issue, lowered(board, issue)) for issue in scoped]
     total = max(len(texts), 1)
@@ -825,23 +1006,38 @@ def related(board: Board, args) -> None:
         if hits:
             rows.append((sum(weight(term) for term in hits), len(hits), issue))
     rows.sort(key=lambda row: (-row[0], -row[1], by_priority(row[2])))
+    matches = []
+    for root in (part for value in args.docs for part in value.split(',') if part.strip()):
+        path = Path(root.strip())
+        files = sorted(path.rglob('*.md')) if path.is_dir() else [path]
+        for file in files:
+            try:
+                lines = file.read_text(encoding='utf-8').splitlines()
+            except (OSError, UnicodeDecodeError) as error:
+                raise BoardError(f'cannot read {file}: {error}') from None
+            matches += [(file, number, text.strip()) for number, text in enumerate(lines, 1)
+                        if any(term in text.lower() for term in terms)]
+    return terms, chosen, [(count, issue) for _, count, issue in rows], matches
+
+
+def related_json(board: Board, args) -> dict:
+    terms, chosen, rows, docs = related_data(board, args)
+    shown = (lambda rows: rows[:args.limit]) if args.limit else (lambda rows: rows)
+    return {'terms': terms, 'like': chosen,
+            'items': [{'id': issue['id'], 'status': issue['status'], 'type': issue.get('issue_type'),
+                       'priority': issue.get('priority'), 'holder': issue.get('assignee') or None,
+                       'title': issue.get('title', ''), 'matched': count, 'of': len(terms)} for count, issue in shown(rows)],
+            'docs': [{'path': str(file), 'line': number, 'text': text} for file, number, text in shown(docs)]}
+
+
+def related(board: Board, args) -> None:
+    terms, chosen, rows, docs = related_data(board, args)
     like = f"; from --like: {', '.join(chosen) or 'no distinctive words'}" if args.like is not None else ''
     section(f"items matching {', '.join(terms)}, rarest matches first (all text fields, closed included{like})",
-            [line(issue, f'{count}/{len(terms)} terms', issue.get('assignee') or 'unassigned') for _, count, issue in rows],
+            [line(issue, f'{count}/{len(terms)} terms', issue.get('assignee') or 'unassigned') for count, issue in rows],
             args.limit)
     if args.docs:
-        matches = []
-        for root in (part for value in args.docs for part in value.split(',') if part.strip()):
-            path = Path(root.strip())
-            files = sorted(path.rglob('*.md')) if path.is_dir() else [path]
-            for file in files:
-                try:
-                    lines = file.read_text(encoding='utf-8').splitlines()
-                except (OSError, UnicodeDecodeError) as error:
-                    raise BoardError(f'cannot read {file}: {error}') from None
-                matches += [f'  {file}:{number}: {text.strip()}' for number, text in enumerate(lines, 1)
-                            if any(term in text.lower() for term in terms)]
-        section('doc lines', matches, args.limit)
+        section('doc lines', [f'  {file}:{number}: {text}' for file, number, text in docs], args.limit)
 
 
 def queue(board: Board, args) -> None:
@@ -988,7 +1184,7 @@ def show(board: Board, args) -> int:
     if missing:
         raise BoardError(f"unknown {', '.join(missing)}")
     issues = [board.by_id[item_id] for item_id in args.ids]
-    known = {key for issue in board.issues for key in issue} | set(TEXT_FIELDS) | {'comments'}
+    known = {key for issue in board.issues for key in issue} | ITEM_FIELDS
     unknown = [field for field in args.fields if field not in known]
     if unknown:
         raise BoardError(f"unknown field {', '.join(unknown)}; fields: {', '.join(sorted(known - {'_type'}))}")
@@ -1095,10 +1291,11 @@ def caller() -> str:
 HANDOVER = 'board handover: '
 
 
-def authorship(issue: dict) -> tuple[str | None, str | None]:
+def authorship(board: Board, issue: dict) -> tuple[str | None, str | None]:
     """(author, legacy holder): who handed the item over, from its handover comment,
     else bd's status history; a hand-over by a pre-actor holder (goal-agent) is legacy."""
     legacy = None
+    board.hydrate(i['id'] for i in board.issues if i['status'] == 'in_review')  # a status read carries no comments
     for note in sorted(issue.get('comments') or [], key=lambda c: c.get('created_at') or '', reverse=True):
         if (note.get('text') or '').startswith(HANDOVER):
             if ACTOR.fullmatch(note.get('author') or ''):
@@ -1116,8 +1313,8 @@ def authorship(issue: dict) -> tuple[str | None, str | None]:
     return None, legacy
 
 
-def author_label(issue: dict) -> str:
-    actor, legacy = authorship(issue)
+def author_label(board: Board, issue: dict) -> str:
+    actor, legacy = authorship(board, issue)
     return f'author {actor}' if actor else f'author unknown ({legacy})' if legacy else 'standalone'
 
 
@@ -1128,22 +1325,47 @@ def held_by_session(board: Board, actor: str) -> list[dict]:
                   key=by_priority)
 
 
-def mine(board: Board, args) -> None:
+def mine_data(board: Board, args) -> tuple[str, list[tuple[dict, bool]]]:
+    """(caller actor, [(item held by its session, worker stopped)])."""
     actor = caller()
+    board.hydrate(board.held_ids())
     scoped = {issue['id'] for issue in board.scoped(args.root)}
-    you = f' (you: {actor})' if actor != session_actor(actor) else ''
     try:
         entry = registry_by_actor(registrations()).get(session_actor(actor))
     except BoardError:
         entry = None  # no marks without the registry; the holds still list
+    return actor, [(issue, worker_stopped(entry, issue)) for issue in held_by_session(board, actor) if issue['id'] in scoped]
+
+
+def console_json(board: Board, args) -> dict:
+    """What the console pane draws, from one snapshot: health counts, this session's holds, the sessions and every
+    hold with its idle or gone mark."""
+    position = position_json(board, args)
+    return {'counts': health_json(board, args)['counts'], 'items': mine_json(board, args)['items'],
+            'sessions': position['sessions'],
+            'held': [{'id': h['id'], 'holder': h['holder'], 'mark': h['mark']} for h in position['held']]}
+
+
+def console(board: Board, args) -> None:
+    print(json.dumps(console_json(board, args), indent=2, ensure_ascii=False))
+
+
+def mine_json(board: Board, args) -> dict:
+    actor, rows = mine_data(board, args)
+    return {'session': session_actor(actor), 'actor': actor,
+            'items': [item_json(board, issue, updatedAt=iso(board.last_activity(issue)), workerStopped=stopped)
+                      for issue, stopped in rows]}
+
+
+def mine(board: Board, args) -> None:
+    actor, held_rows = mine_data(board, args)
+    you = f' (you: {actor})' if actor != session_actor(actor) else ''
     rows, stopped = [], []
-    for issue in held_by_session(board, actor):
-        if issue['id'] in scoped:
-            mark = worker_stopped(entry, issue)
-            rows.append(line(issue, issue['assignee'], f'updated {age(board.last_activity(issue))} ago'
-                             + (' WORKER STOPPED' if mark else '')))
-            if mark:
-                stopped.append(issue['id'])
+    for issue, mark in held_rows:
+        rows.append(line(issue, issue['assignee'], f'updated {age(board.last_activity(issue))} ago'
+                         + (' WORKER STOPPED' if mark else '')))
+        if mark:
+            stopped.append(issue['id'])
     section(f'held by session {session_actor(actor)}{you}', rows, args.limit)
     if stopped:
         print(f"  WORKER STOPPED = the holding worker finished its last turn ({', '.join(stopped)}): "
@@ -1198,7 +1420,7 @@ def claim(board: Board, args) -> int:
                 raise BoardError(f'{item_id}: unknown or closed')
             holder = issue.get('assignee')
             if holder == actor:
-                print(f'{item_id}: already held by {actor}')
+                print(f'{item_id}: already held by {actor}')  # bin/protocol reads this line (claim_items)
                 continue
             if holder and session_actor(holder) == session_actor(actor):
                 # The session owns its workers' holds (design item 16): hand the item down.
@@ -1231,7 +1453,7 @@ def claim(board: Board, args) -> int:
         candidates = sorted((issue for issue in scoped if board.claimable(issue) in kinds),
                             key=lambda issue: claim_order(board, issue))
         for issue in candidates:
-            if issue['status'] == 'in_review' and authorship(issue)[0] == actor:
+            if issue['status'] == 'in_review' and authorship(board, issue)[0] == actor:
                 continue  # your own hand-over needs another reviewer
             ok, _ = claim_one(issue, actor)
             if ok:
@@ -1241,7 +1463,7 @@ def claim(board: Board, args) -> int:
             print(f"nothing claimable for {entry.get('role')} ({','.join(kinds)})")
     args.claimed = [issue['id'] for issue in claimed]
     for issue in claimed:
-        by = f'; {author_label(issue)}' if issue['status'] == 'in_review' else ''
+        by = f'; {author_label(board, issue)}' if issue['status'] == 'in_review' else ''
         print(f"claimed {issue['id']} ({board.kind(issue) or issue.get('issue_type')}{by}): {issue.get('title', '')}")
     still = [issue for issue in held_by_session(board, actor) if issue not in claimed]
     if still:
@@ -1365,6 +1587,7 @@ def missing_sections(text: str, sections=RECORD_SECTIONS) -> list[str]:
 def record(board: Board, args) -> None:
     actor = caller()
     issue = held(board, args.id, actor)
+    board.hydrate([args.id])  # the packet move below reads the item's comments
     if issue.get('issue_type') != 'decision':
         raise BoardError(f'{args.id}: {issue.get("issue_type")}, not a decision')
     if issue['status'] not in ('open', 'in_progress', 'decided', 'needs_ratification'):
@@ -1478,32 +1701,53 @@ def revise(board: Board, args) -> None:
 
 
 def release(board: Board, args) -> int:
+    """Releases the decided rulings, supersedes the records they revise, then closes the questions they answer.
+    Resumable: a ruling already released and a question already closed are done; a failed revise supersede of an
+    already released ruling is retried (its revise link stays until it succeeds)."""
     actor = caller()
     rulings = require_open(board, args.ids)
     problems = []
     for issue in rulings:
         if issue.get('issue_type') != 'decision':
             problems.append(f"{issue['id']}: not a decision")
-        elif issue['status'] != 'decided':
+        elif issue['status'] not in ('decided', 'released'):
             problems.append(f"{issue['id']}: {issue['status']}, not decided")
         blocking = [b for b in board.open_blockers(issue['id']) if b not in args.ids]
-        if blocking:
+        if blocking and issue['status'] == 'decided':
             problems.append(f"{issue['id']}: waits on open {', '.join(blocking)}")
+    closes = []
+    for question, records in args.closes:
+        issue = board.by_id.get(question)
+        if issue is None:
+            problems.append(f'{question}: unknown')
+        elif issue['status'] == 'closed':
+            print(f'{question}: already closed')
+            continue
+        elif issue.get('issue_type') != 'decision' or issue['status'] not in ('open', 'in_progress'):
+            problems.append(f"{question}: {issue['status']} {issue.get('issue_type')}, not an open question")
+        elif issue.get('assignee') and session_actor(issue['assignee']) != session_actor(actor):
+            problems.append(f"{question}: held by {issue['assignee']}; hand it off before closing it")
+        unknown = [record for record in records if record not in args.ids]
+        if unknown:
+            problems.append(f"{question}: answered by {', '.join(unknown)}, which this call does not release")
+        closes.append((question, records))
     if problems:
         raise BoardError('release refused:\n  ' + '\n  '.join(problems))
 
-    lint = json.loads(bd_checked('lint', *args.ids, '--json') or '{}')
-    unlinted = [f"{result['id']}: missing {', '.join(result.get('missing') or [])}"
-                for result in lint.get('results') or [] if result.get('missing')]
-    if unlinted:
-        raise BoardError('release refused, record text fails bd lint (write the record first):\n  ' + '\n  '.join(unlinted))
-
-    # A released ruling keeps blocking the items it changes; planning closes it and unblocks them.
-    operations = [f"update {issue['id']} status=released assignee=\"\"" for issue in rulings]
-    bd_checked('batch', '-m', f"board release {' '.join(args.ids)}", '--json', stdin='\n'.join(operations) + '\n')
+    pending = [issue for issue in rulings if issue['status'] == 'decided']
+    if pending:
+        lint = json.loads(bd_checked('lint', *(issue['id'] for issue in pending), '--json') or '{}')
+        unlinted = [f"{result['id']}: missing {', '.join(result.get('missing') or [])}"
+                    for result in lint.get('results') or [] if result.get('missing')]
+        if unlinted:
+            raise BoardError('release refused, record text fails bd lint (write the record first):\n  ' + '\n  '.join(unlinted))
+        # A released ruling keeps blocking the items it changes; planning closes it and unblocks them.
+        operations = [f"update {issue['id']} status=released assignee=\"\"" for issue in pending]
+        bd_checked('batch', '-m', f"board release {' '.join(issue['id'] for issue in pending)}", '--json',
+                   stdin='\n'.join(operations) + '\n')
     returned, failed = [], []
     for issue in rulings:
-        print(f"released {issue['id']}: {issue.get('title', '')}")
+        print(f"{'released' if issue in pending else 'already released'} {issue['id']}: {issue.get('title', '')}")
         for old in board.revises(issue['id']):
             metadata = issue.get('metadata') if isinstance(issue.get('metadata'), dict) else {}
             rule = metadata.get(REVISES_RULE)
@@ -1518,7 +1762,36 @@ def release(board: Board, args) -> int:
             failed += lost
     if returned:
         print(f"returned from review: {', '.join(returned)}")
-    return 1 if failed else 0
+    left = close_answered(board, closes, set(args.ids))
+    return 1 if failed or left else 0
+
+
+def close_answered(board: Board, closes: list[tuple[str, list[str]]], released: set[str]) -> list[str]:
+    """Closes each answered question once every open blocker is a ruling of this release or a question closed
+    before it here (dependency order); forces only past those. Returns the questions left open."""
+    closed: set[str] = set()
+    pending = list(closes)
+    while pending:
+        progress = False
+        for question, records in list(pending):
+            blockers = board.open_blockers(question)
+            if any(b not in released and b not in closed for b in blockers):
+                continue
+            pending.remove((question, records))
+            result = bd('close', question, '--reason', f"Answered by released {', '.join(records)}",
+                        *(['--force'] if blockers else []))
+            if result.returncode != 0:
+                print(f'{question}: not closed: {(result.stderr or result.stdout).strip()}', file=sys.stderr)
+                continue
+            closed.add(question)
+            progress = True
+            print(f"closed {question}: answered by released {', '.join(records)}")
+        if not progress:
+            break
+    for question, _ in pending:
+        others = [b for b in board.open_blockers(question) if b not in released and b not in closed]
+        print(f"{question}: left open, blocked by {', '.join(others) or 'a question not closed'}", file=sys.stderr)
+    return [question for question, _ in closes if question not in closed]
 
 
 def supersede_pair(board: Board, old: str, new: str, rule: str | None, actor: str) -> tuple[list[str], list[str]]:
@@ -1566,12 +1839,13 @@ EXAMPLES = {
     'related': 'board related --like draft.md tenancy --docs docs,README.md',
     'queue': 'board queue --root <epic>',
     'mine': 'board mine',
+    'console': 'board console',
     'show': 'board show <id> --section Decision',
     'claim': 'board claim',
     'record': 'board record <id> .scratch/<topic>/<arc>/record.md',
     'block': 'board block <item> <item> --on <blocker> --reason "waits for the cache ruling"',
     'revise': 'board revise <old> --title "May X replace Y?" --body-file packet.md --partial "Rule 2"',
-    'release': 'board release <id> <id>',
+    'release': 'board release <id> <id> --closes <question>=<id>',
     'supersede': 'board supersede <old> --with <new> --partial "Rule 2"',
     'bd': 'board bd list --status open --json',
     'handover': 'board handover <id> "pnpm test: exit 0, 412 passed; typecheck exit 0"',
@@ -1621,9 +1895,11 @@ def main(argv: list[str] | None = None) -> int:
     sub = add('health', 'counts', health, [scope, listing])
     sub.add_argument('--items', type=views, default=set(), metavar='VIEW[,VIEW...]',
                      help=f"list the items behind these counts: {', '.join(HEALTH_VIEWS)}")
+    sub.add_argument('--json', action='store_true', help='counts, claimable by kind, --items rows, milestones; every row')
     sub = add('position', 'ready work vs sessions, held items with gone and idle marks, questions holding work, '
               'ready milestones, finished epics', position, [scope, listing])
     sub.add_argument('--all', dest='limit', action='store_const', const=0, help='every row (--limit 0)')
+    sub.add_argument('--json', action='store_true', help='ready by kind, sessions with state, held items; every row')
     add('holders', 'items by open downstream work', holders, [scope, listing])
     sub = add('check', 'deviations from the board conventions', check, [scope, listing])
     sub.add_argument('--all', dest='limit', action='store_const', const=0, help='every row (--limit 0)')
@@ -1639,8 +1915,13 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_argument('--like', type=draft, metavar='FILE|-', help=f'terms from a draft: its {LIKE_TERMS} rarest board words')
     sub.add_argument('--docs', nargs='+', default=[], metavar='PATH',
                      help='canonical docs (files or directories of .md), separated by spaces or commas')
+    sub.add_argument('--json', action='store_true', help='{terms, like, items, docs}; --limit per list')
     add('queue', 'claimable work by pull', queue, [scope, listing])
-    add('mine', 'items held by this session and its workers', mine, [scope, listing])
+    sub = add('mine', 'items held by this session and its workers', mine, [scope, listing])
+    sub.add_argument('--json', action='store_true', help='{session, actor, items}; every row')
+    sub = add('console', 'JSON for the console pane from one snapshot: {counts, items (mine), sessions, held (position)}',
+              console, [scope])
+    sub.set_defaults(items=set(), limit=0)
     sub = add('show', 'items with links, fields and newest comments, within the read budget', show)
     sub.add_argument('ids', nargs='+')
     sub.add_argument('--section', dest='sections', action='append', default=[], metavar='NAME',
@@ -1669,8 +1950,20 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_argument('-p', '--priority', type=int, choices=range(5), help="default: the old record's")
     sub.add_argument('--parent', help="default: the old record's parent")
     sub.add_argument('-l', '--labels', action='append', default=[], help="default: the old record's topic: labels")
-    sub = add('release', 'release decided rulings in one bd batch; supersedes the records they revise', release)
+    sub = add('release', 'release decided rulings in one bd batch; supersedes the records they revise, then closes '
+              'the questions they answer', release)
     sub.add_argument('ids', nargs='+')
+
+    def answered(value: str) -> tuple[str, list[str]]:
+        question, _, records = value.partition('=')
+        named = [record for record in records.split(',') if record]
+        if not question or not named:
+            raise argparse.ArgumentTypeError('QUESTION=RECORD[,RECORD]')
+        return question, named
+
+    sub.add_argument('--closes', nargs='+', type=answered, default=[], metavar='QUESTION=RECORD[,RECORD]',
+                     help='close each question as answered by the named released rulings, in dependency order; '
+                          'forces only past blockers released or closed in this call')
     sub = add('supersede', "supersede a ruling; a full replacement blocks the old record's open items", supersede)
     sub.add_argument('old')
     sub.add_argument('--with', dest='new', required=True)
@@ -1700,8 +1993,17 @@ def main(argv: list[str] | None = None) -> int:
             print(sub.format_usage().strip() + f'\n  {sub.description or ""}'.rstrip() + f'\n  example: {EXAMPLES[name]}')
         return 0
     args.root = getattr(args, 'root', None)
+    JSON_VIEWS = {health: health_json, position: position_json, mine: mine_json, related: related_json}
     try:
-        board = Board.load()
+        # Status views read non-closed items. These read closed items too (check: closed decisions named in text;
+        # block, revise, release, supersede: a closed blocker or old record) or comments (related, check).
+        scope = 'ids' if args.run is show else 'all' if args.run in (related, check, block, revise, release, supersede) \
+            else 'status'
+        board = Board.load(scope, args.ids if scope == 'ids' else None)
+        if getattr(args, 'json', False) and args.run in JSON_VIEWS:
+            # Unbudgeted, every row (related keeps --limit per list); no capacity line after it.
+            print(json.dumps(JSON_VIEWS[args.run](board, args), indent=2, ensure_ascii=False))
+            return 0
         if args.run in (health, position, holders, check, related, queue, mine):
             code = budgeted(args.run, board, args, argv)
         else:

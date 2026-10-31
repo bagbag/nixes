@@ -1,7 +1,8 @@
 ## Asking the user
 
 Run for every question round and every approval request (ratification, apply);
-a release runs the decide protocol's Release Re-check instead. Give each step's output compactly.
+a release runs the decide protocol's Release instead, whose engine asks the
+approval. Give each step's output compactly.
 
 1. **Scope.** Compose the round under the global instructions' Ask in rounds.
    On a large board, scope it by [Priority](../shared/board-core.md#priority)
@@ -9,10 +10,13 @@ a release runs the decide protocol's Release Re-check instead. Give each step's 
    sharing its premise, root cause, consumer concept or flow. When the user
    flagged one instance, find all of its kind, including earlier rulings.
    Output: the round's decisions; the instance list where one was flagged.
-2. **Check.** Invoke the step-back and ground skills on the whole set, in that
-   order; before an approval request, invoke challenge-rulings last. Invoke
-   each through the runtime's skill mechanism (Claude's Skill tool; in Codex,
-   read its `SKILL.md`). Scale each pass to stakes: one line for a local,
+2. **Check.** In a round run through `protocol` (decide protocol Round), the
+   engine sequences the passes below and caps the loop: follow its output and
+   report each pass's changes in its pass report. Otherwise invoke the
+   step-back and ground skills on the whole set, in that order; invoke
+   challenge-rulings last, before the questions or the approval request.
+   Invoke each through the runtime's skill mechanism (Claude's Skill tool; in
+   Codex, read its `SKILL.md`). Scale each pass to stakes: one line for a local,
    reversible round. Repeat step-back and ground over the whole set until a
    pass changes nothing, also after challenge-rulings changes something; a
    changed premise, ruling, option or question set counts as a change. A pass

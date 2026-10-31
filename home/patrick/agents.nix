@@ -96,6 +96,11 @@ in
   home.file.".claude/hooks/session-activity.sh".source =
     config.lib.file.mkOutOfStoreSymlink "${agentsSrc}/hooks/session-activity.sh";
 
+  # Console mod, loaded through CLAUDE_CODE_PLUGIN_DIRS; out of store so edits hot-reload and Claude can lay its
+  # API types into .claude-plugin/types/ (Git-ignored).
+  home.file.".claude/mods/console".source =
+    config.lib.file.mkOutOfStoreSymlink "${agentsSrc}/claude/mods/console";
+
   home.file.".codex/hooks/compact-reorient.sh".source =
     config.lib.file.mkOutOfStoreSymlink "${agentsSrc}/hooks/compact-reorient.sh";
 
@@ -117,6 +122,10 @@ in
 
   home.file.".agents/bin/board".source =
     config.lib.file.mkOutOfStoreSymlink "${agentsSrc}/bin/board.py";
+
+  # Protocol engine for deciding sessions; the console mod and Codex compact-reorient call it.
+  home.file.".agents/bin/protocol".source =
+    config.lib.file.mkOutOfStoreSymlink "${agentsSrc}/bin/protocol";
 
   home.file.".agents/bin/worker-last-use".source =
     config.lib.file.mkOutOfStoreSymlink "${agentsSrc}/bin/worker-last-use.py";

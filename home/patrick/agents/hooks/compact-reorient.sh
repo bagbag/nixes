@@ -32,6 +32,12 @@ if [[ -n "$role" ]]; then
   message="Session recovery: this session is registered as role \`$role\`"
   [[ -z "$pulls" ]] || message+=" pulling $pulls"
   message+=" with board actor \`$actor\`. Before continuing, reload \`\$HOME/.agents/skills/role/SKILL.md\` completely and every protocol file it lists for \`$role\`, and follow them within the current task. Then re-orient from the project's agent instructions."
+  # Codex has no console mod: its open protocol round comes back here (Claude's console owns that recovery).
+  protocol=${AGENT_PROTOCOL_COMMAND:-$HOME/.agents/bin/protocol}
+  if [[ "$(jq -r '.tool // ""' <<<"$registration")" == codex && -x "$protocol" ]]; then
+    line=$("$protocol" --session "$session_id" status --line 2>/dev/null || true)
+    [[ -z "$line" || "$line" == "protocol: no open round" ]] || message+=" $line"
+  fi
 fi
 
 message+=" Recover under \`\$HOME/.agents/skills/shared/project-memory.md\` Recovery and closure."

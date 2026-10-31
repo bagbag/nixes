@@ -66,22 +66,31 @@ findings or stops.
 **Entry:** open questions, a pasted list or consumer report, or the user asks
 for open items.
 
-1. **Collect.** List open items (`board health --items decided,questions,ratification,review,user`). Account for every point of a pasted list or report and check it against the
-   current tree. Classify each as already ruled (cite its owner), the planning
-   session's call, your ruling or user decision. For open items, list decided
-   records awaiting release first, then open questions, then
-   `needs_ratification` records, then `in_review` designs, ready milestones
-   and finished epics whose acceptance names the user (`board position`).
+Run the round through `protocol` (`$HOME/.agents/bin/protocol`; in Claude the
+console's `protocol` tool): `start round` (stdin `{"points": [...]}` for
+pasted points), then `step` with each step's report; resume an open round from
+`protocol show`. Add `--discussion` for a round of the discussion's points
+alone (question-me; board items join through Related) and `--no-board <dir>`
+for a topic outside this repository's board, or a repository without one
+(records go to `<dir>`, nothing on a board changes). The engine lists the
+open items, claims the selected ones, searches each draft's terms, issues the
+dialog batches and writes the records: follow its output. The steps below own
+the judgment each report carries.
+
+1. **Collect.** Account for every point of a pasted list or report and check
+   it against the current tree. Classify each pasted point and each open item
+   in the round's scope (asking.md Scope) as already ruled (cite its owner),
+   the planning session's call, your ruling or user decision; the other open
+   items stay out of this round.
    Output: one row per point: id, class.
 2. **Select.** Choose one round under
-   [Asking the user](../../shared/asking.md#asking-the-user); decide
-   prerequisites before their dependents (`board bd dep tree <id> --direction=up`).
-   Claim the round: `board claim <ids>`.
+   [Asking the user](../../shared/asking.md#asking-the-user); prerequisites
+   before their dependents.
    Output: round ids.
-3. **Related.** Run `board related <terms>` per question, for its own terms
-   and for the modules and APIs its options build on.
-   Extend an open item on the same decision instead of adding one. Comment
-   on or hand off overlaps with items other sessions hold.
+3. **Related.** Give each hit an outcome. Search also for the modules and APIs
+   a question's options build on (`board related <terms>`). Extend an open
+   item on the same decision instead of adding one. Comment on or hand off
+   overlaps with items other sessions hold.
    Output: board check table: question, related hits, action.
 4. **Ground.** Run the decision protocol from Top-down through Premises
    read-only across the round. Ground questions headed into a detailed
@@ -96,15 +105,16 @@ for open items.
    [Asking the user](../../shared/asking.md#asking-the-user), from its Check
    step.
    Output: the walkthrough and the questions.
-6. **Record.** Record each decision when made with `board record <id> <file>`
-   under [Rulings](../../shared/board-coordination.md#rulings); when the user
-   asks for the overall picture first, record the round after the walkthrough. Record user-stated constraints and
-   principles as rulings, and in the Decision any review the user wants of
-   the planning result before it is applied. Check each record against the wording of the chosen
-   option; a rule the option did not state is your ruling (disclose it) or a
-   new question. Revise a record in place until release; record later
-   changes as new records. Close ratified `needs_ratification` records under
-   the same reference.
+6. **Record.** Give each answered decision its record under
+   [Rulings](../../shared/board-coordination.md#rulings); when the user asks
+   for the overall picture first, record the round after the walkthrough.
+   Record user-stated constraints and principles as rulings, and in the
+   Decision any review the user wants of the planning result before it is
+   applied. Check each record against the wording of the chosen option; a rule
+   the option did not state is your ruling (disclose it) or a new question.
+   Revise a record in place until release; record later changes as new
+   records. Close ratified `needs_ratification` records under the same
+   reference.
    Output: `decided <ids>`.
 
 **Stop:** an answer states a criterion, or a later step changes the premise:
@@ -116,47 +126,59 @@ deferred by the user.
 
 ## Release
 
-**Entry:** decided records without open blockers, and the user asks for a
-release.
+**Entry:** decided records, and the user asks for a release (types or presses
+`/release-round`, or asks; nothing starts by itself).
+
+Run the release through `protocol` like a round: `start release` takes the
+records of this session's last closed round until a release used them;
+`start release <ids>` names others. The engine sequences the steps, asks the
+approval (only the person approves), checks the owners, and runs
+`board release` with the answered closes and `board supersede`. The steps
+below own the judgment each report carries.
 
 1. **Re-check.** Compare each record with current items and source and with
    the set's other records for coherence; verify citations and counts
    (`verify` for large sets). Where something changed since the decision,
-   run the Check step of [Asking the user](../../shared/asking.md#asking-the-user)
-   on the changed part.
-   Output: one line per record: unchanged, or the change.
+   give its reach: contained (name why no other ruling moves) or spreads
+   (another ruling may move, or you are unsure).
+   Output: one line per record: unchanged, or the change and its reach.
 2. **Board check.** Run `board related <terms>` across the
    set, closed items and canonical docs included (`--docs <doc paths>`), and
    act on every hit class:
 
    | Hit | Action |
    |---|---|
-   | Earlier ruling it revises or contradicts, closed included | Name it under Prior rulings; supersede it in step 6. |
-   | Open question it duplicates or answers | Merge, or answer and close. |
-   | Open question its own premise rests on | Hold the record; it blocks release. |
+   | Earlier ruling it revises or contradicts, closed included | Name it under Prior rulings and as a supersede (`partial` for one rule); the engine runs it. |
+   | Open question it duplicates or answers | Merge, or name it answered; the engine closes it after the release. |
+   | Open question its own premise rests on | The record leaves the set. |
    | Open item assuming the old state | `board block <item> --on <record> --reason "<revised clause>"`. |
    | Deferred item assuming the old state, or one it unblocks | Relate it; comment the revised clause. |
    | Item another session holds on the same concepts | Comment or hand off. |
    | Doc, README or skill stating the old rule | Owner write in step 5, or a task. |
 
+   A ruling the check changes gets its reach, as in step 1.
    Output: board check table: record, one row per hit class (`none` allowed),
-   action.
-3. **Own rulings.** List every ruling you made in the set.
-   Output: own-rulings table with the disclosure fields of
-   [Asking the user](../../shared/asking.md#asking-the-user).
-4. **Approval.** Offer each set for release separately. Conditional approval
-   covers only that round's items, once steps 1-3 hold.
-   Output: the user's approval, quoted.
+   action; the supersedes and answered questions.
+3. **Own rulings.** List every ruling you made in the set with the disclosure
+   fields of [Asking the user](../../shared/asking.md#asking-the-user); mark it
+   sure only when it is the only realistic clean option and grounded.
+   Output: own-rulings table with a sure mark per ruling.
+4. **Approval.** Walk the user through steps 1-3 before the engine's dialog;
+   a typed or pressed `/release-round` needs none when every own ruling is
+   sure and no record left the set or changed.
+   Output: the user's approval.
 5. **Owner writes.** Write each rule into its one owner, replacing the text it
-   supersedes (old text to `history/` under project-memory), and name path and
-   anchor in the record's `## Rule owner`. For a convention, add an enforcing
-   check where realistic. Withdraw a wrong premise explicitly.
-   Output: one line per rule: owner path and anchor.
-6. **Release.** `board release <ids>`, which supersedes the records opened
-   through `board revise`; supersede other revised records with
-   `board supersede <old> --with <new>`, plus `--partial "<rule>"` for one
-   rule.
-   Output: released and superseded ids, and the ids sent back from review.
+   supersedes (old text to `history/` under project-memory), and name each path
+   and anchor in the record's `## Rule owner` (rewrite it with
+   `board record <id> <file>`). Name repository paths from the board root and
+   installed files by their installed path, as rendered. For a convention,
+   add an enforcing check where realistic. Withdraw a wrong premise explicitly.
+   Output: per record its owners: written path and anchor, none with the
+   reason, or the pending item.
+6. **Release.** Fix what a board refusal names (a record failing
+   `board bd lint`: its text), then rerun the step with `step {}`.
+   Output: the engine's close: released, superseded and closed ids, and the
+   ids sent back from review.
 7. **Next.** List waiting questions, `in_review` designs, ready milestones,
    finished epics whose acceptance names the user and what waits on the user
    (`board health --items user`);
@@ -164,9 +186,10 @@ release.
    user.
    Output: the list and the recommendation.
 
-**Stop:** a re-check or board check changes a ruling: return it to the round.
-`board release` refuses a record (failing `board bd lint`): fix its
-text, rerun step 6.
+**Stop:** a spreading change, a hold at approval, or every record leaving the
+set: nothing releases and the records stay decided and held; run the round the
+engine names on them (its check loop opens with step-back). A contained change
+or an open premise sends only that record to a round.
 
 **Exit:** the set is released, each rule sits in its owner, and the counts are
 reported.
