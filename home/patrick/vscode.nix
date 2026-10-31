@@ -69,7 +69,8 @@
         "css.lint.ieHack" = "warning";
         "css.lint.important" = "warning";
         "css.lint.universalSelector" = "warning";
-        "diffEditor.codeLens" = true;
+        "diffEditor.codeLens" = false;
+        "diffEditor.hideUnchangedRegions.enabled" = false;
         "editor.cursorBlinking" = "smooth";
         "editor.cursorSmoothCaretAnimation" = "on";
         "editor.find.autoFindInSelection" = "multiline";
