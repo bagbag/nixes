@@ -5,13 +5,15 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface } from 'claude-code'
 
-import type { ConsoleBoard, ConsoleLenses, ConsoleOpened, ConsolePassRun, ConsoleQueued, ConsoleRefresh, ConsoleRole, ConsoleRound, ConsoleSection } from '../types'
+import type { ConsoleBoard, ConsoleLenses, ConsoleOpened, ConsolePassRun, ConsoleQueued, ConsoleRefresh, ConsoleRole, ConsoleRound, ConsoleSection, ConsoleStart } from '../types'
+
+import { isRoundOpen } from './engine'
 
 type $ = EngineInterface
 
 const roleState = atom({ plugin: 'console', key: 'role' } as const, null, { shape: 'role-1' })
 const drawnState = atom({ plugin: 'console', key: 'isDrawn' } as const, false)
-const roundState = atom({ plugin: 'console', key: 'round' } as const, null, { shape: 'round-6' })
+const roundState = atom({ plugin: 'console', key: 'round' } as const, null, { shape: 'round-7' })
 const roundErrorState = atom({ plugin: 'console', key: 'roundError' } as const, null)
 const boardState = atom({ plugin: 'console', key: 'board' } as const, null, { shape: 'board-4' })
 const passState = atom({ plugin: 'console', key: 'pass' } as const, null, { shape: 'pass-2' })
@@ -22,7 +24,8 @@ const refreshState = atom({ plugin: 'console', key: 'refresh' } as const, { sinc
 const dismissedState = atom({ plugin: 'console', key: 'isPaneDismissed' } as const, false)
 const expandedState = atom({ plugin: 'console', key: 'expanded' } as const, [] as ConsoleSection[], { shape: 'expanded-1' })
 
-const openedState = atom({ plugin: 'console', key: 'opened' } as const, null, { shape: 'opened-2' })
+const openedState = atom({ plugin: 'console', key: 'opened' } as const, null, { shape: 'opened-3' })
+const startState = atom({ plugin: 'console', key: 'start' } as const, null, { shape: 'start-1' })
 
 const GATE_KEYS_KEPT = 200
 
@@ -33,7 +36,10 @@ export async function getDrawn($: $): Promise<boolean> { return read($, drawnSta
 export async function setDrawn($: $, value: boolean): Promise<void> { await update($, drawnState, () => value) }
 
 export async function getRound($: $): Promise<ConsoleRound | null> { return read($, roundState) }
-export async function setRound($: $, value: ConsoleRound | null): Promise<void> { await update($, roundState, () => value) }
+export async function setRound($: $, value: ConsoleRound | null): Promise<void> {
+  await update($, roundState, () => value)
+  if (isRoundOpen(value)) await setStart($, null)  // a round started: the stored start is moot
+}
 
 export async function getRoundError($: $): Promise<string | null> { return read($, roundErrorState) }
 export async function setRoundError($: $, value: string | null): Promise<void> { await update($, roundErrorState, () => value) }
@@ -56,6 +62,10 @@ export async function getExpanded($: $): Promise<ConsoleSection[]> { return read
 export async function toggleExpanded($: $, section: ConsoleSection): Promise<void> {
   await update($, expandedState, open => open.includes(section) ? open.filter(one => one !== section) : [...open, section])
 }
+
+/** The start message waiting for a compaction (the suggestion's Start with compact); null when none. */
+export async function getStart($: $): Promise<ConsoleStart | null> { return read($, startState) }
+export async function setStart($: $, value: ConsoleStart | null): Promise<void> { await update($, startState, () => value) }
 
 export async function getOpened($: $): Promise<ConsoleOpened | null> { return read($, openedState) }
 export async function updateOpened($: $, change: (opened: ConsoleOpened | null) => ConsoleOpened | null): Promise<void> { await update($, openedState, change) }

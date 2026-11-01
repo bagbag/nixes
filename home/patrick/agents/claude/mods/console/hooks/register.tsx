@@ -1,22 +1,37 @@
 // The console mod (console-spec 3): a thin adapter between Claude Code and the protocol engine
 // and board. It fails open (the CLI works without it) except for recovery, and idles without a
 // registered role or a drawing surface. Round features act for lead and solo only.
-import type { Register } from 'claude-code'
+import type { EngineInterface, Register } from 'claude-code'
+
+import type { ConsoleStart } from '../types'
 
 import {
-  context, failOpen, message, notice, noteModel, PANE, recordPass, refreshAll, refreshBoard, refreshLater,
+  context, failOpen, message, notice, noteModel, PANE, pressSubmit, recordPass, refreshAll, refreshBoard, refreshLater,
   refreshRole, refreshRound, releaseRun, resetSession, stampReleaseRun, withContext,
 } from './core'
 import { answer, boardShow, decline, isRoundOpen, pass, pending as readPending, protocol, RELEASE_COMMAND, say, statusLine, toolArgv } from './engine'
 import { capture, judgeDialog } from './gate'
 import type { DialogInput } from './gate'
 import { drawBand, drawPane, PANE_MIN_COLUMNS } from './pane'
-import { addGate, getBoard, getGate, getPass, getRole, getRound, releaseRefresh, setPaneDismissed, setPass, setRound } from './state'
+import { addGate, getBoard, getGate, getPass, getRole, getRound, getStart, releaseRefresh, setPaneDismissed, setPass, setRound, setStart } from './state'
 import { consoleText, protocolCallText, protocolResultText } from './words'
 
 const PROTOCOL_TOOL = 'mcp__console__protocol'
 
 const REFRESH_MS = 60_000
+
+/** The stored start goes with the compaction that was to precede it: sent once that succeeded, dropped with a notice when it was skipped (a precompute installs nothing and keeps it). */
+async function settleStart($: EngineInterface, start: ConsoleStart, compacted: { skip?: string }, trigger: string): Promise<void> {
+  if (trigger === 'precompute') return
+  if (compacted.skip !== undefined) return abandonStart($, start, `compaction skipped: ${compacted.skip}`)
+  await setStart($, null)
+  $.clock.after(0, () => pressSubmit($, start.text).catch(failOpen($, 'sending the next round')))
+}
+
+async function abandonStart($: EngineInterface, start: ConsoleStart, why: string): Promise<void> {
+  await setStart($, null)
+  $.clock.after(0, () => notice($, `the next round was not started (${why}): ${start.text}`).catch(() => undefined))
+}
 
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
@@ -128,6 +143,7 @@ export const register: Register = on => {
   // Chat-typed messages of the person reach the engine's quote check (R-B9).
   on('prompt.submit', async ($, e, next) => {
     const origin = e.origin.kind
+    if ((origin === 'composer' || origin === 'bridge') && e.isMeta !== true) await setStart($, null)  // the person's own prompt: a stored start is moot
     if ((origin === 'composer' || origin === 'bridge') && e.isMeta !== true && e.command === undefined) {
       const ctx = await context($)
       const round = await getRound($)
@@ -174,14 +190,22 @@ export const register: Register = on => {
   // Recovery: the summary keeps the round, and the engine's status line follows it. Not fail-open:
   // a failure shows as a notice and is a defect to fix.
   on('session.compact', async ($, e, next) => {
-    await releaseRun($, key => key === 'compact')
+    await releaseRun($, key => key === 'compact' || key.startsWith('compact '))
     const ctx = await context($)
     if (!ctx.isRoundRole || e.agentId !== undefined) return next(e)
     const round = await refreshRound($, ctx.session)
-    if (round === null || !isRoundOpen(round)) return next(e)
-    const keep = `Keep the protocol round state: round ${round.round}, step ${round.step}, each question's id, status and open overlap, the pending pass, and that the round runs through the protocol tool (mcp__console__protocol).`
+    const isOpen = round !== null && isRoundOpen(round)
+    // No round is open: a stored start (a suggestion that compacts first) is kept through the compaction and sent after it.
+    const start = isOpen ? null : await getStart($)
+    if (!isOpen && start === null) return next(e)
+    const proposed = round?.next?.compact?.keep
+    const keep = isOpen
+      ? `Keep the protocol round state: round ${round.round}, step ${round.step}, each question's id, status and open overlap, the pending pass, and that the round runs through the protocol tool (mcp__console__protocol).`
+      : [`Keep the proposed next round, which starts right after this compaction: ${start?.text}.`,
+        proposed === undefined || e.instructions?.includes(proposed) === true ? '' : `Keep: ${proposed}`].filter(Boolean).join(' ')
     const compacted = await next({ ...e, instructions: [e.instructions, keep].filter(Boolean).join('\n\n') })
-    if (compacted.skip !== undefined || e.trigger === 'precompute') return compacted
+    if (start !== null) await settleStart($, start, compacted, e.trigger)
+    if (compacted.skip !== undefined || e.trigger === 'precompute' || !isOpen) return compacted
     try {
       const line = await statusLine($, ctx.session)
       $.clock.after(0, () => notice($, `after compaction: ${line}`).catch(() => undefined))
@@ -190,10 +214,19 @@ export const register: Register = on => {
       $.clock.after(0, () => notice($, `after compaction the round line failed: ${message(error)}; run protocol status --line`).catch(() => undefined))
       return compacted
     }
-  }).catch(($, e, next) => {
+  }).catch(async ($, e, next) => {
     // Recovery is not fail-open: say so where the person sees it, and compact without the round's instructions.
     $.clock.after(0, () => notice($, 'the round could not be kept through this compaction; run protocol status --line').catch(() => undefined))
-    return next(e)
+    const start = await getStart($).catch(() => null)
+    if (start === null || e.trigger === 'precompute') return next(e)
+    try {
+      const compacted = await next(e)
+      await settleStart($, start, compacted, e.trigger)
+      return compacted
+    } catch (error) {
+      await abandonStart($, start, `compaction failed: ${message(error)}`)
+      throw error
+    }
   })
 
   on('command.run', { command: 'console' }, async ($, e) => {

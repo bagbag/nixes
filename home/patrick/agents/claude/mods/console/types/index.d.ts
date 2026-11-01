@@ -2,7 +2,7 @@
 // contract-rulings R-B2..R-B5). The engine owns those shapes; this file mirrors them.
 
 export type ConsoleStep = 'collect' | 'select' | 'stage' | 'related' | 'check' | 'ask' | 'record' | 'closed'
-  | 'recheck' | 'board-check' | 'own-rulings' | 'approval' | 'owners' | 'release'
+  | 'recheck' | 'board-check' | 'own-rulings' | 'scoped' | 'approval' | 'owners' | 'release'
 export type ConsolePassOrigin = 'plugin' | 'composer' | 'bridge' | 'press' | 'model'
 
 export type ConsolePending = { id: string; command: string; args: string }
@@ -17,6 +17,8 @@ export type ConsoleQuestion = {
   kind: 'decision' | 'confirm-own-rulings'
   status: 'draft' | 'ready' | 'asked' | 'answered' | 'held'
   waitsOn: string[]
+  /** The selected items (board ids or pasted point ids) this rule question settles with one answer; empty for a plain question. */
+  settles: string[]
   overlaps: ConsoleOverlap[]
   answer: string | null
   answeredAt: string | null
@@ -42,11 +44,23 @@ export type ConsoleCounts = { questions: number; decided: number; toPlan: number
 /** Where the round stands inside its step: Collect's items, points and classes, Select's candidates, the selection. */
 export type ConsoleProgress = { items: number; points: number; classified: number; candidates: number | null; selected: string[] }
 
-/** A release run's record: still in the set, dropped (it left the set for a round), changed (it stopped the run) or released. */
-export type ConsoleRecord = { id: string; title: string; state: 'set' | 'dropped' | 'changed' | 'released'; reason: string | null }
+/** A release run's record: still in the set, revised (kept with a corrected record text), dropped (it left the set for a round), changed (it stopped the run) or released. */
+export type ConsoleRecord = { id: string; title: string; state: 'set' | 'revised' | 'dropped' | 'changed' | 'released'; reason: string | null }
 
 /** One line of the round's recent history, in plain words; `at` is local HH:MM. */
 export type ConsoleLogLine = { at: string; text: string }
+
+/** One proposed round: the question ids, a title, why this cluster, and whether the context is compacted before it starts. */
+export type ConsoleProposal = { ids: string[]; title: string; why: string; compact: boolean }
+
+/**
+ * A step the pane and the band offer: the engine's pending release, the model's proposed rounds (`keep`: what a
+ * compacting one keeps) or a compact-only proposal. The first is the recommended one.
+ */
+export type ConsoleSuggestion =
+  | ({ kind: 'round'; key: string; keep: string | null; isRecommended: boolean } & ConsoleProposal)
+  | { kind: 'release'; key: string; round: string; count: number; isRecommended: boolean }
+  | { kind: 'compact'; key: string; keep: string; isRecommended: boolean }
 
 /** `protocol show --json`; `round` null while no run is open (R-B3). A release run (`protocol` release) fills `records`. */
 export type ConsoleRound = {
@@ -71,8 +85,8 @@ export type ConsoleRound = {
   records: ConsoleRecord[]
   /** The last release, when it stopped: shown while no run is open, its records wait for a round. */
   stopped: { run: string; reason: string; ids: string[] } | null
-  /** What follows a close, the engine's knowledge: the release of the last round's recorded board records. Null while a run is open or nothing waits. */
-  next: { release: { round: string; count: number } } | null
+  /** What follows a close, the engine's knowledge: the release of the last round's recorded board records and the model's stored proposal (`protocol next --set`). Null while a run is open or nothing waits; `rounds` is left out when empty. */
+  next: { release?: { round: string; count: number }; rounds?: ConsoleProposal[]; compact?: { keep: string } } | null
   note: string | null
 }
 
@@ -123,13 +137,18 @@ export type ConsoleRefresh = { since: number | null; again: boolean }
 /** A board item as the pane's slot shows it: the decision or description first, the facts last, the linked ids for the facts' hover. */
 export type ConsoleItemSlot = { lines: string[]; facts: string; linked: string }
 
-/** What the pane shows open inline below its row (one at a time): a board item's summary, or a question's overlaps. */
+/** What the pane shows open inline below its row (one at a time): a board item's summary, a question's overlaps, or the items a rule question settles. */
 export type ConsoleOpened =
   | { kind: 'item'; id: string; from: string | null; phase: 'reading' | 'read' | 'failed'; text: string; slot: ConsoleItemSlot | null }  // `from`: the question whose overlaps listed it; `text`: the failure
   | { kind: 'overlaps'; question: string; overlaps: { id: string; title: string }[] }
+  | { kind: 'settles'; question: string; ids: string[] }
+  | { kind: 'suggestion'; key: string; ids: string[] }
+
+/** The start message a compacting suggestion sends once its compaction succeeded; it goes with the next compaction, typed prompt or round start. */
+export type ConsoleStart = { text: string; at: number }
 
 /** Pane lists the person expanded past their cap. */
-export type ConsoleSection = 'questions' | 'held' | 'items' | 'sessions'
+export type ConsoleSection = 'questions' | 'held' | 'items' | 'sessions' | 'log'
 
 declare module 'claude-code' {
   interface PluginState {
@@ -145,6 +164,7 @@ declare module 'claude-code' {
       lenses: Shaped<ConsoleLenses>
       expanded: Shaped<ConsoleSection[]>
       opened: Shaped<ConsoleOpened | null>
+      start: Shaped<ConsoleStart | null>
       refresh: Shaped<ConsoleRefresh>
       isPaneDismissed: boolean
     }

@@ -57,8 +57,8 @@ For anything non-trivial or hard to reverse, resolve open points and ambiguities
   must not work).
 - Ask in rounds: every open decision whose premises (the decisions and facts
   its options assume) are settled, one question each, grouped by shared
-  premise, no cap per round; a decision resting on an open one waits for a
-  later round. Decompose a decision whose parts rest on different premises
+  premise, no cap per round; a decision resting on an open one waits until
+  that one is answered. Decompose a decision whose parts rest on different premises
   into one question per part; ask the settled parts now and hold the
   rest, naming the rule that applies meanwhile. After the last round, start substantive
   work once the user confirms the resulting premise.

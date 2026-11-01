@@ -2,6 +2,8 @@
 import { describe, expect, test } from 'claude-code/testing'
 
 import { HOME, notices, PANE_PROPS, roundJson, SESSION, world } from './fixture'
+import { parseRound } from '../hooks/engine'
+import { suggestions } from '../hooks/pane'
 import { protocolCallText, protocolResultText, pullsText, recommendationText, roundWords } from '../hooks/words'
 
 const PANE = { plugin: 'console', component: 'Pane', requestId: 'console', props: PANE_PROPS } as const
@@ -55,14 +57,27 @@ describe('pane', () => {
     await ui.unmount()
   })
 
-  test('held questions collapse from 3 on and expand on press', async ($, on) => {
-    const held = (id: string) => ({ id, board: null, text: `${id}?`, title: `Held ${id}`, kind: 'decision', status: 'held', waitsOn: ['q1'], overlaps: [], answer: null })
-    const { clock } = world(on, { round: roundJson({ questions: [held('q5'), held('q6'), held('q7')] }) })
+  test('held questions count toward 10 with the rest: up to 10 all show, beyond it they fold behind their toggle', async ($, on) => {
+    const row = (id: string, status: string) => ({ id, board: null, text: `${id}?`, title: `Row ${id}`, kind: 'decision', status, waitsOn: status === 'held' ? ['q1'] : [], overlaps: [], answer: null, answeredAt: null })
+    const ten = [...[1, 2, 3, 4, 5, 6, 7].map(n => row(`q${n}`, 'ready')), row('q8', 'held'), row('q9', 'held'), row('q10', 'held')]
+    const { w, clock } = world(on, { round: roundJson({ questions: ten }) })
     await ready($, clock)
-    const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
-    expect(await texts(ui)).not.toContain('Held q5')
+    let ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+    expect(await texts(ui)).toContain('Row q8')
+    expect(await texts(ui)).toContain('Row q10')
+    expect(await ui.find({ key: 'held-toggle' })).toBeUndefined()
+    expect(await texts(ui)).not.toContain('more ▸')
+    await ui.unmount()
+    w.round = roundJson({ questions: [...ten, row('q11', 'ready')] })
+    await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
+    await clock.settle()
+    ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+    expect(await texts(ui)).toContain('Row q7')
+    expect(await texts(ui)).not.toContain('Row q8')
+    expect(await texts(ui)).toContain('3 held')
     await ui.press({ key: 'held-toggle' })
-    expect(await texts(ui)).toContain('Held q5')
+    expect(await texts(ui)).toContain('Row q8')
+    expect(await texts(ui)).toContain('Row q10')
     await ui.unmount()
   })
 
@@ -305,20 +320,20 @@ describe('band', () => {
 
   const closed = (next: unknown) => roundJson({ round: null, step: null, check: null, pending: null, batch: null, questions: [], next })
 
-  test('after a close with records to release the band offers Release Round in the accent color', async ($, on) => {
+  test('after a close with records to release the band offers Release Round in the suggestion color', async ($, on) => {
     const { w, clock } = world(on, { round: closed({ release: { round: 'r4', count: 3 } }) })
     await ready($, clock)
     const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
     expect(await texts(ui)).toContain('r4 closed · 3 records decided ·')
     expect(await ui.find({ key: 'band-ground' })).toBeUndefined()
-    expect((await ui.findAll({ type: 'Text', text: 'Release Round' })).map(one => one.props.color)).toEqual(['claude'])
+    expect((await ui.findAll({ type: 'Text', text: 'Release Round' })).filter(one => one.text === 'Release Round').map(one => one.props.color)).toEqual(['suggestion'])
     await ui.press({ key: 'band-release' })
     await clock.settle()
     expect(w.commands).toEqual([{ command: 'release-round', args: '' }])
     expect(JSON.parse(w.calls.find(one => one.argv[3] === 'pass')?.stdin ?? '{}')).toEqual({ command: 'release-round', args: '', pending: null })
     await ui.unmount()
     const pane = await $.ui.mount({ ...PANE, surface: 'terminal' })
-    expect((await pane.findAll({ type: 'Text', text: 'Release Round' })).map(one => one.props.color)).toEqual(['claude'])
+    expect((await pane.findAll({ type: 'Text', text: 'Release Round' })).filter(one => one.text === 'Release Round').map(one => one.props.color)).toEqual(['suggestion'])
     await pane.unmount()
   })
 
@@ -466,6 +481,26 @@ describe('long lists', () => {
     expect(await texts(ui)).not.toContain('Alpha')
   })
 
+  test('a rule question shows a settles mark; its row opens the settled ids, a board id opens its item', async ($, on) => {
+    const { clock, session } = world(on, { round: roundJson({ questions: [q(1, 'draft', { settles: ['tstdl-a', 'pt2'] }), q(2, 'draft')] }) })
+    await ready($, clock)
+    const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+    const drawn = await texts(ui)
+    expect(drawn).toContain('settles 2')
+    expect(drawn.match(/settles \d/g)).toHaveLength(1)
+    await ui.press({ key: 'q-q1-st' })
+    const open = await texts(ui)
+    expect(open).toContain('tstdl-a')
+    expect(open).toContain('pt2')
+    await ui.press({ key: 'st-q1-tstdl-a-open' })
+    await clock.settle()
+    expect(await texts(ui)).toContain('Keep it.')
+    expect(notices(session)).toEqual([])
+    await ui.press({ key: 'q-q1-st' })
+    await ui.press({ key: 'q-q1-st' })
+    expect(await texts(ui)).not.toContain('pt2')
+  })
+
   test('board lists cap at 6 rows, active sessions first', async ($, on) => {
     const items = [1, 2, 3, 4, 5, 6, 7, 8].map(n => ({ id: `tstdl-i${n}`, type: 'decision', status: 'open', title: `Item ${n}`, holder: '617adf08' }))
     const session = (n: number, state: string) => ({ session: `s-${n}`, role: 'agent', actor: `actor00${n}`, pulls: [], holds: 0, workers: null, state, idleSince: null, claimable: 0 })
@@ -576,6 +611,23 @@ describe('long lists', () => {
     expect(drawn.indexOf('13:06')).toBeLessThan(drawn.indexOf('13:05'))  // newest first
   })
 
+  test('the log shows the last 10 lines; +N more opens the whole round', async ($, on) => {
+    const log = Array.from({ length: 13 }, (_, i) => ({ at: '13:00', text: `log line ${i + 1}` }))
+    const { clock } = world(on, { round: roundJson({ log }) })
+    await ready($, clock)
+    const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+    let drawn = await texts(ui)
+    expect(drawn).toContain('log line 13')
+    expect(drawn).toContain('log line 4')
+    expect(drawn).not.toContain('log line 3\n')
+    expect(drawn).toContain('+3 more ▸')
+    await ui.press({ key: 'log-toggle' })
+    drawn = await texts(ui)
+    expect(drawn).toContain('log line 1\n')
+    expect(drawn).toContain('show fewer ▾')
+    await ui.unmount()
+  })
+
   test('a release run lists its records with their state, the reason on hover, and why it stopped', async ($, on) => {
     const records = [
       { id: 'tstdl-a', title: 'Cache store', state: 'set', reason: null },
@@ -662,5 +714,246 @@ describe('long lists', () => {
       .toBe('r1 · ground: q1 changed, 1 not applied · next: step-back, cycle 2/3')
     expect(protocolResultText(JSON.stringify({ version: 1, note: 'r1 · answered q1 (chat) · next: record the answers\nRecorded.' })))
       .toBe('r1 · answered q1 (chat) · next: record the answers')
+  })
+})
+
+describe('suggestions', () => {
+  const closed = (next: unknown) => roundJson({ round: null, step: null, check: null, pending: null, batch: null, questions: [], next })
+  const PROPOSED = {
+    rounds: [
+      { ids: ['tstdl-a', 'tstdl-b'], title: 'Cache questions', why: 'same module as the context read', compact: false },
+      { ids: ['tstdl-c'], title: 'Queue retry', why: 'highest priority left', compact: true },
+    ],
+    compact: { keep: 'the cache decisions' },
+  }
+  const parsed = (next: unknown) => parseRound(closed(next))
+
+  test('suggestions() offers rounds first (the first recommended), then Release Round, then a compact-only proposal', () => {
+    expect(suggestions(null)).toEqual([])
+    expect(suggestions(parsed(null))).toEqual([])
+    expect(suggestions(parsed({ release: { round: 'r4', count: 3 } }))).toEqual([
+      { kind: 'release', key: 'release', round: 'r4', count: 3, isRecommended: true }])
+    expect(suggestions(parsed(PROPOSED)).map(one => [one.kind, one.key, one.isRecommended])).toEqual([['round', 'round-0', true], ['round', 'round-1', false]])
+    expect(suggestions(parsed(PROPOSED))[1]).toMatchObject({ ids: ['tstdl-c'], compact: true, keep: 'the cache decisions' })
+    expect(suggestions(parsed(PROPOSED))[0]).toMatchObject({ compact: false, keep: null })
+    expect(suggestions(parsed({ ...PROPOSED, release: { round: 'r4', count: 1 } })).map(one => [one.kind, one.isRecommended]))
+      .toEqual([['round', true], ['round', false], ['release', false]])
+    expect(suggestions(parsed({ compact: { keep: 'all decisions' } }))).toEqual([{ kind: 'compact', key: 'compact', keep: 'all decisions', isRecommended: true }])
+    // a compact proposal beside rounds is the rounds' keep, not a Compact suggestion of its own
+    expect(suggestions(parsed({ rounds: [PROPOSED.rounds[0]], compact: { keep: 'x' } })).map(one => one.kind)).toEqual(['round'])
+  })
+
+  test('suggestions() stays empty while a round is open or a dialog is', () => {
+    expect(suggestions(parseRound(roundJson()))).toEqual([])
+    expect(suggestions(parseRound(roundJson({ next: PROPOSED })))).toEqual([])
+    expect(suggestions(parsed(PROPOSED), true)).toEqual([])
+  })
+
+  test('the pane lists a row per round with its Start, the recommended one in the suggestion color; a row opens its ids inline', async ($, on) => {
+    const { w, clock } = world(on, { round: closed(PROPOSED) })
+    await ready($, clock)
+    const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+    const color = async (text: string) => (await ui.findAll({ type: 'Text', text })).filter(one => one.text === text).map(one => one.props.color)
+    expect(await texts(ui)).toContain('Suggestions')
+    expect(await color('Cache questions · 2 questions · same module as the context read')).toEqual(['suggestion'])
+    expect(await color('Queue retry · 1 question · highest priority left · compacts first')).toEqual([undefined])
+    expect((await ui.find({ key: 'sg-round-0-start' }))?.text).toBe('Start')
+    expect(await ui.find({ key: 'sg-round-1-start' })).toBeDefined()
+    expect(await texts(ui)).not.toContain('click an id to open it')
+    await ui.press({ key: 'sg-round-0-row' })
+    expect(await texts(ui)).toContain('click an id to open it')
+    await ui.press({ key: 'sg-round-0-tstdl-b-open' })
+    await clock.settle()
+    expect(await texts(ui)).toContain('Keep it.')
+    expect(w.calls.some(one => one.argv[1] === 'show' && one.argv[2] === 'tstdl-b')).toBe(true)
+    await ui.press({ key: 'sg-round-0-row' })  // the item replaced the list; the row lists the ids again, a second press closes
+    expect(await texts(ui)).toContain('click an id to open it')
+    await ui.press({ key: 'sg-round-0-row' })
+    expect(await texts(ui)).not.toContain('click an id to open it')
+    await ui.unmount()
+  })
+
+  test('the pane shows no Suggestions area without a proposal, with a round open, or for an agent', async ($, on) => {
+    const { w, clock } = world(on, { round: closed(null) })
+    await ready($, clock)
+    let ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+    expect(await texts(ui)).not.toContain('Suggestions')
+    await ui.unmount()
+    w.round = roundJson({ next: PROPOSED })
+    await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
+    await clock.settle()
+    ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+    expect(await texts(ui)).not.toContain('Suggestions')
+    await ui.unmount()
+  })
+
+  test('Release Round and a compact-only proposal show in Suggestions, and their Actions twins take the suggestion color exactly then', async ($, on) => {
+    const { w, clock } = world(on, { round: closed({ release: { round: 'r4', count: 3 } }) })
+    await ready($, clock)
+    let ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+    const color = async (text: string) => (await ui.findAll({ type: 'Text', text })).filter(one => one.text === text).map(one => one.props.color)
+    expect(await color('Release Round · r4 closed, 3 records decided')).toEqual(['suggestion'])
+    expect(await color('Release Round')).toEqual(['suggestion'])
+    expect(await color('Compact')).toEqual([])
+    await ui.press({ key: 'sg-release-start' })
+    await clock.settle()
+    expect(w.commands).toEqual([{ command: 'release-round', args: '' }])
+    await ui.unmount()
+    w.round = closed({ compact: { keep: 'all decisions' } })
+    await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
+    await clock.settle()
+    ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+    expect(await color('Compact · keeps all decisions')).toEqual(['suggestion'])
+    expect(await color('Compact')).toEqual(['suggestion'])
+    expect(await color('Release Round')).toEqual([])
+    await ui.press({ key: 'sg-compact-start' })
+    await clock.settle()
+    expect(w.commands.at(-1)).toEqual({ command: 'compact', args: 'all decisions' })
+    await ui.unmount()
+    w.round = closed(PROPOSED)  // rounds alone twin neither
+    await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
+    await clock.settle()
+    ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+    expect(await color('Release Round')).toEqual([])
+    expect(await color('Compact')).toEqual([])
+    expect((await ui.find({ key: 'actions-row-compact' }))?.text).toBe('Compact')
+    await ui.unmount()
+  })
+
+  test('the band shows the recommended suggestion; its Start sends the start message', async ($, on) => {
+    const { w, clock } = world(on, { round: closed(PROPOSED) })
+    await ready($, clock)
+    const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
+    expect(await texts(ui)).toContain('Cache questions · 2 questions ·')
+    expect(await texts(ui)).not.toContain('Queue retry')
+    expect((await ui.findAll({ type: 'Text', text: 'Start' })).map(one => one.props.color)).toEqual(['suggestion'])
+    await ui.press({ key: 'band-start' })
+    await clock.settle()
+    expect(w.prompts).toEqual(['Start the next round on Cache questions: tstdl-a, tstdl-b'])
+    expect(w.commands).toEqual([])
+    await ui.unmount()
+  })
+
+  test('the band offers a compact-only proposal, and leaves the prompt to a dialog', async ($, on) => {
+    const { w, clock } = world(on, { round: closed({ compact: { keep: 'all decisions' } }) })
+    on('ui.render', ($, e) => {
+      const { Text } = $.ui.resolve(e) as any
+      return <Text>engine</Text>
+    })
+    await ready($, clock)
+    let ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
+    expect(await texts(ui)).toContain('Compact · keeps all decisions ·')
+    await ui.press({ key: 'band-compact' })
+    await clock.settle()
+    expect(w.commands).toEqual([{ command: 'compact', args: 'all decisions' }])
+    await ui.unmount()
+    ui = await $.ui.mount({ ...BAND, props: { ...BAND.props, hasSurvey: true }, surface: 'terminal' })
+    expect(await texts(ui)).toContain('engine')
+    expect(await texts(ui)).not.toContain('Compact')
+    await ui.unmount()
+  })
+
+  test('a Start on a round that does not compact sends the start message at once; a repeat is dropped', async ($, on) => {
+    const { w, clock } = world(on, { round: closed(PROPOSED) })
+    await ready($, clock)
+    const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+    await ui.press({ key: 'sg-round-0-start' })
+    await ui.press({ key: 'sg-round-0-start' })
+    await clock.settle()
+    expect(w.prompts).toEqual(['Start the next round on Cache questions: tstdl-a, tstdl-b'])
+    expect(w.commands).toEqual([])
+    await ui.unmount()
+  })
+
+  describe('a Start on a round that compacts first', () => {
+    const START = 'Start the next round on Queue retry: tstdl-c'
+    const messages = [{ role: 'user' as const, text: 'hi', toolUses: [] }]
+    const compact = ($: any) => $.session.compact({ trigger: 'manual', instructions: 'the cache decisions', messages })
+
+    /** The press: stores the start message and runs /compact with the proposal's keep. */
+    async function pressed($: any, on: any, answer: (instructions: string) => unknown = () => ({ messages: [{ role: 'user', text: 'summary', toolUses: [] }] })) {
+      const found = world(on, { round: closed(PROPOSED) })
+      const seen: string[] = []
+      on('session.compact', (_: unknown, e: { instructions?: string }) => { seen.push(e.instructions ?? ''); return answer(e.instructions ?? '') })
+      await ready($, found.clock)
+      const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+      await ui.press({ key: 'sg-round-1-start' })
+      await found.clock.settle()
+      await ui.unmount()
+      return { ...found, seen }
+    }
+
+    test('stores the message and runs /compact with the keep; the compaction hook keeps the proposal and sends it once compaction succeeded', async ($, on) => {
+      const { w, clock, seen } = await pressed($, on)
+      expect(w.commands).toEqual([{ command: 'compact', args: 'the cache decisions' }])
+      expect(w.prompts).toEqual([])  // nothing is sent before the compaction
+      await compact($)
+      expect(seen[0]).toContain('the cache decisions')
+      expect(seen[0]).toContain(`Keep the proposed next round, which starts right after this compaction: ${START}.`)
+      expect(seen[0]?.match(/the cache decisions/g)).toHaveLength(1)  // the keep is in the instructions once
+      await clock.settle()
+      expect(w.prompts).toEqual([START])
+      await compact($)  // cleared: the next compaction sends nothing
+      await clock.settle()
+      expect(w.prompts).toEqual([START])
+    })
+
+    test('a precompute installs nothing: the stored message waits for the compaction itself', async ($, on) => {
+      const { w, clock } = await pressed($, on)
+      await $.session.compact({ trigger: 'precompute', messages })
+      await clock.settle()
+      expect(w.prompts).toEqual([])
+      await compact($)
+      await clock.settle()
+      expect(w.prompts).toEqual([START])
+    })
+
+    test('a skipped compaction clears it and says so', async ($, on) => {
+      const { w, clock, session } = await pressed($, on, () => ({ skip: 'vetoed by a hook' }))
+      await compact($)
+      await clock.settle()
+      expect(w.prompts).toEqual([])
+      expect(notices(session).some(one => one.includes('the next round was not started (compaction skipped: vetoed by a hook)') && one.includes(START))).toBe(true)
+      await $.session.compact({ trigger: 'manual', messages })
+      await clock.settle()
+      expect(w.prompts).toEqual([])
+    })
+
+    test('a failing compaction clears it and says so', async ($, on) => {
+      const { w, clock, session } = await pressed($, on, () => { throw new Error('summarizer down') })
+      await compact($).catch(() => undefined)
+      await clock.settle()
+      expect(w.prompts).toEqual([])
+      expect(notices(session).some(one => one.includes('the next round was not started (compaction failed') && one.includes(START))).toBe(true)
+    })
+
+    test("a plugin's prompt or a hidden one does not clear it", async ($, on) => {
+      const { w, clock } = await pressed($, on)
+      await $.prompt.submit({ text: 'from a plugin', origin: { kind: 'plugin', name: 'x' }, wait: false } as never)
+      await $.prompt.submit({ text: 'hidden', origin: { kind: 'composer' }, isMeta: true, wait: false } as never)
+      await compact($)
+      await clock.settle()
+      expect(w.prompts).toEqual(['from a plugin', 'hidden', START])
+    })
+
+    for (const kind of ['composer', 'bridge'] as const) {
+      test(`a prompt the person types (${kind}) drops it`, async ($, on) => {
+        const { w, clock } = await pressed($, on)
+        await $.prompt.submit({ text: 'use flow, not protocol', origin: { kind }, wait: false } as never)
+        await compact($)
+        await clock.settle()
+        expect(w.prompts).toEqual(['use flow, not protocol'])
+      })
+    }
+
+    test('a round start drops it', async ($, on) => {
+      const { w, clock } = await pressed($, on)
+      w.round = roundJson()
+      await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
+      await clock.settle()
+      await compact($)
+      await clock.settle()
+      expect(w.prompts).toEqual([])
+    })
   })
 })

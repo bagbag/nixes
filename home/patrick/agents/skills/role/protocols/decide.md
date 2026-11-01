@@ -13,6 +13,11 @@ acceptance of designs and user-judged outcomes. Read
 Give each step's output as one line when it passes; add detail only for
 findings or stops.
 
+**Session start:** a deciding session with no open round runs Release 7's
+[Next](#release) step right after it starts (a solo session may propose
+planning); a recovered session resumes its open round (`protocol show`). A
+proposal starts nothing until the user presses Start or says go.
+
 ## Authority
 
 - Rule under
@@ -63,8 +68,10 @@ findings or stops.
 
 ## Round
 
-**Entry:** open questions, a pasted list or consumer report, or the user asks
-for open items.
+**Entry:** open questions, a pasted list or consumer report, the user asks
+for open items, a new request's decisions, or an asking skill's interview
+(define-goal, question-me). A go-ahead on a proposal stays in chat; Accept and
+Release keep their own asks.
 
 Run the round through `protocol` (`$HOME/.agents/bin/protocol`; in Claude the
 console's `protocol` tool): `start round` (stdin `{"points": [...]}` for
@@ -105,6 +112,9 @@ the judgment each report carries.
    [Asking the user](../../shared/asking.md#asking-the-user), from its Check
    step.
    Output: the walkthrough and the questions.
+   Answers that release held questions (every `waitsOn` answered) continue the
+   round: the engine reruns the check on them (path pass, Base loop, refine
+   pair, lean pass, `challenge-rulings`), then the next batch asks them.
 6. **Record.** Give each answered decision its record under
    [Rulings](../../shared/board-coordination.md#rulings); when the user asks
    for the overall picture first, record the round after the walkthrough.
@@ -115,6 +125,8 @@ the judgment each report carries.
    Revise a record in place until release; record later changes as new
    records. Close ratified `needs_ratification` records under the same
    reference.
+   Record once, when nothing is left to ask; held questions still waiting on
+   an unanswered question carry over.
    Output: `decided <ids>`.
 
 Apply a change the user asks for to staged questions through `protocol edit`
@@ -124,8 +136,8 @@ with their words as the quote, not through a pass.
 restart the affected questions under the decision protocol's
 [Changed premises](../../shared/decision-protocol.md#changed-premises).
 
-**Exit:** each round question is decided, re-asked in the next round, or
-deferred by the user.
+**Exit:** each round question is decided, deferred by the user, or still held
+on an unanswered question, which a later round asks.
 
 ## Release
 
@@ -143,8 +155,13 @@ below own the judgment each report carries.
    the set's other records for coherence; verify citations and counts
    (`verify` for large sets). Where something changed since the decision,
    give its reach: contained (name why no other ruling moves) or spreads
-   (another ruling may move, or you are unsure).
-   Output: one line per record: unchanged, or the change and its reach.
+   (another ruling may move, or you are unsure). A contained change also says
+   whether it touches only your own parts (rationale, evidence, a clause the
+   chosen option did not state) or the decision (what the user decided); when
+   unsure, the decision. An own change keeps the record: give the corrected
+   record text, which the engine writes.
+   Output: one line per record: unchanged, or the change, its reach and, when
+   contained, what it touches.
 2. **Board check.** Run `board related <terms>` across the
    set, closed items and canonical docs included (`--docs <doc paths>`), and
    act on every hit class:
@@ -166,9 +183,13 @@ below own the judgment each report carries.
    fields of [Asking the user](../../shared/asking.md#asking-the-user); mark it
    sure only when it is the only realistic clean option and grounded.
    Output: own-rulings table with a sure mark per ruling.
-4. **Approval.** Walk the user through steps 1-3 before the engine's dialog;
-   a typed or pressed `/release-round` needs none when every own ruling is
-   sure and no record left the set or changed.
+   With revised records the engine then has one step-back and one ground pass
+   run on them (the console starts each); report each revised record as
+   unchanged or a change, as in step 1.
+4. **Approval.** Walk the user through steps 1-3 before the engine's dialog,
+   showing each changed or revised record with its correction; a typed or
+   pressed `/release-round` needs none when every own ruling is sure and no
+   record left the set, changed or was revised.
    Output: the user's approval.
 5. **Owner writes.** Write each rule into its one owner, replacing the text it
    supersedes (old text to `history/` under project-memory), and name each path
@@ -184,15 +205,24 @@ below own the judgment each report carries.
    ids sent back from review.
 7. **Next.** List waiting questions, `in_review` designs, ready milestones,
    finished epics whose acceptance names the user and what waits on the user
-   (`board health --items user`);
-   recommend one next step by priority and what it unblocks; wait for the
-   user.
+   (`board health --items user`); run `protocol next` for the ranked seeds;
+   recommend the next round as the cluster asking.md Scope gives, naming its
+   questions, or, when no question round leads, the other next step by
+   priority and what it unblocks; report up to 3 clusters with
+   `protocol next --set` (`rounds`: `ids`, `title`, `why`, `compact`; the
+   cluster that reuses the context you read first, `compact: false`; other
+   clusters `compact: true`; only `compact: {keep}` when nothing fits); wait
+   for the user.
    Output: the list and the recommendation.
 
 **Stop:** a spreading change, a hold at approval, or every record leaving the
 set: nothing releases and the records stay decided and held; run the round the
-engine names on them (its check loop opens with step-back). A contained change
-or an open premise sends only that record to a round.
+engine names on them (its check loop opens with step-back). A contained
+change to the user's decision (or an unsure one) or an open premise sends only
+that record to a round, its reason shown at that round's Stage. A contained
+change of your own parts keeps the record, revised, and the release runs the
+scoped step-back and ground pass on it (once per release) before the approval;
+a pass that finds the decision touched drops it.
 
 **Exit:** the set is released, each rule sits in its owner, and the counts are
 reported.

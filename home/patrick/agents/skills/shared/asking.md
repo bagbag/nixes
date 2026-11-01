@@ -7,8 +7,9 @@ approval. Give each step's output compactly.
 1. **Scope.** Compose the round under the global instructions' Ask in rounds.
    On a large board, scope it by [Priority](../shared/board-core.md#priority)
    first: the highest-priority unblocked question and every ready question
-   sharing its premise, root cause, consumer concept or flow. When the user
-   flagged one instance, find all of its kind, including earlier rulings.
+   sharing its premise, root cause, consumer concept, flow, or the module and
+   sources its grounding reads. When the user flagged one instance, find all
+   of its kind, including earlier rulings.
    Output: the round's decisions; the instance list where one was flagged.
 2. **Check.** In a round run through `protocol` (decide protocol Round), the
    engine sequences the passes below and caps the loop: follow its output and
@@ -25,6 +26,9 @@ approval. Give each step's output compactly.
    Derive process questions from the root fix; step up an abstraction level
    when all options feel wrong. Classify sequencing and process choices as the
    planning session's call.
+   A pass that changes nothing reports one line in chat: that it changed
+   nothing and what it covered; the full `checked` list goes only into its
+   pass report.
    Output: each invocation and what it changed; what stays unsure, as
    questions.
 3. **Walk through.** In chat, readable without arc context: items and ids in

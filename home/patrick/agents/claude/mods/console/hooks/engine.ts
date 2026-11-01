@@ -4,7 +4,7 @@
 import type { EngineInterface } from 'claude-code'
 
 import type {
-  ConsoleAgent, ConsoleBoard, ConsoleCounts, ConsoleDialogQuestion, ConsoleHeld, ConsoleItem, ConsolePassOrigin, ConsolePending, ConsoleProgress, ConsoleQuestion,
+  ConsoleAgent, ConsoleBoard, ConsoleCounts, ConsoleDialogQuestion, ConsoleHeld, ConsoleItem, ConsolePassOrigin, ConsolePending, ConsoleProgress, ConsoleProposal, ConsoleQuestion,
   ConsoleRecord, ConsoleRole, ConsoleRound, ConsoleSession,
 } from '../types'
 
@@ -231,6 +231,7 @@ function parseQuestion(value: unknown): ConsoleQuestion {
     kind: raw.kind === 'confirm-own-rulings' ? 'confirm-own-rulings' : 'decision',
     status: (STATUSES.includes(status) ? status : 'draft') as ConsoleQuestion['status'],
     waitsOn: list(raw.waitsOn).map(text).filter(id => id !== ''),
+    settles: list(raw.settles).map(text).filter(id => id !== ''),
     overlaps: list(raw.overlaps).map(one => ({ id: text(record(one).id), title: text(record(one).title), outcome: nullableText(record(one).outcome) })).filter(one => one.id !== ''),
     answer: nullableText(raw.answer),
     answeredAt: nullableText(raw.answeredAt),
@@ -244,7 +245,7 @@ function parseQuestion(value: unknown): ConsoleQuestion {
   }
 }
 
-const RECORD_STATES: readonly string[] = ['set', 'dropped', 'changed', 'released']
+const RECORD_STATES: readonly string[] = ['set', 'revised', 'dropped', 'changed', 'released']
 
 function parseRecord(value: unknown): ConsoleRecord {
   const raw = record(value)
@@ -263,9 +264,20 @@ function parseProgress(value: unknown): ConsoleProgress | null {
 }
 
 function parseNext(value: unknown): ConsoleRound['next'] {
-  const release = record(record(value).release)
+  const raw = record(value)
+  const release = record(raw.release)
   const round = text(release.round)
-  return round === '' ? null : { release: { round, count: count(release.count) } }
+  const rounds = list(raw.rounds).map((one): ConsoleProposal => {
+    const proposed = record(one)
+    return { ids: list(proposed.ids).map(text).filter(id => id !== ''), title: text(proposed.title), why: text(proposed.why), compact: proposed.compact === true }
+  }).filter(one => one.ids.length > 0 && one.title !== '')
+  const keep = text(record(raw.compact).keep)
+  const next: NonNullable<ConsoleRound['next']> = {
+    ...(round === '' ? {} : { release: { round, count: count(release.count) } }),
+    ...(rounds.length === 0 ? {} : { rounds }),
+    ...(keep === '' ? {} : { compact: { keep } }),
+  }
+  return Object.keys(next).length === 0 ? null : next
 }
 
 export function parseRound(value: unknown): ConsoleRound {

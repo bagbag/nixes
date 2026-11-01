@@ -26,6 +26,17 @@ describe('engine contract', () => {
     expect(parseRound(ENGINE_CONTRACT.answered).questions[0]?.answeredAt).toBe('2026-01-01T00:00:00Z')
     expect(parseRound(ENGINE_CONTRACT.closed).next).toEqual({ release: { round: 'r2', count: 1 } })
     expect(parseRound(ENGINE_CONTRACT.check).next).toBeNull()
+    expect(parseRound(ENGINE_CONTRACT.proposed).next).toEqual({
+      release: { round: 'r2', count: 1 },
+      rounds: [
+        { ids: ['fx-q1', 'fx-q2'], title: 'Cache questions', why: 'same module as the context read', compact: false },
+        { ids: ['fx-q3'], title: 'Queue retry', why: 'highest priority left', compact: true },
+      ],
+      compact: { keep: 'the cache decisions' },
+    })
+    expect(parseRound(ENGINE_CONTRACT.compactOnly).next).toEqual({ release: { round: 'r2', count: 1 }, compact: { keep: 'all decisions of this session' } })
     expect(parseRound(ENGINE_CONTRACT.check).questions[0]?.changedBy).toBeNull()
+    expect(parseRound(ENGINE_CONTRACT.revised).records.map(one => one.state)).toEqual(['set', 'revised'])
+    expect(parseRound(ENGINE_CONTRACT.revised).records[1]?.reason).toBe('changed (contained, own): the rationale cited a wrong size')
   })
 })

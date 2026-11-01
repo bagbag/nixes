@@ -46,6 +46,7 @@ export const ENGINE_CONTRACT = {
         "kind": "decision",
         "status": "draft",
         "waitsOn": [],
+        "settles": [],
         "overlaps": [],
         "answer": null,
         "answeredAt": null,
@@ -128,6 +129,7 @@ export const ENGINE_CONTRACT = {
         "kind": "decision",
         "status": "asked",
         "waitsOn": [],
+        "settles": [],
         "overlaps": [],
         "answer": null,
         "answeredAt": null,
@@ -174,6 +176,14 @@ export const ENGINE_CONTRACT = {
     "log": [
       {
         "at": "00:00",
+        "text": "round started"
+      },
+      {
+        "at": "00:00",
+        "text": "classified 1 point: 1 user"
+      },
+      {
+        "at": "00:00",
         "text": "selected pt1"
       },
       {
@@ -182,7 +192,7 @@ export const ENGINE_CONTRACT = {
       },
       {
         "at": "00:00",
-        "text": "step-back: no change"
+        "text": "step-back (path): no change"
       },
       {
         "at": "00:00",
@@ -194,15 +204,15 @@ export const ENGINE_CONTRACT = {
       },
       {
         "at": "00:00",
-        "text": "step-back: no change"
+        "text": "step-back (refine): no change"
       },
       {
         "at": "00:00",
-        "text": "ground: no change"
+        "text": "ground (refine): no change"
       },
       {
         "at": "00:00",
-        "text": "ground: no change"
+        "text": "ground (lean q1): no change"
       },
       {
         "at": "00:00",
@@ -253,6 +263,7 @@ export const ENGINE_CONTRACT = {
         "kind": "decision",
         "status": "answered",
         "waitsOn": [],
+        "settles": [],
         "overlaps": [],
         "answer": "Keep",
         "answeredAt": "2026-01-01T00:00:00Z",
@@ -280,11 +291,23 @@ export const ENGINE_CONTRACT = {
     "log": [
       {
         "at": "00:00",
+        "text": "round started"
+      },
+      {
+        "at": "00:00",
+        "text": "classified 1 point: 1 user"
+      },
+      {
+        "at": "00:00",
+        "text": "selected pt1"
+      },
+      {
+        "at": "00:00",
         "text": "staged q1"
       },
       {
         "at": "00:00",
-        "text": "step-back: no change"
+        "text": "step-back (path): no change"
       },
       {
         "at": "00:00",
@@ -296,15 +319,15 @@ export const ENGINE_CONTRACT = {
       },
       {
         "at": "00:00",
-        "text": "step-back: no change"
+        "text": "step-back (refine): no change"
       },
       {
         "at": "00:00",
-        "text": "ground: no change"
+        "text": "ground (refine): no change"
       },
       {
         "at": "00:00",
-        "text": "ground: no change"
+        "text": "ground (lean q1): no change"
       },
       {
         "at": "00:00",
@@ -437,6 +460,142 @@ export const ENGINE_CONTRACT = {
       "release": {
         "round": "r2",
         "count": 1
+      }
+    }
+  },
+  "revised": {
+    "version": 1,
+    "session": "0000-contract",
+    "protocol": "release",
+    "round": "r5",
+    "title": "fx-a, fx-b",
+    "summary": null,
+    "step": "board-check",
+    "check": null,
+    "pending": null,
+    "questions": [],
+    "batch": null,
+    "counts": {
+      "questions": 0,
+      "decided": 0,
+      "toPlan": 0,
+      "inReview": 0,
+      "forUser": 0
+    },
+    "progress": null,
+    "log": [
+      {
+        "at": "00:00",
+        "text": "release started"
+      },
+      {
+        "at": "00:00",
+        "text": "re-check: 1 unchanged, fx-b changed"
+      },
+      {
+        "at": "00:00",
+        "text": "revised fx-b: the rationale cited a wrong size"
+      }
+    ],
+    "records": [
+      {
+        "id": "fx-a",
+        "title": "Cache store",
+        "state": "set",
+        "reason": null
+      },
+      {
+        "id": "fx-b",
+        "title": "Cache size",
+        "state": "revised",
+        "reason": "changed (contained, own): the rationale cited a wrong size"
+      }
+    ],
+    "stopped": null,
+    "next": null
+  },
+  "proposed": {
+    "version": 1,
+    "session": "0000-contract",
+    "protocol": null,
+    "round": null,
+    "title": null,
+    "summary": null,
+    "step": null,
+    "check": null,
+    "pending": null,
+    "questions": [],
+    "batch": null,
+    "counts": {
+      "questions": 0,
+      "decided": 0,
+      "toPlan": 0,
+      "inReview": 0,
+      "forUser": 0
+    },
+    "progress": null,
+    "log": [],
+    "records": [],
+    "stopped": null,
+    "next": {
+      "release": {
+        "round": "r2",
+        "count": 1
+      },
+      "rounds": [
+        {
+          "ids": [
+            "fx-q1",
+            "fx-q2"
+          ],
+          "title": "Cache questions",
+          "why": "same module as the context read",
+          "compact": false
+        },
+        {
+          "ids": [
+            "fx-q3"
+          ],
+          "title": "Queue retry",
+          "why": "highest priority left",
+          "compact": true
+        }
+      ],
+      "compact": {
+        "keep": "the cache decisions"
+      }
+    }
+  },
+  "compactOnly": {
+    "version": 1,
+    "session": "0000-contract",
+    "protocol": null,
+    "round": null,
+    "title": null,
+    "summary": null,
+    "step": null,
+    "check": null,
+    "pending": null,
+    "questions": [],
+    "batch": null,
+    "counts": {
+      "questions": 0,
+      "decided": 0,
+      "toPlan": 0,
+      "inReview": 0,
+      "forUser": 0
+    },
+    "progress": null,
+    "log": [],
+    "records": [],
+    "stopped": null,
+    "next": {
+      "release": {
+        "round": "r2",
+        "count": 1
+      },
+      "compact": {
+        "keep": "all decisions of this session"
       }
     }
   }

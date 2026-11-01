@@ -3,29 +3,41 @@
 // ` • ` = toggle or link, secondary text `inactive`, hover hints gathered at the bottom.
 import type { EngineInterface, RenderPropsOf } from 'claude-code'
 
-import type { ConsoleBoard, ConsoleQuestion, ConsoleRecord, ConsoleRole, ConsoleRound, ConsoleSection, ConsoleSession } from '../types'
+import type { ConsoleBoard, ConsoleQuestion, ConsoleRecord, ConsoleRole, ConsoleRound, ConsoleSection, ConsoleSession, ConsoleSuggestion } from '../types'
 
-import { pressOpenItem, pressOpenOverlaps, pressRun, pressSubmit, pressView } from './core'
+import { pressOpenItem, pressOpenOverlaps, pressOpenSettles, pressOpenSuggestion, pressRun, pressStart, pressSubmit, pressView, startText } from './core'
 import { isRoundOpen, RELEASE_COMMAND, ROUND_ROLES } from './engine'
 import { getBoard, getExpanded, getLenses, getOpened, getPass, getRole, getRound, getRoundError, toggleExpanded, updateLenses } from './state'
-import { answerText, COUNT_LABELS, GROUND, GROUND_BASE, lensArgs, LENS_SETS, pullsText, recommendationMark, recommendationText, roundWords, runNoun, staleHolds, staleSessions, STEP_BACK_BASE, WHAT, WHERE } from './words'
+import { answerText, COUNT_LABELS, GROUND, GROUND_BASE, lensArgs, LENS_SETS, plural, pullsText, recommendationMark, recommendationText, roundWords, runNoun, staleHolds, staleSessions, STEP_BACK_BASE, WHAT, WHERE } from './words'
 import type { Lens, LensCommand } from './words'
 
 type $ = EngineInterface
 
 export const DOUBLE_PRESS_MS = 450
-const HELD_COLLAPSE_FROM = 3
-const QUESTIONS_SHOWN = 10  // every asked question and the 2 latest answered always show; upcoming ones fill the rest
+const QUESTIONS_SHOWN = 10  // up to this many questions of any kind show whole; beyond it every asked one and the 2 latest answered show, upcoming ones fill the rest, held ones fold
 const ANSWERED_SHOWN = 2
+const LOG_SHOWN = 10  // the newest log lines; the rest of the round's log folds behind +N more
 const BOARD_ROWS_SHOWN = 6
 const SESSION_ORDER: Record<string, number> = { active: 0, idle: 1, gone: 3 }
 const LIVE_AGENT: readonly string[] = ['pending', 'running', 'waiting', 'idle']
 const LABEL = 11
 const SESSION_COLUMNS = { role: 7, tool: 8, actor: 10, pulls: 9, holds: 9, workers: 13, state: 9 } as const
 
-/** No run is open and the engine names a release next: the last round's recorded records wait for it. */
-const isReleaseNext = (round: ConsoleRound): round is ConsoleRound & { next: NonNullable<ConsoleRound['next']> } =>
-  !isRoundOpen(round) && round.next !== null
+/**
+ * The steps to offer while no run is open: the model's proposed rounds (the first recommended), then the pending release,
+ * then a compact-only proposal. Nothing while a run is open or a dialog is (the band's own states); the pane, the band and
+ * the Actions twins all read this one function.
+ */
+export function suggestions(round: ConsoleRound | null, isDialogOpen = false): ConsoleSuggestion[] {
+  if (round === null || isRoundOpen(round) || isDialogOpen || round.next === null) return []
+  const { release, rounds = [], compact } = round.next
+  const found: ConsoleSuggestion[] = [
+    ...rounds.map((one, i) => ({ ...one, kind: 'round' as const, key: `round-${i}`, keep: one.compact ? compact?.keep ?? '' : null, isRecommended: false })),
+    ...(release === undefined ? [] : [{ kind: 'release' as const, key: 'release', round: release.round, count: release.count, isRecommended: false }]),
+    ...(rounds.length === 0 && compact !== undefined ? [{ kind: 'compact' as const, key: 'compact', keep: compact.keep, isRecommended: false }] : []),
+  ]
+  return found.map((one, i) => ({ ...one, isRecommended: i === 0 }))
+}
 
 /** The narrowest body the layout's fixed columns fit: below it /console prints instead of opening. */
 export const PANE_MIN_COLUMNS = Object.values(SESSION_COLUMNS).reduce((sum, width) => sum + width, 0) + 2
@@ -33,7 +45,7 @@ export const PANE_MIN_COLUMNS = Object.values(SESSION_COLUMNS).reduce((sum, widt
 const QUESTION_COLOR: Record<ConsoleQuestion['status'], string> = { answered: 'success', asked: 'suggestion', ready: 'claude', draft: 'subtle', held: 'warning' }
 const ITEM_COLOR: Record<string, string> = { open: 'claude', in_progress: 'suggestion', in_review: 'warning', decided: 'success', released: 'success', blocked: 'error' }
 const SESSION_COLOR: Record<string, string> = { active: 'success', idle: 'warning', stopped: 'error', gone: 'inactive' }
-const RECORD_COLOR: Record<ConsoleRecord['state'], string> = { set: 'claude', dropped: 'warning', changed: 'error', released: 'success' }
+const RECORD_COLOR: Record<ConsoleRecord['state'], string> = { set: 'claude', revised: 'suggestion', dropped: 'warning', changed: 'error', released: 'success' }
 
 // A lens press within DOUBLE_PRESS_MS of the same lens runs it alone; a reload forgetting it is harmless.
 let lastLensPress: { key: string; at: number } | undefined
@@ -57,6 +69,7 @@ export async function drawPane($: $, e: { surface: string; props: RenderPropsOf[
   const passRun = await getPass($)
   const hint = hints()
   const isRoundRole = role !== null && ROUND_ROLES.includes(role.role)
+  const suggested = isRoundRole ? suggestions(round) : []
 
   const banner = (key: string, title: string, meta: string, top: number) => (
     <Box key={key} flexDirection="row" columnGap={1} marginTop={top} alignItems="flex-start">
@@ -101,6 +114,21 @@ export async function drawPane($: $, e: { surface: string; props: RenderPropsOf[
   }
   const overlapSlot = (question: string) => {
     if (opened?.kind === 'item' && opened.from === question) return slot(opened.id, question)
+    if (opened?.kind === 'settles' && opened.question === question) {
+      return (
+        <Box key={`open-st-${question}`} flexDirection="column" paddingLeft={2}>
+          <Text color="inactive">one answer settles these the same way; click an id to open it</Text>
+          {opened.ids.map(id => (
+            <Box key={`st-${question}-${id}`} flexDirection="row">
+              {/* A pasted point has no board item to open. */}
+              {/^pt\d+$/.test(id)
+                ? <Text bold>{id}</Text>
+                : <Button key={`st-${question}-${id}-open`} plain onPress={() => pressOpenItem($, id, question)}><Text bold>{id}</Text></Button>}
+            </Box>
+          ))}
+        </Box>
+      )
+    }
     if (opened?.kind !== 'overlaps' || opened.question !== question) return null
     return (
       <Box key={`open-ov-${question}`} flexDirection="column" paddingLeft={2}>
@@ -113,6 +141,55 @@ export async function drawPane($: $, e: { surface: string; props: RenderPropsOf[
         ))}
       </Box>
     )
+  }
+  // The ids a suggestion lists, opened inline below its row; each opens its item like an overlap does.
+  const suggestionSlot = (key: string) => {
+    if (opened?.kind === 'item' && opened.from === key) return slot(opened.id, key)
+    if (opened?.kind !== 'suggestion' || opened.key !== key) return null
+    return (
+      <Box key={`open-sg-${key}`} flexDirection="column" paddingLeft={2}>
+        <Text color="inactive">click an id to open it</Text>
+        {opened.ids.map(id => (
+          <Box key={`sg-${key}-${id}`} flexDirection="row">
+            <Button key={`sg-${key}-${id}-open`} plain onPress={() => pressOpenItem($, id, key)}><Text bold>{id}</Text></Button>
+          </Box>
+        ))}
+      </Box>
+    )
+  }
+  const suggestionBlock = () => {
+    if (suggested.length === 0) return []
+    return [
+      banner('suggestions-banner', 'Suggestions', 'the next step, proposed', 0),
+      <Box key="suggestions" flexDirection="column" marginTop={1}>
+        {suggested.map(one => {
+          const color = one.isRecommended ? 'suggestion' : undefined
+          const what = one.kind === 'round'
+            ? `${one.title} · ${plural(one.ids.length, 'question')} · ${one.why}${one.compact ? ' · compacts first' : ''}`
+            : one.kind === 'release'
+              ? `Release Round · ${one.round} closed, ${plural(one.count, 'record')} decided`
+              : `Compact · keeps ${one.keep}`
+          hint.add(`sg-${one.key}`, one.kind === 'round'
+            ? `Start sends "${startText(one)}"${one.compact ? `, after /compact keeping: ${one.keep ?? ''}` : ''}; click the row to list its questions`
+            : one.kind === 'release' ? 'Runs /release-round' : `Runs /compact ${one.keep}`)
+          return (
+            <Box key={`sg-${one.key}`} flexDirection="column">
+              <Box flexDirection="row" columnGap={1}>
+                <Box key={`sg-${one.key}-start-box`} flexShrink={0} hover={{ scope: `sg-${one.key}` }}>
+                  <Button key={`sg-${one.key}-start`} onPress={() => pressStart($, one)}>Start</Button>
+                </Box>
+                <Box key={`sg-${one.key}-row-box`} flexGrow={1} flexShrink={1}>
+                  {one.kind === 'round'
+                    ? <Button key={`sg-${one.key}-row`} plain onPress={() => pressOpenSuggestion($, one.key, one.ids)}><Text color={color} wrap="truncate-end">{what}</Text></Button>
+                    : <Text color={color} wrap="truncate-end">{what}</Text>}
+                </Box>
+              </Box>
+              {suggestionSlot(one.key)}
+            </Box>
+          )
+        })}
+      </Box>,
+    ]
   }
   const run = (command: string, args = '') => () => pressRun($, command, args)
   const more = (section: ConsoleSection, hidden: number, what: string) => {
@@ -135,7 +212,7 @@ export async function drawPane($: $, e: { surface: string; props: RenderPropsOf[
   // Board block
 
   const boardBlock = (who: ConsoleRole, view: ConsoleBoard | null) => {
-    const rows: any[] = [banner('board-banner', 'Board', `${who.role} ${who.actor}`, 0)]
+    const rows: any[] = [banner('board-banner', 'Board', `${who.role} ${who.actor}`, suggested.length > 0 ? 1 : 0)]
     if (view === null) {
       rows.push(<Box key="board-wait" marginTop={1}><Text color="inactive">reading the board…</Text></Box>)
       return rows
@@ -257,6 +334,7 @@ export async function drawPane($: $, e: { surface: string; props: RenderPropsOf[
     hint.add(`q-${question.id}-explain`, `Runs /explain ${focus}`)
     hint.add(`q-${question.id}-sb`, `Runs /step-back ${focus}`)
     hint.add(`q-${question.id}-ov`, `Open the board items ${question.id} overlaps here; each needs an outcome before asking`)
+    hint.add(`q-${question.id}-st`, `Open the items ${question.id} settles with one answer`)
     return (
       <Box key={`q-${question.id}`} flexDirection="column">
       <Box flexDirection="row">
@@ -271,6 +349,13 @@ export async function drawPane($: $, e: { surface: string; props: RenderPropsOf[
             {question.status === 'answered' && question.answer !== null && <Text color="inactive"> → {answerText(question.answer)}</Text>}
             {question.status !== 'answered' && mark !== null && <Text color={mark.color}> {mark.text}</Text>}
             {question.changedBy !== null && <Text color="inactive"> ↻ {question.changedBy}</Text>}
+            {question.settles.length > 0 && (
+              <Box key={`q-${question.id}-st-box`} flexDirection="row" hover={{ scope: `q-${question.id}-st` }}>
+                <Button key={`q-${question.id}-st`} plain onPress={() => pressOpenSettles($, question.id, question.settles)}>
+                  <Text color="inactive"> settles {question.settles.length}</Text>
+                </Button>
+              </Box>
+            )}
             {overlaps.length > 0 && (
               <Box key={`q-${question.id}-ov-box`} flexDirection="row" hover={{ scope: `q-${question.id}-ov` }}>
                 <Text color="warning"> · </Text>
@@ -294,29 +379,33 @@ export async function drawPane($: $, e: { surface: string; props: RenderPropsOf[
     )
   }
 
-  // In reading order: answered, asked, then the upcoming ones in the engine's ask order (its list order).
+  // In reading order: answered, asked, then the upcoming ones in the engine's ask order (its list order), then the held ones.
+  // Questions of every kind count toward QUESTIONS_SHOWN: up to it all show; beyond it the asked and the latest answered
+  // show, upcoming ones fill the rest, and the held ones fold behind their toggle.
   const questionRows = (open: ConsoleRound) => {
     const held = open.questions.filter(one => one.status === 'held')
     const answered = open.questions.filter(one => one.status === 'answered')
       .sort((a, b) => (a.answeredAt ?? '').localeCompare(b.answeredAt ?? ''))
     const asked = open.questions.filter(one => one.status === 'asked')
     const upcoming = [...open.questions.filter(one => one.status === 'ready'), ...open.questions.filter(one => one.status === 'draft')]
+    if (open.questions.length <= QUESTIONS_SHOWN) {
+      return <Box key="round-questions" flexDirection="column" marginTop={1}>{[...answered, ...asked, ...upcoming, ...held].map(questionRow)}</Box>
+    }
     const isAll = expanded.includes('questions')
     const latest = isAll ? answered : answered.slice(-ANSWERED_SHOWN)
     const next = isAll ? upcoming : upcoming.slice(0, Math.max(0, QUESTIONS_SHOWN - asked.length - latest.length))
     const hidden = answered.length + asked.length + upcoming.length - (latest.length + asked.length + next.length)
     const isHeldOpen = expanded.includes('held')
-    const isCollapsed = held.length >= HELD_COLLAPSE_FROM && !isHeldOpen
     hint.add('held-toggle', isHeldOpen ? 'Collapse the held questions' : 'Show the held questions')
     return (
       <Box key="round-questions" flexDirection="column" marginTop={1}>
         {[...latest, ...asked, ...next].map(questionRow)}
         {more('questions', hidden, 'questions')}
-        {!isCollapsed && held.map(questionRow)}
-        {held.length >= HELD_COLLAPSE_FROM && (
+        {isHeldOpen && held.map(questionRow)}
+        {held.length > 0 && (
           <Box key="held-toggle-box" hover={{ scope: 'held-toggle' }}>
             <Button key="held-toggle" plain onPress={() => toggleExpanded($, 'held')}>
-              <Text color="warning">{held.length} held</Text><Text color="inactive"> {isCollapsed ? '▸' : '▾'}</Text>
+              <Text color="warning">{held.length} held</Text><Text color="inactive"> {isHeldOpen ? '▾' : '▸'}</Text>
             </Button>
           </Box>
         )}
@@ -453,18 +542,21 @@ export async function drawPane($: $, e: { surface: string; props: RenderPropsOf[
     return rows
   }
 
-  // The round's log, below the controls: newest first.
+  // The round's log, below the controls: newest first, the last LOG_SHOWN lines; the toggle shows the whole round.
   const logBlock = (current: ConsoleRound | null) => {
     if (current === null || !isRoundOpen(current) || current.log.length === 0) return []
+    const lines = [...current.log].reverse()
+    const shown = expanded.includes('log') ? lines : lines.slice(0, LOG_SHOWN)
     return [
       banner('log-banner', 'Log', `round ${current.round}`, 1),
       <Box key="round-log" flexDirection="column" marginTop={1}>
-        {[...current.log].reverse().map((line, i) => (
+        {shown.map((line, i) => (
           <Box key={`log-${i}`} flexDirection="row">
             <Box width={7} flexShrink={0}><Text color="inactive">{line.at}</Text></Box>
             <Box flexGrow={1} flexShrink={1}><Text color={line.text.startsWith('refused') ? 'warning' : 'inactive'} wrap="truncate-end">{line.text}</Text></Box>
           </Box>
         ))}
+        {more('log', lines.length - shown.length, 'log lines')}
       </Box>,
     ]
   }
@@ -498,13 +590,15 @@ export async function drawPane($: $, e: { surface: string; props: RenderPropsOf[
   }
 
   const actionsRow = () => {
+    // The twins of the Suggestions rows: in the suggestion color exactly when suggestions() offers them.
+    const twin = (kind: 'release' | 'compact', label: string) =>
+      suggested.some(one => one.kind === kind) ? <Text color="suggestion">{label}</Text> : label
     const entries = [
       { key: 'commit', scope: 'action-commit', label: 'Commit', onPress: run('commit') },
       { key: 'push', scope: 'action-push', label: 'Commit and Push', onPress: () => pressSubmit($, 'commit and push') },
-      ...(isRoundRole ? [{ key: 'release', scope: 'action-release', onPress: run(RELEASE_COMMAND),
-        label: round !== null && isReleaseNext(round) ? <Text color="claude">Release Round</Text> : 'Release Round' }] : []),
+      ...(isRoundRole ? [{ key: 'release', scope: 'action-release', onPress: run(RELEASE_COMMAND), label: twin('release', 'Release Round') }] : []),
       { key: 'retro', scope: 'action-retro', label: 'Retro', onPress: run('retro') },
-      { key: 'compact', scope: 'action-compact', label: 'Compact', onPress: run('compact') },
+      { key: 'compact', scope: 'action-compact', label: twin('compact', 'Compact'), onPress: run('compact') },
     ]
     hint.add('action-commit', 'Runs /commit')
     hint.add('action-push', 'Sends "commit and push" as your message')
@@ -516,6 +610,7 @@ export async function drawPane($: $, e: { surface: string; props: RenderPropsOf[
 
   if (role === null) return <Text color="inactive">The console waits for a registered role (/role).</Text>
   const body = [
+    ...(isRoundRole ? suggestionBlock() : []),
     ...boardBlock(role, board),
     ...(isRoundRole ? [...roundBlock(round), ...controlsBlock()] : []),
     ...(isRoundRole ? [] : [banner('controls-banner', 'Controls', '', 1)]),
@@ -536,19 +631,24 @@ export async function drawPane($: $, e: { surface: string; props: RenderPropsOf[
   )
 }
 
-/** The band above the prompt: an open run in words plus the Base passes; after a close with records to release, the way to release them. */
+/** The band above the prompt: an open run in words plus the Base passes; with no run open, the recommended suggestion (a dialog open leaves the prompt to it). */
 export async function drawBand($: $, e: { props: RenderPropsOf['AbovePrompt'] } & Parameters<$['ui']['resolve']>[0]) {
   const role = await getRole($)
   const round = await getRound($)
   if (e.props.hasSurvey || role === null || !ROUND_ROLES.includes(role.role) || round === null) return undefined
   const { Box, Text, Button } = $.ui.resolve(e) as any
   if (!isRoundOpen(round)) {
-    if (!isReleaseNext(round)) return undefined
-    const { round: closed, count } = round.next.release
+    const top = suggestions(round)[0]
+    if (top === undefined) return undefined
+    const what = top.kind === 'round' ? `${top.title} · ${plural(top.ids.length, 'question')}${top.compact ? ' · compacts first' : ''} ·`
+      : top.kind === 'release' ? `${top.round} closed · ${plural(top.count, 'record')} decided ·`
+        : `Compact · keeps ${top.keep} ·`
     return (
       <Box flexDirection="row" columnGap={1} flexWrap="wrap">
-        <Text color="inactive">{closed} closed · {count} {count === 1 ? 'record' : 'records'} decided ·</Text>
-        <Button key="band-release" onPress={() => pressRun($, RELEASE_COMMAND, '')}><Text color="claude">Release Round</Text></Button>
+        <Text color="inactive">{what}</Text>
+        <Button key={`band-${top.kind === 'round' ? 'start' : top.kind}`} onPress={() => pressStart($, top)}>
+          <Text color="suggestion">{top.kind === 'release' ? 'Release Round' : top.kind === 'compact' ? 'Compact' : 'Start'}</Text>
+        </Button>
       </Box>
     )
   }

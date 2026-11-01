@@ -184,8 +184,10 @@ A round:
 - Collect classifies every pasted point and the board items in the round's
   scope; `start round --discussion` takes the pasted points alone, and
   `--no-board <dir>` (required without a board) writes the records as files
-  in `<dir>` with no board reads or writes.
-- Select claims the selected items; Stage requires a plain round title and
+  in `<dir>` with no board reads or writes. Items another live session holds
+  stay out, named in one line; a gone session's hold is offered, marked.
+- Select claims the selected items (a gone session's hold through `board
+  take`); Stage requires a plain round title and
   summary and, per question, a plain title, 2-4 options, the recommended
   option and its strength under decision-protocol.md Recommendation strength
   (a lean names its cause, a strong one carries the five-criterion checklist).
@@ -194,6 +196,31 @@ A round:
   engine's constants) and who reads each field; an option may carry a
   `preview` (single-select only). A refused Stage report, or a new question in
   a pass report, lists every error at once.
+- A rule question settles several selected items (board ids or pasted
+  points) that one answer settles the same way: its `settles` lists their
+  keys, and the items need no question of their own (never on a
+  confirm-own-rulings question; an item is settled once and is no other
+  question's `board`/`for`). Invariant: every selected key is covered by a
+  question's `board`, `for` or `settles`; Stage and every update set (a pass
+  report, `protocol edit`) is checked once after all its updates, and one that
+  leaves a key uncovered is refused as a whole, naming the keys with the other
+  errors. A merge or split is such an update set (set `settles`, add the rule
+  question, `remove` the instance questions, or the reverse); only unanswered
+  questions change. A merge counts as a change for the Base loop. Settled board
+  items stay claimed by the round through Record into the release (a deferred
+  or removed rule question releases them as any other claim). Record writes one
+  record per rule (its own `board`, else a new decision item) and refuses one
+  whose `rationale`/`decision` names no settled id; in the same `bd batch` as
+  the `relate` links the record inherits the settled items' `blocks` links both
+  ways (the open items a settled item blocks wait on the record, the open items
+  it waits on block the record; links among the settled items, to the record or
+  to an item it is linked to already are left, and a blocks link wins over a
+  relate), because a released ruling blocks what it changes until planned. The
+  release pre-fills, for each settled board item of a rule record in its set
+  (this session's state), the answers row `answered: close` and the close by
+  that record, so `board release --closes` closes it; one still open afterwards
+  follows the partial-failure path. A `--no-board` round only names the settled
+  points in the record file. `show --json` questions carry `settles`.
 - Related searches each new draft and needs an outcome per hit.
 - Check runs, per round: the path pass once (`step-back goal foundations`,
   before the first Base cycle; its changes flow into the Base loop, and new or
@@ -205,7 +232,9 @@ A round:
   loop under the cap, and the pair does not repeat), one targeted
   `ground assumptions sources probe <ids>` pass on every lean (evidence or
   preference: make it strong with evidence, or name what it rests on; no
-  loop), then challenge-rulings before every first batch. Base's own lenses
+  loop), then challenge-rulings, last before a batch and again whenever a pass
+  changed questions since its last run (its own changes rerun the Base loop,
+  the cycle cap bounds the repeats, a run that changes nothing ends it). Base's own lenses
   (consumer, root-fix, bloat, gaps) are in neither set. The path and refine
   passes run once per round, flagged on the round: a check rebuilt at
   Ask does not repeat them. `protocol restart <ids>` (also several calls
@@ -265,16 +294,29 @@ records`), one run per session, on a board only:
 - `start release` takes the last closed round's board records still decided,
   `start release <ids>` others; ids another live (or idle) session holds are
   refused, a gone session's hold is taken, unheld records are claimed.
-- Re-check and Board check give each changed record a reach: contained drops
-  it from the set, spreads stops the run (nothing releases, the records stay
-  decided and held, the close names the round for them). The board check
-  names supersedes and answered questions; a premise hit drops the record.
+- Re-check and Board check give each changed record a reach: contained, with
+  `touches` `own` (only the model's rationale, evidence or a clause the chosen
+  option did not state; `file` is the corrected record text) or `decision`
+  (unsure counts as decision), or spreads. Contained + decision drops the
+  record from the set (its reason shows at the next round's Stage); spreads
+  stops the run (nothing releases, the records stay decided and held, the
+  close names the round for them). Contained + own keeps the record
+  `revised`: the engine runs `board record <id> <file>` (a failure refuses
+  the report), a conditional approval lapses, and before the approval one
+  scoped `step-back` then one scoped `ground` pass run on the revised ids
+  (console-started and observed like a round's passes; Codex is told to run
+  the skill), each reporting the re-check's `records` shape (an own change
+  rewrites again, a decision change drops, a spread stops). The pair runs
+  once per release; a later revision does not re-arm it. The approval
+  question and walkthrough name the revised records with their change. The
+  board check names supersedes and answered questions; a premise hit drops
+  the record.
 - Own rulings mark each ruling sure or not. Approval comes from the person
   only: a typed or pressed `/release-round` (the console relays it as `pass
   --origin composer|bridge|press` with command `release-round`, which starts
   the release on the ids leading its arguments, else on the default set, or
   stamps the open one) approves when every ruling is sure
-  and the set is unchanged; otherwise an engine-issued `confirm-own-rulings`
+  and the set is unchanged (nothing dropped or revised); otherwise an engine-issued `confirm-own-rulings`
   question goes through the ask machinery (dialog, chat quote, Codex
   `model-reported`; only the Release or Hold pick counts).
 - Owner writes checks each owner: written paths exist (repo paths from the
@@ -285,19 +327,40 @@ records`), one run per session, on a board only:
   supersedes; it reads statuses first and reruns only what remains after a
   failure.
 
+When a batch's answers release held questions (every `waitsOn` answered), the
+round continues with them instead of recording: Ask hands over to a scoped
+rerun like `restart`'s (a fresh check cycle on their ids, answered questions
+untouched; the path pass, the Base loop, the refine pair on their ids, the lean
+pass and `challenge-rulings`), then the next batch asks them; chains release
+batch by batch, and Record runs once, when nothing is left to ask. A held
+question waiting on a question that is still unanswered carries over.
+
+`protocol next` prints the top 5 seed questions of the next round (open
+decisions, unblocked, not held by another live session; members of an open
+milestone first, then priority, then the work they hold, in Select's ordering)
+and the stored proposal; without a board it has no seeds. `protocol next --set`
+(stdin `{"rounds": [{"ids", "title", "why", "compact"}], "compact": {"keep"}}`)
+stores the model's proposal while no round is open: at most 3 rounds, each with
+at least one id and a title within 60 characters; `compact` is required with a
+compacting round or without rounds. Every error is listed in one refusal, and
+`start round` clears the proposal. The release's close text tells the model to
+run `protocol next` and report its proposal.
+
 Every step's output opens with a headline: the call's events in the Log's
 words, then the next step (`r1 · ground: q3 changed, 1 not applied · next:
 step-back, cycle 2/5`); the console shows it as the call's chat row.
 
-`show --json` is the console's contract (version 1; its real output in seven
+`show --json` is the console's contract (version 1; its real output in ten
 states is `claude/mods/console/tests/engine-contract.ts`, regenerated with
 `WRITE_CONSOLE_CONTRACT=1`): round title and summary, step progress, the
 questions with their recommendation and strength (and `changedBy`, the pass
-whose most recent report changed them), the batch, the round's recent log, a
-release's `records` with their state, and `stopped` (the last release's stop,
-shown while no run is open), and `next` (no run open and the last round
-recorded board records: `{"release": {"round", "count"}}`, until a release
-uses them). The engine-issued release approval question is `Release r4's 3
+whose most recent report changed them), the batch, the round's whole log (pass lines name their kind: `step-back
+(path)`, `ground (lean q39 q40)`, scoped ids for a restart's or a release's
+rerun; a leading "no change" of a summary is left out; consecutive `recorded`
+lines merge), a release's `records` with their state, and `stopped` (the last release's stop,
+shown while no run is open), and `next` (no run open: `{"release": {"round", "count"}}` while the last
+round's recorded board records wait for a release, and the stored proposal's
+`rounds` and `compact`; null when none). The engine-issued release approval question is `Release r4's 3
 records?` (reasons for asking go to the model's ask text and the Log).
 Headline pass summaries cut at a word boundary with `…`. `status --line` is
 the recovery line, which compact-reorient appends for Codex sessions. `start`
@@ -316,8 +379,14 @@ compaction. A `protocol` call reads as two rows in the chat: its arguments and
 the engine's headline. The Console pane (`/console` shows it as text;
 `/console-item <id>` prints an item's summary in the chat) shows Board
 (counts, this session's items, sessions with runtime and pull initials, stale
-holds, live workers), Round (title, summary, step words, questions capped at
-10 with their recommendation on hover and, after the title, a mark (`◆
+holds, live workers), Suggestions while no run is open and the engine's `next`
+offers something (one row per proposed round: `[ Start ] <title> · N questions ·
+<why>`, with `· compacts first` where set, the first row recommended in the
+theme's `suggestion` color; a click on a row lists its ids, each opening its
+item; Release Round and a compact-only proposal show here too), Round (title,
+summary, step words, questions: up to 10 of any kind show whole, beyond that the
+asked ones, the 2 latest answered and the upcoming ones fill the 10 and the
+held ones fold behind their toggle; each with their recommendation on hover and, after the title, a mark (`◆
 strong`, `your call`, `unverified`), the answer on answered rows (`→ …`, cut;
 the title truncates, the answer and marks keep their line) and `↻ <pass>` for
 the questions the most recent pass report changed; a release lists its records
@@ -326,19 +395,28 @@ with their state, and a stopped release its reason and next round), Controls
 Base, Path (`goal foundations`), Refine (`decisions clean overfit mechanics`)
 and All (every lens in list order), Ground Base and All, each with the focus
 for Step Back, without changing the selection; Decide; Actions,
-whose Release Round turns accent-colored while the engine's `next` names a
-release) and the round's Log, newest first. A click on an item id (board
+whose Release Round and Compact take the `suggestion` color exactly when the
+Suggestions area offers them) and the round's Log, newest first, the last 10
+lines with a `+N more` toggle for the whole round. A click on an item id (board
 items, stale holds, release records) opens it inline below the row (`reading…`
 meanwhile, the error in the error color if the read fails): up to 4 lines of
 its `## Decision` (else the description's start, headings dropped), then a
 facts line (type, priority, holder, labels, parent, link counts, comments,
 `/console-item <id>`) whose hover lists the linked ids and a second click
 closes it; a question's overlaps link opens the overlap ids and titles the
-same way, each id opening its item; one thing is open at a time. A pane the
+same way, each id opening its item; a rule question's `settles N` mark opens
+the settled ids the same way (a pasted point has no item to open); one thing is
+open at a time. A pane the
 person closed stays closed until `/console`. The band above the prompt shows
-the round during one (a release run the same way), after a close with records
-to release `rN closed · M records decided ·` with a Release Round button (the
-pane's press), and nothing otherwise; the idle-agent notification goes out
+the round during one (a release run the same way), and with no run open the
+recommended suggestion (`<title> · N questions ·` with Start, `rN closed · M
+records decided ·` with Release Round, or Compact), nothing while a dialog is
+open or nothing is offered. Start sends `Start the next round on <title>: <ids>`
+as your prompt; for a round marked compact it stores that message, runs
+`/compact` with the proposal's `keep`, and the compaction hook keeps the
+proposal in the summary and sends the message once the compaction succeeded (a
+skipped or failed compaction drops it with a notice; so do your next typed
+prompt and a round start); the idle-agent notification goes out
 once per idle episode across consoles. It idles without a registered role or a
 drawing surface and fails open except for recovery. Test it with `claude
 plugin test home/patrick/agents/claude/mods/console`.

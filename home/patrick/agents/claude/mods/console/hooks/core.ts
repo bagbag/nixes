@@ -2,12 +2,12 @@
 // declarations throughout: past an import, the engine follows $ only into those.
 import type { EngineInterface, ToolCallResult } from 'claude-code'
 
-import type { ConsoleBoard, ConsolePassOrigin, ConsoleRound } from '../types'
+import type { ConsoleBoard, ConsolePassOrigin, ConsoleRound, ConsoleSuggestion } from '../types'
 
 import { boardItem, boardViews, isRoundOpen, pass, PASS_COMMANDS, readRole, RELEASE_COMMAND, ROUND_ROLES, show, stampRelease, stateDir } from './engine'
 import {
   claimRefresh, getDrawn, getPaneDismissed, getPass, getRole, getRound, releaseRefresh, setBoard, setDrawn, setPass, setRole, setRound, setRoundError,
-  takeRefreshAgain, updateOpened, updateQueued,
+  setStart, takeRefreshAgain, updateOpened, updateQueued,
 } from './state'
 import { itemSlot } from './words'
 
@@ -155,7 +155,8 @@ async function registerTool($: $): Promise<void> {
     name: 'protocol',
     description: [
       "Runs the protocol engine for this session's round (`protocol <args>`): one call per step, per-question updates as JSON on stdin; the output is the next step.",
-      'Read: ["show","--json"], ["show"], ["pending"], ["status","--line"], ["history"].',
+      'Read: ["show","--json"], ["show"], ["pending"], ["status","--line"], ["history"], ["next"] (the ranked seeds of the next round and your stored proposal).',
+      'Propose the next rounds: ["next","--set"] with stdin {"rounds":[{"ids","title","why","compact"}],"compact":{"keep"}} (at most 3 rounds; `compact` with a compacting round or without rounds).',
       'Record an answer the user typed in chat: ["answer"] with stdin {"question","answer","quote"}, the quote being the user\'s exact words.',
       'Apply a change the user asked for to the questions: ["edit"] with stdin {"updates","quote"}, the quote being the user\'s exact words (no pass runs).',
       'The console stamps --session and --origin; dialog answers, declines and passes are recorded by the console from the person\'s actions.',
@@ -222,8 +223,8 @@ export async function stampReleaseRun($: $, ctx: Context, origin: 'composer' | '
   }
 }
 
-/** Runs `/command args` as the person's press; drops a repeat while the same run is queued. */
-export async function pressRun($: $, command: string, args: string): Promise<void> {
+/** Runs `/command args` as the person's press; drops a repeat while the same run is queued. `onFailed` follows a run that failed. */
+export async function pressRun($: $, command: string, args: string, onFailed?: () => Promise<void>): Promise<void> {
   const key = runKey(command, args)
   if (!(await claimRun($, key))) {
     $.ui.toast(`/${key} is already queued`)
@@ -234,6 +235,7 @@ export async function pressRun($: $, command: string, args: string): Promise<voi
   void $.command.run({ command, args }).catch(error => {
     void releaseRun($, one => one === key)
     $.ui.toast(`console: /${command} failed: ${message(error)}`)
+    if (onFailed !== undefined) void onFailed().catch(failOpen($, `clearing the stored start after /${command}`))
   })
 }
 
@@ -244,6 +246,32 @@ export async function pressSubmit($: $, text: string): Promise<void> {
     return
   }
   void $.prompt.submit({ text }).catch(failOpen($, `sending "${text}"`))
+}
+
+/** The message a Start press sends (or stores, with compact): the proposal's title and question ids. */
+export const startText = (suggestion: Extract<ConsoleSuggestion, { kind: 'round' }>): string =>
+  `Start the next round on ${suggestion.title}: ${suggestion.ids.join(', ')}`
+
+/**
+ * A suggestion's [ Start ]. A round sends its start message as the person's prompt; one that compacts first stores the message
+ * and runs /compact with the proposal's keep, and the compaction hook sends it once the compaction succeeded (register.tsx).
+ * Release Round and a compact-only proposal run their commands.
+ */
+export async function pressStart($: $, suggestion: ConsoleSuggestion): Promise<void> {
+  if (suggestion.kind === 'release') return pressRun($, RELEASE_COMMAND, '')
+  if (suggestion.kind === 'compact') return pressRun($, 'compact', suggestion.keep)
+  const text = startText(suggestion)
+  if (!suggestion.compact) return pressSubmit($, text)
+  await setStart($, { text, at: await $.clock.now() })
+  await pressRun($, 'compact', suggestion.keep ?? '', async () => {
+    await setStart($, null)
+    await notice($, `/compact failed: the next round (${suggestion.title}) was not started`)
+  })
+}
+
+/** Opens (or closes) a suggestion's questions inline below its row; each listed id opens its item. */
+export async function pressOpenSuggestion($: $, key: string, ids: readonly string[]): Promise<void> {
+  await updateOpened($, current => current?.kind === 'suggestion' && current.key === key ? null : { kind: 'suggestion', key, ids: [...ids] })
 }
 
 /**
@@ -269,6 +297,11 @@ export async function pressOpenItem($: $, id: string, from: string | null = null
 export async function pressOpenOverlaps($: $, question: string, overlaps: readonly { id: string; title: string }[]): Promise<void> {
   await updateOpened($, current => current?.kind === 'overlaps' && current.question === question ? null
     : { kind: 'overlaps', question, overlaps: overlaps.map(one => ({ id: one.id, title: one.title })) })
+}
+
+/** Opens (or closes) the items a rule question settles inline below its row; each listed id opens its item. */
+export async function pressOpenSettles($: $, question: string, ids: readonly string[]): Promise<void> {
+  await updateOpened($, current => current?.kind === 'settles' && current.question === question ? null : { kind: 'settles', question, ids: [...ids] })
 }
 
 /** Switches the main view to a worker, or back to the main conversation (press only). */

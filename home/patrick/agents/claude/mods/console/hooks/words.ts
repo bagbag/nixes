@@ -77,7 +77,7 @@ export function staleSessions(board: ConsoleBoard): Set<string> {
 export const staleHolds = (board: ConsoleBoard, stale: Set<string>): { id: string; actor: string }[] =>
   board.held.map(one => ({ id: one.id, actor: one.holder.split('/')[0] ?? '' })).filter(one => stale.has(one.actor))
 
-const plural = (n: number, one: string, many = `${one}s`): string => `${n} ${n === 1 ? one : many}`
+export const plural = (n: number, one: string, many = `${one}s`): string => `${n} ${n === 1 ? one : many}`
 
 /** The protocol tool's call in one line: its arguments (`step`, `show --json`); the result's headline says what it did. */
 export function protocolCallText(input: unknown): string {
@@ -171,7 +171,7 @@ export function itemSlot(id: string, raw: Record<string, unknown>): ConsoleItemS
 /** At most three ids, then a count: `tstdl-a, tstdl-b, pt1 +2`. */
 const someIds = (ids: readonly string[]): string => ids.slice(0, 3).join(', ') + (ids.length > 3 ? ` +${ids.length - 3}` : '')
 
-const inSet = (round: ConsoleRound): number => round.records.filter(one => one.state === 'set' || one.state === 'released').length
+const inSet = (round: ConsoleRound): number => round.records.filter(one => one.state === 'set' || one.state === 'revised' || one.state === 'released').length
 
 /** The step in words, with what it works on. */
 function stepWords(round: ConsoleRound): string {
@@ -188,6 +188,7 @@ function stepWords(round: ConsoleRound): string {
     case 'recheck': return `re-checking ${plural(inSet(round), 'record')}`
     case 'board-check': return `board check of ${plural(inSet(round), 'record')}`
     case 'own-rulings': return 'listing own rulings'
+    case 'scoped': return 'checking the revised records'
     case 'approval': return 'approval'
     case 'owners': return 'checking owner writes'
     case 'release': return 'releasing; rerun waits'
