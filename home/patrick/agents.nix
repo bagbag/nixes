@@ -120,17 +120,17 @@ in
 
   # Stable, tool-neutral session role registry shared by Codex and Claude Code.
   home.file.".agents/bin/session-lead-mode".source =
-    config.lib.file.mkOutOfStoreSymlink "${agentsSrc}/bin/session-lead-mode.sh";
+    config.lib.file.mkOutOfStoreSymlink "${agentsSrc}/bin/session-lead-mode";
 
   home.file.".agents/bin/board".source =
-    config.lib.file.mkOutOfStoreSymlink "${agentsSrc}/bin/board.py";
+    config.lib.file.mkOutOfStoreSymlink "${agentsSrc}/bin/board";
 
   # Protocol engine for deciding sessions; the console mod and Codex compact-reorient call it.
   home.file.".agents/bin/protocol".source =
     config.lib.file.mkOutOfStoreSymlink "${agentsSrc}/bin/protocol";
 
   home.file.".agents/bin/worker-last-use".source =
-    config.lib.file.mkOutOfStoreSymlink "${agentsSrc}/bin/worker-last-use.py";
+    config.lib.file.mkOutOfStoreSymlink "${agentsSrc}/bin/worker-last-use";
 
   # Skills are rendered from the shared source tree so included instructions
   # remain single-sourced while each deployed SKILL.md is self-contained.

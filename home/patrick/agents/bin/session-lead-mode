@@ -129,7 +129,7 @@ process_identity() {
     name=$(LC_ALL=C "$ps_command" -o comm= -p "$pid" 2>/dev/null) || return 0
     case ${name##*/} in
       claude)
-        # UTC, as board.py compares it: a time-zone change must not read as a new process.
+        # UTC, as board compares it: a time-zone change must not read as a new process.
         started=$(LC_ALL=C TZ=UTC0 "$ps_command" -o lstart= -p "$pid" 2>/dev/null) || return 0
         [[ -n "$started" ]] || return 0
         read -r -a started <<<"$started"

@@ -35,7 +35,8 @@ from pathlib import Path
 
 VERSION = 1  # the show --json contract and the state file schema
 BIN = Path(__file__).resolve().parent
-REGISTRY = BIN / 'session-lead-mode.sh'
+REGISTRY = BIN / 'session-lead-mode'
+BOARD = BIN / 'board'
 CHECK_CAP = 5  # check cycles before the machine asks the user how to go on
 BATCH = 4  # AskUserQuestion takes 1-4 questions
 HEADER_MAX = 12  # AskUserQuestion's header chip
@@ -163,7 +164,7 @@ def resolve_session(flag: str | None) -> tuple[str, dict]:
     return entry['session'], entry
 
 
-# Board access through the board CLI (sibling board.py; PROTOCOL_BOARD overrides for tests).
+# Board access through the board CLI (sibling board; PROTOCOL_BOARD overrides for tests).
 
 def board_root(start: Path) -> Path | None:
     return next((d for d in (start, *start.parents) if (d / '.beads').is_dir()), None)
@@ -174,7 +175,7 @@ class Board:
         self.repo, self.actor = repo, actor
 
     def run(self, *args: str, stdin: str | None = None) -> subprocess.CompletedProcess:
-        command = [env()['PROTOCOL_BOARD']] if env().get('PROTOCOL_BOARD') else [sys.executable, str(BIN / 'board.py')]
+        command = [env()['PROTOCOL_BOARD']] if env().get('PROTOCOL_BOARD') else [sys.executable, str(BOARD)]
         return subprocess.run([*command, *args], input=stdin, capture_output=True, text=True, cwd=self.repo,
                               env={**env(), 'BEADS_ACTOR': self.actor})
 

@@ -124,7 +124,7 @@ export async function statusLine($: $, session: string): Promise<string> {
   return ran.stdout.trim()
 }
 
-// The board resolves the caller's actor from CLAUDE_CODE_SESSION_ID (board.py derived_actor).
+// The board resolves the caller's actor from CLAUDE_CODE_SESSION_ID (board derived_actor).
 async function board($: $, session: string, args: readonly string[]): Promise<Ran> {
   const homeDir = await home($)
   const ran = await $.process.run([binary(homeDir, 'board'), ...args],

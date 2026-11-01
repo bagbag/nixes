@@ -57,7 +57,7 @@ describe('pane', () => {
     await ui.unmount()
   })
 
-  test('held questions count toward 10 with the rest: up to 10 all show, beyond it they fold behind their toggle', async ($, on) => {
+  test('held questions count toward 10 with the rest: up to 10 all show, beyond it they fill what is left and the rest fold', async ($, on) => {
     const row = (id: string, status: string) => ({ id, board: null, text: `${id}?`, title: `Row ${id}`, kind: 'decision', status, waitsOn: status === 'held' ? ['q1'] : [], overlaps: [], answer: null, answeredAt: null })
     const ten = [...[1, 2, 3, 4, 5, 6, 7].map(n => row(`q${n}`, 'ready')), row('q8', 'held'), row('q9', 'held'), row('q10', 'held')]
     const { w, clock } = world(on, { round: roundJson({ questions: ten }) })
@@ -73,11 +73,33 @@ describe('pane', () => {
     await clock.settle()
     ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
     expect(await texts(ui)).toContain('Row q7')
-    expect(await texts(ui)).not.toContain('Row q8')
-    expect(await texts(ui)).toContain('3 held')
+    expect(await texts(ui)).toContain('Row q9')
+    expect(await texts(ui)).not.toContain('Row q10')
+    expect(await texts(ui)).toContain('1 held')
     await ui.press({ key: 'held-toggle' })
-    expect(await texts(ui)).toContain('Row q8')
     expect(await texts(ui)).toContain('Row q10')
+    expect(await texts(ui)).toContain('3 held')
+    await ui.unmount()
+  })
+
+  test('beyond 10 questions, 10 show whatever their kinds: held and older answered fill the room upcoming leaves', async ($, on) => {
+    const base = (id: string, status: string) => ({ id, board: null, text: `${id}?`, title: `Row ${id}`, kind: 'decision', status, waitsOn: status === 'held' ? ['q1'] : [], overlaps: [], answer: null, answeredAt: null })
+    const row = (n: number, status: string) => ({ ...base(`q${n}`, status), title: `Row ${n}.`, answeredAt: status === 'answered' ? `2026-10-31T${String(n).padStart(2, '0')}:00:00Z` : null })
+    const heavyHeld = [row(1, 'ready'), row(2, 'ready'), row(3, 'ready'), row(4, 'ready'), ...Array.from({ length: 15 }, (_, i) => row(i + 5, 'held'))]
+    const { w, clock } = world(on, { round: roundJson({ questions: heavyHeld }) })
+    await ready($, clock)
+    let ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+    const shown = async () => (await texts(ui)).match(/Row \d+\./g)?.filter((t, i, all) => all.indexOf(t) === i) ?? []
+    expect((await shown()).length).toBe(10)
+    expect(await texts(ui)).toContain('9 held')
+    expect(await texts(ui)).not.toContain('more ▸')
+    await ui.unmount()
+    w.round = roundJson({ questions: [...Array.from({ length: 15 }, (_, i) => row(i + 1, 'answered')), row(16, 'ready'), row(17, 'ready')] })
+    await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
+    await clock.settle()
+    ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+    expect(await shown()).toEqual(['Row 8.', 'Row 9.', 'Row 10.', 'Row 11.', 'Row 12.', 'Row 13.', 'Row 14.', 'Row 15.', 'Row 16.', 'Row 17.'])
+    expect(await texts(ui)).toContain('+7 more ▸')
     await ui.unmount()
   })
 
@@ -501,20 +523,20 @@ describe('long lists', () => {
     expect(await texts(ui)).not.toContain('pt2')
   })
 
-  test('board lists cap at 6 rows, active sessions first', async ($, on) => {
-    const items = [1, 2, 3, 4, 5, 6, 7, 8].map(n => ({ id: `tstdl-i${n}`, type: 'decision', status: 'open', title: `Item ${n}`, holder: '617adf08' }))
+  test('board lists cap at 10 rows, active sessions first', async ($, on) => {
+    const items = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].map(n => ({ id: `tstdl-i${n}`, type: 'decision', status: 'open', title: `Item ${n}`, holder: '617adf08' }))
     const session = (n: number, state: string) => ({ session: `s-${n}`, role: 'agent', actor: `actor00${n}`, pulls: [], holds: 0, workers: null, state, idleSince: null, claimable: 0 })
-    const sessions = [session(1, 'gone'), ...[2, 3, 4, 5, 6, 7].map(n => session(n, 'active'))]
+    const sessions = [session(1, 'gone'), ...[2, 3, 4, 5, 6, 7, 8, 9, 10, 11].map(n => session(n, 'active'))]
     const { clock } = world(on, { items, sessions })
     await ready($, clock)
     const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
     const drawn = await texts(ui)
-    expect(drawn).toContain('Item 6')
-    expect(drawn).not.toContain('Item 7')
+    expect(drawn).toContain('Item 10')
+    expect(drawn).not.toContain('Item 11')
     expect(drawn).toContain('+2 more ▸')
-    expect(drawn).not.toContain('actor001')  // gone sorts last, past the cap
+    expect(drawn).not.toContain('actor001\n')  // gone sorts last, past the cap
     await ui.press({ key: 'items-toggle' })
-    expect(await texts(ui)).toContain('Item 8')
+    expect(await texts(ui)).toContain('Item 12')
   })
 
   test('stale sessions become one stale-holds line; pulls read as fixed-position initials', async ($, on) => {

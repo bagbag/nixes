@@ -126,7 +126,7 @@ Workflow owners:
   trigger descriptions, frontmatter and style for skills, definitions and
   instructions; loaded while writing, user-invoked to review.
 
-`bin/board.py` (installed as `$HOME/.agents/bin/board`, not on `PATH`) is the
+`bin/board` (installed as `$HOME/.agents/bin/board`, not on `PATH`) is the
 agents' only board interface: views and hand-offs from one snapshot sized to
 the command (`Board.load`: a `bd list` of the non-closed items plus one
 `bd show` of the held items' comments for status views, `bd export` for
@@ -384,9 +384,9 @@ offers something (one row per proposed round: `[ Start ] <title> · N questions 
 <why>`, with `· compacts first` where set, the first row recommended in the
 theme's `suggestion` color; a click on a row lists its ids, each opening its
 item; Release Round and a compact-only proposal show here too), Round (title,
-summary, step words, questions: up to 10 of any kind show whole, beyond that the
-asked ones, the 2 latest answered and the upcoming ones fill the 10 and the
-held ones fold behind their toggle; each with their recommendation on hover and, after the title, a mark (`◆
+summary, step words, questions: up to 10 of any kind show whole, beyond that 10
+show, the asked ones and the 2 latest answered first, then upcoming, held and
+older answered ones, and the rest fold behind their toggles; each with their recommendation on hover and, after the title, a mark (`◆
 strong`, `your call`, `unverified`), the answer on answered rows (`→ …`, cut;
 the title truncates, the answer and marks keep their line) and `↻ <pass>` for
 the questions the most recent pass report changed; a release lists its records
@@ -421,8 +421,11 @@ once per idle episode across consoles. It idles without a registered role or a
 drawing surface and fails open except for recovery. Test it with `claude
 plugin test home/patrick/agents/claude/mods/console`.
 
-The validator runs its groups (core, hooks, board, engine) as parallel child
-processes (`--group <name>` runs one).
+The validator runs its groups (core, hooks, board, contract and the protocol
+engine's parts `engine-<part>`, `PROTOCOL_PARTS`) as parallel child processes
+(`--group <name>` runs one). Each engine part starts on a fresh fixture;
+sections within a part share state in order, so a section that needs an earlier
+one's rounds stays in its part.
 
 Work tracking deliberately avoids some beads features (bd 1.3.1); re-check
 before adopting them:

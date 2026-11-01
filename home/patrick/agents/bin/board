@@ -65,7 +65,7 @@ RECORD_SECTIONS = ('Question', 'Alternatives Considered', 'Decision', 'Rationale
 # link lives exactly until release. The partial rule's name sits in the new record's metadata.
 REVISES = 'tracks'
 REVISES_RULE = 'board.revises_rule'
-REGISTRY = Path(__file__).resolve().parent / 'session-lead-mode.sh'
+REGISTRY = Path(__file__).resolve().parent / 'session-lead-mode'
 
 
 class BoardError(Exception):

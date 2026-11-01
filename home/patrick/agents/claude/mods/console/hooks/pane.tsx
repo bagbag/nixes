@@ -14,10 +14,10 @@ import type { Lens, LensCommand } from './words'
 type $ = EngineInterface
 
 export const DOUBLE_PRESS_MS = 450
-const QUESTIONS_SHOWN = 10  // up to this many questions of any kind show whole; beyond it every asked one and the 2 latest answered show, upcoming ones fill the rest, held ones fold
+const QUESTIONS_SHOWN = 10  // this many questions show while enough exist: every asked one and the 2 latest answered, then upcoming, held and older answered ones
 const ANSWERED_SHOWN = 2
 const LOG_SHOWN = 10  // the newest log lines; the rest of the round's log folds behind +N more
-const BOARD_ROWS_SHOWN = 6
+const BOARD_ROWS_SHOWN = 10
 const SESSION_ORDER: Record<string, number> = { active: 0, idle: 1, gone: 3 }
 const LIVE_AGENT: readonly string[] = ['pending', 'running', 'waiting', 'idle']
 const LABEL = 11
@@ -381,7 +381,7 @@ export async function drawPane($: $, e: { surface: string; props: RenderPropsOf[
 
   // In reading order: answered, asked, then the upcoming ones in the engine's ask order (its list order), then the held ones.
   // Questions of every kind count toward QUESTIONS_SHOWN: up to it all show; beyond it the asked and the latest answered
-  // show, upcoming ones fill the rest, and the held ones fold behind their toggle.
+  // show, then upcoming, held and older answered ones fill the room; the rest fold behind their toggles.
   const questionRows = (open: ConsoleRound) => {
     const held = open.questions.filter(one => one.status === 'held')
     const answered = open.questions.filter(one => one.status === 'answered')
@@ -392,20 +392,25 @@ export async function drawPane($: $, e: { surface: string; props: RenderPropsOf[
       return <Box key="round-questions" flexDirection="column" marginTop={1}>{[...answered, ...asked, ...upcoming, ...held].map(questionRow)}</Box>
     }
     const isAll = expanded.includes('questions')
+    const isHeldOpen = expanded.includes('held')
     const latest = isAll ? answered : answered.slice(-ANSWERED_SHOWN)
     const next = isAll ? upcoming : upcoming.slice(0, Math.max(0, QUESTIONS_SHOWN - asked.length - latest.length))
-    const hidden = answered.length + asked.length + upcoming.length - (latest.length + asked.length + next.length)
-    const isHeldOpen = expanded.includes('held')
+    const roomForHeld = Math.max(0, QUESTIONS_SHOWN - asked.length - latest.length - next.length)
+    const heldShown = isHeldOpen ? held : held.slice(0, roomForHeld)
+    const roomForOlder = Math.max(0, roomForHeld - heldShown.length)
+    const older = isAll || roomForOlder === 0 ? [] : answered.slice(0, -ANSWERED_SHOWN).slice(-roomForOlder)
+    const hidden = answered.length + upcoming.length - (older.length + latest.length + next.length)
+    const heldFolded = held.length - heldShown.length
     hint.add('held-toggle', isHeldOpen ? 'Collapse the held questions' : 'Show the held questions')
     return (
       <Box key="round-questions" flexDirection="column" marginTop={1}>
-        {[...latest, ...asked, ...next].map(questionRow)}
+        {[...older, ...latest, ...asked, ...next].map(questionRow)}
         {more('questions', hidden, 'questions')}
-        {isHeldOpen && held.map(questionRow)}
-        {held.length > 0 && (
+        {heldShown.map(questionRow)}
+        {(heldFolded > 0 || isHeldOpen) && (
           <Box key="held-toggle-box" hover={{ scope: 'held-toggle' }}>
             <Button key="held-toggle" plain onPress={() => toggleExpanded($, 'held')}>
-              <Text color="warning">{held.length} held</Text><Text color="inactive"> {isHeldOpen ? '▾' : '▸'}</Text>
+              <Text color="warning">{isHeldOpen ? held.length : heldFolded} held</Text><Text color="inactive"> {isHeldOpen ? '▾' : '▸'}</Text>
             </Button>
           </Box>
         )}
