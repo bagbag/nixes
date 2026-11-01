@@ -140,6 +140,45 @@ describe('pane', () => {
     await ui.unmount()
   })
 
+  test('All runs every lens of the command in list order with the focus, and keeps the selection', async ($, on) => {
+    const { w, clock } = world(on)
+    await ready($, clock)
+    const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+    await ui.press({ key: 'ground-row-probe' })
+    await ui.input({ key: 'focus', text: 'the gate', kind: 'change' })
+    await ui.press({ key: 'step-back-all' })
+    await ui.press({ key: 'ground-all' })
+    await clock.settle()
+    expect(w.commands).toEqual([
+      { command: 'step-back', args: 'goal decisions foundations consumer root-fix bloat gaps clean overfit mechanics the gate' },
+      { command: 'ground', args: 'assumptions board sources probe' },
+    ])
+    expect(await texts(ui)).toContain('✓ Probe')
+    expect(await texts(ui)).toContain('All: every lens, in list order.')
+    await ui.unmount()
+  })
+
+  test('Path and Refine run their lens sets with the focus, and the Step Back row offers Base, Path, Refine, All', async ($, on) => {
+    const { w, clock } = world(on)
+    await ready($, clock)
+    const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+    await ui.input({ key: 'focus', text: 'the gate', kind: 'change' })
+    await ui.press({ key: 'step-back-path' })
+    await ui.input({ key: 'focus', text: 'the gate', kind: 'change' })
+    await ui.press({ key: 'step-back-refine' })
+    await clock.settle()
+    expect(w.commands).toEqual([
+      { command: 'step-back', args: 'goal foundations the gate' },
+      { command: 'step-back', args: 'decisions clean overfit mechanics the gate' },
+    ])
+    expect(await ui.find({ key: 'ground-path' })).toBeUndefined()
+    expect(await ui.find({ key: 'ground-refine' })).toBeUndefined()
+    const drawn = await texts(ui)
+    expect(drawn).toContain('Path: goal and foundations: is the direction right?')
+    expect(drawn).toContain('Refine: decisions, clean, overfit, mechanics: sharpen the path.')
+    await ui.unmount()
+  })
+
   test('Ground leaves the Step Back focus alone', async ($, on) => {
     const { w, clock } = world(on)
     await ready($, clock)
@@ -170,13 +209,82 @@ describe('pane', () => {
     await ui.unmount()
   })
 
-  test('an item id prints its summary as a notice; a worker row switches the view', async ($, on) => {
-    const { w, clock, session } = world(on, { agents: [{ id: 'a1', description: 'Worker B', type: 'craft', status: 'running' }] })
+  const dep = (issue: string, on: string, type: string) => ({ issue_id: issue, depends_on_id: on, type })
+
+  test('an item id opens its Decision and facts inline, reading first; a second press closes it', async ($, on) => {
+    const { w, clock, session } = world(on)
+    w.show.record = {
+      description: '## Question\nWhich?\n\n## Decision\nFail closed (A).\n\n# Sub heading\nSecond line.\nThird.\nFourth.\nFifth line.\n\n## Rationale\nWhy.',
+      dependencies: [
+        dep('tstdl-x1', 'tstdl-p', 'parent-child'), dep('tstdl-x1', 'tstdl-r1', 'relates-to'), dep('tstdl-r1', 'tstdl-x1', 'relates-to'),
+        dep('tstdl-o1', 'tstdl-x1', 'blocks'), dep('tstdl-x1', 'tstdl-b1', 'blocks'), dep('tstdl-c1', 'tstdl-x1', 'parent-child'),
+      ],
+      issue_type: 'decision', priority: 1, assignee: 'a1b2/c3', labels: ['topic:rpc', 'x'], comment_count: 2,
+    }
+    await ready($, clock)
+    const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+    await ui.press({ key: 'item-tstdl-x1-show' })
+    expect(await texts(ui)).toContain('reading…')
+    await clock.settle()
+    const drawn = await texts(ui)
+    expect(drawn).not.toContain('reading…')
+    for (const line of ['Fail closed (A).', 'Second line.', 'Third.', 'Fourth. …']) expect(drawn, line).toContain(line)
+    for (const gone of ['Question', 'Which?', 'Sub heading', 'Fifth line', 'Rationale']) expect(drawn, gone).not.toContain(gone)
+    const facts = 'decision · p1 · held by a1b2/c3 · topic:rpc, x · parent tstdl-p · blocked by 1 · blocks 1 · relates to 1 · children 1 · 2 comments · /console-item tstdl-x1'
+    expect((await ui.findAll({ type: 'Text', text: facts })).map(one => one.props.color)).toEqual(['inactive'])
+    expect(drawn).toContain('blocked by tstdl-b1 · blocks tstdl-o1 · relates to tstdl-r1 · parent tstdl-p · children tstdl-c1')  // the hover list
+    expect(notices(session)).toEqual([])
+    await ui.press({ key: 'item-tstdl-x1-show' })
+    expect(await texts(ui)).not.toContain('Fail closed (A).')
+    await ui.unmount()
+  })
+
+  test('a non-decision item shows its description from the start, headings dropped; unassigned, zero counts omitted', async ($, on) => {
+    const { w, clock } = world(on)
+    w.show.record = { description: '## Purpose\n\nDo the thing.\n# Notes\nMore.', dependencies: [], issue_type: 'task', priority: 2, assignee: null, labels: [], comment_count: 0 }
     await ready($, clock)
     const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
     await ui.press({ key: 'item-tstdl-x1-show' })
     await clock.settle()
-    expect(notices(session).some(text => text.includes('tstdl-x1: Which engine name?'))).toBe(true)
+    const drawn = await texts(ui)
+    expect(drawn).toContain('Do the thing.')
+    expect(drawn).toContain('More.')
+    expect(drawn).not.toContain('Purpose')
+    expect((await ui.findAll({ type: 'Text', text: 'task · p2 · /console-item tstdl-x1' })).length).toBe(1)
+    expect(drawn).not.toContain('held by')
+    await ui.unmount()
+  })
+
+  test('opening another item closes the first; a failed read shows its error in the error color', async ($, on) => {
+    const { w, clock } = world(on, { items: [
+      { id: 'tstdl-x1', type: 'decision', status: 'open', title: 'First', holder: null },
+      { id: 'tstdl-x2', type: 'decision', status: 'open', title: 'Second', holder: null },
+    ] })
+    await ready($, clock)
+    const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+    await ui.press({ key: 'item-tstdl-x1-show' })
+    await clock.settle()
+    await ui.press({ key: 'item-tstdl-x2-show' })
+    await clock.settle()
+    const drawn = await texts(ui)
+    expect(drawn).toContain('Keep it.')
+    expect((drawn.match(/Keep it\./g) ?? []).length).toBe(1)
+    w.show.exit = 1
+    await ui.press({ key: 'item-tstdl-x1-show' })
+    await clock.settle()
+    expect((await ui.findAll({ type: 'Text', text: 'exit 1: no such item' })).map(one => one.props.color)).toEqual(['error'])
+    w.show.exit = 0
+    w.show.bad = true
+    await ui.press({ key: 'item-tstdl-x2-show' })
+    await clock.settle()
+    expect((await ui.findAll({ type: 'Text', text: 'output is not JSON' })).map(one => one.props.color)).toEqual(['error'])
+    await ui.unmount()
+  })
+
+  test('a worker row switches the view', async ($, on) => {
+    const { w, clock } = world(on, { agents: [{ id: 'a1', description: 'Worker B', type: 'craft', status: 'running' }] })
+    await ready($, clock)
+    const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
     await ui.press({ key: 'worker-a1' })
     expect(w.views).toEqual([{ agentId: 'a1' }])
     await ui.unmount()
@@ -192,6 +300,63 @@ describe('band', () => {
     await ui.press({ key: 'band-ground' })
     await clock.settle()
     expect(w.commands).toEqual([{ command: 'ground', args: '' }])
+    await ui.unmount()
+  })
+
+  const closed = (next: unknown) => roundJson({ round: null, step: null, check: null, pending: null, batch: null, questions: [], next })
+
+  test('after a close with records to release the band offers Release Round in the accent color', async ($, on) => {
+    const { w, clock } = world(on, { round: closed({ release: { round: 'r4', count: 3 } }) })
+    await ready($, clock)
+    const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
+    expect(await texts(ui)).toContain('r4 closed · 3 records decided ·')
+    expect(await ui.find({ key: 'band-ground' })).toBeUndefined()
+    expect((await ui.findAll({ type: 'Text', text: 'Release Round' })).map(one => one.props.color)).toEqual(['claude'])
+    await ui.press({ key: 'band-release' })
+    await clock.settle()
+    expect(w.commands).toEqual([{ command: 'release-round', args: '' }])
+    expect(JSON.parse(w.calls.find(one => one.argv[3] === 'pass')?.stdin ?? '{}')).toEqual({ command: 'release-round', args: '', pending: null })
+    await ui.unmount()
+    const pane = await $.ui.mount({ ...PANE, surface: 'terminal' })
+    expect((await pane.findAll({ type: 'Text', text: 'Release Round' })).map(one => one.props.color)).toEqual(['claude'])
+    await pane.unmount()
+  })
+
+  test('the pane keeps the Release Round label plain while nothing waits for release', async ($, on) => {
+    const { clock } = world(on)
+    await ready($, clock)
+    const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+    expect(await ui.findAll({ type: 'Text', text: 'Release Round' })).toEqual([])
+    expect((await ui.find({ key: 'actions-row-release' }))?.text).toBe('Release Round')
+    await ui.unmount()
+  })
+
+  test('the band shows an open release run like a round, and waits on its dialog', async ($, on) => {
+    const release = { protocol: 'release', round: 'r5', step: 'ask', title: "r4's records", check: null, pending: null, questions: [], next: null }
+    const { w, clock } = world(on, { round: roundJson({ ...release, batch: null }) })
+    await ready($, clock)
+    let ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
+    expect(await texts(ui)).toContain("Release r5 · r4's records · approval to ask again")
+    expect(await texts(ui)).not.toContain('waiting on your answer')
+    await ui.unmount()
+    w.round = roundJson({ ...release, questions: [{ id: 'q9', board: null, text: 'Release r4\'s 3 records?', title: 'Release', kind: 'confirm-own-rulings', status: 'asked', waitsOn: [], overlaps: [], answer: null }] })
+    await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
+    await clock.settle()
+    ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
+    expect(await texts(ui)).toContain("Release r5 · r4's records · asking your approval")
+    expect(await texts(ui)).toContain('waiting on your answer')
+    await ui.unmount()
+  })
+
+  test('the band stays away without a release next', async ($, on) => {
+    const { clock } = world(on, { round: closed(null) })
+    on('ui.render', ($, e) => {
+      const { Text } = $.ui.resolve(e) as any
+      return <Text>engine</Text>
+    })
+    await ready($, clock)
+    const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
+    expect(await texts(ui)).toContain('engine')
     await ui.unmount()
   })
 
@@ -282,14 +447,23 @@ describe('long lists', () => {
     expect((await shown()).length).toBe(14)
   })
 
-  test('overlaps are one count link that prints ids and titles', async ($, on) => {
+  test('overlaps open inline with clickable ids; an id opens its item under the question', async ($, on) => {
     const overlaps = [{ id: 'tstdl-a', title: 'Alpha', outcome: null }, { id: 'tstdl-b', title: 'Beta', outcome: null }]
     const { clock, session } = world(on, { round: roundJson({ questions: [q(1, 'draft', { overlaps })] }) })
     await ready($, clock)
     const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
     expect(await texts(ui)).toContain('2 overlaps')
     await ui.press({ key: 'q-q1-ov' })
-    expect(notices(session).some(text => text.includes('tstdl-a  Alpha') && text.includes('tstdl-b  Beta'))).toBe(true)
+    const open = await texts(ui)
+    expect(open).toContain('Alpha')
+    expect(open).toContain('Beta')
+    await ui.press({ key: 'ov-q1-tstdl-b-open' })
+    await clock.settle()
+    expect(await texts(ui)).toContain('Keep it.')
+    expect(notices(session)).toEqual([])
+    await ui.press({ key: 'q-q1-ov' })
+    await ui.press({ key: 'q-q1-ov' })
+    expect(await texts(ui)).not.toContain('Alpha')
   })
 
   test('board lists cap at 6 rows, active sessions first', async ($, on) => {
@@ -374,6 +548,14 @@ describe('long lists', () => {
     expect(drawn.filter(line => line.includes('◂ next'))).toHaveLength(1)
   })
 
+  test('a refine pass with lens arguments is marked next like any pending pass', async ($, on) => {
+    const { clock } = world(on, { round: roundJson({ pending: { id: 'p8', command: 'step-back', args: 'decisions clean overfit mechanics' } }) })
+    await ready($, clock)
+    const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+    expect((await texts(ui)).split('\n').filter(line => line.includes('◂ next'))).toHaveLength(1)
+    expect(await texts(ui)).toContain('next /step-back')
+  })
+
   test('the pending pass reads running once the console started it', async ($, on) => {
     const { clock } = world(on, { round: roundJson({ pending: { id: 'p7', command: 'ground', args: '' } }) })
     await ready($, clock)
@@ -419,6 +601,48 @@ describe('long lists', () => {
     await ready($, clock)
     const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
     expect(await texts(ui)).toContain('release r5 stopped: tstdl-a changed: the premise moved · next: a round on tstdl-a, tstdl-b')
+    await ui.unmount()
+  })
+
+  test('question rows carry the recommendation mark, the answer and the last pass that changed them', async ($, on) => {
+    const base = { board: null, kind: 'decision', waitsOn: [], overlaps: [], answeredAt: null, changedBy: null }
+    const questions = [
+      { ...base, id: 'q1', text: 'A?', title: 'Strong one', status: 'ready', strength: 'strong', answer: null },
+      { ...base, id: 'q2', text: 'B?', title: 'Pref one', status: 'ready', strength: 'lean', leanBecause: { cause: 'preference', detail: 'x' }, answer: null, changedBy: 'ground' },
+      { ...base, id: 'q3', text: 'C?', title: 'Evidence one', status: 'draft', strength: 'lean', leanBecause: { cause: 'evidence', detail: 'y' }, answer: null },
+      { ...base, id: 'q4', text: 'D?', title: 'Done one', status: 'answered', strength: 'lean', leanBecause: { cause: 'evidence', detail: 'y' }, answer: 'Keep' },
+      { ...base, id: 'q5', text: 'E?', title: 'Typed one', status: 'answered', answer: 'a very long typed answer that goes on and on and on' },
+    ]
+    const { clock } = world(on, { round: roundJson({ questions }) })
+    await ready($, clock)
+    const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+    const color = async (text: string) => (await ui.findAll({ type: 'Text', text })).map(one => one.props.color)
+    expect(await color('◆ strong')).toEqual(['inactive'])
+    expect(await color('your call')).toEqual(['claude'])
+    expect(await color('unverified')).toEqual(['warning'])  // the answered row shows no mark
+    expect(await color('→ Keep')).toEqual(['inactive'])
+    expect(await color('↻ ground')).toEqual(['inactive'])
+    expect(await texts(ui)).toContain('→ a very long typed answer that goes on a…')
+    await ui.unmount()
+  })
+
+  test('a long title truncates while the answer and marks keep their line', async ($, on) => {
+    const long = 'A very long question title that would push the answer onto a second line of the pane'
+    const base = { board: null, kind: 'decision', waitsOn: [], overlaps: [], answeredAt: null, changedBy: 'edit', answer: null }
+    const questions = [
+      { ...base, id: 'q1', text: 'A?', title: long, status: 'answered', answer: 'Keep' },
+      { ...base, id: 'q2', text: 'B?', title: long + ' 2', status: 'ready', strength: 'lean', leanBecause: { cause: 'preference', detail: 'x' } },
+    ]
+    const { clock } = world(on, { round: roundJson({ questions }) })
+    await ready($, clock)
+    const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+    expect((await ui.findAll({ type: 'Text', text: long })).filter(one => one.text === long).map(one => one.props.wrap)).toEqual(['truncate-end'])
+    for (const mark of ['→ Keep', 'your call', '↻ edit']) {
+      const found = await ui.findAll({ type: 'Text', text: mark })
+      expect(found.length, mark).toBeGreaterThan(0)
+      expect(found.some(one => one.props.wrap === 'truncate-end'), mark).toBe(false)
+    }
+    expect(await texts(ui)).toContain(`q1: A?`)  // the hover keeps the full text
     await ui.unmount()
   })
 

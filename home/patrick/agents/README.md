@@ -189,17 +189,63 @@ A round:
   summary and, per question, a plain title, 2-4 options, the recommended
   option and its strength under decision-protocol.md Recommendation strength
   (a lean names its cause, a strong one carries the five-criterion checklist).
+  The Stage text states the limits (round `summary` 240, `title` 60, question
+  `text` 160, `header` 12, option `description` 150, all built from the
+  engine's constants) and who reads each field; an option may carry a
+  `preview` (single-select only). A refused Stage report, or a new question in
+  a pass report, lists every error at once.
 - Related searches each new draft and needs an outcome per hit.
-- Check runs step-back and ground until a cycle changes nothing (cap 3 cycles,
-  then a dialog), one focused `ground probe sources <ids>` pass on evidence
-  leans, then challenge-rulings before every first batch. A pass that changes
-  nothing lists what it `checked`; any pass report, also out of sequence or
-  with a batch out, updates questions. Edits to title, header, strength or its
-  backing alone re-issue the batch; other changes rerun the loop.
+- Check runs, per round: the path pass once (`step-back goal foundations`,
+  before the first Base cycle; its changes flow into the Base loop, and new or
+  reworded drafts are searched through Related first), then step-back and
+  ground until a cycle changes nothing (cap 5 cycles, then a dialog whose
+  Continue adds 5; an open round keeps its stored cap), then the refine pair
+  once (round-wide `step-back decisions clean overfit mechanics`, then
+  `ground assumptions board sources probe`; a change in either reruns the Base
+  loop under the cap, and the pair does not repeat), one targeted
+  `ground assumptions sources probe <ids>` pass on every lean (evidence or
+  preference: make it strong with evidence, or name what it rests on; no
+  loop), then challenge-rulings before every first batch. Base's own lenses
+  (consumer, root-fix, bloat, gaps) are in neither set. The path and refine
+  passes run once per round, flagged on the round: a check rebuilt at
+  Ask does not repeat them. `protocol restart <ids>` (also several calls
+  before the loop settles, ids accumulating) queues scoped reruns on the
+  restarted questions, kept apart from the round's flags: a path pass
+  `step-back goal foundations <ids>` first, the Base loop round-wide, then
+  `step-back decisions clean overfit mechanics <ids>` and
+  `ground assumptions board sources probe <ids>` (changes rerun Base once),
+  then the lean pass as usual. A pass (pressed, typed or model) whose argument names every lens
+  of the path set, of the refine step-back set or of the refine ground set
+  counts as that pass for the round (a scoped rerun also needs the restarted ids
+  in the argument), and a pending path or refine pass is
+  accepted only after such a run (Codex: its report). The engine's lens lists
+  (`ALL_LENSES`, `PATH_LENSES`, `REFINE_LENSES`) are checked against the
+  skills and the console's words.ts. A
+  pass that changes nothing lists what it `checked`; any pass report, also out
+  of sequence or with a batch out, updates questions. Edits to title, header,
+  strength or its backing alone re-issue the batch; other changes rerun the
+  loop. The Claude hand-off names no pass (the console runs it); Codex's names
+  the skill to run. The report format goes out with a round's first pass and
+  with every refused pass report, not on later passes. In Claude sessions a
+  pass report is accepted only after an observed run of that pass since its
+  last report (the console's `pass` record, or a model Skill call); a run
+  stays open while part of a report was not applied. A question too long or
+  invalid to ask (only one from before the limits can be) gets a plain message
+  naming its error: the model shortens it in a pass of its own (its Skill call
+  counts as the observed run); no pass runs automatically. `protocol edit` (stdin `{"updates", "quote"}`) applies a change the
+  user asked for: the quote must appear in a message the console relayed since
+  the touched questions went out (Codex: verbatim), the updates validate as in
+  a pass report, a batch that is out comes back and goes out again, and neither
+  a pass nor a check rerun happens (rows read `↻ edit`). An option's `preview`
+  alone is presentation: its change re-issues the batch without rerunning the
+  loop.
 - Ask issues batches marked `metadata.source = round:<id>:<n>`: the
   recommended option first, labelled "(recommended, strong)" or
   "(recommended, lean)", a lean's description opening with what it rests on
-  ("Unverified: …" or "Your call: …"). Answers
+  ("Unverified: …" or "Your call: …"; the prefix does not count toward the
+  description limit). A batch of two or more is numbered (`1. `, `2. `) in
+  the dialog text, which keys the answers; the ask text has the model walk
+  through in that order. Answers
   count only from the person: `dialog` (relayed by the console), `chat` (the
   model's mapping, accepted when its quote appears in a message the console
   relayed with `say`) and, in Codex sessions only, `model-reported`. A
@@ -241,16 +287,22 @@ records`), one run per session, on a board only:
 
 Every step's output opens with a headline: the call's events in the Log's
 words, then the next step (`r1 · ground: q3 changed, 1 not applied · next:
-step-back, cycle 2/3`); the console shows it as the call's chat row.
+step-back, cycle 2/5`); the console shows it as the call's chat row.
 
-`show --json` is the console's contract (version 1; its real output in six
+`show --json` is the console's contract (version 1; its real output in seven
 states is `claude/mods/console/tests/engine-contract.ts`, regenerated with
 `WRITE_CONSOLE_CONTRACT=1`): round title and summary, step progress, the
-questions with their recommendation and strength, the batch, the round's
-recent log, a release's `records` with their state, and `stopped` (the last
-release's stop, shown while no run is open). `status --line` is the recovery line, which compact-reorient
-appends for Codex sessions. `start` deletes other sessions' folders without
-an open round after 30 days without changes.
+questions with their recommendation and strength (and `changedBy`, the pass
+whose most recent report changed them), the batch, the round's recent log, a
+release's `records` with their state, and `stopped` (the last release's stop,
+shown while no run is open), and `next` (no run open and the last round
+recorded board records: `{"release": {"round", "count"}}`, until a release
+uses them). The engine-issued release approval question is `Release r4's 3
+records?` (reasons for asking go to the model's ask text and the Log).
+Headline pass summaries cut at a word boundary with `…`. `status --line` is
+the recovery line, which compact-reorient appends for Codex sessions. `start`
+deletes other sessions' folders without an open round after 30 days without
+changes.
 
 `claude/mods/console/` is the Claude Code console mod, linked out of store as
 `~/.claude/mods/console` and loaded through `CLAUDE_CODE_PLUGIN_DIRS` in
@@ -260,17 +312,35 @@ tool (`mcp__console__protocol`, stamping session and origin), runs the
 engine's pending pass at each turn's end, gates and captures round dialogs,
 relays the person's chat messages, presses and a typed or pressed
 `/release-round` (conditional approval), and keeps the round through
-compaction. A `protocol` call reads as two rows in the chat: its arguments
-and the engine's headline. The Console pane (`/console`; `/console-item <id>`) shows Board
+compaction. A `protocol` call reads as two rows in the chat: its arguments and
+the engine's headline. The Console pane (`/console` shows it as text;
+`/console-item <id>` prints an item's summary in the chat) shows Board
 (counts, this session's items, sessions with runtime and pull initials, stale
 holds, live workers), Round (title, summary, step words, questions capped at
-10 with their recommendation on hover; a release lists its records with their
-state, and a stopped release its reason and next round), Controls (the passes, with the
-pending one marked next or running; Decide; Actions) and the round's Log,
-newest first. A pane the person closed stays closed until `/console`. The band
-above the prompt shows the round during one; the idle-agent notification goes
-out once per idle episode across consoles. It idles without a registered role
-or a drawing surface and fails open except for recovery. Test it with `claude
+10 with their recommendation on hover and, after the title, a mark (`◆
+strong`, `your call`, `unverified`), the answer on answered rows (`→ …`, cut;
+the title truncates, the answer and marks keep their line) and `↻ <pass>` for
+the questions the most recent pass report changed; a release lists its records
+with their state, and a stopped release its reason and next round), Controls
+(the passes, with the pending one marked next or running; Step Back offers
+Base, Path (`goal foundations`), Refine (`decisions clean overfit mechanics`)
+and All (every lens in list order), Ground Base and All, each with the focus
+for Step Back, without changing the selection; Decide; Actions,
+whose Release Round turns accent-colored while the engine's `next` names a
+release) and the round's Log, newest first. A click on an item id (board
+items, stale holds, release records) opens it inline below the row (`reading…`
+meanwhile, the error in the error color if the read fails): up to 4 lines of
+its `## Decision` (else the description's start, headings dropped), then a
+facts line (type, priority, holder, labels, parent, link counts, comments,
+`/console-item <id>`) whose hover lists the linked ids and a second click
+closes it; a question's overlaps link opens the overlap ids and titles the
+same way, each id opening its item; one thing is open at a time. A pane the
+person closed stays closed until `/console`. The band above the prompt shows
+the round during one (a release run the same way), after a close with records
+to release `rN closed · M records decided ·` with a Release Round button (the
+pane's press), and nothing otherwise; the idle-agent notification goes out
+once per idle episode across consoles. It idles without a registered role or a
+drawing surface and fails open except for recovery. Test it with `claude
 plugin test home/patrick/agents/claude/mods/console`.
 
 The validator runs its groups (core, hooks, board, engine) as parallel child

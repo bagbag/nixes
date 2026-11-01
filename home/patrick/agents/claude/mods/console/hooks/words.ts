@@ -1,7 +1,7 @@
 // Lens names and the words the pane, the band and /console print. Lens names and focus follow
 // skills/step-back/SKILL.md and skills/ground/SKILL.md, which own them: typed name = label in
 // lowercase with hyphens.
-import type { ConsoleBoard, ConsoleQuestion, ConsoleRole, ConsoleRound } from '../types'
+import type { ConsoleBoard, ConsoleItemSlot, ConsoleQuestion, ConsoleRole, ConsoleRound } from '../types'
 
 import { isRoundOpen } from './engine'
 
@@ -33,6 +33,26 @@ export const GROUND: readonly Lens[] = [
   { name: 'sources', label: 'Sources', hint: 'Read the owning docs, READMEs, sibling modules and transcripts not yet read.' },
   { name: 'probe', label: 'Probe', hint: 'Settle facts by running something: a probe, a test, a count over real data.' },
 ]
+
+/** Every lens of a command in list order: what the All button runs. */
+export const ALL_LENSES: Record<LensCommand, readonly string[]> = {
+  'step-back': [...WHERE, ...WHAT].map(lens => lens.name),
+  ground: GROUND.map(lens => lens.name),
+}
+
+/** The Path and Refine buttons' Step Back lenses; the engine's check sequence runs the same sets (the validator compares them). */
+export const PATH_LENSES: readonly string[] = ['goal', 'foundations']
+export const REFINE_LENSES: readonly string[] = ['decisions', 'clean', 'overfit', 'mechanics']
+
+/** The fixed lens sets each row offers after Base, in button order; Path and Refine are Step Back's only. */
+export const LENS_SETS: Record<LensCommand, readonly { key: string; label: string; hint: string; lenses: readonly string[] }[]> = {
+  'step-back': [
+    { key: 'path', label: 'Path', hint: 'goal and foundations: is the direction right?', lenses: PATH_LENSES },
+    { key: 'refine', label: 'Refine', hint: 'decisions, clean, overfit, mechanics: sharpen the path.', lenses: REFINE_LENSES },
+    { key: 'all', label: 'All', hint: 'every lens, in list order.', lenses: ALL_LENSES['step-back'] },
+  ],
+  ground: [{ key: 'all', label: 'All', hint: 'every lens, in list order.', lenses: ALL_LENSES.ground }],
+}
 
 /** Lens names first, then the free focus: the typed form both skills read. */
 export const lensArgs = (lenses: readonly string[], focus: string): string =>
@@ -90,6 +110,62 @@ export function recommendationText(question: ConsoleQuestion): string {
   }
   const claims = Object.entries(question.strongBecause ?? {}).map(([name, value]) => `${name} ${value}`).join('; ')
   return `strong: ${question.recommendation}${claims === '' ? '' : ` (${claims})`}`
+}
+
+/** The row mark of a question's recommendation: strong, or what a lean rests on (colors are the pane's palette names). */
+export function recommendationMark(question: ConsoleQuestion): { text: string; color: string } | null {
+  if (question.strength === 'strong') return { text: '◆ strong', color: 'inactive' }
+  if (question.strength !== 'lean') return null
+  return question.leanBecause?.cause === 'evidence' ? { text: 'unverified', color: 'warning' } : { text: 'your call', color: 'claude' }
+}
+
+const ANSWER_SHOWN = 40
+
+/** The answer on an answered row, cut to keep the row one line (typed and model-reported answers can be long). */
+export function answerText(answer: string): string {
+  const one = answer.replace(/\s+/g, ' ').trim()
+  return one.length > ANSWER_SHOWN ? `${one.slice(0, ANSWER_SHOWN - 1).trimEnd()}…` : one
+}
+
+const SLOT_TEXT_LINES = 4
+
+/** The text of a slot: the `## Decision` body when there is one, else the description from its start; heading and blank lines dropped, at most four lines (`…` ends a cut one). */
+function slotLines(description: string): string[] {
+  const decision = /^##\s+Decision\s*$([\s\S]*?)(?=^##\s|(?![\s\S]))/m.exec(description)
+  const lines = (decision?.[1] ?? description).split('\n').map(line => line.trimEnd()).filter(line => line.trim() !== '' && !/^\s*#/.test(line))
+  return lines.length > SLOT_TEXT_LINES ? [...lines.slice(0, SLOT_TEXT_LINES - 1), `${lines[SLOT_TEXT_LINES - 1]} …`] : lines
+}
+
+/** A board item's fields as the slot shows them (the row above already has id, status and title). */
+export function itemSlot(id: string, raw: Record<string, unknown>): ConsoleItemSlot {
+  const str = (value: unknown): string => typeof value === 'string' ? value : ''
+  const links = (Array.isArray(raw.dependencies) ? raw.dependencies : []).map(one => {
+    const entry = typeof one === 'object' && one !== null ? one as Record<string, unknown> : {}
+    return { issue: str(entry.issue_id), on: str(entry.depends_on_id), type: str(entry.type) }
+  })
+  const unique = (ids: string[]): string[] => [...new Set(ids)]
+  const groups: [string, string[]][] = [
+    ['blocked by', unique(links.filter(one => one.type === 'blocks' && one.issue === id).map(one => one.on))],
+    ['blocks', unique(links.filter(one => one.type === 'blocks' && one.on === id).map(one => one.issue))],
+    ['relates to', unique(links.filter(one => one.type === 'relates-to').map(one => one.issue === id ? one.on : one.issue))],
+  ]
+  const parent = links.find(one => one.type === 'parent-child' && one.issue === id)?.on
+  const children = unique(links.filter(one => one.type === 'parent-child' && one.on === id).map(one => one.issue))
+  const labels = (Array.isArray(raw.labels) ? raw.labels : []).map(str).filter(label => label !== '')
+  const comments = typeof raw.comment_count === 'number' ? raw.comment_count : 0
+  const counted = (label: string, ids: string[]): string[] => ids.length > 0 ? [`${label} ${ids.length}`] : []
+  const facts = [
+    str(raw.issue_type), ...(typeof raw.priority === 'number' ? [`p${raw.priority}`] : []),
+    ...(str(raw.assignee) === '' ? [] : [`held by ${str(raw.assignee)}`]),
+    ...(labels.length > 0 ? [labels.join(', ')] : []),
+    ...(parent === undefined || parent === '' ? [] : [`parent ${parent}`]),
+    ...groups.flatMap(([label, ids]) => counted(label, ids)), ...counted('children', children),
+    ...(comments > 0 ? [`${comments} ${comments === 1 ? 'comment' : 'comments'}`] : []),
+    `/console-item ${id}`,
+  ].filter(part => part !== '').join(' · ')
+  const linked = [...groups, ['parent', parent === undefined || parent === '' ? [] : [parent]] as [string, string[]], ['children', children] as [string, string[]]]
+    .filter(([, ids]) => ids.length > 0).map(([label, ids]) => `${label} ${ids.join(', ')}`).join(' · ')
+  return { lines: slotLines(str(raw.description)), facts, linked }
 }
 
 /** At most three ids, then a count: `tstdl-a, tstdl-b, pt1 +2`. */

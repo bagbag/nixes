@@ -35,11 +35,13 @@ from pathlib import Path
 VERSION = 1  # the show --json contract and the state file schema
 BIN = Path(__file__).resolve().parent
 REGISTRY = BIN / 'session-lead-mode.sh'
-CHECK_CAP = 3  # check cycles before the machine asks the user how to go on
+CHECK_CAP = 5  # check cycles before the machine asks the user how to go on
 BATCH = 4  # AskUserQuestion takes 1-4 questions
 HEADER_MAX = 12  # AskUserQuestion's header chip
 TITLE_MAX = 60  # question and round titles: one pane row
 SUMMARY_MAX = 240  # the round summary: about two pane rows
+TEXT_MAX = 160  # a question's text: the dialog question
+DESCRIPTION_MAX = 150  # an option's model-written description (the engine's "Unverified: …" prefix is not counted)
 OVERLAP_LIMIT = 5  # related hits per new draft
 PRUNE_DAYS = 30  # a session's protocol folder without an open round goes after this much inactivity
 CLASSES = ('ruled', 'planning', 'own', 'user')  # decide.md Collect
@@ -62,16 +64,26 @@ CONTENT = ('text', 'title', 'header', 'options', 'multiSelect', 'kind', 'board',
            'recommendation', 'strength', 'leanBecause', 'strongBecause')
 # How a question is shown and backed, not what it asks (asking.md Check counts premise, ruling, option and question
 # set): an edit to these alone re-issues the batch without rerunning the check loop.
-PRESENTATION = ('title', 'header', 'strength', 'leanBecause', 'strongBecause')
+PRESENTATION = ('title', 'header', 'strength', 'leanBecause', 'strongBecause')  # plus an option's `preview` (see substantive)
 CAP_CHOICES = ('Continue', 'Ask now', 'Pause')
 STRENGTHS = ('lean', 'strong')
-LEAN_CAUSES = ('preference', 'evidence')  # the user's values decide, or an unchecked fact (the focused ground pass)
-FOCUS_LENSES = 'probe sources'  # the ground lenses of the focused pass on evidence leans
+LEAN_CAUSES = ('preference', 'evidence')  # the user's values decide, or an unchecked fact (the lean pass)
+# Lens names: skills/step-back/SKILL.md and skills/ground/SKILL.md own them (the console's hooks/words.ts repeats them);
+# the validator keeps the three in step. Base (no lens named) covers consumer, root-fix, bloat and gaps.
+ALL_LENSES = {  # the owners' lists (the validator compares them); the check sequence runs the path and refine subsets
+    'step-back': ('goal', 'decisions', 'foundations', 'consumer', 'root-fix', 'bloat', 'gaps', 'clean', 'overfit', 'mechanics'),
+    'ground': ('assumptions', 'board', 'sources', 'probe'),
+}
+# The check sequence per round (user, r5 q26, r6 q28): the path pass (is the goal and what it builds on right?) before the
+# Base loop, the refine pair after it; Base's own lenses (consumer, root-fix, bloat, gaps) are named in neither.
+PATH_LENSES = ('goal', 'foundations')
+REFINE_LENSES = {'step-back': ('decisions', 'clean', 'overfit', 'mechanics'), 'ground': ('assumptions', 'board', 'sources', 'probe')}
+LEAN_LENSES = ('assumptions', 'sources', 'probe')  # the targeted lean pass: every way a lean gets decided (r6 q29)
 # skills/shared/decision-protocol.md#recommendation-strength owns these rules; the validator keeps the names in step.
 # A strong recommendation is a claim: each criterion "true: <evidence>", or "does-not-apply: <reason>" where allowed.
 STRONG_CRITERIA = {
     'noAssumptions': 'every premise checked in current source, a run or an item (name where)',
-    'alternativesFail': 'each other option fails a named criterion (cleanliness test, goal, correctness, consumer need)',
+    'alternativesFail': 'each other realistic option, listed or not, fails a named criterion (cleanliness test, goal, correctness, consumer need); name the strongest unlisted one and why it fails or was added',
     'notPreference': 'the choice does not depend on what the user values',
     'consumerWalk': 'a realistic consumer walk supports it (does-not-apply for internal choices)',
     'rulingsHold': 'released rulings hold, or each revision is raised as its own question',
@@ -316,61 +328,81 @@ def premise_status(ctx: Context, q: dict) -> str:
 
 # Validation of question content (AskUserQuestion's limits).
 
-def check_question(q: dict, where: str, marks: bool = True) -> None:
-    """AskUserQuestion's limits, and with `marks` the recommendation, its strength and its backing (a complete
-    question: Stage, a new question, asking; an update checks the marks only when it touches them)."""
+def question_errors(q: dict, where: str, marks: bool = True) -> list[str]:
+    """Every break of AskUserQuestion's limits and, with `marks`, of the recommendation, its strength and its backing
+    (a complete question: Stage, a new question, asking; an update checks the marks only when it touches them)."""
+    errors = []
     for field in ('text', 'title', 'header'):
         if not isinstance(q.get(field), str) or not q[field].strip():
-            fail(f'{where}: `{field}` must be a non-empty string')
-    if len(q['title']) > TITLE_MAX:
-        fail(f'{where}: title {q["title"]!r} is longer than {TITLE_MAX} characters')
-    if len(q['header']) > HEADER_MAX:
-        fail(f'{where}: header {q["header"]!r} is longer than {HEADER_MAX} characters')
+            errors.append(f'{where}: `{field}` must be a non-empty string')
+    for field, limit in (('text', TEXT_MAX), ('title', TITLE_MAX), ('header', HEADER_MAX)):
+        if isinstance(q.get(field), str) and len(q[field]) > limit:
+            errors.append(f'{where}: {field} {q[field]!r} is longer than {limit} characters')
+    if isinstance(q.get('text'), str) and re.match(r'\s*\d+[.)]\s', q['text']):
+        errors.append(f'{where}: `text` carries no number (the engine numbers the dialog)')
     options = q.get('options')
-    if not isinstance(options, list) or not 2 <= len(options) <= 4 \
-            or not all(isinstance(o, dict) and isinstance(o.get('label'), str) and o['label'].strip()
-                       and isinstance(o.get('description', ''), str) for o in options):
-        fail(f'{where}: `options` must be 2-4 objects with a label and a description')
-    if len({o['label'] for o in options}) != len(options):
-        fail(f'{where}: option labels must be unique')
+    valid = isinstance(options, list) and 2 <= len(options) <= 4 \
+        and all(isinstance(o, dict) and isinstance(o.get('label'), str) and o['label'].strip()
+                and isinstance(o.get('description', ''), str) and isinstance(o.get('preview', ''), str) for o in options)
+    if not valid:
+        errors.append(f'{where}: `options` must be 2-4 objects with a label, a description and optionally a preview (text)')
+    else:
+        if len({o['label'] for o in options}) != len(options):
+            errors.append(f'{where}: option labels must be unique')
+        errors += [f'{where}: the description of option {o["label"]!r} is longer than {DESCRIPTION_MAX} characters'
+                   for o in options if len(o.get('description', '')) > DESCRIPTION_MAX]
+        if q.get('multiSelect') is True and any('preview' in o for o in options):
+            errors.append(f'{where}: `preview` is for single-select questions: remove it or make the question single-select')
     if not isinstance(q.get('multiSelect', False), bool):
-        fail(f'{where}: `multiSelect` must be a boolean')
+        errors.append(f'{where}: `multiSelect` must be a boolean')
     if q.get('kind', 'decision') not in KINDS:
-        fail(f"{where}: `kind` must be one of {', '.join(KINDS)}")
+        errors.append(f"{where}: `kind` must be one of {', '.join(KINDS)}")
     if not isinstance(q.get('waitsOn', []), list) or not all(isinstance(i, str) for i in q.get('waitsOn', [])):
-        fail(f'{where}: `waitsOn` must be a list of question ids')
+        errors.append(f'{where}: `waitsOn` must be a list of question ids')
     if q.get('board') is not None and not isinstance(q['board'], str):
-        fail(f'{where}: `board` must be a board id or null')
+        errors.append(f'{where}: `board` must be a board id or null')
     if not marks:
-        return
-    if q.get('recommendation') not in {o['label'] for o in options} or q.get('strength') not in STRENGTHS:
-        fail(f"{where}: `recommendation` names one option's label and `strength` is lean or strong (the dialog marks both)")
-    if q['strength'] == 'strong':
+        return errors
+    labels = {o['label'] for o in options} if valid else set()
+    if (valid and q.get('recommendation') not in labels) or q.get('strength') not in STRENGTHS:
+        errors.append(f"{where}: `recommendation` names one option's label and `strength` is lean or strong (the dialog marks both)")
+    if q.get('strength') == 'strong':
         claims = q.get('strongBecause') if isinstance(q.get('strongBecause'), dict) else {}
         for name, meaning in STRONG_CRITERIA.items():
             value = claims.get(name)
             allowed = ('true', 'does-not-apply') if name in MAY_NOT_APPLY else ('true',)
             if not (isinstance(value, str) and re.match(rf"({'|'.join(allowed)}): \S", value)):
-                fail(f"{where}: strong is a claim: `strongBecause.{name}` is \"{' or '.join(f'{a}: …' for a in allowed)}\" "
-                     f"({meaning}); if it does not hold, the recommendation is a lean")
+                errors.append(f"{where}: strong is a claim: `strongBecause.{name}` is \"{' or '.join(f'{a}: …' for a in allowed)}\" "
+                              f"({meaning}); if it does not hold, the recommendation is a lean")
     because = q.get('leanBecause')
-    if q['strength'] == 'lean' and not (isinstance(because, dict) and because.get('cause') in LEAN_CAUSES
-                                        and isinstance(because.get('detail'), str) and because['detail'].strip()):
-        fail(f'{where}: a lean names its cause: `leanBecause` {{"cause": "preference" (what the choice depends on) or '
-             '"evidence" (the unchecked fact and how to check it), "detail": "…"}')
+    if q.get('strength') == 'lean' and not (isinstance(because, dict) and because.get('cause') in LEAN_CAUSES
+                                            and isinstance(because.get('detail'), str) and because['detail'].strip()):
+        errors.append(f'{where}: a lean names its cause: `leanBecause` {{"cause": "preference" (what the choice depends on) or '
+                      '"evidence" (the unchecked fact and how to check it), "detail": "…"}')
+    return errors
+
+
+def refuse_all(errors: list[str]) -> None:
+    """One refusal listing every error, so a report is fixed once."""
+    if errors:
+        fail('; '.join(errors))
+
+
+def check_question(q: dict, where: str, marks: bool = True) -> None:
+    refuse_all(question_errors(q, where, marks))
 
 
 def new_question(ctx: Context, raw: dict, where: str) -> dict:
     unknown = set(raw) - set(CONTENT) - {'key'}
-    if unknown:
-        fail(f"{where}: unknown fields {', '.join(sorted(unknown))}")
+    errors = [f"{where}: unknown fields {', '.join(sorted(unknown))}"] if unknown else []
     q = {'id': next_id(ctx.state, 'question', 'q'), 'board': None, 'kind': 'decision', 'multiSelect': False,
          'waitsOn': [], 'for': None, 'premises': None, 'recommendation': None, 'strength': None, 'leanBecause': None,
          'strongBecause': None,
          **{k: v for k, v in raw.items() if k != 'key'},
          'status': 'draft', 'overlaps': [], 'searched': False, 'answer': None, 'round': ctx.round['id']}
-    check_question(q, where)
-    q['options'] = [{'label': o['label'], 'description': o.get('description', '')} for o in q['options']]
+    refuse_all(errors + question_errors(q, where))
+    q['options'] = [{'label': o['label'], 'description': o.get('description', ''), **({'preview': o['preview']} if 'preview' in o else {})}
+                    for o in q['options']]
     return q
 
 
@@ -442,7 +474,9 @@ def apply_update(ctx: Context, update, where: str, keys: dict) -> tuple[int, str
         return 0, None
     if merged['board'] is None and (merged['text'] != q['text'] or merged['title'] != q['title']):
         merged['searched'] = False  # search again; known outcomes stay
-    substantive = any(merged.get(k) != q.get(k) for k in CONTENT if k not in PRESENTATION)
+    plain = lambda options: [{'label': o['label'], 'description': o.get('description', '')} for o in options]  # previews are presentation
+    substantive = any((plain(merged[k]) != plain(q[k]) if k == 'options' else merged.get(k) != q.get(k))
+                      for k in CONTENT if k not in PRESENTATION)
     q.update(merged)
     return int(substantive), q['id']
 
@@ -590,21 +624,26 @@ def stage_text(ctx: Context) -> str:
     r = ctx.round
     staged = [f"- {q['id']} {q['status']}: {q['text']}" for q in r['questions']]
     return '\n'.join([
-        f"Round {r['id']} · Stage the questions for {', '.join(r['selected'])} under asking.md Question format, with a "
-        'plain round `title` and two-line `summary`. A board item keeps its id in `board`; a pasted point or new '
+        f"Round {r['id']} · Stage the questions for {', '.join(r['selected'])} under asking.md Question format (it owns "
+        'the wording), with a round `title` and `summary`. A board item keeps its id in `board`; a pasted point or new '
         'question is a draft (`board`: null, `for`: the point id)' + (', created on the board at Record' if ctx.board
                                                                         else '') + '. `waitsOn` names the questions a '
         'decision rests on; kind confirm-own-rulings asks the user to confirm your rulings. Mark each recommendation '
         'under decision-protocol.md Recommendation strength: strong sets `strongBecause` '
         f"{', '.join(STRONG_CRITERIA)} each to \"true: <evidence>\" (\"does-not-apply: <reason>\" for consumerWalk "
-        'and rulingsHold); lean sets `leanBecause` with cause preference or evidence. The engine refuses a report that '
-        'breaks a rule, naming it.',
+        'and rulingsHold); lean sets `leanBecause` with cause preference or evidence. Limits in characters and who '
+        f'reads each field: round `summary` {SUMMARY_MAX} (pane header); `title` {TITLE_MAX} (pane row; a question\'s '
+        f"is also the board item's title); `text` {TEXT_MAX}, without a number (the engine numbers the dialog; it is the dialog "
+        f"question and the board item's Question); `header` "
+        f'{HEADER_MAX} (dialog chip); option `label`, `description` {DESCRIPTION_MAX} and optional `preview` (dialog; '
+        'single-select questions only). The engine refuses a report that breaks a rule, listing every error.',
         *(['Already staged (carried held decisions):', *staged] if staged else []),
-        report_hint({'round': {'title': '<what this round decides>', 'summary': '<two lines: the decisions and why now>'},
+        report_hint({'round': {'title': '<what this round decides>', 'summary': '<the topic in plain words>'},
                      'questions': [{'key': 'a', 'board': None, 'for': r['selected'][0] if r['selected'] else None,
                                     'text': '<question>?',
-                                    'title': '<short title>', 'header': '<chip>', 'kind': 'decision',
-                                    'options': [{'label': 'A', 'description': '…'},
+                                    'title': '<the decision as a short question>', 'header': '<topic noun>',
+                                    'kind': 'decision',
+                                    'options': [{'label': 'A', 'description': '…', 'preview': '<code example>'},
                                                 {'label': 'B', 'description': '…'}],
                                     'premises': '<grounded premises>', 'recommendation': 'A', 'strength': 'lean',
                                     'leanBecause': {'cause': 'evidence', 'detail': '<the unchecked fact and how to check it>'},
@@ -612,29 +651,40 @@ def stage_text(ctx: Context) -> str:
     ])
 
 
-def describe(ctx: Context, raw, where: str, required: bool) -> None:
-    """The round's title and summary: what it decides, in plain words a reader without the discussion follows."""
+def describe_errors(raw, where: str, required: bool) -> list[str]:
     if raw is None and not required:
-        return
+        return []
     if not isinstance(raw, dict) or not all(isinstance(raw.get(k), str) and raw[k].strip() for k in ('title', 'summary')):
-        fail(f'{where}: `round` needs a plain-words "title" and a "summary" of what this round decides')
-    if len(raw['title']) > TITLE_MAX or len(raw['summary']) > SUMMARY_MAX:
-        fail(f'{where}: round title at most {TITLE_MAX} characters, summary at most {SUMMARY_MAX}')
-    ctx.round.update(title=raw['title'].strip(), summary=raw['summary'].strip())
+        return [f'{where}: `round` needs a plain-words "title" and a "summary" of what this round decides']
+    return [f'{where}: round {field} at most {limit} characters' for field, limit in
+            (('title', TITLE_MAX), ('summary', SUMMARY_MAX)) if len(raw[field]) > limit]
+
+
+def describe(ctx: Context, raw, where: str, required: bool) -> None:
+    """The round's title and summary: the topic in plain words, no ids."""
+    refuse_all(describe_errors(raw, where, required))
+    if raw is not None:
+        ctx.round.update(title=raw['title'].strip(), summary=raw['summary'].strip())
 
 
 def stage_accept(ctx: Context, report: dict) -> str:
-    describe(ctx, report.get('round'), 'stage', required=True)
     raw = report.get('questions')
+    errors = describe_errors(report.get('round'), 'stage', required=True)
     if not isinstance(raw, list):
-        fail('`questions` must be a list')
+        fail('; '.join([*errors, '`questions` must be a list']))
     keys = {}
     for index, item in enumerate(raw):
-        if not isinstance(item, dict):
-            fail(f'questions[{index}]: must be an object')
-        q = new_question(ctx, item, f'questions[{index}]')
+        try:
+            if not isinstance(item, dict):
+                fail(f'questions[{index}]: must be an object')
+            q = new_question(ctx, item, f'questions[{index}]')
+        except ProtocolError as error:
+            errors.append(str(error))
+            continue
         ctx.round['questions'].append(q)
         keys[item.get('key') or q['id']] = q['id']
+    refuse_all(errors)
+    describe(ctx, report.get('round'), 'stage', required=True)
     resolve_waits(ctx, keys)
     unique_texts(ctx)
     covered = {q['board'] for q in ctx.round['questions']} | {q['for'] for q in ctx.round['questions']} \
@@ -709,17 +759,71 @@ def related_accept(ctx: Context, report: dict) -> str:
 
 def fresh_check(ctx: Context) -> None:
     ctx.round['check'] = {'cycle': 1, 'cap': CHECK_CAP, 'expect': 'step-back', 'changes': 0, 'last': {},
-                          'converged': False, 'challenged': False, 'focused': False, 'focusing': False, 'askNow': False,
-                          'paused': False}
+                          'converged': False, 'challenged': False, 'focused': False, 'focusing': False, 'pathNow': False,
+                          'pathScoped': False, 'refineNow': None, 'refineScoped': False, 'refineChanges': 0, 'askNow': False, 'paused': False}
     for q in questions(ctx, 'ready'):
         q['status'] = 'draft'
-    ctx.set_pending('step-back')
+    start_base(ctx)
+
+
+def rescope_ids(ctx: Context) -> list[str]:
+    """The restarted questions still in the round: `protocol restart` queues scoped reruns of the path and refine passes
+    on them (round['rescope']: ids, pending `path` and `refine` passes, `seen` observed runs); the round's flags stay."""
+    scope = ctx.round.get('rescope') or {}
+    live = {q['id'] for q in ctx.round['questions']}
+    return [qid for qid in scope.get('ids', []) if qid in live]
+
+
+def rescope_done(ctx: Context) -> None:
+    scope = ctx.round.get('rescope')
+    if scope and not scope['path'] and not scope['refine']:
+        del ctx.round['rescope']
+
+
+def start_base(ctx: Context) -> None:
+    """The next step-back of the Base loop; the round's first one is the path pass (round-wide, once per round: r5 q21,
+    flagged on the round so a rebuilt check does not repeat it), and after a restart a path pass on the restarted ids."""
+    r, check = ctx.round, ctx.round['check']
+    scope = r.get('rescope')
+    check['pathNow'] = not r.get('pathRun')
+    check['pathScoped'] = bool(not check['pathNow'] and scope and scope['path'] and rescope_ids(ctx))
+    if scope and check['pathNow']:
+        scope['path'] = False  # the round-wide path pass covers the restarted ids
+    elif scope and scope['path'] and not check['pathScoped']:
+        scope['path'] = False
+    if check['pathScoped']:
+        check['pathNow'] = True
+        ctx.set_pending('step-back', ' '.join([*PATH_LENSES, *rescope_ids(ctx)]))
+    else:
+        ctx.set_pending('step-back', ' '.join(PATH_LENSES) if check['pathNow'] else '')
+    rescope_done(ctx)
+
+
+def count_pass_args(ctx: Context, command: str, args: str) -> None:
+    """A pass whose argument names every lens of the path set (or of a refine pass) counts as that pass for the round;
+    with the restarted ids as well, it counts for the scoped rerun."""
+    named = set(args.split())
+    r = ctx.round
+    scope = r.get('rescope')
+    scoped = bool(scope) and set(rescope_ids(ctx)) <= named
+    if command == 'step-back' and set(PATH_LENSES) <= named:
+        r['pathRun'] = True
+        if scoped:
+            scope['seen'] = list(dict.fromkeys([*scope['seen'], 'path']))
+    if command in REFINE_LENSES and set(REFINE_LENSES[command]) <= named:
+        r['refineRun'] = list(dict.fromkeys([*r.get('refineRun', []), command]))
+        if scoped:
+            scope['seen'] = list(dict.fromkeys([*scope['seen'], command]))
 
 
 def check_enter(ctx: Context) -> str | None:
     if not ctx.round['check'].get('expect'):
         fresh_check(ctx)
     return None
+
+
+def needs_related(ctx: Context) -> bool:
+    return bool(unresolved(ctx)) or any(q['board'] is None and not q['searched'] for q in questions(ctx, 'draft', 'held'))
 
 
 def needs_challenge(ctx: Context) -> bool:
@@ -732,14 +836,35 @@ def gate_ask(ctx: Context) -> str:
     """Before asking: every related hit has an outcome; challenge-rulings ran on the converged questions."""
     check = ctx.round['check']
     check['converged'] = True
-    if unresolved(ctx) or any(q['board'] is None and not q['searched'] for q in questions(ctx, 'draft', 'held')):
+    if needs_related(ctx):
         return 'related'  # a pass added or reworded drafts: search them first
-    evidence = [q['id'] for q in questions(ctx, 'draft', 'ready') if q.get('strength') == 'lean'
-                and (q.get('leanBecause') or {}).get('cause') == 'evidence']
-    if evidence and not check.get('focused') and not check['askNow']:
-        # One focused pass: grounding the unchecked facts turns most evidence leans strong (user, 2026-10-31).
+    if not check['askNow']:
+        # The refine pair, once per round after the Base loop converged (r5 q20, q26): step-back, then ground, round-wide
+        # (no question ids).
+        scope = ctx.round.get('rescope')
+        for command, lenses in REFINE_LENSES.items():
+            if command not in ctx.round.get('refineRun', []):
+                if scope and command in scope['refine']:
+                    scope['refine'].remove(command)  # the round-wide pass covers the restarted ids
+                check.update(expect=command, refineNow=command, refineScoped=False)
+                ctx.set_pending(command, ' '.join(lenses))
+                return 'check'
+            if scope and command in scope['refine']:
+                if not rescope_ids(ctx):
+                    scope['refine'].remove(command)
+                    continue
+                check.update(expect=command, refineNow=command, refineScoped=True)
+                ctx.set_pending(command, ' '.join([*lenses, *rescope_ids(ctx)]))
+                return 'check'
+        rescope_done(ctx)
+        if check.get('refineChanges'):  # the pair's changes rerun the Base loop (under the cap); the pair does not run again
+            check['refineChanges'] = 0
+            return next_cycle(ctx)
+    leans = [q['id'] for q in questions(ctx, 'draft', 'ready') if q.get('strength') == 'lean']
+    if leans and not check.get('focused') and not check['askNow']:
+        # One targeted pass on every lean, evidence or preference: strengthen it with evidence, or name what it rests on.
         check.update(expect='ground', focusing=True)
-        ctx.set_pending('ground', f"{FOCUS_LENSES} {' '.join(evidence)}")
+        ctx.set_pending('ground', ' '.join([*LEAN_LENSES, *leans]))
         return 'check'
     if needs_challenge(ctx):
         check['expect'] = 'challenge-rulings'
@@ -768,16 +893,48 @@ def next_cycle(ctx: Context) -> str:
     if check['cycle'] >= check['cap']:
         cap_batch(ctx)
         return 'check'
-    check.update(cycle=check['cycle'] + 1, changes=0, expect='step-back', converged=False)
-    ctx.set_pending('step-back')
+    check.update(cycle=check['cycle'] + 1, changes=0, expect='step-back', converged=False, refineNow=None)
+    start_base(ctx)
     return 'check'
 
 
+def pass_report_format(command: str) -> str:
+    return '\n'.join([
+        'After the pass, report each change as a per-question update: changed fields, a new question (no id), or '
+        '{"id", "remove": true, "reason"}; report an empty list when nothing changed. A pass that would revise a '
+        "user's ruling raises it as a new question.",
+        report_hint({'pass': command, 'updates': [{'id': 'q1', 'premises': '<revised premise>'}],
+                     'checked': ['<what you examined, when nothing changed>'],
+                     'summary': '<one line: what the pass found (the headline already says whether it changed anything)>'}),
+    ])
+
+
+def round_passes_recorded(ctx: Context) -> bool:
+    """Whether this round recorded a pass already (history, plus this call's queued events): the report format goes out
+    with the first pass only."""
+    path = ctx.store.dir / 'history.jsonl'
+    events = [json.loads(row) for row in path.read_text(encoding='utf-8').splitlines() if row.strip()] if path.is_file() else []
+    return any(e.get('event') == 'pass' and e.get('round') == ctx.round['id'] for e in [*events, *ctx.store.pending])
+
+
 def record_pass(ctx: Context, report: dict) -> tuple[str, int, str]:
+    """Records a pass report; every refusal repeats the report format."""
+    try:
+        return record_pass_report(ctx, report)
+    except ProtocolError as error:
+        command = report.get('pass') if report.get('pass') in PASSES else (ctx.round['check'].get('expect') or PASSES[0])
+        raise ProtocolError(f'{error}\n{pass_report_format(command)}') from None
+
+
+def record_pass_report(ctx: Context, report: dict) -> tuple[str, int, str]:
     command = report.get('pass')
     if command not in PASSES:
         fail(f"`pass` must be one of {', '.join(PASSES)}")
-    origin = ctx.round['observed'].pop(command, 'model')
+    observed = ctx.round['observed']
+    if not ctx.codex and command not in observed:  # Codex has no console to observe its runs
+        fail(f'no /{command} ran since its last report: the console runs it as its own turn (end your turn), or the person '
+             'types or presses it; a model Skill call counts once it ran')
+    origin = observed.get(command, 'model')
     describe(ctx, report.get('round'), 'pass report', required=False)
     checked = report.get('checked')
     if checked is not None and not (isinstance(checked, list) and all(isinstance(c, str) and c.strip() for c in checked)):
@@ -791,7 +948,10 @@ def record_pass(ctx: Context, report: dict) -> tuple[str, int, str]:
     if not changes and not checked:
         fail(f'a {command} pass that changes nothing names what it checked: `"checked": ["q2: the retry premise in '
              'task-queue.ts", …]` (no change is a finding, not a skip)')
+    if not ctx.rejected:
+        observed.pop(command, None)  # a run stays open while part of its report was not applied: the resend counts
     ctx.round['check']['last'][command] = {'changes': changes, 'origin': origin}
+    ctx.round['lastPass'] = {'pass': command, 'questions': list(dict.fromkeys([*ctx.applied, *ctx.added]))}  # in or out of sequence
     ctx.log('pass', command=command, changes=changes, questions=list(dict.fromkeys(ctx.applied)), added=ctx.added,
             rejected=len(ctx.rejected), origin=origin, cycle=ctx.round['check']['cycle'], summary=report.get('summary'),
             checked=checked)
@@ -806,11 +966,38 @@ def check_accept(ctx: Context, report: dict) -> str:
         fail('the check loop is paused: protocol resume continues it')
     expected = check['expect']
     command, changes, _ = record_pass(ctx, report)
-    if command != expected:  # an extra pass between passes (pressed, typed, or asked for in chat)
+    # A pending path or refine pass is that pass only once a run naming its lenses was observed (Codex has no observation:
+    # it reports the pending pass it was told to run).
+    scope = ctx.round.get('rescope') or {}
+    path_seen = 'path' in scope.get('seen', []) if check.get('pathScoped') else ctx.round.get('pathRun')
+    refine_seen = command in scope.get('seen', []) if check.get('refineScoped') else command in ctx.round.get('refineRun', [])
+    path_open = not ctx.codex and check.get('pathNow') and not path_seen
+    refine_open = not ctx.codex and check.get('refineNow') == command and not refine_seen
+    if command != expected or path_open or refine_open:  # an extra pass between passes (pressed, typed, or asked for in chat)
         if changes:
-            check.update(changes=0, expect='step-back', converged=False, challenged=False, focused=False, focusing=False)
-            ctx.set_pending('step-back')
+            check.update(changes=0, expect='step-back', converged=False, challenged=False, focused=False, focusing=False, refineNow=None)
+            if not path_open:
+                start_base(ctx)
         return 'check'
+    if check.get('refineNow') == command:
+        check.update(refineNow=None, refineChanges=check.get('refineChanges', 0) + changes)
+        if check.get('refineScoped'):
+            scope['refine'].remove(command)
+            scope['seen'] = [one for one in scope['seen'] if one != command]
+        else:
+            ctx.round['refineRun'] = list(dict.fromkeys([*ctx.round.get('refineRun', []), command]))
+        check['refineScoped'] = False
+        return gate_ask(ctx)
+    if command == 'step-back' and check.get('pathNow'):
+        # The path pass: its changes flow into the Base loop that runs next; new or reworded drafts are searched first.
+        if check.get('pathScoped'):
+            scope['path'] = False
+            scope['seen'] = [one for one in scope['seen'] if one != 'path']
+        else:
+            ctx.round['pathRun'] = True
+        check.update(changes=0, expect='step-back')
+        start_base(ctx)
+        return 'related' if changes and needs_related(ctx) else 'check'
     if command == 'step-back':
         check.update(changes=changes, expect='ground')
         ctx.set_pending('ground')
@@ -830,12 +1017,11 @@ def check_accept(ctx: Context, report: dict) -> str:
 
 def pass_text(ctx: Context, command: str) -> str:
     args = (ctx.round['pending'] or {}).get('args') or ''
-    run = f'{command} {args}'.strip()
     scope = f'with the argument `{args}` (lenses, then the questions to strengthen)' if args else 'on the whole round'
     if ctx.codex:
         return f'Run the {command} skill now {scope} (read its SKILL.md), then report the pass.'
-    return (f'End your turn now, without restating the pass or the next step in chat (the call\'s row and the pane '
-            f'show both): the console runs /{run} as the next turn.')
+    return ("Don't run or report the next pass in this turn: the console starts it as its own turn. Finish any other "
+            "work for the user, then end the turn without a closing status line.")
 
 
 def check_text(ctx: Context) -> str:
@@ -848,38 +1034,43 @@ def check_text(ctx: Context) -> str:
     rows = [f"- {q['id']} {q['status']}{' (' + q['kind'] + ')' if q['kind'] != 'decision' else ''}: {q['text']}"
             + (f" — waits on {', '.join(q['waitsOn'])}" if q['status'] == 'held' else '') for q in r['questions']]
     return '\n'.join([
-        f"Round {r['id']} · Check cycle {check['cycle']}/{check['cap']}: {command} next"
+        f"Round {r['id']} · Check cycle {check['cycle']}/{check['cap']}"
         + (' (last before the batch: your own rulings in this round become questions where unsure, and each strong '
            "recommendation's checklist is checked against its evidence: a criterion that fails makes it a lean)."
            if command == 'challenge-rulings' else
-           ' (focused: check the facts behind the evidence leans; strengthen each, or keep it lean with what stays unverified).'
+           f" (the path pass on the restarted questions {' '.join(rescope_ids(ctx))}: goal and foundations; its changes flow into the base loop)."
+           if check.get('pathScoped') else
+           " (the round's path pass: goal and foundations, before the drafts settle; its changes flow into the base loop)."
+           if check.get('pathNow') else
+           f" (the refine pass on the restarted questions {' '.join(rescope_ids(ctx))}: the lenses named in the argument, once the base loop settled; changes rerun the base loop)."
+           if check.get('refineScoped') else
+           " (the round's refine pass: the lenses named in the argument, once the base loop settled; changes rerun the base loop)."
+           if check.get('refineNow') else
+           ' (the lean pass: make each lean named in the argument strong with evidence (a rule, a released ruling, a consumer '
+           'need, a source or a probe), or keep it lean and name exactly what it depends on).'
            if check.get('focusing') else
            '.'),
         *rows,
         pass_text(ctx, command),
-        'After the pass, report each change as a per-question update: changed fields, a new question (no id), or '
-        '{"id", "remove": true, "reason"}; report an empty list when nothing changed. A pass that would revise a '
-        "user's ruling raises it as a new question.",
-        report_hint({'pass': command, 'updates': [{'id': 'q1', 'premises': '<revised premise>'}],
-                     'checked': ['<what you examined, when nothing changed>'],
-                     'summary': '<one line: what the pass found (the headline already says whether it changed anything)>'}),
+        *([] if round_passes_recorded(ctx) else [pass_report_format(command)]),
     ])
 
 
 # Ask: machine-issued batches marked round:<id>:<n>.
 
-def dialog_question(q: dict) -> dict:
+def dialog_question(q: dict, number: int | None = None) -> dict:
     """The AskUserQuestion entry: the recommended option first, its label marked with the strength and, on a lean,
-    its description opening with what the lean rests on."""
+    its description opening with what the lean rests on; a batch of 2+ numbers its questions (`1. `)."""
     best = next(o for o in q['options'] if o['label'] == q['recommendation'])
     description = best['description']
     if q['strength'] == 'lean':
         because = q.get('leanBecause') or {}
         kind = 'Unverified' if because.get('cause') == 'evidence' else 'Your call'
         description = f"{kind}: {because.get('detail')}" + (f' — {description}' if description else '')
-    options = [{'label': best['label'] + recommended_suffix(q), 'description': description},
+    options = [{**best, 'label': best['label'] + recommended_suffix(q), 'description': description},
                *(o for o in q['options'] if o is not best)]
-    return {'question': q['text'], 'header': q['header'], 'options': options, 'multiSelect': q['multiSelect']}
+    return {'question': f'{number}. {q["text"]}' if number else q['text'], 'header': q['header'], 'options': options,
+            'multiSelect': q['multiSelect']}
 
 
 def ask_enter(ctx: Context) -> str | None:
@@ -894,20 +1085,25 @@ def ask_enter(ctx: Context) -> str | None:
         if questions(ctx, 'asked') or any(q.get('typed') for q in questions(ctx, 'ready')):
             return None
         return PROTOCOLS[r['protocol']].after_ask
-    # Only valid questions go out; an invalid one waits for a pass report (an answer being recorded must not fail here).
-    valid = []
+    # Only valid questions go out (an answer being recorded must not fail here). Only a question from before the limits
+    # can be invalid here (staging, pass and edit updates check them): it names its error and the model shortens it in a
+    # pass of its own (no automatic pass).
+    valid, broken = [], {}
     for q in ready:
         try:
             check_question(q, q['id'])
             valid.append(q)
         except ProtocolError as error:
-            ctx.messages.append(f'Not asked yet: {error}. Report a pass with the missing fields.')
+            broken[q['id']] = str(error)
+    if broken:
+        ctx.messages.append('Not asked yet: ' + '; '.join(broken.values()) + f". Shorten {', '.join(broken)} in a pass of its "
+                            'own: call the ground skill on it (that Skill call counts as the observed run), then report the pass.')
     if not valid:
         return None
     chosen = valid[:BATCH]
     r['batchSeq'] += 1
     r['batch'] = {'marker': f"round:{r['id']}:{r['batchSeq']}", 'cap': False, 'ids': [q['id'] for q in chosen],
-                  'questions': [dialog_question(q) for q in chosen]}
+                  'questions': [dialog_question(q, i + 1 if len(chosen) > 1 else None) for i, q in enumerate(chosen)]}
     for q in chosen:
         q['status'] = 'asked'
     ctx.log('asked', marker=r['batch']['marker'], questions=r['batch']['ids'])
@@ -920,7 +1116,11 @@ def ask_text(ctx: Context) -> str:
         return f"Round {ctx.round['id']} · Ask: no batch out. `protocol step` with {{}} issues the next one."
     tool_input = {'questions': batch['questions'], 'metadata': {'source': batch['marker']}}
     lead = f"Round {ctx.round['id']} · " + ('Check cap reached: ask the user how to go on.' if batch['cap'] else
-                                             f"Ask batch {batch['marker']} (walk through first under asking.md).")
+                                             f"Ask batch {batch['marker']} (walk through first under asking.md"
+                                             + (', in this order, numbered like the dialog' if len(batch['questions']) > 1 else '') + ').')
+    approval = approval_question(ctx) if ctx.round['protocol'] == 'release' else None
+    if approval and approval['id'] in batch['ids'] and approval_reasons(ctx):
+        lead += f" The dialog stays short; why it asks: {'; '.join(approval_reasons(ctx))}."
     if ctx.codex:
         return '\n'.join([
             lead, f'Ask the user exactly these questions: {json_block(batch["questions"])}',
@@ -928,10 +1128,13 @@ def ask_text(ctx: Context) -> str:
             + json_block({'marker': batch['marker'], 'answers': {batch['questions'][0]['question']: "<the user's own words, quoted verbatim>"}})
             + ". Key each answer by the question's exact text and quote only what the user wrote; leave out questions "
             'the user did not answer. If the user declines, run `protocol decline --origin model-reported` with stdin '
-            + json_block({'marker': batch['marker'], 'partial': None}) + '.'])
+            + json_block({'marker': batch['marker'], 'partial': None}) + '. To apply a change the user asked for to a question, '
+            'run `protocol edit` (stdin {"updates": [...], "quote": "<the user\'s words, verbatim>"}); the batch comes back to ask again.'])
     return '\n'.join([lead, f'Call AskUserQuestion with exactly this input: {json_block(tool_input)}',
-                      'To change a question before the user answers (an extra pass), report the pass with its updates: the '
-                      'batch comes back and goes out again. The console records the answers from the dialog. Never pass a person origin (dialog, composer, '
+                      'To apply a change the user asked for to a question before they answer, use `protocol edit` (stdin '
+                      '{"updates": [...], "quote": "<the user\'s exact words>"}; no pass runs): the batch comes back and goes out '
+                      'again. A pass report updates questions only for a pass.\n'
+                      'The console records the answers from the dialog. Never pass a person origin (dialog, composer, '
                       'bridge, press) yourself: the console relays those. Record an answer the user types in chat '
                       'instead with the protocol tool\'s ["answer"] (it stamps the origin; through Bash, `protocol '
                       'answer --origin chat`) and stdin '
@@ -1483,6 +1686,18 @@ def own_rulings_accept(ctx: Context, report: dict) -> str:
     return 'approval'
 
 
+def approval_reasons(ctx: Context) -> list[str]:
+    """Why the approval is asked (unsure rulings, records that left the set): for the model and the Log, never the dialog."""
+    return [f"unsure: {x['record']} {x['ruling']}" for x in ctx.round['rulings'] or [] if not x['sure']] + \
+           [f"left the set: {rec['id']} ({rec['reason']})" for rec in ctx.round['set'] if rec['state'] != 'set']
+
+
+def release_question_text(ctx: Context) -> str:
+    """`Release r4's 3 records?`: within the dialog limits whatever the set holds."""
+    source, count = ctx.round.get('source'), plural(len(in_set(ctx)), 'record')
+    return f"Release {source}'s {count}?" if source else f"Release {count}?"
+
+
 def approval_question(ctx: Context) -> dict | None:
     return next((q for q in ctx.round['questions'] if q['kind'] == 'confirm-own-rulings'), None)
 
@@ -1516,25 +1731,25 @@ def approval_enter(ctx: Context) -> str | None:
     if r['conditional'] and not changed and not unsure:
         return approve(ctx, r['conditional']['origin'], '/release-round')
     if q is None:
-        reasons = [f"unsure: {x['record']} {x['ruling']}" for x in unsure] + \
-                  [f"left the set: {rec['id']} ({rec['reason']})" for rec in r['set'] if rec['state'] != 'set']
-        ids = ', '.join(in_set(ctx))
+        reasons = approval_reasons(ctx)
         q = {'id': next_id(ctx.state, 'question', 'q'), 'board': None, 'kind': 'confirm-own-rulings', 'multiSelect': False,
              'waitsOn': [], 'for': None, 'premises': None, 'round': r['id'], 'status': 'draft', 'overlaps': [],
              'searched': True, 'answer': None,
-             'text': f"Release {ids}?" + (f" ({'; '.join(reasons)})" if reasons else ''),
+             'text': release_question_text(ctx),
              'title': f'Release {release_label(ctx)}'[:TITLE_MAX], 'header': 'Release',
-             'options': [{'label': APPROVE, 'description': f'Owner writes, then board release {ids}'},
+             'options': [{'label': APPROVE, 'description': 'Owner writes, then board release'},
                          {'label': HOLD, 'description': 'Nothing releases; the records stay decided for a round'}],
              'recommendation': APPROVE, 'strength': 'lean', 'strongBecause': None,
              'leanBecause': {'cause': 'preference', 'detail': 'the release is your approval'}}
         r['questions'].append(q)
-        ctx.log('approval-asked', question=q['id'], reasons=len(reasons))
+        ctx.log('approval-asked', question=q['id'], reasons=reasons)
     return 'ask'
 
 
 def approval_text(ctx: Context) -> str:
-    return f"Release {ctx.round['id']} · Approval: `protocol step` with {{}} continues."
+    reasons = approval_reasons(ctx)
+    return f"Release {ctx.round['id']} · Approval: `protocol step` with {{}} continues." \
+        + (f" The dialog asks because: {'; '.join(reasons)}." if reasons else '')
 
 
 def release_ask_accept(ctx: Context, report: dict) -> str:
@@ -1576,6 +1791,17 @@ def owner_path(ctx: Context, written: str) -> Path:
         written = home + written[1:]
     path = Path(written)
     return path if path.is_absolute() else Path(ctx.board.repo) / path
+
+
+def git_ignored(ctx: Context, shown: str) -> bool:
+    """Whether git ignores a repository-relative owner path (an installed `~`/`$HOME` or absolute path is not checked).
+    Without git, or outside a git repository, nothing is ignored: the check is skipped."""
+    if shown.startswith(('~', '$HOME', '/')):
+        return False
+    try:
+        return subprocess.run(['git', 'check-ignore', '-q', '--', shown], cwd=ctx.board.repo, capture_output=True).returncode == 0
+    except OSError:
+        return False
 
 
 def rule_owner_text(description: str) -> str:
@@ -1628,6 +1854,8 @@ def owners_accept(ctx: Context, report: dict) -> str:
             resolved = path.resolve()
             if not resolved.is_file():  # the installed state: a rendered, linked file counts as it reads
                 problems.append(f'{rid}: {shown} does not exist ({path})')
+            elif git_ignored(ctx, shown):
+                problems.append(f'{rid}: {shown} is ignored by git (e.g. .scratch): write the rule into a tracked or trackable owner')
             elif anchor and resolved.suffix.lower() not in ('.md', '.markdown'):
                 problems.append(f'{rid}: {shown}#{anchor}: anchors name Markdown headings; name the section in words')
             elif anchor and anchor not in anchors_of(resolved.read_text(encoding='utf-8', errors='replace')):
@@ -1827,6 +2055,16 @@ def batch_number(marker: str | None) -> str:
     return (marker or '?').rsplit(':', 1)[-1]
 
 
+def cut(text: str, limit: int) -> str:
+    """At most `limit` characters, cut at a word boundary and ending with `…` when it cut."""
+    if len(text) <= limit:
+        return text
+    head = text[:limit - 1]
+    if not text[limit - 1].isspace() and ' ' in head:
+        head = head.rsplit(' ', 1)[0]
+    return head.rstrip(' ,;:.-') + '…'
+
+
 def plural(n: int, word: str) -> str:
     return f"{n} {word}{'' if n == 1 else 's'}"
 
@@ -1849,7 +2087,7 @@ def log_text(event: dict) -> str | None:
     """One history event in plain words for the console's log, or None for events it leaves out."""
     e, kind = event, event['event']
     ids = lambda key: ', '.join(e.get(key) or []) or 'none'
-    summary = f": {e['summary'][:90]}" if e.get('summary') else ''
+    summary = f": {cut(e['summary'], 90)}" if e.get('summary') else ''
     return {
         'start': 'release started' if e.get('protocol') == 'release' else 'round started',
         'rechecked': f"re-check: {e.get('unchanged')} unchanged" + (f", {ids('changed')} changed" if e.get('changed') else ''),
@@ -1857,10 +2095,12 @@ def log_text(event: dict) -> str | None:
         'release-stopped': f"stopped: {(e.get('reason') or '')[:90]}",
         'board-checked': f"board check: {plural(e.get('supersedes') or 0, 'supersede')}, {plural(len(e.get('closes') or []), 'answered question')}",
         'own-rulings': f"own rulings: {e.get('rulings')}, {e.get('unsure')} unsure",
-        'approval-asked': 'approval asked', 'approved': f"approved ({e.get('origin')}, {e.get('how')})",
+        'approval-asked': 'approval asked' + (f": {cut('; '.join(e['reasons']), 90)}" if isinstance(e.get('reasons'), list) and e['reasons'] else ''), 'approved': f"approved ({e.get('origin')}, {e.get('how')})",
         'stamped': f"/release-round ({e.get('origin')}): approves if the checks hold",
         'owners-checked': f"owners checked: {plural(e.get('written') or 0, 'written path')}",
-        'board-release': f"board release {ids('records')}" + (f" closing {ids('closes')}" if e.get('closes') else '') + (f": exit {e.get('exit')}" if e.get('exit') else ''),
+        # a clean release without closes is "released <ids>" (release-done) alone
+        'board-release': f"board release {ids('records')}" + (f" closing {ids('closes')}" if e.get('closes') else '') + (f": exit {e.get('exit')}" if e.get('exit') else '')
+        if e.get('exit') or e.get('closes') else None,
         'superseded': f"superseded {e.get('old')} by {e.get('new')}", 'release-done': f"released {ids('records')}", 'selected': f"selected {ids('selected')}", 'staged': f"staged {ids('questions')}",
         'related': f"{e.get('question')}: {len(e.get('hits') or [])} related items",
         'pass': f"{e.get('command')}: {pass_words(e)}{summary}", 'classified': classified_words(e),
@@ -1870,6 +2110,7 @@ def log_text(event: dict) -> str | None:
         'batch-withdrawn': f"batch {batch_number(e.get('marker'))} withdrawn for updates", 'recorded': f"recorded {e.get('question')} → {e.get('board') or 'file'}",
         'deferred': f"deferred {e.get('question')}", 'released': f"released {ids('items')}",
         'refused': f"refused {e.get('verb')}: {(e.get('error') or '')[:90]}", 'removed': f"removed {e.get('question')}",
+        'edited': f"edited {ids('questions')} (your words)",
         'closed': 'release closed' if e.get('protocol') == 'release' else 'round closed', 'dropped': f"dropped {ids('questions')} (no longer open on the board)", 'abandoned': f"abandoned at {e.get('step')}",
     }.get(kind)
 
@@ -1893,14 +2134,20 @@ def stopped_view(r: dict | None) -> dict | None:
     return {'run': r['id'], 'reason': stopped['reason'], 'ids': stopped['ids']} if stopped else None
 
 
+def next_run(ctx: Context) -> dict | None:
+    """What follows a close: the release of the last round's recorded board records, until a release consumes them."""
+    last = ctx.state.get('lastRecorded') or {}
+    return {'release': {'round': last['round'], 'count': len(last['ids'])}} if last.get('ids') else None
+
+
 def show_json(ctx: Context) -> dict:
     r = ctx.round
     base = {'version': VERSION, 'session': ctx.store.session, 'protocol': None, 'round': None, 'title': None,
             'summary': None, 'step': None,
             'check': None, 'pending': None, 'questions': [], 'batch': None, 'counts': ctx.state.get('counts'),
-            'progress': None, 'log': [], 'records': [], 'stopped': stopped_view(r)}
+            'progress': None, 'log': [], 'records': [], 'stopped': stopped_view(r), 'next': None}
     if not r or r['step'] == 'closed':  # contract-rulings R-B3: no open round
-        return base
+        return {**base, 'next': next_run(ctx)}
     check = r['check']
     return {**base, 'protocol': r['protocol'], 'round': r['id'], 'title': r.get('title'), 'summary': r.get('summary'),
             'step': r['step'],
@@ -1910,6 +2157,7 @@ def show_json(ctx: Context) -> dict:
             'questions': [{'id': q['id'], 'board': q['board'], 'text': q['text'], 'title': q['title'], 'kind': q['kind'],
                            'status': q['status'], 'waitsOn': q['waitsOn'], 'overlaps': q['overlaps'], 'answer': q['answer'],
                            'answeredAt': q.get('answeredAt') if q['answer'] is not None else None,
+                           'changedBy': (r.get('lastPass') or {}).get('pass') if q['id'] in (r.get('lastPass') or {}).get('questions', []) else None,
                            'recommendation': q.get('recommendation'), 'strength': q.get('strength'),
                            'leanBecause': q.get('leanBecause'), 'strongBecause': q.get('strongBecause')}
                           for q in r['questions']],
@@ -1918,7 +2166,7 @@ def show_json(ctx: Context) -> dict:
             # a release run: its records with their state (set, dropped, changed, released) and reason
             'records': [{'id': rec['id'], 'title': rec['title'], 'state': rec['state'], 'reason': rec['reason']}
                         for rec in r.get('set') or []],
-            'stopped': None}
+            'stopped': None, 'next': None}
 
 
 def show_markdown(ctx: Context) -> str:
@@ -2067,6 +2315,39 @@ def chat_answer(ctx: Context, report: dict) -> str:
     return f'Recorded the chat answer to {qid} with its quote.'
 
 
+def edit_round(ctx: Context, report: dict) -> str:
+    """The user's requested change to the questions, applied without a pass: the quote must appear in a message the console
+    relayed (or a typed dialog text) since the questions it touches went out (the chat-answer check; Codex quotes verbatim).
+    A batch that is out comes back and goes out again; the check loop does not rerun and no pass is counted."""
+    r = ctx.round
+    if r['protocol'] != 'round' or r['step'] not in ('related', 'check', 'ask'):
+        fail('edit applies to a round between Related and Ask')
+    if r['batch'] and r['batch']['cap']:
+        fail('answer the cap question first')
+    updates, quote = report.get('updates'), report.get('quote')
+    if not isinstance(updates, list) or not updates or not isinstance(quote, str) or not quote.strip():
+        fail('edit: stdin needs "updates" (per-question updates as in a pass report) and "quote" (the user\'s exact words asking for it)')
+    if not ctx.codex:
+        floor = min([by_id(ctx, u['id']).get('messagesBefore', 0) for u in updates if isinstance(u, dict) and u.get('id') in
+                     {q['id'] for q in r['questions']}] or [0])
+        if not any(normalized(quote) in normalized(message['text']) for message in r['messages'][floor:]):
+            fail('edit: quote check failed: the quote appears in no message the user sent since the questions it changes went out')
+    if r['batch']:
+        ctx.log('batch-withdrawn', marker=r['batch']['marker'], reason='edit')
+        batch_back(ctx)
+    for q in questions(ctx):
+        q.pop('typed', None)
+    apply_updates(ctx, updates)
+    if ctx.rejected and not ctx.applied and not ctx.added:
+        fail('no update applied: ' + '; '.join(ctx.rejected))
+    if ctx.rejected:
+        ctx.messages.append('Not applied (fix and resend these through edit; the others applied): ' + '; '.join(ctx.rejected))
+    touched = list(dict.fromkeys([*ctx.applied, *ctx.added]))
+    r['lastPass'] = {'pass': 'edit', 'questions': touched}  # rows read "↻ edit"
+    ctx.log('edited', questions=touched, rejected=len(ctx.rejected), quote=quote)
+    return r['step']
+
+
 def open_batch(ctx: Context, marker) -> dict:
     r = ctx.round
     if not r or r['step'] == 'closed':
@@ -2177,8 +2458,8 @@ def answer(ctx: Context, report: dict, origin: str) -> str:
     for qid in typed:
         notes.append(f'{qid}: the user typed "{by_id(ctx, qid)["typed"]}" instead of picking an option. Read it before '
                      f'{qid} goes out again: an option → the ["answer"] call with that text as quote; a criterion → '
-                     f'`protocol restart {qid}`; a request (explain, step back, ground, …) → run it on {qid}, then '
-                     '`protocol step` with {} (or the pass report) asks it again.')
+                     f'`protocol restart {qid}`; a change to the questions → `protocol edit` (updates + the quote); another request '
+                     f'(explain, step back, ground, …) → run it on {qid}, then `protocol step` with {{}} (or the pass report) asks it again.')
     if response:
         ctx.round['responses'].append({'marker': batch['marker'], 'text': response, 'origin': origin})
         notes.append(f'The user also wrote: "{response}" — not assigned to any question: it may state a criterion '
@@ -2214,6 +2495,10 @@ def restart(ctx: Context, ids: list[str], reason: str | None) -> None:
         q['status'] = premise_status(ctx, q)
     ctx.log('restart', questions=ids, reason=reason)
     r['batch'] = None
+    # The restarted ids get their own path pass and refine pair (accumulating over restarts before the loop settles);
+    # the round's once-per-round flags stay.
+    scope = r.get('rescope') or {'ids': [], 'path': True, 'refine': [], 'seen': []}
+    r['rescope'] = {'ids': list(dict.fromkeys([*scope['ids'], *ids])), 'path': True, 'refine': list(REFINE_LENSES), 'seen': []}
     fresh_check(ctx)
     ctx.go('check')
 
@@ -2257,7 +2542,7 @@ def next_words(ctx: Context) -> str | None:
     if r['step'] == 'closed':
         if r['protocol'] == 'release':
             return f"a round on {', '.join(r['stopped']['ids'])}" if r.get('stopped') else None
-        return 'release (/release-round or ask)' if (ctx.state.get('lastRecorded') or {}).get('ids') else None
+        return 'release (/release-round or ask)' if next_run(ctx) else None
     if r['batch']:
         return 'your call on the cycle cap' if r['batch']['cap'] else f"your answers (batch {batch_number(r['batch']['marker'])})"
     if r['step'] == 'check':
@@ -2266,7 +2551,7 @@ def next_words(ctx: Context) -> str | None:
             return 'check paused; `protocol resume` continues'
         if check['expect'] == 'challenge-rulings':
             return 'challenge-rulings, last before asking'
-        return f"{check['expect']}{', focused' if check.get('focusing') else ''}, cycle {check['cycle']}/{check['cap']}"
+        return f"{check['expect']}{', path pass' + (' ' + ' '.join(rescope_ids(ctx)) if check.get('pathScoped') else '') if check.get('pathNow') else ', refine pass' + (' ' + ' '.join(rescope_ids(ctx)) if check.get('refineScoped') else '') if check.get('refineNow') else ', lean pass' if check.get('focusing') else ''}, cycle {check['cycle']}/{check['cap']}"
     if r['step'] == 'collect':
         return 'classify ' + ' and '.join(plural(len(r[key]), key[:-1]) for key in ('points', 'items') if r[key])
     return {'select': 'select', 'stage': 'stage the questions', 'related': 'resolve related items',
@@ -2416,6 +2701,7 @@ def cli(argv: list[str]) -> int:
     verb('decline', 'a declined batch returns to ready (stdin JSON); prints show --json')
     verb('pass', 'a pass started, or the person typed or pressed /release-round (stdin {"command","args","pending"}); prints '
                  'show --json')
+    verb('edit', "apply the user's requested change to the questions (stdin {\"updates\", \"quote\"}); no pass, no check rerun")
     verb('say', "store the person's message for the chat quote check (stdin {\"text\"})")
     sub = verb('restart', 'questions back to draft after a criterion answer; the check loop reruns')
     sub.add_argument('ids', nargs='+')
@@ -2508,6 +2794,9 @@ def run(ctx: Context, args) -> str:
         step = PROTOCOLS[r['protocol']].steps[r['step']]
         ctx.go(step.accept(ctx, report))
         return instructions(ctx)
+    if command == 'edit':
+        ctx.go(edit_round(ctx, report))
+        return instructions(ctx)
     if command == 'say':
         if not isinstance(report.get('text'), str) or not report['text'].strip():
             fail('say: stdin needs {"text"}')
@@ -2524,6 +2813,7 @@ def run(ctx: Context, args) -> str:
         # Observation only: the pending pass stays until its report (`step`), so the console can tell a pass turn
         # that ended without one.
         r['observed'][pass_command] = args.origin
+        count_pass_args(ctx, pass_command, report.get('args') or '')
         ctx.log('pass-start', command=pass_command, args=report.get('args') or '', origin=args.origin,
                 pending=report.get('pending'))
         return json.dumps({**show_json(ctx), 'note': None}, indent=1, ensure_ascii=False)

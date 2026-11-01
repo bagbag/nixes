@@ -20,6 +20,8 @@ export type ConsoleQuestion = {
   overlaps: ConsoleOverlap[]
   answer: string | null
   answeredAt: string | null
+  /** The pass whose most recent report changed this question; null for every other question. */
+  changedBy: string | null
   recommendation: string | null
   strength: 'lean' | 'strong' | null
   leanBecause: { cause: string; detail: string } | null
@@ -69,6 +71,8 @@ export type ConsoleRound = {
   records: ConsoleRecord[]
   /** The last release, when it stopped: shown while no run is open, its records wait for a round. */
   stopped: { run: string; reason: string; ids: string[] } | null
+  /** What follows a close, the engine's knowledge: the release of the last round's recorded board records. Null while a run is open or nothing waits. */
+  next: { release: { round: string; count: number } } | null
   note: string | null
 }
 
@@ -116,6 +120,14 @@ export type ConsoleLenses = { 'step-back': string[]; ground: string[]; focus: st
 /** The running refresh (single flight): when it started, and whether a request arrived meanwhile. */
 export type ConsoleRefresh = { since: number | null; again: boolean }
 
+/** A board item as the pane's slot shows it: the decision or description first, the facts last, the linked ids for the facts' hover. */
+export type ConsoleItemSlot = { lines: string[]; facts: string; linked: string }
+
+/** What the pane shows open inline below its row (one at a time): a board item's summary, or a question's overlaps. */
+export type ConsoleOpened =
+  | { kind: 'item'; id: string; from: string | null; phase: 'reading' | 'read' | 'failed'; text: string; slot: ConsoleItemSlot | null }  // `from`: the question whose overlaps listed it; `text`: the failure
+  | { kind: 'overlaps'; question: string; overlaps: { id: string; title: string }[] }
+
 /** Pane lists the person expanded past their cap. */
 export type ConsoleSection = 'questions' | 'held' | 'items' | 'sessions'
 
@@ -132,6 +144,7 @@ declare module 'claude-code' {
       gate: Shaped<string[]>
       lenses: Shaped<ConsoleLenses>
       expanded: Shaped<ConsoleSection[]>
+      opened: Shaped<ConsoleOpened | null>
       refresh: Shaped<ConsoleRefresh>
       isPaneDismissed: boolean
     }

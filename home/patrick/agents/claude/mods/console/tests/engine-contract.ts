@@ -16,7 +16,8 @@ export const ENGINE_CONTRACT = {
     "progress": null,
     "log": [],
     "records": [],
-    "stopped": null
+    "stopped": null,
+    "next": null
   },
   "check": {
     "version": 1,
@@ -28,13 +29,13 @@ export const ENGINE_CONTRACT = {
     "step": "check",
     "check": {
       "cycle": 1,
-      "cap": 3,
+      "cap": 5,
       "last": {}
     },
     "pending": {
       "id": "p1",
       "command": "step-back",
-      "args": ""
+      "args": "goal foundations"
     },
     "questions": [
       {
@@ -48,6 +49,7 @@ export const ENGINE_CONTRACT = {
         "overlaps": [],
         "answer": null,
         "answeredAt": null,
+        "changedBy": null,
         "recommendation": "Keep",
         "strength": "lean",
         "leanBecause": {
@@ -87,7 +89,8 @@ export const ENGINE_CONTRACT = {
       }
     ],
     "records": [],
-    "stopped": null
+    "stopped": null,
+    "next": null
   },
   "ask": {
     "version": 1,
@@ -99,7 +102,7 @@ export const ENGINE_CONTRACT = {
     "step": "ask",
     "check": {
       "cycle": 1,
-      "cap": 3,
+      "cap": 5,
       "last": {
         "step-back": {
           "changes": 0,
@@ -128,6 +131,7 @@ export const ENGINE_CONTRACT = {
         "overlaps": [],
         "answer": null,
         "answeredAt": null,
+        "changedBy": null,
         "recommendation": "Keep",
         "strength": "lean",
         "leanBecause": {
@@ -170,14 +174,6 @@ export const ENGINE_CONTRACT = {
     "log": [
       {
         "at": "00:00",
-        "text": "round started"
-      },
-      {
-        "at": "00:00",
-        "text": "classified 1 point: 1 user"
-      },
-      {
-        "at": "00:00",
         "text": "selected pt1"
       },
       {
@@ -187,6 +183,22 @@ export const ENGINE_CONTRACT = {
       {
         "at": "00:00",
         "text": "step-back: no change"
+      },
+      {
+        "at": "00:00",
+        "text": "step-back: no change"
+      },
+      {
+        "at": "00:00",
+        "text": "ground: no change"
+      },
+      {
+        "at": "00:00",
+        "text": "step-back: no change"
+      },
+      {
+        "at": "00:00",
+        "text": "ground: no change"
       },
       {
         "at": "00:00",
@@ -202,7 +214,8 @@ export const ENGINE_CONTRACT = {
       }
     ],
     "records": [],
-    "stopped": null
+    "stopped": null,
+    "next": null
   },
   "answered": {
     "version": 1,
@@ -214,7 +227,7 @@ export const ENGINE_CONTRACT = {
     "step": "record",
     "check": {
       "cycle": 1,
-      "cap": 3,
+      "cap": 5,
       "last": {
         "step-back": {
           "changes": 0,
@@ -243,6 +256,7 @@ export const ENGINE_CONTRACT = {
         "overlaps": [],
         "answer": "Keep",
         "answeredAt": "2026-01-01T00:00:00Z",
+        "changedBy": null,
         "recommendation": "Keep",
         "strength": "lean",
         "leanBecause": {
@@ -266,23 +280,27 @@ export const ENGINE_CONTRACT = {
     "log": [
       {
         "at": "00:00",
-        "text": "round started"
-      },
-      {
-        "at": "00:00",
-        "text": "classified 1 point: 1 user"
-      },
-      {
-        "at": "00:00",
-        "text": "selected pt1"
-      },
-      {
-        "at": "00:00",
         "text": "staged q1"
       },
       {
         "at": "00:00",
         "text": "step-back: no change"
+      },
+      {
+        "at": "00:00",
+        "text": "step-back: no change"
+      },
+      {
+        "at": "00:00",
+        "text": "ground: no change"
+      },
+      {
+        "at": "00:00",
+        "text": "step-back: no change"
+      },
+      {
+        "at": "00:00",
+        "text": "ground: no change"
       },
       {
         "at": "00:00",
@@ -302,13 +320,44 @@ export const ENGINE_CONTRACT = {
       }
     ],
     "records": [],
-    "stopped": null
+    "stopped": null,
+    "next": null
+  },
+  "closed": {
+    "version": 1,
+    "session": "0000-contract",
+    "protocol": null,
+    "round": null,
+    "title": null,
+    "summary": null,
+    "step": null,
+    "check": null,
+    "pending": null,
+    "questions": [],
+    "batch": null,
+    "counts": {
+      "questions": 0,
+      "decided": 0,
+      "toPlan": 0,
+      "inReview": 0,
+      "forUser": 0
+    },
+    "progress": null,
+    "log": [],
+    "records": [],
+    "stopped": null,
+    "next": {
+      "release": {
+        "round": "r2",
+        "count": 1
+      }
+    }
   },
   "release": {
     "version": 1,
     "session": "0000-contract",
     "protocol": "release",
-    "round": "r2",
+    "round": "r3",
     "title": "fx-a, fx-b",
     "summary": null,
     "step": "board-check",
@@ -316,7 +365,13 @@ export const ENGINE_CONTRACT = {
     "pending": null,
     "questions": [],
     "batch": null,
-    "counts": null,
+    "counts": {
+      "questions": 0,
+      "decided": 0,
+      "toPlan": 0,
+      "inReview": 0,
+      "forUser": 0
+    },
     "progress": null,
     "log": [
       {
@@ -346,7 +401,8 @@ export const ENGINE_CONTRACT = {
         "reason": "changed (contained): size moved"
       }
     ],
-    "stopped": null
+    "stopped": null,
+    "next": null
   },
   "stopped": {
     "version": 1,
@@ -371,11 +427,17 @@ export const ENGINE_CONTRACT = {
     "log": [],
     "records": [],
     "stopped": {
-      "run": "r3",
+      "run": "r4",
       "reason": "fx-a changed: the store moved",
       "ids": [
         "fx-a"
       ]
+    },
+    "next": {
+      "release": {
+        "round": "r2",
+        "count": 1
+      }
     }
   }
 } as const

@@ -143,6 +143,17 @@ describe('dialog gate and capture', () => {
     expect(notices(session).some(text => text.includes('blocked a dialog once'))).toBe(true)
   })
 
+  test('the gate compares option previews: the issued preview passes, a dropped one differs', async ($, on) => {
+    const withPreview = { ...BATCH, questions: [{ ...BATCH.questions[0], options: [{ ...BATCH.questions[0]!.options[0]!, preview: 'engine --json' }, BATCH.questions[0]!.options[1]!] }] }
+    world(on, { round: roundJson({ batch: withPreview }) })
+    on('tool.call', { tool: 'AskUserQuestion' }, () => answered({ 'Which engine name?': 'protocol' }) as never)
+    await start($)
+    const issued = await $.tool.call({ tool: 'AskUserQuestion', questions: withPreview.questions, metadata: { source: BATCH.marker } } as never)
+    expect(issued.deny).toBeUndefined()
+    const dropped = await $.tool.call({ tool: 'AskUserQuestion', questions: BATCH.questions, metadata: { source: BATCH.marker } } as never)
+    expect(String(dropped.deny)).toContain('differs from the batch round r4 issued')
+  })
+
   test('an unmarked dialog repeating a staged question is blocked once', async ($, on) => {
     world(on)
     on('tool.call', { tool: 'AskUserQuestion' }, () => answered({ 'Which pane layout?': 'one' }) as never)

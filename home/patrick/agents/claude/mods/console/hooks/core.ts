@@ -4,18 +4,18 @@ import type { EngineInterface, ToolCallResult } from 'claude-code'
 
 import type { ConsoleBoard, ConsolePassOrigin, ConsoleRound } from '../types'
 
-import { boardShow, boardViews, isRoundOpen, pass, PASS_COMMANDS, readRole, RELEASE_COMMAND, ROUND_ROLES, show, stampRelease, stateDir } from './engine'
+import { boardItem, boardViews, isRoundOpen, pass, PASS_COMMANDS, readRole, RELEASE_COMMAND, ROUND_ROLES, show, stampRelease, stateDir } from './engine'
 import {
   claimRefresh, getDrawn, getPaneDismissed, getPass, getRole, getRound, releaseRefresh, setBoard, setDrawn, setPass, setRole, setRound, setRoundError,
-  takeRefreshAgain, updateQueued,
+  takeRefreshAgain, updateOpened, updateQueued,
 } from './state'
+import { itemSlot } from './words'
 
 type $ = EngineInterface
 
 export const PANE = 'console'
 const QUEUED_EXPIRY_MS = 10 * 60_000
 const REFRESH_STALE_MS = 2 * 60_000  // a run this old is stuck (a board call that never returns): take over
-const ITEM_LINES = 40
 
 // Module state a reload may lose without harm: session.start resets it.
 let isToolRegistered = false
@@ -157,6 +157,7 @@ async function registerTool($: $): Promise<void> {
       "Runs the protocol engine for this session's round (`protocol <args>`): one call per step, per-question updates as JSON on stdin; the output is the next step.",
       'Read: ["show","--json"], ["show"], ["pending"], ["status","--line"], ["history"].',
       'Record an answer the user typed in chat: ["answer"] with stdin {"question","answer","quote"}, the quote being the user\'s exact words.',
+      'Apply a change the user asked for to the questions: ["edit"] with stdin {"updates","quote"}, the quote being the user\'s exact words (no pass runs).',
       'The console stamps --session and --origin; dialog answers, declines and passes are recorded by the console from the person\'s actions.',
     ].join(' '),
     inputSchema: {
@@ -245,20 +246,29 @@ export async function pressSubmit($: $, text: string): Promise<void> {
   void $.prompt.submit({ text }).catch(failOpen($, `sending "${text}"`))
 }
 
-/** Prints a board item's summary as a notice; the slow read runs on a timer. */
-export async function pressShowItem($: $, id: string): Promise<void> {
+/**
+ * Opens a board item's summary inline below its row, or closes it on a second press; one item is open at a
+ * time. The slow read runs on a timer, off the press's budget, and lands only if the item is still the open one.
+ */
+export async function pressOpenItem($: $, id: string, from: string | null = null): Promise<void> {
+  let isOpening = false
+  await updateOpened($, current => {
+    isOpening = !(current?.kind === 'item' && current.id === id && current.from === from)
+    return isOpening ? { kind: 'item', id, from, phase: 'reading', text: '', slot: null } : null
+  })
+  if (!isOpening) return
   const session = await $.session.id()
   $.clock.after(0, async () => {
-    const shown = await boardShow($, session, id).catch(message)
-    const lines = shown.split('\n')
-    await notice($, `${lines.slice(0, ITEM_LINES).join('\n')}${lines.length > ITEM_LINES ? `\n… ${lines.length - ITEM_LINES} more lines: board show ${id}` : ''}`)
+    const read = await boardItem($, session, id).then(raw => ({ slot: itemSlot(id, raw), text: '' }), error => ({ slot: null, text: message(error) }))
+    await updateOpened($, current => current?.kind === 'item' && current.id === id && current.from === from
+      ? { ...current, phase: read.slot === null ? 'failed' : 'read', text: read.text, slot: read.slot } : current)
   })
 }
 
-/** Prints a question's unresolved overlaps (id and title) as a notice. */
-export async function pressOverlaps($: $, question: string, overlaps: readonly { id: string; title: string }[]): Promise<void> {
-  await notice($, [`${question} overlaps (each needs an outcome before asking; /console-item <id> prints one):`,
-    ...overlaps.map(one => `  ${one.id}  ${one.title}`)].join('\n'))
+/** Opens (or closes) a question's unresolved overlaps inline below its row; each listed id opens its item. */
+export async function pressOpenOverlaps($: $, question: string, overlaps: readonly { id: string; title: string }[]): Promise<void> {
+  await updateOpened($, current => current?.kind === 'overlaps' && current.question === question ? null
+    : { kind: 'overlaps', question, overlaps: overlaps.map(one => ({ id: one.id, title: one.title })) })
 }
 
 /** Switches the main view to a worker, or back to the main conversation (press only). */

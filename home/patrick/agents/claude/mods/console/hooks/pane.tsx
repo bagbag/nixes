@@ -5,10 +5,10 @@ import type { EngineInterface, RenderPropsOf } from 'claude-code'
 
 import type { ConsoleBoard, ConsoleQuestion, ConsoleRecord, ConsoleRole, ConsoleRound, ConsoleSection, ConsoleSession } from '../types'
 
-import { pressOverlaps, pressRun, pressShowItem, pressSubmit, pressView } from './core'
-import { isRoundOpen, ROUND_ROLES } from './engine'
-import { getBoard, getExpanded, getLenses, getPass, getRole, getRound, getRoundError, toggleExpanded, updateLenses } from './state'
-import { COUNT_LABELS, GROUND, GROUND_BASE, lensArgs, pullsText, recommendationText, roundWords, runNoun, staleHolds, staleSessions, STEP_BACK_BASE, WHAT, WHERE } from './words'
+import { pressOpenItem, pressOpenOverlaps, pressRun, pressSubmit, pressView } from './core'
+import { isRoundOpen, RELEASE_COMMAND, ROUND_ROLES } from './engine'
+import { getBoard, getExpanded, getLenses, getOpened, getPass, getRole, getRound, getRoundError, toggleExpanded, updateLenses } from './state'
+import { answerText, COUNT_LABELS, GROUND, GROUND_BASE, lensArgs, LENS_SETS, pullsText, recommendationMark, recommendationText, roundWords, runNoun, staleHolds, staleSessions, STEP_BACK_BASE, WHAT, WHERE } from './words'
 import type { Lens, LensCommand } from './words'
 
 type $ = EngineInterface
@@ -22,6 +22,10 @@ const SESSION_ORDER: Record<string, number> = { active: 0, idle: 1, gone: 3 }
 const LIVE_AGENT: readonly string[] = ['pending', 'running', 'waiting', 'idle']
 const LABEL = 11
 const SESSION_COLUMNS = { role: 7, tool: 8, actor: 10, pulls: 9, holds: 9, workers: 13, state: 9 } as const
+
+/** No run is open and the engine names a release next: the last round's recorded records wait for it. */
+const isReleaseNext = (round: ConsoleRound): round is ConsoleRound & { next: NonNullable<ConsoleRound['next']> } =>
+  !isRoundOpen(round) && round.next !== null
 
 /** The narrowest body the layout's fixed columns fit: below it /console prints instead of opening. */
 export const PANE_MIN_COLUMNS = Object.values(SESSION_COLUMNS).reduce((sum, width) => sum + width, 0) + 2
@@ -48,6 +52,7 @@ export async function drawPane($: $, e: { surface: string; props: RenderPropsOf[
   const round = await getRound($)
   const lenses = await getLenses($)
   const expanded = await getExpanded($)
+  const opened = await getOpened($)
   const roundError = await getRoundError($)
   const passRun = await getPass($)
   const hint = hints()
@@ -76,6 +81,39 @@ export async function drawPane($: $, e: { surface: string; props: RenderPropsOf[
       ))}
     </Box>
   )
+  // What the person opened inline below a row (one at a time): an item's first lines, or a question's overlaps.
+  const slot = (id: string, from: string | null = null) => {
+    if (opened?.kind !== 'item' || opened.id !== id || opened.from !== from) return null
+    const read = opened.phase === 'read' ? opened.slot : null
+    if (read !== null && read.linked !== '') hint.add(`slot-${id}`, `${id}: ${read.linked}`)
+    return (
+      <Box key={`open-${from ?? ''}-${id}`} flexDirection="column" paddingLeft={2}>
+        {opened.phase === 'reading' && <Text color="inactive">reading…</Text>}
+        {opened.phase === 'failed' && <Text color="error" wrap="wrap">{opened.text}</Text>}
+        {read !== null && read.lines.map((line, i) => <Text key={`open-${id}-${i}`} wrap="truncate-end">{line}</Text>)}
+        {read !== null && (
+          <Box key={`open-${id}-facts`} hover={read.linked === '' ? undefined : { scope: `slot-${id}` }}>
+            <Text color="inactive" wrap="truncate-end">{read.facts}</Text>
+          </Box>
+        )}
+      </Box>
+    )
+  }
+  const overlapSlot = (question: string) => {
+    if (opened?.kind === 'item' && opened.from === question) return slot(opened.id, question)
+    if (opened?.kind !== 'overlaps' || opened.question !== question) return null
+    return (
+      <Box key={`open-ov-${question}`} flexDirection="column" paddingLeft={2}>
+        <Text color="inactive">each needs an outcome before asking; click an id to open it</Text>
+        {opened.overlaps.map(one => (
+          <Box key={`ov-${question}-${one.id}`} flexDirection="row">
+            <Box width={14} flexShrink={0}><Button key={`ov-${question}-${one.id}-open`} plain onPress={() => pressOpenItem($, one.id, question)}><Text bold>{one.id}</Text></Button></Box>
+            <Box flexGrow={1} flexShrink={1}><Text wrap="truncate-end">{one.title}</Text></Box>
+          </Box>
+        ))}
+      </Box>
+    )
+  }
   const run = (command: string, args = '') => () => pressRun($, command, args)
   const more = (section: ConsoleSection, hidden: number, what: string) => {
     const isOpen = expanded.includes(section)
@@ -117,14 +155,17 @@ export async function drawPane($: $, e: { surface: string; props: RenderPropsOf[
       rows.push(
         <Box key="board-items" flexDirection="column" marginTop={1}>
           {items.shown.map(item => {
-            hint.add(`item-${item.id}`, `${item.id}: print its summary (/console-item ${item.id})`)
+            hint.add(`item-${item.id}`, `${item.id}: open its summary here (/console-item ${item.id} prints it in the chat)`)
             return (
-              <Box key={`item-${item.id}`} flexDirection="row">
-                <Box key={`item-${item.id}-idbox`} width={12} flexShrink={0} hover={{ scope: `item-${item.id}` }}>
-                  <Button key={`item-${item.id}-show`} plain onPress={() => pressShowItem($, item.id)}>{item.id}</Button>
+              <Box key={`item-${item.id}`} flexDirection="column">
+                <Box flexDirection="row">
+                  <Box key={`item-${item.id}-idbox`} width={12} flexShrink={0} hover={{ scope: `item-${item.id}` }}>
+                    <Button key={`item-${item.id}-show`} plain onPress={() => pressOpenItem($, item.id)}>{item.id}</Button>
+                  </Box>
+                  <Box width={13} flexShrink={0}><Text color={ITEM_COLOR[item.status] ?? 'inactive'}>{item.status}</Text></Box>
+                  <Box flexGrow={1} flexShrink={1}><Text wrap="truncate-end">{item.title}</Text></Box>
                 </Box>
-                <Box width={13} flexShrink={0}><Text color={ITEM_COLOR[item.status] ?? 'inactive'}>{item.status}</Text></Box>
-                <Box flexGrow={1} flexShrink={1}><Text wrap="truncate-end">{item.title}</Text></Box>
+                {slot(item.id)}
               </Box>
             )
           })}
@@ -166,12 +207,13 @@ export async function drawPane($: $, e: { surface: string; props: RenderPropsOf[
               {holds.map((one, i) => (
                 <Box key={`stale-${one.id}-box`} flexDirection="row" hover={{ scope: 'stale-holds' }}>
                   {i > 0 && <Text color="inactive">, </Text>}
-                  <Button key={`stale-${one.id}`} plain onPress={() => pressShowItem($, one.id)}><Text color="warning">{one.id}</Text></Button>
+                  <Button key={`stale-${one.id}`} plain onPress={() => pressOpenItem($, one.id)}><Text color="warning">{one.id}</Text></Button>
                   <Text color="inactive"> ({one.actor})</Text>
                 </Box>
               ))}
             </Box>
           )}
+          {holds.map(one => slot(one.id))}
         </Box>,
       )
     }
@@ -210,24 +252,34 @@ export async function drawPane($: $, e: { surface: string; props: RenderPropsOf[
     const overlaps = question.overlaps.filter(one => one.outcome === null)
     const focus = `${question.id} ${question.title}`
     const backing = recommendationText(question)
+    const mark = recommendationMark(question)
     hint.add(`q-${question.id}-text`, `${question.id}: ${question.text}${backing === '' ? '' : ` — ${backing}`}`)
     hint.add(`q-${question.id}-explain`, `Runs /explain ${focus}`)
     hint.add(`q-${question.id}-sb`, `Runs /step-back ${focus}`)
-    hint.add(`q-${question.id}-ov`, `Print the board items ${question.id} overlaps; each needs an outcome before asking`)
+    hint.add(`q-${question.id}-ov`, `Open the board items ${question.id} overlaps here; each needs an outcome before asking`)
     return (
-      <Box key={`q-${question.id}`} flexDirection="row">
+      <Box key={`q-${question.id}`} flexDirection="column">
+      <Box flexDirection="row">
         <Box width={10} flexShrink={0}><Text color={QUESTION_COLOR[question.status]}>{question.status}</Text></Box>
         <Box width={5} flexShrink={0}><Text bold>{question.id}</Text></Box>
-        <Box flexGrow={1} flexShrink={1} flexDirection="row" flexWrap="wrap">
-          <Box key={`q-${question.id}-text-box`} hover={{ scope: `q-${question.id}-text` }}><Text>{question.title}{question.waitsOn.length > 0 ? <Text color="inactive"> (waits on {question.waitsOn.join(', ')})</Text> : ''}</Text></Box>
-          {overlaps.length > 0 && (
-            <Box key={`q-${question.id}-ov-box`} flexDirection="row" hover={{ scope: `q-${question.id}-ov` }}>
-              <Text color="warning"> · </Text>
-              <Button key={`q-${question.id}-ov`} plain onPress={() => pressOverlaps($, question.id, overlaps)}>
-                <Text color="warning">{overlaps.length === 1 ? '1 overlap' : `${overlaps.length} overlaps`}</Text>
-              </Button>
-            </Box>
-          )}
+        <Box flexGrow={1} flexShrink={1} flexDirection="row">
+          {/* The title shrinks and truncates; the answer, marks and overlap link keep their width on the line. */}
+          <Box key={`q-${question.id}-text-box`} flexShrink={1} hover={{ scope: `q-${question.id}-text` }}>
+            <Text wrap="truncate-end">{question.title}{question.waitsOn.length > 0 ? <Text color="inactive"> (waits on {question.waitsOn.join(', ')})</Text> : ''}</Text>
+          </Box>
+          <Box key={`q-${question.id}-marks`} flexShrink={0} flexDirection="row">
+            {question.status === 'answered' && question.answer !== null && <Text color="inactive"> → {answerText(question.answer)}</Text>}
+            {question.status !== 'answered' && mark !== null && <Text color={mark.color}> {mark.text}</Text>}
+            {question.changedBy !== null && <Text color="inactive"> ↻ {question.changedBy}</Text>}
+            {overlaps.length > 0 && (
+              <Box key={`q-${question.id}-ov-box`} flexDirection="row" hover={{ scope: `q-${question.id}-ov` }}>
+                <Text color="warning"> · </Text>
+                <Button key={`q-${question.id}-ov`} plain onPress={() => pressOpenOverlaps($, question.id, overlaps)}>
+                  <Text color="warning">{overlaps.length === 1 ? '1 overlap' : `${overlaps.length} overlaps`}</Text>
+                </Button>
+              </Box>
+            )}
+          </Box>
         </Box>
         <Box key={`q-${question.id}-explain-box`} flexShrink={0} hover={{ scope: `q-${question.id}-explain` }}>
           <Button key={`q-${question.id}-explain`} plain onPress={run('explain', focus)}><Text color="inactive">explain</Text></Button>
@@ -236,6 +288,8 @@ export async function drawPane($: $, e: { surface: string; props: RenderPropsOf[
         <Box key={`q-${question.id}-sb-box`} flexShrink={0} hover={{ scope: `q-${question.id}-sb` }}>
           <Button key={`q-${question.id}-sb`} plain onPress={run('step-back', focus)}><Text color="inactive">step back</Text></Button>
         </Box>
+      </Box>
+      {overlapSlot(question.id)}
       </Box>
     )
   }
@@ -284,6 +338,13 @@ export async function drawPane($: $, e: { surface: string; props: RenderPropsOf[
     await updateLenses($, current => ({ ...current, focus: '' }))
     await pressRun($, command, focus.trim())
   }
+  // A fixed lens set (Path, Refine, All), the focus included (Step Back); the toggled selection stays.
+  const runSet = async (command: LensCommand, set: readonly string[]) => {
+    const hasFocus = command === 'step-back'
+    const focus = hasFocus ? (await getLenses($)).focus : ''
+    if (hasFocus) await updateLenses($, current => ({ ...current, focus: '' }))
+    await pressRun($, command, lensArgs(set, focus))
+  }
   const toggleLens = (command: LensCommand, lens: string) => async () => {
     const now = await $.clock.now()
     const key = `${command}:${lens}`
@@ -323,12 +384,19 @@ export async function drawPane($: $, e: { surface: string; props: RenderPropsOf[
     const focus = hasFocus ? lenses.focus.trim() : ''
     const isRunShown = picked.length > 0 || focus !== ''
     hint.add(`${command}-base`, `Base: ${base}${focus === '' ? '' : ` Focus: ${focus}`}`)
+    const sets = LENS_SETS[command]
+    for (const set of sets) hint.add(`${command}-${set.key}`, `${set.label}: ${set.hint}${focus === '' ? '' : ` Focus: ${focus}`}`)
     hint.add(`${command}-run`, `Runs /${command} ${lensArgs(picked, focus)}`)
     return labelled(`${command}-head`, <Text bold color={pendingPass === command ? 'claude' : undefined}>{title}</Text>, (
       <Box flexDirection="row" columnGap={1}>
         <Box key={`${command}-base-box`} hover={{ scope: `${command}-base` }}>
           <Button key={`${command}-base`} onPress={() => runBase(command)}>Base</Button>
         </Box>
+        {sets.map(set => (
+          <Box key={`${command}-${set.key}-box`} hover={{ scope: `${command}-${set.key}` }}>
+            <Button key={`${command}-${set.key}`} onPress={() => runSet(command, set.lenses)}>{set.label}</Button>
+          </Box>
+        ))}
         {isRunShown && (
           <Box key={`${command}-run-box`} hover={{ scope: `${command}-run` }}>
             <Button key={`${command}-run`} onPress={() => runLenses(command)}>Run {picked.length} ▸</Button>
@@ -355,12 +423,15 @@ export async function drawPane($: $, e: { surface: string; props: RenderPropsOf[
       {open.records.map(one => {
         if (one.reason !== null) hint.add(`rec-${one.id}`, `${one.id}: ${one.reason}`)
         return (
-          <Box key={`rec-${one.id}`} flexDirection="row" hover={one.reason === null ? undefined : { scope: `rec-${one.id}` }}>
-            <Box width={10} flexShrink={0}><Text color={RECORD_COLOR[one.state]}>{one.state}</Text></Box>
-            <Box key={`rec-${one.id}-idbox`} width={14} flexShrink={0}>
-              <Button key={`rec-${one.id}-show`} plain onPress={() => pressShowItem($, one.id)}><Text bold>{one.id}</Text></Button>
+          <Box key={`rec-${one.id}`} flexDirection="column">
+            <Box flexDirection="row" hover={one.reason === null ? undefined : { scope: `rec-${one.id}` }}>
+              <Box width={10} flexShrink={0}><Text color={RECORD_COLOR[one.state]}>{one.state}</Text></Box>
+              <Box key={`rec-${one.id}-idbox`} width={14} flexShrink={0}>
+                <Button key={`rec-${one.id}-show`} plain onPress={() => pressOpenItem($, one.id)}><Text bold>{one.id}</Text></Button>
+              </Box>
+              <Box flexGrow={1} flexShrink={1}><Text wrap="truncate-end">{one.title}</Text></Box>
             </Box>
-            <Box flexGrow={1} flexShrink={1}><Text wrap="truncate-end">{one.title}</Text></Box>
+            {slot(one.id)}
           </Box>
         )
       })}
@@ -430,7 +501,8 @@ export async function drawPane($: $, e: { surface: string; props: RenderPropsOf[
     const entries = [
       { key: 'commit', scope: 'action-commit', label: 'Commit', onPress: run('commit') },
       { key: 'push', scope: 'action-push', label: 'Commit and Push', onPress: () => pressSubmit($, 'commit and push') },
-      ...(isRoundRole ? [{ key: 'release', scope: 'action-release', label: 'Release Round', onPress: run('release-round') }] : []),
+      ...(isRoundRole ? [{ key: 'release', scope: 'action-release', onPress: run(RELEASE_COMMAND),
+        label: round !== null && isReleaseNext(round) ? <Text color="claude">Release Round</Text> : 'Release Round' }] : []),
       { key: 'retro', scope: 'action-retro', label: 'Retro', onPress: run('retro') },
       { key: 'compact', scope: 'action-compact', label: 'Compact', onPress: run('compact') },
     ]
@@ -464,15 +536,25 @@ export async function drawPane($: $, e: { surface: string; props: RenderPropsOf[
   )
 }
 
-/** The band above the prompt: only while a round is open, the round in words plus the Base passes. */
+/** The band above the prompt: an open run in words plus the Base passes; after a close with records to release, the way to release them. */
 export async function drawBand($: $, e: { props: RenderPropsOf['AbovePrompt'] } & Parameters<$['ui']['resolve']>[0]) {
   const role = await getRole($)
   const round = await getRound($)
-  if (e.props.hasSurvey || role === null || !ROUND_ROLES.includes(role.role) || round === null || !isRoundOpen(round)) return undefined
+  if (e.props.hasSurvey || role === null || !ROUND_ROLES.includes(role.role) || round === null) return undefined
   const { Box, Text, Button } = $.ui.resolve(e) as any
+  if (!isRoundOpen(round)) {
+    if (!isReleaseNext(round)) return undefined
+    const { round: closed, count } = round.next.release
+    return (
+      <Box flexDirection="row" columnGap={1} flexWrap="wrap">
+        <Text color="inactive">{closed} closed · {count} {count === 1 ? 'record' : 'records'} decided ·</Text>
+        <Button key="band-release" onPress={() => pressRun($, RELEASE_COMMAND, '')}><Text color="claude">Release Round</Text></Button>
+      </Box>
+    )
+  }
   return (
     <Box flexDirection="row" columnGap={1} flexWrap="wrap">
-      <Text color="inactive">{runNoun(round)} {round.round} · {roundWords(round)}</Text>
+      <Text color="inactive">{runNoun(round)} {round.round}{round.protocol === 'release' && round.title ? ` · ${round.title}` : ''} · {roundWords(round)}</Text>
       {round.batch !== null && <Text color="warning">· waiting on your answer</Text>}
       {(['step-back', 'ground'] as const).map(command => (
         <Button key={`band-${command}`} onPress={() => pressRun($, command, '')}>

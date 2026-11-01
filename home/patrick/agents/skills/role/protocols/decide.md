@@ -117,6 +117,9 @@ the judgment each report carries.
    reference.
    Output: `decided <ids>`.
 
+Apply a change the user asks for to staged questions through `protocol edit`
+with their words as the quote, not through a pass.
+
 **Stop:** an answer states a criterion, or a later step changes the premise:
 restart the affected questions under the decision protocol's
 [Changed premises](../../shared/decision-protocol.md#changed-premises).

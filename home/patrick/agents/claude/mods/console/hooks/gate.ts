@@ -22,7 +22,7 @@ const shape = (questions: readonly ConsoleDialogQuestion[]): string => JSON.stri
   question: squash(one.question),
   header: squash(one.header),
   multiSelect: one.multiSelect === true,
-  options: (one.options ?? []).map(option => ({ label: squash(option.label), description: squash(option.description ?? '') })),
+  options: (one.options ?? []).map(option => ({ label: squash(option.label), description: squash(option.description ?? ''), preview: squash(option.preview ?? '') })),
 })))
 
 /** Same key for the same dialog, so a block happens once per dialog, not once per call. */

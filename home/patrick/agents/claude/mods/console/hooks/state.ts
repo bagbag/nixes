@@ -5,7 +5,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface } from 'claude-code'
 
-import type { ConsoleBoard, ConsoleLenses, ConsolePassRun, ConsoleQueued, ConsoleRefresh, ConsoleRole, ConsoleRound, ConsoleSection } from '../types'
+import type { ConsoleBoard, ConsoleLenses, ConsoleOpened, ConsolePassRun, ConsoleQueued, ConsoleRefresh, ConsoleRole, ConsoleRound, ConsoleSection } from '../types'
 
 type $ = EngineInterface
 
@@ -21,6 +21,8 @@ const lensState = atom({ plugin: 'console', key: 'lenses' } as const, { 'step-ba
 const refreshState = atom({ plugin: 'console', key: 'refresh' } as const, { since: null, again: false } as ConsoleRefresh, { shape: 'refresh-1' })
 const dismissedState = atom({ plugin: 'console', key: 'isPaneDismissed' } as const, false)
 const expandedState = atom({ plugin: 'console', key: 'expanded' } as const, [] as ConsoleSection[], { shape: 'expanded-1' })
+
+const openedState = atom({ plugin: 'console', key: 'opened' } as const, null, { shape: 'opened-2' })
 
 const GATE_KEYS_KEPT = 200
 
@@ -54,6 +56,9 @@ export async function getExpanded($: $): Promise<ConsoleSection[]> { return read
 export async function toggleExpanded($: $, section: ConsoleSection): Promise<void> {
   await update($, expandedState, open => open.includes(section) ? open.filter(one => one !== section) : [...open, section])
 }
+
+export async function getOpened($: $): Promise<ConsoleOpened | null> { return read($, openedState) }
+export async function updateOpened($: $, change: (opened: ConsoleOpened | null) => ConsoleOpened | null): Promise<void> { await update($, openedState, change) }
 
 /** Single flight for refreshAll: true when this call runs; otherwise the running one runs once more. */
 export async function claimRefresh($: $, now: number, staleMs: number): Promise<boolean> {

@@ -142,9 +142,22 @@ async function boardJson($: $, session: string, args: readonly string[]): Promis
   }
 }
 
-export async function boardShow($: $, session: string, id: string): Promise<string> {
+/** One board item's fields for the pane's slot (`board show <id> --json`, one call); a failing or unreadable call throws. */
+export async function boardItem($: $, session: string, id: string): Promise<Record<string, unknown>> {
+  const fields = ['description', 'dependencies', 'issue_type', 'priority', 'assignee', 'labels', 'comment_count']
+  const found = record(await boardJson($, session, ['show', id, '--json', ...fields.flatMap(field => ['--field', field])]))
+  if (!(id in found)) throw new EngineError(`board show ${id}: no such item`)
+  return record(found[id])
+}
+
+/** `board show <id>`: its summary, or on failure the error line (`isFailed`). */
+export async function boardRead($: $, session: string, id: string): Promise<{ text: string; isFailed: boolean }> {
   const ran = await board($, session, ['show', id])
-  return ran.exitCode === 0 ? ran.stdout.trim() : `board show ${id}: exit ${ran.exitCode}: ${ran.stderr.trim()}`
+  return ran.exitCode === 0 ? { text: ran.stdout.trim(), isFailed: false } : { text: `board show ${id}: exit ${ran.exitCode}: ${ran.stderr.trim()}`, isFailed: true }
+}
+
+export async function boardShow($: $, session: string, id: string): Promise<string> {
+  return (await boardRead($, session, id)).text
 }
 
 /** `board console` (counts, this session's holds, sessions from one snapshot) and this session's workers; a failing read leaves its part empty and names the error. */
@@ -221,6 +234,7 @@ function parseQuestion(value: unknown): ConsoleQuestion {
     overlaps: list(raw.overlaps).map(one => ({ id: text(record(one).id), title: text(record(one).title), outcome: nullableText(record(one).outcome) })).filter(one => one.id !== ''),
     answer: nullableText(raw.answer),
     answeredAt: nullableText(raw.answeredAt),
+    changedBy: nullableText(raw.changedBy),
     recommendation: nullableText(raw.recommendation),
     strength: raw.strength === 'lean' || raw.strength === 'strong' ? raw.strength : null,
     leanBecause: raw.leanBecause === null || raw.leanBecause === undefined ? null
@@ -246,6 +260,12 @@ function parseProgress(value: unknown): ConsoleProgress | null {
     candidates: typeof raw.candidates === 'number' ? raw.candidates : null,
     selected: list(raw.selected).map(text).filter(id => id !== ''),
   }
+}
+
+function parseNext(value: unknown): ConsoleRound['next'] {
+  const release = record(record(value).release)
+  const round = text(release.round)
+  return round === '' ? null : { release: { round, count: count(release.count) } }
 }
 
 export function parseRound(value: unknown): ConsoleRound {
@@ -275,6 +295,7 @@ export function parseRound(value: unknown): ConsoleRound {
     records: list(raw.records).map(parseRecord).filter(one => one.id !== ''),
     stopped: raw.stopped === null || raw.stopped === undefined ? null
       : { run: text(record(raw.stopped).run), reason: text(record(raw.stopped).reason), ids: list(record(raw.stopped).ids).map(text).filter(id => id !== '') },
+    next: parseNext(raw.next),
     note: nullableText(raw.note),
   }
 }

@@ -118,8 +118,10 @@ for each when asked or recorded:
 
 - **No assumptions** (`noAssumptions`): every premise checked in current
   source, a run or an item; name where.
-- **Alternatives fail** (`alternativesFail`): each other option fails a named
-  criterion (a cleanliness test, the goal, correctness, a consumer need).
+- **Alternatives fail** (`alternativesFail`): each other realistic option,
+  listed or not, fails a named criterion (a cleanliness test, the goal,
+  correctness, a consumer need); name the strongest unlisted one and why it
+  fails or was added.
 - **Not a preference** (`notPreference`): the choice does not depend on what
   the user values.
 - **Consumer walk** (`consumerWalk`): a realistic consumer walk supports it;

@@ -82,7 +82,7 @@ Get explicit confirmation before running git commands that modify the working tr
 
 **Renames and moves use `git mv`.** Rename or move git-tracked files and folders with `git mv` by default, not filesystem moves (or `mv` + `git add`).
 
-**Committing and staging.** Commit and push only when the user explicitly asks ("commit this", "commit and push", `/commit`); plans, todo lists, and workflow steps do **not** count as that instruction. When the tree reaches a coherent, verified state (bug fixed with tests passing, a feature step complete, a refactor done with lint/tests green), end the turn with the headline only: `✅ Good commit point: <subject>`. Follow the project's commit convention when defined. Otherwise use a **Conventional Commit** subject in the form `<type>(scope): <description>` (≤ 72 characters), then a blank line and a concise `- ` bullet list summarizing the material changes. When the working tree holds changes beyond this commit, add the explicit paths to stage.
+**Committing and staging.** Commit and push only when the user explicitly asks ("commit this", "commit and push", `/commit`); plans, todo lists, and workflow steps do **not** count as that instruction. When the tree reaches a coherent, verified state (bug fixed with tests passing, a feature step complete, a refactor done with lint/tests green), end the turn with the headline only: `✅ Good commit point: <subject>`. Follow the project's commit convention when defined. Otherwise use a **Conventional Commit** subject in the form `<type>(scope): <description>` (≤ 72 characters), then a blank line and a concise `- ` bullet list summarizing the material changes.
 
 ## Sandbox and permissions
 

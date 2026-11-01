@@ -18,6 +18,8 @@ let
         nativeBuildInputs = [
           # The build sandbox refuses the setuid /bin/ps; the registry liveness tests need a ps.
           pkgs.ps
+          # The protocol owner-path tests run git init and git check-ignore.
+          pkgs.git
           pkgs.jq
           (pkgs.python3.withPackages (p: [ p.pyyaml ]))
         ];

@@ -29,7 +29,7 @@ export function roundJson(overrides: Record<string, unknown> = {}): Record<strin
       { id: 'q2', board: 'tstdl-x1', text: 'Which engine name?', title: 'Engine name', kind: 'decision', status: 'asked', waitsOn: [], overlaps: [{ id: 'tstdl-ab12', outcome: null }], answer: null },
       { id: 'q3', board: null, text: 'Which pane layout?', title: 'Pane layout', kind: 'decision', status: 'ready', waitsOn: [], overlaps: [], answer: null },
     ],
-    batch: BATCH,
+    batch: BATCH, next: null,
     counts: { questions: 188, decided: 0, toPlan: 82, inReview: 14, forUser: 3 },
     note: null,
     ...overrides,
@@ -56,6 +56,8 @@ export type World = {
   held: unknown[]
   agents: { id: string; description: string; type: string; status: string }[]
   protocolExit: number
+  /** `board show --json`'s fields for any id, or an exit code to fail with (`bad`: print text that is no JSON). */
+  show: { record: Record<string, unknown>; exit: number; bad: boolean }
   verbs: () => string[]
 }
 
@@ -74,6 +76,7 @@ export function world(on: On, init: Partial<Pick<World, 'round' | 'role' | 'surf
     held: init.held ?? [],
     agents: init.agents ?? [],
     protocolExit: 0,
+    show: { record: { description: '## Decision\nKeep it.', dependencies: [], issue_type: 'decision', priority: 1, assignee: null, labels: [], comment_count: 0 }, exit: 0, bad: false },
     verbs: () => w.calls.filter(one => one.argv[0] === PROTOCOL).map(one => one.argv.slice(3).join(' ')),
   }
   const clock = mock.clock(on, { now: 1_000_000 })
@@ -119,6 +122,8 @@ export function world(on: On, init: Partial<Pick<World, 'round' | 'role' | 'surf
     }
     if (argv[0] === BOARD) {
       if (argv[1] === 'console') return ok({ counts: { questions: 188, decided: 0, toPlan: 82, inReview: 14, forUser: 3 }, items: w.items, sessions: w.sessions, held: w.held })
+      if (argv[1] === 'show' && w.show.exit !== 0) return { value: { exitCode: w.show.exit, stdout: '', stderr: 'no such item', isStdoutTruncated: false, isStderrTruncated: false } }
+      if (argv[1] === 'show' && argv.includes('--json')) return ok(w.show.bad ? 'not json' : { [argv[2] as string]: w.show.record })
       if (argv[1] === 'show') return ok(`${argv[2]}: Which engine name?\nstatus: in_progress`)
     }
     return { value: { exitCode: 127, stdout: '', stderr: `unknown ${argv[0]}`, isStdoutTruncated: false, isStderrTruncated: false } }
