@@ -89,7 +89,7 @@
 Link evidence where it changes interpretation. Scratch links provide optional
 context; keep contracts complete without them.
 
-## Recovery and closure
+## Recovery
 
 - After compaction, resume or a crash, preserve the current task and newer
   user instructions. Recover holds, the approved checkpoint, next authorized
@@ -103,6 +103,9 @@ context; keep contracts complete without them.
   current authorized task; keep later product acceptance in its approved
   sequence. Check the working tree and relevant evidence; reuse applicable
   pre-flight results.
+
+## Closure
+
 - Close finished epics under board-coordination [Epics](../shared/board-coordination.md#epics).
 - At phase boundaries or architecture resets, review affected owners and links;
   inventory the topic for cross-document changes or uncertain ownership.

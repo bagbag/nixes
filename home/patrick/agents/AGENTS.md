@@ -221,9 +221,8 @@ question is answered.
 
 **Warm reuse:** continue an existing agent instead of spawning when its context
 covers the next task, its permissions allow the work, and it did not author
-what it would assess. Weigh context rebuild cost against tier: a warm stronger
-agent often handles a narrow follow-up more cheaply than a fresh one rereading
-its sources. Continue only while the agent's last turn ended at most 30 minutes
+what it would assess. Weigh context rebuild cost against tier; a narrow follow-up
+often favors a warm stronger agent. Continue only while the agent's last turn ended at most 30 minutes
 ago (`$HOME/.agents/bin/worker-last-use`, a recency hint: if continuation
 fails, start fresh). Start fresh for independent
 judgments, changed premises, or at the retry limit. Brief

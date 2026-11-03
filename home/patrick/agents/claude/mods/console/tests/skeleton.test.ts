@@ -266,7 +266,7 @@ describe('machine-run passes', () => {
 
 describe('skill reminder', () => {
   const complete = () => ({ answer: '', durationMs: 1, isAborted: false, turnId: 't', reason: 'answer' }) as never
-  const REMINDER = 'Reminder for /ground; its full text went out earlier this cycle.'
+  const REMINDER = 'Reminder for /ground. Argument: `assumptions`. Run it anew.'
   const pending = (reminder: string | null) => roundJson({ pending: { id: 'p7', command: 'ground', args: 'assumptions', reminder } })
   const plugin = { kind: 'plugin', name: 'console' } as const
   const presentation = { isFullscreen: true, columns: 160 }

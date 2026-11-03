@@ -2,7 +2,7 @@
 # compact-reorient: restore the session's registered role after compaction or
 # resume in Codex and Claude Code. role/SKILL.md owns the role -> protocol
 # file mapping and project-memory.md the recovery steps; this hook names the
-# role and prints that file's Recovery and closure section. A deciding session's
+# role and prints that file's Recovery section. A deciding session's
 # protocol engine learns of the compaction (`protocol compacted`), so what it
 # printed before prints in full again.
 set -euo pipefail
@@ -50,11 +50,11 @@ fi
 
 memory="$HOME/.agents/skills/shared/project-memory.md"
 recovery=''
-[[ ! -r "$memory" ]] || recovery=$(awk '/^## Recovery and closure[[:space:]]*$/ {found = 1; next} found && /^## / {exit} found' "$memory")
+[[ ! -r "$memory" ]] || recovery=$(awk '/^## Recovery[[:space:]]*$/ {found = 1; next} found && /^## / {exit} found' "$memory")
 if [[ -n "${recovery//[[:space:]]/}" ]]; then
-  message+=" Recovery and closure (\`\$HOME/.agents/skills/shared/project-memory.md\`):"$'\n'"$recovery"
+  message+=" Recovery (\`\$HOME/.agents/skills/shared/project-memory.md\`):"$'\n'"$recovery"
 else
-  message+=" Recover under \`\$HOME/.agents/skills/shared/project-memory.md\` Recovery and closure."
+  message+=" Recover under \`\$HOME/.agents/skills/shared/project-memory.md\` Recovery."
 fi
 
 jq -cn --arg m "$message" \

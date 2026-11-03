@@ -87,7 +87,7 @@ findings or stops.
    Output: per checkpoint: gates, commits, parked items, remaining budget.
 3. **Recover** after crashes, window boundaries or compaction under
    project-memory
-   [Recovery and closure](../../shared/project-memory.md#recovery-and-closure);
+   [Recovery](../../shared/project-memory.md#recovery);
    check remaining authority and time, preserve discrepancies, and rerun
    affected gates. Park recovery that exceeds authority or the window. Update
    the board before window and context boundaries.

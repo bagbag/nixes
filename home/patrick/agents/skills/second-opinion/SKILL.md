@@ -14,7 +14,7 @@ Own user-facing orchestration; the `second-opinion` agent owns the judgment and
 report. Use `explore-options` for a broader solution space; treat its result as
 context, not independent review. Apply [Reviewers](#reviewers) throughout.
 
-## Frame
+## 1. Frame
 
 - Inspect the cheapest orientation sources. Brief neutrally: the exact
   decision, proposal or claim; committed goal, product boundary, constraints
@@ -24,7 +24,9 @@ context, not independent review. Apply [Reviewers](#reviewers) throughout.
   expected content and exclusive write ownership; keep short opinions in the
   response.
 
-## Dispatch
+Output: the neutral brief or its path.
+
+## 2. Dispatch
 
 - Start each requested opinion with a new `second-opinion` agent and only the
   neutral brief; native configuration owns model, sandbox and output contract.
@@ -42,7 +44,9 @@ context, not independent review. Apply [Reviewers](#reviewers) throughout.
   - **Standard:** relevant option space, sources, trade-offs, refinements.
   - **Thorough:** adjacent consequences, alternatives, cumulative architecture.
 
-## Return
+Output: agent dispatched, depth.
+
+## 3. Return
 
 - Spot-check load-bearing evidence; apply the [Decision protocol](#decision-protocol)
   to premises and alternatives.
@@ -53,3 +57,5 @@ context, not independent review. Apply [Reviewers](#reviewers) throughout.
 <!-- @include shared/decision-protocol.md -->
 
 <!-- @include shared/reviewers.md -->
+
+Output: options, recommendation, disagreements, remaining decisions.

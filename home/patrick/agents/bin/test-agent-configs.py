@@ -935,10 +935,10 @@ def validate_session_register(root: Path) -> None:
 def validate_compact_reorient(root: Path) -> None:
     hook = root / "hooks" / "compact-reorient.sh"
     env_base = {"AGENT_SESSION_LEAD_COMMAND": str(root / "bin" / "session-lead-mode")}
-    pointer = "Recover under `$HOME/.agents/skills/shared/project-memory.md` Recovery and closure."
+    pointer = "Recover under `$HOME/.agents/skills/shared/project-memory.md` Recovery."
     # The pointer's target must keep the recovery obligations the hook used to restate.
     memory = (root / "skills" / "shared" / "project-memory.md").read_text(encoding="utf-8")
-    recovery = " ".join(memory.split("## Recovery and closure", 1)[1].split())
+    recovery = " ".join(memory.split("## Recovery\n", 1)[1].split("\n## ", 1)[0].split())
     obligations = (
         "current task and newer user instructions",
         "the approved checkpoint",
@@ -955,9 +955,9 @@ def validate_compact_reorient(root: Path) -> None:
     )
     missing = [item for item in obligations if item not in recovery]
     if missing:
-        raise ValueError(f"project-memory Recovery and closure lost obligations {missing}")
+        raise ValueError(f"project-memory Recovery lost obligations {missing}")
     with tempfile.TemporaryDirectory() as state_dir, tempfile.TemporaryDirectory() as home:
-        # The hook prints the installed file's Recovery and closure section; where it cannot, it names the file.
+        # The hook prints the installed file's Recovery section; where it cannot, it names the file.
         installed = Path(home) / ".agents" / "skills" / "shared"
         installed.mkdir(parents=True)
         (installed / "project-memory.md").write_text(memory, encoding="utf-8")
@@ -975,7 +975,7 @@ def validate_compact_reorient(root: Path) -> None:
                     hook, {"hook_event_name": "SessionStart", "source": source, "session_id": session}, env))
                 body = " ".join(context.split())
                 if pointer in context or "bd ready" in context or not all(item in body for item in obligations) \
-                        or "Recovery and closure (`$HOME/.agents/skills/shared/project-memory.md`):" not in context:
+                        or "Recovery (`$HOME/.agents/skills/shared/project-memory.md`):" not in context:
                     raise ValueError(f"{source} recovery must print the project-memory recovery section only: {context}")
                 markers = ("role `agent` pulling implement, review", f"actor `{SESSION_ACTOR}`",
                            "`$HOME/.agents/skills/role/SKILL.md`", "every protocol file it lists")
@@ -1010,7 +1010,7 @@ def validate_compact_reorient(root: Path) -> None:
         failing.write_text("")
         context = hook_context(run_hook(hook, {"hook_event_name": "SessionStart", "source": "compact", "session_id": codex},
                                         {**env, "AGENT_PROTOCOL_COMMAND": str(fake)}))
-        if "`protocol compacted` failed: run it" not in context or "Recovery and closure" not in context:
+        if "`protocol compacted` failed: run it" not in context or "Recover" not in context:
             raise ValueError(f"compact-reorient must say a failed protocol compacted in the recovery message: {context}")
         context = hook_context(run_hook(hook, {"hook_event_name": "SessionStart", "source": "compact", "session_id": codex},
                                         {**env, "AGENT_PROTOCOL_COMMAND": str(Path(state_dir) / "missing")}))
@@ -3119,7 +3119,7 @@ def validate_protocol(root: Path, part: str) -> None:
                     or first["questions"][0]["status"] != "draft" or first["questions"][0]["overlaps"] != []:
                 raise ValueError(f"protocol stage → check: {first}")
             body = out.split("\n", 1)[1]
-            if "Don't run or report the next pass in this turn: the console starts it as its own turn. Finish any other work for the user, then end the turn without a closing status line." not in out or "model-reported" in out \
+            if 'End the turn after any other work for the user, without a closing status line: the console starts the next pass as its own turn.' not in out or "model-reported" in out \
                     or "step-back" in body.replace("report_hint", "").split("After the pass")[0] \
                     or "Check cycle 1/5 (the round's path pass: goal and foundations, before the drafts settle" not in out \
                     or "path pass, cycle 1/5" not in out.splitlines()[0]:
@@ -4115,7 +4115,7 @@ def validate_protocol(root: Path, part: str) -> None:
             view = shown(cwd=repo)
             if view["step"] != "scoped" or view["pending"] is None or view["pending"]["command"] != "step-back" \
                     or view["pending"]["args"] != "fx-s2" or "next: step-back pass on the revised fx-s2" not in out.splitlines()[0] \
-                    or "console starts it as its own turn" not in out or view["pending"]["reminder"] is not None:
+                    or "console starts the pass as its own turn" not in out or view["pending"]["reminder"] is not None:
                 raise ValueError(f"the scoped step-back must wait on the revised ids before the approval: {view['step']} {view['pending']}\n{out}")
             refused("step", stdin={"pass": "ground", "records": {"fx-s2": "unchanged"}}, needle="`pass` is step-back", observe=False, cwd=repo)
             refused("step", stdin={"pass": "step-back", "records": {"fx-s2": "unchanged"}}, needle="no /step-back ran", observe=False, cwd=repo)
@@ -5536,8 +5536,12 @@ def validate_protocol(root: Path, part: str) -> None:
             if "## Durable owners (project-memory.md)" not in out or " ".join(durable.split()) not in " ".join(out.split()) \
                     or "## Outstanding work" in out:
                 raise ValueError(f"Owner writes prints project-memory.md's Durable owners section, read from the installed file:\n{out}")
+            closure = (installed / ".agents" / "skills" / "shared" / "project-memory.md").read_text(encoding="utf-8").split("## Closure", 1)[1].split("\n## ", 1)[0]
+            if "## Closure (project-memory.md)" not in out or " ".join(closure.split()) not in " ".join(out.split()):
+                raise ValueError(f"Owner writes prints project-memory.md's Closure section with the Durable owners:\n{out}")
             proto("abandon", **own)
-            if "Durable owners" in to_owners(**own):
+            later_owners = to_owners(**own)
+            if "Durable owners" in later_owners or "## Closure" in later_owners:
                 raise ValueError("the Durable owners print once between compactions")
             proto("abandon", **own)
             proto("compacted", **own)

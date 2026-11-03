@@ -30,9 +30,9 @@ for skills (inventory, layout, validators) add to these.
 ## Description
 
 - The routing model sees only `name` and `description`. Model-invocable: one
-  clause of purpose, then "Use when" with the moments and the user's words
-  (symbols, verbs, phrases), then "not for" a close sibling or skip
-  condition where one exists; the procedure stays in the body, since the
+  clause of purpose, then the moments and the user's words (symbols, verbs,
+  phrases) that trigger it, then "not for" a close sibling or skip condition
+  where one exists; the procedure stays in the body, since the
   description loads into every session.
 - Manual-only: one sentence of menu help from the user's view; put argument
   hints in `argument-hint` (Claude; Codex ignores it).
@@ -49,7 +49,8 @@ for skills (inventory, layout, validators) add to these.
   invoking turn and restricts nothing. Document the Codex behavior when using
   one.
 - One `SKILL.md` per kebab-case folder named like the skill; supporting files
-  inside it (`assets/`, `scripts/`, `references/`).
+  inside it (`assets/`, `scripts/`, `references/`, or a named folder such as
+  `protocols/`). Text several skills share lives in `skills/shared/`.
 
 ## Style
 

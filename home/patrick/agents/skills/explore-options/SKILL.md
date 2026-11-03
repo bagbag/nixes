@@ -14,7 +14,7 @@ Own framing, dispatch and the user-facing decision; the `option-explorer` agent
 owns exploration. Use `second-opinion` to challenge a proposal and `architect`
 to develop or assess architecture.
 
-## Frame and dispatch
+## 1. Frame and dispatch
 
 - Read cheap orientation sources. Brief outcome and consumers, scope,
   requirements, current decisions, preferences, unknowns, source pointers,
@@ -33,7 +33,9 @@ to develop or assess architecture.
 - When the agent is unavailable, report the limitation instead of an
   undisclosed self-review.
 
-## Synthesize and route
+Output: the brief and the assigned path.
+
+## 2. Synthesize and route
 
 - Spot-check decisive claims. Present viable options, trade-offs, a marked or
   conditional recommendation and remaining decisions; account briefly for
@@ -44,3 +46,5 @@ to develop or assess architecture.
   experiment or implementation only when needed and authorized. Exploration
   adds no review round and replaces no independent-review gate; its author
   never reviews its own proposal.
+
+Output: options, trade-offs, recommendation, report link.

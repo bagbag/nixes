@@ -399,8 +399,8 @@ deciding session of either tool and says so in the recovery message when it fail
 `show` and a release-round note never count as telling. The record holds: a step
 kind's report format, the ask instructions around the dialog (the Codex form keeps
 the marker and the verb in a clause), the open-item list, the Durable owners
-section of project-memory.md (printed at Owner writes from the installed file;
-one line naming it when it is missing) and, per check run and cycle, the question
+and Closure sections of project-memory.md (printed at Owner writes from the
+installed file; one line naming each that is missing) and, per check run and cycle, the question
 list of a check pass (later passes print `N questions (protocol show lists them)`) and
 the skill text of a pass kind. `SKILL_TEXT` (`cycle` by default, `pass` for every
 pass full) selects the cadence: the first step-back and the first ground of each

@@ -25,11 +25,12 @@ agent implements; the user stages and commits.
   choices. Verify claims in comments, TSDoc, README and CHANGELOG against the
   code, including line references and signatures.
 
-## Scope and snapshot
+## 1. Scope and snapshot
 
 1. Before round one, record the review base and target. Use the index as the
    staged target. For committed work, name the base explicitly: a commit, a
    merge-base or `HEAD`.
+   Output: base and target.
 2. Capture the tree identity first, then create the snapshot from it:
 
    ```sh
@@ -41,15 +42,18 @@ agent implements; the user stages and commits.
    ```
 
    Use a directory that does not exist yet and record `$tree` in the verdict.
+   Output: $tree and the snapshot directory.
 3. Take the delta with `git diff --stat <previous-tree> <tree>` and
    `git diff <previous-tree> <tree>`. For round one, diff against the recorded
    base. If the previous tree is gone, diff against its snapshot directory. If
    both are gone, say so and review against the recorded base.
+   Output: the delta stat.
 4. List worktree-only changes separately as pending staging: modified files
    (`git status --porcelain`: ` M`, `MM`) and untracked files referenced by the
    delta or brief. They cannot satisfy the brief.
+   Output: the pending-staging list.
 
-## Adjudicate the brief
+## 2. Adjudicate the brief
 
 - Account for every file in the delta: map it to a brief item or mark it
   unbriefed, then review unbriefed changes on their merits.
@@ -58,7 +62,9 @@ agent implements; the user stages and commits.
 - Treat the implementer's record as claims; verify every load-bearing claim by
   searching or reading the snapshot.
 
-## Verify pins
+Output: each delta file and brief item with its status.
+
+## 3. Verify pins
 
 Reuse recorded tests, typechecks and builds. Run a check only when the record
 cannot answer a question: a defeat probe, a pin suspected not to execute, a
@@ -76,7 +82,9 @@ claim contradicted by the snapshot, or results from another revision.
   index: back up the file, mutate it, run only the pin, restore the backup, and
   verify restoration with its checksum and `cmp`.
 
-## Before issuing
+Output: each check with its source label and outcome.
+
+## 4. Before issuing
 
 - Check each proposed edit in the final brief against the skills, style guides
   and project instructions governing the target. Withdraw a brief item explicitly
@@ -86,7 +94,9 @@ claim contradicted by the snapshot, or results from another revision.
   criteria leave one clean option, or as a user decision with lettered options,
   a recommendation, and the case for and against each.
 
-## Write and close the round
+Output: withdrawn items; each open question as ruled or a user decision.
+
+## 5. Write and close the round
 
 - Write the round under `.scratch/<topic>/<arc>/round<N>/` and follow the
   artifact schema in [Round artifacts](#round-artifacts).
@@ -101,6 +111,8 @@ claim contradicted by the snapshot, or results from another revision.
 - Report the verdict, blockers, decisions and recommendations, work the user
   still owns (staging and committing), pending-staging list and whether another
   round is needed.
+
+Output: the verdict path and the report.
 
 ## Round artifacts
 

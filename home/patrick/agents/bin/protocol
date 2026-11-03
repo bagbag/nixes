@@ -1357,7 +1357,7 @@ def skill_reminder(command: str, args: str) -> str | None:
     except (OSError, ValueError, KeyError):
         return None
     focus = f'Argument: `{args}`.' if args else 'No argument: the current discussion.'
-    return lines(f'Reminder for /{command}; its full text went out earlier this cycle. {focus} Run it anew.', lead,
+    return lines(f'Reminder for /{command}. {focus} Run it anew.', lead,
                  *(items[lens] for lens in chosen))
 
 
@@ -1397,8 +1397,8 @@ def pass_text(ctx: Context, command: str) -> str:
         if reminder:
             return lines(f'Run the {command} pass now {scope}, then report the pass.', reminder)
         return f'Run the {command} skill now {scope} (read its SKILL.md), then report the pass.'
-    return ("Don't run or report the next pass in this turn: the console starts it as its own turn. Finish any other "
-            "work for the user, then end the turn without a closing status line.")
+    return ('End the turn after any other work for the user, without a closing status line: the console starts the next '
+            'pass as its own turn.')
 
 
 HELD_TEXT = ('Held: part of the last pass report was not applied. Fix the refused updates and resend them in a pass report '
@@ -2453,8 +2453,8 @@ def scoped_text(ctx: Context) -> str:
             'corrected record text, each against its sources and the rest of the set. ')
     how = (f'Run the {command} skill now with the argument `{args}` (read its SKILL.md), then report the pass. '
            if ctx.codex else
-           "Don't run or report the pass in this turn: the console starts it as its own turn. Finish any other work for "
-           'the user, then end the turn without a closing status line. ')
+           'End the turn after any other work for the user, without a closing status line: the console starts the pass as '
+           'its own turn. ')
     return lines(lead + how + 'Report each revised record as "unchanged" or a change as in the re-check (a change of your own '
                  "parts rewrites it again; a change to the user's decision drops it; a spread stops the run):",
                  report_hint(ctx, 'scoped', {
@@ -2625,16 +2625,17 @@ def rule_owner_text(description: str) -> str:
     return match.group(1) if match else ''
 
 
-def durable_owners(ctx: Context) -> str:
-    """project-memory.md's `## Durable owners` section, read from the installed file: where each kind of rule is written."""
+def memory_section(name: str) -> str:
+    """A `##` section of project-memory.md, read from the installed file. Durable owners says where each kind of rule is
+    written, Closure what a doc write owes (r20-q72)."""
     path = Path(env().get('HOME') or str(Path.home())) / '.agents' / 'skills' / 'shared' / 'project-memory.md'
     try:
-        match = re.search(r'^## Durable owners\s*$(.*?)(?=^## |\Z)', path.read_text(encoding='utf-8'), re.M | re.S)
+        match = re.search(rf'^## {name}\s*$(.*?)(?=^## |\Z)', path.read_text(encoding='utf-8'), re.M | re.S)
     except OSError:
         match = None
     if match is None or not match.group(1).strip():
-        return f'Durable owners: the `## Durable owners` section of {path} is missing; read what owns durable docs before writing.'
-    return '## Durable owners (project-memory.md)' + match.group(1).rstrip()
+        return f'{name}: the `## {name}` section of {path} is missing; read it before writing durable docs.'
+    return f'## {name} (project-memory.md)' + match.group(1).rstrip()
 
 
 def owners_text(ctx: Context) -> str:
@@ -2644,7 +2645,7 @@ def owners_text(ctx: Context) -> str:
         'record with `board record <id> <file>`). A rule a topic\'s design-target doc states is written now, not pending. Report per record its owners: written {path, anchor} (a repo path '
         'from the board root, or absolute/~; installed files by their installed path), none {reason}, or '
         'pending {item} (an open board item).',
-        durable_owners(ctx) if first_time(ctx, 'owners') else '',
+        lines(memory_section('Durable owners'), memory_section('Closure')) if first_time(ctx, 'owners') else '',
         *set_rows(ctx),
         report_hint(ctx, 'owners', {'owners': {(in_set(ctx) or ['<id>'])[0]: [{'written': {'path': 'docs/x.md', 'anchor': 'the-rule'}},
                                                                               {'pending': {'item': '<task id>'}}]}}),

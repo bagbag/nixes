@@ -18,7 +18,7 @@ description: >-
 - End at design or review; the user or invoking lead decides implementation and
   next phases.
 
-## Frame
+## 1. Frame
 
 - Infer DESIGN (new architecture) or REVIEW (existing) from the request; ask for
   mode or target only when genuinely ambiguous.
@@ -32,7 +32,9 @@ description: >-
   standalone), expected content and artifact ownership; keep short answers in
   the response.
 
-## Depth
+Output: frame, mode and output path.
+
+## 2. Depth
 
 Use the lightest level that protects the decision:
 
@@ -47,7 +49,9 @@ Use the lightest level that protects the decision:
 Apply [Reviewers](#reviewers) for depth, count, reuse, independence and
 disagreement. Explain any evidence-based increase in depth.
 
-## Dispatch and mediate
+Output: the level, with any reason for raising it.
+
+## 3. Dispatch and mediate
 
 - Dispatch with frame, mode, depth, expected result and paths; native
   configuration owns model, permissions and output contract. When the agent is
@@ -58,7 +62,9 @@ disagreement. Explain any evidence-based increase in depth.
   invoking lead when delegated; return decisions and rationale to the
   architect. Realign on scope or premise changes.
 
-## Assess and return
+Output: agent, mode and depth dispatched.
+
+## 4. Assess and return
 
 - Arrange independent review at the chosen depth: a fresh architect in REVIEW
   mode assesses the architecture; `second-opinion` challenges decision,
@@ -73,3 +79,5 @@ disagreement. Explain any evidence-based increase in depth.
 <!-- @include shared/decision-protocol.md -->
 
 <!-- @include shared/reviewers.md -->
+
+Output: result, artifact paths and recommendation.
