@@ -3092,7 +3092,7 @@ def validate_protocol(root: Path, part: str) -> None:
             refused("step", stdin={"classes": {"pt1": "ruled"}}, needle="cites its owner")
             proto("step", stdin={"classes": {"pt1": "user"}})
             proto("step", stdin={"select": ["pt1"]})
-            refused("step", stdin={**ROUND_INFO, "questions": [question("Which cache?", header="Much too long")]}, needle="longer than 12")
+            refused("step", stdin={**ROUND_INFO, "questions": [question("Which cache?", header="Much too long")]}, needle="over the limit of 12")
             refused("step", stdin={**ROUND_INFO, "questions": [question("Which cache?", options=[{"label": "Only", "description": ""}])]},
                     needle="2-4 objects")
             refused("step", stdin={**ROUND_INFO, "questions": [question("Which cache?", **{"for": "pt1"}), question("Which cache?")]}, needle="unique")
@@ -3108,8 +3108,8 @@ def validate_protocol(root: Path, part: str) -> None:
                     needle="strong is a claim: `strongBecause.noAssumptions`")
             refused("step", stdin={**ROUND_INFO, "questions": [question("Which cache?", strength="strong", strongBecause={
                 **STRONG_CLAIMS, "notPreference": "does-not-apply: x"}, **{"for": "pt1"})]}, needle="`strongBecause.notPreference` is \"true: …\"")
-            refused("step", stdin={**ROUND_INFO, "questions": [question("Which cache?", title="x" * 61, **{"for": "pt1"})]},
-                    needle="longer than 60")
+            refused("step", stdin={**ROUND_INFO, "questions": [question("Which cache?", title="x" * 76, **{"for": "pt1"})]},
+                    needle="76 characters, over the limit of 75")
             out = proto("step", stdin={**ROUND_INFO, "questions": [question("Which cache?", **{"for": "pt1"})]}).stdout
             if (shown()["title"], shown()["summary"]) != ("Cache policy", "Which cache the service keeps, and why now."):
                 raise ValueError(f"protocol show --json must carry the round title and summary: {shown()}")
@@ -3444,57 +3444,31 @@ def validate_protocol(root: Path, part: str) -> None:
             history_events = [json.loads(row) for row in (state / "0000-lead0001.protocol" / "history.jsonl").read_text().splitlines()]
             if [e["event"] for e in history_events if e.get("round") == "r3"].count("continued") != 1:
                 raise ValueError("protocol: the hand-over logs one continued event")
-            # A held question whose premise is not answered carries over: it waits on a question a round left held; the premise
-            # answered later lets the next round offer it. A premise answered in the round releases its dependents instead.
+            # A question waits only within its round (r23-q91): abandoning keeps no held question, and the board item comes back
+            # with the same text accepted.
             configure(health={"counts": counts, "items": {"questions": [
                 {"id": "fx-a", "status": "open", "type": "decision", "title": "A?", "priority": 1, "blockedBy": []},
                 {"id": "fx-b", "status": "open", "type": "decision", "title": "B?", "priority": 0, "blockedBy": ["fx-a"]}]}})
-            proto("start", "round", cwd=repo)
-            proto("step", stdin={"classes": {"fx-a": "user", "fx-b": "user"}}, cwd=repo)
-            proto("step", stdin={"select": ["fx-a", "fx-b"]}, cwd=repo)
-            proto("step", cwd=repo, stdin={**ROUND_INFO, "questions": [question("A?", key="a", board="fx-a"),
-                                                                      question("B?", board="fx-b", waitsOn=["a"])]})
-            converge(cwd=repo)
-            carried_round = shown(cwd=repo)
-            premise, held_id = (next(q["id"] for q in carried_round["questions"] if q["board"] == board) for board in ("fx-a", "fx-b"))
-            if [q["question"] for q in carried_round["batch"]["questions"]] != ["A?"] or carried_round["questions"][1]["status"] != "held":
-                raise ValueError(f"protocol: a held question waits for its premise: {carried_round}")
-            # Declined: the premise stays unanswered, the held question stays held and carries over with the round.
+            def waiting_round():
+                proto("start", "round", cwd=repo)
+                proto("step", stdin={"classes": {"fx-a": "user", "fx-b": "user"}}, cwd=repo)
+                proto("step", stdin={"select": ["fx-a", "fx-b"]}, cwd=repo)
+                proto("step", cwd=repo, stdin={**ROUND_INFO, "questions": [question("A?", key="a", board="fx-a"),
+                                                                          question("B?", board="fx-b", waitsOn=["a"])]})
+                converge(cwd=repo)
+                return shown(cwd=repo)
+            waiting = waiting_round()
+            held_id = next(q["id"] for q in waiting["questions"] if q["board"] == "fx-b")
+            if [q["question"] for q in waiting["batch"]["questions"]] != ["A?"] or waiting["questions"][1]["status"] != "held":
+                raise ValueError(f"protocol: a held question waits for its premise: {waiting}")
             declined = json.loads(proto("decline", "--origin", "dialog", cwd=repo,
-                                        stdin={"marker": carried_round["batch"]["marker"], "partial": None}).stdout)
+                                        stdin={"marker": waiting["batch"]["marker"], "partial": None}).stdout)
             if next(q for q in declined["questions"] if q["id"] == held_id)["status"] != "held":
                 raise ValueError(f"protocol: a held question waiting on a declined premise stays held: {declined}")
             proto("abandon", cwd=repo)
-            if [q["id"] for q in json.loads((state / "0000-lead0001.protocol" / "state.json").read_text())["carried"]] != [held_id]:
-                raise ValueError("protocol: the held question waiting on an unanswered premise carries over")
-            # Its premise answered elsewhere (outside this round), the next round offers it.
-            session_dir = state / "0000-lead0001.protocol"
-            document = json.loads((session_dir / "state.json").read_text())
-            document["answers"][premise] = "Keep"
-            (session_dir / "state.json").write_text(json.dumps(document))
-            # A held question whose item another session closed is dropped at the next start (the board owns it).
-            saved = {name: (session_dir / name).read_text() for name in ("state.json", "history.jsonl")}
-            configure(statuses={"fx-b": "closed"})
-            out = proto("start", "round", cwd=repo).stdout
-            if f"Dropped held questions no longer open on the board: {held_id} fx-b (closed)." not in out \
-                    or not re.match(r"r\d+ · round started · dropped " + held_id + r" \(no longer open on the board\)", out) \
-                    or json.loads((session_dir / "state.json").read_text())["carried"]:
-                raise ValueError(f"protocol must drop a carried question the board closed:\n{out}")
-            for name, text in saved.items():
-                (session_dir / name).write_text(text)
-            # The held decision is offered once its premise is answered; selecting it claims its item.
-            configure()
-            proto("start", "round", cwd=repo)
-            out = proto("step", stdin={"classes": {}}, cwd=repo).stdout
-            if f"- {held_id} p9 (held): B" not in out:
-                raise ValueError(f"protocol must offer the held decision:\n{out}")
-            calls()
-            proto("step", stdin={"select": [held_id]}, cwd=repo)
-            proto("step", stdin={**ROUND_INFO, "questions": []}, cwd=repo)
-            held_round = shown(cwd=repo)
-            if [c["args"] for c in calls()] != [["claim", "fx-b"]] or held_round["step"] != "check" \
-                    or [(q["id"], q["status"]) for q in held_round["questions"]] != [(held_id, "draft")]:
-                raise ValueError(f"protocol held decision in the next round: {held_round}")
+            again = waiting_round()  # the same texts: no ghost refuses them
+            if [q["question"] for q in again["batch"]["questions"]] != ["A?"]:
+                raise ValueError(f"protocol: after an abandon the same questions stage again: {again}")
             proto("abandon", cwd=repo)
             # Collect leaves out another live session's holds (named in one line) and marks a gone session's; selecting the
             # gone one takes it over (board take) and the round releases it like its own claims.
@@ -3721,18 +3695,16 @@ def validate_protocol(root: Path, part: str) -> None:
             reissued = shown(cwd=repo)["batch"]
             if reissued["marker"] == out_marker or [q["options"][0]["description"] for q in reissued["questions"]] != ["keep it"] * 2:
                 raise ValueError(f"protocol must issue the updated batch anew: {reissued}")
-            # Updates apply one by one: a valid title edit applies while an invalid strong claim is set aside with its reason.
-            headline = proto("step", stdin={"pass": "ground", "checked": ["titles"], "updates": [
+            # A report applies whole (r23-q95): an invalid strong claim refuses the valid title beside it, with every error listed.
+            refused("step", stdin={"pass": "ground", "checked": ["titles"], "updates": [
                 {"id": ids[0], "title": "Does bd batch keep order"}, {"id": ids[1], "strength": "strong", "strongBecause": {}}]},
-                cwd=repo).stdout.splitlines()[0]
-            if not re.fullmatch(rf"r\d+ · (.* · )?ground: {ids[0]} changed, 1 not applied · .*next: .+", headline):
-                raise ValueError(f"protocol headline must name the changed and the not applied updates: {headline!r}")
-            partial = shown(cwd=repo)
-            titles = {q["id"]: q["title"] for q in partial["questions"]}
-            if titles[ids[0]] != "Does bd batch keep order" or not any(line["text"].startswith("ground") for line in partial["log"]):
-                raise ValueError(f"protocol must apply the valid update of a partly invalid report: {partial}")
+                needle="strong is a claim", cwd=repo)
+            if next(q for q in shown(cwd=repo)["questions"] if q["id"] == ids[0])["title"] == "Does bd batch keep order":
+                raise ValueError("protocol must not apply part of a refused report")
+            # Sent alone, the title needs no marks.
+            proto("step", stdin={"pass": "ground", "checked": ["titles"], "updates": [{"id": ids[0], "title": "Does bd batch keep order"}]}, cwd=repo)
             refused("step", stdin={"pass": "ground", "checked": ["x"], "updates": [{"id": ids[1], "strength": "strong", "strongBecause": {}}]},
-                    needle="no update applied", cwd=repo)
+                    needle="strong is a claim", cwd=repo)
             # A refused call leaves only its refusal in the history: no event of the work it did not save.
             tail = [json.loads(line)["event"] for line in (state / "0000-lead0001.protocol" / "history.jsonl").read_text().splitlines()][-2:]
             if tail[-1] != "refused" or "batch-withdrawn" in tail:
@@ -3799,10 +3771,10 @@ def validate_protocol(root: Path, part: str) -> None:
                                {"ids": ["fx-n1"], "title": "Plain question", "why": "highest priority outside a milestone", "fresh": True}],
                     "compact": {"keep": "the member questions' decisions"}}
             refused("next", "--set", stdin={}, needle="`compact` is required with a fresh round or without rounds", cwd=repo)
-            errors = proto("next", "--set", stdin={"rounds": [{"ids": [], "title": "x" * 61, "why": "", "fresh": "yes"}] * 4, "extra": 1},
+            errors = proto("next", "--set", stdin={"rounds": [{"ids": [], "title": "x" * 76, "why": "", "fresh": "yes"}] * 4, "extra": 1},
                            ok=False, cwd=repo).stderr
             for needle in ("unknown fields extra", "`rounds` holds at most 3, not 4", "rounds[0]: `ids` needs at least one question id",
-                           "rounds[0]: `title` is 61 characters, longer than 60", "rounds[0]: `why` must be a non-empty string",
+                           "rounds[0]: `title` is 76 characters, over the limit of 75", "rounds[0]: `why` must be a non-empty string",
                            "rounds[0]: `fresh` must be true or false", "rounds[3]: `fresh` must be true or false"):
                 if needle not in errors:
                     raise ValueError(f"protocol next --set must list every error in one refusal, missing {needle!r}:\n{errors}")
@@ -4519,12 +4491,13 @@ def validate_protocol(root: Path, part: str) -> None:
             proto("start", "round", "--no-board", str(notes), stdin={"points": ["Limits?"]}, **texts)
             proto("step", stdin={"classes": {"pt1": "user"}}, **texts)
             proto("step", stdin={"select": ["pt1"]}, **texts)
-            long_round = {"round": {"title": "t" * 61, "summary": "s" * 241}}
+            long_round = {"round": {"title": "t" * 76, "summary": "s" * 241}}
             result = proto("step", ok=False, **texts, stdin={**long_round, "questions": [
-                question("Limits?", title="x" * 61, header="Much too long", **{"for": "pt1"}),
-                question("y" * 161, options=[{"label": "A", "description": "d" * 151}, {"label": "B", "description": ""}])]})
-            for needle in ("round title at most 60", "round summary at most 240", "questions[0]: title", "questions[0]: header",
-                           "questions[1]: text", "questions[1]: the description of option 'A' is longer than 150"):
+                question("Limits?", title="x" * 76, header="Much too long", **{"for": "pt1"}),
+                question("y" * 241, options=[{"label": "A", "description": "d" * 201}, {"label": "B", "description": ""}])]})
+            for needle in ("round title is 76 characters, over the limit of 75", "round summary is 241 characters, over the limit of 240",
+                           "questions[0]: title", "questions[0]: header", "questions[1]: text",
+                           "questions[1]: the description of option 'A' is 201 characters, over the limit of 200"):
                 if needle not in result.stderr:
                     raise ValueError(f"a staging refusal lists every error at once ({needle!r} missing): {result.stderr}")
             refused("step", **texts, stdin={**ROUND_INFO, "questions": [question("2. Numbered?", **{"for": "pt1"})]}, needle="carries no number")
@@ -4619,51 +4592,122 @@ def validate_protocol(root: Path, part: str) -> None:
             refused("step", **texts, observe=False, stdin=unobserved, needle="no /step-back ran since its last report")
             refused("step", **texts, observe=False, stdin=unobserved, needle="Report with `protocol step`")
             proto("pass", "--origin", "plugin", stdin={"command": "step-back", "args": "", "pending": None}, **texts)
-            partial = {"pass": "step-back", "updates": [{"id": qid, "premises": "moved"}, {"id": "q99", "premises": "x"}]}
-            out = proto("step", **texts, observe=False, stdin=partial).stdout
-            if "Not applied" not in out:
-                raise ValueError(f"a partly applied report says what was not applied: {out}")
+            # A refused report changes nothing and lists every error (r23-q95); the run stays open for the resend.
+            partly = {"pass": "step-back", "updates": [{"id": qid, "title": "Moved"}, {"id": "q99", "premises": "x"}, {"id": qid, "header": "Much too long"}]}
+            result = proto("step", **texts, observe=False, stdin=partly, ok=False)
+            if "unknown question q99" not in result.stderr or "over the limit of 12" not in result.stderr or shown(**texts)["questions"][0]["title"] == "Moved":
+                raise ValueError(f"a report with an invalid update is refused whole and lists every error: {result.stderr}")
             proto("step", **texts, observe=False, stdin={"pass": "step-back", "updates": [{"id": qid, "premises": "moved again"}]})  # the run stayed open
             refused("step", **texts, observe=False, stdin=unobserved, needle="no /step-back ran")
             proto("abandon", **texts)
-            # F: a pass report with a refused update holds the round: the batch does not go out on the old text; the failed
-            # update is resent through a pass report. In Check (the last pass before the batch) and in Ask (an extra pass).
-            qid = texts_round("Hold?")
-            while shown(**texts)["pending"]["command"] != "challenge-rulings":
-                proto("step", **texts, stdin={"pass": shown(**texts)["pending"]["command"], "updates": [], "checked": ["q"]})
-            out = proto("step", **texts, stdin={"pass": "challenge-rulings", "checked": ["q"], "updates": [
-                {"id": qid, "title": "Held title"}, {"id": qid, "header": "Much too long for a chip"}]}).stdout
+            # A refused report in Ask leaves the batch out as it was.
+            qid = texts_round("Whole?")
+            converge(**texts)
+            out_batch = shown(**texts)["batch"]["marker"]
+            refused("step", **texts, stdin={"pass": "ground", "checked": ["q"], "updates": [{"id": qid, "title": "Ask title"}, {"id": qid, "header": "Much too long"}]},
+                    needle="over the limit of 12")
+            if shown(**texts)["batch"]["marker"] != out_batch or shown(**texts)["questions"][0]["title"] == "Ask title":
+                raise ValueError(f"a refused report changes nothing in Ask: {shown(**texts)}")
+            proto("abandon", **texts)
+            # Lengths (r23-q95): the targets are stated, the limits refuse; a few characters over pass.
+            found = re.search(r"(pt\d+) \[pasted\]", proto("start", "round", "--no-board", str(notes), stdin={"points": ["Soft?"]}, **texts).stdout)[1]
+            proto("step", stdin={"classes": {found: "user"}}, **texts)
+            stage_text = proto("step", stdin={"select": [found]}, **texts).stdout
+            for needle in ("`title` 60", "`text` 160", "`description` 150", "listed order"):
+                if needle not in stage_text:
+                    raise ValueError(f"Stage states the targets and the order, missing {needle!r}: {stage_text}")
+            if "`title` 75" in stage_text or "`description` 200" in stage_text or "`text` 240" in stage_text:
+                raise ValueError("Stage states only the targets")
+            proto("step", **texts, stdin={**ROUND_INFO, "questions": [question("y" * 240, title="t" * 75, options=[
+                {"label": "Keep", "description": "d" * 200}, {"label": "B", "description": ""}], **{"for": found})]})
+            proto("abandon", **texts)
+            # Read back (r23-q89): show <ids> prints a question whole, plain show stays short.
+            found = re.search(r"(pt\d+) \[pasted\]", proto("start", "round", "--no-board", str(notes), stdin={"points": ["Read?"]}, **texts).stdout)[1]
+            proto("step", stdin={"classes": {found: "user"}}, **texts)
+            proto("step", stdin={"select": [found]}, **texts)
+            proto("step", **texts, stdin={**ROUND_INFO, "questions": [question("Read?", premises="the grounded premise", options=[
+                {"label": "Keep", "description": "keep it", "preview": "x = 1"}, {"label": "Drop", "description": ""}], **{"for": found})]})
+            qid = shown(**texts)["questions"][0]["id"]
+            whole = proto("show", qid, **texts).stdout
+            if "the grounded premise" not in whole or "x = 1" not in whole or "the grounded premise" in proto("show", **texts).stdout \
+                    or "the grounded premise" in proto("show", "--json", **texts).stdout:
+                raise ValueError(f"show <ids> prints the question whole, the other forms stay short: {whole}")
+            refused("show", "q9999", **texts, needle="unknown question q9999")
+            # Premises in the record (r23-q90).
+            converge(**texts)
+            batch = shown(**texts)["batch"]
+            proto("answer", "--origin", "dialog", **texts, stdin={"marker": batch["marker"], "answers": {batch["questions"][0]["question"]: batch["questions"][0]["options"][0]["label"]}})
+            out = proto("step", **texts, stdin={"records": {qid: {"rationale": "why", "ruleOwner": "docs/x.md#x"}}}).stdout
+            written = next((notes / name).read_text(encoding="utf-8") for name in sorted(p.name for p in notes.iterdir()) if name.endswith(f"-{qid}.md"))
+            if "## Premises\nthe grounded premise" not in written or "## Rule owner\ndocs/x.md#x" not in written:
+                raise ValueError(f"the record carries the premises: {written}")
+            # Dependencies: a circle and bad references are refused and say why (r23-q91, q93).
+            def two_points(first, second, stage=None):
+                out = proto("start", "round", "--no-board", str(notes), stdin={"points": [first, second]}, **texts).stdout
+                keys = re.findall(r"(pt\d+) \[pasted\]", out)
+                proto("step", stdin={"classes": {key: "user" for key in keys}}, **texts)
+                proto("step", stdin={"select": keys}, **texts)
+                return keys
+            keys = two_points("Circle one?", "Circle two?")
+            refused("step", **texts, needle="waitsOn runs in a circle", stdin={**ROUND_INFO, "questions": [
+                question("Circle one?", key="a", waitsOn=["b"], **{"for": keys[0]}), question("Circle two?", key="b", waitsOn=["a"], **{"for": keys[1]})]})
+            refused("step", **texts, needle="names itself", stdin={**ROUND_INFO, "questions": [
+                question("Circle one?", key="a", waitsOn=["a"], **{"for": keys[0]}), question("Circle two?", **{"for": keys[1]})]})
+            proto("step", **texts, stdin={**ROUND_INFO, "questions": [
+                question("Circle one?", key="a", **{"for": keys[0]}), question("Circle two?", key="b", waitsOn=["a"], **{"for": keys[1]})]})
+            first, second = [q["id"] for q in shown(**texts)["questions"]]
+            bad = lambda *updates: {"pass": "step-back", "checked": ["q"], "updates": list(updates)}
+            refused("step", **texts, needle="waitsOn runs in a circle", stdin=bad({"id": first, "waitsOn": [second]}))
+            refused("step", **texts, needle="a `key` holds only inside the report", stdin=bad({"id": first, "waitsOn": ["a"]}))
+            refused("step", **texts, needle="a removed question goes from `waitsOn`", stdin=bad({"id": first, "remove": True, "reason": "moot"}))
+            # Position of a late question (r23-q98): `before` on a new question only; the batch follows it.
+            late = lambda text, **extra: question(text, **extra)
+            refused("step", **texts, needle="unknown fields before", stdin=bad({"id": first, "before": second}))
+            refused("step", **texts, needle="`before` names no question", stdin=bad(late("Nowhere?", before="q9999")))
+            proto("step", **texts, stdin=bad(late("Late?", before=first)))
+            if [q["text"] for q in shown(**texts)["questions"]][:2] != ["Late?", "Circle one?"]:
+                raise ValueError(f"`before` puts a new question ahead: {shown(**texts)['questions']}")
+            converge(**texts)
+            batch = shown(**texts)["batch"]
+            if batch["questions"][0]["question"] != "1. Late?":
+                raise ValueError(f"the batch follows the listed order: {batch}")
+            # A dialog note counts as the user's words (r23-q97); restart takes answered dependents along (r23-q92).
+            texts_of = {one["question"]: one["options"][0]["label"] for one in batch["questions"]}
+            noted = next(text for text in texts_of if "Circle one" in text)
+            proto("answer", "--origin", "dialog", **texts, stdin={"marker": batch["marker"], "answers": texts_of,
+                                                                  "annotations": {noted: {"notes": "also ask about caches"}}})
+            refused("edit", **texts, needle="quote check failed", stdin={"quote": "not the user's", "updates": [question("Caches?")]})
+            proto("edit", **texts, stdin={"quote": "also ask about caches", "updates": [question("Caches?")]})
+            converge(**texts)
             view = shown(**texts)
-            if "Not applied" not in out or view["batch"] is not None or view["step"] != "check" \
-                    or (view["pending"] or {}).get("command") != "challenge-rulings":
-                raise ValueError(f"a refused update holds the batch (Check): {out}\n{view}")
-            proto("step", **texts, stdin={"pass": "challenge-rulings", "checked": ["q"], "updates": [{"id": qid, "header": "Fixed"}]})
+            if view["batch"] is not None:
+                batch = view["batch"]
+                proto("answer", "--origin", "dialog", **texts, stdin={"marker": batch["marker"], "answers": {one["question"]: one["options"][0]["label"] for one in batch["questions"]}})
+                converge(**texts)
             view = shown(**texts)
-            if view["batch"] is None or view["questions"][0]["title"] != "Held title":
-                raise ValueError(f"the resend releases the held batch with the applied updates: {view}")
-            out = proto("step", **texts, stdin={"pass": "ground", "checked": ["q"], "updates": [
-                {"id": qid, "title": "Ask title"}, {"id": qid, "header": "Much too long for a chip"}]}).stdout
-            view = shown(**texts)
-            if "Not applied" not in out or view["batch"] is not None or view["step"] != "ask":
-                raise ValueError(f"a refused update holds the batch (Ask): {out}\n{view}")
-            refused("step", **texts, stdin={}, needle="resend")
-            proto("step", **texts, stdin={"pass": "ground", "checked": ["q"], "updates": [{"id": qid, "header": "Fixed 2"}]})
-            view = shown(**texts)
-            if view["batch"] is None or view["questions"][0]["title"] != "Ask title":
-                raise ValueError(f"the resend issues the held batch in Ask: {view}")
+            batch = view["batch"]
+            if batch is not None:
+                proto("answer", "--origin", "dialog", **texts, stdin={"marker": batch["marker"], "answers": {one["question"]: one["options"][0]["label"] for one in batch["questions"]}})
+            statuses_now = {q["id"]: q["status"] for q in shown(**texts)["questions"]}
+            if statuses_now[first] != "answered" or statuses_now[second] != "answered":
+                raise ValueError(f"both answered before the restart: {shown(**texts)['questions']}")
+            out = proto("restart", first, "--reason", "criterion", **texts).stdout
+            after = {q["id"]: (q["status"], q["answer"]) for q in shown(**texts)["questions"]}
+            if f"Restarted with it, their answers rested on it: {second}." not in out or after[first][1] is not None or after[second][1] is not None:
+                raise ValueError(f"restart takes answered dependents along: {out}\n{after}")
             proto("abandon", **texts)
             # A question too long to ask (only a pre-limit one can be): a plain message naming the error, no automatic pass; the
             # model shortens it in a pass of its own, whose Skill call counts as the observed run.
             def long_at_ask(qid_, session_state):
                 path = state / f"{texts['session']}.protocol" / "state.json"
                 data = json.loads(path.read_text(encoding="utf-8"))
-                data["round"]["questions"][0]["text"] = "z" * 170
+                data["round"]["questions"][0]["text"] = "z" * 250
                 path.write_text(json.dumps(data), encoding="utf-8")
 
             qid = texts_round("Fix?")
             long_at_ask(qid, None)
             out = converge(**texts)
-            if "Not asked yet" not in out or "longer than 160" not in out or "in a pass of its own" not in out \
+            if "Not asked yet" not in out or "over the limit of 240" not in out or "in a pass of its own" not in out \
                     or shown(**texts)["pending"] is not None or shown(**texts)["batch"] is not None:
                 raise ValueError(f"a question too long to ask gets a plain message and no pending pass:\n{out}\n{shown(**texts)['pending']}")
             proto("pass", "--origin", "model", stdin={"command": "ground", "args": "", "pending": None}, **texts)

@@ -214,8 +214,10 @@ A round:
   summary and, per question, a plain title, 2-4 options, the recommended
   option and its strength under decision-protocol.md Recommendation strength
   (a lean names its cause, a strong one carries the five-criterion checklist).
-  The Stage text states the limits (round `summary` 240, `title` 60, question
-  `text` 160, `header` 12, option `description` 150, all built from the
+  The Stage text states the lengths to keep to (round `summary` 240, `title` 60, question
+  `text` 160, `header` 12, option `description` 150; a report is refused only
+  above text 240, title 75, description 200, or summary 240 and header 12, naming the
+  measured length; all built from the
   engine's constants) and who reads each field; an option may carry a
   `preview` (single-select only). A refused Stage report, or a new question in
   a pass report, lists every error at once.
@@ -288,8 +290,9 @@ A round:
   refused `step` repeats the formats its step offers; the dialog JSON always
   prints). In Claude sessions a
   pass report is accepted only after an observed run of that pass since its
-  last report (the console's `pass` record, or a model Skill call); a run
-  stays open while part of a report was not applied. A question too long or
+  last report (the console's `pass` record, or a model Skill call). A report
+  applies whole: a refused one, at any step, changes nothing, lists every error
+  and leaves the run open for the resend. A question too long or
   invalid to ask (only one from before the limits can be) gets a plain message
   naming its error: the model shortens it in a pass of its own (its Skill call
   counts as the observed run); no pass runs automatically. `protocol edit` (stdin `{"updates", "quote"}`) applies a change the
@@ -322,8 +325,9 @@ A round:
   `step` asks again), and a pick's note reaches the model and Record.
 - Record writes the records; closing or abandoning releases the claims the
   round made and did not record (a hold the session had before, such as a
-  decided record, stays). Held questions carry to the next round while their
-  board item stays open. A round that closes while the session holds decided
+  decided record, stays). A question waits only within its round: `waitsOn` refuses
+  a circle, abandoning keeps no held question, and the board owns what a later
+  round asks. A round that closes while the session holds decided
   board records closes naming the release.
 
 A release runs in the same slot with the next run id (`r5 release · the
@@ -376,8 +380,12 @@ re-recommended): Ask hands over to a scoped
 rerun like `restart`'s (a fresh check cycle on their ids, answered questions
 untouched; the path pass, the Base loop, the refine pair on their ids, the lean
 pass and `challenge-rulings`), then the next batch asks them; chains release
-batch by batch, and Record runs once, when nothing is left to ask. A held
-question waiting on a question that is still unanswered carries over.
+batch by batch, and Record runs once, when nothing is left to ask. `restart`
+takes answered dependents along, through chains, and names them. Questions go out
+in listed order, four at a time; a new question goes last, or ahead of the one
+its `before` names, and existing questions stay put. `show <ids>` prints
+questions whole, and a record carries the question's premises as `## Premises`.
+The quote check of `edit` and chat answers also accepts a dialog note.
 
 `protocol next` prints the top 5 seed questions of the next round (open
 decisions, unblocked, not held by another live session; members of an open
@@ -417,7 +425,7 @@ the pass-start event. A new check run (`restart`, a rerun at Ask) and a
 compaction make the next pass full again.
 
 Every step's output opens with a headline: the call's events in the Log's
-words, then the next step (`r1 · ground: q3 changed, 1 not applied · next:
+words, then the next step (`r1 · ground: q3 changed · next:
 step-back, cycle 2/5`); the console shows it as the call's chat row.
 
 `show --json` is the console's contract (version 1; its real output in eleven

@@ -170,7 +170,7 @@ async function registerTool($: $): Promise<void> {
     name: 'protocol',
     description: [
       "Runs the protocol engine for this session's round (`protocol <args>`): one call per step, per-question updates as JSON on stdin; the output is the next step.",
-      'Read: ["show","--json"], ["show"], ["pending"], ["status","--line"], ["history"], ["next"] (the ranked seeds of the next round and your stored proposal; it prints the ["next","--set"] format).',
+      'Read: ["show","--json"], ["show"], ["show","q3"] (that question whole: options, previews, premises), ["pending"], ["status","--line"], ["history"], ["next"] (the ranked seeds of the next round and your stored proposal; it prints the ["next","--set"] format).',
       'Record an answer the user typed in chat: ["answer"] with stdin {"question","answer","quote"}, the quote being the user\'s exact words.',
       'Apply a change the user asked for to the questions: ["edit"] with stdin {"updates","quote"}, the quote being the user\'s exact words.',
       'The console stamps --session and --origin; dialog answers, declines and passes are recorded by the console from the person\'s actions.',

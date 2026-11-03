@@ -51,8 +51,8 @@ export type ConsoleRecord = { id: string; title: string; state: 'set' | 'revised
 /** One line of the round's recent history, in plain words; `at` is local HH:MM. */
 export type ConsoleLogLine = { at: string; text: string }
 
-/** One proposed round: the question ids, a title, why this cluster, and whether the context is compacted before it starts. */
-export type ConsoleProposal = { ids: string[]; title: string; why: string; compact: boolean }
+/** One proposed round: the question ids, a title, why this cluster, and whether it reuses nothing read so far (the console compacts first only when the context is large). */
+export type ConsoleProposal = { ids: string[]; title: string; why: string; fresh: boolean }
 
 /**
  * A step the pane and the band offer: the engine's pending release, the model's proposed rounds (`keep`: what a
@@ -65,6 +65,8 @@ export type ConsoleSuggestion =
 
 /** `protocol show --json`; `round` null while no run is open (R-B3). A release run (`protocol` release) fills `records`. */
 export type ConsoleRound = {
+  /** The context is at or above the size at which a fresh round compacts first; a missing or failed reading counts as small. */
+  isContextLarge: boolean
   version: number
   session: string
   protocol: string | null

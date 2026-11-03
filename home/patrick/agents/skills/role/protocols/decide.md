@@ -116,8 +116,7 @@ with their words as the quote, not through a pass.
 restart the affected questions under the decision protocol's
 [Changed premises](../../shared/decision-protocol.md#changed-premises).
 
-**Exit:** each round question is decided, deferred by the user, or still held
-on an unanswered question, which a later round asks.
+**Exit:** each round question is decided or deferred by the user.
 
 ## Release
 

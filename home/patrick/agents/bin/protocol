@@ -41,10 +41,12 @@ BOARD = BIN / 'board'
 CHECK_CAP = 5  # check cycles before the machine asks the user how to go on
 BATCH = 4  # AskUserQuestion takes 1-4 questions
 HEADER_MAX = 12  # AskUserQuestion's header chip
-TITLE_MAX = 60  # question and round titles: one pane row
+# Lengths: the Stage text states the targets; a report is refused only above the limit, since a model cannot count exactly and
+# a few characters over cost nothing to read (r23-q95). The pane truncates titles.
+TITLE_MAX, TITLE_LIMIT = 60, 75  # question and round titles: one pane row
 SUMMARY_MAX = 240  # the round summary: about two pane rows
-TEXT_MAX = 160  # a question's text: the dialog question
-DESCRIPTION_MAX = 150  # an option's model-written description (the engine's "Unverified: …" prefix is not counted)
+TEXT_MAX, TEXT_LIMIT = 160, 240  # a question's text: the dialog question
+DESCRIPTION_MAX, DESCRIPTION_LIMIT = 150, 200  # an option's model-written description (the engine's "Unverified: …" prefix is not counted)
 OVERLAP_LIMIT = 5  # related hits per new draft
 SEEDS = 5  # `protocol next` lists this many seed questions
 PROPOSAL_ROUNDS = 3  # rounds in a stored proposal
@@ -249,7 +251,7 @@ class Store:
         try:
             state = json.loads((self.dir / 'state.json').read_text(encoding='utf-8'))
         except FileNotFoundError:
-            return {'version': VERSION, 'session': self.session, 'seq': {}, 'round': None, 'carried': [],
+            return {'version': VERSION, 'session': self.session, 'seq': {}, 'round': None,
                     'answers': {}, 'counts': None}
         except ValueError as error:
             raise ProtocolError(f'unreadable protocol state {self.dir / "state.json"}: {error}') from None
@@ -303,7 +305,7 @@ class Context:
         self.complete = False  # a read the model asked for (`show`): says everything, records nothing as told
         self.formats: dict[str, str] = {}  # report formats the step text offered, by kind (a refused report reprints them)
         self.messages: list[str] = []  # said once, ahead of the step's instructions
-        self.applied, self.added, self.rejected = [], [], []  # this call's updates: changed ids, new ids, reasons
+        self.applied, self.added = [], []  # this call's updates: changed ids, new ids
 
     @property
     def round(self) -> dict:
@@ -358,9 +360,9 @@ def question_errors(q: dict, where: str, marks: bool = True) -> list[str]:
     for field in ('text', 'title', 'header'):
         if not isinstance(q.get(field), str) or not q[field].strip():
             errors.append(f'{where}: `{field}` must be a non-empty string')
-    for field, limit in (('text', TEXT_MAX), ('title', TITLE_MAX), ('header', HEADER_MAX)):
+    for field, limit in (('text', TEXT_LIMIT), ('title', TITLE_LIMIT), ('header', HEADER_MAX)):
         if isinstance(q.get(field), str) and len(q[field]) > limit:
-            errors.append(f'{where}: {field} {q[field]!r} is longer than {limit} characters')
+            errors.append(f'{where}: {field} {q[field]!r} is {len(q[field])} characters, over the limit of {limit}')
     if isinstance(q.get('text'), str) and re.match(r'\s*\d+[.)]\s', q['text']):
         errors.append(f'{where}: `text` carries no number (the engine numbers the dialog)')
     options = q.get('options')
@@ -372,8 +374,8 @@ def question_errors(q: dict, where: str, marks: bool = True) -> list[str]:
     else:
         if len({o['label'] for o in options}) != len(options):
             errors.append(f'{where}: option labels must be unique')
-        errors += [f'{where}: the description of option {o["label"]!r} is longer than {DESCRIPTION_MAX} characters'
-                   for o in options if len(o.get('description', '')) > DESCRIPTION_MAX]
+        errors += [f'{where}: the description of option {o["label"]!r} is {len(o["description"])} characters, over the limit of {DESCRIPTION_LIMIT}'
+                   for o in options if len(o.get('description', '')) > DESCRIPTION_LIMIT]
         if q.get('multiSelect') is True and any('preview' in o for o in options):
             errors.append(f'{where}: `preview` is for single-select questions: remove it or make the question single-select')
     if not isinstance(q.get('multiSelect', False), bool):
@@ -432,21 +434,38 @@ def new_question(ctx: Context, raw: dict, where: str) -> dict:
 
 
 def unique_texts(ctx: Context) -> None:
-    texts = [q['text'].strip() for q in ctx.round['questions']] + [q['text'].strip() for q in ctx.state['carried']]
+    texts = [q['text'].strip() for q in ctx.round['questions']]
     dupes = sorted({t for t in texts if texts.count(t) > 1})
     if dupes:
         fail(f'question texts must be unique (answers are keyed by text): {dupes[0]!r}')
 
 
 def resolve_waits(ctx: Context, keys: dict[str, str]) -> None:
-    known = {q['id'] for q in ctx.round['questions']} | {q['id'] for q in ctx.state['carried']} | set(ctx.state['answers'])
+    known = {q['id'] for q in ctx.round['questions']} | set(ctx.state['answers'])
+    errors = []
     for q in ctx.round['questions']:
         q['waitsOn'] = [keys.get(ref, ref) for ref in q.get('waitsOn') or []]
-        missing = [ref for ref in q['waitsOn'] if ref not in known]
-        if missing or q['id'] in q['waitsOn']:
-            fail(f"{q['id']}: waitsOn names unknown or own ids: {', '.join(missing) or q['id']}")
+        for ref in q['waitsOn']:
+            if ref == q['id']:
+                errors.append(f"{q['id']}: waitsOn names itself")
+            elif ref not in known:
+                errors.append(f"{q['id']}: waitsOn names {ref}, no question here: " + (
+                    'a removed question goes from `waitsOn` in the same report' if QUESTION_ID.fullmatch(ref)
+                    else 'a `key` holds only inside the report that defines it; later reports use the question id'))
+    refuse_all(errors)
+    waits = {q['id']: q['waitsOn'] for q in ctx.round['questions']}
+
+    def loop(qid: str, path: tuple[str, ...]) -> tuple[str, ...] | None:
+        if qid in path:
+            return (*path[path.index(qid):], qid)
+        return next(filter(None, (loop(other, (*path, qid)) for other in waits.get(qid, []))), None)
+
+    cycle = next(filter(None, (loop(qid, ()) for qid in waits)), None)
+    if cycle:
+        fail(f"waitsOn runs in a circle, so none of them could be asked: {' → '.join(cycle)}")
 
 
+QUESTION_ID = re.compile(r'q\d+')
 POINT = re.compile(r'pt\d+')  # a pasted point's key (next_id 'point'); every other selected key is a board item or a held question
 
 
@@ -495,21 +514,26 @@ MARK_FIELDS = ('recommendation', 'strength', 'leanBecause', 'strongBecause', 'op
 
 
 def apply_updates(ctx: Context, updates) -> int:
-    """Applies a pass's per-question updates, each on its own: a valid one applies, an invalid one is set aside with
-    its reason (`ctx.rejected`) for the pass to resend. Returns the number of questions added, removed or changed in
-    substance (PRESENTATION edits apply but do not count); `ctx.applied` lists the question of each update that applied."""
+    """Applies a report's per-question updates, all or none (r23-q95): one refusal lists every error, and a refused call
+    saves nothing. Returns the number of questions added, removed or changed in substance (PRESENTATION edits apply but do
+    not count); `ctx.applied` lists the question of each update that applied."""
     if not isinstance(updates, list):
         fail('`updates` must be a list')
-    changes, keys = 0, {}
+    changes, keys, errors, placed = 0, {}, [], []
     for index, update in enumerate(updates):
         try:
             changed, qid = apply_update(ctx, update, f'updates[{index}]', keys)
         except ProtocolError as error:
-            ctx.rejected.append(str(error))
+            errors.append(str(error))
             continue
         if qid:
             (ctx.applied if 'id' in update else ctx.added).append(qid)
+            if 'id' not in update and update.get('before') is not None:
+                placed.append((qid, update['before'], f'updates[{index}]'))
         changes += changed
+    refuse_all(errors)
+    for qid, before, where in placed:
+        place_before(ctx, qid, keys.get(before, before), where)
     resolve_waits(ctx, keys)
     unique_texts(ctx)
     refuse_all(coverage_errors(ctx))  # a merge or split is several updates: the set is checked once, after all of them
@@ -518,12 +542,28 @@ def apply_updates(ctx: Context, updates) -> int:
     return changes
 
 
+def place_before(ctx: Context, qid: str, target: str, where: str) -> None:
+    """A new question's `before` (r23-q98): it goes ahead of a question still to be asked; existing questions stay put (q94)."""
+    listed = ctx.round['questions']
+    other = next((q for q in listed if q['id'] == target), None)
+    if other is None:
+        fail(f'{where}: `before` names no question of this round: {target}')
+    if other['status'] in ('asked', 'answered'):
+        fail(f"{where}: `before` names {target}, which is {other['status']}")
+    q = next(one for one in listed if one['id'] == qid)
+    listed.remove(q)
+    listed.insert(listed.index(other), q)
+
+
 def apply_update(ctx: Context, update, where: str, keys: dict) -> tuple[int, str]:
     """One update; returns (1 for a substantive change, else 0; the question's id)."""
     if not isinstance(update, dict):
         fail(f'{where}: must be an object')
     if 'id' not in update:
-        q = new_question(ctx, update, where)
+        before = update.get('before')
+        if before is not None and not isinstance(before, str):
+            fail(f'{where}: `before` must be a question id')
+        q = new_question(ctx, {k: v for k, v in update.items() if k != 'before'}, where)
         ctx.round['questions'].append(q)
         keys[update.get('key') or q['id']] = q['id']
         q['status'] = 'draft'
@@ -723,23 +763,19 @@ def dependency_order(pool: list[dict], rank) -> list[dict]:
 
 
 def candidates(ctx: Context) -> list[dict]:
-    """Points for the user (and own rulings to confirm), then held decisions whose premises are answered; prerequisites
-    before their dependents, then by priority."""
+    """Points for the user (and own rulings to confirm); prerequisites before their dependents, then by priority."""
     r = ctx.round
     def scoped(key: str) -> bool:  # unclassified board items stay out of this round
         return r['classes'].get(key, {}).get('class') in ('user', 'own')
 
-    settled = {key for q in ctx.state['carried'] for key in q.get('settles') or []}  # a held rule question brings its own
-    pool = [{**item, 'key': item['id'], 'source': 'board'} for item in r['items'] if scoped(item['id']) and item['id'] not in settled]
+    pool = [{**item, 'key': item['id'], 'source': 'board'} for item in r['items'] if scoped(item['id'])]
     pool += [{'key': p['id'], 'id': p['id'], 'title': p['text'], 'priority': 9, 'blockedBy': [], 'source': 'pasted'}
              for p in r['points'] if scoped(p['id'])]
-    pool += [{'key': q['id'], 'id': q['id'], 'title': q['title'], 'priority': 9, 'blockedBy': [], 'source': 'held'}
-             for q in ctx.state['carried'] if premise_status(ctx, q) == 'draft']
     return dependency_order(pool, lambda c: (priority_of(c), c['key']))
 
 
 def select_text(ctx: Context) -> str:
-    rows = [f"- {c['key']} p{c.get('priority', '?')} ({ctx.round['classes'].get(c['key'], {}).get('class', 'held')})"
+    rows = [f"- {c['key']} p{c.get('priority', '?')} ({ctx.round['classes'].get(c['key'], {}).get('class')})"
             + (f" waits on {', '.join(c['blockedBy'])}" if c.get('blockedBy') else '') + f": {c['title']}"
             for c in candidates(ctx)]
     return lines(
@@ -782,25 +818,12 @@ def select_accept(ctx: Context, report: dict) -> str:
     if claims and ctx.board and [key for key in claims if key not in taken]:
         claim_items(ctx, [key for key in claims if key not in taken])
     ctx.log('selected', selected=chosen, claimed=claims if ctx.board else [])
-    selected = list(chosen)
-    for key in chosen:
-        if pool[key]['source'] == 'held':
-            q = next(q for q in ctx.state['carried'] if q['id'] == key)
-            ctx.state['carried'].remove(q)
-            ctx.round['questions'].append({**q, 'status': 'draft', 'round': ctx.round['id']})
-            if q.get('board') and ctx.board:
-                claim_items(ctx, [q['board']])
-            settles = [one for one in q.get('settles') or [] if one not in selected]
-            if settles and board_keys(settles) and ctx.board:
-                claim_items(ctx, board_keys(settles))
-            selected += settles  # the held rule question still settles them: they are selected with it
-    ctx.round['selected'] = selected
+    ctx.round['selected'] = list(chosen)
     return 'stage'
 
 
 def stage_text(ctx: Context) -> str:
     r = ctx.round
-    staged = [f"- {q['id']} {q['status']}: {q['text']}" for q in r['questions']]
     dropped = {key: (ctx.state.get('dropReasons') or {})[key] for key in r['selected'] if key in (ctx.state.get('dropReasons') or {})}
     return lines(
         f"Round {r['id']} · Stage the questions for {', '.join(r['selected'])} under asking.md Question format, "
@@ -811,7 +834,8 @@ def stage_text(ctx: Context) -> str:
         'decision rests on; kind confirm-own-rulings asks the user to confirm your rulings. Mark each recommendation '
         'under decision-protocol.md Recommendation strength: strong sets `strongBecause` '
         f"{', '.join(STRONG_CRITERIA)} each to \"true: <evidence>\" (\"does-not-apply: <reason>\" for consumerWalk "
-        'and rulingsHold); lean sets `leanBecause` with cause preference or evidence. Limits in characters and who '
+        'and rulingsHold); lean sets `leanBecause` with cause preference or evidence. Questions go out in the listed '
+        f'order, {BATCH} at a time; `waitsOn` holds a dependent back until its premise is answered. Lengths to keep to in characters and who '
         f'reads each field: round `summary` {SUMMARY_MAX} (pane header); `title` {TITLE_MAX} (pane row; a question\'s '
         f"is also the board item's title); `text` {TEXT_MAX}, without a number (the engine numbers the dialog; it is the dialog "
         f"question and the board item's Question); `header` "
@@ -819,7 +843,6 @@ def stage_text(ctx: Context) -> str:
         'single-select questions only).',
         *(['A release dropped or held back these records earlier (the reason says what changed; ask what it leaves open):',
            *(f'- {key}: {reason}' for key, reason in dropped.items())] if dropped else []),
-        *(['Already staged (carried held decisions):', *staged] if staged else []),
         report_hint(ctx, 'stage', {'round': {'title': '<what this round decides>', 'summary': '<the topic in plain words>'},
                      'questions': [{'key': 'a', 'board': None, 'for': r['selected'][0] if r['selected'] else None,
                                     'settles': [], 'text': '<question>?',
@@ -838,8 +861,8 @@ def describe_errors(raw, where: str, required: bool) -> list[str]:
         return []
     if not isinstance(raw, dict) or not all(isinstance(raw.get(k), str) and raw[k].strip() for k in ('title', 'summary')):
         return [f'{where}: `round` needs a plain-words "title" and a "summary" of what this round decides']
-    return [f'{where}: round {field} at most {limit} characters' for field, limit in
-            (('title', TITLE_MAX), ('summary', SUMMARY_MAX)) if len(raw[field]) > limit]
+    return [f'{where}: round {field} is {len(raw[field])} characters, over the limit of {limit}' for field, limit in
+            (('title', TITLE_LIMIT), ('summary', SUMMARY_MAX)) if len(raw[field]) > limit]
 
 
 def describe(ctx: Context, raw, where: str, required: bool) -> None:
@@ -1150,7 +1173,8 @@ def next_cycle(ctx: Context) -> str:
 
 def pass_format(command: str) -> str:
     return lines(
-        'After the pass, report each change as a per-question update: changed fields, a new question (no id), or '
+        'After the pass, report each change as a per-question update: changed fields, a new question (no id; it goes last, '
+        'or ahead of the question its `before` names), or '
         '{"id", "remove": true, "reason"}; report an empty list when nothing changed. A pass that would revise a '
         "user's ruling raises it as a new question. Merge questions one answer settles the same way into one rule "
         'question (`settles`: the selected keys it settles); split an item out when the rule\'s application to it is open. '
@@ -1191,11 +1215,6 @@ def record_pass(ctx: Context, report: dict) -> tuple[str, int, str]:
     if checked is not None and not (isinstance(checked, list) and all(isinstance(c, str) and c.strip() for c in checked)):
         fail('`checked` lists what the pass examined, as strings')
     changes = apply_updates(ctx, report.get('updates') or [])
-    if ctx.rejected and not ctx.applied and not ctx.added:
-        fail('no update applied: ' + '; '.join(ctx.rejected))
-    if ctx.rejected:
-        ctx.messages.append('Not applied (fix and resend these in a pass report; the others applied): '
-                            + '; '.join(ctx.rejected))
     if not changes and not checked:
         fail(f'a {command} pass that changes nothing names what it checked: `"checked": ["q2: the retry premise in '
              'task-queue.ts", …]`')
@@ -1203,23 +1222,14 @@ def record_pass(ctx: Context, report: dict) -> tuple[str, int, str]:
     if told is None:  # Codex: nothing observes its runs, the text it was given decides
         told = 'reminder' if pass_reminder(ctx, command) else 'full'
     mark_skill(ctx, command)  # the pass ran: the rest of the run's passes of its kind get the reminder
-    if not ctx.rejected:
-        observed.pop(command, None)  # a run stays open while part of its report was not applied: the resend counts
-        ctx.round.get('given', {}).pop(command, None)
+    observed.pop(command, None)
+    ctx.round.get('given', {}).pop(command, None)
     ctx.round['check']['last'][command] = {'changes': changes, 'origin': origin}
     ctx.round['lastPass'] = {'pass': command, 'questions': list(dict.fromkeys([*ctx.applied, *ctx.added]))}  # in or out of sequence
     ctx.log('pass', command=command, changes=changes, questions=list(dict.fromkeys(ctx.applied)), added=ctx.added,
-            rejected=len(ctx.rejected), origin=origin, cycle=ctx.round['check']['cycle'], summary=report.get('summary'),
+            origin=origin, cycle=ctx.round['check']['cycle'], summary=report.get('summary'),
             checked=checked, kind=kind, scoped=scoped, told=told)
     return command, changes, origin
-
-
-def hold_pass(ctx: Context, command: str, changes: int) -> None:
-    """A pass report with a refused update holds the round where it is (the batch does not go out on the old text): the
-    applied changes wait in `held` and count with the resend, which comes as a pass report; the run stays open."""
-    if changes and command != 'challenge-rulings':
-        ctx.round['check']['challenged'] = False
-    ctx.round['held'] = {'changes': changes}
 
 
 def start_challenge(ctx: Context, kind: str, ids: list[str]) -> None:
@@ -1252,10 +1262,6 @@ def check_accept(ctx: Context, report: dict) -> str:
         fail('the check loop is paused: protocol resume continues it')
     expected = check['expect']
     command, changes, _ = record_pass(ctx, report)
-    changes += (ctx.round.pop('held', None) or {}).get('changes', 0)
-    if ctx.rejected:
-        hold_pass(ctx, command, changes)
-        return 'check'
     if changes and command != 'challenge-rulings':
         check['challenged'] = False  # a change after the last challenge-rulings run re-arms it
     if check.get('challenge') and command == expected == 'challenge-rulings':
@@ -1406,10 +1412,6 @@ def pass_text(ctx: Context, command: str) -> str:
             'pass as its own turn.')
 
 
-HELD_TEXT = ('Held: part of the last pass report was not applied. Fix the refused updates and resend them in a pass report '
-             '(the same pass); the questions go out after it.')
-
-
 def check_text(ctx: Context) -> str:
     r, check = ctx.round, ctx.round['check']
     if r['batch']:
@@ -1444,7 +1446,6 @@ def check_text(ctx: Context) -> str:
            if check.get('focusing') else
            '.'),
         *rows,
-        *([HELD_TEXT] if r.get('held') else []),
         pass_text(ctx, command),
         pass_report_format(ctx, command),
     )
@@ -1505,7 +1506,7 @@ def hand_over(ctx: Context) -> str:
     - questions an edit raised to strong alone get one challenge-rulings pass on them (r13 q48);
     - once the last answer is in, one challenge-rulings over the answered set (r13 q49): a finding is a new question that
       takes the first path, and the pass runs again after its answer; a pass that changed nothing goes to Record.
-    Questions still waiting on an unanswered one carry over."""
+    A question waits only within its round (r23-q91): nothing is held when the last answer is in."""
     r = ctx.round
     if r['protocol'] != 'round':
         return PROTOCOLS[r['protocol']].after_ask
@@ -1533,7 +1534,7 @@ def hand_over(ctx: Context) -> str:
 
 def ask_enter(ctx: Context) -> str | None:
     r = ctx.round
-    if r['batch'] or r.get('held'):
+    if r['batch']:
         return None
     for q in questions(ctx, 'draft'):
         if q.get('unchecked'):
@@ -1578,8 +1579,6 @@ EDIT_WORDS = 'a question the edit adds or whose recommendation it changes is che
 def ask_text(ctx: Context) -> str:
     batch = ctx.round['batch']
     if not batch:
-        if ctx.round.get('held'):
-            return f"Round {ctx.round['id']} · Ask: {HELD_TEXT}"
         return f"Round {ctx.round['id']} · Ask: no batch out. `protocol step` with {{}} issues the next one."
     tool_input = {'questions': batch['questions'], 'metadata': {'source': batch['marker']}}
     lead = f"Round {ctx.round['id']} · " + ('Check cap reached: ask the user how to go on.' if batch['cap'] else
@@ -1615,19 +1614,13 @@ def ask_accept(ctx: Context, report: dict) -> str:
     still out comes back and is issued again, and a change reruns the check loop (asking.md Check)."""
     if ctx.round['batch'] and not report.get('pass'):
         fail(f"waiting on the user's answer to {ctx.round['batch']['marker']}; a pass report updates its questions")
-    if ctx.round.get('held') and not report.get('pass'):
-        fail('part of the last pass report was not applied: resend the refused updates in a pass report (the questions go out after it)')
     for q in questions(ctx):
         q.pop('typed', None)  # read: the step or pass report sends them out again
     if report.get('pass'):
         if ctx.round['batch']:
             ctx.log('batch-withdrawn', marker=ctx.round['batch']['marker'], reason='pass report')
             batch_back(ctx)
-        command, changes, _ = record_pass(ctx, report)
-        changes += (ctx.round.pop('held', None) or {}).get('changes', 0)
-        if ctx.rejected:
-            hold_pass(ctx, command, changes)
-            return 'ask'
+        _, changes, _ = record_pass(ctx, report)
         if changes:
             waiting = take_unchecked(ctx)
             rescope_check(ctx, waiting) if waiting else fresh_check(ctx)
@@ -1649,12 +1642,10 @@ def record_text(ctx: Context) -> str:
                'rule applies' if q.get('settles') else '')
              + (f"\n  recording closes {', '.join(q['replaces'])}: name each in the rationale or decision with what the new "
                 'record keeps or changes' if q.get('replaces') else '') for q in todo]
-    held = [q['id'] for q in questions(ctx, 'held')]
     return lines(
         f"Round {ctx.round['id']} · Record (board-coordination.md#rulings). Check each answer against the option's "
         'wording; an answer stating a criterion restarts the affected questions instead (`protocol restart <ids>`).',
         *rows,
-        *([f"Held for a later round: {', '.join(held)}."] if held else []),
         'Give each a rationale and its rule owner; decision and alternatives default to the answer and the options '
         'not chosen. A question the user deferred goes under `defer` with the reason.',
         report_hint(ctx, 'record', {'records': {q['id']: {'rationale': '<why, with provenance>', 'ruleOwner': '<path#anchor>'}
@@ -1674,7 +1665,8 @@ def record_file(ctx: Context, q: dict, fields: dict) -> str:
         quoted = 'Recommended (strong): ' + '; '.join(f'{k} {v}' for k, v in q['strongBecause'].items()) + '\n\n' + quoted
     return (f"## Question\n{q['text']}\n\n## Alternatives Considered\n{alternatives or '- none offered'}\n\n"
             f"## Decision\n{fields.get('decision') or chosen}\n\n## Rationale\n{fields['rationale'].strip()}\n\n{quoted}\n\n"
-            f"## Rule owner\n{fields['ruleOwner'].strip()}\n")
+            + (f"## Premises\n{q['premises'].strip()}\n\n" if (q.get('premises') or '').strip() else '')
+            + f"## Rule owner\n{fields['ruleOwner'].strip()}\n")
 
 
 def board_item(ctx: Context, q: dict, path: Path) -> str:
@@ -1792,6 +1784,9 @@ def record_accept(ctx: Context, report: dict) -> str:
     records, deferred = report.get('records') or {}, report.get('defer') or {}
     if not isinstance(records, dict) or not isinstance(deferred, dict):
         fail('`records` and `defer` map question ids to objects and reasons')
+    waiting = [f"{q['id']} on {', '.join(q['waitsOn'])}" for q in questions(ctx, 'held')]
+    if waiting:  # waitsOn refuses a circle and an unknown id, and an answer releases its dependents: nothing should reach this
+        fail(f"questions still wait at Record: {'; '.join(waiting)}. A question waits only within its round: `protocol abandon`")
     todo = [q for q in questions(ctx, 'answered') if not q.get('recorded')]
     for qid in [*records, *deferred]:
         if qid not in {q['id'] for q in todo}:
@@ -1803,7 +1798,7 @@ def record_accept(ctx: Context, report: dict) -> str:
         if not isinstance(fields, dict) or not all(str(fields.get(k) or '').strip() for k in ('rationale', 'ruleOwner')):
             fail(f'records.{qid}: needs rationale and ruleOwner')
     # A question asked once its premise was answered rests on that answer: when the premise is deferred instead (the
-    # engine learns of a deferral only here), the dependent's answer has no settled premise and carries over too (r11-q42).
+    # engine learns of a deferral only here), the dependent's answer has no settled premise: it is deferred or restarted too (r11-q42).
     put_off = set(deferred) | {q['id'] for q in ctx.round['questions'] if q.get('recorded') == 'deferred'}
     resting = [f"{qid} rests on deferred {', '.join(w for w in q['waitsOn'] if w in put_off)}"
                for q in todo if (qid := q['id']) in records and any(w in put_off for w in q['waitsOn'])]
@@ -1894,12 +1889,10 @@ def closed_enter(ctx: Context) -> None:
     r = ctx.round
     r['pending'], r['batch'] = None, None
     release_claims(ctx)
-    carried = [q for q in r['questions'] if q['status'] == 'held']
-    ctx.state['carried'] += carried
     r['closedAt'] = utcnow()
     if ctx.board and refresh_board(ctx):
         r['countsAt'] = r['closedAt']
-    ctx.log('closed', recorded=[q['id'] for q in r['questions'] if q.get('recorded')], carried=[q['id'] for q in carried])
+    ctx.log('closed', recorded=[q['id'] for q in r['questions'] if q.get('recorded')])
 
 
 def closed_text(ctx: Context) -> str:
@@ -1910,8 +1903,6 @@ def closed_text(ctx: Context) -> str:
     counts = ctx.state.get('counts')
     return '\n'.join([
         f"Round {r['id']} closed.", *done,
-        *([f"Held for a later round: {', '.join(q['id'] for q in r['questions'] if q['status'] == 'held')}."]
-          if any(q['status'] == 'held' for q in r['questions']) else []),
         (f"Board: {counts['questions']} open questions, {counts['decided']} decided awaiting release, "
          f"{counts['toPlan']} released to plan, {counts['inReview']} in review, {counts['forUser']} waiting on the user."
          if counts and r.get('countsAt') else 'No board counts.' if ctx.board else 'No board here: the records are files only.'),
@@ -2485,7 +2476,7 @@ def scoped_accept(ctx: Context, report: dict) -> str:
     raw = report.get('records')
     ids = revised(ctx)
     changed = [rid for rid, value in raw.items() if value != 'unchanged'] if isinstance(raw, dict) else []
-    ctx.log('pass', command=command, changes=len(changed), questions=changed, added=[], rejected=0, origin=origin,
+    ctx.log('pass', command=command, changes=len(changed), questions=changed, added=[], origin=origin,
             summary=report.get('summary'), scope='release', records=ids,
             kind='scoped', scoped=ids, told='full')  # queued: a refusal drops it
     stopped = apply_changes(ctx, raw, 'records', every=True, scope=ids)
@@ -2959,11 +2950,11 @@ def proposal_errors(raw) -> list[str]:
         ids = one.get('ids')
         if not isinstance(ids, list) or not ids or not all(isinstance(i, str) and i.strip() for i in ids):
             errors.append(f'{where}: `ids` needs at least one question id')
-        for field, limit in (('title', TITLE_MAX), ('why', TEXT_MAX)):
+        for field, limit in (('title', TITLE_LIMIT), ('why', TEXT_LIMIT)):
             if not isinstance(one.get(field), str) or not one[field].strip():
                 errors.append(f'{where}: `{field}` must be a non-empty string')
             elif len(one[field]) > limit:
-                errors.append(f'{where}: `{field}` is {len(one[field])} characters, longer than {limit}')
+                errors.append(f'{where}: `{field}` is {len(one[field])} characters, over the limit of {limit}')
         if not isinstance(one.get('fresh'), bool):
             errors.append(f'{where}: `fresh` must be true or false')
     needs = not rounds or any(isinstance(one, dict) and one.get('fresh') is True for one in rounds)
@@ -3021,12 +3012,11 @@ def plural(n: int, word: str) -> str:
 
 
 def pass_words(e: dict) -> str:
-    """`q3, q5 changed, 1 not applied`, `no change`."""
+    """`q3, q5 changed`, `no change`."""
     ids, added, changes = e.get('questions'), e.get('added'), e.get('changes') or 0
     parts = [f"{', '.join(ids)} changed"] if ids else []
     parts += [f"{', '.join(added)} added"] if added else []
-    words = ', '.join(parts) if parts else f'{changes} changes' if changes else 'no change'
-    return words + (f", {e['rejected']} not applied" if e.get('rejected') else '')
+    return ', '.join(parts) if parts else f'{changes} changes' if changes else 'no change'
 
 
 def classified_words(e: dict) -> str:
@@ -3094,7 +3084,7 @@ def log_text(event: dict) -> str | None:
         'edited': f"edited {ids('questions')} (your words)",
         'checking': f"{ids('questions')}: " + ('challenge-rulings on the raised strong mark' if e.get('kind') == 'raised'
                                                else 'checked before they are asked (added or re-recommended)'),
-        'closed': 'release closed' if e.get('protocol') == 'release' else 'round closed', 'dropped': f"dropped {ids('questions')} (no longer open on the board)", 'abandoned': f"abandoned at {e.get('step')}",
+        'closed': 'release closed' if e.get('protocol') == 'release' else 'round closed', 'abandoned': f"abandoned at {e.get('step')}",
     }.get(kind)
 
 
@@ -3219,6 +3209,14 @@ def show_markdown(ctx: Context) -> str:
     if r['step'] != 'closed':
         lines += ['', '## Next step', '', instructions(ctx)]  # recovery after compaction: the step's instructions
     return '\n'.join(lines)
+
+
+def show_questions(ctx: Context, ids: list[str]) -> str:
+    """The named questions whole (r23-q89): what `show` leaves out, for a model that lost them to a compaction."""
+    if not ctx.round:
+        fail('no round in this session')
+    return '\n\n'.join(json.dumps({key: value for key, value in by_id(ctx, qid).items() if value not in (None, [], '')},
+                                   indent=1, ensure_ascii=False) for qid in ids)
 
 
 def status_line(ctx: Context) -> str:
@@ -3387,14 +3385,10 @@ def edit_round(ctx: Context, report: dict) -> str:
         q.pop('typed', None)
     before = {q['id']: (recommended_index(q), q.get('strength')) for q in questions(ctx)}
     apply_updates(ctx, updates)
-    if ctx.rejected and not ctx.applied and not ctx.added:
-        fail('no update applied: ' + '; '.join(ctx.rejected))
-    if ctx.rejected:
-        ctx.messages.append('Not applied (fix and resend these through edit; the others applied): ' + '; '.join(ctx.rejected))
     mark_unchecked(ctx, before)
     touched = list(dict.fromkeys([*ctx.applied, *ctx.added]))
     r['lastPass'] = {'pass': 'edit', 'questions': touched}  # rows read "↻ edit"
-    ctx.log('edited', questions=touched, rejected=len(ctx.rejected), quote=quote)
+    ctx.log('edited', questions=touched, quote=quote)
     if r['step'] != 'ask':
         # Before Ask the check takes them: not started yet, it covers them; under way, a scoped check restarts it and a raise
         # re-arms the round's challenge-rulings.
@@ -3502,6 +3496,7 @@ def answer(ctx: Context, report: dict, origin: str) -> str:
             done.append(qid)
             if isinstance(annotation, dict) and str(annotation.get('notes') or '').strip():
                 noted.append(f'{qid}: picked "{pick}" with the note "{annotation["notes"].strip()}".')
+                ctx.round['messages'].append({'text': annotation['notes'], 'origin': origin, 'at': now})  # the quote check reads these
         else:
             q['status'] = 'ready'
             if value:  # typed instead of a pick: the model reads it before the question goes out again
@@ -3543,6 +3538,14 @@ def restart(ctx: Context, ids: list[str], reason: str | None) -> None:
     if not r or r['step'] in ('collect', 'select', 'stage', 'closed'):
         fail('restart needs an open round past Stage')
     targets = [by_id(ctx, qid) for qid in ids]
+    # Answers resting on a restarted premise go with it, through chains (r23-q92): their options assumed the old answer.
+    resting = []
+    for q in targets:
+        for other in r['questions']:
+            if q['id'] in other.get('waitsOn', []) and other not in targets and other['answer'] is not None:
+                targets.append(other)  # the loop reaches its own dependents too
+                resting.append(other['id'])
+    ids = [q['id'] for q in targets]
     if r['batch'] and not r['batch']['cap']:
         batch_back(ctx)
     for q in targets:
@@ -3558,8 +3561,9 @@ def restart(ctx: Context, ids: list[str], reason: str | None) -> None:
         q['status'] = premise_status(ctx, q)
     ctx.log('restart', questions=ids, reason=reason)
     r['batch'] = None
-    r.pop('held', None)
     rescope_check(ctx, [*ids, *take_unchecked(ctx)])
+    if resting:
+        ctx.messages.append(f"Restarted with it, their answers rested on it: {', '.join(resting)}.")
     ctx.messages.append(f'A restart that widens the round: list the open items with `{LIST_COMMAND}`.')
     ctx.go('check')
 
@@ -3606,8 +3610,6 @@ def next_words(ctx: Context) -> str | None:
         return 'release (/release-round or ask)' if release_next(ctx) else None
     if r['batch']:
         return 'your call on the cycle cap' if r['batch']['cap'] else f"your answers (batch {batch_number(r['batch']['marker'])})"
-    if r.get('held'):
-        return 'your resent pass report (part of the last was not applied)'
     if r['step'] == 'check':
         check = r['check']
         if check.get('paused'):
@@ -3651,23 +3653,6 @@ def instructions(ctx: Context) -> str:
     return '\n'.join([headline(ctx), *ctx.messages, text])
 
 
-def drop_closed_carried(ctx: Context) -> None:
-    """The board owns whether a held board question still exists; the carried copy only keeps its draft. Questions
-    another session closed, decided or released since are dropped."""
-    carried = [q for q in ctx.state['carried'] if q['board']]
-    if not carried or not ctx.board:
-        return
-    found = ctx.board.json('show', *(q['board'] for q in carried), '--json', '--field', 'status')
-    gone = [q for q in carried if (found.get(q['board']) or {}).get('status') != 'open']
-    if not gone:
-        return
-    for q in gone:
-        ctx.state['carried'].remove(q)
-    ctx.log('dropped', questions=[q['id'] for q in gone])
-    ctx.messages.append('Dropped held questions no longer open on the board: ' + ', '.join(
-        f"{q['id']} {q['board']} ({(found.get(q['board']) or {}).get('status') or 'missing'})" for q in gone) + '.')
-
-
 def start(ctx: Context, name: str, report: dict, scope: str = 'board', records: Path | None = None,
           ids: list[str] | None = None) -> None:
     if ctx.round and ctx.round['step'] != 'closed':
@@ -3692,7 +3677,6 @@ def start(ctx: Context, name: str, report: dict, scope: str = 'board', records: 
                           'points': [], 'classes': {}, 'selected': [], 'questions': [], 'check': {}, 'pending': None,
                           'observed': {}, 'batch': None, 'batchSeq': 0, 'responses': [], 'messages': []}
     ctx.log('start', protocol=name, repo=ctx.state['round']['repo'], scope=scope, named=ctx.round['named'] or None)
-    drop_closed_carried(ctx)
     for point in report.get('points') or []:
         ctx.round['points'].append({'id': next_id(ctx.state, 'point', 'pt'), 'text': str(point)})
     ctx.go('collect')
@@ -3785,7 +3769,8 @@ def cli(argv: list[str]) -> int:
     verb('compacted', "the session's context was compacted: what it was told prints in full again")
     verb('resume', 'continue a paused check loop')
     verb('abandon', 'close the open round without records')
-    sub = verb('show', 'the round as markdown, or --json (the console contract)')
+    sub = verb('show', 'the round as markdown, --json (the console contract), or <ids>: those questions whole')
+    sub.add_argument('ids', nargs='*', help='question ids: their options, previews, premises and marks')
     sub.add_argument('--json', action='store_true')
     verb('pending', 'the pending pass as JSON, or null')
     sub = verb('status', 'one recovery line')
@@ -3848,6 +3833,8 @@ def run(ctx: Context, args) -> str:
     command = args.command
     if command == 'show':
         ctx.complete = True  # the model asked: everything, whatever it was told
+        if args.ids:
+            return show_questions(ctx, args.ids)
         return json.dumps(show_json(ctx), indent=1, ensure_ascii=False) if args.json else show_markdown(ctx)
     if command == 'pending':
         return json.dumps(pending_view(ctx))
@@ -3947,7 +3934,6 @@ def run(ctx: Context, args) -> str:
         r['closedAt'] = utcnow()
         if ctx.board and any(q.get('recorded') not in (None, 'deferred', 'file') for q in r['questions']):
             refresh_board(ctx)  # records written before the abandon are decided and held
-        ctx.state['carried'] += [q for q in r['questions'] if q['status'] == 'held']
         return '\n'.join([headline(ctx), *ctx.messages, f"Round {r['id']} abandoned at its step; nothing recorded."])
     fail(f'unknown command {command}')
 
