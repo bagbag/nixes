@@ -173,8 +173,9 @@ snapshot.
 decided rulings (already released ones count as done, so a rerun retries only
 a failed revise supersede), then closes the answered questions in dependency
 order with "Answered by released <record>", forcing only past rulings of the
-call and questions it closed before; any other open blocker leaves the
-question open (exit 1).
+call, questions it closed before and released rulings; any other open blocker
+leaves the question open (exit 1). A released blocker holds neither a decided
+record nor an answered question, only the open items it changes.
 `session-lead-mode state-dir` names the state dir; the engine and the console
 ask it instead of restating the location.
 

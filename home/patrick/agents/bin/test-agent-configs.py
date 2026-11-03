@@ -1792,6 +1792,35 @@ def validate_board(root: Path) -> None:
                 {"issue_id": store, "depends_on_id": ids["Ready task"], "type": "blocks"}]}}))
             if invoke(["release", store], fake, "lead0001")[0] == 0 or fake.writes():
                 raise ValueError("board release accepted a ruling with an open blocker")
+            # A released ruling is a settled premise: it holds no decided record resting on it (health's blockedBy, which the
+            # release's drop step reads, and board release agree), an unsettled blocker is refused with its real status, and an
+            # open question or work item stays held by it until it is planned.
+            released_ruling, ready_task = ids["Released ruling"], ids["Ready task"]
+
+            def with_blockers(*blockers):
+                return variant(**{"Store choice": {"status": "decided", "dependencies": [
+                    *next(i for i in fixture if i["id"] == store)["dependencies"],
+                    *[{"issue_id": store, "depends_on_id": b, "type": "blocks"} for b in blockers]]}})
+
+            def decided_blocked(items):
+                _, output, _ = invoke(["health", "--json", "--items", "decided"], Fake(items), "lead0001")
+                return next(i["blockedBy"] for i in json.loads(output)["items"]["decided"] if i["id"] == store)
+
+            fake = Fake(with_blockers(released_ruling))
+            code, _, errors = invoke(["release", store], fake, "lead0001")
+            if code or not fake.writes() or decided_blocked(with_blockers(released_ruling)):
+                raise ValueError(f"a released blocker must not hold a decided record: {errors}")
+            fake = Fake(with_blockers(released_ruling, ready_task))
+            code, _, errors = invoke(["release", store], fake, "lead0001")
+            if code == 0 or fake.writes() or f"{store}: waits on {ready_task} (open)" not in errors \
+                    or released_ruling in errors or decided_blocked(with_blockers(released_ruling, ready_task)) != [ready_task]:
+                raise ValueError(f"an unsettled blocker refuses with its status, the released one unnamed: {errors}")
+            held_by_ruling = variant(**{"Open cache question": {"dependencies": [
+                {"issue_id": ids["Open cache question"], "depends_on_id": released_ruling, "type": "blocks"}]}})
+            _, output, _ = invoke(["health", "--json", "--items", "blocked"], Fake(held_by_ruling), "lead0001")
+            if not any(i["id"] == ids["Open cache question"] and i["blockedBy"] == [released_ruling]
+                       for i in json.loads(output)["items"]["blocked"]):
+                raise ValueError(f"a released ruling must keep holding an open question: {output}")
             for status in ("open", "in_progress", "needs_ratification"):
                 fake = Fake(variant(**{"Store choice": {"status": status}}))
                 code, _, errors = invoke(["release", store], fake, "lead0001")
@@ -1826,6 +1855,11 @@ def validate_board(root: Path) -> None:
                     or fake.writes()[0][0] != "batch" or f"{loose}: left open, blocked by {ready}" not in errors \
                     or f"closed {cache}: answered by released {store}" not in output:
                 raise ValueError(f"board release --closes: {fake.writes()}\n{output}\n{errors}")
+            # A released ruling outside the release does not leave the answered question open; bd still needs the force.
+            fake = Fake(variant(**{"Open cache question": {"dependencies": blocks(cache, store, ids["Released ruling"])}}))
+            code, _, errors = invoke(["release", store, "--closes", f"{cache}={store}"], fake, "lead0001")
+            if code or [args for args in fake.writes() if args[0] == "close"] != [["close", cache, "--reason", f"Answered by released {store}", "--force"]]:
+                raise ValueError(f"a released blocker must not leave an answered question open: {fake.writes()}\n{errors}")
             # Refused before any write: a question another session holds, a record the call does not release.
             for closes_arg, needle in ((f"{ids['Held task']}={store}", "not an open question"),
                                        (f"{cache}={ids['Old store ruling']}", "which this call does not release")):
@@ -4047,12 +4081,13 @@ def validate_protocol(root: Path, part: str) -> None:
             # is unchanged; during an open round it is refused.
             # A record waiting on an open item outside the set leaves it at the board check (board release would refuse).
             patch_config(items={**json.loads(config.read_text())["items"],
-                                "fx-s2": {"status": "decided", "issue_type": "decision", "title": "S2", "assignee": "lead0001"}},
+                                "fx-s2": {"status": "decided", "issue_type": "decision", "title": "S2", "assignee": "lead0001"},
+                                "fx-open": {"status": "in_review", "issue_type": "task", "title": "Open"}},
                          health={"counts": counts, "items": {"decided": [{"id": "fx-s2", "blockedBy": ["fx-open"]}]}})
             proto("start", "release", "fx-s1", "fx-s2", cwd=repo)
             proto("step", stdin={"records": {"fx-s1": "unchanged", "fx-s2": "unchanged"}}, cwd=repo)
             proto("step", stdin={"checks": {"fx-s1": nones, "fx-s2": nones}}, cwd=repo)
-            if {r["id"]: (r["state"], r["reason"]) for r in shown(cwd=repo)["records"]}["fx-s2"] != ("dropped", "waits on open fx-open"):
+            if {r["id"]: (r["state"], r["reason"]) for r in shown(cwd=repo)["records"]}["fx-s2"] != ("dropped", "waits on fx-open (in_review)"):
                 raise ValueError(f"a blocked record must leave the set at the board check: {shown(cwd=repo)['records']}")
             proto("abandon", cwd=repo)
             proto("start", "release", "fx-s1", cwd=repo)

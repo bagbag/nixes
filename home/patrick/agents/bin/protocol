@@ -2355,7 +2355,7 @@ def board_check_accept(ctx: Context, report: dict) -> str:
         waiting = sorted(hit_items(checks, rid, 'premise'))
         if waiting:
             drop(ctx, rid, f"its premise waits on {', '.join(waiting)}")
-    # board release refuses a record waiting on an open item outside the set: it leaves the set now, while the
+    # board release refuses a record waiting on an unsettled item outside the set: it leaves the set now, while the
     # report can still change, not after the approval (a blocker dropped here can drop its dependents in turn).
     blocked = {item['id']: item.get('blockedBy') or []
                for item in (ctx.board.json('health', '--json', '--items', 'decided').get('items') or {}).get('decided') or []}
@@ -2364,8 +2364,9 @@ def board_check_accept(ctx: Context, report: dict) -> str:
         waiting = {rid: blockers for rid, blockers in waiting.items() if blockers}
         if not waiting:
             break
+        found = statuses(ctx, [b for blockers in waiting.values() for b in blockers])
         for rid, blockers in waiting.items():
-            drop(ctx, rid, f"waits on open {', '.join(blockers)}")
+            drop(ctx, rid, 'waits on ' + ', '.join(f"{b} ({found[b] or 'not found'})" for b in blockers))
     if not in_set(ctx):
         return stop(ctx, 'every record left the set', [])
     return 'own-rulings'

@@ -113,7 +113,7 @@ claims them.
 | `open` | Unanswered and unclaimed. Blocks its dependents. |
 | `in_progress` | Unanswered; claimed by the session running its round. Blocks its dependents. |
 | `decided` | Answered, release pending. Still blocks. |
-| `released` | Binding. Blocks the open items it changes until a `plan` session plans it and closes it; claimed before equal-priority work. |
+| `released` | Binding. Blocks the open items it changes until a `plan` session plans it and closes it; claimed before equal-priority work. Holds no decided record resting on it. |
 | `needs_ratification` | Autopilot ruling in force, awaiting the user's ratification through a deciding session. Blocks nothing. |
 | closed | Planned, superseded or withdrawn. |
 

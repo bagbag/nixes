@@ -453,6 +453,12 @@ class Board:
                 if self.is_open(blocker)
                 or (self.complete and blocker not in self.by_id and not blocker.startswith('external:'))]
 
+    def unsettled_blockers(self, item_id: str) -> list[str]:
+        """What holds a decided record's release or an answered question's close: a released ruling is a settled
+        premise, which holds only the open items it changes until planned."""
+        return [blocker for blocker in self.open_blockers(item_id)
+                if self.by_id.get(blocker, {}).get('status') != 'released']
+
     def kind(self, issue: dict) -> str | None:
         status, kind = issue['status'], issue.get('issue_type')
         if kind == 'decision':
@@ -569,7 +575,8 @@ def item_json(board: Board, issue: dict, **extra) -> dict:
     """An item row of a --json view."""
     return {'id': issue['id'], 'type': issue.get('issue_type'), 'status': issue['status'], 'priority': issue.get('priority'),
             'holder': issue.get('assignee') or None, 'title': issue.get('title', ''),
-            'blockedBy': board.open_blockers(issue['id']), **extra}
+            'blockedBy': board.unsettled_blockers(issue['id']) if issue['status'] == 'decided' else board.open_blockers(issue['id']),
+            **extra}
 
 
 # health views under the console's count names (contract-rulings R-B5); the others keep their view name.
@@ -1752,9 +1759,10 @@ def release(board: Board, args) -> int:
             problems.append(f"{issue['id']}: not a decision")
         elif issue['status'] not in ('decided', 'released'):
             problems.append(f"{issue['id']}: {issue['status']}, not decided")
-        blocking = [b for b in board.open_blockers(issue['id']) if b not in args.ids]
+        blocking = [b for b in board.unsettled_blockers(issue['id']) if b not in args.ids]
         if blocking and issue['status'] == 'decided':
-            problems.append(f"{issue['id']}: waits on open {', '.join(blocking)}")
+            named = ', '.join(f"{b} ({board.by_id.get(b, {}).get('status', 'not found')})" for b in blocking)
+            problems.append(f"{issue['id']}: waits on {named}")
         # A decided record a live question revises is about to be replaced: releasing it puts it in force first
         # (a board revise opened outside a round; Record closes the replaced record).
         live = [other for other in board.revised_by(issue['id']) if board.is_open(other) and other not in args.ids]
@@ -1806,15 +1814,15 @@ def release(board: Board, args) -> int:
 
 
 def close_answered(board: Board, closes: list[tuple[str, list[str]]], released: set[str]) -> list[str]:
-    """Closes each answered question once every open blocker is a ruling of this release or a question closed
-    before it here (dependency order); forces only past those. Returns the questions left open."""
+    """Closes each answered question once every unsettled blocker is a ruling of this release or a question closed
+    before it here (dependency order); forces only past those and released rulings. Returns the questions left open."""
     closed: set[str] = set()
     pending = list(closes)
     while pending:
         progress = False
         for question, records in list(pending):
             blockers = board.open_blockers(question)
-            if any(b not in released and b not in closed for b in blockers):
+            if any(b not in released and b not in closed for b in board.unsettled_blockers(question)):
                 continue
             pending.remove((question, records))
             result = bd('close', question, '--reason', f"Answered by released {', '.join(records)}",
@@ -1828,7 +1836,7 @@ def close_answered(board: Board, closes: list[tuple[str, list[str]]], released: 
         if not progress:
             break
     for question, _ in pending:
-        others = [b for b in board.open_blockers(question) if b not in released and b not in closed]
+        others = [b for b in board.unsettled_blockers(question) if b not in released and b not in closed]
         print(f"{question}: left open, blocked by {', '.join(others) or 'a question not closed'}", file=sys.stderr)
     return [question for question, _ in closes if question not in closed]
 
