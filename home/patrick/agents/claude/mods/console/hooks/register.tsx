@@ -140,7 +140,7 @@ export const register: Register = on => {
   }).catch(($, e, next) => next(e))
 
   // A run has started as its skill expands: a press's guard entry goes, and the machine's pass is started. The console's own pass
-  // reads the engine's reminder in place of the skill's full text when the cycle told that kind already (r17-q62); a typed
+  // reads the engine's reminder in place of the skill's full text when the run told that kind already (r22-q87); a typed
   // command and the model's own Skill call keep the full text, and a failing read passes it through.
   on('skill.prompt', async ($, e, next) => {
     const skill = e.skill.slice(e.skill.lastIndexOf(':') + 1)

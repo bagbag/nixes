@@ -68,7 +68,7 @@ LIST_COMMAND = f'board health --items {COLLECT_VIEWS}'  # lists the open items C
 # Skill text of step-back and ground passes: 'cycle' gives the full text on the first pass of each kind in a check cycle and a
 # reminder (the skill's stance and the named lenses, read from the installed SKILL.md) on the others; 'pass' gives every pass the
 # full text. The one value to change to go back (r17-q62).
-SKILL_TEXT = 'cycle'
+SKILL_TEXT = 'run'
 BASE_LENSES = ('consumer', 'root-fix', 'bloat', 'gaps')  # step-back's lenses when its argument names none (skills/step-back: "Default")
 # Question fields a pass can change; a change to any of them counts (asking.md Check: premise, ruling, option or
 # question set).
@@ -578,9 +578,14 @@ def cycle_key(ctx: Context, what: str) -> str:
     return f"cycle:{what}:{r['id']}:{r.get('checkRun', 0)}.{r['check'].get('cycle', 0)}"
 
 
-def forget_cycles(ctx: Context) -> None:
+def run_key(ctx: Context, what: str) -> str:
+    r = ctx.round
+    return f"run:{what}:{r['id']}:{r.get('checkRun', 0)}"
+
+
+def forget_runs(ctx: Context) -> None:
     """A new run starts: the old runs' cycles go from the record."""
-    ctx.state['told'] = [key for key in ctx.state.get('told') or [] if not key.startswith('cycle:')]
+    ctx.state['told'] = [key for key in ctx.state.get('told') or [] if not key.startswith(('cycle:', 'run:'))]
 
 
 def report_format(ctx: Context, kind: str, text: str) -> str:
@@ -1197,7 +1202,7 @@ def record_pass(ctx: Context, report: dict) -> tuple[str, int, str]:
     told = ctx.round.get('given', {}).get(command)
     if told is None:  # Codex: nothing observes its runs, the text it was given decides
         told = 'reminder' if pass_reminder(ctx, command) else 'full'
-    mark_skill(ctx, command)  # the pass ran: the rest of the cycle's passes of its kind get the reminder
+    mark_skill(ctx, command)  # the pass ran: the rest of the run's passes of its kind get the reminder
     if not ctx.rejected:
         observed.pop(command, None)  # a run stays open while part of its report was not applied: the resend counts
         ctx.round.get('given', {}).pop(command, None)
@@ -1305,7 +1310,7 @@ def check_accept(ctx: Context, report: dict) -> str:
     return gate_ask(ctx)
 
 
-# Skill text once per cycle (r17-q62): the first step-back and the first ground of a check cycle get the skill's full text,
+# Skill text once per check run (r22-q87, a trial; 'pass' switches back): the first step-back and the first ground of a run get the skill's full text,
 # the others a reminder cut from the installed SKILL.md; challenge-rulings, a release's scoped passes, a typed command and
 # a model's own Skill call stay full. A new check run or a compaction makes the next pass full again.
 
@@ -1363,22 +1368,22 @@ def skill_reminder(command: str, args: str) -> str | None:
 
 def pass_reminder(ctx: Context, command: str | None = None) -> str | None:
     """The reminder the pending pass gets instead of the skill's full text, or None when it gets the full text. Whether the
-    cycle told this kind already is `state['told']`'s word."""
+    run told this kind already is `state['told']`'s word."""
     r = ctx.round
     pending = (r or {}).get('pending')
-    if SKILL_TEXT != 'cycle' or not pending or r['protocol'] != 'round' or pending['command'] not in CUT_PASSES \
-            or command not in (None, pending['command']) or cycle_key(ctx, pending['command']) not in ctx.state.get('told', []):
+    if SKILL_TEXT != 'run' or not pending or r['protocol'] != 'round' or pending['command'] not in CUT_PASSES \
+            or command not in (None, pending['command']) or run_key(ctx, pending['command']) not in ctx.state.get('told', []):
         return None
     return skill_reminder(pending['command'], pending['args'])
 
 
 def mark_skill(ctx: Context, command: str) -> None:
-    """A step-back or ground ran with the skill's full text: the rest of the cycle's passes of that kind get the reminder."""
+    """A step-back or ground ran with the skill's full text: the rest of the run's passes of that kind get the reminder."""
     r = ctx.round
     if command in CUT_PASSES and r['protocol'] == 'round':
         told = ctx.state.setdefault('told', [])
-        if cycle_key(ctx, command) not in told:
-            told.append(cycle_key(ctx, command))
+        if run_key(ctx, command) not in told:
+            told.append(run_key(ctx, command))
 
 
 def pending_view(ctx: Context) -> dict | None:
@@ -2093,7 +2098,7 @@ def start_release(ctx: Context, ids: list[str]) -> None:
         ctx.board.checked('take', *gone)
     if claim:
         ctx.board.checked('claim', *claim)
-    forget_cycles(ctx)
+    forget_runs(ctx)
     ctx.state['round'] = {
         'id': next_id(ctx.state, 'round', 'r'), 'protocol': 'release', 'step': 'recheck', 'startedAt': utcnow(),
         'repo': ctx.board.repo, 'scope': 'release', 'source': source, 'title': None, 'summary': None,
@@ -3546,6 +3551,8 @@ def restart(ctx: Context, ids: list[str], reason: str | None) -> None:
         if q['answer'] is not None:
             ctx.state['answers'].pop(q['id'], None)
         q.pop('typed', None)
+        q.pop('quote', None)  # the answer's own words go with it: a later answer's record must not quote them
+        q.pop('annotations', None)
         q.update(answer=None, status='draft')
     for q in questions(ctx, 'draft', 'held', 'ready'):
         q['status'] = premise_status(ctx, q)
@@ -3677,7 +3684,7 @@ def start(ctx: Context, name: str, report: dict, scope: str = 'board', records: 
     if ctx.board is None and records is None:
         fail('no board here: name the records folder with `start round --no-board <dir>`')
     ctx.state.pop('proposal', None)  # a round starts from its proposal or without one: the next proposal is made after it
-    forget_cycles(ctx)
+    forget_runs(ctx)
     ctx.state['round'] = {'id': next_id(ctx.state, 'round', 'r'), 'protocol': name, 'step': 'collect',
                           'startedAt': utcnow(), 'repo': ctx.board.repo if ctx.board else None, 'scope': scope,
                           'records': str(records.resolve()) if records else None, 'items': [],

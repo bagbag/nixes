@@ -401,11 +401,11 @@ deciding session of either tool and says so in the recovery message when it fail
 kind's report format, the ask instructions around the dialog (the Codex form keeps
 the marker and the verb in a clause), the open-item list, the Durable owners
 and Closure sections of project-memory.md (printed at Owner writes from the
-installed file; one line naming each that is missing) and, per check run and cycle, the question
-list of a check pass (later passes print `N questions (protocol show lists them)`) and
-the skill text of a pass kind. `SKILL_TEXT` (`cycle` by default, `pass` for every
+installed file; one line naming each that is missing), per check cycle the question
+list of a check pass (later passes print `N questions (protocol show lists them)`) and,
+per check run, the skill text of a pass kind. `SKILL_TEXT` (`run` by default, `pass` for every
 pass full) selects the cadence: the first step-back and the first ground of each
-check cycle get the skill's full text, the others a reminder cut from the
+check run get the skill's full text, the others a reminder cut from the
 installed `SKILL.md` (step-back: its `## Stance` and the lens items the argument
 names, the base lenses when it names none; ground: its first paragraph after the
 argument lines and the named lens items; a part that cannot be cut makes the

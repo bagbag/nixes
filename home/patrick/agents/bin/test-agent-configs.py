@@ -3261,7 +3261,15 @@ def validate_protocol(root: Path, part: str) -> None:
                                                                               "followUp": "why?"}).stdout)
             if follow["questions"][0]["answer"] != "Keep" or "another round of questions" not in follow["note"]:
                 raise ValueError(f"protocol followUp must record the given answers and ask what to add: {follow}")
+            # A restart takes the answer back with its words: a later answer's record must not quote them (r22-q88).
+            saved_answer = state / "0000-lead0001.protocol" / "state.json"
+            document = json.loads(saved_answer.read_text(encoding="utf-8"))
+            next(q for q in document["round"]["questions"] if q["id"] == "q2").update(quote="the reversed words", annotations={"notes": "the reversed note"})
+            saved_answer.write_text(json.dumps(document), encoding="utf-8")
             out = proto("restart", "q2", "--reason", "criterion: only reversible caches").stdout
+            taken_back = next(q for q in json.loads(saved_answer.read_text(encoding="utf-8"))["round"]["questions"] if q["id"] == "q2")
+            if "quote" in taken_back or "annotations" in taken_back:
+                raise ValueError(f"a restart clears the answer's quote and note: {taken_back}")
             restarted = shown()
             if restarted["step"] != "check" or restarted["questions"][0]["status"] != "draft" or restarted["questions"][0]["answer"] \
                     or restarted["check"]["cycle"] != 1 or restarted["pending"]["command"] != "step-back" or "Check cycle 1/5" not in out:
@@ -5265,7 +5273,7 @@ def validate_protocol(root: Path, part: str) -> None:
                 staged["q"] = shown(**kwargs)["questions"][0]["id"]
                 return out
 
-            # A: the skill text once per check cycle. The path pass is the cycle's first step-back (full), then each pending pass
+            # A: the skill text once per check run (r22-q87). The path pass is the run's first step-back (full), then each pending pass
             # gets the reminder cut from the installed SKILL.md: step-back's Stance and lenses, ground's paragraph and lenses.
             first = to_check("Cadence?", **home)
             qid = staged["q"]
@@ -5288,7 +5296,7 @@ def validate_protocol(root: Path, part: str) -> None:
             for (command, args, reminder), (_, _, cut) in zip(seen, expected):
                 if not cut:
                     if reminder is not None:
-                        raise ValueError(f"{command} {args!r} is the cycle's first of its kind and gets the full text: {reminder}")
+                        raise ValueError(f"{command} {args!r} is the run's first of its kind and gets the full text: {reminder}")
                     continue
                 skill = (installed / ".agents" / "skills" / command / "SKILL.md").read_text(encoding="utf-8")
                 lead = skill.split("## Stance\n", 1)[1].split("\n## ", 1)[0].strip() if command == "step-back" \
@@ -5307,7 +5315,7 @@ def validate_protocol(root: Path, part: str) -> None:
                 raise ValueError(f"later check passes of a cycle count the questions:\n{outputs[0]}")
             proto("abandon", **home)
 
-            # A2: a change opens the next cycle: its step-back and ground are full again, and its first check pass lists the questions.
+            # A2: a change opens the next cycle: its passes stay reminders within the run, and its first check pass lists the questions.
             to_check("Cycles?", **home)
             qid = staged["q"]
             run_pass(**home)                                                                       # path pass
@@ -5316,12 +5324,12 @@ def validate_protocol(root: Path, part: str) -> None:
             run_pass(**home)                                                                       # Base step-back
             _, out = run_pass(updates=[{"id": qid, "premises": "a changed premise"}], **home)     # the cycle's ground, with a change
             nxt = shown(**home)
-            if (nxt["check"]["cycle"], nxt["pending"]["command"], nxt["pending"]["reminder"]) != (2, "step-back", None) \
+            if (nxt["check"]["cycle"], nxt["pending"]["command"]) != (2, "step-back") or nxt["pending"]["reminder"] is None \
                     or "Check cycle 2/5" not in out or f"- {qid} draft: Cycles?" not in out:
-                raise ValueError(f"the next cycle's first step-back is full, and its first check pass lists the questions:\n{nxt}\n{out}")
+                raise ValueError(f"the next cycle's first step-back gets the reminder, and its first check pass lists the questions:\n{nxt}\n{out}")
             _, out = run_pass(**home)
-            if "(protocol show lists them)" not in out or shown(**home)["pending"]["reminder"] is not None:
-                raise ValueError(f"cycle 2: its ground is full (the first of the cycle), the question list was told:\n{out}")
+            if "(protocol show lists them)" not in out or shown(**home)["pending"]["reminder"] is None:
+                raise ValueError(f"cycle 2: its ground gets the reminder (the run told ground already), the question list was told:\n{out}")
             if f"- {qid} draft: Cycles?" not in proto("show", **home).stdout:
                 raise ValueError("protocol show lists the questions whatever the record says")
             # A restart is a new check run: its first pass is full again.
@@ -5359,7 +5367,7 @@ def validate_protocol(root: Path, part: str) -> None:
                 if told_events(**home)[-1] != "full":
                     raise ValueError("SKILL_TEXT = 'pass' tells every pass the full text")
             finally:
-                engine_module.SKILL_TEXT = "cycle"
+                engine_module.SKILL_TEXT = "run"
             proto("restart", staged["q"], **home)
             run_pass(**home)
             marked = tmp / "marked-home"
