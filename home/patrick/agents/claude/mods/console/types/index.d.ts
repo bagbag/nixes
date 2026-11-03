@@ -5,7 +5,8 @@ export type ConsoleStep = 'collect' | 'select' | 'stage' | 'related' | 'check' |
   | 'recheck' | 'board-check' | 'own-rulings' | 'scoped' | 'approval' | 'owners' | 'release'
 export type ConsolePassOrigin = 'plugin' | 'composer' | 'bridge' | 'press' | 'model'
 
-export type ConsolePending = { id: string; command: string; args: string }
+/** The pending pass; `reminder` is what the skill expands to for the console's own run (the engine's cut of SKILL.md), null when the full text is due. */
+export type ConsolePending = { id: string; command: string; args: string; reminder: string | null }
 
 export type ConsoleOverlap = { id: string; title: string; outcome: string | null }
 
@@ -59,7 +60,7 @@ export type ConsoleProposal = { ids: string[]; title: string; why: string; compa
  */
 export type ConsoleSuggestion =
   | ({ kind: 'round'; key: string; keep: string | null; isRecommended: boolean } & ConsoleProposal)
-  | { kind: 'release'; key: string; round: string; count: number; isRecommended: boolean }
+  | { kind: 'release'; key: string; count: number; isRecommended: boolean }
   | { kind: 'compact'; key: string; keep: string; isRecommended: boolean }
 
 /** `protocol show --json`; `round` null while no run is open (R-B3). A release run (`protocol` release) fills `records`. */
@@ -85,8 +86,8 @@ export type ConsoleRound = {
   records: ConsoleRecord[]
   /** The last release, when it stopped: shown while no run is open, its records wait for a round. */
   stopped: { run: string; reason: string; ids: string[] } | null
-  /** What follows a close, the engine's knowledge: the release of the last round's recorded board records and the model's stored proposal (`protocol next --set`). Null while a run is open or nothing waits; `rounds` is left out when empty. */
-  next: { release?: { round: string; count: number }; rounds?: ConsoleProposal[]; compact?: { keep: string } } | null
+  /** What follows a close, the engine's knowledge: the release of the decided records the session holds (their count, read from the board at the last close or `protocol next`), and the model's stored proposal (`protocol next --set`). Null while a run is open or nothing waits; `rounds` is left out when empty. */
+  next: { release?: { count: number }; rounds?: ConsoleProposal[]; compact?: { keep: string } } | null
   note: string | null
 }
 
@@ -123,8 +124,8 @@ export type ConsoleBoard = {
 /** The registry entry (`session-lead-mode show`). */
 export type ConsoleRole = { session: string; role: string; actor: string; tool: string }
 
-/** The machine-run pass this console started, by pending id (R-B4). */
-export type ConsolePassRun = { id: string; command: string; phase: 'queued' | 'started' | 'noted' }
+/** The machine-run pass this console started, by pending id (R-B4); `isOwn` marks the console's own run, which a typed or pressed one is not. */
+export type ConsolePassRun = { id: string; command: string; phase: 'queued' | 'started' | 'noted'; isOwn?: true }
 
 /** Runs a press queued that have not started yet (repeat-press guard). */
 export type ConsoleQueued = { key: string; at: number }[]

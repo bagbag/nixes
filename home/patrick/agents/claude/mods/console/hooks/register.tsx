@@ -3,7 +3,7 @@
 // registered role or a drawing surface. Round features act for lead and solo only.
 import type { EngineInterface, Register } from 'claude-code'
 
-import type { ConsoleStart } from '../types'
+import type { ConsolePassRun, ConsoleStart } from '../types'
 
 import {
   context, failOpen, message, notice, noteModel, PANE, pressSubmit, recordPass, refreshAll, refreshBoard, refreshLater,
@@ -19,6 +19,12 @@ import { consoleText, protocolCallText, protocolResultText } from './words'
 const PROTOCOL_TOOL = 'mcp__console__protocol'
 
 const REFRESH_MS = 60_000
+
+/** The engine's reminder for the console's own run of its pending pass; null when the pass is no longer pending or gets the full text. */
+async function ownReminder($: EngineInterface, run: ConsolePassRun): Promise<string | null> {
+  const pending = await readPending($, await $.session.id())
+  return pending !== null && pending.id === run.id && pending.command === run.command ? pending.reminder : null
+}
 
 /** The stored start goes with the compaction that was to precede it: sent once that succeeded, dropped with a notice when it was skipped (a precompute installs nothing and keeps it). */
 async function settleStart($: EngineInterface, start: ConsoleStart, compacted: { skip?: string }, trigger: string): Promise<void> {
@@ -126,13 +132,19 @@ export const register: Register = on => {
     return next(e)
   }).catch(($, e, next) => next(e))
 
-  // A run has started as its skill expands: a press's guard entry goes, and the machine's pass is started.
+  // A run has started as its skill expands: a press's guard entry goes, and the machine's pass is started. The console's own pass
+  // reads the engine's reminder in place of the skill's full text when the cycle told that kind already (r17-q62); a typed
+  // command and the model's own Skill call keep the full text, and a failing read passes it through.
   on('skill.prompt', async ($, e, next) => {
     const skill = e.skill.slice(e.skill.lastIndexOf(':') + 1)
     await releaseRun($, key => key === skill || key.startsWith(`${skill} `))
     const run = await getPass($)
     if (run !== null && run.phase === 'queued' && run.command === skill) await setPass($, { ...run, phase: 'started' })
-    return next(e)
+    const isOwnRun = run !== null && run.isOwn === true && run.phase !== 'noted' && run.command === skill
+    if (isOwnRun) await setPass($, { id: run.id, command: run.command, phase: 'started' })  // its one expansion: a later Skill call in the run is the model's own
+    const reminder = isOwnRun ? await ownReminder($, run).catch(() => null) : null
+    const expanded = await next(e)
+    return reminder === null ? expanded : { ...expanded, text: reminder }
   }).catch(($, e, next) => next(e))
 
   on('turn.start', async ($, e, next) => {
@@ -175,7 +187,7 @@ export const register: Register = on => {
           await noteModel($, `The /${pending.command} pass (${pending.id}) ended without its report. Report its per-question updates through the protocol tool.`)
         }
       } else if (pending !== null && !e.isAborted) {
-        await setPass($, { id: pending.id, command: pending.command, phase: 'queued' })
+        await setPass($, { id: pending.id, command: pending.command, phase: 'queued', isOwn: true })
         await pass($, ctx.session, 'plugin', { command: pending.command, args: pending.args, pending: pending.id })
           .catch(failOpen($, `recording /${pending.command}`))
         void $.command.run({ command: pending.command, args: pending.args }).catch(failOpen($, `running /${pending.command}`))

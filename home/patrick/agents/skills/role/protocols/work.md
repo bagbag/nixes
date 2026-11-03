@@ -1,6 +1,6 @@
 # Work protocol
 
-Doing one claimed design or implementation item. Read
+Read
 `$HOME/.agents/skills/shared/board-core.md`,
 `$HOME/.agents/skills/shared/decision-protocol.md` and
 `$HOME/.agents/skills/shared/acceptance.md` before
@@ -39,7 +39,7 @@ findings or stops.
    and comment them on the item; raise every other choice as a question
    blocking the affected part, and continue unaffected parts.
    Output: one line per completed part; for a design, what each pass changed.
-5. **Evidence.** Run the item's gates under the review protocol's
+5. **Evidence.** Run the item's gates under Acceptance
    [Evidence and gates](../../shared/acceptance.md#evidence-and-gates); comment each command
    and outcome.
    Output: one line per gate: command, exit code, and passed/failed/skipped

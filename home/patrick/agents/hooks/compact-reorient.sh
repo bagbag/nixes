@@ -2,7 +2,9 @@
 # compact-reorient: restore the session's registered role after compaction or
 # resume in Codex and Claude Code. role/SKILL.md owns the role -> protocol
 # file mapping and project-memory.md the recovery steps; this hook names the
-# role and points there.
+# role and prints that file's Recovery and closure section. A deciding session's
+# protocol engine learns of the compaction (`protocol compacted`), so what it
+# printed before prints in full again.
 set -euo pipefail
 
 command -v jq >/dev/null 2>&1 || exit 0
@@ -38,9 +40,22 @@ if [[ -n "$role" ]]; then
     line=$("$protocol" --session "$session_id" status --line 2>/dev/null || true)
     [[ -z "$line" || "$line" == "protocol: no open round" ]] || message+=" $line"
   fi
+  case "$role" in
+    lead | solo | autopilot)
+      if [[ ! -x "$protocol" ]] || ! "$protocol" --session "$session_id" compacted >/dev/null 2>&1; then
+        message+=" \`protocol compacted\` failed: run it, or the engine keeps its texts short."
+      fi ;;
+  esac
 fi
 
-message+=" Recover under \`\$HOME/.agents/skills/shared/project-memory.md\` Recovery and closure."
+memory="$HOME/.agents/skills/shared/project-memory.md"
+recovery=''
+[[ ! -r "$memory" ]] || recovery=$(awk '/^## Recovery and closure[[:space:]]*$/ {found = 1; next} found && /^## / {exit} found' "$memory")
+if [[ -n "${recovery//[[:space:]]/}" ]]; then
+  message+=" Recovery and closure (\`\$HOME/.agents/skills/shared/project-memory.md\`):"$'\n'"$recovery"
+else
+  message+=" Recover under \`\$HOME/.agents/skills/shared/project-memory.md\` Recovery and closure."
+fi
 
 jq -cn --arg m "$message" \
   '{hookSpecificOutput:{hookEventName:"SessionStart",additionalContext:$m}}'

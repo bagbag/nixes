@@ -35,7 +35,8 @@ export const ENGINE_CONTRACT = {
     "pending": {
       "id": "p1",
       "command": "step-back",
-      "args": "goal foundations"
+      "args": "goal foundations",
+      "reminder": null
     },
     "questions": [
       {
@@ -87,6 +88,90 @@ export const ENGINE_CONTRACT = {
       {
         "at": "00:00",
         "text": "staged q1"
+      }
+    ],
+    "records": [],
+    "stopped": null,
+    "next": null
+  },
+  "reminder": {
+    "version": 1,
+    "session": "0000-contract",
+    "protocol": "round",
+    "round": "r1",
+    "title": "Cache policy",
+    "summary": "Which cache the service keeps, and why now.",
+    "step": "check",
+    "check": {
+      "cycle": 1,
+      "cap": 5,
+      "last": {
+        "step-back": {
+          "changes": 0,
+          "origin": "model"
+        }
+      }
+    },
+    "pending": {
+      "id": "p2",
+      "command": "step-back",
+      "args": "",
+      "reminder": "Reminder for /step-back; its full text went out earlier this cycle. No argument: the current discussion. Run it anew.\nJudge greenfield: previous rulings, contracts and current usages are no\nauthority. Find the cleanest end state, keeping DX in mind; then judge the\nwhole picture: is the combined result clean and coherent? Ground and think\nyourself until you have strong recommendations; where none is strong, list the\ndecisive trade-offs.\n- **consumer:** walk a realistic consumer through the whole flow end to end\n  (for an API: set up, configure, use, handle failure, test), noting what each\n  step needs; judge the options against that walk.\n- **root-fix:** does it fix the root cause, not a symptom? Trace the cause;\n  the root may lie outside this module or repo, and changes there are allowed.\n- **bloat:** over-engineered? Too much magic?\n- **gaps:** under-built: does anything the goal or realistic consumers need\n  fall short?"
+    },
+    "questions": [
+      {
+        "id": "q1",
+        "board": null,
+        "text": "Which cache?",
+        "title": "Cache",
+        "kind": "decision",
+        "status": "draft",
+        "waitsOn": [],
+        "settles": [],
+        "overlaps": [],
+        "answer": null,
+        "answeredAt": null,
+        "changedBy": null,
+        "recommendation": "Keep",
+        "strength": "lean",
+        "leanBecause": {
+          "cause": "preference",
+          "detail": "taste"
+        },
+        "strongBecause": null
+      }
+    ],
+    "batch": null,
+    "counts": null,
+    "progress": {
+      "items": 0,
+      "points": 1,
+      "classified": 1,
+      "candidates": null,
+      "selected": [
+        "pt1"
+      ]
+    },
+    "log": [
+      {
+        "at": "00:00",
+        "text": "round started"
+      },
+      {
+        "at": "00:00",
+        "text": "classified 1 point: 1 user"
+      },
+      {
+        "at": "00:00",
+        "text": "selected pt1"
+      },
+      {
+        "at": "00:00",
+        "text": "staged q1"
+      },
+      {
+        "at": "00:00",
+        "text": "step-back (path): no change"
       }
     ],
     "records": [],
@@ -234,7 +319,7 @@ export const ENGINE_CONTRACT = {
     "round": "r1",
     "title": "Cache policy",
     "summary": "Which cache the service keeps, and why now.",
-    "step": "record",
+    "step": "check",
     "check": {
       "cycle": 1,
       "cap": 5,
@@ -253,7 +338,12 @@ export const ENGINE_CONTRACT = {
         }
       }
     },
-    "pending": null,
+    "pending": {
+      "id": "p8",
+      "command": "challenge-rulings",
+      "args": "q1",
+      "reminder": null
+    },
     "questions": [
       {
         "id": "q1",
@@ -371,7 +461,6 @@ export const ENGINE_CONTRACT = {
     "stopped": null,
     "next": {
       "release": {
-        "round": "r2",
         "count": 1
       }
     }
@@ -456,12 +545,7 @@ export const ENGINE_CONTRACT = {
         "fx-a"
       ]
     },
-    "next": {
-      "release": {
-        "round": "r2",
-        "count": 1
-      }
-    }
+    "next": null
   },
   "revised": {
     "version": 1,
@@ -538,10 +622,6 @@ export const ENGINE_CONTRACT = {
     "records": [],
     "stopped": null,
     "next": {
-      "release": {
-        "round": "r2",
-        "count": 1
-      },
       "rounds": [
         {
           "ids": [
@@ -590,10 +670,6 @@ export const ENGINE_CONTRACT = {
     "records": [],
     "stopped": null,
     "next": {
-      "release": {
-        "round": "r2",
-        "count": 1
-      },
       "compact": {
         "keep": "all decisions of this session"
       }

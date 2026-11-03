@@ -27,9 +27,10 @@ Protocol files:
 - review: `$HOME/.agents/skills/role/protocols/review.md`
 - unattended: `$HOME/.agents/skills/role/protocols/unattended.md`
 
-Pulls: **plan**, **design**, **implement**, **review**; each claims the kinds
-in board-core [Routing](../shared/board-core.md#routing)
-(`$HOME/.agents/skills/shared/board-core.md`).
+Pulls: **plan**, **design**, **implement**, **review**; `board claim` routes
+each its kinds, and board-core [Routing](../shared/board-core.md#routing)
+(`$HOME/.agents/skills/shared/board-core.md`) keeps the rules a claim does not
+enforce.
 
 An agent session runs each claimed item under the protocol for its kind:
 
@@ -66,16 +67,16 @@ Give each step's output as one line.
    Pass `--pulls` only for agent.
    Output: `registered <role> [pulls]`.
 4. **Load.** Read the role's protocol files fully, and the shared files each
-   one names. An agent reads those of its pulls: plan → plan, design and
-   implement → work, review → review.
+   one's opening read list names (the others load where a step names them).
+   An agent reads those of its pulls: plan → plan, design and implement →
+   work, review → review.
    Output: `loaded <protocols>`.
 5. **Holds.** Where the repository has `.beads/`, run `board mine`.
    Output: held ids, or `none held`.
 6. **Continue** under the loaded protocols within the current task. As an
    agent, loop: with the `plan` pull, run the plan protocol through its
    Exit; then dispatch ready items of your pulls to workers in parallel under
-   the plan protocol's [Dispatch](protocols/plan.md#dispatch)
-   (`$HOME/.agents/skills/role/protocols/plan.md`), each running
+   the plan protocol's [Dispatch](protocols/plan.md#dispatch), each running
    its protocol from the table above through its Exit, and refill as it says.
    Without workers in the runtime, `board claim` one item, run its protocol
    through its Exit, skipping its Claim step, and claim again. When no item is

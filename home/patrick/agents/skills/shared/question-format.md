@@ -1,17 +1,18 @@
 ## Question format
 
-- Ask top-down: direction first (goal, outcome, principle), then the
-  criteria and behavior it leaves open, then the remaining specific
-  decisions; each level is its own batch, whose answers set the next level's
-  premises, and levels the context already settles are skipped. Show each
-  option's observable result with concrete cases; where the user cannot state
-  a rule, ask a few cases and derive it. Name the decisions each answer
-  settles and derive them. Present them for one confirmation per rule (a rule
-  question settles the items one answer settles the same way) and per kind,
-  never together with board actions, acceptance or release; ask each you are
-  unsure is the only realistic clean option as its own question. Write or act
-  on them only after that. Ask a mechanism question only where the answers
-  leave several clean mechanisms.
+- Ask top-down: direction first (goal, outcome, principle), then the criteria
+  and behavior it leaves open, then the remaining specific decisions. Each level
+  is its own batch, whose answers set the next level's premises; skip levels the
+  context already settles.
+- Show each option's observable result with concrete cases; where the user cannot
+  state a rule, ask a few cases and derive it.
+- Name the decisions each answer settles and derive them. Present them for one
+  confirmation per rule (a rule question settles the items one answer settles the
+  same way) and per kind, never together with board actions, acceptance or
+  release. Write or act on them only after that.
+- Ask each derived decision you are unsure is the only realistic clean option as
+  its own question.
+- Ask a mechanism question only where the answers leave several clean mechanisms.
 - In the walkthrough a rule question gives each settled item one line: how
   the rule applies and its own evidence. An item failing a Recommendation
   strength criterion gets its own question.

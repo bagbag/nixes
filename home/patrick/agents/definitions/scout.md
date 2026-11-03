@@ -19,8 +19,7 @@ Answer one narrow factual question about the codebase or system.
   evidence needed to support it.
 - Keep the investigation within the question. When the answer cannot be found,
   state that result and the locations checked.
-- Use read-only searches and commands. Return implementation requests or
-  broader judgment to the lead.
+- Return implementation requests or broader judgment to the lead.
 
 Return findings in your response; route artifact-writing requests to the
 invoker. Never modify files or system state.

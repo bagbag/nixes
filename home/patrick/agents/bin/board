@@ -8,8 +8,8 @@ items or comments are read, only the named items for `board show`.
 reads excepted: `board show` renders them within the read budget). Every bd call carries the caller's
 actor (`derived_actor`) and, on a server-mode board, finds the server running.
 
-Routing: skills/shared/board-core.md#routing; `ROLE_KINDS` and `Board.kind`
-implement it.
+Routing: `ROLE_KINDS` and `Board.kind` route a bare claim; what a claim by id
+does not enforce is in skills/shared/board-core.md#routing.
 """
 from __future__ import annotations
 
@@ -55,7 +55,7 @@ TEXT_FIELDS = ('title', 'description', 'design', 'acceptance_criteria', 'notes',
 SHOW_FIELDS = TEXT_FIELDS[1:]
 # Fields `board show --field` accepts besides those on the shown items (a read of few items would otherwise hide
 # the ones its items leave unset).
-ITEM_FIELDS = {*TEXT_FIELDS, 'comments', 'assignee', 'closed_at', 'started_at', 'external_ref', 'source_system', 'spec_id',
+ITEM_FIELDS = {*TEXT_FIELDS, 'comments', 'assignee', 'metadata', 'closed_at', 'started_at', 'external_ref', 'source_system', 'spec_id',
                'lease_expires_at', 'heartbeat_at', 'await_type'}
 # A decision record's `##` sections (board-coordination.md#rulings). bd lint accepts the words anywhere in the text,
 # so board checks the headings itself.
@@ -437,6 +437,11 @@ class Board:
         if self.by_id.get(item_id, {}).get('issue_type') != 'decision':
             return []
         return [other for other, kind, outgoing in self.edges.get(item_id, []) if outgoing and kind == REVISES]
+
+    def revised_by(self, item_id: str) -> list[str]:
+        """The decisions whose pending revision names this record."""
+        return [other for other, kind, outgoing in self.edges.get(item_id, [])
+                if not outgoing and kind == REVISES and self.by_id.get(other, {}).get('issue_type') == 'decision']
 
     def is_open(self, item_id: str) -> bool:
         return item_id in self.by_id and self.by_id[item_id]['status'] != 'closed'
@@ -833,10 +838,10 @@ REJECTED = re.compile(r'^##\s+alternatives considered\b.*?(?=^##\s|\Z)', re.IGNO
 WINDOW = 60  # characters after the verb searched for the record it names
 
 
-def unlinked_revisions(board: Board, root: str | None) -> list[tuple[str, str]]:
-    """(id, detail) per live decision whose editable text says it revises, supersedes or replaces another decision
-    (or is revised by one) without a supersedes or revise edge between them. Comments are history (moved packets
-    quote old records); rejected alternatives describe what the record does not do."""
+def unlinked_revision_rows(board: Board, root: str | None) -> list[dict]:
+    """One row per live decision whose editable text says it revises, supersedes or replaces another decision (or is
+    revised by one) without a supersedes or revise edge between them: {id, other, word, old, new}. Comments are
+    history (moved packets quote old records); rejected alternatives describe what the record does not do."""
     flagged = []
     for issue in board.scoped(root):
         if issue['status'] == 'closed' or issue.get('issue_type') != 'decision':
@@ -854,9 +859,15 @@ def unlinked_revisions(board: Board, root: str | None) -> list[tuple[str, str]]:
         for other, (word, passive) in named.items():
             if not any(kind in ('supersedes', REVISES) for _, _, kind in board.between(issue['id'], other)):
                 old, new = (issue['id'], other) if passive else (other, issue['id'])
-                flagged.append((issue['id'], f'{word} {other} without a supersedes or revise link: board supersede '
-                                             f'{old} --with {new} [--partial "<rule>"]'))
+                flagged.append({'id': issue['id'], 'other': other, 'word': word, 'old': old, 'new': new})
     return flagged
+
+
+def unlinked_revisions(board: Board, root: str | None) -> list[tuple[str, str]]:
+    """(id, detail) per row of unlinked_revision_rows."""
+    return [(row['id'], f"{row['word']} {row['other']} without a supersedes or revise link: board supersede "
+                        f"{row['old']} --with {row['new']} [--partial \"<rule>\"]")
+            for row in unlinked_revision_rows(board, root)]
 
 
 def unnamed_waits(board: Board, root: str | None) -> list[tuple[str, str]]:
@@ -938,6 +949,14 @@ def squash_flags(board: Board, root: str | None, words: set[str]) -> list[tuple[
         if hits >= SQUASH_MIN_HITS and 1000 * hits / max(total, 1) > SQUASH_PER_1K:
             flagged.append((issue['id'], f"{1000 * hits / total:.0f} squashed per 1,000 words, e.g. {', '.join(examples[:3])}"))
     return flagged
+
+
+def check_json(board: Board, args) -> dict:
+    """Every finding of `board check`, unbudgeted: deviations by class, then the flags."""
+    return {'deviations': [{'id': item_id, 'class': kind, 'detail': detail} for item_id, kind, detail in deviations(board, args.root)],
+            'squashed': [{'id': item_id, 'detail': detail} for item_id, detail in squash_flags(board, args.root, word_list())],
+            'unnamedBlockers': [{'id': item_id, 'detail': detail} for item_id, detail in unnamed_waits(board, args.root)],
+            'unlinkedRevisions': unlinked_revision_rows(board, args.root)}
 
 
 def check(board: Board, args) -> int:
@@ -1548,6 +1567,14 @@ def passthrough(argv: list[str]) -> int:
         at += 2 if argv[at] in GLOBAL_VALUES else 1
     command, rest = (argv[at], argv[at + 1:]) if at < len(argv) else ('', [])
     flags = {arg.split('=', 1)[0] for arg in rest}
+    if command == 'edit':
+        print('board: bd edit opens an editor and blocks; edit fields with board bd update --title/--description/--design/--acceptance',
+              file=sys.stderr)
+        return 2
+    if '--readonly' in {arg.split('=', 1)[0] for arg in argv[:at]} | flags:
+        print('board: bd --readonly is refused; run the command without it (a server-mode board needs elevated sandbox '
+              'permissions, and board starts the server)', file=sys.stderr)
+        return 2
     # Raw show output is padded and wraps; it cut most agent reads mid-item. board show renders and budgets it.
     if (command in ('show', 'view') and not flags & set(SHOW_PASSTHROUGH)) \
             or (command == 'comments' and rest[:1] != ['add'] and not flags & {'-h', '--help'}):
@@ -1584,6 +1611,12 @@ def missing_sections(text: str, sections=RECORD_SECTIONS) -> list[str]:
     return [name for name in sections if not any(heading.startswith(normalized(name)) for heading in headings)]
 
 
+def section_body(text: str, name: str) -> str | None:
+    """The body of the record's `## <name>` section (to the next `##` heading), None when it has none."""
+    parts = re.split(r'^##\s+(.+?)\s*$', text, flags=re.MULTILINE)
+    return next((parts[i + 1].strip() for i in range(1, len(parts) - 1, 2) if normalized(parts[i]).startswith(normalized(name))), None)
+
+
 def record(board: Board, args) -> None:
     actor = caller()
     issue = held(board, args.id, actor)
@@ -1610,6 +1643,13 @@ def record(board: Board, args) -> None:
                    for c in issue.get('comments') or []):
             comment_long(args.id, packet)
         moved = '; packet moved to a comment'
+    # A rewrite keeps the Decision it replaces in a comment (the description holds one). A rerun after a failed update finds it.
+    before = section_body(old, 'Decision') if issue['status'] == 'decided' and not missing_sections(old, ('Decision',)) else None
+    if before and before != section_body(text, 'Decision') \
+            and not any((c.get('text') or '').endswith(f'\n\n{before}') and (c.get('text') or '').startswith('Previous Decision')
+                        for c in issue.get('comments') or []):
+        comment_long(args.id, f'Previous Decision (replaced {utcnow().date().isoformat()}):\n\n{before}')
+        moved += '; previous Decision kept in a comment'
     # An unratified autopilot record waits unheld for the user's ratification; a decided one stays held to release.
     unheld = ['--assignee', ''] if args.status == 'needs_ratification' else []
     bd_checked('update', args.id, '--body-file', args.file, '--status', args.status, *unheld, '--json')
@@ -1715,6 +1755,12 @@ def release(board: Board, args) -> int:
         blocking = [b for b in board.open_blockers(issue['id']) if b not in args.ids]
         if blocking and issue['status'] == 'decided':
             problems.append(f"{issue['id']}: waits on open {', '.join(blocking)}")
+        # A decided record a live question revises is about to be replaced: releasing it puts it in force first
+        # (a board revise opened outside a round; Record closes the replaced record).
+        live = [other for other in board.revised_by(issue['id']) if board.is_open(other) and other not in args.ids]
+        if live and issue['status'] == 'decided':
+            problems.append(f"{issue['id']}: revised by {', '.join(live)}, not closed or released with it; close the "
+                            'revision (board supersede), or release them together')
     closes = []
     for question, records in args.closes:
         issue = board.by_id.get(question)
@@ -1748,16 +1794,9 @@ def release(board: Board, args) -> int:
     returned, failed = [], []
     for issue in rulings:
         print(f"{'released' if issue in pending else 'already released'} {issue['id']}: {issue.get('title', '')}")
+        metadata = issue.get('metadata') if isinstance(issue.get('metadata'), dict) else {}
         for old in board.revises(issue['id']):
-            metadata = issue.get('metadata') if isinstance(issue.get('metadata'), dict) else {}
-            rule = metadata.get(REVISES_RULE)
-            try:
-                back, lost = supersede_pair(board, old, issue['id'], rule, actor)
-            except BoardError as error:
-                failed.append(old)
-                print(f"{old}: not superseded by {issue['id']}: {error}; finish with board supersede {old} --with {issue['id']}"
-                      + (f' --partial {shlex.quote(rule)}' if rule is not None else ''), file=sys.stderr)
-                continue
+            back, lost = supersede_chain(board, old, issue['id'], metadata.get(REVISES_RULE), actor, {issue['id']})
             returned += back
             failed += lost
     if returned:
@@ -1794,12 +1833,64 @@ def close_answered(board: Board, closes: list[tuple[str, list[str]]], released: 
     return [question for question, _ in closes if question not in closed]
 
 
-def supersede_pair(board: Board, old: str, new: str, rule: str | None, actor: str) -> tuple[list[str], list[str]]:
-    """Supersedes old by new, wholly or (rule not None) one rule; (returned from review, failed items)."""
+def rule_of(issue: dict) -> str | None:
+    metadata = issue.get('metadata') if isinstance(issue.get('metadata'), dict) else {}
+    return metadata.get(REVISES_RULE)
+
+
+def supersede_chain(board: Board, old: str, new: str, rule: str | None, actor: str, seen: set[str]) -> tuple[list[str], list[str]]:
+    """supersede_pair, then follows the chain: a record replaced whole that itself revises another leaves that one to
+    `new` too, with the replaced record's own rule, through unreleased records to the first released one.
+    (returned from review, failed records)."""
+    if old in seen:
+        return [], []
+    seen.add(old)
+    try:
+        returned, failed = supersede_pair(board, old, new, rule, actor)
+    except BoardError as error:
+        print(f"{old}: not superseded by {new}: {error}; finish with board supersede {old} --with {new}"
+              + (f' --partial {shlex.quote(rule)}' if rule is not None else ''), file=sys.stderr)
+        return [], [old]
+    if rule is not None:
+        return returned, failed
+    for earlier in board.revises(old):
+        more_returned, more_failed = supersede_chain(board, earlier, new, rule_of(board.by_id[old]), actor, seen)
+        returned += more_returned
+        failed += more_failed
+    return returned, failed
+
+
+def carry_revisions(board: Board, old: str, new: str) -> list[str]:
+    """`dep` operations that move the revisions `old` still has pending to `new` (which replaces it whole), and the
+    rule's metadata write first: a rerun after a partial failure repeats the same write. Returns the operations."""
+    targets = [t for t in board.revises(old) if t != new]
+    if not targets:
+        return []
+    own = [t for t in board.revises(new) if t != old]
+    rule, new_rule = rule_of(board.by_id[old]), rule_of(board.by_id[new])
+    if own and (set(own) != set(targets) or rule != new_rule):
+        raise BoardError(f"{new} already revises {', '.join(own)} and {old} revises {', '.join(targets)}; bd keeps one "
+                         'revision rule per record: finish the revisions one record at a time')
+    if rule is not None and rule != new_rule:
+        bd_checked('update', new, '--set-metadata', f'{REVISES_RULE}={rule}', '--json')
+    operations = []
+    for target in targets:
+        operations.append(f'dep remove {old} {target}')
+        if target not in own:
+            operations += [f'dep remove {a} {b}' for a, b, kind in board.between(new, target) if kind != 'parent-child']
+            operations.append(f'dep add {new} {target} {REVISES}')
+    return operations
+
+
+def supersede_pair(board: Board, old: str, new: str, rule: str | None, actor: str, carry: bool = False) -> tuple[list[str], list[str]]:
+    """Supersedes old by new, wholly or (rule not None) one rule; (returned from review, failed items). `carry`: a
+    whole replacement takes over the revisions the old record still has pending."""
     # bd allows one edge per pair: drop an existing link between the two records (a revise link included) first.
     operations = [f'dep remove {a} {b}' for a, b, kind in board.between(old, new) if kind != 'parent-child']
+    carried = carry_revisions(board, old, new) if carry and rule is None else []
     if rule is not None:
         operations.append(f'dep add {old} {new} supersedes')
+    operations += carried
     if operations:
         bd_checked('batch', '-m', f'board supersede {old} --with {new}', '--json', stdin='\n'.join(operations) + '\n')
     if rule is not None:
@@ -1813,7 +1904,8 @@ def supersede_pair(board: Board, old: str, new: str, rule: str | None, actor: st
                    and all(kind in ('relates-to', 'related') for _, _, kind in board.between(i, new)))
     returned, failed = block_items(board, items, new, f'supersedes {old}; replan against it', actor)
     bd_checked('supersede', old, '--with', new)
-    print(f"superseded {old} by {new}; blocked {', '.join(i for i in items if i not in failed) or 'none'}")
+    print(f"superseded {old} by {new}; blocked {', '.join(i for i in items if i not in failed) or 'none'}"
+          + (f"; revision of {', '.join(board.revises(old))} now pending on {new}" if carried else ''))
     return returned, failed
 
 
@@ -1825,7 +1917,7 @@ def supersede(board: Board, args) -> int:
         require_open(board, [args.new])  # a full replacement blocks items on the new record until it is planned
     elif args.new not in board.by_id:
         raise BoardError(f'unknown {args.new}')  # a closed record still supersedes one rule: the edge is the record
-    returned, failed = supersede_pair(board, args.old, args.new, args.partial, actor)
+    returned, failed = supersede_pair(board, args.old, args.new, args.partial, actor, carry=True)
     if returned:
         print(f"returned from review: {', '.join(returned)}")
     return 1 if failed else 0
@@ -1903,6 +1995,7 @@ def main(argv: list[str] | None = None) -> int:
     add('holders', 'items by open downstream work', holders, [scope, listing])
     sub = add('check', 'deviations from the board conventions', check, [scope, listing])
     sub.add_argument('--all', dest='limit', action='store_const', const=0, help='every row (--limit 0)')
+    sub.add_argument('--json', action='store_true', help='deviations and flags as rows, unlinked revisions with their old and new record')
     sub = add('related', 'items and doc lines mentioning terms', related, [scope, listing])
     sub.add_argument('terms', nargs='*')
 
@@ -1993,7 +2086,7 @@ def main(argv: list[str] | None = None) -> int:
             print(sub.format_usage().strip() + f'\n  {sub.description or ""}'.rstrip() + f'\n  example: {EXAMPLES[name]}')
         return 0
     args.root = getattr(args, 'root', None)
-    JSON_VIEWS = {health: health_json, position: position_json, mine: mine_json, related: related_json}
+    JSON_VIEWS = {health: health_json, position: position_json, mine: mine_json, related: related_json, check: check_json}
     try:
         # Status views read non-closed items. These read closed items too (check: closed decisions named in text;
         # block, revise, release, supersede: a closed blocker or old record) or comments (related, check).

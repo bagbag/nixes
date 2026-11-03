@@ -33,7 +33,7 @@ export function suggestions(round: ConsoleRound | null, isDialogOpen = false): C
   const { release, rounds = [], compact } = round.next
   const found: ConsoleSuggestion[] = [
     ...rounds.map((one, i) => ({ ...one, kind: 'round' as const, key: `round-${i}`, keep: one.compact ? compact?.keep ?? '' : null, isRecommended: false })),
-    ...(release === undefined ? [] : [{ kind: 'release' as const, key: 'release', round: release.round, count: release.count, isRecommended: false }]),
+    ...(release === undefined ? [] : [{ kind: 'release' as const, key: 'release', count: release.count, isRecommended: false }]),
     ...(rounds.length === 0 && compact !== undefined ? [{ kind: 'compact' as const, key: 'compact', keep: compact.keep, isRecommended: false }] : []),
   ]
   return found.map((one, i) => ({ ...one, isRecommended: i === 0 }))
@@ -167,7 +167,7 @@ export async function drawPane($: $, e: { surface: string; props: RenderPropsOf[
           const what = one.kind === 'round'
             ? `${one.title} · ${plural(one.ids.length, 'question')} · ${one.why}${one.compact ? ' · compacts first' : ''}`
             : one.kind === 'release'
-              ? `Release Round · ${one.round} closed, ${plural(one.count, 'record')} decided`
+              ? `Release Round · ${plural(one.count, 'record')} decided`
               : `Compact · keeps ${one.keep}`
           hint.add(`sg-${one.key}`, one.kind === 'round'
             ? `Start sends "${startText(one)}"${one.compact ? `, after /compact keeping: ${one.keep ?? ''}` : ''}; click the row to list its questions`
@@ -646,7 +646,7 @@ export async function drawBand($: $, e: { props: RenderPropsOf['AbovePrompt'] } 
     const top = suggestions(round)[0]
     if (top === undefined) return undefined
     const what = top.kind === 'round' ? `${top.title} · ${plural(top.ids.length, 'question')}${top.compact ? ' · compacts first' : ''} ·`
-      : top.kind === 'release' ? `${top.round} closed · ${plural(top.count, 'record')} decided ·`
+      : top.kind === 'release' ? `${plural(top.count, 'record')} decided ·`
         : `Compact · keeps ${top.keep} ·`
     return (
       <Box flexDirection="row" columnGap={1} flexWrap="wrap">

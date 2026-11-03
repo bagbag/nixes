@@ -155,10 +155,9 @@ async function registerTool($: $): Promise<void> {
     name: 'protocol',
     description: [
       "Runs the protocol engine for this session's round (`protocol <args>`): one call per step, per-question updates as JSON on stdin; the output is the next step.",
-      'Read: ["show","--json"], ["show"], ["pending"], ["status","--line"], ["history"], ["next"] (the ranked seeds of the next round and your stored proposal).',
-      'Propose the next rounds: ["next","--set"] with stdin {"rounds":[{"ids","title","why","compact"}],"compact":{"keep"}} (at most 3 rounds; `compact` with a compacting round or without rounds).',
+      'Read: ["show","--json"], ["show"], ["pending"], ["status","--line"], ["history"], ["next"] (the ranked seeds of the next round and your stored proposal; it prints the ["next","--set"] format).',
       'Record an answer the user typed in chat: ["answer"] with stdin {"question","answer","quote"}, the quote being the user\'s exact words.',
-      'Apply a change the user asked for to the questions: ["edit"] with stdin {"updates","quote"}, the quote being the user\'s exact words (no pass runs).',
+      'Apply a change the user asked for to the questions: ["edit"] with stdin {"updates","quote"}, the quote being the user\'s exact words.',
       'The console stamps --session and --origin; dialog answers, declines and passes are recorded by the console from the person\'s actions.',
     ].join(' '),
     inputSchema: {
@@ -248,9 +247,9 @@ export async function pressSubmit($: $, text: string): Promise<void> {
   void $.prompt.submit({ text }).catch(failOpen($, `sending "${text}"`))
 }
 
-/** The message a Start press sends (or stores, with compact): the proposal's title and question ids. */
+/** The message a Start press sends (or stores, with compact): the proposal's title and the `start round <ids>` form naming its question ids. */
 export const startText = (suggestion: Extract<ConsoleSuggestion, { kind: 'round' }>): string =>
-  `Start the next round on ${suggestion.title}: ${suggestion.ids.join(', ')}`
+  `Start the next round on ${suggestion.title}: protocol start round ${suggestion.ids.join(' ')}`
 
 /**
  * A suggestion's [ Start ]. A round sends its start message as the person's prompt; one that compacts first stores the message

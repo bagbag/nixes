@@ -1,6 +1,6 @@
 # Review protocol
 
-Independent assessment and acceptance of handed-over work. Read
+Read
 `$HOME/.agents/skills/shared/board-core.md`,
 `$HOME/.agents/skills/shared/acceptance.md`,
 `$HOME/.agents/skills/shared/decision-protocol.md` and
@@ -23,7 +23,7 @@ steps 3-7.
    `board claim <id>` for a named item; it prints the author
    doer. You are independent when you are not that doer; a fresh-context
    worker of the same session suffices. `author unknown (<holder>)` names a
-   hand-over by a retired role holder (e.g. goal-agent): you are independent.
+   hand-over by a retired role holder: you are independent.
    An item no one ever held is a standalone review
    ([Kinds](../../shared/board-core.md#kinds)): it has no author and needs
    no independence check.

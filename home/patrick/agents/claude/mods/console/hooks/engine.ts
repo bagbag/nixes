@@ -209,7 +209,7 @@ export function parsePending(value: unknown): ConsolePending | null {
   const id = text(raw.id)
   const command = text(raw.command)
   if (id === '' || command === '') throw new EngineError('pending without id or command')
-  return { id, command, args: text(raw.args) }
+  return { id, command, args: text(raw.args), reminder: nullableText(raw.reminder) }
 }
 
 function parseCounts(value: unknown): ConsoleCounts | null {
@@ -266,14 +266,13 @@ function parseProgress(value: unknown): ConsoleProgress | null {
 function parseNext(value: unknown): ConsoleRound['next'] {
   const raw = record(value)
   const release = record(raw.release)
-  const round = text(release.round)
   const rounds = list(raw.rounds).map((one): ConsoleProposal => {
     const proposed = record(one)
     return { ids: list(proposed.ids).map(text).filter(id => id !== ''), title: text(proposed.title), why: text(proposed.why), compact: proposed.compact === true }
   }).filter(one => one.ids.length > 0 && one.title !== '')
   const keep = text(record(raw.compact).keep)
   const next: NonNullable<ConsoleRound['next']> = {
-    ...(round === '' ? {} : { release: { round, count: count(release.count) } }),
+    ...(count(release.count) === 0 ? {} : { release: { count: count(release.count) } }),
     ...(rounds.length === 0 ? {} : { rounds }),
     ...(keep === '' ? {} : { compact: { keep } }),
   }

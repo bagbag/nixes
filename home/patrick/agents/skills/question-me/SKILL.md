@@ -12,7 +12,9 @@ disable-model-invocation: true
 
 Question me now. In a deciding session (lead or solo), run these steps
 through the decide protocol's Round in `protocol`
-(`$HOME/.agents/skills/role/protocols/decide.md`): resume the open round, or
+(`$HOME/.agents/skills/role/protocols/decide.md`): resume the open round,
+abandon an open release (nothing releases; `start release` takes its records
+again), or
 start one with `--discussion` and step 1's decisions as points; add
 `--no-board <dir>` when they concern a topic outside this repository's board
 or it has none.

@@ -1,8 +1,5 @@
 ## Acceptance
 
-Gates and evidence for accepting work, shared by the decide, plan, work and
-review protocols.
-
 ### Review policy
 
 Use one acceptance gate per coherent target, sized to stakes; a role protocol
@@ -38,3 +35,11 @@ may tighten it.
 - Run targeted gates after isolated changes; whole-repository gates after
   cross-cutting changes, at agreed milestones and at final acceptance. With a
   red baseline, target the touched surfaces the broken gate would cover.
+- A whole-project check in an item's criteria, failing for others' reasons,
+  means no new errors from the item's change: compare the errors before and
+  after, tracing new ones to their files in a shared tree; an item with no
+  earlier run checks its touched and consuming files. Record that comparison;
+  leave the criteria as written. Gate items keep the full check; once it passes,
+  the criterion binds as written. An item whose own tests cannot run stays open.
+- Proof is the command and its output; leave out hash pins and byte copies. A
+  tiny edit gets one check.

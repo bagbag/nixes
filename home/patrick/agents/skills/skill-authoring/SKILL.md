@@ -58,6 +58,8 @@ Guidelines; apply only where they don't weaken a rule:
 - Address the acting model: imperative, present tense.
 - Information dense: rules, lists and tables over prose; keep definitions of
   terms.
+- Keep text small where viable, since it uses context: leave what a tool prints
+  when it applies to that tool.
 - Write an ordered process as numbered steps, each with its output; keep
   standing constraints as lists.
 - Positive wording ("do X") where it says the same as the prohibition; keep

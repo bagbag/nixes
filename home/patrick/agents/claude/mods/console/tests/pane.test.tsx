@@ -343,10 +343,10 @@ describe('band', () => {
   const closed = (next: unknown) => roundJson({ round: null, step: null, check: null, pending: null, batch: null, questions: [], next })
 
   test('after a close with records to release the band offers Release Round in the suggestion color', async ($, on) => {
-    const { w, clock } = world(on, { round: closed({ release: { round: 'r4', count: 3 } }) })
+    const { w, clock } = world(on, { round: closed({ release: { count: 3 } }) })
     await ready($, clock)
     const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
-    expect(await texts(ui)).toContain('r4 closed · 3 records decided ·')
+    expect(await texts(ui)).toContain('3 records decided ·')
     expect(await ui.find({ key: 'band-ground' })).toBeUndefined()
     expect((await ui.findAll({ type: 'Text', text: 'Release Round' })).filter(one => one.text === 'Release Round').map(one => one.props.color)).toEqual(['suggestion'])
     await ui.press({ key: 'band-release' })
@@ -356,6 +356,17 @@ describe('band', () => {
     await ui.unmount()
     const pane = await $.ui.mount({ ...PANE, surface: 'terminal' })
     expect((await pane.findAll({ type: 'Text', text: 'Release Round' })).filter(one => one.text === 'Release Round').map(one => one.props.color)).toEqual(['suggestion'])
+    await pane.unmount()
+  })
+
+  test('the band and the pane show the count of decided records the session holds: one Release Round takes all of them', async ($, on) => {
+    const { clock } = world(on, { round: closed({ release: { count: 5 } }) })
+    await ready($, clock)
+    const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
+    expect(await texts(band)).toContain('5 records decided ·')
+    await band.unmount()
+    const pane = await $.ui.mount({ ...PANE, surface: 'terminal' })
+    expect((await pane.findAll({ type: 'Text', text: 'Release Round · 5 records decided' })).length).toBeGreaterThan(0)
     await pane.unmount()
   })
 
@@ -753,12 +764,12 @@ describe('suggestions', () => {
   test('suggestions() offers rounds first (the first recommended), then Release Round, then a compact-only proposal', () => {
     expect(suggestions(null)).toEqual([])
     expect(suggestions(parsed(null))).toEqual([])
-    expect(suggestions(parsed({ release: { round: 'r4', count: 3 } }))).toEqual([
-      { kind: 'release', key: 'release', round: 'r4', count: 3, isRecommended: true }])
+    expect(suggestions(parsed({ release: { count: 3 } }))).toEqual([
+      { kind: 'release', key: 'release', count: 3, isRecommended: true }])
     expect(suggestions(parsed(PROPOSED)).map(one => [one.kind, one.key, one.isRecommended])).toEqual([['round', 'round-0', true], ['round', 'round-1', false]])
     expect(suggestions(parsed(PROPOSED))[1]).toMatchObject({ ids: ['tstdl-c'], compact: true, keep: 'the cache decisions' })
     expect(suggestions(parsed(PROPOSED))[0]).toMatchObject({ compact: false, keep: null })
-    expect(suggestions(parsed({ ...PROPOSED, release: { round: 'r4', count: 1 } })).map(one => [one.kind, one.isRecommended]))
+    expect(suggestions(parsed({ ...PROPOSED, release: { count: 1 } })).map(one => [one.kind, one.isRecommended]))
       .toEqual([['round', true], ['round', false], ['release', false]])
     expect(suggestions(parsed({ compact: { keep: 'all decisions' } }))).toEqual([{ kind: 'compact', key: 'compact', keep: 'all decisions', isRecommended: true }])
     // a compact proposal beside rounds is the rounds' keep, not a Compact suggestion of its own
@@ -810,11 +821,11 @@ describe('suggestions', () => {
   })
 
   test('Release Round and a compact-only proposal show in Suggestions, and their Actions twins take the suggestion color exactly then', async ($, on) => {
-    const { w, clock } = world(on, { round: closed({ release: { round: 'r4', count: 3 } }) })
+    const { w, clock } = world(on, { round: closed({ release: { count: 3 } }) })
     await ready($, clock)
     let ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
     const color = async (text: string) => (await ui.findAll({ type: 'Text', text })).filter(one => one.text === text).map(one => one.props.color)
-    expect(await color('Release Round · r4 closed, 3 records decided')).toEqual(['suggestion'])
+    expect(await color('Release Round · 3 records decided')).toEqual(['suggestion'])
     expect(await color('Release Round')).toEqual(['suggestion'])
     expect(await color('Compact')).toEqual([])
     await ui.press({ key: 'sg-release-start' })
@@ -851,7 +862,7 @@ describe('suggestions', () => {
     expect((await ui.findAll({ type: 'Text', text: 'Start' })).map(one => one.props.color)).toEqual(['suggestion'])
     await ui.press({ key: 'band-start' })
     await clock.settle()
-    expect(w.prompts).toEqual(['Start the next round on Cache questions: tstdl-a, tstdl-b'])
+    expect(w.prompts).toEqual(['Start the next round on Cache questions: protocol start round tstdl-a tstdl-b'])
     expect(w.commands).toEqual([])
     await ui.unmount()
   })
@@ -882,13 +893,13 @@ describe('suggestions', () => {
     await ui.press({ key: 'sg-round-0-start' })
     await ui.press({ key: 'sg-round-0-start' })
     await clock.settle()
-    expect(w.prompts).toEqual(['Start the next round on Cache questions: tstdl-a, tstdl-b'])
+    expect(w.prompts).toEqual(['Start the next round on Cache questions: protocol start round tstdl-a tstdl-b'])
     expect(w.commands).toEqual([])
     await ui.unmount()
   })
 
   describe('a Start on a round that compacts first', () => {
-    const START = 'Start the next round on Queue retry: tstdl-c'
+    const START = 'Start the next round on Queue retry: protocol start round tstdl-c'
     const messages = [{ role: 'user' as const, text: 'hi', toolUses: [] }]
     const compact = ($: any) => $.session.compact({ trigger: 'manual', instructions: 'the cache decisions', messages })
 

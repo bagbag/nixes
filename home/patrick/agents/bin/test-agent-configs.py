@@ -956,16 +956,27 @@ def validate_compact_reorient(root: Path) -> None:
     missing = [item for item in obligations if item not in recovery]
     if missing:
         raise ValueError(f"project-memory Recovery and closure lost obligations {missing}")
-    with tempfile.TemporaryDirectory() as state_dir:
-        env = {**session_env(state_dir), **env_base}
+    with tempfile.TemporaryDirectory() as state_dir, tempfile.TemporaryDirectory() as home:
+        # The hook prints the installed file's Recovery and closure section; where it cannot, it names the file.
+        installed = Path(home) / ".agents" / "skills" / "shared"
+        installed.mkdir(parents=True)
+        (installed / "project-memory.md").write_text(memory, encoding="utf-8")
+        env = {**session_env(state_dir), **env_base, "HOME": home}
+        no_memory = {**env, "HOME": str(Path(state_dir) / "no-home")}
+        context = hook_context(run_hook(hook, {"hook_event_name": "SessionStart", "source": "compact", "session_id": "abcdefgh-unregistered"},
+                                        no_memory))
+        if pointer not in context:
+            raise ValueError(f"recovery without the installed project-memory.md must name the file: {context}")
         subprocess.run(["bash", str(root / "bin" / "session-lead-mode"), "activate", "agent", "--pulls",
                         "implement,review"], check=True, env={**os.environ, **env, **as_session(SESSION)})
         for source in ("compact", "resume"):
             for session, registered in ((SESSION, True), ("abcdefgh-unregistered", False)):
                 context = hook_context(run_hook(
                     hook, {"hook_event_name": "SessionStart", "source": source, "session_id": session}, env))
-                if pointer not in context or "bd ready" in context:
-                    raise ValueError(f"{source} recovery must point to project-memory recovery only: {context}")
+                body = " ".join(context.split())
+                if pointer in context or "bd ready" in context or not all(item in body for item in obligations) \
+                        or "Recovery and closure (`$HOME/.agents/skills/shared/project-memory.md`):" not in context:
+                    raise ValueError(f"{source} recovery must print the project-memory recovery section only: {context}")
                 markers = ("role `agent` pulling implement, review", f"actor `{SESSION_ACTOR}`",
                            "`$HOME/.agents/skills/role/SKILL.md`", "every protocol file it lists")
                 if registered and not all(marker in context for marker in markers):
@@ -975,11 +986,12 @@ def validate_compact_reorient(root: Path) -> None:
         if run_hook(hook, {"hook_event_name": "SessionStart", "source": "startup", "session_id": SESSION}, env):
             raise ValueError("session recovery ran for a new session")
         generic = hook_context(run_hook(hook, {"hook_event_name": "SessionStart", "source": "compact"}, env))
-        if "re-orient" not in generic or pointer not in generic or "registered as role" in generic:
+        if "re-orient" not in generic or "the approved checkpoint" not in generic or "registered as role" in generic:
             raise ValueError("recovery without a session id must stay generic")
         # Codex sessions get the open protocol round's line; Claude's console owns that recovery.
-        fake = Path(state_dir) / "protocol"
-        fake.write_text('#!/usr/bin/env bash\n[[ "$1 $3 $4" == "--session status --line" ]] && echo "protocol: round r2 · check 1/3"\n')
+        fake, called, failing = Path(state_dir) / "protocol", Path(state_dir) / "protocol-calls", Path(state_dir) / "protocol-fails"
+        fake.write_text(f'#!/usr/bin/env bash\necho "$*" >> {called}\n[[ -f {failing} && "$3" == compacted ]] && exit 1\n'
+                        '[[ "$1 $3 $4" == "--session status --line" ]] && echo "protocol: round r2 · check 1/3"\nexit 0\n')
         fake.chmod(0o755)
         codex = "cdx-recovery-0001"
         subprocess.run(["bash", str(root / "bin" / "session-lead-mode"), "activate", "lead"], check=True,
@@ -989,6 +1001,21 @@ def validate_compact_reorient(root: Path) -> None:
                                                    "session_id": session}, {**env, "AGENT_PROTOCOL_COMMAND": str(fake)}))
             if ("protocol: round r2" in context) != expected:
                 raise ValueError(f"compact-reorient protocol line for {session} (expected {expected}): {context}")
+            if "compacted failed" in context:
+                raise ValueError(f"compact-reorient reported a failure of a working protocol compacted: {context}")
+        # A deciding session's engine learns of the compaction, whichever tool; an agent's has nothing to forget. A failing call is
+        # said in the recovery message.
+        if called.read_text().splitlines().count(f"--session {codex} compacted") != 1 or f"--session {SESSION} compacted" in called.read_text():
+            raise ValueError(f"compact-reorient must call protocol compacted for deciding sessions only: {called.read_text()}")
+        failing.write_text("")
+        context = hook_context(run_hook(hook, {"hook_event_name": "SessionStart", "source": "compact", "session_id": codex},
+                                        {**env, "AGENT_PROTOCOL_COMMAND": str(fake)}))
+        if "`protocol compacted` failed: run it" not in context or "Recovery and closure" not in context:
+            raise ValueError(f"compact-reorient must say a failed protocol compacted in the recovery message: {context}")
+        context = hook_context(run_hook(hook, {"hook_event_name": "SessionStart", "source": "compact", "session_id": codex},
+                                        {**env, "AGENT_PROTOCOL_COMMAND": str(Path(state_dir) / "missing")}))
+        if "`protocol compacted` failed" not in context:
+            raise ValueError(f"compact-reorient must say a missing protocol command: {context}")
 
 
 def validate_bd_guard(root: Path) -> None:
@@ -1885,6 +1912,9 @@ def validate_board(root: Path) -> None:
             _, text, _ = invoke(["show", new, "--json", "--field", "comments", "--field", "status"], Fake(shown))
             if json.loads(text) != {new: {"comments": notes, "status": "decided"}}:
                 raise ValueError(f"board show --json --field: {text[:500]}")
+            code, text, errors = invoke(["show", old, "--json", "--field", "metadata"], Fake(shown))  # a field no shown item sets
+            if code or json.loads(text) != {old: {"metadata": None}}:
+                raise ValueError(f"board show --json --field metadata must answer null for an item without metadata: {text} {errors}")
             if invoke(["show", new, "--json"], Fake(shown))[0] != 1 or invoke(["show", "fx-nope"], Fake(shown))[0] != 1 \
                     or invoke(["show", new, "--field", "desc"], Fake(shown))[0] != 1:
                 raise ValueError("board show must refuse --json without --field, unknown ids and unknown fields")
@@ -1920,6 +1950,21 @@ def validate_board(root: Path) -> None:
                 code, _, errors = invoke(["record", question, str(draft)], fake, "lead0001")
                 if code != 1 or "## Extra" not in errors or [w[0] for w in fake.writes()] != ["update"]:
                     raise ValueError(f"board record revised in place wrongly: {fake.writes()} {errors}")
+                # A rewrite keeps the Decision it replaces in a comment when the Decision section changes, not when only other
+                # sections do (r13 q51); a rerun after a failed update finds the comment already there.
+                text = draft.read_text(encoding="utf-8")
+                rewrite = Path(directory, "rewrite.md")
+                for changed, comments in ((text.replace("## Decision\nd\n", "## Decision\nnew decision\n"), 1),
+                                          (text.replace("## Rationale\nr (user", "## Rationale\nrevised (user"), 0)):
+                    rewrite.write_text(changed, encoding="utf-8")
+                    fake = Fake(recorded)
+                    code, output, _ = invoke(["record", question, str(rewrite)], fake, "lead0001", now="2026-10-31T10:00:00+00:00")
+                    kept = fake.files.get(("comments", question, "-f"))
+                    if code or [w[0] for w in fake.writes()] != ["comments", "update"][1 - comments:] \
+                            or (kept or "") != ("Previous Decision (replaced 2026-10-31):\n\nd" if comments else "") \
+                            or ("previous Decision kept in a comment" in output) != bool(comments):
+                        raise ValueError(f"board record must comment the old Decision exactly when the section changes ({comments}): "
+                                         f"{fake.writes()} {kept!r} {output}")
                 for refused, actor in ((ids["Ready task"], "lead0001"), (question, "aaaa1111")):
                     fake = Fake(fixture)
                     if invoke(["record", refused, str(draft)], fake, actor)[0] != 1 or fake.writes():
@@ -2009,6 +2054,57 @@ def validate_board(root: Path) -> None:
             if code or [stdin for args, stdin in fake.calls if args[0] == "batch"][1] != f"dep remove {new} {old}\ndep add {old} {new} supersedes\n" \
                     or any(args[0] == "supersede" for args in fake.writes()) or "one rule (Rule 2)" not in output:
                 raise ValueError(f"board release of a partial revision: {fake.calls}\n{output}")
+
+            # Replaced records (r12-q44): a decided record a live question revises is not released alone; a chain of
+            # revisions is followed to the first released record; supersede carries a pending revision to its replacement.
+            def record(rid, status, *links, **extra):
+                return {"id": rid, "title": rid, "status": status, "issue_type": "decision", "priority": 2,
+                        "dependencies": [{"issue_id": rid, "depends_on_id": target, "type": kind} for target, kind in links], **extra}
+
+            chain = [record("fx-a", "released"), record("fx-b", "decided", ("fx-a", "tracks")),
+                     record("fx-c", "decided", ("fx-b", "tracks"))]
+            fake = Fake(chain)
+            code, output, errors = invoke(["release", "fx-c"], fake, "lead0001")
+            if code or [args for args in fake.writes() if args[0] == "supersede"] != [["supersede", "fx-b", "--with", "fx-c"],
+                                                                                   ["supersede", "fx-a", "--with", "fx-c"]] \
+                    or "superseded fx-a by fx-c" not in output:
+                raise ValueError(f"board release must follow a chain of revisions to the first released record: {fake.writes()}\n{output}{errors}")
+            partly = [{**issue, "metadata": {"board.revises_rule": "Rule 2"}} if issue["id"] == "fx-b" else issue for issue in chain]
+            fake = Fake(partly)
+            code, output, _ = invoke(["release", "fx-c"], fake, "lead0001")
+            if code or [args for args in fake.writes() if args[0] == "supersede"] != [["supersede", "fx-b", "--with", "fx-c"]] \
+                    or "dep add fx-a fx-c supersedes\n" not in [stdin for args, stdin in fake.calls if args[0] == "batch"] or "fx-a: one rule (Rule 2)" not in output:
+                raise ValueError(f"a chain carries the replaced record's own rule: {fake.writes()}\n{output}")
+            fake = Fake(chain)
+            code, _, errors = invoke(["release", "fx-b"], fake, "lead0001")
+            if code != 1 or "fx-b: revised by fx-c" not in errors or fake.writes():
+                raise ValueError(f"board release must refuse a decided record a live question revises: {errors}\n{fake.writes()}")
+            for allowed, args in ((chain, ["fx-b", "fx-c"]), ([*chain[:2], {**chain[2], "status": "closed"}], ["fx-b"])):
+                fake = Fake(allowed)
+                if invoke(["release", *args], fake, "lead0001")[0] or not fake.writes():
+                    raise ValueError(f"board release {args}: a revision released together or closed is no refusal")
+            # supersede carries the revision the old record still has pending, with its rule, to the new one.
+            carried = [record("fx-a", "released"), record("fx-b", "decided", ("fx-a", "tracks"), metadata={"board.revises_rule": "Rule 2"}),
+                       record("fx-d", "decided", ("fx-b", "tracks"))]
+            fake = Fake(carried)
+            code, output, _ = invoke(["supersede", "fx-b", "--with", "fx-d"], fake, "lead0001")
+            if code or fake.writes() != [["update", "fx-d", "--set-metadata", "board.revises_rule=Rule 2", "--json"],
+                                         ["batch", "-m", "board supersede fx-b --with fx-d", "--json"], ["supersede", "fx-b", "--with", "fx-d"]] \
+                    or [stdin for args, stdin in fake.calls if args[0] == "batch"] != ["dep remove fx-d fx-b\ndep remove fx-b fx-a\ndep add fx-d fx-a tracks\n"] \
+                    or "revision of fx-a now pending on fx-d" not in output:
+                raise ValueError(f"board supersede must move the pending revision and its rule: {fake.writes()}\n{output}")
+            busy = [*carried[:2], record("fx-d", "decided", ("fx-b", "tracks"), ("fx-z", "tracks")), record("fx-z", "released")]
+            fake = Fake(busy)
+            code, _, errors = invoke(["supersede", "fx-b", "--with", "fx-d"], fake, "lead0001")
+            if code != 1 or "keeps one revision rule" not in errors or fake.writes():
+                raise ValueError(f"board supersede must refuse a carry onto a record that revises another: {errors}\n{fake.writes()}")
+            # board check --json: the rows a Release Board check reads (no text parsing).
+            unlinked = [record("fx-a", "released"), record("fx-b", "decided", notes="This revises fx-a for the cache.")]
+            code, text, _ = invoke(["check", "--json"], Fake(unlinked))
+            found = json.loads(text)
+            if code or found["unlinkedRevisions"] != [{"id": "fx-b", "other": "fx-a", "word": "revises", "old": "fx-a", "new": "fx-b"}] \
+                    or set(found) != {"deviations", "squashed", "unnamedBlockers", "unlinkedRevisions"}:
+                raise ValueError(f"board check --json: {text}")
 
             # board check: an in_review item waiting on an open blocker deviates; an unlinked revision is a flag.
             stuck = variant(**{"Handed task": {"dependencies": [{"issue_id": handed, "depends_on_id": question, "type": "blocks"}]},
@@ -2443,6 +2539,15 @@ def validate_board(root: Path) -> None:
             result, seen = run_board("bd", *args)
             if result.returncode != 2 or seen or "questions are type decision" not in result.stderr:
                 raise ValueError(f"board bd {args} must hint that questions are decisions: {result.stderr!r}")
+        # bd edit blocks on an editor and --readonly is not for agents: the board refuses both and names the way on.
+        for args, needle in ((("edit", "x"), "board bd update --title/--description/--design/--acceptance"), (("-C", repo, "edit", "x", "--title"), "bd update"),
+                             (("--readonly", "list"), "without it"), (("list", "--readonly"), "without it"), (("list", "--readonly=true"), "without it")):
+            result, seen = run_board("bd", *args)
+            if result.returncode != 2 or seen or needle not in result.stderr or len(result.stderr.strip().splitlines()) != 1:
+                raise ValueError(f"board bd {args} must be refused in one line naming the alternative: {result.returncode} {seen!r} {result.stderr!r}")
+        result, seen = run_board("bd", "comments", "add", "x", "never --readonly or edit")
+        if result.returncode != 7 or not seen:
+            raise ValueError(f"board bd must pass a comment mentioning --readonly: {result.returncode} {seen!r}")
         upstream = Path(repo) / "upstream"
         (upstream / ".beads").mkdir(parents=True)
         (upstream / ".beads" / "metadata.json").write_text(json.dumps({"dolt_mode": "server"}), encoding="utf-8")
@@ -2469,12 +2574,26 @@ args = sys.argv[1:]
 stdin = "" if sys.stdin.isatty() else sys.stdin.read()
 with open(config["log"], "a") as log:
     log.write(json.dumps({"args": args, "stdin": stdin, "actor": os.environ.get("BEADS_ACTOR"), "cwd": os.getcwd()}) + "\n")
+def new_id(default):
+    """config "newIds": the ids the next creations print, in order."""
+    ids = config.get("newIds") or []
+    if not ids:
+        return default
+    config["newIds"] = ids[1:]
+    json.dump(config, open(os.environ["FAKE_BOARD_CONFIG"], "w"))
+    return ids[0]
 if any(" ".join(args).startswith(prefix) for prefix in config.get("fail", [])):
     print("board: simulated failure", file=sys.stderr)
     sys.exit(1)
 if args[:1] == ["health"]:
     root = args[args.index("--root") + 1] if "--root" in args else None
-    print(json.dumps(config.get("roots", {}).get(root, {"counts": {}, "items": {}, "milestones": []}) if root else config["health"]))
+    health = config.get("roots", {}).get(root, {"counts": {}, "items": {}, "milestones": []}) if root else config["health"]
+    if not root and args[2:] == ["--items", "decided"] and "decided" not in health.get("items", {}):
+        # the board's decided view, from the items (the holder is the item's assignee): what a bare release reads
+        health = {**health, "items": {**health.get("items", {}), "decided": [
+            {"id": i, "status": "decided", "type": row.get("issue_type"), "priority": 1, "holder": row.get("assignee") or None,
+             "title": row.get("title", ""), "blockedBy": []} for i, row in config.get("items", {}).items() if row.get("status") == "decided"]}}
+    print(json.dumps(health))
 elif args[:1] == ["position"]:
     print(json.dumps(config.get("position", {})))
 elif args[:1] == ["related"]:
@@ -2513,10 +2632,12 @@ elif args[:1] in (["release"], ["supersede"]):
     if bad:
         print(f"board: {args[0]} failed for {sorted(bad)}", file=sys.stderr)
         sys.exit(1)
+elif args[:1] == ["check"]:
+    print(json.dumps(config.get("check", {})))
 elif args[:2] == ["bd", "create"]:
-    print(json.dumps({"id": "fx-new1"}))
+    print(json.dumps({"id": new_id("fx-new1")}))
 elif args[:1] == ["revise"]:
-    print("fx-rev1")
+    print(new_id("fx-rev1"))
 elif args[:1] == ["record"]:
     with open(config["log"] + ".records", "a") as out:
         out.write(open(args[2]).read())
@@ -2537,11 +2658,17 @@ CONSOLE_CONTRACT = Path("claude") / "mods" / "console" / "tests" / "engine-contr
 
 
 def console_contract_states(root: Path) -> dict:
-    """The real engine's `show --json` in ten states (no round, check, batch out, answered, a closed round with a release next, a release, a stopped release, a release with a revised record, a stored proposal, a compact-only proposal), timestamps normalized:
+    """The real engine's `show --json` in eleven states (no round, check, a pending pass with a reminder, batch out, answered, a closed round with a release next, a release, a stopped release, a release with a revised record, a stored proposal, a compact-only proposal), timestamps normalized:
     the console's tests parse exactly these, so a shape change on either side fails a test."""
     states = {}
     with tempfile.TemporaryDirectory() as tmp:
-        env = {**os.environ, "AGENT_SESSION_STATE_DIR": tmp, "CODEX_THREAD_ID": "", "CODEX_SESSION_ID": ""}
+        # The installed skills the engine cuts its reminders from: the repository's, expanded as the install does.
+        home, expander = Path(tmp) / "home", load_skill_expander(root)
+        for name in ("step-back", "ground"):
+            installed = home / ".agents" / "skills" / name / "SKILL.md"
+            installed.parent.mkdir(parents=True)
+            installed.write_text(expander.expand_markdown(root / "skills" / name / "SKILL.md", (root / "skills").resolve()), encoding="utf-8")
+        env = {**os.environ, "AGENT_SESSION_STATE_DIR": tmp, "CODEX_THREAD_ID": "", "CODEX_SESSION_ID": "", "HOME": str(home)}
 
         def run(*args, stdin=None, cwd=tmp):
             if args[:1] == ("step",) and isinstance(stdin, dict) and stdin.get("pass"):  # the model's Skill call, recorded by the console
@@ -2567,8 +2694,10 @@ def console_contract_states(root: Path) -> dict:
             {"label": "Keep", "description": "keep it"}, {"label": "Drop", "description": "drop it"}],
             "recommendation": "Keep", "strength": "lean", "leanBecause": {"cause": "preference", "detail": "taste"}}]})
         states["check"] = show()
-        while show()["pending"] is not None:  # the path pass, Base, the refine pair, the lean pass, challenge-rulings
-            run("step", stdin={"pass": show()["pending"]["command"], "updates": [], "checked": ["every question"]})
+        while (view := show())["pending"] is not None:  # the path pass, Base, the refine pair, the lean pass, challenge-rulings
+            if view["pending"]["reminder"] and "reminder" not in states:
+                states["reminder"] = view  # the Base step-back after the path pass: the cycle told step-back already
+            run("step", stdin={"pass": view["pending"]["command"], "updates": [], "checked": ["every question"]})
         states["ask"] = show()
         run("answer", "--origin", "dialog", stdin={"marker": states["ask"]["batch"]["marker"], "answers": {"Which cache?": "Keep"}})
         states["answered"] = show()
@@ -2584,7 +2713,8 @@ def console_contract_states(root: Path) -> dict:
         # A board round that recorded one decision: closed, the release of its records next.
         config.write_text(json.dumps({"log": str(Path(tmp) / "calls.jsonl"), "health": {"counts": {}, "items": {"questions": [
             {"id": "fx-q", "status": "open", "type": "decision", "title": "Store?", "priority": 1, "blockedBy": []}]}}, "items": {
-            rid: {"status": "decided", "issue_type": "decision", "title": title} for rid, title in (("fx-a", "Cache store"), ("fx-b", "Cache size"))}}))
+            rid: {"status": "decided", "issue_type": "decision", "title": title, **({"assignee": "contract"} if rid == "fx-a" else {})}
+            for rid, title in (("fx-a", "Cache store"), ("fx-b", "Cache size"))}}))
         run("start", "round", cwd=repo)
         run("step", stdin={"classes": {"fx-q": "user"}}, cwd=repo)
         run("step", stdin={"select": ["fx-q"]}, cwd=repo)
@@ -2595,6 +2725,7 @@ def console_contract_states(root: Path) -> dict:
             run("step", stdin={"pass": json.loads(run("show", "--json", cwd=repo))["pending"]["command"], "updates": [], "checked": ["every question"]}, cwd=repo)
         board_round = json.loads(run("show", "--json", cwd=repo))
         run("answer", "--origin", "dialog", stdin={"marker": board_round["batch"]["marker"], "answers": {"Which store?": "Keep"}}, cwd=repo)
+        run("step", stdin={"pass": "challenge-rulings", "updates": [], "checked": ["every question"]}, cwd=repo)  # after the last answer
         run("step", stdin={"records": {board_round["questions"][0]["id"]: {"rationale": "R.", "ruleOwner": "docs/x.md"}}}, cwd=repo)
         states["closed"] = show(cwd=repo)
         run("start", "release", "fx-a", "fx-b", cwd=repo)
@@ -2668,6 +2799,8 @@ def check_sets_problems(engine, words_ts: str) -> list[str]:
             or tuple(engine.REFINE_LENSES["ground"]) != tuple(engine.ALL_LENSES["ground"]) \
             or not set(engine.LEAN_LENSES) <= set(engine.ALL_LENSES["ground"]):
         problems.append("the engine's path, refine and lean sets must be disjoint lenses the skills own (refine ground = every ground lens)")
+    if not set(engine.BASE_LENSES) <= set(engine.ALL_LENSES["step-back"]) or set(engine.BASE_LENSES) & {*sets}:
+        problems.append("the engine's BASE_LENSES (step-back's default pass, cut into its reminder) must be step-back lenses outside the path and refine sets")
     return problems
 
 
@@ -2727,6 +2860,18 @@ def validate_console_programs(root: Path) -> None:
             raise ValueError(f"console {file} runs {name} directly, but bin/{name} is not executable: run it through bash")
 
 
+def validate_engine_board_fields(root: Path) -> None:
+    """`board show --field` refuses a field no shown item carries, unless it is listed (ITEM_FIELDS): the fake board accepts
+    anything, so a field the engine asks for but the real board can refuse would only show on a real run."""
+    engine, board = (root / "bin" / "protocol").read_text(), (root / "bin" / "board").read_text()
+    asked = set(re.findall(r"'--field',\s*'(\w+)'", engine))
+    listed = set(re.findall(r"'(\w+)'", re.search(r"^TEXT_FIELDS = .*$", board, re.M).group(0))) \
+        | set(re.findall(r"'(\w+)'", re.search(r"^ITEM_FIELDS = \{.*?\}", board, re.M | re.S).group(0)))
+    always = {"status", "issue_type", "dependencies"}  # bd shows these on every item, unlinked ones included
+    if not asked or asked - listed - always:
+        raise ValueError(f"the engine asks board show for fields it can refuse: {sorted(asked - listed - always)}")
+
+
 def validate_copied_install(root: Path) -> None:
     """~/.agents/bin may hold copies rather than links into this tree; the tools then find their siblings only when
     source and installed names agree."""
@@ -2765,7 +2910,7 @@ def validate_console_lenses(root: Path) -> None:
             raise ValueError(f"console lenses {pane(*lists)} differ from the {name} skill's {skill(name)}")
 
 
-PROTOCOL_PARTS = ("rounds", "release", "answers", "texts", "rules")
+PROTOCOL_PARTS = ("rounds", "release", "answers", "texts", "rules", "context")
 
 
 def validate_protocol(root: Path, part: str) -> None:
@@ -2819,6 +2964,13 @@ def validate_protocol(root: Path, part: str) -> None:
                     args_run = waiting.get("args", "") if waiting.get("command") == stdin["pass"] else ""
                     proto("pass", "--origin", "model", stdin={"command": stdin["pass"], "args": args_run, "pending": None}, cwd=cwd,
                           session=session, ok=None, env=env, process=process, observe=False)
+            if observe and args[:1] == ("step",) and isinstance(stdin, dict) and ({"records", "defer"} & set(stdin)):
+                # The pass after the last answer (r13 q49) comes before Record: tests not about it run it without a change.
+                saved = state / f"{session}.protocol" / "state.json"
+                current = (json.loads(saved.read_text(encoding="utf-8")).get("round") or {}) if saved.is_file() else {}
+                if current.get("step") == "check" and (current.get("check") or {}).get("challenge", {}).get("kind") == "answers":
+                    proto("step", stdin={"pass": "challenge-rulings", "updates": [], "checked": ["the answers"]}, cwd=cwd, session=session,
+                          env=env, process=process)
             argv = [*(["--session", session] if session else []), *args]
             text = json.dumps(stdin) if isinstance(stdin, dict) else (stdin or "")
             if process:
@@ -2855,12 +3007,68 @@ def validate_protocol(root: Path, part: str) -> None:
                 out = proto("step", stdin={"pass": view["pending"]["command"], "updates": [], "checked": ["every question"]}, **kwargs).stdout
             return out
 
+        def after_answers(**kwargs):
+            """The pass after the last answer (r13 q49), reported without a change: the round then stands at Record."""
+            view = json.loads(proto("show", "--json", **kwargs).stdout)
+            if view["step"] != "check" or (view["pending"] or {}).get("command") != "challenge-rulings":
+                raise ValueError(f"the challenge after the last answer must be pending: {view}")
+            proto("step", stdin={"pass": "challenge-rulings", "updates": [], "checked": ["the answers"]}, **kwargs)
+
         def patch_config(**changes):
             config.write_text(json.dumps({**json.loads(config.read_text(encoding="utf-8")), **changes}), encoding="utf-8")
 
         notes = state / "notes"
         nones = {name: "none" for name in ("revises", "answers", "premise", "assumes", "deferred", "held", "doc")}
         configure()
+        session_dir = state / "0000-lead0001.protocol"
+        decided = {"status": "decided", "issue_type": "decision", "assignee": "lead0001"}
+        released_record = {"status": "released", "issue_type": "decision"}
+
+        def edit_state(change):
+            document = json.loads((session_dir / "state.json").read_text(encoding="utf-8"))
+            change(document)
+            (session_dir / "state.json").write_text(json.dumps(document), encoding="utf-8")
+
+        def replacing(point, hits, outcomes, **cfg):
+            """A one-question board round on a pasted point, up to the batch: `hits` are the board items its text resembles,
+            `outcomes` the Related report (None: stop at Related). Returns the question's id."""
+            configure(related={point.split()[0]: hits}, **cfg)
+            out = proto("start", "round", stdin={"points": [point]}, cwd=repo).stdout
+            pasted = re.search(r"(pt\d+) \[pasted\]", out).group(1)
+            proto("step", stdin={"classes": {pasted: "user"}}, cwd=repo)
+            proto("step", stdin={"select": [pasted]}, cwd=repo)
+            proto("step", stdin={**ROUND_INFO, "questions": [question(f"{point}?", **{"for": pasted})]}, cwd=repo)
+            qid = shown(cwd=repo)["questions"][0]["id"]
+            if outcomes is not None:
+                proto("step", stdin={"outcomes": {qid: outcomes}}, cwd=repo)
+                converge(cwd=repo)
+            return qid
+
+        def answered(answer="Keep"):
+            """Answers the batch out in the dialog; returns the dialog question text."""
+            batch = shown(cwd=repo)["batch"]
+            text = batch["questions"][0]["question"]
+            proto("answer", "--origin", "dialog", stdin={"marker": batch["marker"], "answers": {text: answer}}, cwd=repo)
+            return text
+
+        def board_round(*ids):
+            """A board round answering and recording the questions on `ids`; returns its id."""
+            patch_config(health={"counts": counts, "items": {"questions": [
+                {"id": rid, "status": "open", "type": "decision", "title": f"{rid}?", "priority": 1, "blockedBy": []} for rid in ids]}})
+            proto("start", "round", cwd=repo)
+            proto("step", stdin={"classes": {rid: "user" for rid in ids}}, cwd=repo)
+            proto("step", stdin={"select": list(ids)}, cwd=repo)
+            proto("step", stdin={**ROUND_INFO, "questions": [question(f"{rid}?", board=rid) for rid in ids]}, cwd=repo)
+            converge(cwd=repo)
+            batch = shown(cwd=repo)["batch"]
+            proto("answer", "--origin", "dialog", stdin={"marker": batch["marker"], "answers": {q["question"]: "Keep" for q in batch["questions"]}}, cwd=repo)
+            view = shown(cwd=repo)
+            proto("step", stdin={"records": {q["id"]: {"rationale": "R.", "ruleOwner": "docs/x.md"} for q in view["questions"]}}, cwd=repo)
+            return view["round"]
+
+        def item_status(rid):
+            return json.loads(config.read_text(encoding="utf-8"))["items"][rid]["status"]
+
         if part == "rounds":
             # No open round (R-B3): the null shape, `pending` null, exit 0.
             empty = shown()
@@ -2984,10 +3192,14 @@ def validate_protocol(root: Path, part: str) -> None:
                             ["--orig", "dialog", "answer"]):
                 refused(*spelled, stdin=answers, needle="protocol: error:")
             result = json.loads(proto("--origin", "dialog", "answer", stdin=answers).stdout)
-            if result["step"] != "record" or result["questions"][0]["answer"] != "Keep" or "Record" not in result["note"] \
+            if result["step"] != "check" or result["questions"][0]["answer"] != "Keep" or "after the last answer" not in result["note"] \
+                    or result["pending"] != {"id": result["pending"]["id"], "command": "challenge-rulings", "args": "q1", "reminder": None} \
                     or not re.fullmatch(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ", result["questions"][0]["answeredAt"] or ""):
                 raise ValueError(f"protocol answer: {result}")
             refused("answer", "--origin", "dialog", stdin=answers, needle="no batch is out")
+            out = proto("step", stdin={"pass": "challenge-rulings", "updates": [], "checked": ["the answer"]}).stdout  # C: nothing found
+            if "challenge-rulings (after answers): no change" not in out.splitlines()[0] or shown()["step"] != "record":
+                raise ValueError(f"a challenge after the last answer that changes nothing goes to Record:\n{out}")
             refused("step", stdin={"records": {}}, needle="records missing for q1")
             out = proto("step", stdin={"records": {"q1": {"rationale": "Simpler.", "ruleOwner": "docs/cache.md#cache"}}}).stdout
             record = (notes / "r1-q1.md").read_text(encoding="utf-8")
@@ -3057,7 +3269,7 @@ def validate_protocol(root: Path, part: str) -> None:
             history = proto("history").stdout
             if "0000-lead0001 r2:" not in history or "restarts q2 (criterion: only reversible caches)" not in history \
                     or "cap Continue, Ask now" not in history or "declines 2" not in history \
-                    or "0000-lead0001 r1: passes model 7, plugin 1" not in history:
+                    or "0000-lead0001 r1: passes model 8, plugin 1" not in history:
                 raise ValueError(f"protocol history:\n{history}")
             line = proto("status", "--line").stdout.strip()
             if not line.startswith("protocol: round r2 · check 1/5 · pending /step-back (p") or "1 draft" not in line:
@@ -3080,7 +3292,8 @@ def validate_protocol(root: Path, part: str) -> None:
             if [c["args"] for c in first_calls] != [["health", "--json", "--items", "decided,questions,ratification,review,user"],
                                                     ["position", "--json"]] \
                     or first_calls[0]["actor"] != "lead0001" or Path(first_calls[0]["cwd"]).resolve() != repo.resolve() \
-                    or out.index("fx-d [decided]") > out.index("fx-a [questions]") or "fx-m [readyMilestone]" not in out:
+                    or "decided, awaiting release · decided (1):\n- fx-d: D" not in out \
+                    or out.index("- fx-d: D") > out.index("- fx-a: A?") or "ready milestones · open (1):\n- fx-m [milestone]: Beta" not in out:
                 raise ValueError(f"protocol Collect from board health and position: {first_calls}\n{out}")
             # Scoped (user, 2026-10-31): every pasted point needs a class; board items outside the scope stay out.
             refused("step", stdin={"classes": {"fx-a": "user"}}, needle="every pasted point needs a class; unclassified: pt3", cwd=repo)
@@ -3093,7 +3306,7 @@ def validate_protocol(root: Path, part: str) -> None:
             refused("step", stdin={"select": ["fx-b"]}, needle="waits on fx-a", cwd=repo)
             configure(related={"Pasted": ["fx-old", "fx-rel"]}, refuse=["fx-a"])
             refused("step", stdin={"select": ["fx-a", "fx-b", "pt3"]}, needle="`board claim fx-a fx-b` failed", cwd=repo)
-            configure(related={"Pasted": ["fx-old", "fx-rel"]})
+            configure(related={"Pasted": ["fx-old", "fx-rel"]}, items={"fx-old": {"status": "released", "issue_type": "decision"}})
             calls()
             proto("step", stdin={"select": ["fx-a", "fx-b", "pt3"]}, cwd=repo)
             if [c["args"] for c in calls()] != [["claim", "fx-a", "fx-b"]]:
@@ -3150,17 +3363,17 @@ def validate_protocol(root: Path, part: str) -> None:
                 raise ValueError(f"a challenge change at the last cycle must reach the cap: {cap}")
             proto("answer", "--origin", "dialog", cwd=repo, stdin={"marker": "round:r3:1", "answers": {cap["questions"][0]["question"]: "Ask now"}})
             batch = shown(cwd=repo)["batch"]
-            if batch["marker"] != "round:r3:2" or [q["question"] for q in batch["questions"]] != ["1. A?", "2. Pasted point?"]:
+            if batch["marker"] != "round:r3:2" or [q["question"] for q in batch["questions"]] != ["1. A?", "2. Pasted point? fx-old (Old ruling) is replaced at release."]:
                 raise ValueError(f"protocol batch must leave held questions out: {batch}")
             result = json.loads(proto("answer", "--origin", "dialog", cwd=repo, stdin={
                 "marker": "round:r3:2", "answers": {"1. A?": "Keep"}, "annotations": {}, "response": "And mind the tenancy."}).stdout)
             if "And mind the tenancy." not in result["note"] or "not assigned" not in result["note"] \
-                    or result["batch"]["marker"] != "round:r3:3" or [q["question"] for q in result["batch"]["questions"]] != ["Pasted point?"]:
+                    or result["batch"]["marker"] != "round:r3:3" or [q["question"] for q in result["batch"]["questions"]] != ["Pasted point? fx-old (Old ruling) is replaced at release."]:
                 raise ValueError(f"protocol answer with a response: {result}")
             declined = json.loads(proto("decline", "--origin", "dialog", cwd=repo,
-                                        stdin={"marker": "round:r3:3", "partial": {"Pasted point?": "Keep"}}).stdout)
+                                        stdin={"marker": "round:r3:3", "partial": {"Pasted point? fx-old (Old ruling) is replaced at release.": "Keep"}}).stdout)
             if declined["batch"] is not None or draft_q["id"] not in [q["id"] for q in declined["questions"] if q["status"] == "ready"] \
-                    or "'Pasted point?': 'Keep'" not in declined["note"]:
+                    or "'Pasted point? fx-old (Old ruling) is replaced at release.': 'Keep'" not in declined["note"]:
                 raise ValueError(f"protocol decline: {declined}")
             # Chat answers (R-B9): only with a quote the console relayed from the person this round.
             chat = {"question": draft_q["id"], "answer": "Keep", "quote": "keep   it,\nfinal"}
@@ -3173,12 +3386,15 @@ def validate_protocol(root: Path, part: str) -> None:
             refused("answer", "--origin", "chat", stdin={**chat, "question": held_q["id"]}, needle="is held", cwd=repo)
             # The chat answer releases the held q4 (its premise q3 is answered): the round continues with it, a scoped rerun on q4,
             # not a Record that carries it over.
-            recording = json.loads(proto("answer", "--origin", "chat", stdin=chat, cwd=repo).stdout)
+            note = proto("answer", "--origin", "chat", stdin=chat, cwd=repo).stdout  # the note alone (r18-q70), not the state
+            recording = shown(cwd=repo)
+            if note.startswith("{") or '"questions"' in note:
+                raise ValueError(f"a chat answer prints the note only:\n{note}")
             released = next(q for q in recording["questions"] if q["id"] == held_q["id"])
             if recording["step"] != "check" or next(q for q in recording["questions"] if q["id"] == draft_q["id"])["answer"] != "Keep" \
                     or released["status"] != "draft" or (recording["pending"]["command"], recording["pending"]["args"]) != ("step-back", f"goal foundations {held_q['id']}") \
-                    or f"released {held_q['id']} from held" not in recording["note"].splitlines()[0] \
-                    or f"next: step-back, path pass {held_q['id']}, cycle 1/5" not in recording["note"].splitlines()[0]:
+                    or f"released {held_q['id']} from held" not in note.splitlines()[0] \
+                    or f"next: step-back, path pass {held_q['id']}, cycle 1/5" not in note.splitlines()[0]:
                 raise ValueError(f"protocol chat answer must release the held question into a scoped rerun: {recording}")
             for _ in range(12):  # the scoped path pass, the Base loop, the scoped refine pair, the lean pass, challenge-rulings
                 pending = shown(cwd=repo)["pending"]
@@ -3194,6 +3410,10 @@ def validate_protocol(root: Path, part: str) -> None:
                     or not any(text.startswith("ground (lean " + held_q["id"]) for text in scoped_texts):
                 raise ValueError(f"protocol scoped rerun on the released question: {scoped_batch}\n{scoped_texts}")
             proto("answer", "--origin", "dialog", cwd=repo, stdin={"marker": "round:r3:4", "answers": {"B?": "Keep"}})
+            after = shown(cwd=repo)
+            if after["step"] != "check" or after["pending"]["command"] != "challenge-rulings" or after["pending"]["args"] != "q3 q4 q5":
+                raise ValueError(f"protocol: the challenge over the answered set follows the last answer: {after}")
+            proto("step", cwd=repo, stdin={"pass": "challenge-rulings", "updates": [], "checked": ["the answers"]})
             if shown(cwd=repo)["step"] != "record":
                 raise ValueError(f"protocol: Record follows once nothing is left to ask: {shown(cwd=repo)}")
             calls()
@@ -3206,7 +3426,7 @@ def validate_protocol(root: Path, part: str) -> None:
             expected = [["claim", "fx-a"], ["record", "fx-a"], ["claim", "fx-b"], ["record", "fx-b"],
                         ["revise", "fx-old", "--title", "Pasted point", "--body-file"],
                         ["bd", "batch", "-m", "protocol: link fx-rev1", "--json"], ["claim", "fx-rev1"], ["record", "fx-rev1"],
-                        ["health", "--json"]]  # one Record writes all three
+                        ["health", "--json", "--items", "decided"]]  # one Record writes all three
             if [c["args"][:len(want)] for c, want in zip(board_calls, expected)] != expected or len(board_calls) != len(expected) \
                     or board_calls[5]["stdin"] != "dep add fx-rev1 fx-rel relates-to\n" \
                     or 'User (chat), ' not in records or '"keep   it,\nfinal"' not in records or "## Decision\nKeep the point." not in records \
@@ -3276,9 +3496,10 @@ def validate_protocol(root: Path, part: str) -> None:
                 {**row, "id": "fx-mine", "title": "Mine?"}, {**row, "id": "fx-live", "title": "Live?", "holder": "other001"},
                 {**row, "id": "fx-gone", "title": "Gone?", "holder": "gone0001"}]}},
                 position={"held": [{"id": "fx-live", "holder": "other001", "mark": None}, {"id": "fx-gone", "holder": "gone0001", "mark": "gone"}]})
+            proto("compacted", cwd=repo)  # the open-item list prints whole once between compactions
             out = proto("start", "round", cwd=repo).stdout
-            if "- held by live session other001, not offered: fx-live" not in out or "fx-live [" in out \
-                    or "- fx-gone [questions] open decision, held by gone0001 (gone): Gone?" not in out:
+            if "Held by live session other001, not offered: fx-live" not in out or "- fx-live" in out \
+                    or "- fx-gone, held by gone0001 (gone): Gone?" not in out:
                 raise ValueError(f"protocol Collect must leave out live foreign holds and mark gone ones:\n{out}")
             proto("step", stdin={"classes": {"fx-mine": "user", "fx-gone": "user"}}, cwd=repo)
             calls()
@@ -3315,6 +3536,133 @@ def validate_protocol(root: Path, part: str) -> None:
             if made.count(["bd", "create"]) != 1 or made.count(["bd", "batch"]) != 2 or "Board counts unavailable" not in out \
                     or "Round r6 closed." not in out or shown(cwd=repo)["round"] is not None:
                 raise ValueError(f"protocol Record rerun: {made}\n{out}")
+            configure()
+
+            # G: a question that replaces records (r12-q44): a decided record closes at Record, a released one is revised.
+            # Alpha: the dialog names the record, a record not naming it is refused, Record closes it and reports it.
+            qid = replacing("Alpha point", ["fx-u1"], {"fx-u1": "supersedes"}, items={"fx-u1": {**decided, "title": "Alpha store"}}, newIds=["fx-n1"])
+            if answered() != "Alpha point? Recording it closes fx-u1 (Alpha store).":
+                raise ValueError("the dialog must name the record the question closes")
+            calls()
+            refused("step", stdin={"records": {qid: {"rationale": "R.", "ruleOwner": "o"}}}, needle="recording closes fx-u1; name each", cwd=repo)
+            if [c for c in calls() if c["args"][0] in ("revise", "claim", "supersede")] or shown(cwd=repo)["step"] != "record":
+                raise ValueError("a record that does not name the closed record must be refused before any board write")
+            out = proto("step", stdin={"records": {qid: {"rationale": "Replaces fx-u1: the same store, now with a TTL.", "ruleOwner": "o"}}},
+                        cwd=repo).stdout
+            made = [c["args"][:2] for c in calls() if c["args"][0] in ("revise", "claim", "record", "supersede")]
+            history = [json.loads(row) for row in (session_dir / "history.jsonl").read_text().splitlines()]
+            if made != [["revise", "fx-u1"], ["claim", "fx-n1"], ["record", "fx-n1"], ["supersede", "fx-u1"]] \
+                    or item_status("fx-u1") != "closed" or "- " + qid + " → fx-n1, closed fx-u1" not in out \
+                    or "recorded " + qid + " · superseded fx-u1 by fx-n1 · round closed" not in out.splitlines()[0] \
+                    or not any(e["event"] == "superseded" and (e["question"], e["old"], e["new"]) == (qid, "fx-u1", "fx-n1") for e in history):
+                raise ValueError(f"Record must close the replaced decided record and report it: {made}\n{out}")
+            # Beta: a deferred question closes nothing and leaves the old record alone.
+            qid = replacing("Beta point", ["fx-u2"], {"fx-u2": "supersedes"}, items={"fx-u2": decided})
+            answered()
+            calls()
+            proto("step", stdin={"records": {}, "defer": {qid: "later"}}, cwd=repo)
+            if [c for c in calls() if c["args"][0] in ("revise", "claim", "record", "supersede")] or item_status("fx-u2") != "decided":
+                raise ValueError("a deferred question must close nothing")
+            # Gamma: several records close; the first is revised (parent and labels), the others stay linked until closed; the
+            # items a closed record settles move to the new record.
+            qid = replacing("Gamma point", ["fx-u3", "fx-u4"], {"fx-u3": "supersedes", "fx-u4": "supersedes"},
+                            items={"fx-u3": {**decided, "title": "Gamma three"}, "fx-u4": {**decided, "title": "Gamma four"}}, newIds=["fx-n3"])
+            edit_state(lambda document: document.setdefault("settles", {}).update({"fx-u4": ["fx-set1"]}))
+            if answered() != "Gamma point? Recording it closes fx-u3 (Gamma three), fx-u4 (Gamma four).":
+                raise ValueError("the dialog must name every record the question closes")
+            calls()
+            proto("step", stdin={"records": {qid: {"rationale": "Replaces fx-u3 and fx-u4.", "ruleOwner": "o"}}}, cwd=repo)
+            rows = calls()
+            settles = json.loads((session_dir / "state.json").read_text())["settles"]
+            if [c["args"][:2] for c in rows if c["args"][0] in ("revise", "supersede")] != [["revise", "fx-u3"], ["supersede", "fx-u3"], ["supersede", "fx-u4"]] \
+                    or [c["stdin"] for c in rows if c["args"][:2] == ["bd", "batch"]] != ["dep add fx-n3 fx-u4 tracks\n"] \
+                    or item_status("fx-u3") != "closed" or item_status("fx-u4") != "closed" \
+                    or settles.get("fx-n3") != ["fx-set1"] or "fx-u4" in settles:
+                raise ValueError(f"Record must close several records and move their settled items: {rows}\n{settles}")
+            # Delta: one released record (revised, replaced at its release) and one decided record (closed).
+            qid = replacing("Delta point", ["fx-r0", "fx-u5"], {"fx-r0": "supersedes", "fx-u5": "supersedes"},
+                            items={"fx-r0": {**released_record, "title": "Delta old"}, "fx-u5": {**decided, "title": "Delta five"}}, newIds=["fx-n4"])
+            if answered() != "Delta point? Recording it closes fx-u5 (Delta five); fx-r0 (Delta old) is replaced at release.":
+                raise ValueError("the dialog must name the closed and the revised record")
+            calls()
+            proto("step", stdin={"records": {qid: {"rationale": "Replaces fx-u5.", "ruleOwner": "o"}}}, cwd=repo)
+            rows = calls()
+            if [c["args"][:2] for c in rows if c["args"][0] in ("revise", "supersede")] != [["revise", "fx-r0"], ["supersede", "fx-u5"]] \
+                    or [c["stdin"] for c in rows if c["args"][:2] == ["bd", "batch"]] != ["dep add fx-n4 fx-u5 tracks\n"] \
+                    or item_status("fx-r0") != "released":
+                raise ValueError(f"a released record is revised and a decided one closed: {rows}")
+            # Two released records, or a revision to carry besides a released one, are refused at Related.
+            released_tracked = {**decided, "dependencies": [{"issue_id": "fx-u7", "depends_on_id": "fx-r2", "type": "tracks"}]}
+            for hits, items, needle in ((["fx-r0", "fx-r1"], {"fx-r0": released_record, "fx-r1": released_record}, "at most one released record"),
+                                        (["fx-r1", "fx-u7"], {"fx-r1": released_record, "fx-u7": released_tracked}, "more than one record or rule"),
+                                        (["fx-open"], {"fx-open": {"status": "open", "issue_type": "decision"}}, "supersedes needs a recorded ruling")):
+                qid = replacing("Epsilon point", hits, None, items=items)
+                refused("step", stdin={"outcomes": {qid: {hit: "supersedes" for hit in hits}}}, needle=needle, cwd=repo)
+                proto("abandon", cwd=repo)
+            # Zeta: a record another live session holds is refused at Related (board supersede has no holder check); a gone
+            # session's hold is taken at Record, just before the close.
+            held = {"position": {"held": [{"id": "fx-live", "holder": "other001", "mark": "idle"}, {"id": "fx-gone", "holder": "gone0001", "mark": "gone"}]}}
+            qid = replacing("Zeta point", ["fx-live"], None, items={"fx-live": {**decided, "assignee": "other001"}}, **held)
+            refused("step", stdin={"outcomes": {qid: {"fx-live": "supersedes"}}}, needle="another live session holds it", cwd=repo)
+            proto("abandon", cwd=repo)
+            qid = replacing("Zeta point", ["fx-gone"], {"fx-gone": "supersedes"}, items={"fx-gone": {**decided, "assignee": "gone0001"}}, newIds=["fx-n5"], **held)
+            answered()
+            calls()
+            proto("step", stdin={"records": {qid: {"rationale": "Replaces fx-gone.", "ruleOwner": "o"}}}, cwd=repo)
+            made = [c["args"][:2] for c in calls() if c["args"][0] in ("take", "supersede")]
+            if made != [["take", "fx-gone"], ["supersede", "fx-gone"]]:
+                raise ValueError(f"a gone session's hold must be taken before the close: {made}")
+            # A hold taken by another live session after Related is refused at Record too.
+            qid = replacing("Eta point", ["fx-u8"], {"fx-u8": "supersedes"}, items={"fx-u8": decided}, newIds=["fx-n6"], **held)
+            answered()
+            patch_config(items={"fx-u8": {**decided, "assignee": "other001"}}, position={"held": [{"id": "fx-u8", "holder": "other001", "mark": "idle"}]})
+            calls()
+            out = proto("step", stdin={"records": {qid: {"rationale": "Replaces fx-u8.", "ruleOwner": "o"}}}, cwd=repo).stdout
+            if "Not recorded" not in out or "another live session holds it" not in out or item_status("fx-u8") != "decided":
+                raise ValueError(f"Record must refuse a close of a record another live session holds:\n{out}")
+            proto("abandon", cwd=repo)
+            # Nu (r13 q51): a decided record the search missed is marked `supersedes` by id: the dialog names it by title, Record
+            # closes it. Only a recorded ruling qualifies and a live foreign hold stays refused; other outcomes name hits only.
+            nu_items = {"fx-u11": {**decided, "title": "Nu old"}, "fx-open2": {"status": "open", "issue_type": "decision"},
+                        "fx-live2": {**decided, "assignee": "other001"}}
+            held_live = {"position": {"held": [{"id": "fx-live2", "holder": "other001", "mark": "idle"}]}}
+            qid = replacing("Nu point", ["fx-o1"], None, items=nu_items, newIds=["fx-n11"], **held_live)
+            for outcomes, needle in (({"fx-o1": "unrelated", "fx-u11": "relate"}, "only `supersedes` may name a decided record"),
+                                     ({"fx-o1": "unrelated", "fx-open2": "supersedes"}, "supersedes needs a recorded ruling"),
+                                     ({"fx-o1": "unrelated", "fx-live2": "supersedes"}, "another live session holds it")):
+                refused("step", stdin={"outcomes": {qid: outcomes}}, needle=needle, cwd=repo)
+            if [h["id"] for h in shown(cwd=repo)["questions"][0]["overlaps"]] != ["fx-o1"]:
+                raise ValueError("a refused outcome must add no overlap")
+            proto("step", stdin={"outcomes": {qid: {"fx-o1": "unrelated", "fx-u11": "supersedes"}}}, cwd=repo)
+            converge(cwd=repo)
+            if answered() != "Nu point? Recording it closes fx-u11 (Nu old)." \
+                    or [h["id"] for h in shown(cwd=repo)["questions"][0]["overlaps"]] != ["fx-o1", "fx-u11"]:
+                raise ValueError("the dialog must name the missed record by title")
+            calls()
+            proto("step", stdin={"records": {qid: {"rationale": "Replaces fx-u11.", "ruleOwner": "o"}}}, cwd=repo)
+            made = [c["args"][:2] for c in calls() if c["args"][0] in ("revise", "claim", "record", "supersede")]
+            if made != [["revise", "fx-u11"], ["claim", "fx-n11"], ["record", "fx-n11"], ["supersede", "fx-u11"]] or item_status("fx-u11") != "closed":
+                raise ValueError(f"Record must close the missed record: {made}")
+            configure()
+            # Theta: a close that failed is retried on the rerun without a second record; a close that bd made before it
+            # exited 1 counts as done and says so.
+            qid = replacing("Theta point", ["fx-u9"], {"fx-u9": "supersedes"}, items={"fx-u9": decided}, newIds=["fx-n7"], fail=["supersede"])
+            answered()
+            calls()
+            report = {"records": {qid: {"rationale": "Replaces fx-u9.", "ruleOwner": "o"}}}
+            out = proto("step", stdin=report, cwd=repo).stdout
+            if "Not recorded" not in out or "board supersede fx-u9 --with fx-n7" not in out or shown(cwd=repo)["step"] != "record" or item_status("fx-u9") != "decided":
+                raise ValueError(f"a failed close must leave the question unrecorded:\n{out}")
+            patch_config(fail=[])
+            out = proto("step", stdin=report, cwd=repo).stdout
+            made = [c["args"][:2] for c in calls() if c["args"][0] in ("revise", "supersede")]
+            if made != [["revise", "fx-u9"], ["supersede", "fx-u9"], ["supersede", "fx-u9"]] or item_status("fx-u9") != "closed" or "Round r" not in out or shown(cwd=repo)["round"] is not None:
+                raise ValueError(f"a failed close must be retried on the rerun without a second record: {made}\n{out}")
+            qid = replacing("Iota point", ["fx-u10"], {"fx-u10": "supersedes"}, items={"fx-u10": decided}, newIds=["fx-n8"], supersedeFail=["fx-u10"])
+            answered()
+            out = proto("step", stdin={"records": {qid: {"rationale": "Replaces fx-u10.", "ruleOwner": "o"}}}, cwd=repo).stdout
+            if "closed fx-u10 but exited 1" not in out or item_status("fx-u10") != "closed" or shown(cwd=repo)["round"] is not None:
+                raise ValueError(f"a close bd made before exiting 1 counts as done:\n{out}")
             configure()
 
             # F: evidence leans get one focused ground pass before challenge-rulings; a lean left unverified is flagged.
@@ -3429,11 +3777,12 @@ def validate_protocol(root: Path, part: str) -> None:
                              "fx-m2": {"items": {"questions": [{"id": "fx-n4"}, {"id": "fx-n3"}]}}})
             calls()
             out = proto("next", cwd=repo).stdout
+            seeds_only = out.split("Open items (")[0]
             seeded = re.findall(r"^- (fx-n\d) · p(\d) · holds (\d+) · (milestone fx-m\d|no milestone) · ", out, re.M)
             made = [c["args"] for c in calls()]
             if seeded != [("fx-n4", "1", "5", "milestone fx-m2"), ("fx-n3", "1", "1", "milestone fx-m1"), ("fx-n2", "2", "0", "milestone fx-m1"),
                           ("fx-n1", "0", "0", "no milestone"), ("fx-n7", "0", "0", "no milestone")] \
-                    or "fx-n5" in out or "fx-n6" in out or "fx-n8" in out or "No proposal stored." not in out \
+                    or "fx-n5" in seeds_only or "fx-n6" in seeds_only or "fx-n8" in seeds_only or "No proposal stored." not in out \
                     or ["health", "--json", "--root", "fx-m1", "--items", "questions"] not in made or made[0][:3] != ["health", "--json", "--items"]:
                 raise ValueError(f"protocol next must rank the seeds (milestone, priority, holds; no blocked or live-held):\n{out}\n{made}")
             if "No board here: no seeds." not in proto("next", cwd=plain).stdout or calls():
@@ -3509,6 +3858,7 @@ def validate_protocol(root: Path, part: str) -> None:
                 if [q["question"] for q in batch["questions"]] != [f"Chain {'BC'[position - 1]}?"]:
                     raise ValueError(f"protocol chain step {position}: the next batch asks the released question: {batch}")
             proto("answer", "--origin", "dialog", cwd=repo, stdin={"marker": shown(cwd=repo)["batch"]["marker"], "answers": {"Chain C?": "Keep"}})
+            after_answers(cwd=repo)
             if shown(cwd=repo)["step"] != "record":
                 raise ValueError(f"protocol chain: Record follows once the last released question is answered: {shown(cwd=repo)}")
             # A premise deferred at Record leaves its dependents without a settled premise: they cannot be recorded as decided.
@@ -3545,7 +3895,7 @@ def validate_protocol(root: Path, part: str) -> None:
                                        "```\n## Not a heading\n```\n<a id=\"explicit-one\"></a>\n", encoding="utf-8")
             (docs / "y.md").write_text("# Y\n", encoding="utf-8")
             anchor = "approved-dependencies-settlement-and-retry--implementation-pending"
-            # A no-board last round gives no default set; a cwd without a board refuses a release outright.
+            # A session holding no decided record has no default set; a cwd without a board refuses a release outright.
             refused("start", "release", needle="a release needs a board", cwd=plain)
             out = proto("start", "round", "--no-board", str(notes), stdin={"points": ["File only?"]}, cwd=repo).stdout
             point = re.search(r"(pt\d+) \[pasted\]", out).group(1)
@@ -3558,11 +3908,13 @@ def validate_protocol(root: Path, part: str) -> None:
             closed = proto("step", stdin={"records": {asked["questions"][0]["id"]: {"rationale": "R.", "ruleOwner": "o"}}}, cwd=repo).stdout
             if "next: release" in closed.splitlines()[0]:
                 raise ValueError(f"a round without board records must not name the release: {closed}")
-            refused("start", "release", needle="recorded no board records; name the ids", cwd=repo)
+            refused("start", "release", needle="this session holds no decided records; name the ids", cwd=repo)
             # A board round recording two records closes naming the release (r4-q15); nothing starts by itself.
             configure(health={"counts": counts, "items": {"questions": [
                 {"id": "fx-r1", "status": "open", "type": "decision", "title": "R1?", "priority": 1, "blockedBy": []},
-                {"id": "fx-r2", "status": "open", "type": "decision", "title": "R2?", "priority": 1, "blockedBy": []}]}})
+                {"id": "fx-r2", "status": "open", "type": "decision", "title": "R2?", "priority": 1, "blockedBy": []}]}},
+                      items={rid: {"status": "decided", "issue_type": "decision", "title": rid.upper(), "assignee": "lead0001"}
+                             for rid in ("fx-r1", "fx-r2")})
             proto("start", "round", cwd=repo)
             proto("step", stdin={"classes": {"fx-r1": "user", "fx-r2": "user"}}, cwd=repo)
             proto("step", stdin={"select": ["fx-r1", "fx-r2"]}, cwd=repo)
@@ -3581,7 +3933,7 @@ def validate_protocol(root: Path, part: str) -> None:
             closed = proto("step", stdin={"records": {q["id"]: {"rationale": "R.", "ruleOwner": "docs/x.md"} for q in asked["questions"]}},
                            cwd=repo).stdout
             if not re.fullmatch(r"r\d+ · recorded q\d+, q\d+ · round closed · next: release \(/release-round or ask\)", closed.splitlines()[0]) \
-                    or shown(cwd=repo)["round"] is not None or shown(cwd=repo)["next"] != {"release": {"round": round_id, "count": 2}}:
+                    or shown(cwd=repo)["round"] is not None or shown(cwd=repo)["next"] != {"release": {"count": 2}}:
                 raise ValueError(f"a round with board records must close naming the release:\n{closed}")
             rule_owner = f"## Question\nR1?\n\n## Rule owner\ndocs/x.md#{anchor}; fx-pend\n"
             configure(items={"fx-r1": {"status": "decided", "issue_type": "decision", "title": "R1", "assignee": "lead0001",
@@ -3614,9 +3966,9 @@ def validate_protocol(root: Path, part: str) -> None:
             calls()
             started = json.loads(proto("pass", "--origin", "composer", stdin={"command": "release-round", "args": "", "pending": None},
                                        cwd=repo).stdout)
-            if started["protocol"] != "release" or started["step"] != "recheck" or started["title"] != f"{round_id}'s records" \
+            if started["protocol"] != "release" or started["step"] != "recheck" or started["title"] != "the session's records" \
                     or [r["id"] for r in started["records"]] != ["fx-r1", "fx-r2"] \
-                    or not started["note"].startswith(f"r{int(round_id[1:]) + 2} release · {round_id}'s records · release started") \
+                    or not started["note"].startswith(f"r{int(round_id[1:]) + 2} release · the session's records · release started") \
                     or ["claim", "fx-r1", "fx-r2"] in [c["args"] for c in calls()]:
                 raise ValueError(f"a typed /release-round must start the default release and stamp it: {started}")
             refused("step", stdin={"records": {"fx-r1": "unchanged"}}, needle="no line for fx-r2", cwd=repo)
@@ -3648,15 +4000,15 @@ def validate_protocol(root: Path, part: str) -> None:
             dialog = shown(cwd=repo)
             records = {r["id"]: r["state"] for r in dialog["records"]}
             if dialog["step"] != "ask" or dialog["batch"] is None or dialog["batch"]["questions"][0]["header"] != "Release" \
-                    or dialog["batch"]["questions"][0]["question"] != f"Release {round_id}'s 1 record?" \
+                    or dialog["batch"]["questions"][0]["question"] != "Release the session's 1 record?" \
                     or "left the set: fx-r2" in json.dumps(dialog["batch"]) or records != {"fx-r1": "set", "fx-r2": "dropped"} \
                     or "left the set: fx-r2" not in proto("show", cwd=repo).stdout \
                     or not any("approval asked: left the set: fx-r2" in line["text"] for line in dialog["log"]):
                 raise ValueError(f"a dropped record must lapse the typed approval into the dialog: {dialog}")
             result = json.loads(proto("answer", "--origin", "dialog", cwd=repo, stdin={
-                "marker": dialog["batch"]["marker"], "answers": {dialog["batch"]["questions"][0]["question"]: "Release (recommended, lean)"}}).stdout)
-            if result["step"] != "owners":
-                raise ValueError(f"the dialog approval must lead to Owner writes: {result}")
+                "marker": dialog["batch"]["marker"], "answers": {dialog["batch"]["questions"][0]["question"]: "Release"}}).stdout)
+            if result["step"] != "owners" or result["pending"] is not None or any("after answers" in line["text"] for line in result["log"]):
+                raise ValueError(f"the dialog approval must lead to Owner writes, with no challenge after the answer: {result}")
             # Owner writes: each path exists, each anchor is a heading slug or an explicit anchor, each pending item is open,
             # and the record's Rule owner names each written path.
             for entry, needle in (({"written": {"path": "docs/missing.md"}}, "docs/missing.md does not exist"),
@@ -3688,16 +4040,18 @@ def validate_protocol(root: Path, part: str) -> None:
             out = proto("step", stdin={}, cwd=repo).stdout
             made = [c["args"] for c in calls() if c["args"][0] in ("release", "supersede")]
             if made != [["release", "fx-r1"], ["supersede", "fx-old", "--with", "fx-r1", "--partial", "Rule 2"]] \
-                    or not re.match(r"r\d+ release · r\d+'s records · .*superseded fx-old by fx-r1 · released fx-r1", out) \
+                    or not re.match(r"r\d+ release · the session's records · .*superseded fx-old by fx-r1 · released fx-r1", out) \
                     or "- released fx-r1: R1" not in out or "- closed fx-q1: answered by released fx-r1" not in out \
                     or "- superseded fx-old by fx-r1 (rule: Rule 2)" not in out or "- dropped fx-r2" not in out \
-                    or "decide.md Release 7" not in out or "`protocol next --set`" not in out or '"compact": false' not in out \
+                    or "decide.md Release 7" not in out or "`protocol next --set`" not in out or '"compact": false' in out \
                     or shown(cwd=repo)["round"] is not None \
                     or "board release" in out.splitlines()[0]:
                 raise ValueError(f"protocol release rerun: {made}\n{out}")
-            # The default set is used up: a bare /release-round must not offer the dropped fx-r2 again (it goes to a round).
+            if "compact false" not in proto("next", cwd=repo).stdout:
+                raise ValueError("`protocol next` prints the proposal's format, which the release's close text leaves to it")
+            # Nothing is left to take: a bare /release-round must not offer the dropped fx-r2 again (it goes to a round).
             refused("pass", "--origin", "composer", stdin={"command": "release-round", "args": "", "pending": None},
-                    needle="went through release", cwd=repo)
+                    needle="was dropped or stopped by a release", cwd=repo)
             # Spreads: the run stops, nothing releases, and the close names the next round on the ids.
             patch_config(items={**json.loads(config.read_text())["items"],
                                 "fx-s1": {"status": "decided", "issue_type": "decision", "title": "S1", "assignee": "lead0001"}})
@@ -3761,7 +4115,7 @@ def validate_protocol(root: Path, part: str) -> None:
             view = shown(cwd=repo)
             if view["step"] != "scoped" or view["pending"] is None or view["pending"]["command"] != "step-back" \
                     or view["pending"]["args"] != "fx-s2" or "next: step-back pass on the revised fx-s2" not in out.splitlines()[0] \
-                    or "console starts it as its own turn" not in out:
+                    or "console starts it as its own turn" not in out or view["pending"]["reminder"] is not None:
                 raise ValueError(f"the scoped step-back must wait on the revised ids before the approval: {view['step']} {view['pending']}\n{out}")
             refused("step", stdin={"pass": "ground", "records": {"fx-s2": "unchanged"}}, needle="`pass` is step-back", observe=False, cwd=repo)
             refused("step", stdin={"pass": "step-back", "records": {"fx-s2": "unchanged"}}, needle="no /step-back ran", observe=False, cwd=repo)
@@ -3773,7 +4127,7 @@ def validate_protocol(root: Path, part: str) -> None:
             out = proto("step", stdin={"pass": "step-back", "records": {"fx-s2": "unchanged"}, "summary": "holds"}, cwd=repo).stdout
             view = shown(cwd=repo)
             if view["step"] != "scoped" or view["pending"]["command"] != "ground" or view["pending"]["args"] != "fx-s2" \
-                    or "step-back (scoped fx-s2): no change: holds" not in out.splitlines()[0]:
+                    or "step-back (scoped fx-s2): no change: holds" not in out.splitlines()[0] or view["pending"]["reminder"] is not None:
                 raise ValueError(f"the scoped ground must follow the scoped step-back: {view['pending']}\n{out}")
             proto("step", stdin={"pass": "ground", "records": {"fx-s2": "unchanged"}}, cwd=repo)
             dialog = shown(cwd=repo)
@@ -3796,13 +4150,17 @@ def validate_protocol(root: Path, part: str) -> None:
             if dropped["fx-s2"] != ("dropped", "changed (contained): the user chose the other store") or shown(cwd=repo)["step"] != "ask":
                 raise ValueError(f"a scoped pass with a decision change must drop the record: {dropped}")
             proto("abandon", cwd=repo)
-            # The drop reason shows at the next round's Stage.
+            if json.loads((session_dir / "state.json").read_text()).get("dropReasons", {}).get("fx-s2"):
+                raise ValueError("a drop of an abandoned release must not leave a reason")
+            # A stop's reason shows at the next round's Stage.
+            proto("start", "release", "fx-s2", cwd=repo)
+            proto("step", stdin={"records": {"fx-s2": {"change": "the user chose the other store", "reach": "spreads"}}}, cwd=repo)
             patch_config(health={"counts": counts, "items": {"decided": [
                 {"id": "fx-s2", "status": "decided", "type": "decision", "title": "S2", "priority": 1, "blockedBy": []}]}})
             proto("start", "round", cwd=repo)
             proto("step", stdin={"classes": {"fx-s2": "user"}}, cwd=repo)
             out = proto("step", stdin={"select": ["fx-s2"]}, cwd=repo).stdout
-            if "- fx-s2: changed (contained): the user chose the other store" not in out:
+            if "- fx-s2: fx-s2 changed: the user chose the other store" not in out:
                 raise ValueError(f"a dropped record's reason must show at the next round's Stage:\n{out}")
             proto("abandon", cwd=repo)
             patch_config(health={"counts": counts, "items": {}})
@@ -3814,6 +4172,9 @@ def validate_protocol(root: Path, part: str) -> None:
             proto("step", stdin={"pass": "step-back", "records": {"fx-s2": {"change": "other rulings read it", "reach": "spreads"}}}, cwd=repo)
             if shown(cwd=repo)["stopped"] is None or shown(cwd=repo)["stopped"]["ids"] != ["fx-s1", "fx-s2"]:
                 raise ValueError(f"a spread in a scoped pass must stop the release: {shown(cwd=repo)}")
+            stopped_reasons = json.loads((session_dir / "state.json").read_text())["dropReasons"]  # the revised fx-s2 gets the stop's reason
+            if stopped_reasons.get("fx-s2") != "fx-s2 changed: other rulings read it" or stopped_reasons.get("fx-s1") != stopped_reasons["fx-s2"]:
+                raise ValueError(f"every record of a stop gets the stop's reason, a revised one too: {stopped_reasons}")
             # Codex has no console to observe its runs: the text tells it to run the skill and report.
             subprocess.run(["bash", str(registry), "activate", "solo"], check=True,
                            env={**os.environ, **session_env(str(state)), **as_session("0000-cdx00002", "codex")})
@@ -3834,7 +4195,129 @@ def validate_protocol(root: Path, part: str) -> None:
             proto("start", "round", "--no-board", str(notes), stdin={"points": ["Busy?"]}, cwd=repo)
             refused("pass", "--origin", "composer", stdin={"command": "release-round"}, needle="the release starts once it closes", cwd=repo)
             proto("abandon", cwd=repo)
+
+            # D: the default set (r13 q50): the decided records this session holds, a worker's holds included, read from the
+            # board and counted at a close and at `protocol next`; `show` makes no board call. A stop gives each stopped record a
+            # reason a bare release leaves out; a re-recording or a release clears it; an abandoned release changes nothing.
+            leftover = {"rounds": [{"round": "r9", "ids": ["fx-gone"]}], "last": "r9", "consumedBy": "r9"}
+            edit_state(lambda document: document.update(dropReasons={}, recorded=leftover, lastRecorded="r9"))  # old keys are ignored
+            items = {rid: {"status": "decided", "issue_type": "decision", "title": rid.upper(), "assignee": holder}
+                     for rid, holder in (("fx-d1", "lead0001"), ("fx-d2", "lead0001/worker01"), ("fx-d3", "lead0001"), ("fx-d4", "other001"))}
+            patch_config(items=items)
+            calls()
+            if shown(cwd=repo)["next"] is not None or calls():
+                raise ValueError("show makes no board call and offers nothing before the board was read")
+            first = board_round("fx-d1", "fx-d2")
+            board_round("fx-d3")
+            calls()
+            if shown(cwd=repo)["next"] != {"release": {"count": 3}} or calls():
+                raise ValueError(f"the count is the decided records held here, a worker's included, another session's out: {shown(cwd=repo)['next']}")
+            patch_config(items={**items, "fx-d5": {**items["fx-d3"], "title": "FX-D5"}})  # decided outside any round, held here
+            if shown(cwd=repo)["next"] != {"release": {"count": 3}} or "count 4" in proto("next", cwd=repo).stdout:
+                raise ValueError("show reads the saved count; `protocol next` reads the board")
+            if shown(cwd=repo)["next"] != {"release": {"count": 4}}:
+                raise ValueError(f"protocol next saves the count: {shown(cwd=repo)['next']}")
+            bare = json.loads(proto("pass", "--origin", "composer", stdin={"command": "release-round", "args": "", "pending": None}, cwd=repo).stdout)
+            if [r["id"] for r in bare["records"]] != ["fx-d1", "fx-d2", "fx-d3", "fx-d5"] or bare["title"] != "the session's records":
+                raise ValueError(f"a bare release takes every decided record this session holds: {bare}")
+            if "A bare release takes the decided records this session holds" not in proto("show", cwd=repo).stdout:
+                raise ValueError("the release's first step must say what a bare release takes")
+            patch_config(items=items)
+            proto("abandon", cwd=repo)  # an abandoned release leaves everything as it was
+            before = json.loads((session_dir / "state.json").read_text())
+            proto("start", "release", "fx-d1", "fx-d2", cwd=repo)
+            proto("step", stdin={"records": {"fx-d1": "unchanged", "fx-d2": {"change": "c", "reach": "contained", "why": "w", "touches": "decision"}}}, cwd=repo)
+            proto("abandon", cwd=repo)
+            after = json.loads((session_dir / "state.json").read_text())
+            if after.get("dropReasons") != before.get("dropReasons") or after.get("releasable") != before.get("releasable") or shown(cwd=repo)["next"] != {"release": {"count": 4}}:
+                raise ValueError("an abandoned release must change no drop reason and no count")
+            # A named release that runs to its close: the released record clears, the dropped one is out of the default set.
+            proto("start", "release", "fx-d1", "fx-d2", cwd=repo)
+            proto("pass", "--origin", "press", stdin={"command": "release-round", "args": "fx-d1 fx-d2", "pending": None}, cwd=repo)
+            proto("step", stdin={"records": {"fx-d1": "unchanged", "fx-d2": {"change": "c", "reach": "contained", "why": "w", "touches": "decision"}}}, cwd=repo)
+            proto("step", stdin={"checks": {"fx-d1": nones}}, cwd=repo)
+            proto("step", stdin={"rulings": []}, cwd=repo)
+            dialog = shown(cwd=repo)["batch"]  # the drop lapses the typed approval into a dialog
+            proto("answer", "--origin", "dialog", cwd=repo, stdin={"marker": dialog["marker"], "answers": {dialog["questions"][0]["question"]: "Release"}})
+            proto("step", stdin={"owners": {"fx-d1": [{"none": {"reason": "covered by the rule"}}]}}, cwd=repo)
+            dropped = json.loads((session_dir / "state.json").read_text())["dropReasons"]
+            if list(dropped) != ["fx-d2"] or "changed (contained)" not in dropped["fx-d2"] or shown(cwd=repo)["next"] != {"release": {"count": 1}}:
+                raise ValueError(f"a closed release records the dropped record's reason and counts the rest: {dropped} {shown(cwd=repo)['next']}")
+            # A stop gives each stopped record a reason, named or bare; a bare release then leaves them out.
+            proto("start", "release", cwd=repo)
+            proto("step", stdin={"records": {"fx-d3": {"change": "the premise moved", "reach": "spreads"}}}, cwd=repo)
+            reasons = json.loads((session_dir / "state.json").read_text())["dropReasons"]
+            if sorted(reasons) != ["fx-d2", "fx-d3"] or "premise moved" not in reasons["fx-d3"] or shown(cwd=repo)["next"] is not None:
+                raise ValueError(f"a stop must give each stopped record a reason and leave the default set empty: {reasons}")
+            refused("start", "release", needle="was dropped or stopped by a release", cwd=repo)
+            # A re-recording clears the reason: the record is in the default set again.
+            board_round("fx-d3")
+            again = json.loads((session_dir / "state.json").read_text())["dropReasons"]
+            if "fx-d3" in again or shown(cwd=repo)["next"] != {"release": {"count": 1}}:
+                raise ValueError(f"a re-recording must clear the drop reason: {again} {shown(cwd=repo)['next']}")
+            edit_state(lambda document: document.update(dropReasons={}))
+            # A named stop gives its reasons too.
+            proto("start", "release", "fx-d3", cwd=repo)
+            proto("step", stdin={"records": {"fx-d3": {"change": "moved", "reach": "spreads"}}}, cwd=repo)
+            if list(json.loads((session_dir / "state.json").read_text())["dropReasons"]) != ["fx-d3"]:
+                raise ValueError("a named stop must give its record a reason")
+            edit_state(lambda document: document.update(dropReasons={}))
+            # An unsure ruling leads the dialog, in full in the preview; a question during the release is told to abandon; a
+            # person's Hold drops nothing, so a bare release takes the records again (r14 q52, q56).
+            proto("start", "release", "fx-d3", cwd=repo)
+            proto("step", stdin={"records": {"fx-d3": "unchanged"}}, cwd=repo)
+            proto("step", stdin={"checks": {"fx-d3": nones}}, cwd=repo)
+            long_ruling = "reveal issues a fresh secret after a breach " * 6
+            proto("step", stdin={"rulings": [{"record": "fx-d3", "ruling": long_ruling, "alternative": "reveal refuses",
+                                              "fails": "nothing", "evidence": "x", "sure": False}]}, cwd=repo)
+            dialog = shown(cwd=repo)["batch"]["questions"][0]
+            release_option = dialog["options"][0]
+            if not dialog["question"].startswith("Release 1 record? Unsure: fx-d3 (reveal") or len(dialog["question"]) > 160 \
+                    or long_ruling not in release_option.get("preview", "") or "reveal refuses" not in release_option["preview"]:
+                raise ValueError(f"the dialog must lead with the unsure ruling and show it in full in the preview: {dialog}")
+            refused("start", "round", "--discussion", stdin={"points": [{"text": "x"}]}, needle="takes the same records again", cwd=repo)
+            out = proto("answer", "--origin", "dialog", cwd=repo, stdin={"marker": shown(cwd=repo)["batch"]["marker"], "answers": {dialog["question"]: "Hold"}}).stdout
+            reasons = json.loads((session_dir / "state.json").read_text()).get("dropReasons")
+            closed_text = proto("show", cwd=repo).stdout
+            if reasons or "ask what it was held for" not in out + closed_text or shown(cwd=repo)["next"] != {"release": {"count": 2}}:
+                raise ValueError(f"a Hold must drop nothing and leave the records to a bare release: {reasons} {shown(cwd=repo)['next']}\n{out}\n{closed_text}")
+            bare = json.loads(proto("pass", "--origin", "composer", stdin={"command": "release-round", "args": "", "pending": None}, cwd=repo).stdout)
+            if "fx-d3" not in [r["id"] for r in bare["records"]]:
+                raise ValueError(f"a bare release takes a held record again: {bare['records']}")
+            proto("abandon", cwd=repo)
+            edit_state(lambda document: document.update(dropReasons={}))
+            patch_config(items={rid: row for rid, row in items.items() if rid != "fx-d3"})
+            calls()
+            proto("next", cwd=repo)
+            if ["health", "--json", "--items", "decided"] not in [c["args"] for c in calls()] or shown(cwd=repo)["next"] != {"release": {"count": 2}}:
+                raise ValueError("protocol next must read the board and save the count")
+            patch_config(items=items)
+            # Board check: a revision the set's texts name without a link is listed (board check --json), once, in the step's text.
+            patch_config(check={"unlinkedRevisions": [
+                {"id": "fx-d1", "other": "fx-old", "word": "revises", "old": "fx-old", "new": "fx-d1"},
+                {"id": "fx-elsewhere", "other": "fx-else", "word": "replaces", "old": "fx-else", "new": "fx-elsewhere"}]})
+            proto("start", "release", "fx-d1", cwd=repo)
+            calls()
+            out = proto("step", stdin={"records": {"fx-d1": "unchanged"}}, cwd=repo).stdout
+            if ["check", "--json"] not in [c["args"] for c in calls()] \
+                    or "fx-d1 revises fx-old: `board supersede fx-old --with fx-d1`" not in out or "fx-elsewhere" in out:
+                raise ValueError(f"the Board check must list the set's unlinked revisions:\n{out}")
+            proto("abandon", cwd=repo)
+            patch_config(check={})
+            # Carried settled items: a rule record that closes another takes over the items it settled, and its release closes them.
+            qid = replacing("Kappa point", ["fx-d5"], {"fx-d5": "supersedes"}, items={**items, "fx-d5": {**items["fx-d1"], "title": "D5"},
+                                                                                     "fx-set1": {"status": "open", "issue_type": "decision"}}, newIds=["fx-n9"])
+            edit_state(lambda document: document.setdefault("settles", {}).update({"fx-d5": ["fx-set1"]}))
+            answered()
+            proto("step", stdin={"records": {qid: {"rationale": "Replaces fx-d5.", "ruleOwner": "docs/x.md"}}}, cwd=repo)
+            patch_config(items={**json.loads(config.read_text())["items"], "fx-n9": {**items["fx-d1"], "title": "N9"}})
+            proto("start", "release", "fx-n9", cwd=repo)
+            out = proto("step", stdin={"records": {"fx-n9": "unchanged"}}, cwd=repo).stdout
+            if "Pre-filled: fx-n9 answers fx-set1" not in out:
+                raise ValueError(f"the items a closed record settled must belong to the new record's release:\n{out}")
+            proto("abandon", cwd=repo)
             configure()
+
 
         if part == "answers":
             # H: a chat answer quotes only what the user wrote after the question went out (an earlier "yes" fails).
@@ -3874,10 +4357,12 @@ def validate_protocol(root: Path, part: str) -> None:
             if again is None or [q["question"] for q in again["questions"]] != ["Typed?"]:
                 raise ValueError(f"protocol step must send a read typed question out again: {again}")
             proto("answer", "--origin", "dialog", cwd=repo, stdin={"marker": again["marker"], "answers": {"Typed?": "Drop, but keep the log"}})
-            mapped = json.loads(proto("answer", "--origin", "chat", cwd=repo, stdin={
-                "question": typed["id"], "answer": "Drop", "quote": "Drop, but keep the log"}).stdout)
-            if mapped["step"] != "record" or "note: but log it" not in mapped["note"]:
-                raise ValueError(f"protocol must accept the model's reading of typed text and show notes at Record: {mapped}")
+            proto("answer", "--origin", "chat", cwd=repo, stdin={"question": typed["id"], "answer": "Drop", "quote": "Drop, but keep the log"})
+            mapped = shown(cwd=repo)
+            if mapped["step"] != "check" or mapped["pending"]["command"] != "challenge-rulings":
+                raise ValueError(f"the last answer, typed then read, leads to the challenge after the answers: {mapped}")
+            if "note: but log it" not in proto("step", stdin={"pass": "challenge-rulings", "updates": [], "checked": ["the answers"]}, cwd=repo).stdout:
+                raise ValueError("protocol must show notes at Record")
             closed = proto("step", stdin={"records": {q["id"]: {"rationale": "r", "ruleOwner": "o"} for q in mapped["questions"]}},
                            cwd=repo).stdout.splitlines()[0]
             if not re.fullmatch(r"r\d+ · recorded q\d+, q\d+ · round closed", closed):
@@ -3925,10 +4410,12 @@ def validate_protocol(root: Path, part: str) -> None:
             out = converge(session=None, env=codex)
             if "protocol answer --origin model-reported" not in out or "quoted verbatim" not in out or "AskUserQuestion" in out:
                 raise ValueError(f"protocol Codex ask output:\n{out}")
-            result = json.loads(proto("answer", "--origin", "model-reported", session=None, env=codex,
-                                      stdin={"marker": "round:r1:1", "answers": {"Codex?": "keep it, as I said"}}).stdout)
-            if result["session"] != "0000-cdx00001" or result["step"] != "record":
+            note = proto("answer", "--origin", "model-reported", session=None, env=codex,
+                         stdin={"marker": "round:r1:1", "answers": {"Codex?": "keep it, as I said"}}).stdout
+            result = json.loads(proto("show", "--json", session=None, env=codex).stdout)
+            if note.startswith("{") or "challenge-rulings" not in note or result["session"] != "0000-cdx00001" or result["step"] != "check" or result["pending"]["command"] != "challenge-rulings":
                 raise ValueError(f"protocol Codex answer: {result}")
+            proto("step", session=None, env=codex, stdin={"pass": "challenge-rulings", "updates": [], "checked": ["the answer"]})
             proto("step", session=None, env=codex, stdin={"records": {"q1": {"rationale": "R.", "ruleOwner": "o"}}})
             if 'User (model-reported), ' not in (notes / "r1-q1.md").read_text(encoding="utf-8"):
                 raise ValueError("a Codex record must flag the answer model-reported")
@@ -3947,17 +4434,18 @@ def validate_protocol(root: Path, part: str) -> None:
                                                     "evidence": "e", "sure": False}]}, **codex_repo).stdout
             batch = json.loads(proto("show", "--json", **codex_repo).stdout)["batch"]
             if "protocol answer --origin model-reported" not in out or "unsure: fx-c1 r" not in out \
-                    or batch["questions"][0]["question"] != "Release 1 record?":
+                    or batch["questions"][0]["question"] != "Release 1 record? Unsure: fx-c1 (r)":
                 raise ValueError(f"protocol Codex approval: {out}")
             text = batch["questions"][0]["question"]
-            result = json.loads(proto("answer", "--origin", "model-reported", stdin={"marker": batch["marker"], "answers": {text: "sounds fine"}},
-                                      **codex_repo).stdout)
-            if result["step"] != "ask" or "needs the user's pick" not in result["note"]:
-                raise ValueError(f"protocol: free words must not approve a release: {result}")
+            note = proto("answer", "--origin", "model-reported", stdin={"marker": batch["marker"], "answers": {text: "sounds fine"}},
+                         **codex_repo).stdout
+            result = json.loads(proto("show", "--json", **codex_repo).stdout)
+            if result["step"] != "ask" or "needs the user's pick" not in note:
+                raise ValueError(f"protocol: free words must not approve a release: {note}")
             proto("step", stdin={}, **codex_repo)
             batch = json.loads(proto("show", "--json", **codex_repo).stdout)["batch"]
-            result = json.loads(proto("answer", "--origin", "model-reported", stdin={"marker": batch["marker"], "answers": {text: "Release"}},
-                                      **codex_repo).stdout)
+            proto("answer", "--origin", "model-reported", stdin={"marker": batch["marker"], "answers": {text: "Release"}}, **codex_repo)
+            result = json.loads(proto("show", "--json", **codex_repo).stdout)
             if result["step"] != "owners":
                 raise ValueError(f"protocol Codex model-reported approval: {result}")
             proto("abandon", **codex_repo)
@@ -4006,7 +4494,7 @@ def validate_protocol(root: Path, part: str) -> None:
             real_session = {"cwd": real, "session": "0000-real0001", "env": env, "process": True}
             out = proto("start", "round", **real_session).stdout
             # fx-ovo.3 is held by the live lead0001: left out of this session's candidates, still a Related hit below.
-            if "- held by live session lead0001, not offered: fx-ovo.3" not in out or "fx-ovo.3 [" in out or "fx-ovo.1 [decided]" not in out:
+            if "Held by live session lead0001, not offered: fx-ovo.3" not in out or "- fx-ovo.3" in out or "- fx-ovo.1: Store choice" not in out:
                 raise ValueError(f"protocol Collect through bin/board:\n{out}")
             proto("step", stdin={"classes": {"fx-ovo.1": "user", "fx-ovo.9": "planning"}}, **real_session)
             proto("step", stdin={"select": ["fx-ovo.1"]}, **real_session)
@@ -4129,6 +4617,32 @@ def validate_protocol(root: Path, part: str) -> None:
                 raise ValueError(f"a partly applied report says what was not applied: {out}")
             proto("step", **texts, observe=False, stdin={"pass": "step-back", "updates": [{"id": qid, "premises": "moved again"}]})  # the run stayed open
             refused("step", **texts, observe=False, stdin=unobserved, needle="no /step-back ran")
+            proto("abandon", **texts)
+            # F: a pass report with a refused update holds the round: the batch does not go out on the old text; the failed
+            # update is resent through a pass report. In Check (the last pass before the batch) and in Ask (an extra pass).
+            qid = texts_round("Hold?")
+            while shown(**texts)["pending"]["command"] != "challenge-rulings":
+                proto("step", **texts, stdin={"pass": shown(**texts)["pending"]["command"], "updates": [], "checked": ["q"]})
+            out = proto("step", **texts, stdin={"pass": "challenge-rulings", "checked": ["q"], "updates": [
+                {"id": qid, "title": "Held title"}, {"id": qid, "header": "Much too long for a chip"}]}).stdout
+            view = shown(**texts)
+            if "Not applied" not in out or view["batch"] is not None or view["step"] != "check" \
+                    or (view["pending"] or {}).get("command") != "challenge-rulings":
+                raise ValueError(f"a refused update holds the batch (Check): {out}\n{view}")
+            proto("step", **texts, stdin={"pass": "challenge-rulings", "checked": ["q"], "updates": [{"id": qid, "header": "Fixed"}]})
+            view = shown(**texts)
+            if view["batch"] is None or view["questions"][0]["title"] != "Held title":
+                raise ValueError(f"the resend releases the held batch with the applied updates: {view}")
+            out = proto("step", **texts, stdin={"pass": "ground", "checked": ["q"], "updates": [
+                {"id": qid, "title": "Ask title"}, {"id": qid, "header": "Much too long for a chip"}]}).stdout
+            view = shown(**texts)
+            if "Not applied" not in out or view["batch"] is not None or view["step"] != "ask":
+                raise ValueError(f"a refused update holds the batch (Ask): {out}\n{view}")
+            refused("step", **texts, stdin={}, needle="resend")
+            proto("step", **texts, stdin={"pass": "ground", "checked": ["q"], "updates": [{"id": qid, "header": "Fixed 2"}]})
+            view = shown(**texts)
+            if view["batch"] is None or view["questions"][0]["title"] != "Ask title":
+                raise ValueError(f"the resend issues the held batch in Ask: {view}")
             proto("abandon", **texts)
             # A question too long to ask (only a pre-limit one can be): a plain message naming the error, no automatic pass; the
             # model shortens it in a pass of its own, whose Skill call counts as the observed run.
@@ -4337,6 +4851,163 @@ def validate_protocol(root: Path, part: str) -> None:
             if shown(**texts)["step"] != "check":
                 raise ValueError("an option description change is content: it reruns the check loop")
             proto("abandon", **texts)
+            # r13: an edit that adds a question or changes a recommendation gets the scoped check, one that raises to strong a
+            # challenge, before the question is asked; the others go out. A pass after the last answer follows the same path.
+            def multi_round(*words):
+                """A round of one question per word up to the batch (check converged); returns (the point, the question ids)."""
+                found = re.search(r"(pt\d+) \[pasted\]", proto("start", "round", "--no-board", str(notes), stdin={"points": [words[0]]}, **texts).stdout)[1]
+                proto("step", stdin={"classes": {found: "user"}}, **texts)
+                proto("step", stdin={"select": [found]}, **texts)
+                proto("step", **texts, stdin={**ROUND_INFO, "questions": [question(word, **{"for": found}) for word in words]})
+                ids_ = [q["id"] for q in shown(**texts)["questions"]]
+                converge(**texts)
+                return found, ids_
+
+            def said(words):
+                proto("say", "--origin", "composer", stdin={"text": words}, **texts)
+                return words
+
+            def log_texts():
+                return [line["text"] for line in shown(**texts)["log"]]
+
+            # A: an added question waits while the batch is out (it stays out), is checked at the hand-over, then asked.
+            point, (q1, q2) = multi_round("Add one?", "Add two?")
+            first = shown(**texts)["batch"]
+            proto("edit", **texts, stdin={"updates": [question("Third?", **{"for": point})], "quote": said("also ask Third?")})
+            view = shown(**texts)
+            third = view["questions"][2]
+            if view["batch"] != first or third["status"] != "draft" or view["pending"] is not None:
+                raise ValueError(f"an edit that only adds leaves the batch out and the question unasked: {view}")
+            proto("answer", "--origin", "dialog", **texts, stdin={"marker": first["marker"], "answers": {"1. Add one?": "Keep", "2. Add two?": "Keep"}})
+            view = shown(**texts)
+            if view["step"] != "check" or (view["pending"]["command"], view["pending"]["args"]) != ("step-back", f"goal foundations {third['id']}") \
+                    or not any(text.startswith(f"{third['id']}: checked before they are asked") for text in log_texts()):
+                raise ValueError(f"the added question gets the scoped check at the hand-over, before the challenge after the answers: {view['pending']}\n{log_texts()}")
+            converge(**texts)
+            view = shown(**texts)
+            if [q["question"] for q in view["batch"]["questions"]] != ["Third?"]:
+                raise ValueError(f"the checked question is asked in the next batch: {view['batch']}")
+            proto("answer", "--origin", "dialog", **texts, stdin={"marker": view["batch"]["marker"], "answers": {"Third?": "Keep"}})
+            if shown(**texts)["pending"]["args"] != f"{q1} {q2} {third['id']}":
+                raise ValueError("the challenge after the last answer covers the whole answered set")
+            after_answers(**texts)
+            proto("abandon", **texts)
+            # A changed recommendation takes the question out of the batch and the others go out; wording, options and a mark
+            # lowered to lean stay free.
+            point, (q1, q2) = multi_round("Rec one?", "Rec two?")
+            first = shown(**texts)["batch"]
+            proto("edit", **texts, stdin={"updates": [{"id": q1, "recommendation": "Drop"}], "quote": said("recommend Drop for the first")})
+            view = shown(**texts)
+            if view["batch"]["marker"] == first["marker"] or [q["question"] for q in view["batch"]["questions"]] != ["Rec two?"] \
+                    or view["questions"][0]["status"] != "draft":
+                raise ValueError(f"a changed recommendation leaves the batch and the others go out: {view}")
+            proto("edit", **texts, stdin={"updates": [{"id": q2, "text": "Rec two, reworded?", "title": "Reworded", "header": "Rec",
+                                                       "options": [{"label": "Keep", "description": "keep it, said again"}, {"label": "Drop", "description": "drop it"}],
+                                                       "premises": "a new premise"}], "quote": said("reword the second")})
+            view = shown(**texts)
+            if [q["question"] for q in view["batch"]["questions"]] != ["Rec two, reworded?"] or view["pending"] is not None:
+                raise ValueError(f"wording, options and premises are free: the batch goes out again at once: {view}")
+            renamed = [{"label": "Keep it", "description": "keep it"}, {"label": "Drop", "description": "drop it"}]
+            proto("edit", **texts, stdin={"updates": [{"id": q2, "options": renamed, "recommendation": "Keep it"}], "quote": said("call the first option Keep it")})
+            view = shown(**texts)  # the recommended option keeps its place: wording, not a changed recommendation
+            if [q["question"] for q in view["batch"]["questions"]] != ["Rec two, reworded?"] or view["pending"] is not None:
+                raise ValueError(f"renaming the recommended option's label is wording: {view}")
+            proto("answer", "--origin", "dialog", **texts, stdin={"marker": view["batch"]["marker"], "answers": {"Rec two, reworded?": "Keep it"}})
+            view = shown(**texts)
+            if (view["pending"]["command"], view["pending"]["args"]) != ("step-back", f"goal foundations {q1}"):
+                raise ValueError(f"the re-recommended question gets the scoped check at the hand-over: {view['pending']}")
+            converge(**texts)
+            asked = shown(**texts)["batch"]["questions"][0]
+            if asked["question"] != "Rec one?" or asked["options"][0]["label"] != "Drop (recommended, lean)":
+                raise ValueError(f"the checked question is asked with its new recommendation: {asked}")
+            proto("abandon", **texts)
+            # With nothing else to ask, the check starts at once; an edit that only adds does not take the only question out.
+            point, (q1,) = multi_round("Solo?")
+            first = shown(**texts)["batch"]
+            proto("edit", **texts, stdin={"updates": [{"id": q1, "recommendation": "Drop"}], "quote": said("recommend Drop")})
+            view = shown(**texts)
+            if view["batch"] is not None or view["step"] != "check" or view["pending"]["command"] != "step-back" or view["pending"]["args"] != f"goal foundations {q1}":
+                raise ValueError(f"with nothing left to ask the scoped check starts at once: {view}")
+            proto("abandon", **texts)
+            # Before Ask the running check takes an added question: no extra hand-over check, both go out together.
+            found = re.search(r"(pt\d+) \[pasted\]", proto("start", "round", "--no-board", str(notes), stdin={"points": ["Early one?"]}, **texts).stdout)[1]
+            proto("step", stdin={"classes": {found: "user"}}, **texts)
+            proto("step", stdin={"select": [found]}, **texts)
+            proto("step", **texts, stdin={**ROUND_INFO, "questions": [question("Early one?", **{"for": found})]})
+            proto("edit", **texts, stdin={"updates": [question("Early two?", **{"for": found})], "quote": said("and ask Early two?")})
+            converge(**texts)
+            view = shown(**texts)
+            if [q["question"] for q in view["batch"]["questions"]] != ["1. Early one?", "2. Early two?"]:
+                raise ValueError(f"a question added while the check runs goes out with the others: {view['batch']}")
+            proto("abandon", **texts)
+            # B: a raise to strong takes the question out of the batch and runs one challenge on it; its lowered mark is what shows.
+            point, (q1, q2) = multi_round("Raise one?", "Raise two?")
+            first = shown(**texts)["batch"]
+            raise_strong = {"strength": "strong", "leanBecause": None, "strongBecause": STRONG_CLAIMS}
+            proto("edit", **texts, stdin={"updates": [{"id": q1, **raise_strong}], "quote": said("make the first strong")})
+            view = shown(**texts)
+            if [q["question"] for q in view["batch"]["questions"]] != ["Raise two?"] or view["questions"][0]["status"] != "draft":
+                raise ValueError(f"a raise to strong leaves the batch and the others go out: {view}")
+            proto("answer", "--origin", "dialog", **texts, stdin={"marker": view["batch"]["marker"], "answers": {"Raise two?": "Keep"}})
+            view = shown(**texts)
+            if (view["pending"]["command"], view["pending"]["args"]) != ("challenge-rulings", q1) or view["step"] != "check":
+                raise ValueError(f"a raise runs one challenge on that question: {view['pending']}")
+            proto("step", **texts, stdin={"pass": "challenge-rulings", "checked": ["its checklist"], "updates": [
+                {"id": q1, "strength": "lean", "strongBecause": None, "leanBecause": {"cause": "evidence", "detail": "the probe was not run"}}]})
+            view = shown(**texts)
+            if [q["question"] for q in view["batch"]["questions"]] != ["Raise one?"] \
+                    or view["batch"]["questions"][0]["options"][0]["description"] != "Unverified: the probe was not run — keep it" \
+                    or f"challenge-rulings (raised {q1}): {q1} changed" not in log_texts()[-2]:
+                raise ValueError(f"the challenge's lowered mark is what shows:\n{view['batch']}\n{log_texts()}")
+            proto("abandon", **texts)
+            # A raise with nothing else to ask runs its challenge at once; lowering to lean is free.
+            point, (q1,) = multi_round("Solo raise?")
+            proto("edit", **texts, stdin={"updates": [{"id": q1, **raise_strong}], "quote": said("make it strong")})
+            view = shown(**texts)
+            if view["batch"] is not None or (view["pending"] or {}).get("command") != "challenge-rulings" or view["pending"]["args"] != q1:
+                raise ValueError(f"a raise with nothing else to ask runs its challenge at once: {view}")
+            proto("step", **texts, stdin={"pass": "challenge-rulings", "checked": ["its checklist"], "updates": []})
+            view = shown(**texts)
+            if view["questions"][0]["strength"] != "strong" or view["batch"]["questions"][0]["options"][0]["label"] != "Keep (recommended, strong)":
+                raise ValueError(f"a raise the challenge leaves stands: {view}")
+            proto("edit", **texts, stdin={"updates": [{"id": q1, "strength": "lean", "strongBecause": None,
+                                                       "leanBecause": {"cause": "preference", "detail": "taste"}}], "quote": said("make it lean again")})
+            view = shown(**texts)
+            if view["batch"]["questions"][0]["options"][0]["label"] != "Keep (recommended, lean)" or view["pending"] is not None:
+                raise ValueError(f"lowering to lean is free: {view}")
+            proto("abandon", **texts)
+            # C: the pass after the last answer: a finding is a new question that takes the scoped check, then the pass runs
+            # again; a round with nothing answered skips it.
+            point, (q1,) = multi_round("Final?")
+            note = json.loads(proto("answer", "--origin", "dialog", **texts, stdin={"marker": shown(**texts)["batch"]["marker"],
+                                                                                        "answers": {"Final?": "Keep"}}).stdout)["note"]
+            view = shown(**texts)
+            if (view["pending"]["command"], view["pending"]["args"]) != ("challenge-rulings", q1) \
+                    or view["step"] != "check" or "next: challenge-rulings after the last answer" not in note.splitlines()[0]:
+                raise ValueError(f"the last answer is followed by the challenge over the answered set: {view['pending']}")
+            out = proto("step", **texts, stdin={"pass": "challenge-rulings", "checked": ["the answer"], "updates": [question("Found?", **{"for": point})]}).stdout
+            view = shown(**texts)
+            found_id = view["questions"][1]["id"]
+            if f"challenge-rulings (after answers): {found_id} added" not in out.splitlines()[0] or view["step"] != "check" \
+                    or (view["pending"]["command"], view["pending"]["args"]) != ("step-back", f"goal foundations {found_id}"):
+                raise ValueError(f"a finding is a new question that takes the scoped check:\n{out}")
+            converge(**texts)
+            view = shown(**texts)
+            proto("answer", "--origin", "dialog", **texts, stdin={"marker": view["batch"]["marker"], "answers": {"Found?": "Keep"}})
+            if (shown(**texts)["pending"]["command"], shown(**texts)["pending"]["args"]) != ("challenge-rulings", f"{q1} {found_id}"):
+                raise ValueError("the pass runs once more after the finding's answer")
+            after_answers(**texts)
+            proto("abandon", **texts)
+            point, (q1,) = multi_round("Gone?")
+            saved = state / f"{texts['session']}.protocol" / "state.json"  # nothing answered: the only question went away
+            document = json.loads(saved.read_text(encoding="utf-8"))
+            document["round"].update(questions=[], batch=None)
+            saved.write_text(json.dumps(document), encoding="utf-8")
+            proto("step", **texts, stdin={})
+            view = shown(**texts)
+            if view["step"] != "record" or view["pending"] is not None:
+                raise ValueError(f"a round with nothing answered skips the pass: {view}")
+            proto("abandon", **texts)
             # Codex: the same verb, the quote taken verbatim (no console relays messages there).
             point = re.search(r"(pt\d+) \[pasted\]", proto("start", "round", "--no-board", str(notes), stdin={"points": ["CEdit?"]}, **codex).stdout)[1]
             proto("step", stdin={"classes": {point: "user"}}, **codex)
@@ -4359,7 +5030,7 @@ def validate_protocol(root: Path, part: str) -> None:
                 for n, rid in enumerate(ids[:6])]})
             dialog = shown(cwd=repo, **texts)["batch"]["questions"][0]
             if len(dialog["question"]) > 160 or len(dialog["header"]) > 12 or any(len(o["description"]) > 150 for o in dialog["options"]) \
-                    or "unsure:" not in proto("show", cwd=repo, **texts).stdout or any(rid in dialog["question"] for rid in ids):
+                    or "unsure:" not in proto("show", cwd=repo, **texts).stdout or " Unsure: " not in dialog["question"]:
                 raise ValueError(f"a release approval dialog stays within the limits by construction: {dialog}")
             title = next(q for q in shown(cwd=repo, **texts)["questions"])["title"]
             if len(title) > 60:
@@ -4367,6 +5038,12 @@ def validate_protocol(root: Path, part: str) -> None:
             proto("abandon", cwd=repo, **texts)
 
         if part == "rules":
+            # The engine reads a pending revision's link type and rule key from the board's own constants.
+            board_loader = importlib.machinery.SourceFileLoader("board_constants", str(root / "bin" / "board"))
+            board_module = importlib.util.module_from_spec(importlib.util.spec_from_loader("board_constants", board_loader))
+            board_loader.exec_module(board_module)
+            if (engine_module.REVISES, engine_module.REVISES_RULE) != (board_module.REVISES, board_module.REVISES_RULE):
+                raise ValueError("bin/protocol REVISES and REVISES_RULE must equal bin/board's")
             # G: rule questions. One question settles the selected items one answer settles the same way: `settles` is checked at
             # Stage and again after every update set (pass report, edit); the record names each settled item, inherits their
             # blocks, and the release closes them by it.
@@ -4457,6 +5134,7 @@ def validate_protocol(root: Path, part: str) -> None:
                     needle="is answered; restart it first", **rules)
             batch = shown(**rules)["batch"]
             proto("answer", "--origin", "dialog", stdin={"marker": batch["marker"], "answers": {batch["questions"][0]["question"]: "Keep"}}, **rules)
+            after_answers(**rules)
             if shown(**rules)["step"] != "record":
                 raise ValueError(f"both questions answered: {shown(**rules)}")
             # Record: the rule's record names each settled item (checked before any board write).
@@ -4549,6 +5227,329 @@ def validate_protocol(root: Path, part: str) -> None:
             if shown(**rules)["batch"] is None or shown(**rules)["pending"] is not None:
                 raise ValueError(f"a challenge-rulings run that changes nothing asks: {shown(**rules)}")
             proto("abandon", **rules)
+
+        if part == "context":
+            # r17/r18: what a session was told is one record (`state['told']`), cleared by `protocol compacted`: the skill text of a
+            # pass and the question list of a check pass once per check cycle, the open-item list once, the report formats once per
+            # step kind, the Durable owners once, the ask instructions once.
+            expander = load_skill_expander(root)
+            installed = tmp / "home"
+            for source in ("step-back/SKILL.md", "ground/SKILL.md", "shared/project-memory.md"):
+                target = installed / ".agents" / "skills" / source
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_text(expander.expand_markdown(root / "skills" / source, (root / "skills").resolve()), encoding="utf-8")
+            home = {"env": {"HOME": str(installed)}}
+            ctx_notes = tmp / "ctx-notes"
+
+            def history(**kwargs):
+                return [json.loads(row) for row in proto("history", "--json", **kwargs).stdout.splitlines()]
+
+            def told_events(event="pass", **kwargs):
+                return [e["told"] for e in history(**kwargs) if e["event"] == event]
+
+            def run_pass(origin="plugin", updates=None, **kwargs):
+                """The pending pass as the console runs it (origin plugin), then its report; returns (the pass, the report's output)."""
+                waiting = shown(**kwargs)["pending"]
+                proto("pass", "--origin", origin, stdin={"command": waiting["command"], "args": waiting["args"], "pending": waiting["id"]}, **kwargs)
+                out = proto("step", stdin={"pass": waiting["command"], "updates": updates or [], "checked": ["every question"]}, **kwargs).stdout
+                return waiting, out
+
+            staged = {}
+
+            def to_check(point, **kwargs):
+                """A no-board round to its first check pass; `staged['q']` is its question's id."""
+                pasted = re.search(r"(pt\d+) \[pasted\]", proto("start", "round", "--no-board", str(ctx_notes), stdin={"points": [point]}, **kwargs).stdout).group(1)
+                proto("step", stdin={"classes": {pasted: "user"}}, **kwargs)
+                proto("step", stdin={"select": [pasted]}, **kwargs)
+                out = proto("step", stdin={**ROUND_INFO, "questions": [question(f"{point}?", **{"for": pasted})]}, **kwargs).stdout
+                staged["q"] = shown(**kwargs)["questions"][0]["id"]
+                return out
+
+            # A: the skill text once per check cycle. The path pass is the cycle's first step-back (full), then each pending pass
+            # gets the reminder cut from the installed SKILL.md: step-back's Stance and lenses, ground's paragraph and lenses.
+            first = to_check("Cadence?", **home)
+            qid = staged["q"]
+            if f"- {qid} draft: Cadence?" not in first:
+                raise ValueError(f"the cycle's first check pass lists the questions:\n{first}")
+            seen, outputs = [], []
+            for _ in range(10):
+                view = shown(**home)
+                if view["step"] != "check" or view["pending"] is None:
+                    break
+                seen.append((view["pending"]["command"], view["pending"]["args"], view["pending"]["reminder"]))
+                outputs.append(run_pass(**home)[1])
+            expected = [("step-back", "goal foundations", False), ("step-back", "", True), ("ground", "", False),
+                        ("step-back", "decisions clean overfit mechanics", True), ("ground", "assumptions board sources probe", True),
+                        ("ground", f"assumptions sources probe {qid}", True), ("challenge-rulings", "", False)]
+            if [(c, a) for c, a, _ in seen] != [(c, a) for c, a, _ in expected]:
+                raise ValueError(f"the check sequence changed under the cadence test: {seen}")
+            everything = ("goal", "decisions", "foundations", "consumer", "root-fix", "bloat", "gaps", "clean", "overfit", "mechanics",
+                          "assumptions", "board", "sources", "probe")
+            for (command, args, reminder), (_, _, cut) in zip(seen, expected):
+                if not cut:
+                    if reminder is not None:
+                        raise ValueError(f"{command} {args!r} is the cycle's first of its kind and gets the full text: {reminder}")
+                    continue
+                skill = (installed / ".agents" / "skills" / command / "SKILL.md").read_text(encoding="utf-8")
+                lead = skill.split("## Stance\n", 1)[1].split("\n## ", 1)[0].strip() if command == "step-back" \
+                    else skill.split("the rest of the argument is the focus.\n\n", 1)[1].split("\n\n", 1)[0]
+                wanted = [word for word in args.split() if f"- **{word}:**" in skill] or (["consumer", "root-fix", "bloat", "gaps"] if command == "step-back" else [])
+                absent = [name for name in everything if f"- **{name}:**" in skill and name not in wanted]
+                if not reminder or not reminder.startswith(f"Reminder for /{command}") or lead not in reminder \
+                        or not all(f"- **{name}:**" in reminder for name in wanted) or any(f"- **{name}:**" in reminder for name in absent) \
+                        or "On every mention" in reminder or (args and f"`{args}`" not in reminder):
+                    raise ValueError(f"the reminder of {command} {args!r} is the file's stance/paragraph plus the named lenses:\n{reminder}")
+            if told_events(**home) != ["full", "reminder", "full", "reminder", "reminder", "reminder", "full"] \
+                    or told_events("pass-start", **home) != told_events(**home):
+                raise ValueError(f"each pass logs what it was told (the console's own run gets the reminder): {history(**home)}")
+            # B: the cycle's first check pass lists the questions, the others count them.
+            if "(protocol show lists them)" not in outputs[0] or f"- {qid} draft" in outputs[0] or f"- {qid} draft" in outputs[1]:
+                raise ValueError(f"later check passes of a cycle count the questions:\n{outputs[0]}")
+            proto("abandon", **home)
+
+            # A2: a change opens the next cycle: its step-back and ground are full again, and its first check pass lists the questions.
+            to_check("Cycles?", **home)
+            qid = staged["q"]
+            run_pass(**home)                                                                       # path pass
+            if shown(**home)["pending"]["reminder"] is None:
+                raise ValueError("a second round: its Base step-back gets the reminder after its own path pass")
+            run_pass(**home)                                                                       # Base step-back
+            _, out = run_pass(updates=[{"id": qid, "premises": "a changed premise"}], **home)     # the cycle's ground, with a change
+            nxt = shown(**home)
+            if (nxt["check"]["cycle"], nxt["pending"]["command"], nxt["pending"]["reminder"]) != (2, "step-back", None) \
+                    or "Check cycle 2/5" not in out or f"- {qid} draft: Cycles?" not in out:
+                raise ValueError(f"the next cycle's first step-back is full, and its first check pass lists the questions:\n{nxt}\n{out}")
+            _, out = run_pass(**home)
+            if "(protocol show lists them)" not in out or shown(**home)["pending"]["reminder"] is not None:
+                raise ValueError(f"cycle 2: its ground is full (the first of the cycle), the question list was told:\n{out}")
+            if f"- {qid} draft: Cycles?" not in proto("show", **home).stdout:
+                raise ValueError("protocol show lists the questions whatever the record says")
+            # A restart is a new check run: its first pass is full again.
+            proto("restart", qid, **home)
+            restarted = shown(**home)["pending"]
+            if (restarted["command"], restarted["reminder"]) != ("step-back", None):
+                raise ValueError(f"a new check run tells the skill text again: {restarted}")
+            run_pass(**home)                                                                       # the scoped path pass
+            if shown(**home)["pending"]["reminder"] is None:
+                raise ValueError("the Base step-back after the path pass gets the reminder")
+            # C: a compaction makes the next one full and lists the questions again; typed and model runs read the full text.
+            proto("compacted", **home)
+            if shown(**home)["pending"]["reminder"] is not None:
+                raise ValueError("a compaction makes the next pass full")
+            _, out = run_pass(origin="composer", **home)
+            if told_events(**home)[-1] != "full" or f"- {qid} draft: Cycles?" not in out or shown(**home)["pending"]["command"] != "ground":
+                raise ValueError(f"a typed run is told the full text, and the questions list again after a compaction: {told_events(**home)}\n{out}")
+            run_pass(origin="model", **home)
+            if told_events(**home)[-1] != "full":
+                raise ValueError(f"a model's own Skill call is told the full text: {told_events(**home)}")
+            proto("abandon", **home)
+            if "Compaction recorded" not in proto("compacted", **home).stdout or history(**home)[-1]["event"] != "compacted":
+                raise ValueError("protocol compacted works without an open round and logs it")
+
+            # A3: one switch restores today's behavior; a missing or broken file makes the pass full; the words come from the file.
+            to_check("Switch?", **home)
+            run_pass(**home)
+            if shown(**home)["pending"]["reminder"] is None:
+                raise ValueError("the Base step-back gets the reminder")
+            engine_module.SKILL_TEXT = "pass"
+            try:
+                if shown(**home)["pending"]["reminder"] is not None:
+                    raise ValueError("SKILL_TEXT = 'pass' gives every pass the full text")
+                _, out = run_pass(**home)
+                if told_events(**home)[-1] != "full":
+                    raise ValueError("SKILL_TEXT = 'pass' tells every pass the full text")
+            finally:
+                engine_module.SKILL_TEXT = "cycle"
+            proto("restart", staged["q"], **home)
+            run_pass(**home)
+            marked = tmp / "marked-home"
+            skill = marked / ".agents" / "skills" / "step-back" / "SKILL.md"
+            skill.parent.mkdir(parents=True)
+            skill.write_text((installed / ".agents" / "skills" / "step-back" / "SKILL.md").read_text(encoding="utf-8").replace(
+                "Judge greenfield", "ZEBRA-STANCE greenfield"), encoding="utf-8")
+            if "ZEBRA-STANCE greenfield" not in shown(env={"HOME": str(marked)})["pending"]["reminder"]:
+                raise ValueError("the reminder is read from the installed file, not copied into the engine")
+            for broken in (None, "---\nname: step-back\n---\n\n# Step back\n\nNo stance here.\n"):  # no file, a skill without a Stance
+                bad = tmp / f"bad-home-{bool(broken)}"
+                if broken:
+                    (bad / ".agents" / "skills" / "step-back").mkdir(parents=True)
+                    (bad / ".agents" / "skills" / "step-back" / "SKILL.md").write_text(broken, encoding="utf-8")
+                if shown(env={"HOME": str(bad)})["pending"]["reminder"] is not None:
+                    raise ValueError(f"a reminder that cannot be cut makes the pass full: {broken!r}")
+            proto("abandon", **home)
+
+            # A4: Codex has no console: the reminder comes inline, and SKILL.md is named only when the text is full.
+            codex = {"session": None, "env": {"CODEX_THREAD_ID": "0000-cdx00001", "CODEX_SESSION_ID": "0000-cdx00001", "HOME": str(installed)}}
+            full = to_check("Codex cadence?", **codex)
+            if "Run the step-back skill now" not in full or "(read its SKILL.md)" not in full or "Reminder for" in full:
+                raise ValueError(f"a Codex pass with the full text reads SKILL.md:\n{full}")
+            reminded = proto("step", stdin={"pass": "step-back", "updates": [], "checked": ["x"]}, observe=False, **codex).stdout  # Codex runs are not observed
+            if "Reminder for /step-back" not in reminded or "read its SKILL.md" in reminded or "Judge greenfield" not in reminded \
+                    or told_events(**codex) != ["full"]:
+                raise ValueError(f"a Codex pass with a reminder prints it inline:\n{reminded}")
+            proto("step", stdin={"pass": "step-back", "updates": [], "checked": ["x"]}, observe=False, **codex)
+            if told_events(**codex) != ["full", "reminder"]:
+                raise ValueError(f"the Codex Base step-back is told the reminder: {told_events(**codex)}")
+            proto("abandon", **codex)
+
+            # A5: the real skills yield a reminder for every lens set the engine names (the names are the files' own).
+            token = engine_module._call.set(engine_module.Call({"HOME": str(installed)}, Path(tmp), ""))
+            try:
+                for command, lenses in engine_module.ALL_LENSES.items():
+                    for args in ("", " ".join(lenses), *lenses, "x y"):
+                        text = engine_module.skill_reminder(command, args)
+                        if not text or any(f"- **{name}:**" not in text for name in args.split() if name in lenses):
+                            raise ValueError(f"no reminder for {command} {args!r} from the real skill: {text}")
+            finally:
+                engine_module._call.reset(token)
+
+            # G: the open-item list, once between compactions (protocol next or a round's Collect, whichever is first), grouped.
+            listing_session = {"session": "0000-ctxlist01", "cwd": repo}
+            row = {"status": "open", "type": "decision", "priority": 1, "blockedBy": []}
+            configure(health={"counts": counts, "items": {
+                "questions": [{**row, "id": "fx-a", "title": "A?"}, {**row, "id": "fx-b", "title": "B?"},
+                              {**row, "id": "fx-live", "title": "Live?", "holder": "other001"}],
+                "decided": [{**row, "id": "fx-d", "status": "decided", "title": "D"}],
+                "forUser": [{**row, "id": "fx-u", "type": "task", "title": "Needs you", "holder": "user"}]}},
+                position={"held": [{"id": "fx-live", "holder": "other001", "mark": None}, {"id": "fx-u", "holder": "user", "mark": None}],
+                          "readyMilestones": [{**row, "id": "fx-m", "type": "milestone", "title": "Beta"}],
+                          "finishedEpics": [{**row, "id": "fx-e", "type": "epic", "title": "Cache"}]},
+                items={"fx-closed": {"status": "closed"}, "fx-rel": {"status": "released"}, "fx-null": {"status": None}})
+            out = proto("next", **listing_session).stdout
+            for needle in ("Open items (6):", "open questions · open (2):\n- fx-a: A?\n- fx-b: B?", "decided, awaiting release · decided (1):\n- fx-d: D",
+                           "ready milestones · open (1):\n- fx-m [milestone]: Beta", "finished epics (close one whose acceptance names the user) · open (1):\n- fx-e [epic]: Cache",
+                           "waiting on the user · held by the user, not offered (1):\n- fx-u [task]: Needs you",
+                           "Held by live session other001, not offered: fx-live", "Seeds for the next round"):
+                if needle not in out:
+                    raise ValueError(f"protocol next prints the whole list, grouped, the first time ({needle!r} missing):\n{out}")
+            if out.count("open decision") or out.count("[questions]"):
+                raise ValueError("the rows no longer repeat their view and status")
+            again = proto("next", **listing_session).stdout
+            if "Open items (" in again or "- fx-a: A?" in again or "open questions · open" in again \
+                    or "Open items: 1 decided, 2 open questions, 1 waiting on the user, 1 ready milestones, 1 finished epics" not in again \
+                    or f"`{engine_module.LIST_COMMAND}`" not in again or "board position" not in again or "Seeds for the next round" not in again:
+                raise ValueError(f"protocol next lists nothing the second time between compactions: counts and the command:\n{again}")
+            calls()
+            bare = proto("start", "round", **listing_session).stdout
+            if "- fx-b" in bare or "Open items: 1 decided, 2 open questions, 1 waiting on the user" not in bare or "List them before you select." not in bare:
+                raise ValueError(f"a bare round after the list was printed counts and tells the model to list first:\n{bare}")
+            proto("step", stdin={"classes": {"fx-b": "user"}}, **listing_session)  # an item not printed is classified all the same
+            if "fx-b" not in proto("show", **listing_session).stdout:
+                raise ValueError("the engine keeps every item: an unprinted id classifies")
+            proto("abandon", **listing_session)
+            proto("compacted", **listing_session)
+            bare = proto("start", "round", **listing_session).stdout
+            if "Open items (6):" not in bare or "List them before you select." in bare:
+                raise ValueError(f"after a compaction the first Collect prints the whole list:\n{bare}")
+            proto("abandon", **listing_session)
+            if "Open items (" in proto("next", **listing_session).stdout:
+                raise ValueError("a round's Collect counts as the list printed: protocol next after it does not print it again")
+            # A named round: start round <ids>; the whole list the first time, the named ids with counts afterwards.
+            proto("compacted", **listing_session)
+            named = proto("start", "round", "fx-a", "fx-b", **listing_session).stdout
+            if "Open items (6):" not in named or "Named for this round: fx-a, fx-b." not in named:
+                raise ValueError(f"a named round prints the whole list the first time:\n{named}")
+            proto("abandon", **listing_session)
+            named = proto("start", "round", "fx-a", **listing_session).stdout
+            if "Named:\n- fx-a: A?\n" not in named or "Open items: 1 decided, 2 open questions, 1 waiting on the user" not in named or "- fx-b" in named \
+                    or "List them before you select." in named or "Open items (" in named:
+                raise ValueError(f"a named round afterwards prints its ids, the counts and the command:\n{named}")
+            if shown(**listing_session)["round"] is None:
+                raise ValueError("the named round started")
+            proto("step", stdin={"classes": {"fx-a": "user", "fx-b": "user"}}, **listing_session)  # the scope widens: fx-b was not named
+            proto("abandon", **listing_session)
+            for ids, needle in ((["fx-closed"], "fx-closed is closed"), (["fx-live"], "fx-live is held by live session other001"),
+                                (["fx-u"], "fx-u is held by the user"),
+                                (["fx-rel"], "fx-rel is released, an item no round offers"), (["fx-null"], "fx-null is unknown"),
+                                (["fx-a", "fx-closed", "fx-live"], "fx-closed is closed; fx-live is held by live session other001")):
+                refused("start", "round", *ids, needle=needle, **listing_session)
+            if shown(**listing_session)["round"] is not None:
+                raise ValueError("a refused named round starts nothing")
+            refused("start", "round", "fx-a", "--discussion", needle="not with --discussion or --no-board", **listing_session)
+            refused("start", "round", "fx-a", "--no-board", str(ctx_notes), needle="not with --discussion or --no-board", **listing_session)
+            configure()
+
+            # H: report formats once per step kind between compactions; a refused report repeats its format. The ask instructions
+            # once; the dialog itself always.
+            fmt = {"session": "0000-ctxfmt001", **home}
+            first = proto("start", "round", "--no-board", str(ctx_notes), stdin={"points": ["Formats?"]}, **fmt).stdout
+            if "Report with `protocol step`" not in first or '"classes"' not in first:
+                raise ValueError(f"the first Collect carries its report format:\n{first}")
+            refused("step", stdin={"classes": {"nope": "user"}}, needle='Report with `protocol step` (stdin JSON), e.g. {"classes"', **fmt)
+            proto("abandon", **fmt)
+            second = proto("start", "round", "--no-board", str(ctx_notes), stdin={"points": ["Again?"]}, **fmt).stdout
+            if "Report with" in second:
+                raise ValueError(f"the report format of a step kind prints once between compactions:\n{second}")
+            refused("step", stdin={"classes": {"nope": "user"}}, needle='Report with `protocol step` (stdin JSON), e.g. {"classes"', **fmt)
+            proto("step", stdin={"classes": {"pt2": "user"}}, **fmt)
+            refused("step", stdin={"select": ["pt9"]}, needle='Report with `protocol step` (stdin JSON), e.g. {"select"', **fmt)
+            proto("step", stdin={"select": ["pt2"]}, **fmt)
+            refused("step", stdin={"questions": []}, needle='Report with `protocol step` (stdin JSON), e.g. {"round"', **fmt)
+            proto("step", stdin={**ROUND_INFO, "questions": [question("Again?", **{"for": "pt2"})]}, **fmt)
+            refused("step", stdin={"pass": "step-back", "updates": []}, needle="After the pass, report each change", **fmt)
+            ask = converge(**fmt)
+            if '"questions"' not in ask or "Never pass a person origin" not in ask:
+                raise ValueError(f"the first ask prints the instructions and the dialog:\n{ask}")
+            proto("answer", "--origin", "dialog", stdin={"marker": "round:r2:1", "answers": {"Again?": "Keep"}}, **fmt)
+            proto("step", stdin={"pass": "challenge-rulings", "updates": [], "checked": ["the answer"]}, **fmt)
+            refused("step", stdin={"records": {}}, needle='Report with `protocol step` (stdin JSON), e.g. {"records"', **fmt)
+            proto("step", stdin={"records": {"q1": {"rationale": "R.", "ruleOwner": "o"}}}, **fmt)
+            to_check("Third?", **fmt)
+            ask = converge(**fmt)
+            if "AskUserQuestion with exactly this input" not in ask or "Never pass a person origin" in ask or "protocol edit" in ask:
+                raise ValueError(f"a later ask prints the dialog without the instructions:\n{ask}")
+            refused("edit", stdin={"updates": [{"id": staged["q"], "premises": "x"}], "quote": "never said"}, needle='Edit format: `protocol edit` with stdin {"updates"', **fmt)
+            refused("answer", "--origin", "chat", stdin={"question": staged["q"], "answer": "Keep", "quote": "never said"}, needle='Chat answer format: stdin {"question"', **fmt)
+            proto("abandon", **fmt)
+            proto("compacted", **fmt)
+            if "Report with" not in proto("start", "round", "--no-board", str(ctx_notes), stdin={"points": ["After?"]}, **fmt).stdout:
+                raise ValueError("a compaction brings the report formats back")
+            proto("abandon", **fmt)
+            # Codex: the ask instructions once; later batches say how to answer in a clause with the marker.
+            cdx = {"session": None, "env": {"CODEX_THREAD_ID": "0000-cdx00001", "CODEX_SESSION_ID": "0000-cdx00001", "HOME": str(installed)}}
+            to_check("Codex ask?", **cdx)
+            ask = converge(**cdx)
+            if "Then record the reply: `protocol answer --origin model-reported`" not in ask or "round:r" not in ask:
+                raise ValueError(f"the first Codex ask carries the answer instructions:\n{ask}")
+            proto("abandon", **cdx)
+            to_check("Codex again?", **cdx)
+            ask = converge(**cdx)
+            marker = shown(**cdx)["batch"]["marker"]
+            if "Then record the reply" in ask or f"Record the reply as before: `protocol answer --origin model-reported` (or `decline`), marker {marker}." not in ask \
+                    or "Ask the user exactly these questions" not in ask:
+                raise ValueError(f"a later Codex ask names the marker and the verb in a clause:\n{ask}")
+            proto("abandon", **cdx)
+
+            # D: the Durable owners of project-memory.md print at Owner writes once between compactions, from the installed file.
+            own = {"session": "0000-own00001", "cwd": repo, "env": {"HOME": str(installed)}}
+            configure(items={"fx-s1": {"status": "decided", "issue_type": "decision", "title": "S1"}})
+
+            def to_owners(**kwargs):
+                proto("start", "release", "fx-s1", **kwargs)
+                proto("pass", "--origin", "press", stdin={"command": "release-round", "args": "fx-s1", "pending": None}, **kwargs)
+                proto("step", stdin={"records": {"fx-s1": "unchanged"}}, **kwargs)
+                proto("step", stdin={"checks": {"fx-s1": nones}}, **kwargs)
+                return proto("step", stdin={"rulings": []}, **kwargs).stdout
+
+            out = to_owners(**own)
+            durable = (installed / ".agents" / "skills" / "shared" / "project-memory.md").read_text(encoding="utf-8").split("## Durable owners", 1)[1].split("\n## ", 1)[0]
+            if "## Durable owners (project-memory.md)" not in out or " ".join(durable.split()) not in " ".join(out.split()) \
+                    or "## Outstanding work" in out:
+                raise ValueError(f"Owner writes prints project-memory.md's Durable owners section, read from the installed file:\n{out}")
+            proto("abandon", **own)
+            if "Durable owners" in to_owners(**own):
+                raise ValueError("the Durable owners print once between compactions")
+            proto("abandon", **own)
+            proto("compacted", **own)
+            if "## Durable owners (project-memory.md)" not in to_owners(**own):
+                raise ValueError("a compaction brings the Durable owners back")
+            proto("abandon", **own)
+            proto("compacted", **own)
+            missing = to_owners(**{**own, "env": {"HOME": str(tmp / "no-home")}})
+            if "Durable owners: the `## Durable owners` section of" not in missing or "is missing" not in missing or "| Content | Owner |" in missing:
+                raise ValueError(f"a missing project-memory.md gives one line naming it:\n{missing}")
+            proto("abandon", **own)
+            configure()
 
 
 def validate_worker_last_use(root: Path) -> None:
@@ -4679,6 +5680,7 @@ def run_group(name: str, root: Path) -> None:
         validate_effort_overrides(generator)
         validate_worker_last_use(root)
         validate_copied_install(root)
+        validate_engine_board_fields(root)
         validate_console_lenses(root)
         validate_console_programs(root)
         validate_strength_rules(root)

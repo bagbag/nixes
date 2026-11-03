@@ -11,7 +11,7 @@ argument-hint: "[focus and follow-ups]"
 
 <!-- @include shared/rerun.md -->
 
-Are you sure all your own rulings are the only realistic clean option? Name
+Check that each of your own rulings is the only realistic clean option. Name
 each ruling's strongest alternative and its footguns; re-check every choice you
 left to another role; downgrade anything unsure to a question. Check each
 strong recommendation against the decision protocol's Recommendation strength

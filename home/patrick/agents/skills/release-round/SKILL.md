@@ -20,4 +20,4 @@ Run the release through `protocol` under Release in
 Re-check, Board check and Own rulings steps. The console has already started
 it (on the argument's ids, else the last closed round's records) or stamped
 the open one; without an open release, start it
-(`protocol start release [<ids>]`). A round still open finishes first.
+(`protocol start release [<ids>]`).

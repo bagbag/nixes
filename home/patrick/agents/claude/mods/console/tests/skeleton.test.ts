@@ -264,6 +264,69 @@ describe('machine-run passes', () => {
   })
 })
 
+describe('skill reminder', () => {
+  const complete = () => ({ answer: '', durationMs: 1, isAborted: false, turnId: 't', reason: 'answer' }) as never
+  const REMINDER = 'Reminder for /ground; its full text went out earlier this cycle.'
+  const pending = (reminder: string | null) => roundJson({ pending: { id: 'p7', command: 'ground', args: 'assumptions', reminder } })
+  const plugin = { kind: 'plugin', name: 'console' } as const
+  const presentation = { isFullscreen: true, columns: 160 }
+  const expand = async ($: any) => ($.skill.prompt({ skill: 'ground', text: 'Ground, in full.' } as never) as Promise<{ text: string }>)
+
+  test("the console's own pass expands to the engine's reminder", async ($, on) => {
+    const { clock } = world(on, { round: pending(REMINDER) })
+    await start($)
+    await $.turn.complete(complete())
+    await $.command.run({ command: 'ground', args: 'assumptions', origin: plugin, presentation })
+    expect((await expand($)).text).toBe(REMINDER)
+    await clock.settle()
+  })
+
+  test("a model's Skill call during the console's own pass keeps the full text", async ($, on) => {
+    const { clock } = world(on, { round: pending(REMINDER) })
+    await start($)
+    await $.turn.complete(complete())
+    await $.command.run({ command: 'ground', args: 'assumptions', origin: plugin, presentation })
+    expect((await expand($)).text).toBe(REMINDER)
+    expect((await expand($)).text).toBe('Ground, in full.')
+    await clock.settle()
+  })
+
+  test('a typed command keeps the full text, and so does the model\'s own Skill call', async ($, on) => {
+    const { clock } = world(on, { round: pending(REMINDER) })
+    await start($)
+    await $.command.run({ command: 'ground', args: 'assumptions', origin: { kind: 'composer' }, presentation })
+    expect((await expand($)).text).toBe('Ground, in full.')
+    await $.command.run({ command: 'ground', args: 'assumptions', origin: { kind: 'bridge' }, presentation })
+    expect((await expand($)).text).toBe('Ground, in full.')
+    await $.command.run({ command: 'step-back', args: '', origin: { kind: 'composer' }, presentation })
+    expect((await expand($)).text).toBe('Ground, in full.')  // the model's Skill call: no console run of this pass
+    await clock.settle()
+  })
+
+  test('a pass the engine gives its full text expands as the skill computed it', async ($, on) => {
+    const { clock } = world(on, { round: pending(null) })
+    await start($)
+    await $.turn.complete(complete())
+    await $.command.run({ command: 'ground', args: 'assumptions', origin: plugin, presentation })
+    expect((await expand($)).text).toBe('Ground, in full.')
+    await clock.settle()
+  })
+
+  test('a pass that is no longer pending, and a failing read, pass the full text through', async ($, on) => {
+    const { w, clock } = world(on, { round: pending(REMINDER) })
+    await start($)
+    await $.turn.complete(complete())
+    w.round = roundJson({ pending: { id: 'p8', command: 'step-back', args: '', reminder: REMINDER } })
+    await $.command.run({ command: 'ground', args: 'assumptions', origin: plugin, presentation })
+    expect((await expand($)).text).toBe('Ground, in full.')
+    w.round = pending(REMINDER)
+    w.protocolExit = 1
+    await $.command.run({ command: 'ground', args: 'assumptions', origin: plugin, presentation })
+    expect((await expand($)).text).toBe('Ground, in full.')
+    await clock.settle()
+  })
+})
+
 describe('pass observation', () => {
   test('a model Skill call counts after it ran, with origin model', async ($, on) => {
     const { w } = world(on)

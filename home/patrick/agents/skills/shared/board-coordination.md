@@ -49,7 +49,7 @@ and upstream waits. The board model is [Board core](../shared/board-core.md)
 - At decision time, write the record with `board record <id> <file>`, which
   moves the packet into the first comment and sets status `decided`
   (autopilot: `--status needs_ratification`). The file holds these `##`
-  sections, which `board bd lint` checks before release: `Question`,
+  sections, which `board record` checks: `Question`,
   `Alternatives Considered`, `Decision`, `Rationale` (with provenance: user or
   the ruling session's role, and date) and `Rule owner`.
 - Record each ruling you make as "ruling — rejected: <alternative>, fails
@@ -58,8 +58,10 @@ and upstream waits. The board model is [Board core](../shared/board-core.md)
 - Open a revision with
   `board revise <old> --title "<question>" --body-file <packet>`; for one rule
   of a record add `--partial "<rule>"`, and the rest stays in force. Its
-  record restates the rule in full. `board release` supersedes the old record; autopilot runs
-  `board supersede <old> --with <new>` when it records the revision. A
+  record restates the rule in full. `board release` supersedes a released old
+  record. A decided old record closes when its replacement is recorded
+  (`board supersede <old> --with <new>`; autopilot runs it too), and
+  `board release` refuses a decided record a live revision names. A
   revision question blocks only the work items whose part it would change.
 - On the user's ratification, the claiming deciding session closes a
   `needs_ratification` record with the ratification as reason; a reversal
@@ -79,15 +81,4 @@ and upstream waits. The board model is [Board core](../shared/board-core.md)
 
 ### Upstream waits
 
-1. The delivering upstream issue carries `export:<capability>`. With user
-   approval, the waiting session files a missing issue or labels/comments an
-   existing one:
-   `board bd -C <upstream path> create … --assignee user --label export:<capability>`;
-   description names the waiting issue.
-2. Create the local wait:
-   `board bd gate create --type=human --blocks <issue> --reason "waits for <project>:<capability>"`.
-   Make further waiting issues depend on the same gate.
-3. Upstream runs `board bd ship <capability>` at issue closure. The waiting
-   session resolves the gate once
-   `board bd -C <upstream path> list --label provides:<capability> --status closed`
-   shows the capability.
+Before creating a wait on another project's delivery, read `$HOME/.agents/skills/shared/upstream-waits.md`.

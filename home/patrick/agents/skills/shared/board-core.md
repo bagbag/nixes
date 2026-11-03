@@ -21,13 +21,11 @@ relying on the missing part.
   obtain it: the regenerating command and commit, or its location and
   holder.
 
-The session hook injects `board bd remember` facts.
-
 Without `.beads/`: a project with existing trackers or backlog files moves onto
 the board through `/board-migrate`; otherwise follow
 `$HOME/.agents/skills/shared/beads-setup.md` with the user. A board in older
-conventions also moves through `/board-migrate`. Agent guidance comes from
-session hooks, not `bd setup`. Remote sync (`bd dolt push`/`pull`) belongs to
+conventions also moves through `/board-migrate`. Leave `bd setup` unrun; session
+hooks supply agent guidance. Remote sync (`bd dolt push`/`pull`) belongs to
 the user.
 
 ### Actors and holds
@@ -72,17 +70,17 @@ directly in review,
 
 ### Routing
 
-Sessions claim unassigned ready items by kind:
+A bare `board claim` takes the unassigned ready items routed to the session's
+role or pulls (`board position` counts them). A claim by id checks no role;
+follow these rules yourself:
 
-| Claimer | Claims |
-|---|---|
-| Pull `plan` | `released` decisions; board restructuring tasks it creates and claims itself. |
-| Pull `design` | Open `design` items. |
-| Pull `implement` | Open `task`, `bug` and `spike` items. |
-| Pull `review` | `in_review` tasks, bugs and spikes, standalone reviews included; first choice while a review-pulling session is active. |
-| Lead | By id: its round's open decisions, `needs_ratification` records, `in_review` design items and ready milestones; closes finished epics whose acceptance names the user. A bare `board claim` takes open decisions. |
-| Solo | Open and `released` decisions, `needs_ratification` records, `in_review` design items and ready milestones itself; every other kind through one worker per item. |
-| Autopilot | Open and `released` decisions and `in_review` design items itself; every other kind through one worker per item. |
+- Pull `plan` also claims the board restructuring tasks it creates itself.
+- Pull `review` takes a review first while a review-pulling session is active.
+- Lead claims by id its round's open decisions, `needs_ratification` records,
+  `in_review` design items and ready milestones, and closes finished epics
+  whose acceptance names the user.
+- Solo claims ready milestones by id; solo and autopilot run every other kind
+  through one worker per item.
 
 Questions, autopilot's parked ones included, stay unassigned until a session
 claims them.
@@ -189,9 +187,9 @@ context coincide, keep `blocks`.
    (`$HOME/.agents/skills/shared/acceptance.md#evidence-and-gates`).
 2. Keep active work `in_progress` with its current resume point in `notes`
    (`board bd update <id> --notes "<point>"`), replaced as the work moves;
-   record history as comments. Hand over only with complete evidence for
-   the item's acceptance; keep partial work open with the remainder in
-   `--acceptance`, and block waiting work on what it needs.
+   record history as comments, in plain sentences. Hand over only with
+   complete evidence for the item's acceptance; keep partial work open with
+   the remainder in `--acceptance`, and block waiting work on what it needs.
 3. Hand over with the evidence: `board handover <id> "<evidence>"`.
 4. The acceptor claims the item (`board claim <id>` prints its author), then
    closes it with the verdict as reason (`board bd close <id> --reason …`) or
@@ -220,24 +218,14 @@ context coincide, keep `blocks`.
 
 ### Views
 
-`board` views read one board snapshot per run; all but `board show` take
-`--root <epic>` or `--root <milestone>`, `--limit <rows>` and
-`--offset <rows>`. Output stops at 35,000 characters. Other queries: `board bd query`, `search`,
-`blocked`, `lint`, `dep tree`.
+`board check` lists deviations from these conventions on live
+items, each naming the section it breaks; a board with deviations moves through
+`/board-migrate`.
 
-| Command | View |
-|---|---|
-| `board show <id>… [--section <name>] [--comments] [--full]` | Items with links, fields and newest comments; `--json --field <field>` for scripts. |
-| `board queue` | Ready work plus released rulings to plan, milestone work marked. |
-| `board position` | Ready work against registered sessions and their pulls; held items with holder, role, tool, age and gone or idle marks; open questions holding work; ready milestones; finished epics not closed. |
-| `board mine` | Items your session and its workers hold; holds of stopped workers marked. |
-| `board health` | Counts, with each open milestone's progress; dispatchable counts include only unblocked items. |
-| `board holders` | Items by open downstream count. |
-| `board check` | Deviations from these conventions on live items, each naming the section it breaks; closed items are never checked; as flags, squashed text in editable fields and waits whose blocker the waiting item's text does not name. `board health` names their count; a board with deviations moves through `/board-migrate`. |
-| `board related <terms>\|--like <draft> [--docs <paths>]` | Items (closed included) and canonical docs mentioning the terms, rarest matches first, with holders; `--like` takes the terms from a draft file. |
-| `board bd list --type decision --all --label topic:<slug>` | Decision log. |
-| `board bd list --status deferred --label topic:<slug>` | Topic backlog. |
-| `board bd dep cycles` | Dependency-cycle check before dispatch. |
+Other queries: `board bd query`, `search`, `blocked`, `lint`, `dep tree`; the
+decision log, `board bd list --type decision --all --label topic:<slug>`; the
+topic backlog, `board bd list --status deferred --label topic:<slug>`; before
+dispatch, `board bd dep cycles`.
 
 ### Limits
 
@@ -245,15 +233,13 @@ context coincide, keep `blocks`.
   server-mode board; otherwise it is embedded.
 - On a server-mode board, every `board` command needs elevated sandbox
   permissions (global Sandbox and permissions); `board` starts a stopped
-  server. Never use `board bd --readonly`.
+  server.
 - On an embedded board, run `board` commands one at a time and never
   interrupt a running one.
 - `board bd ready` returns 100 rows; use `--limit 0` for inventories. Read
   inventories with one `board bd export` or
   `board bd list --all --limit 0 --json` instead of per-item `board show`.
-- Edit fields with `board bd update --title/--description/--design/--acceptance`;
-  `board bd edit` opens an editor and blocks.
+- Edit fields with `board bd update --title/--description/--design/--acceptance`.
 - Give `board bd create` a description and `board bd close` a reason of 20+
   characters.
-- Inspect changes with `board bd history <id> --events` and board-wide changes
-  with `board bd events tail --since <seq>`.
+- Inspect board-wide changes with `board bd events tail --since <seq>`.

@@ -85,7 +85,7 @@ if grep -Eq "$bare" <<<"$stripped" || { [[ -n "$bodies" ]] && grep -Eq "$bare" <
   if grep -Eq "$reads" <<<"$stripped" || { [[ -n "$bodies" ]] && grep -Eq "$reads" <<<"$bodies"; }; then
     deny 'read items with `$HOME/.agents/bin/board show <ids> [--section …] [--field …] [--comments] [--full]`; other bd commands run as `$HOME/.agents/bin/board bd <same args>`.'
   fi
-  deny 'run bd as `$HOME/.agents/bin/board bd <same args>`: it sets your actor and starts the board server.'
+  deny 'run bd as `$HOME/.agents/bin/board bd <same args>`.'
 fi
 # Board call: the CLI by name, or any command word running bd ("$B" bd).
 # Over-matching only adds the actor checks below.

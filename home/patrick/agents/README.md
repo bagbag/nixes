@@ -23,6 +23,9 @@ skill's workflow; place other whole-file shared references after it and link
 them from the relevant phases. Includes
 retain their heading levels; use one H1 and flat reference sections.
 
+The global instructions describe capabilities and responsibilities rather than
+a particular tool's command syntax.
+
 Load shared content per reader; every file in `skills/shared/` stays readable
 on its own:
 
@@ -108,8 +111,9 @@ Workflow owners:
   evidence and gates) and
   [unattended](skills/role/protocols/unattended.md) (autopilot authority and
   parking). Sessions read them by path; compaction recovery names them again.
-- [Work tracking](skills/shared/work-tracking.md): board model, holds,
-  routing, record shapes and `board` views; [board-migrate](skills/board-migrate/SKILL.md)
+- [Board core](skills/shared/board-core.md) and
+  [board coordination](skills/shared/board-coordination.md): board model, holds,
+  routing, record shapes, epics, milestones and rulings; [board-migrate](skills/board-migrate/SKILL.md)
   moves a project from any starting state onto it, deriving the work from the gap to the target.
 - Challenge skills: [step-back](skills/step-back/SKILL.md),
   [challenge-rulings](skills/challenge-rulings/SKILL.md) and
@@ -132,7 +136,8 @@ the command (`Board.load`: a `bd list` of the non-closed items plus one
 `bd show` of the held items' comments for status views, `bd export` for
 `related`, `check` and the writes that read closed items, a `bd show` of only
 the named items for `board show`), and `board bd <args>` for every other bd
-command. It starts a stopped
+command (`bd edit`, which blocks on an editor, and `--readonly` are refused with
+the way on named in one line). It starts a stopped
 server on server-mode boards (bd's auto-start is off) and takes the actor from
 `session-lead-mode actor`, the owner of the session identity
 (`CODEX_SESSION_ID`/`CODEX_THREAD_ID`, else `CLAUDE_CODE_SESSION_ID`). Hooks
@@ -156,7 +161,7 @@ holder's last tool call (else the item's update) and shows
 without a marker WORKER STOPPED once the session's `.active` exists (only the
 owner knows whether it continues the worker). `claim`, `handover`, `return`,
 `block`, `mine` and `queue` print a capacity line for dispatching sessions
-below the worker cap with ready work. `board check` encodes the work-tracking
+below the worker cap with ready work. `board check` encodes the board-core
 conventions mechanically; change both in the same change, so drifted boards
 surface in `board health` and move through `/board-migrate`.
 `health`, `mine`, `position` and `related` take `--json` (every row; `related`
@@ -179,6 +184,13 @@ engine of deciding sessions: it owns each session's protocol state in
 prints the next step, one call per step; `run_cli()` is the same CLI as a
 function, which the tests call in-process. Its protocols are `round` (the
 decide protocol's Round from Collect to Record) and `release` (its Release).
+A question whose Related outcome supersedes a decided record closes it at Record
+(`board supersede`: waiting items, settled items and a pending revision move to
+the new record; the dialog names it by id and title); a released record is
+revised and replaced at release. Related may mark any decided record this way,
+a hit or not, by naming its id under `outcomes` (only a recorded ruling; a
+record another live session holds is refused). `board record` on a decided
+record keeps its old `## Decision` in a comment when that section changes.
 A round:
 
 - Collect classifies every pasted point and the board items in the round's
@@ -186,6 +198,17 @@ A round:
   `--no-board <dir>` (required without a board) writes the records as files
   in `<dir>` with no board reads or writes. Items another live session holds
   stay out, named in one line; a gone session's hold is offered, marked.
+  `start round <ids>` names the open items to look at first (an id that is closed,
+  held by another live session or no item a round offers is refused by name);
+  the engine keeps every open item either way, so a round can classify an id it
+  did not print. The open-item list prints whole, grouped under a heading per view
+  and status, the first time between compactions that `protocol next` or a
+  round's Collect needs it; after that Collect prints the named ids, the counts
+  per kind and the command that lists everything (`board health --items
+  <COLLECT_VIEWS>`, plus `board position` for ready milestones and finished
+  epics), and a bare round is told to list before it selects. A restart, a
+  Related step and the pass report format name that command where a round's scope
+  widens.
 - Select claims the selected items (a gone session's hold through `board
   take`); Stage requires a plain round title and
   summary and, per question, a plain title, 2-4 options, the recommended
@@ -234,7 +257,13 @@ A round:
   preference: make it strong with evidence, or name what it rests on; no
   loop), then challenge-rulings, last before a batch and again whenever a pass
   changed questions since its last run (its own changes rerun the Base loop,
-  the cycle cap bounds the repeats, a run that changes nothing ends it). Base's own lenses
+  the cycle cap bounds the repeats, a run that changes nothing ends it). Once
+  the last answer is in, a round (never a release) runs one challenge-rulings
+  pass over the answered set before Record (`challenge-rulings (after
+  answers)`): a finding is a new question that gets the scoped check below
+  before it is asked, and the pass runs again after its answer; a pass that
+  changes nothing goes to Record, and a round with nothing answered skips it.
+  Base's own lenses
   (consumer, root-fix, bloat, gaps) are in neither set. The path and refine
   passes run once per round, flagged on the round: a check rebuilt at
   Ask does not repeat them. `protocol restart <ids>` (also several calls
@@ -254,8 +283,10 @@ A round:
   of sequence or with a batch out, updates questions. Edits to title, header,
   strength or its backing alone re-issue the batch; other changes rerun the
   loop. The Claude hand-off names no pass (the console runs it); Codex's names
-  the skill to run. The report format goes out with a round's first pass and
-  with every refused pass report, not on later passes. In Claude sessions a
+  the skill to run, or carries the reminder inline. A step's report format goes
+  out once per step kind between compactions, and with every refused report (a
+  refused `step` repeats the formats its step offers; the dialog JSON always
+  prints). In Claude sessions a
   pass report is accepted only after an observed run of that pass since its
   last report (the console's `pass` record, or a model Skill call); a run
   stays open while part of a report was not applied. A question too long or
@@ -264,15 +295,22 @@ A round:
   counts as the observed run); no pass runs automatically. `protocol edit` (stdin `{"updates", "quote"}`) applies a change the
   user asked for: the quote must appear in a message the console relayed since
   the touched questions went out (Codex: verbatim), the updates validate as in
-  a pass report, a batch that is out comes back and goes out again, and neither
-  a pass nor a check rerun happens (rows read `↻ edit`). An option's `preview`
-  alone is presentation: its change re-issues the batch without rerunning the
+  a pass report, a batch that is out comes back and goes out again with no pass
+  (rows read `↻ edit`), except an edit that only adds questions, which leaves it
+  out. A new question or a changed recommendation stays out of the batches until
+  the scoped check ran on it (at the hand-over below, at once when nothing else
+  waits), and a recommendation raised to strong until one challenge-rulings pass
+  ran on it (`challenge-rulings (raised <ids>)`); the other questions go out.
+  Wording, options, premises, previews and a mark lowered to lean stay free. A
+  pass report with a refused update holds the round: no batch goes out until the
+  failed updates are resent in a pass report. An option's `preview` alone is
+  presentation for a pass: its change re-issues the batch without rerunning the
   loop.
 - Ask issues batches marked `metadata.source = round:<id>:<n>`: the
   recommended option first, labelled "(recommended, strong)" or
-  "(recommended, lean)", a lean's description opening with what it rests on
-  ("Unverified: …" or "Your call: …"; the prefix does not count toward the
-  description limit). A batch of two or more is numbered (`1. `, `2. `) in
+  "(recommended, lean)" (a release approval has no mark), a lean's description
+  opening with what it rests on ("Unverified: …" or "Your call: …"; the prefix
+  does not count toward the description limit). A batch of two or more is numbered (`1. `, `2. `) in
   the dialog text, which keys the answers; the ask text has the model walk
   through in that order. Answers
   count only from the person: `dialog` (relayed by the console), `chat` (the
@@ -285,14 +323,19 @@ A round:
 - Record writes the records; closing or abandoning releases the claims the
   round made and did not record (a hold the session had before, such as a
   decided record, stays). Held questions carry to the next round while their
-  board item stays open. A round that recorded board records closes naming
-  the release.
+  board item stays open. A round that closes while the session holds decided
+  board records closes naming the release.
 
-A release runs in the same slot with the next run id (`r5 release · r4's
-records`), one run per session, on a board only:
+A release runs in the same slot with the next run id (`r5 release · the
+session's records`), one run per session, on a board only:
 
-- `start release` takes the last closed round's board records still decided,
-  `start release <ids>` others; ids another live (or idle) session holds are
+- `start release` takes the decided records this session holds (a worker's
+  holds included, read from the board at the start), minus the records a release
+  dropped or stopped on a spreading change; those stay out until a round records
+  them again or a release releases them. A person's Hold and an abandoned release
+  change none of this: a round takes what was held, and a later `start release`
+  takes the rest;
+  `start release <ids>` takes others; ids another live (or idle) session holds are
   refused, a gone session's hold is taken, unheld records are claimed.
 - Re-check and Board check give each changed record a reach: contained, with
   `touches` `own` (only the model's rationale, evidence or a clause the chosen
@@ -328,7 +371,8 @@ records`), one run per session, on a board only:
   failure.
 
 When a batch's answers release held questions (every `waitsOn` answered), the
-round continues with them instead of recording: Ask hands over to a scoped
+round continues with them instead of recording (so do questions an edit added or
+re-recommended): Ask hands over to a scoped
 rerun like `restart`'s (a fresh check cycle on their ids, answered questions
 untouched; the path pass, the Base loop, the refine pair on their ids, the lean
 pass and `challenge-rulings`), then the next batch asks them; chains release
@@ -337,8 +381,11 @@ question waiting on a question that is still unanswered carries over.
 
 `protocol next` prints the top 5 seed questions of the next round (open
 decisions, unblocked, not held by another live session; members of an open
-milestone first, then priority, then the work they hold, in Select's ordering)
-and the stored proposal; without a board it has no seeds. `protocol next --set`
+milestone first, then priority, then the work they hold, in Select's ordering),
+the open-item list (waiting questions, `in_review` designs, ready milestones,
+finished epics, what waits on the user: whole the first time between
+compactions, counts and the listing command after) and the stored proposal, and
+saves the board's count of a bare release; without a board it has no seeds. `protocol next --set`
 (stdin `{"rounds": [{"ids", "title", "why", "compact"}], "compact": {"keep"}}`)
 stores the model's proposal while no round is open: at most 3 rounds, each with
 at least one id and a title within 60 characters; `compact` is required with a
@@ -346,11 +393,33 @@ compacting round or without rounds. Every error is listed in one refusal, and
 `start round` clears the proposal. The release's close text tells the model to
 run `protocol next` and report its proposal.
 
+What a session was told is one record, `state['told']`, cleared by `protocol
+compacted` (no stdin, open round or not; `hooks/compact-reorient.sh` calls it for a
+deciding session of either tool and says so in the recovery message when it fails).
+`show` and a release-round note never count as telling. The record holds: a step
+kind's report format, the ask instructions around the dialog (the Codex form keeps
+the marker and the verb in a clause), the open-item list, the Durable owners
+section of project-memory.md (printed at Owner writes from the installed file;
+one line naming it when it is missing) and, per check run and cycle, the question
+list of a check pass (later passes print `N questions (protocol show lists them)`) and
+the skill text of a pass kind. `SKILL_TEXT` (`cycle` by default, `pass` for every
+pass full) selects the cadence: the first step-back and the first ground of each
+check cycle get the skill's full text, the others a reminder cut from the
+installed `SKILL.md` (step-back: its `## Stance` and the lens items the argument
+names, the base lenses when it names none; ground: its first paragraph after the
+argument lines and the named lens items; a part that cannot be cut makes the
+pass full); challenge-rulings, a release's scoped passes, a typed command and a
+model's own Skill call stay full. `show --json` carries the reminder in `pending`
+(null when the pass is full); the console swaps it into the expansion of its own
+pass only, and a pass report's `pass` event logs `told: full|reminder` beside
+the pass-start event. A new check run (`restart`, a rerun at Ask) and a
+compaction make the next pass full again.
+
 Every step's output opens with a headline: the call's events in the Log's
 words, then the next step (`r1 · ground: q3 changed, 1 not applied · next:
 step-back, cycle 2/5`); the console shows it as the call's chat row.
 
-`show --json` is the console's contract (version 1; its real output in ten
+`show --json` is the console's contract (version 1; its real output in eleven
 states is `claude/mods/console/tests/engine-contract.ts`, regenerated with
 `WRITE_CONSOLE_CONTRACT=1`): round title and summary, step progress, the
 questions with their recommendation and strength (and `changedBy`, the pass
@@ -358,11 +427,18 @@ whose most recent report changed them), the batch, the round's whole log (pass l
 (path)`, `ground (lean q39 q40)`, scoped ids for a restart's or a release's
 rerun; a leading "no change" of a summary is left out; consecutive `recorded`
 lines merge), a release's `records` with their state, and `stopped` (the last release's stop,
-shown while no run is open), and `next` (no run open: `{"release": {"round", "count"}}` while the last
-round's recorded board records wait for a release, and the stored proposal's
-`rounds` and `compact`; null when none). The engine-issued release approval question is `Release r4's 3
-records?` (reasons for asking go to the model's ask text and the Log).
-Headline pass summaries cut at a word boundary with `…`. `status --line` is
+shown while no run is open), and `next` (no run open: `{"release": {"count"}}` while the session holds decided
+board records a bare release would take, counted at a round's or release's close
+and by `protocol next` (`show` never reads the board), and the stored proposal's
+`rounds` and `compact`; null when none). The engine-issued release approval question is `Release the
+session's 3 records?`, an unsure ruling first and cut to fit, in full in the
+Release option's preview (all reasons for asking go to the model's ask text and
+the Log). `start` with a release open refuses and says that for a question to the
+user, `protocol abandon` releases nothing and `start release` takes the same
+records again.
+`answer` and `decline` print the show state with the note for the console's
+`dialog` origin, and the note alone for `chat` and `model-reported`, which the
+model reads. Headline pass summaries cut at a word boundary with `…`. `status --line` is
 the recovery line, which compact-reorient appends for Codex sessions. `start`
 deletes other sessions' folders without an open round after 30 days without
 changes.
@@ -409,8 +485,8 @@ the settled ids the same way (a pasted point has no item to open); one thing is
 open at a time. A pane the
 person closed stays closed until `/console`. The band above the prompt shows
 the round during one (a release run the same way), and with no run open the
-recommended suggestion (`<title> · N questions ·` with Start, `rN closed · M
-records decided ·` with Release Round, or Compact), nothing while a dialog is
+recommended suggestion (`<title> · N questions ·` with Start, `M records
+decided ·` with Release Round, or Compact), nothing while a dialog is
 open or nothing is offered. Start sends `Start the next round on <title>: <ids>`
 as your prompt; for a round marked compact it stores that message, runs
 `/compact` with the proposal's `keep`, and the compaction hook keeps the
@@ -427,7 +503,7 @@ engine's parts `engine-<part>`, `PROTOCOL_PARTS`) as parallel child processes
 sections within a part share state in order, so a section that needs an earlier
 one's rounds stays in its part.
 
-Work tracking deliberately avoids some beads features (bd 1.3.1); re-check
+The board deliberately avoids some beads features (bd 1.3.1); re-check
 before adopting them:
 
 - `external:` dependencies never block: no production code calls
@@ -438,13 +514,13 @@ before adopting them:
   follow priority and decision clusters.
 - Claim leases, `bd heartbeat` and `bd reclaim`: nothing reads the 5-minute
   leases, and `bd reclaim` would free every held item. Holds end only as
-  work tracking's [Actors and holds](skills/shared/work-tracking.md#actors-and-holds)
+  board core's [Actors and holds](skills/shared/board-core.md#actors-and-holds)
   describes.
 
 `bd lint` checks `decision` descriptions for the record sections (built-in
 Rationale and Alternatives Considered; configured Question, Decision, Rule
-owner); work tracking's
-[Questions and rulings](skills/shared/work-tracking.md#questions-and-rulings)
+owner); board core's
+[Questions and rulings](skills/shared/board-core.md#questions-and-rulings)
 owns the record lifecycle. Closed records keep their shape (board-migrate
 Invariants).
 
@@ -466,8 +542,10 @@ acceptance evidence. The [decision protocol](skills/shared/decision-protocol.md)
 owns default decision authority, end-state criteria and concern classes; agent
 definitions read it at runtime. Shared files:
 [reviewers](skills/shared/reviewers.md) (selection, briefing, independence,
-disagreement) and [asking](skills/shared/asking.md) (how deciding sessions
-walk the user through a round).
+disagreement), [asking](skills/shared/asking.md) (how deciding sessions
+walk the user through a round) and
+[upstream waits](skills/shared/upstream-waits.md) (read on demand from
+board-coordination).
 [Question format](skills/shared/question-format.md) is tool-neutral; asking, role, question-me and retro include it.
 The skills a user re-runs by mention include [rerun](skills/shared/rerun.md).
 

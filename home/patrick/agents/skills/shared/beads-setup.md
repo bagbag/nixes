@@ -16,8 +16,6 @@ $HOME/.agents/bin/board bd config set events-journal-retain-days 30
 
 - Use stealth initialization: exclusions go to `.git/info/exclude`; plain init
   stages agent files and replaces `core.hooksPath`.
-- Require descriptions and close reasons of 20+ characters. Leave Git authority
-  with the user and repository through `no-git-ops false`.
 - Inspect init's new `.git/info/exclude` lines; remove patterns hiding project
   files (1.3 adds `*.db`). Beads data lives under `.beads/`.
 - Server mode (`init --server`): `config set dolt.auto-start false`; `board`

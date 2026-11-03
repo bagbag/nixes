@@ -1,7 +1,6 @@
 # Plan protocol
 
-Turning released rulings and outcomes into work, cutting and ordering items,
-and dispatching workers. Read
+Read
 `$HOME/.agents/skills/shared/board-core.md`,
 `$HOME/.agents/skills/shared/board-coordination.md`,
 `$HOME/.agents/skills/shared/decision-protocol.md`,
@@ -75,7 +74,7 @@ dispatched or claimable; the checkpoint file is current; the report is given.
    items it only informs (`board bd dep relate <ruling> <item>`). Add the
    ruling id and owner anchor to each item's `--design`.
    Create missing work items. Add changelog and upgrade duties to affected
-   items' acceptance. Closing the ruling in step 5 unblocks them.
+   items' acceptance.
 3. For a revision, update every consumer of the changed decision: related
    items, briefs, dependencies and active workers whose premise changed. Refresh questions written against
    the superseded state. Repoint duplicate dependents to the keeper before
@@ -150,7 +149,7 @@ Establish the outcome's contribution to its milestone:
 - For material decomposition or integration uncertainty, obtain an
   independent plan assessment before dispatch: coverage, grounding,
   dependencies, integration, verification, silent failures. Self-check
-  pattern-determined plans. Select gates under the review protocol's
+  pattern-determined plans. Select gates under Acceptance
   [Review policy](../../shared/acceptance.md#review-policy).
 
 ## Queue
