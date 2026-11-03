@@ -2907,10 +2907,10 @@ def seed_line(seed: dict) -> str:
 def proposal_text(proposal: dict | None) -> list[str]:
     if not proposal:
         return ['No proposal stored.']
-    rows = [f"{index}. {' '.join(r['ids'])} · {r['title']} · {'compacts first' if r['compact'] else 'keeps the context'} · {r['why']}"
+    rows = [f"{index}. {' '.join(r['ids'])} · {r['title']} · {'wants a fresh context' if r['fresh'] else 'keeps the context'} · {r['why']}"
             for index, r in enumerate(proposal['rounds'], 1)]
     return ['Stored proposal' + (' (the first row is the recommended one):' if rows else ':'), *rows,
-            *([f"Compact, keeping: {proposal['compact']['keep']}"] if proposal.get('compact') else [])]
+            *([f"A compaction keeps: {proposal['compact']['keep']}"] if proposal.get('compact') else [])]
 
 
 def next_text(ctx: Context) -> str:
@@ -2928,9 +2928,10 @@ def next_text(ctx: Context) -> str:
         *proposal_text(ctx.state.get('proposal')),
         'Record the proposal with `protocol next --set` (stdin '
         + json_block({'rounds': [{'ids': ['<question id>'], 'title': '<the round in plain words>', 'why': '<why this cluster>',
-                                  'compact': False}], 'compact': {'keep': '<what the compaction keeps>'}})
-        + f'): at most {PROPOSAL_ROUNDS} rounds, the one that reuses the read context first with compact false, other clusters with '
-        'compact true; `compact` is required with a compact round or without rounds.',
+                                  'fresh': False}], 'compact': {'keep': '<what a compaction keeps>'}})
+        + f'): at most {PROPOSAL_ROUNDS} rounds, the one that reuses the read context first with fresh false, other clusters with '
+        'fresh true; `compact` is required with a fresh round or without rounds. The console compacts before a fresh round only '
+        'when the context is large, so do not tell the user a round will compact.',
     )
 
 
@@ -2948,8 +2949,8 @@ def proposal_errors(raw) -> list[str]:
         if not isinstance(one, dict):
             errors.append(f'{where}: must be an object')
             continue
-        if set(one) - {'ids', 'title', 'why', 'compact'}:
-            errors.append(f"{where}: unknown fields {', '.join(sorted(set(one) - {'ids', 'title', 'why', 'compact'}))}")
+        if set(one) - {'ids', 'title', 'why', 'fresh'}:
+            errors.append(f"{where}: unknown fields {', '.join(sorted(set(one) - {'ids', 'title', 'why', 'fresh'}))}")
         ids = one.get('ids')
         if not isinstance(ids, list) or not ids or not all(isinstance(i, str) and i.strip() for i in ids):
             errors.append(f'{where}: `ids` needs at least one question id')
@@ -2958,14 +2959,14 @@ def proposal_errors(raw) -> list[str]:
                 errors.append(f'{where}: `{field}` must be a non-empty string')
             elif len(one[field]) > limit:
                 errors.append(f'{where}: `{field}` is {len(one[field])} characters, longer than {limit}')
-        if not isinstance(one.get('compact'), bool):
-            errors.append(f'{where}: `compact` must be true or false')
-    needs = not rounds or any(isinstance(one, dict) and one.get('compact') is True for one in rounds)
+        if not isinstance(one.get('fresh'), bool):
+            errors.append(f'{where}: `fresh` must be true or false')
+    needs = not rounds or any(isinstance(one, dict) and one.get('fresh') is True for one in rounds)
     if compact is None:
         if needs:
-            errors.append('`compact` is required with a compact round or without rounds: {"keep": "<what the compaction keeps>"}')
+            errors.append('`compact` is required with a fresh round or without rounds: {"keep": "<what a compaction keeps>"}')
     elif not isinstance(compact, dict) or set(compact) - {'keep'} or not isinstance(compact.get('keep'), str) or not compact['keep'].strip():
-        errors.append('`compact` must be {"keep": "<what the compaction keeps>"}')
+        errors.append('`compact` must be {"keep": "<what a compaction keeps>"}')
     return errors
 
 
@@ -2974,7 +2975,7 @@ def set_proposal(ctx: Context, report: dict) -> str:
         fail(f"{ctx.round['protocol']} {ctx.round['id']} is open: propose the next rounds once it closes")
     refuse_all([f'next --set: {error}' for error in proposal_errors(report)])
     proposal = {'rounds': [{'ids': [i.strip() for i in one['ids']], 'title': one['title'].strip(), 'why': one['why'].strip(),
-                            'compact': one['compact']} for one in report.get('rounds', [])]}
+                            'fresh': one['fresh']} for one in report.get('rounds', [])]}
     if report.get('compact'):
         proposal['compact'] = {'keep': report['compact']['keep'].strip()}
     ctx.state['proposal'] = proposal
@@ -3772,7 +3773,7 @@ def cli(argv: list[str]) -> int:
     sub.add_argument('ids', nargs='+')
     sub.add_argument('--reason')
     sub = verb('next', 'the seed questions of the next round and the stored proposal; --set stores the proposal (stdin)')
-    sub.add_argument('--set', action='store_true', help='store the proposal: stdin {"rounds": [{"ids", "title", "why", "compact"}], '
+    sub.add_argument('--set', action='store_true', help='store the proposal: stdin {"rounds": [{"ids", "title", "why", "fresh"}], '
                                                         '"compact": {"keep"}}')
     verb('compacted', "the session's context was compacted: what it was told prints in full again")
     verb('resume', 'continue a paused check loop')

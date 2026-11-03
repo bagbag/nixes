@@ -13,7 +13,7 @@ type $ = EngineInterface
 
 const roleState = atom({ plugin: 'console', key: 'role' } as const, null, { shape: 'role-1' })
 const drawnState = atom({ plugin: 'console', key: 'isDrawn' } as const, false)
-const roundState = atom({ plugin: 'console', key: 'round' } as const, null, { shape: 'round-8' })
+const roundState = atom({ plugin: 'console', key: 'round' } as const, null, { shape: 'round-9' })
 const roundErrorState = atom({ plugin: 'console', key: 'roundError' } as const, null)
 const boardState = atom({ plugin: 'console', key: 'board' } as const, null, { shape: 'board-4' })
 const passState = atom({ plugin: 'console', key: 'pass' } as const, null, { shape: 'pass-3' })

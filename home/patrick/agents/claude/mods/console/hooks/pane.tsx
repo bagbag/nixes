@@ -25,16 +25,18 @@ const SESSION_COLUMNS = { role: 7, tool: 8, actor: 10, pulls: 9, holds: 9, worke
 
 /**
  * The steps to offer while no run is open: the model's proposed rounds (the first recommended), then the pending release,
- * then a compact-only proposal. Nothing while a run is open or a dialog is (the band's own states); the pane, the band and
+ * then a compact-only proposal. Only a large context compacts: the model knows a round reuses nothing, the console knows
+ * there is something to drop (r21). Nothing while a run is open or a dialog is (the band's own states); the pane, the band and
  * the Actions twins all read this one function.
  */
 export function suggestions(round: ConsoleRound | null, isDialogOpen = false): ConsoleSuggestion[] {
   if (round === null || isRoundOpen(round) || isDialogOpen || round.next === null) return []
   const { release, rounds = [], compact } = round.next
+  const isLarge = round.isContextLarge
   const found: ConsoleSuggestion[] = [
-    ...rounds.map((one, i) => ({ ...one, kind: 'round' as const, key: `round-${i}`, keep: one.compact ? compact?.keep ?? '' : null, isRecommended: false })),
+    ...rounds.map((one, i) => ({ ...one, kind: 'round' as const, key: `round-${i}`, keep: one.fresh && isLarge ? compact?.keep ?? '' : null, isRecommended: false })),
     ...(release === undefined ? [] : [{ kind: 'release' as const, key: 'release', count: release.count, isRecommended: false }]),
-    ...(rounds.length === 0 && compact !== undefined ? [{ kind: 'compact' as const, key: 'compact', keep: compact.keep, isRecommended: false }] : []),
+    ...(rounds.length === 0 && compact !== undefined && isLarge ? [{ kind: 'compact' as const, key: 'compact', keep: compact.keep, isRecommended: false }] : []),
   ]
   return found.map((one, i) => ({ ...one, isRecommended: i === 0 }))
 }
@@ -165,12 +167,12 @@ export async function drawPane($: $, e: { surface: string; props: RenderPropsOf[
         {suggested.map(one => {
           const color = one.isRecommended ? 'suggestion' : undefined
           const what = one.kind === 'round'
-            ? `${one.title} · ${plural(one.ids.length, 'question')} · ${one.why}${one.compact ? ' · compacts first' : ''}`
+            ? `${one.title} · ${plural(one.ids.length, 'question')} · ${one.why}${one.keep !== null ? ' · compacts first' : ''}`
             : one.kind === 'release'
               ? `Release Round · ${plural(one.count, 'record')} decided`
               : `Compact · keeps ${one.keep}`
           hint.add(`sg-${one.key}`, one.kind === 'round'
-            ? `Start sends "${startText(one)}"${one.compact ? `, after /compact keeping: ${one.keep ?? ''}` : ''}; click the row to list its questions`
+            ? `Start sends "${startText(one)}"${one.keep !== null ? `, after /compact keeping: ${one.keep}` : ''}; click the row to list its questions`
             : one.kind === 'release' ? 'Runs /release-round' : `Runs /compact ${one.keep}`)
           return (
             <Box key={`sg-${one.key}`} flexDirection="column">
@@ -645,7 +647,7 @@ export async function drawBand($: $, e: { props: RenderPropsOf['AbovePrompt'] } 
   if (!isRoundOpen(round)) {
     const top = suggestions(round)[0]
     if (top === undefined) return undefined
-    const what = top.kind === 'round' ? `${top.title} · ${plural(top.ids.length, 'question')}${top.compact ? ' · compacts first' : ''} ·`
+    const what = top.kind === 'round' ? `${top.title} · ${plural(top.ids.length, 'question')}${top.keep !== null ? ' · compacts first' : ''} ·`
       : top.kind === 'release' ? `${plural(top.count, 'record')} decided ·`
         : `Compact · keeps ${top.keep} ·`
     return (

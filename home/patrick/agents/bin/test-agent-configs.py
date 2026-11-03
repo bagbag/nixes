@@ -2741,11 +2741,11 @@ def console_contract_states(root: Path) -> dict:
         run("step", stdin={"records": {"fx-a": "unchanged", "fx-b": {"change": "the rationale cited a wrong size", "reach": "contained",
                                                                    "why": "only fx-b", "touches": "own", "file": "fixed.md"}}}, cwd=repo)
         states["revised"] = show(cwd=repo)
-        # The model's proposal for the next rounds, stored while no round is open: two rounds (the second compacts first), then compact only.
+        # The model's proposal for the next rounds, stored while no round is open: two rounds (the second wants a fresh context), then compact only.
         run("abandon", cwd=repo)
         run("next", "--set", stdin={"rounds": [
-            {"ids": ["fx-q1", "fx-q2"], "title": "Cache questions", "why": "same module as the context read", "compact": False},
-            {"ids": ["fx-q3"], "title": "Queue retry", "why": "highest priority left", "compact": True}],
+            {"ids": ["fx-q1", "fx-q2"], "title": "Cache questions", "why": "same module as the context read", "fresh": False},
+            {"ids": ["fx-q3"], "title": "Queue retry", "why": "highest priority left", "fresh": True}],
             "compact": {"keep": "the cache decisions"}}, cwd=repo)
         states["proposed"] = show(cwd=repo)
         run("next", "--set", stdin={"compact": {"keep": "all decisions of this session"}}, cwd=repo)
@@ -3787,24 +3787,24 @@ def validate_protocol(root: Path, part: str) -> None:
                 raise ValueError(f"protocol next must rank the seeds (milestone, priority, holds; no blocked or live-held):\n{out}\n{made}")
             if "No board here: no seeds." not in proto("next", cwd=plain).stdout or calls():
                 raise ValueError("protocol next without a board says so and reads no board")
-            good = {"rounds": [{"ids": ["fx-n4", "fx-n3"], "title": "Member questions", "why": "same module as the context read", "compact": False},
-                               {"ids": ["fx-n1"], "title": "Plain question", "why": "highest priority outside a milestone", "compact": True}],
+            good = {"rounds": [{"ids": ["fx-n4", "fx-n3"], "title": "Member questions", "why": "same module as the context read", "fresh": False},
+                               {"ids": ["fx-n1"], "title": "Plain question", "why": "highest priority outside a milestone", "fresh": True}],
                     "compact": {"keep": "the member questions' decisions"}}
-            refused("next", "--set", stdin={}, needle="`compact` is required with a compact round or without rounds", cwd=repo)
-            errors = proto("next", "--set", stdin={"rounds": [{"ids": [], "title": "x" * 61, "why": "", "compact": "yes"}] * 4, "extra": 1},
+            refused("next", "--set", stdin={}, needle="`compact` is required with a fresh round or without rounds", cwd=repo)
+            errors = proto("next", "--set", stdin={"rounds": [{"ids": [], "title": "x" * 61, "why": "", "fresh": "yes"}] * 4, "extra": 1},
                            ok=False, cwd=repo).stderr
             for needle in ("unknown fields extra", "`rounds` holds at most 3, not 4", "rounds[0]: `ids` needs at least one question id",
                            "rounds[0]: `title` is 61 characters, longer than 60", "rounds[0]: `why` must be a non-empty string",
-                           "rounds[0]: `compact` must be true or false", "rounds[3]: `compact` must be true or false"):
+                           "rounds[0]: `fresh` must be true or false", "rounds[3]: `fresh` must be true or false"):
                 if needle not in errors:
                     raise ValueError(f"protocol next --set must list every error in one refusal, missing {needle!r}:\n{errors}")
             refused("next", "--set", stdin={**good, "compact": None}, needle="`compact` is required", cwd=repo)
             refused("next", "--set", stdin={**good, "compact": {"keep": " "}}, needle='`compact` must be {"keep"', cwd=repo)
-            proto("next", "--set", stdin={"rounds": [good["rounds"][0]]}, cwd=repo)  # no compact round: `compact` is optional
+            proto("next", "--set", stdin={"rounds": [good["rounds"][0]]}, cwd=repo)  # no fresh round: `compact` is optional
             proto("next", "--set", stdin=good, cwd=repo)
             out = proto("next", cwd=repo).stdout
             if "1. fx-n4 fx-n3 · Member questions · keeps the context · same module" not in out \
-                    or "2. fx-n1 · Plain question · compacts first" not in out or "Compact, keeping: the member questions' decisions" not in out:
+                    or "2. fx-n1 · Plain question · wants a fresh context" not in out or "A compaction keeps: the member questions' decisions" not in out:
                 raise ValueError(f"protocol next must print the stored proposal:\n{out}")
             if shown(cwd=repo)["next"] != {"rounds": [{**r, "ids": r["ids"]} for r in good["rounds"]], "compact": good["compact"]}:
                 raise ValueError(f"show --json next carries the stored proposal while no round is open: {shown(cwd=repo)['next']}")
@@ -4043,11 +4043,11 @@ def validate_protocol(root: Path, part: str) -> None:
                     or not re.match(r"r\d+ release · the session's records · .*superseded fx-old by fx-r1 · released fx-r1", out) \
                     or "- released fx-r1: R1" not in out or "- closed fx-q1: answered by released fx-r1" not in out \
                     or "- superseded fx-old by fx-r1 (rule: Rule 2)" not in out or "- dropped fx-r2" not in out \
-                    or "decide.md Release 7" not in out or "`protocol next --set`" not in out or '"compact": false' in out \
+                    or "decide.md Release 7" not in out or "`protocol next --set`" not in out or '"fresh": false' in out \
                     or shown(cwd=repo)["round"] is not None \
                     or "board release" in out.splitlines()[0]:
                 raise ValueError(f"protocol release rerun: {made}\n{out}")
-            if "compact false" not in proto("next", cwd=repo).stdout:
+            if "fresh false" not in proto("next", cwd=repo).stdout:
                 raise ValueError("`protocol next` prints the proposal's format, which the release's close text leaves to it")
             # Nothing is left to take: a bare /release-round must not offer the dropped fx-r2 again (it goes to a round).
             refused("pass", "--origin", "composer", stdin={"command": "release-round", "args": "", "pending": None},

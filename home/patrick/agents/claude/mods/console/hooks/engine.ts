@@ -268,7 +268,7 @@ function parseNext(value: unknown): ConsoleRound['next'] {
   const release = record(raw.release)
   const rounds = list(raw.rounds).map((one): ConsoleProposal => {
     const proposed = record(one)
-    return { ids: list(proposed.ids).map(text).filter(id => id !== ''), title: text(proposed.title), why: text(proposed.why), compact: proposed.compact === true }
+    return { ids: list(proposed.ids).map(text).filter(id => id !== ''), title: text(proposed.title), why: text(proposed.why), fresh: proposed.fresh === true }
   }).filter(one => one.ids.length > 0 && one.title !== '')
   const keep = text(record(raw.compact).keep)
   const next: NonNullable<ConsoleRound['next']> = {
@@ -307,6 +307,7 @@ export function parseRound(value: unknown): ConsoleRound {
     stopped: raw.stopped === null || raw.stopped === undefined ? null
       : { run: text(record(raw.stopped).run), reason: text(record(raw.stopped).reason), ids: list(record(raw.stopped).ids).map(text).filter(id => id !== '') },
     next: parseNext(raw.next),
+    isContextLarge: false,
     note: nullableText(raw.note),
   }
 }

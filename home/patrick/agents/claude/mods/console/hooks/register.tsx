@@ -26,6 +26,13 @@ async function ownReminder($: EngineInterface, run: ConsolePassRun): Promise<str
   return pending !== null && pending.id === run.id && pending.command === run.command ? pending.reminder : null
 }
 
+/** A compaction that ran leaves a small context. Set, not read: `$.session.usage()` still gives the old size inside this hook (probed, r21). */
+async function settleContext<T extends { skip?: string }>($: EngineInterface, compacted: T, trigger: string): Promise<T> {
+  const round = await getRound($)
+  if (compacted.skip === undefined && trigger !== 'precompute' && round !== null) await setRound($, { ...round, isContextLarge: false })
+  return compacted
+}
+
 /** The stored start goes with the compaction that was to precede it: sent once that succeeded, dropped with a notice when it was skipped (a precompute installs nothing and keeps it). */
 async function settleStart($: EngineInterface, start: ConsoleStart, compacted: { skip?: string }, trigger: string): Promise<void> {
   if (trigger === 'precompute') return
@@ -209,13 +216,14 @@ export const register: Register = on => {
     const isOpen = round !== null && isRoundOpen(round)
     // No round is open: a stored start (a suggestion that compacts first) is kept through the compaction and sent after it.
     const start = isOpen ? null : await getStart($)
-    if (!isOpen && start === null) return next(e)
+    if (!isOpen && start === null) return settleContext($, await next(e), e.trigger)
     const proposed = round?.next?.compact?.keep
     const keep = isOpen
       ? `Keep the protocol round state: round ${round.round}, step ${round.step}, each question's id, status and open overlap, the pending pass, and that the round runs through the protocol tool (mcp__console__protocol).`
       : [`Keep the proposed next round, which starts right after this compaction: ${start?.text}.`,
         proposed === undefined || e.instructions?.includes(proposed) === true ? '' : `Keep: ${proposed}`].filter(Boolean).join(' ')
     const compacted = await next({ ...e, instructions: [e.instructions, keep].filter(Boolean).join('\n\n') })
+    await settleContext($, compacted, e.trigger)
     if (start !== null) await settleStart($, start, compacted, e.trigger)
     if (compacted.skip !== undefined || e.trigger === 'precompute' || !isOpen) return compacted
     try {

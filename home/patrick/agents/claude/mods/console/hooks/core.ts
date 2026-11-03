@@ -78,9 +78,24 @@ export async function refreshRole($: $): Promise<Context> {
   return { session, isActive, isRoundRole }
 }
 
+/**
+ * Above this a compaction frees something. Measured (r21): 56-72k right after a compaction, 91-120k within 25 calls, 272k-687k
+ * at proposals after real work. Fixed, as what stays after a compaction does not grow with the window.
+ */
+const LARGE_CONTEXT_TOKENS = 150_000
+
+/** No reading (a fresh session, one just compacted, a failed read) counts as small: a Start then only starts. */
+async function isContextLarge($: $): Promise<boolean> {
+  try {
+    return ((await $.session.usage()).context.tokens ?? 0) >= LARGE_CONTEXT_TOKENS
+  } catch {
+    return false
+  }
+}
+
 export async function refreshRound($: $, session: string): Promise<ConsoleRound | null> {
   try {
-    const round = await show($, session)
+    const round = { ...await show($, session), isContextLarge: await isContextLarge($) }
     await setRound($, round)
     await setRoundError($, null)
     return round
@@ -260,9 +275,9 @@ export async function pressStart($: $, suggestion: ConsoleSuggestion): Promise<v
   if (suggestion.kind === 'release') return pressRun($, RELEASE_COMMAND, '')
   if (suggestion.kind === 'compact') return pressRun($, 'compact', suggestion.keep)
   const text = startText(suggestion)
-  if (!suggestion.compact) return pressSubmit($, text)
+  if (suggestion.keep === null) return pressSubmit($, text)
   await setStart($, { text, at: await $.clock.now() })
-  await pressRun($, 'compact', suggestion.keep ?? '', async () => {
+  await pressRun($, 'compact', suggestion.keep, async () => {
     await setStart($, null)
     await notice($, `/compact failed: the next round (${suggestion.title}) was not started`)
   })

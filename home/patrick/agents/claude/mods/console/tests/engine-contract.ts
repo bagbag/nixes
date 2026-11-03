@@ -630,7 +630,7 @@ export const ENGINE_CONTRACT = {
           ],
           "title": "Cache questions",
           "why": "same module as the context read",
-          "compact": false
+          "fresh": false
         },
         {
           "ids": [
@@ -638,7 +638,7 @@ export const ENGINE_CONTRACT = {
           ],
           "title": "Queue retry",
           "why": "highest priority left",
-          "compact": true
+          "fresh": true
         }
       ],
       "compact": {

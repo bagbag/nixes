@@ -386,10 +386,11 @@ the open-item list (waiting questions, `in_review` designs, ready milestones,
 finished epics, what waits on the user: whole the first time between
 compactions, counts and the listing command after) and the stored proposal, and
 saves the board's count of a bare release; without a board it has no seeds. `protocol next --set`
-(stdin `{"rounds": [{"ids", "title", "why", "compact"}], "compact": {"keep"}}`)
+(stdin `{"rounds": [{"ids", "title", "why", "fresh"}], "compact": {"keep"}}`)
 stores the model's proposal while no round is open: at most 3 rounds, each with
-at least one id and a title within 60 characters; `compact` is required with a
-compacting round or without rounds. Every error is listed in one refusal, and
+at least one id and a title within 60 characters; `fresh` marks a round that
+reuses nothing read so far; `compact` is required with a fresh round or without
+rounds. Every error is listed in one refusal, and
 `start round` clears the proposal. The release's close text tells the model to
 run `protocol next` and report its proposal.
 
@@ -457,7 +458,9 @@ the engine's headline. The Console pane (`/console` shows it as text;
 (counts, this session's items, sessions with runtime and pull initials, stale
 holds, live workers), Suggestions while no run is open and the engine's `next`
 offers something (one row per proposed round: `[ Start ] <title> · N questions ·
-<why>`, with `· compacts first` where set, the first row recommended in the
+<why>`, with `· compacts first` for a `fresh` round while the context is at
+150k tokens or more (`$.session.usage()`; no reading counts as small, and a
+compact-only proposal shows only then too), the first row recommended in the
 theme's `suggestion` color; a click on a row lists its ids, each opening its
 item; Release Round and a compact-only proposal show here too), Round (title,
 summary, step words, questions: up to 10 of any kind show whole, beyond that 10
@@ -488,7 +491,7 @@ the round during one (a release run the same way), and with no run open the
 recommended suggestion (`<title> · N questions ·` with Start, `M records
 decided ·` with Release Round, or Compact), nothing while a dialog is
 open or nothing is offered. Start sends `Start the next round on <title>: <ids>`
-as your prompt; for a round marked compact it stores that message, runs
+as your prompt; for a row that compacts first it stores that message, runs
 `/compact` with the proposal's `keep`, and the compaction hook keeps the
 proposal in the summary and sends the message once the compaction succeeded (a
 skipped or failed compaction drops it with a notice; so do your next typed

@@ -56,6 +56,8 @@ export type World = {
   held: unknown[]
   agents: { id: string; description: string; type: string; status: string }[]
   protocolExit: number
+  /** The size $.session.usage() reports; undefined until a response, 'fails' for a read that throws. */
+  tokens: number | undefined | 'fails'
   /** `board show --json`'s fields for any id, or an exit code to fail with (`bad`: print text that is no JSON). */
   show: { record: Record<string, unknown>; exit: number; bad: boolean }
   verbs: () => string[]
@@ -76,6 +78,7 @@ export function world(on: On, init: Partial<Pick<World, 'round' | 'role' | 'surf
     held: init.held ?? [],
     agents: init.agents ?? [],
     protocolExit: 0,
+    tokens: 500_000,
     show: { record: { description: '## Decision\nKeep it.', dependencies: [], issue_type: 'decision', priority: 1, assignee: null, labels: [], comment_count: 0 }, exit: 0, bad: false },
     verbs: () => w.calls.filter(one => one.argv[0] === PROTOCOL).map(one => one.argv.slice(3).join(' ')),
   }
@@ -84,6 +87,10 @@ export function world(on: On, init: Partial<Pick<World, 'round' | 'role' | 'surf
   mock.env(on, { HOME })
 
   on('session.id', () => ({ value: SESSION }))
+  on('session.usage', () => {
+    if (w.tokens === 'fails') throw new Error('no usage')
+    return { value: { startedAt: 0, context: { ...(w.tokens === undefined ? {} : { tokens: w.tokens }), window: 1_000_000 }, rateLimits: {}, cost: { usd: 0 } } as never }
+  })
   on('session.surfaces', () => ({ value: w.surfaces as never }))
   on('fs.exists', (_, e) => ({ value: w.files.has(e.path) }))
   on('fs.read', (_, e) => ({ value: w.files.get(e.path) ?? '' }))

@@ -754,12 +754,12 @@ describe('suggestions', () => {
   const closed = (next: unknown) => roundJson({ round: null, step: null, check: null, pending: null, batch: null, questions: [], next })
   const PROPOSED = {
     rounds: [
-      { ids: ['tstdl-a', 'tstdl-b'], title: 'Cache questions', why: 'same module as the context read', compact: false },
-      { ids: ['tstdl-c'], title: 'Queue retry', why: 'highest priority left', compact: true },
+      { ids: ['tstdl-a', 'tstdl-b'], title: 'Cache questions', why: 'same module as the context read', fresh: false },
+      { ids: ['tstdl-c'], title: 'Queue retry', why: 'highest priority left', fresh: true },
     ],
     compact: { keep: 'the cache decisions' },
   }
-  const parsed = (next: unknown) => parseRound(closed(next))
+  const parsed = (next: unknown) => ({ ...parseRound(closed(next)), isContextLarge: true })
 
   test('suggestions() offers rounds first (the first recommended), then Release Round, then a compact-only proposal', () => {
     expect(suggestions(null)).toEqual([])
@@ -767,13 +767,21 @@ describe('suggestions', () => {
     expect(suggestions(parsed({ release: { count: 3 } }))).toEqual([
       { kind: 'release', key: 'release', count: 3, isRecommended: true }])
     expect(suggestions(parsed(PROPOSED)).map(one => [one.kind, one.key, one.isRecommended])).toEqual([['round', 'round-0', true], ['round', 'round-1', false]])
-    expect(suggestions(parsed(PROPOSED))[1]).toMatchObject({ ids: ['tstdl-c'], compact: true, keep: 'the cache decisions' })
-    expect(suggestions(parsed(PROPOSED))[0]).toMatchObject({ compact: false, keep: null })
+    expect(suggestions(parsed(PROPOSED))[1]).toMatchObject({ ids: ['tstdl-c'], fresh: true, keep: 'the cache decisions' })
+    expect(suggestions(parsed(PROPOSED))[0]).toMatchObject({ fresh: false, keep: null })
     expect(suggestions(parsed({ ...PROPOSED, release: { count: 1 } })).map(one => [one.kind, one.isRecommended]))
       .toEqual([['round', true], ['round', false], ['release', false]])
     expect(suggestions(parsed({ compact: { keep: 'all decisions' } }))).toEqual([{ kind: 'compact', key: 'compact', keep: 'all decisions', isRecommended: true }])
     // a compact proposal beside rounds is the rounds' keep, not a Compact suggestion of its own
     expect(suggestions(parsed({ rounds: [PROPOSED.rounds[0]], compact: { keep: 'x' } })).map(one => one.kind)).toEqual(['round'])
+  })
+
+  test('below the size limit no row compacts first and a compact-only proposal is not offered', () => {
+    const small = (next: unknown) => parseRound(closed(next))
+    expect(small(PROPOSED).isContextLarge).toBe(false)
+    expect(suggestions(small(PROPOSED)).map(one => one.kind === 'round' ? one.keep : 'other')).toEqual([null, null])
+    expect(suggestions(small({ compact: { keep: 'all decisions' } }))).toEqual([])
+    expect(suggestions(small({ compact: { keep: 'all decisions' }, release: { count: 1 } })).map(one => one.kind)).toEqual(['release'])
   })
 
   test('suggestions() stays empty while a round is open or a dialog is', () => {
@@ -896,6 +904,76 @@ describe('suggestions', () => {
     expect(w.prompts).toEqual(['Start the next round on Cache questions: protocol start round tstdl-a tstdl-b'])
     expect(w.commands).toEqual([])
     await ui.unmount()
+  })
+
+  describe('the context size decides whether a Start compacts first', () => {
+    const FIRST = 'Queue retry · 1 question · highest priority left'
+    async function mounted($: any, on: any, tokens: number | undefined | 'fails') {
+      const found = world(on, { round: closed(PROPOSED) })
+      found.w.tokens = tokens
+      const compaction = { answer: { messages: [{ role: 'user', text: 'summary', toolUses: [] }] } as unknown }
+      on('session.compact', () => compaction.answer)
+      await ready($, found.clock)
+      return { ...found, compaction, ui: await $.ui.mount({ ...PANE, surface: 'terminal' }) }
+    }
+
+    for (const [name, tokens] of [['a fresh session (no reading yet)', undefined], ['just under the limit', 149_999], ['a failing reading', 'fails']] as const) {
+      test(`${name}: the row does not say it, and its Start only starts`, async ($, on) => {
+        const { w, clock, ui } = await mounted($, on, tokens)
+        expect(await texts(ui)).toContain(FIRST)
+        expect(await texts(ui)).not.toContain(`${FIRST} · compacts first`)
+        await ui.press({ key: 'sg-round-1-start' })
+        await clock.settle()
+        expect(w.commands).toEqual([])
+        expect(w.prompts).toEqual(['Start the next round on Queue retry: protocol start round tstdl-c'])
+        await ui.unmount()
+      })
+    }
+
+    test('at the limit the row says it and its Start compacts first; a row the model did not mark never does', async ($, on) => {
+      const { w, clock, ui } = await mounted($, on, 150_000)
+      expect(await texts(ui)).toContain(`${FIRST} · compacts first`)
+      expect(await texts(ui)).toContain('Cache questions · 2 questions · same module as the context read')
+      await ui.press({ key: 'sg-round-1-start' })
+      await clock.settle()
+      expect(w.commands).toEqual([{ command: 'compact', args: 'the cache decisions' }])
+      await ui.unmount()
+    })
+
+    test('a proposal stored small compacts first once the context has grown', async ($, on) => {
+      const { w, clock, ui } = await mounted($, on, 71_000)
+      expect(await texts(ui)).not.toContain(`${FIRST} · compacts first`)
+      w.tokens = 300_000
+      await $.turn.complete({ answer: '', durationMs: 1, isAborted: false, turnId: 't', reason: 'answer' } as never)
+      await clock.settle()
+      expect(await texts(ui)).toContain(`${FIRST} · compacts first`)
+      await ui.unmount()
+    })
+
+    const messages = [{ role: 'user' as const, text: 'hi', toolUses: [] }]
+    test('after a compaction a Start does not compact again, though the reading inside the hook is still the old one', async ($, on) => {
+      const { w, clock, ui } = await mounted($, on, 500_000)
+      expect(await texts(ui)).toContain(`${FIRST} · compacts first`)
+      await $.session.compact({ trigger: 'manual', messages })
+      await clock.settle()
+      expect(await texts(ui)).not.toContain(`${FIRST} · compacts first`)
+      await ui.press({ key: 'sg-round-1-start' })
+      await clock.settle()
+      expect(w.commands).toEqual([])
+      await ui.unmount()
+    })
+
+    test('a skipped compaction or a precompute changes nothing', async ($, on) => {
+      const { clock, compaction, ui } = await mounted($, on, 500_000)
+      await $.session.compact({ trigger: 'precompute', messages })
+      await clock.settle()
+      expect(await texts(ui)).toContain(`${FIRST} · compacts first`)
+      compaction.answer = { skip: 'vetoed by a hook' }
+      await $.session.compact({ trigger: 'manual', messages })
+      await clock.settle()
+      expect(await texts(ui)).toContain(`${FIRST} · compacts first`)
+      await ui.unmount()
+    })
   })
 
   describe('a Start on a round that compacts first', () => {
