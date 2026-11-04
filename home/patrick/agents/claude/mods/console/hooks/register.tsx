@@ -8,12 +8,13 @@ import type { ConsoleStart } from '../types'
 import {
   betweenTurns, context, failOpen, message, notice, noteModel, openDialog, PANE, placeholderMarker, pressSubmit, recordPass, refreshAll, refreshBoard, refreshLater,
   refreshRole, refreshRound, releaseRun, resetSession, setDialogOutcome, stampReleaseRun, withContext,
+  isNewText, setQuestionsAnswered,
 } from './core'
 import { answer, boardShow, decline, isRoundOpen, pass, pending as readPending, protocol, RELEASE_COMMAND, say, statusLine, toolArgv } from './engine'
 import { capture, judgeDialog, needsModel } from './gate'
 import type { DialogInput } from './gate'
 import { drawBand, drawPane, PANE_MIN_COLUMNS } from './pane'
-import { addGate, getBoard, getGate, getPass, getPrinted, getRole, getRound, getStart, releaseRefresh, setAskSent, setPaneDismissed, setPass, setRound, setStart } from './state'
+import { addGate, getBoard, getGate, getPass, getPrinted, getRole, getRound, getStart, releaseRefresh, setAskSent, setPaneDismissed, setPass, setPrinted, setRound, setStart } from './state'
 import { answeredText, consoleText, protocolCallText, protocolResultText } from './words'
 
 const PROTOCOL_TOOL = 'mcp__console__protocol'
@@ -46,7 +47,7 @@ export const register: Register = on => {
     // $.state outlives a reload, the previous environment's refresh does not: its single-flight claim goes.
     await releaseRefresh($)
     await $.command.register({ name: 'console', description: 'Open the console pane (prints the board and round where no pane fits)' })
-    await $.command.register({ name: 'console-questions', description: "Print the issued batch's question text (the console runs it at the turn's end)", argumentHint: '[batch marker]' })
+    await $.command.register({ name: 'console-questions', description: "Print the issued batch's question text", argumentHint: '[batch marker]' })
     await $.command.register({ name: 'console-item', description: "Print a board item's summary", argumentHint: '<id>' })
     await refreshRole($).catch(failOpen($, 'reading the session role'))
     $.clock.every(REFRESH_MS, () => refreshAll($).catch(failOpen($, 'refresh')))
@@ -258,14 +259,17 @@ export const register: Register = on => {
   on('command.run', { command: 'console-questions' }, async ($, e) => {
     const round = await getRound($)
     const batch = round !== null && isRoundOpen(round) ? round.batch : null
-    const [wanted, again] = e.args.trim().split(' ')
+    const wanted = e.args.trim()
     const isOurs = e.origin.kind === 'plugin' && e.origin.name === 'console'
-    if (batch === null || (wanted !== '' && wanted !== undefined && wanted !== batch.marker)) return { text: 'No question text to print.' }
+    if (batch === null || (wanted !== '' && wanted !== batch.marker)) return { text: 'No question text to print.' }
     if (isOurs) {
+      const isNew = await isNewText($, batch)
+      await setPrinted($, batch.marker)
       const ctx = await context($)
+      setQuestionsAnswered(batch.marker)
       void openDialog($, batch.marker, ctx.session).catch(failOpen($, 'opening the dialog'))
-    }
-    if (batch.notice.trim() === '' || again !== undefined) return { text: isOurs ? '\nNothing new to read for these questions.' : 'No question text to print.' }
+      if (!isNew) return { text: '\nNothing new to read for these questions.' }
+    } else if (batch.notice.trim() === '') return { text: 'No question text to print.' }
     return { text: `\n${batch.notice}` }  // the host prefixes the output with the plugin's name: the first question starts its own line
   })
 

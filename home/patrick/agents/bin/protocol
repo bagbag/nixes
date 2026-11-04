@@ -836,7 +836,6 @@ def select_text(ctx: Context) -> str:
                                                            ctx.round.get('named') else 'start from the highest-priority unblocked question. ')
         + 'Candidates in order:',
         *(rows or ['- none: report {"select": []} to close the round']),
-        'The engine claims the selected board items.',
         report_hint(ctx, 'select', {'select': [c['key'] for c in candidates(ctx)[:2]] or ['<id>']}),
     )
 
@@ -1484,8 +1483,7 @@ def pass_text(ctx: Context, command: str) -> str:
     scope = f'with the argument `{args}` (lenses, then the questions to strengthen)' if args else 'on the whole round'
     if ctx.codex:
         return f'Run the {command} skill now {scope} (read its SKILL.md), then report the pass.'
-    return ('End the turn after any other work for the user, without a closing status line: the console starts the next '
-            'pass as its own turn.')
+    return 'End the turn after any other work for the user, without a closing status line; the console runs the next pass.'
 
 
 def check_text(ctx: Context) -> str:
@@ -1926,9 +1924,8 @@ def ask_text(ctx: Context) -> str:
     tool_input = {'questions': batch['questions'], 'metadata': {'source': batch['marker']}}
     notice = batch.get('notice') or ''
     order = ', in this order' + (', numbered like the dialog' if len(batch['questions']) > 1 else '')
-    console_opens = ('write nothing about the questions and end your turn now. The console ' + ('prints each question\'s parts, ' if notice else '')
-                     + 'opens the dialog and records the answers; a message tells you when you have something to do. After a reply the person typed instead of '
-                     'picking: answer it as the turn\'s last text and end the turn; the console reopens the dialog, also when nothing new prints. '
+    console_opens = ('write nothing about the questions and end your turn now; a message tells you when you have something to do. '
+                     'After a reply the person typed instead of picking: answer it as the turn\'s last text and end the turn. '
                      'If a console message asks you to open the dialog: call AskUserQuestion with the input `protocol show` gives.')
     lead = f"Round {ctx.round['id']} · " + (f"Check cap reached: {'ask the user how to go on.' if ctx.codex else console_opens}" if batch['cap'] else
                                              f"Ask batch {batch['marker']}" + (f' (show the user the text below first, then ask{order}).' if ctx.codex else f': {console_opens}'))
@@ -1950,9 +1947,7 @@ def ask_text(ctx: Context) -> str:
                  f'To apply a change the user asked for to a question before they answer, use `protocol edit` (stdin {EDIT_STDIN}); '
                  + EDIT_WORDS +
                  ' A pass report updates questions only for a pass.\n'
-                 'The console records the answers from the dialog. Never pass a person origin (dialog, composer, '
-                 'bridge, press) yourself: the console relays those. Record an answer the user types in chat '
-                 'instead with the protocol tool\'s ["answer"] (it stamps the origin; through Bash, `protocol '
+                 'Record an answer the user types in chat with the protocol tool\'s ["answer"] (through Bash, `protocol '
                  'answer --origin chat`) and stdin '
                  + json_block({'question': batch['ids'][0] if batch['ids'] else '<q id>', 'answer': '<the answer>',
                                'quote': "<the user's exact words>"}) + '.' if once else '')
@@ -2286,9 +2281,9 @@ def closed_text(ctx: Context) -> str:
         f"Round {r['id']} closed.", *done, *parked,
         (f"Board: {counts['questions']} open questions, {counts['decided']} decided awaiting release, "
          f"{counts['toPlan']} released to plan, {counts['inReview']} in review, {counts['forUser']} waiting on the user."
-         if counts and r.get('countsAt') else 'No board counts.' if ctx.board else 'No board here: the records are files only.'),
-        *([f"Next: a release (decide.md Release) takes {release_takes(waiting)}. It starts when the user types /release-round or "
-           'asks for it; nothing starts by itself.'] if (waiting := release_next(ctx)) else []),
+         if counts and r.get('countsAt') else 'No board counts.' if ctx.board else ''),
+        *([f"Next: a release (decide.md Release) takes {release_takes(waiting)}, on the user's /release-round or request."]
+          if (waiting := release_next(ctx)) else []),
     ])
 
 
@@ -2857,8 +2852,7 @@ def scoped_text(ctx: Context) -> str:
             'corrected record text, each against its sources and the rest of the set. ')
     how = (f'Run the {command} skill now with the argument `{args}` (read its SKILL.md), then report the pass. '
            if ctx.codex else
-           'End the turn after any other work for the user, without a closing status line: the console starts the pass as '
-           'its own turn. ')
+           'End the turn after any other work for the user, without a closing status line; the console runs the pass. ')
     return lines(lead + how + 'Report each revised record as "unchanged" or a change as in the re-check (a change of your own '
                  "parts rewrites it again; a change to the user's decision drops it; a spread stops the run):",
                  report_hint(ctx, 'scoped', {
@@ -3346,7 +3340,7 @@ def next_text(ctx: Context) -> str:
     return lines(
         f'Seeds for the next round (top {SEEDS} open questions, unblocked, not held by another live session; open-milestone '
         'members first, then priority, then the work they hold; holds: stopping at a milestone/everything downstream):'
-        if ctx.board else 'No board here: no seeds.',
+        if ctx.board else '',
         *([seed_line(seed) for seed in seeded] or (['- none'] if ctx.board else [])),
         items_text(ctx, items, elsewhere, waiting),
         *(topic_counts(ctx, items) if ctx.board else []),
@@ -3360,8 +3354,8 @@ def next_text(ctx: Context) -> str:
                                   'why': '<why this topic, and the priority/size trade>', 'fresh': False,
                                   'ids': ['<a question that must lead (optional)>']}]})
         + f'): at most {PROPOSAL_ROUNDS} rounds, the one that reuses the read context first with fresh false, other topics with '
-        'fresh true; `rounds` may be empty to offer only a compaction. The console compacts before a fresh round only '
-        "when the context is large, so do not tell the user a round will compact. Start a row with `protocol start round --topic '<title>: <premise>'`.",
+        'fresh true; `rounds` may be empty to offer only a compaction. Do not tell the user a round will compact. '
+        "Start a row with `protocol start round --topic '<title>: <premise>'`.",
     )
 
 
@@ -3944,7 +3938,7 @@ def answer(ctx: Context, report: dict, origin: str) -> str:
         ctx.round['check']['challenged'] = False  # the answers are news to the last challenge-rulings run
     response = report.get('response')
     ctx.log('answered', marker=batch['marker'], origin=origin, questions=done, typed=typed, response=response)
-    notes = [f"Recorded answers to {', '.join(done) or 'no question'} ({origin})."]
+    notes = [f"Recorded answers to {', '.join(done)} ({origin})."] if done else []
     notes += [*noted, 'A note that states a criterion restarts its question (`protocol restart <id>`); otherwise the '
               'record carries it.'] if noted else []
     for qid in typed:

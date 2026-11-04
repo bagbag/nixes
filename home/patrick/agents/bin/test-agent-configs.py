@@ -2498,7 +2498,7 @@ def validate_board(root: Path) -> None:
                           or not row(fresh, "live0001").endswith("  process alive")
                           or not row(fresh, "gone0001").endswith("  GONE")
                           or "  workers 1/3  " not in row(fresh, "work0001")
-                          or "idle = no activity for 1 h (the holder's last tool call, else the item's last update)" not in fresh):
+                          or "idle = no activity for 1 h." not in fresh):
             raise ValueError(f"board position liveness footer or session rows:\n{fresh}")
         if not own_start and "GONE" in fresh:
             raise ValueError(f"without ps, nothing is marked gone:\n{fresh}")
@@ -3358,7 +3358,7 @@ def validate_protocol(root: Path, part: str) -> None:
                     or first["questions"][0]["status"] != "draft" or first["questions"][0]["overlaps"] != []:
                 raise ValueError(f"protocol stage → check: {first}")
             body = out.split("\n", 1)[1]
-            if 'End the turn after any other work for the user, without a closing status line: the console starts the next pass as its own turn.' not in out or "model-reported" in out \
+            if 'End the turn after any other work for the user, without a closing status line; the console runs the next pass.' not in out or "model-reported" in out \
                     or "step-back" in body.replace("report_hint", "").split("After the pass")[0] \
                     or "Check cycle 1/5 (the round's path pass: goal and foundations, before the drafts settle" not in out \
                     or "path pass, cycle 1/5" not in out.splitlines()[0]:
@@ -3421,7 +3421,7 @@ def validate_protocol(root: Path, part: str) -> None:
                         {"label": "Keep (recommended, lean)", "description": "Your call: taste — keep it"}, {"label": "Drop", "description": "drop it"}],
                         "multiSelect": False}]:
                 raise ValueError(f"protocol ask: {asked}")
-            if '"metadata"' in out or "Never pass a person origin" not in out or "model-reported" in out \
+            if '"metadata"' in out or "Record an answer the user types in chat" not in out or "model-reported" in out \
                     or '"metadata": {"source": "round:r1:1"}' not in proto("show", cwd=repo).stdout:
                 raise ValueError(f"protocol Claude ask output: {out}")
             # The options pass's dropped ideas print as one line each under the options; a kept idea and a stated reason print nothing.
@@ -3429,7 +3429,7 @@ def validate_protocol(root: Path, part: str) -> None:
                     or "an owner-side cache" in asked["batch"]["notice"] or asked["batch"]["notice"].count("Dropped:") != 1:
                 raise ValueError(f"the dropped ideas print under the options:\n{asked['batch']['notice']}")
             # r32-q149: the Ask text tells the model to print nothing and end its turn: the console prints, opens the dialog and records.
-            if "write nothing about the questions and end your turn now" not in out or "opens the dialog and records the answers" not in out \
+            if "write nothing about the questions and end your turn now" not in out or "a message tells you when you have something to do" not in out \
                     or "Ask message" in out or "Later call" in out or "the turn's last text and end the turn" not in out or '"questions"' in out:
                 raise ValueError(f"the Claude Ask text ends the turn and leaves the dialog to the console:\n{out}")
             # Recovery: `show` repeats the current step's instructions; `status --line` points to it.
@@ -3467,7 +3467,7 @@ def validate_protocol(root: Path, part: str) -> None:
             refused("step", stdin={"records": {}}, needle="records missing for q1")
             out = proto("step", stdin={"records": {"q1": {"rationale": "Simpler.", "ruleOwner": "docs/cache.md#cache"}}}).stdout
             record = (notes / "r1-q1.md").read_text(encoding="utf-8")
-            if "Round r1 closed." not in out or "No board here" not in out or calls() \
+            if "Round r1 closed." not in out or "Board:" in out or calls() \
                     or "## Alternatives Considered\n- Drop: drop it\n\n## Decision\nKeep\n" not in record \
                     or 'User (dialog), ' not in record or "## Rule owner\ndocs/cache.md#cache" not in record:
                 raise ValueError(f"protocol no-board record:\n{out}\n{record}")
@@ -4062,8 +4062,8 @@ def validate_protocol(root: Path, part: str) -> None:
                     or "fx-n5" in seeds_only or "fx-n6" in seeds_only or "fx-n8" in seeds_only or "No proposal stored." not in out \
                     or ["health", "--json", "--root", "fx-m1", "--items", "questions"] not in made or made[0][:3] != ["health", "--json", "--items"]:
                 raise ValueError(f"protocol next must rank the seeds (milestone, priority, holds; no blocked or live-held):\n{out}\n{made}")
-            if "No board here: no seeds." not in proto("next", cwd=plain).stdout or calls():
-                raise ValueError("protocol next without a board says so and reads no board")
+            if "Seeds for the next round" in proto("next", cwd=plain).stdout or calls():
+                raise ValueError("protocol next without a board lists no seeds and reads no board")
             # r24-q104/q105: the open questions by topic label and priority print every time, and the lead ranks topics itself.
             if "Open questions by topic" not in out or "- store 1 p1, 1 p2" not in out or "- cache 1 p2" not in out or "- (no topic) 3 p0, 2 p1" not in out \
                     or "Propose topics, not question sets" not in out or "how many questions each settles" not in out or "--set" not in out \
@@ -4437,7 +4437,7 @@ def validate_protocol(root: Path, part: str) -> None:
             view = shown(cwd=repo)
             if view["step"] != "scoped" or view["pending"] is None or view["pending"]["command"] != "step-back" \
                     or view["pending"]["args"] != "fx-s2" or "next: step-back pass on the revised fx-s2" not in out.splitlines()[0] \
-                    or "console starts the pass as its own turn" not in out:
+                    or "the console runs the pass" not in out:
                 raise ValueError(f"the scoped step-back must wait on the revised ids before the approval: {view['step']} {view['pending']}\n{out}")
             refused("step", stdin={"pass": "ground", "records": {"fx-s2": "unchanged"}}, needle="`pass` is step-back", observe=False, cwd=repo)
             refused("step", stdin={"pass": "step-back", "records": {"fx-s2": "unchanged"}}, needle="no /step-back ran", observe=False, cwd=repo)
@@ -4883,9 +4883,9 @@ def validate_protocol(root: Path, part: str) -> None:
                     or "in this order, numbered like the dialog" not in proto("show", **texts).stdout:
                 raise ValueError(f"the dialog numbers a batch of two and passes previews through: {batch}")
             claude_ask = proto("show", **texts).stdout
-            if "write nothing about the questions and end your turn now. The console prints each question's parts, opens the dialog and records the answers" not in claude_ask \
+            if "write nothing about the questions and end your turn now; a message tells you when you have something to do" not in claude_ask \
                     or "call AskUserQuestion with the input `protocol show` gives" not in claude_ask \
-                    or "After a reply the person typed instead of picking: answer it as the turn's last text and end the turn; the console reopens the dialog, also when nothing new prints." not in claude_ask \
+                    or "After a reply the person typed instead of picking: answer it as the turn's last text and end the turn." not in claude_ask \
                     or "AskUserQuestion input, in this order, numbered like the dialog:" not in claude_ask or '"source": "round:r1:1"' not in claude_ask or "Ask message" in claude_ask \
                     or "before the dialog" in claude_ask or "walk through first" in claude_ask or "Text to show first" in claude_ask:
                 raise ValueError(f"a Claude ask with text to print tells the lead to end its turn and keeps the dialog:\n{claude_ask}")
@@ -4895,7 +4895,7 @@ def validate_protocol(root: Path, part: str) -> None:
             again = shown(**texts)["batch"]
             ask_again = proto("show", **texts).stdout
             if again is None or again["marker"] == batch["marker"] or again["notice"] != "" \
-                    or "end your turn now. The console opens the dialog and records the answers" not in ask_again or "prints each" in ask_again \
+                    or "end your turn now; a message tells you" not in ask_again \
                     or "AskUserQuestion input" not in ask_again or "next: the console to open the dialog, then your answers (batch 2)" not in ask_again:
                 raise ValueError(f"a re-ask with nothing changed ends the turn for the console's message:\n{ask_again}")
             proto("abandon", **texts)
@@ -5885,7 +5885,7 @@ def validate_protocol(root: Path, part: str) -> None:
             proto("step", stdin={**ROUND_INFO, "questions": [question("Again?", **{"for": "pt2"})]}, **fmt)
             refused("step", stdin={"pass": "step-back", "updates": []}, needle="After the pass, report each change", **fmt)
             ask = converge(**fmt)
-            if "Never pass a person origin" not in ask or "opens the dialog" not in ask:
+            if "Record an answer the user types in chat" not in ask or "open the dialog" not in ask:
                 raise ValueError(f"the first ask prints the instructions and the dialog:\n{ask}")
             proto("answer", "--origin", "dialog", stdin={"marker": "round:r2:1", "answers": {"Again?": "Keep"}}, **fmt)
             proto("step", stdin={"pass": "challenge-rulings", "updates": [], "checked": ["the answer"]}, **fmt)
@@ -5893,7 +5893,7 @@ def validate_protocol(root: Path, part: str) -> None:
             proto("step", stdin={"records": {"q1": {"rationale": "R.", "ruleOwner": "o"}}}, **fmt)
             to_check("Third?", **fmt)
             ask = converge(**fmt)
-            if "AskUserQuestion input" in ask or "Never pass a person origin" in ask or "protocol edit" in ask \
+            if "AskUserQuestion input" in ask or "Record an answer the user types in chat" in ask or "protocol edit" in ask \
                     or "After a reply the person typed instead of picking: answer it as the turn's last text" not in ask:  # every Ask carries it: it matters after a typed reply
                 raise ValueError(f"a later ask prints the dialog without the instructions:\n{ask}")
             refused("edit", stdin={"updates": [{"id": staged["q"], "premises": "x"}], "quote": "never said"}, needle='Edit format: `protocol edit` with stdin {"updates"', **fmt)

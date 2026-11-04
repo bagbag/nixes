@@ -782,8 +782,7 @@ def position(board: Board, args) -> None:
     if gone:
         print(f"  GONE = the holding session's process ended. Free {', '.join(gone)}: board take <id> | board unclaim <id> (the user or a deciding session)")
     if idle:
-        print(f'  idle = no activity for {IDLE_HOURS} h (the holder\'s last tool call, else the item\'s last update); '
-              'a single long-running tool call looks idle too. '
+        print(f'  idle = no activity for {IDLE_HOURS} h. '
               'If that session is gone: board take <id> | board unclaim <id> (the user or a deciding session)')
 
     section('open questions holding work',

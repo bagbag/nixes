@@ -44,6 +44,8 @@ export type World = {
   surfaces: string[]
   calls: { argv: string[]; stdin: string | undefined; env: Record<string, string> | undefined }[]
   commands: { command: string; args: string }[]
+  /** Per prompt: submitted as the person's own words, without the host's plugin frame. */
+  asUser: boolean[]
   prompts: string[]
   opened: string[]
   tools: { name: string; isDeferred: unknown }[]
@@ -73,7 +75,7 @@ export function world(on: On, init: Partial<Pick<World, 'round' | 'role' | 'surf
     role: init.role === undefined ? { session: SESSION, role: 'lead', actor: '617adf08', tool: 'claude' } : init.role,
     surfaces: init.surfaces ?? ['terminal'],
     activateError: init.activateError,
-    calls: [], commands: [], prompts: [], opened: [], tools: [], toasts: [], notified: [], views: [],
+    calls: [], commands: [], prompts: [], asUser: [], opened: [], tools: [], toasts: [], notified: [], views: [],
     files: new Map(),
     sessions: init.sessions ?? [
       { session: SESSION, role: 'lead', actor: '617adf08', pulls: [], holds: 2, workers: null, state: 'active', idleSince: null, claimable: 0 },
@@ -116,6 +118,7 @@ export function world(on: On, init: Partial<Pick<World, 'round' | 'role' | 'surf
   on('prompt.submit', (_, e) => {
     if (w.promptError !== null) return { drop: w.promptError } as never
     w.prompts.push(e.text)
+    w.asUser.push((e.origin as { asUser?: boolean }).asUser === true)
     return { text: e.text } as never
   })
 

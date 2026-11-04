@@ -276,10 +276,11 @@ A round:
   `$.ui.ask` takes labels only, so it asks a placeholder and the console's
   AskUserQuestion hook swaps it for the issued batch (never drawing the placeholder).
   Plain picks then let a pending pass run; a typed reply, a note, a decline or anything
-  else wakes the model with one visible line and the engine's text as a note. A `$` call
+  else wakes the model with the answers, one line each, as the person's own words (no plugin frame), and the engine's text as a note. A `$` call
   skips the hook it came from, so that hook cannot print a next batch: the model's turn
   end does. If the swap never ran, a one-line message asks the lead to open the dialog
-  with the input `protocol show` gives. There is no Ask button. At most one dialog per
+  with the input `protocol show` gives; so does a run of the command its hook never
+  answered, after printing any new text as a notice. There is no Ask button. At most one dialog per
   batch marker opens until the person sends a new message (a composer or bridge message
   clears it). The dialog gate still blocks a
   marked dialog whose notice is not printed yet once, telling the lead to end its turn. After a

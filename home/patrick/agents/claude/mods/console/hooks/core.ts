@@ -73,10 +73,7 @@ export async function openDialog($: $, marker: string, session: string): Promise
   const outcome = dialogOutcome as DialogOutcome | null
   dialogOutcome = null
   if (outcome === null) {
-    await pressSubmit($, openDialogText(marker), async error => {
-      await setAskSent($, null).catch(() => undefined)
-      await notice($, `sending the message that opens the dialog failed: ${message(error)}`).catch(() => undefined)
-    })
+    await askModelToOpen($, marker)
     return
   }
   if (outcome.needsModel || !(await betweenTurns($, session, false, false))) await wakeModel($, outcome)
@@ -86,21 +83,46 @@ export async function openDialog($: $, marker: string, session: string): Promise
  * At a main-agent turn's end that was not aborted, with a batch out (r29-q138, r30-q140, r32-q149): runs `/console-questions`, whose
  * hook prints the text and opens the dialog. A command's output draws whole between turns where a transcript row would not, and the hook's
  * fresh `$` matters too: after an awaited call in a chain, `$.ui.ask` skips the swap in the console's hook. One dialog per batch marker until
- * the person sends a new message (`prompt.submit` clears it); a batch already printed prints only a short line. Returns whether one is on its way.
+ * the person sends a new message (`prompt.submit` clears it); a batch already printed prints only a short line. A run that settles unanswered
+ * by the hook takes the model's route instead of leaving the round waiting. Returns whether one is on its way.
  */
 export async function openBatchDialog($: $, round: ConsoleRound | null): Promise<boolean> {
   const batch = round?.batch
   if (round === null || round === undefined || !isRoundOpen(round) || batch === null || batch === undefined || (await getAskSent($)) === batch.marker) return false
   await setAskSent($, batch.marker)
-  const isNew = batch.notice.trim() !== '' && (await getPrinted($)) !== batch.marker
-  await setPrinted($, batch.marker)
-  void $.command.run({ command: QUESTIONS_COMMAND, args: isNew ? batch.marker : `${batch.marker} again` })
+  questionsAnswered = null
+  void $.command.run({ command: QUESTIONS_COMMAND, args: batch.marker })
+    .then(() => questionsAnswered === batch.marker ? undefined : openUnanswered($, batch))
     .catch(async error => {
       await setPrinted($, null).catch(() => undefined)
       await setAskSent($, null).catch(() => undefined)
       await notice($, `printing the question text failed: ${message(error)}; nothing opens the dialog`).catch(() => undefined)
     })
   return true
+}
+
+/** The marker the `/console-questions` hook last answered; a run that settles without it never reached the hook. */
+let questionsAnswered: string | null = null
+export const setQuestionsAnswered = (marker: string): void => { questionsAnswered = marker }
+
+/** Whether the person has yet to read this batch's text; the hook prints it once per batch. */
+export async function isNewText($: $, batch: { marker: string; notice: string }): Promise<boolean> {
+  return batch.notice.trim() !== '' && (await getPrinted($)) !== batch.marker
+}
+
+/** The command's hook never ran: the person reads any new text as a notice, and the model opens the dialog. */
+async function openUnanswered($: $, batch: { marker: string; notice: string }): Promise<void> {
+  if (await isNewText($, batch)) await notice($, `\n${batch.notice}`)
+  await setPrinted($, batch.marker)
+  await askModelToOpen($, batch.marker)
+}
+
+/** The route when the console cannot open the dialog itself. */
+async function askModelToOpen($: $, marker: string): Promise<void> {
+  await pressSubmit($, openDialogText(marker), async error => {
+    await setAskSent($, null).catch(() => undefined)
+    await notice($, `sending the message that opens the dialog failed: ${message(error)}`).catch(() => undefined)
+  }, true)
 }
 
 /** What follows a turn or a dialog: the pending pass, else the issued batch's print and dialog. Whether either started. */
@@ -362,8 +384,8 @@ export async function pressWorkers($: $, session: string, workers: string): Prom
   refreshLater($)
 }
 
-/** Submits a message as a prompt (Commit and Push, a role button, the dialog message); `onFailed` follows a submit that failed. */
-export async function pressSubmit($: $, text: string, onFailed?: (error: unknown) => Promise<void>): Promise<void> {
+/** Submits the person's press or picks as their own words, read without the host's plugin frame; `isConsoleWords` keeps the frame on the console's own request. `onFailed` follows a submit that failed. */
+export async function pressSubmit($: $, text: string, onFailed?: (error: unknown) => Promise<void>, isConsoleWords = false): Promise<void> {
   if (!(await claimRun($, `prompt:${text}`))) {
     $.ui.toast(`"${text}" is already queued`)
     return
@@ -374,7 +396,7 @@ export async function pressSubmit($: $, text: string, onFailed?: (error: unknown
     await report(error)
   }
   // A prompt that did not enter resolves as a drop with its reason; a refused text (a leading `/`) rejects.
-  void $.prompt.submit({ text }).then(sent => { if (sent.drop !== undefined) return failed(new Error(sent.drop)) }).catch(failed)
+  void $.prompt.submit(isConsoleWords ? { text } : { text, asUser: true }).then(sent => { if (sent.drop !== undefined) return failed(new Error(sent.drop)) }).catch(failed)
 }
 
 /** The message a Start press sends (or stores, with compact): `protocol start round --topic '<title>: <premise>'`, then the ids that must lead. */

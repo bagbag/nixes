@@ -236,7 +236,7 @@ export async function drawPane($: $, e: { surface: string; props: RenderPropsOf[
       rows.push(
         <Box key="board-items" flexDirection="column" marginTop={1}>
           {items.shown.map(item => {
-            hint.add(`item-${item.id}`, `${item.id}: open its summary here (/console-item ${item.id} prints it in the chat)`)
+            hint.add(`item-${item.id}`, `${item.id}: open its summary here`)
             return (
               <Box key={`item-${item.id}`} flexDirection="column">
                 <Box flexDirection="row">
@@ -632,7 +632,7 @@ export async function drawPane($: $, e: { surface: string; props: RenderPropsOf[
     if (role?.role === 'solo') hint.add('action-role-autopilot', 'Runs /role autopilot: setup as solo, then away on your go')
     hint.add('action-release', 'Runs /release-round')
     hint.add('action-retro', 'Runs /retro')
-    hint.add('action-compact', 'Runs /compact; the round state is kept')
+    hint.add('action-compact', 'Runs /compact')
     return labelled('actions', <Text bold>Actions</Text>, divided('actions-row', entries), 1)
   }
 

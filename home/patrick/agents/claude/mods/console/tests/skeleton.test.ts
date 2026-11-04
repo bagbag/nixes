@@ -3,7 +3,7 @@
 import { describe, expect, test } from 'claude-code/testing'
 
 import { BATCH, NO_ROUND, notes, notices, PROTOCOL, roundJson, SESSION, world } from './fixture'
-import { openDialogText } from '../hooks/words'
+import { answeredText, openDialogText } from '../hooks/words'
 
 const start = async ($: any) => $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
 
@@ -178,7 +178,17 @@ describe('dialog gate and capture', () => {
         expect((drawn as any).questions).toEqual(BATCH.questions)
         expect((drawn as any).metadata).toEqual({ source: BATCH.marker })
         expect(w.verbs()).toContain('answer --origin dialog')
-        expect(w.prompts).toEqual([`Answered: 1. ${label}`])
+        expect(w.prompts).toEqual([`Answered:\n1. ${label}`])
+      })
+
+      test('answers read as the person\'s own words, one line each; the console\'s own request stays framed', async ($, on) => {
+        expect(answeredText([{ question: 'a' }, { question: 'b' }], { a: 'x', b: 'y' })).toBe('Answered:\n1. x\n2. y')
+        const { w, clock } = world(on, { round: asking() })
+        on('tool.call', { tool: 'AskUserQuestion' }, () => answered({ [QUESTION]: label }) as never)
+        await start($)
+        await $.turn.complete(complete())
+        await clock.settle()
+        expect(w.asUser).toEqual([true])
       })
 
       test('a next batch wakes the model, and its turn end opens that batch', async ($, on) => {
@@ -193,7 +203,7 @@ describe('dialog gate and capture', () => {
         await $.turn.complete(complete())
         await clock.settle()
         expect(asked).toEqual([BATCH.marker])
-        expect(w.prompts).toEqual([`Answered: 1. ${label}`])
+        expect(w.prompts).toEqual([`Answered:\n1. ${label}`])
         await $.turn.complete(complete())
         await clock.settle()
         expect(asked).toEqual([BATCH.marker, 'round:r4:3'])
@@ -221,7 +231,7 @@ describe('dialog gate and capture', () => {
         await start($)
         await $.turn.complete(complete())
         await clock.settle()
-        expect(w.prompts).toEqual(['Answered: 1. my own words'])
+        expect(w.prompts).toEqual(['Answered:\n1. my own words'])
       })
 
       test('a declined dialog is recorded and wakes the model', async ($, on) => {
@@ -295,7 +305,27 @@ describe('dialog gate and capture', () => {
         await $.tool.call({ tool: 'mcp__console__protocol', args: ['show', '--json'] } as never)
         await $.turn.complete(complete())
         await clock.settle()
-        expect(w.prompts.filter(text => text.startsWith('The console could not open'))).toEqual([openDialogText(BATCH.marker), openDialogText('round:r4:3')])
+        expect(w.prompts.filter(text => text.startsWith('Open the dialog'))).toEqual([openDialogText(BATCH.marker), openDialogText('round:r4:3')])
+      })
+
+      test('a run the hook never answered does not leave the round stuck: the person reads the text and the model opens the dialog', async ($, on) => {
+        // The trimmed arguments cannot match this marker, so the hook answers without taking the batch: the kit's stand-in for a run it never answered.
+        const marker = `${BATCH.marker} `
+        const { w, clock, session } = world(on, { round: roundJson({ step: 'ask', batch: { ...BATCH, marker, notice: NOTICE } }) })
+        await start($)
+        await $.turn.complete(complete())
+        await clock.settle()
+        expect(w.prompts).toEqual([openDialogText(marker)])
+        expect(notices(session).join(' ')).toContain('Engine name')
+      })
+
+      test('run by the console, the command prints a text once and a repeat says so', async ($, on) => {
+        const { clock } = world(on, { round: asking() })
+        await start($)
+        await clock.settle()
+        const own = { command: 'console-questions', args: BATCH.marker, origin: { kind: 'plugin', name: 'console' }, presentation: typed.presentation } as never
+        expect((await $.command.run(own)).text).toBe(`\n${NOTICE}`)
+        expect((await $.command.run(own)).text).toBe('\nNothing new to read for these questions.')
       })
 
       test('an empty text sends at once, with nothing to print', async ($, on) => {
@@ -304,6 +334,7 @@ describe('dialog gate and capture', () => {
         await $.turn.complete(complete())
         await clock.settle()
         expect(message(w)).toHaveLength(1)
+        expect(w.asUser).toEqual([false])
       })
 
       test('an aborted turn end, a subagent turn end, a round without a batch and the autopilot role send nothing', async ($, on) => {

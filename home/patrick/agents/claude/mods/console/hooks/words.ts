@@ -225,13 +225,13 @@ export function roundWords(round: ConsoleRound): string {
 }
 
 /** The message the console sends when it could not open a batch's dialog itself: the model opens it. */
-export const openDialogText = (marker: string): string => `The console could not open the dialog for batch ${marker}: call AskUserQuestion with the input protocol show gives`
+export const openDialogText = (marker: string): string => `Open the dialog for batch ${marker}: call AskUserQuestion with the input protocol show gives`
 
-/** The visible line after a dialog: what was answered, one line, without the dialog's recommended mark. */
+/** The visible text after a dialog: what was answered, one line per question, without the dialog's recommended mark. */
 export const answeredText = (questions: readonly { question: string }[], answers: Readonly<Record<string, string>>): string => {
   const picked = questions.filter(one => answers[one.question] !== undefined)
     .map((one, index) => `${index + 1}. ${cutAnswer((answers[one.question] ?? '').replace(/ \(recommended, (lean|strong)\)$/, ''))}`)
-  return picked.length > 0 ? `Answered: ${picked.join(' · ')}` : 'The dialog was declined.'
+  return picked.length > 0 ? `Answered:\n${picked.join('\n')}` : 'The dialog was declined.'
 }
 
 const cutAnswer = (text: string): string => text.length > 80 ? `${text.slice(0, 79)}…` : text
