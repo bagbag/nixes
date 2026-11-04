@@ -30,8 +30,9 @@ import tomllib
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+HOLDS_LEGEND = 'holds a/b: a stops at a milestone, b counts everything downstream'
 IDLE_HOURS = 1  # holds without activity (holder's tool call, else item update) for longer are hinted as idle
-WORKER_CAP = 6  # concurrent workers per session; a Codex session's agents thread limits lower it
+WORKER_CAP = 3  # workers a session targets unless registered with its own (activate --workers); Codex thread limits lower it
 WORKER_ACTIVE_MINUTES = 15  # a running worker with a tool call this recently counts as active
 CODEX_SYSTEM_CONFIG = Path('/etc/codex/config.toml')  # Codex's system layer, under $CODEX_HOME/config.toml
 CAPACITY_ROLES = ('agent', 'solo', 'autopilot')  # roles that dispatch workers
@@ -40,7 +41,7 @@ ROWS = 50  # rows per view section unless --limit (0: all)
 READ_BUDGET = 35_000  # characters per command output; Codex cuts a call's output above ~40,000 from the middle
 PREVIEW = 600  # characters a cut section still prints
 SHOWN_COMMENTS = 3
-SESSION_HOURS = 24  # position lists sessions registered this recently (plus any holding items)
+SESSION_HOURS = 24  # position lists sessions of this project active or registered this recently (plus any holding items)
 PULLS = ('plan', 'design', 'implement', 'review')
 KINDS = (*PULLS, 'question', 'accept', 'ratify', 'milestone')
 WORK_TYPES = ('task', 'bug', 'spike')
@@ -159,6 +160,14 @@ def registrations() -> list[dict]:
     return [json.loads(line) for line in result.stdout.splitlines() if line.strip()]
 
 
+def board_project() -> str | None:
+    """The resolved folder holding this board: the parent of the first line of `bd where` (a worktree names the main
+    checkout's .beads); None when the lookup fails. The registry records the same value (session-lead-mode project)."""
+    result = bd('where')
+    first = result.stdout.splitlines()[0].strip() if result.returncode == 0 and result.stdout.strip() else ''
+    return str(Path(first).parent.resolve()) if first.startswith('/') else None
+
+
 def parse_time(value) -> datetime | None:
     if not isinstance(value, str) or not value:
         return None
@@ -228,10 +237,11 @@ def active_workers(entry: dict | None) -> list[str]:
 
 
 def worker_cap(entry: dict) -> int:
-    """WORKER_CAP, lowered for a Codex session by the effective `agents.max_threads` or
+    """The session's own `worker_cap`, else WORKER_CAP, lowered for a Codex session by the effective `agents.max_threads` or
     `agents.max_concurrent_threads_per_session`: Codex's layers, the system config (CODEX_SYSTEM_CONFIG; tests set
     AGENT_CODEX_SYSTEM_CONFIG) overridden per key by `$CODEX_HOME/config.toml` (default ~/.codex)."""
-    cap = WORKER_CAP
+    own = entry.get('worker_cap')
+    cap = own if isinstance(own, int) and not isinstance(own, bool) and own >= 0 else WORKER_CAP
     if entry.get('tool') != 'codex':
         return cap
     layers = (Path(os.environ.get('AGENT_CODEX_SYSTEM_CONFIG') or CODEX_SYSTEM_CONFIG),
@@ -477,15 +487,22 @@ class Board:
             return None
         return kind
 
-    def downstream(self, item_id: str) -> int:
+    def downstream(self, item_id: str, through_milestones: bool = True) -> int:
+        """Open work waiting on an item. A milestone's whole scope waits on each member, which tells members apart by
+        nothing: `through_milestones=False` counts a milestone as one item and stops there (r24-q109)."""
         seen: set[str] = set()
         pending = [item_id]
         while pending:
             for waiting in self.dependents.get(pending.pop(), []):
                 if waiting not in seen and self.is_open(waiting):
                     seen.add(waiting)
-                    pending.append(waiting)
+                    if through_milestones or self.by_id.get(waiting, {}).get('issue_type') != 'milestone':
+                        pending.append(waiting)
         return len(seen)
+
+    def holds(self, item_id: str) -> tuple[int, int]:
+        """(stopping at milestones, everything downstream): what `holds 2/52` prints and lists sort by."""
+        return self.downstream(item_id, through_milestones=False), self.downstream(item_id)
 
     def last_activity(self, issue: dict) -> datetime | None:
         moments = [parse_time(issue.get('updated_at'))]
@@ -574,7 +591,7 @@ def milestone_states(board: Board, root: str | None) -> list[dict]:
 def item_json(board: Board, issue: dict, **extra) -> dict:
     """An item row of a --json view."""
     return {'id': issue['id'], 'type': issue.get('issue_type'), 'status': issue['status'], 'priority': issue.get('priority'),
-            'holder': issue.get('assignee') or None, 'title': issue.get('title', ''),
+            'holder': issue.get('assignee') or None, 'title': issue.get('title', ''), 'labels': issue.get('labels') or [],
             'blockedBy': board.unsettled_blockers(issue['id']) if issue['status'] == 'decided' else board.open_blockers(issue['id']),
             **extra}
 
@@ -668,9 +685,16 @@ def position_data(board: Board, args) -> dict:
     held = sorted((issue for issue in items if issue.get('assignee') and issue.get('issue_type') != 'epic'),
                   key=lambda issue: (issue['assignee'], by_priority(issue)))
     holding = {session_actor(issue['assignee']) for issue in held}
+    project = board_project()
+    horizon = now - timedelta(hours=SESSION_HOURS)
+
+    def recent(entry: dict) -> bool:
+        moments = (parse_time(entry.get('registered_at')), session_activity(entry))
+        return max((m for m in moments if m is not None), default=now) > horizon
+
     sessions = [entry for entry in known.values()
                 if entry.get('actor') in holding
-                or (parse_time(entry.get('registered_at')) or now) > now - timedelta(hours=SESSION_HOURS)]
+                or (project is not None and entry.get('project') == project and recent(entry))]
     kinds = {kind: {'ready': sum(1 for issue in ready if board.claimable(issue) == kind),
                     'sessions': sum(1 for entry in sessions if kind in session_kinds(entry, ROLE_HANDLES))}
              for kind in KINDS}
@@ -683,15 +707,15 @@ def position_data(board: Board, args) -> dict:
         gone = liveness(entry) == 'GONE'
         idle = not gone and (activity is None or (now - activity).total_seconds() > IDLE_HOURS * 3600)
         holds.append((issue, entry, updated, recorded, 'gone' if gone else 'idle' if idle else None))
-    questions = sorted(((board.downstream(issue['id']), issue) for issue in items
+    questions = sorted(((board.holds(issue['id']), issue) for issue in items
                         if issue.get('issue_type') == 'decision' and issue['status'] not in ('released', 'deferred')),
-                       key=lambda pair: (-pair[0], by_priority(pair[1])))
+                       key=lambda pair: (-pair[0][0], -pair[0][1], by_priority(pair[1])))
     return {
         'kinds': kinds, 'known': known, 'now': now,
         'sessions': [(entry, sum(1 for issue in held if session_actor(issue['assignee']) == entry.get('actor')))
                      for entry in sessions],
         'held': holds,
-        'questions': [(waiting, issue) for waiting, issue in questions if waiting],
+        'questions': [(waiting, issue) for waiting, issue in questions if waiting[1]],
         'milestones': sorted((i for i in items if board.kind(i) == 'milestone' and not board.open_blockers(i['id'])),
                              key=by_priority),
         'finished': sorted((issue for issue in items if board.finished_epic(issue)), key=by_priority),
@@ -723,7 +747,7 @@ def position_json(board: Board, args) -> dict:
         'sessions': [session_json(board, args, entry, count, data['now']) for entry, count in data['sessions']],
         'held': [item_json(board, issue, updatedAt=iso(updated), activeAt=iso(recorded), mark=mark)
                  for issue, _, updated, recorded, mark in data['held']],
-        'questionsHoldingWork': [item_json(board, issue, holds=waiting) for waiting, issue in data['questions']],
+        'questionsHoldingWork': [item_json(board, issue, holds=waiting[0], holdsAll=waiting[1]) for waiting, issue in data['questions']],
         'readyMilestones': [item_json(board, issue) for issue in data['milestones']],
         'finishedEpics': [item_json(board, issue) for issue in data['finished']],
     }
@@ -736,7 +760,7 @@ def position(board: Board, args) -> None:
     for kind, counts in data['kinds'].items():
         print(f"  {kind}: {counts['ready']} ready, {counts['sessions']} sessions")
     limit = args.limit
-    section(f'sessions (registered within {SESSION_HOURS} h or holding items)',
+    section(f'sessions (holding items here, or of this project and registered or active within {SESSION_HOURS} h)',
             [f"  {entry.get('actor')}  {entry.get('role')}  {entry.get('tool') or 'tool unknown'}"
              f"  handles {','.join(session_kinds(entry, ROLE_HANDLES)) or '-'}  registered {age(parse_time(entry.get('registered_at')))} ago"
              f"  holds {count}"
@@ -763,8 +787,10 @@ def position(board: Board, args) -> None:
               'If that session is gone: board take <id> | board unclaim <id> (the user or a deciding session)')
 
     section('open questions holding work',
-            [line(issue, f'holds {waiting}', issue.get('assignee') or 'unassigned') for waiting, issue in data['questions']],
+            [line(issue, f'holds {waiting[0]}/{waiting[1]}', issue.get('assignee') or 'unassigned') for waiting, issue in data['questions']],
             limit)
+    if data['questions']:
+        print(f'  {HOLDS_LEGEND}')
     section('ready milestones', [line(issue, issue.get('assignee') or 'unassigned') for issue in data['milestones']], limit)
     section('finished epics not closed', [line(issue) for issue in data['finished']], limit)
 
@@ -778,12 +804,14 @@ def holders(board: Board, args) -> None:
     rows = []
     for issue in board.scoped(args.root):
         if issue['status'] != 'closed':
-            count = board.downstream(issue['id'])
-            if count:
+            count = board.holds(issue['id'])
+            if count[1]:
                 rows.append((count, issue))
-    rows.sort(key=lambda pair: (-pair[0], by_priority(pair[1])))
+    rows.sort(key=lambda pair: (-pair[0][0], -pair[0][1], by_priority(pair[1])))
     section('items holding open work (transitive blocks dependents)',
-            [line(issue, f'holds {count}', issue.get('assignee') or 'unassigned') for count, issue in rows], args.limit)
+            [line(issue, f'holds {count[0]}/{count[1]}', issue.get('assignee') or 'unassigned') for count, issue in rows], args.limit)
+    if rows:
+        print(f'  {HOLDS_LEGEND}')
 
 
 # Conformance with skills/shared/board-core.md and board-coordination.md: mechanical classes only.
@@ -1249,6 +1277,8 @@ def show(board: Board, args) -> int:
                     budget.emit(text, f'board show {item_id} --section {q(name)}', name, item_id)
         comments = comment_list(issue)
         if args.comments or not selected:
+            if args.comments and not args.sections and not args.fields:
+                budget.out(f'comments only: board show {item_id} --full prints the whole item')
             shown = comments if args.comments else comments[-SHOWN_COMMENTS:]
             if comments:
                 budget.out(f'comments: {len(comments)}' + (f', newest {len(shown)}' if len(shown) < len(comments) else ''))
@@ -2029,7 +2059,7 @@ def main(argv: list[str] | None = None) -> int:
                      help='a field or a ##/### heading (case-insensitive prefix; repeatable)')
     sub.add_argument('--field', dest='fields', action='append', default=[], metavar='FIELD',
                      help='a named field, comments included (repeatable)')
-    sub.add_argument('--comments', action='store_true', help='every comment, newest first')
+    sub.add_argument('--comments', action='store_true', help='select the comments, every one, newest first (not the rest of the item)')
     sub.add_argument('--full', action='store_true', help=f'no {READ_BUDGET}-character budget')
     sub.add_argument('--json', action='store_true', help='with --field: {id: {field: value}}, unbudgeted')
     sub = add('claim', 'claim the next item routed to your role, or the given ids', claim, [scope])

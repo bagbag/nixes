@@ -116,6 +116,8 @@ When triaging a **pre-existing** list of findings (e.g. a handed-over `roast.md`
 
 Keep chat responses concise. Write a large standalone artifact — a full report, spec, plan, generated file, or bulk command/log dump that runs more than a screen or two — to a file and reference the path in your reply.
 
+Write brief progress notes and findings as you work. Everything the user needs to see also goes in the turn's last text or a dialog. When they need a finding before you go on, end the turn there.
+
 - **Canonical durable artifacts** (goals, ratified specifications, enduring
   plans, decisions) go to their owners under
   `$HOME/.agents/skills/shared/project-memory.md` Durable owners; reuse

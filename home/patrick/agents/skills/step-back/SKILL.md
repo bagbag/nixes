@@ -27,7 +27,9 @@ decisive trade-offs.
 
 Default: the current focus. Each selected lens widens it.
 
-- **goal:** one level up; judge the design against the goal behind it.
+- **goal:** one level up; judge the design against the goal behind it. Dig
+  into the real problem behind the ask and whether the design fixes its root
+  or works around it (XY problem).
 - **decisions:** every decision in the discussion together, not only the
   latest.
 - **foundations:** what the design builds on: earlier rulings, conventions and
@@ -50,3 +52,7 @@ focus; keep the other default criteria to a line each.
 - **overfit:** tailored to this case, or does it hold for the neighbouring
   cases?
 - **mechanics:** how each part actually works end to end, and what breaks.
+- **options:** find radically different ways to solve the problem: other
+  mechanisms, other owners, or removing the need, not variants. Argue each at
+  its strongest; drop one only for a stated constraint or sourced fact. Say for
+  each whether it is kept or dropped, and why.

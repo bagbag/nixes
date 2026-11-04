@@ -6,7 +6,8 @@
 # started from Codex is not: it inherits CODEX_SESSION_ID). The
 # session-register hook keeps workers from registering.
 # activate and alive record the Claude Code process (pid, pid_started) so
-# board position can tell a gone session. The session-activity hook records
+# board position can tell a gone session, and the project (the resolved folder
+# of the board: `board bd where`) so it lists only the sessions of its own. The session-activity hook records
 # activity as file mtimes: session-active touches <session>.active for the
 # session's own tool calls; worker-started and worker-active create or touch
 # one marker file per running worker in <session>.workers/ and worker-ended
@@ -21,7 +22,8 @@ pull_order=(plan design implement review)
 
 usage() {
   cat >&2 <<'EOF'
-usage: session-lead-mode activate <lead|agent|solo|autopilot> [--pulls plan,design,implement,review]
+usage: session-lead-mode activate <lead|agent|solo|autopilot> [--pulls plan,design,implement,review] [--workers <n>]
+       session-lead-mode set-workers <id> --workers <n>
        session-lead-mode actor
        session-lead-mode get <id>
        session-lead-mode show <id>
@@ -33,6 +35,7 @@ usage: session-lead-mode activate <lead|agent|solo|autopilot> [--pulls plan,desi
        session-lead-mode worker-active <agent-id>
        session-lead-mode worker-ended <agent-id>
 `--pulls` applies only to agent, which needs at least one pull.
+`--workers` sets the session's worker cap; without it, activate keeps the one set.
 EOF
   exit 2
 }
@@ -45,11 +48,13 @@ fail() {
 [[ $# -gt 0 ]] || usage
 command=$1
 shift
-role='' pulls='' session='' tool='' thread=''
+role='' pulls='' workers='' session='' tool='' thread=''
 while (($#)); do
   case $1 in
     --pulls) (($# >= 2)) || usage; pulls=$2; shift 2 ;;
     --pulls=*) pulls=${1#*=}; shift ;;
+    --workers) (($# >= 2)) || usage; workers=$2; shift 2 ;;
+    --workers=*) workers=${1#*=}; shift ;;
     -*) usage ;;
     *)
       [[ -z "$role" ]] || usage
@@ -58,6 +63,7 @@ while (($#)); do
       ;;
   esac
 done
+[[ -z "$workers" || "$command" == activate || "$command" == set-workers ]] || usage
 
 valid_session_id() {
   [[ "$1" =~ ^[A-Za-z0-9._-]{8,}$ ]] || fail "invalid session id '$1'"
@@ -113,7 +119,7 @@ entry_json() {
     times+=("${marker##*/}" "$modified")
   done
   jq -c --arg active_at "$active_at" --args \
-    '{role, pulls, actor, tool, session, registered_at, pid, pid_started,
+    '{role, pulls, actor, tool, session, registered_at, pid, pid_started, project, worker_cap,
       active_at: (if $active_at == "" then null else $active_at end),
       workers: ([range(0; $ARGS.positional | length; 2) as $i | {($ARGS.positional[$i]): $ARGS.positional[$i + 1]}] | add // {})}' \
     "${times[@]}" <"$1"
@@ -153,6 +159,20 @@ read_identity() {
   [[ -z "$identity" ]] || pid=${identity%%$'\n'*} pid_started=${identity#*$'\n'}
 }
 
+# Sets project to the resolved folder holding the board (first line of `board bd where`: its .beads
+# path; it works from a git worktree), empty outside a board or when the lookup fails. Fails open.
+read_project() {
+  local dir=${BASH_SOURCE[0]%/*} board where
+  [[ "$dir" != "${BASH_SOURCE[0]}" ]] || dir=.
+  board=$dir/board
+  project=''
+  [[ -x "$board" ]] || return 0
+  where=$("$board" bd where 2>/dev/null </dev/null | head -n 1) || true
+  [[ "$where" == /* ]] || return 0
+  project=$(cd -P -- "${where%/*}" 2>/dev/null && pwd -P) || project=''
+}
+project_filter='def located: if $project == "" then {} else {project: $project} end;'
+
 case "$command" in
   activate)
     case "$role" in
@@ -174,11 +194,13 @@ case "$command" in
     elif [[ -n "$pulls" ]]; then
       fail "--pulls applies only to agent"
     fi
+    [[ -z "$workers" || "$workers" =~ ^(0|[1-9][0-9]*)$ ]] || fail "--workers takes a whole number, not '$workers'"
 
     umask 077
     mkdir -p "$state_dir"
     target="$state_dir/$session.json"
     read_identity
+    read_project
     temporary=$(mktemp "$state_dir/.$session.XXXXXX")
     jq -n \
       --arg session "$session" \
@@ -188,20 +210,35 @@ case "$command" in
       --arg registered_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
       --arg pid "$pid" \
       --arg pid_started "$pid_started" \
+      --arg project "$project" \
+      --argjson worker_cap "${workers:-$(jq -c '.worker_cap // null' "$target" 2>/dev/null || echo null)}" \
       --args \
-      "$identity_filter"'{session: $session, role: $role, pulls: $ARGS.positional, actor: $actor,
-        tool: $tool, registered_at: $registered_at} + identity' \
+      "$identity_filter$project_filter"'{session: $session, role: $role, pulls: $ARGS.positional, actor: $actor,
+        tool: $tool, registered_at: $registered_at} + identity + located
+        + (if $worker_cap == null then {} else {worker_cap: $worker_cap} end)' \
       "${selected[@]}" >"$temporary"
+    mv -f "$temporary" "$target"
+    ;;
+  set-workers)
+    [[ -z "$pulls" && -n "$role" && "$workers" =~ ^(0|[1-9][0-9]*)$ ]] || usage
+    session=$role
+    valid_session_id "$session"
+    target="$state_dir/$session.json"
+    [[ -f "$target" ]] || fail "session $session has no role"
+    umask 077
+    temporary=$(mktemp "$state_dir/.$session.XXXXXX")
+    jq --argjson worker_cap "$workers" '.worker_cap = $worker_cap' "$target" >"$temporary"
     mv -f "$temporary" "$target"
     ;;
   alive)
     [[ -z "$role$pulls" ]] || usage
     registered_session
     read_identity
+    read_project
     umask 077
     temporary=$(mktemp "$state_dir/.$session.XXXXXX")
-    jq --arg pid "$pid" --arg pid_started "$pid_started" \
-      "$identity_filter"'del(.pid, .pid_started, .ended_workers) + identity' "$target" >"$temporary"
+    jq --arg pid "$pid" --arg pid_started "$pid_started" --arg project "$project" \
+      "$identity_filter$project_filter"'del(.pid, .pid_started, .project, .ended_workers) + identity + located' "$target" >"$temporary"
     mv -f "$temporary" "$target"
     ;;
   session-active)
@@ -250,7 +287,7 @@ case "$command" in
     [[ "$command" == get ]] ||
       jq -nc --arg actor "${session: -8}" --arg session "$session" \
         '{role: null, pulls: [], actor: $actor, tool: null, session: $session, registered_at: null,
-          pid: null, pid_started: null, active_at: null, workers: {}}'
+          pid: null, pid_started: null, project: null, active_at: null, workers: {}}'
     ;;
   state-dir)
     # The one owner of the location: the protocol engine and the console mod ask here.

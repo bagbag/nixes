@@ -52,10 +52,13 @@ export type World = {
   views: unknown[]
   files: Map<string, string>
   sessions: unknown[]
+  activateError: string | undefined
   items: unknown[]
   held: unknown[]
   agents: { id: string; description: string; type: string; status: string }[]
   protocolExit: number
+  /** The reason `$.prompt.submit` drops a prompt with (the console's sends fail); null: it goes through. */
+  promptError: string | null
   /** The size $.session.usage() reports; undefined until a response, 'fails' for a read that throws. */
   tokens: number | undefined | 'fails'
   /** `board show --json`'s fields for any id, or an exit code to fail with (`bad`: print text that is no JSON). */
@@ -64,11 +67,12 @@ export type World = {
 }
 
 /** Registers the world's hooks beneath the console; returns it, the clock and the session record. */
-export function world(on: On, init: Partial<Pick<World, 'round' | 'role' | 'surfaces' | 'sessions' | 'items' | 'held' | 'agents'>> = {}) {
+export function world(on: On, init: Partial<Pick<World, 'round' | 'role' | 'surfaces' | 'sessions' | 'items' | 'held' | 'agents' | 'activateError'>> = {}) {
   const w: World = {
     round: init.round ?? roundJson(),
     role: init.role === undefined ? { session: SESSION, role: 'lead', actor: '617adf08', tool: 'claude' } : init.role,
     surfaces: init.surfaces ?? ['terminal'],
+    activateError: init.activateError,
     calls: [], commands: [], prompts: [], opened: [], tools: [], toasts: [], notified: [], views: [],
     files: new Map(),
     sessions: init.sessions ?? [
@@ -78,6 +82,7 @@ export function world(on: On, init: Partial<Pick<World, 'round' | 'role' | 'surf
     held: init.held ?? [],
     agents: init.agents ?? [],
     protocolExit: 0,
+    promptError: null,
     tokens: 500_000,
     show: { record: { description: '## Decision\nKeep it.', dependencies: [], issue_type: 'decision', priority: 1, assignee: null, labels: [], comment_count: 0 }, exit: 0, bad: false },
     verbs: () => w.calls.filter(one => one.argv[0] === PROTOCOL).map(one => one.argv.slice(3).join(' ')),
@@ -108,7 +113,11 @@ export function world(on: On, init: Partial<Pick<World, 'round' | 'role' | 'surf
   on('turn.complete', (_, e) => ({ text: e.answer }))
   on('skill.prompt', (_, e) => ({ text: e.text }))
   on('command.run', (_, e) => { w.commands.push({ command: e.command, args: e.args }); return { text: '' } })
-  on('prompt.submit', (_, e) => { w.prompts.push(e.text); return { text: e.text } as never })
+  on('prompt.submit', (_, e) => {
+    if (w.promptError !== null) return { drop: w.promptError } as never
+    w.prompts.push(e.text)
+    return { text: e.text } as never
+  })
 
   on('process.run', (_, e) => {
     const argv = [...e.argv]
@@ -116,6 +125,7 @@ export function world(on: On, init: Partial<Pick<World, 'round' | 'role' | 'surf
     const ok = (out: unknown) => ({ value: { exitCode: 0, stdout: typeof out === 'string' ? out : JSON.stringify(out), stderr: '', isStdoutTruncated: false, isStderrTruncated: false } })
     // The registry script has no execute bit: only `bash <script>` runs it, as on the machine.
     if (argv[0] === REGISTRY) return { value: { exitCode: 126, stdout: '', stderr: 'Permission denied', isStdoutTruncated: false, isStderrTruncated: false } }
+    if (argv[0] === 'bash' && argv[1] === REGISTRY && argv[2] === 'set-workers' && w.activateError !== undefined) return { value: { exitCode: 2, stdout: '', stderr: w.activateError, isStdoutTruncated: false, isStderrTruncated: false } }
     if (argv[0] === 'bash' && argv[1] === REGISTRY && argv[2] === 'state-dir') return ok(`${HOME}/.local/state/agent-sessions\n`)
     if (argv[0] === 'bash' && argv[1] === REGISTRY) return ok({ role: null, ...(w.role ?? {}), session: argv[3] })
     if (argv[0] === PROTOCOL) {

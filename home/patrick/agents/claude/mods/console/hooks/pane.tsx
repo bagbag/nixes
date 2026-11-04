@@ -5,10 +5,10 @@ import type { EngineInterface, RenderPropsOf } from 'claude-code'
 
 import type { ConsoleBoard, ConsoleQuestion, ConsoleRecord, ConsoleRole, ConsoleRound, ConsoleSection, ConsoleSession, ConsoleSuggestion } from '../types'
 
-import { pressOpenItem, pressOpenOverlaps, pressOpenSettles, pressOpenSuggestion, pressRun, pressStart, pressSubmit, pressView, startText } from './core'
+import { pressOpenItem, pressOpenOverlaps, pressOpenSettles, pressOpenSuggestion, pressRole, pressRun, pressStart, pressSubmit, pressView, pressWorkers, startText } from './core'
 import { isRoundOpen, RELEASE_COMMAND, ROUND_ROLES } from './engine'
 import { getBoard, getExpanded, getLenses, getOpened, getPass, getRole, getRound, getRoundError, toggleExpanded, updateLenses } from './state'
-import { answerText, COUNT_LABELS, GROUND, GROUND_BASE, lensArgs, LENS_SETS, plural, pullsText, recommendationMark, recommendationText, roundWords, runNoun, staleHolds, staleSessions, STEP_BACK_BASE, WHAT, WHERE } from './words'
+import { answerText, COUNT_LABELS, GROUND, GROUND_BASE, lensArgs, LENS_SETS, plural, pullsText, recommendationMark, recommendationText, roleText, roundWords, runNoun, staleHolds, staleSessions, STEP_BACK_BASE, WHAT, WHERE } from './words'
 import type { Lens, LensCommand } from './words'
 
 type $ = EngineInterface
@@ -25,18 +25,18 @@ const SESSION_COLUMNS = { role: 7, tool: 8, actor: 10, pulls: 9, holds: 9, worke
 
 /**
  * The steps to offer while no run is open: the model's proposed rounds (the first recommended), then the pending release,
- * then a compact-only proposal. Only a large context compacts: the model knows a round reuses nothing, the console knows
+ * then a compact-only proposal (a stored proposal without rounds). Only a large context compacts: the model knows a round reuses nothing, the console knows
  * there is something to drop (r21). Nothing while a run is open or a dialog is (the band's own states); the pane, the band and
  * the Actions twins all read this one function.
  */
 export function suggestions(round: ConsoleRound | null, isDialogOpen = false): ConsoleSuggestion[] {
   if (round === null || isRoundOpen(round) || isDialogOpen || round.next === null) return []
-  const { release, rounds = [], compact } = round.next
+  const { release, rounds } = round.next
   const isLarge = round.isContextLarge
   const found: ConsoleSuggestion[] = [
-    ...rounds.map((one, i) => ({ ...one, kind: 'round' as const, key: `round-${i}`, keep: one.fresh && isLarge ? compact?.keep ?? '' : null, isRecommended: false })),
+    ...(rounds ?? []).map((one, i) => ({ ...one, kind: 'round' as const, key: `round-${i}`, isCompacting: one.fresh && isLarge, isRecommended: false })),
     ...(release === undefined ? [] : [{ kind: 'release' as const, key: 'release', count: release.count, isRecommended: false }]),
-    ...(rounds.length === 0 && compact !== undefined && isLarge ? [{ kind: 'compact' as const, key: 'compact', keep: compact.keep, isRecommended: false }] : []),
+    ...(rounds !== undefined && rounds.length === 0 && isLarge ? [{ kind: 'compact' as const, key: 'compact', isRecommended: false }] : []),
   ]
   return found.map((one, i) => ({ ...one, isRecommended: i === 0 }))
 }
@@ -44,7 +44,8 @@ export function suggestions(round: ConsoleRound | null, isDialogOpen = false): C
 /** The narrowest body the layout's fixed columns fit: below it /console prints instead of opening. */
 export const PANE_MIN_COLUMNS = Object.values(SESSION_COLUMNS).reduce((sum, width) => sum + width, 0) + 2
 
-const QUESTION_COLOR: Record<ConsoleQuestion['status'], string> = { answered: 'success', asked: 'suggestion', ready: 'claude', draft: 'subtle', held: 'warning' }
+const WORKER_CHOICES: readonly number[] = [1, 2, 3, 4, 5, 6]
+const QUESTION_COLOR: Record<ConsoleQuestion['status'], string> = { answered: 'success', asked: 'suggestion', ready: 'claude', draft: 'subtle', held: 'warning', parked: 'warning' }
 const ITEM_COLOR: Record<string, string> = { open: 'claude', in_progress: 'suggestion', in_review: 'warning', decided: 'success', released: 'success', blocked: 'error' }
 const SESSION_COLOR: Record<string, string> = { active: 'success', idle: 'warning', stopped: 'error', gone: 'inactive' }
 const RECORD_COLOR: Record<ConsoleRecord['state'], string> = { set: 'claude', revised: 'suggestion', dropped: 'warning', changed: 'error', released: 'success' }
@@ -60,7 +61,7 @@ const hints = (): Hints => {
 }
 
 export async function drawPane($: $, e: { surface: string; props: RenderPropsOf['Pane'] } & Parameters<$['ui']['resolve']>[0]) {
-  const { Box, Text, Button, Input } = $.ui.resolve(e) as any
+  const { Box, Text, Button, Input, Select } = $.ui.resolve(e) as any
   const role = await getRole($)
   const board = await getBoard($)
   const round = await getRound($)
@@ -71,7 +72,8 @@ export async function drawPane($: $, e: { surface: string; props: RenderPropsOf[
   const passRun = await getPass($)
   const hint = hints()
   const isRoundRole = role !== null && ROUND_ROLES.includes(role.role)
-  const suggested = isRoundRole ? suggestions(round) : []
+  const isAutopilot = role?.role === 'autopilot'  // away: nothing is proposed to start, and no release (the engine refuses both)
+  const suggested = isRoundRole && !isAutopilot ? suggestions(round) : []
 
   const banner = (key: string, title: string, meta: string, top: number) => (
     <Box key={key} flexDirection="row" columnGap={1} marginTop={top} alignItems="flex-start">
@@ -167,13 +169,13 @@ export async function drawPane($: $, e: { surface: string; props: RenderPropsOf[
         {suggested.map(one => {
           const color = one.isRecommended ? 'suggestion' : undefined
           const what = one.kind === 'round'
-            ? `${one.title} · ${plural(one.ids.length, 'question')} · ${one.why}${one.keep !== null ? ' · compacts first' : ''}`
+            ? `${[one.title, one.premise, one.why].filter(part => part !== '').join(' · ')}${one.ids.length > 0 ? ` · leads with ${one.ids.join(', ')}` : ''}${one.isCompacting ? ' · compacts first' : ''}`
             : one.kind === 'release'
               ? `Release Round · ${plural(one.count, 'record')} decided`
-              : `Compact · keeps ${one.keep}`
+              : 'Compact'
           hint.add(`sg-${one.key}`, one.kind === 'round'
-            ? `Start sends "${startText(one)}"${one.keep !== null ? `, after /compact keeping: ${one.keep}` : ''}; click the row to list its questions`
-            : one.kind === 'release' ? 'Runs /release-round' : `Runs /compact ${one.keep}`)
+            ? `Start sends "${startText(one)}"${one.isCompacting ? ', after /compact' : ''}${one.ids.length > 0 ? '; click the row to list the question that leads' : ''}`
+            : one.kind === 'release' ? 'Runs /release-round' : 'Runs /compact')
           return (
             <Box key={`sg-${one.key}`} flexDirection="column">
               <Box flexDirection="row" columnGap={1}>
@@ -181,7 +183,7 @@ export async function drawPane($: $, e: { surface: string; props: RenderPropsOf[
                   <Button key={`sg-${one.key}-start`} onPress={() => pressStart($, one)}>Start</Button>
                 </Box>
                 <Box key={`sg-${one.key}-row-box`} flexGrow={1} flexShrink={1}>
-                  {one.kind === 'round'
+                  {one.kind === 'round' && one.ids.length > 0
                     ? <Button key={`sg-${one.key}-row`} plain onPress={() => pressOpenSuggestion($, one.key, one.ids)}><Text color={color} wrap="truncate-end">{what}</Text></Button>
                     : <Text color={color} wrap="truncate-end">{what}</Text>}
                 </Box>
@@ -262,18 +264,31 @@ export async function drawPane($: $, e: { surface: string; props: RenderPropsOf[
         <Box key="board-sessions" flexDirection="column" marginTop={1}>
           {sessions.shown.map(session => {
             if (session.pulls.length > 0) hint.add(`pulls-${session.session}`, `${session.actor} pulls: ${session.pulls.join(', ')}`)
+            hint.add(`workers-${session.session}`, `How many workers ${session.actor} keeps running`)
             return (
             <Box key={`session-${session.session}`} flexDirection="row">
-              <Box width={SESSION_COLUMNS.role} flexShrink={0}><Text>{session.role}</Text></Box>
+              <Box width={SESSION_COLUMNS.role} flexShrink={0}><Text>{roleText(session.role)}</Text></Box>
               <Box width={SESSION_COLUMNS.tool} flexShrink={0}><Text color="inactive">{session.tool || '?'}</Text></Box>
               <Box width={SESSION_COLUMNS.actor} flexShrink={0}><Text color="inactive">{session.actor}</Text></Box>
               <Box width={SESSION_COLUMNS.pulls} flexShrink={0} hover={{ scope: `pulls-${session.session}` }}><Text color="inactive">{pullsText(session.pulls)}</Text></Box>
               <Box width={SESSION_COLUMNS.holds} flexShrink={0}><Text color="inactive">holds {session.holds}</Text></Box>
               <Box width={SESSION_COLUMNS.workers} flexShrink={0}>
                 {/* Over the cap: a worker ended without its stop event (Codex after an error) and still counts for 15 min. */}
-                <Text color={session.workers !== null && session.workers.active > session.workers.cap ? 'warning' : 'inactive'}>
-                  {session.workers === null ? '' : `workers ${session.workers.active}/${session.workers.cap}`}
-                </Text>
+                {session.workers !== null && Select !== undefined && session.role !== 'lead' && session.state !== 'gone' ? (
+                  <Box flexDirection="row" hover={{ scope: `workers-${session.session}` }}>
+                    <Text color={session.workers.active > session.workers.cap ? 'warning' : 'inactive'}>{`workers ${session.workers.active}/`}</Text>
+                    <Select
+                      key={`workers-${session.session}`}
+                      value={String(session.workers.cap)}
+                      options={[...new Set([...WORKER_CHOICES, session.workers.cap])].sort((a, b) => a - b).map(value => ({ value: String(value) }))}
+                      onSelect={(value: string) => { void pressWorkers($, session.session, value) }}
+                    />
+                  </Box>
+                ) : (
+                  <Text color={session.workers !== null && session.workers.active > session.workers.cap ? 'warning' : 'inactive'}>
+                    {session.workers === null ? '' : `workers ${session.workers.active}/${session.workers.cap}`}
+                  </Text>
+                )}
               </Box>
               <Text color={SESSION_COLOR[session.state] ?? 'inactive'}>{session.state || 'unknown'}</Text>
             </Box>
@@ -386,12 +401,13 @@ export async function drawPane($: $, e: { surface: string; props: RenderPropsOf[
   // show, then upcoming, held and older answered ones fill the room; the rest fold behind their toggles.
   const questionRows = (open: ConsoleRound) => {
     const held = open.questions.filter(one => one.status === 'held')
+    const parked = open.questions.filter(one => one.status === 'parked')
     const answered = open.questions.filter(one => one.status === 'answered')
       .sort((a, b) => (a.answeredAt ?? '').localeCompare(b.answeredAt ?? ''))
     const asked = open.questions.filter(one => one.status === 'asked')
     const upcoming = [...open.questions.filter(one => one.status === 'ready'), ...open.questions.filter(one => one.status === 'draft')]
     if (open.questions.length <= QUESTIONS_SHOWN) {
-      return <Box key="round-questions" flexDirection="column" marginTop={1}>{[...answered, ...asked, ...upcoming, ...held].map(questionRow)}</Box>
+      return <Box key="round-questions" flexDirection="column" marginTop={1}>{[...answered, ...asked, ...upcoming, ...held, ...parked].map(questionRow)}</Box>
     }
     const isAll = expanded.includes('questions')
     const isHeldOpen = expanded.includes('held')
@@ -409,6 +425,7 @@ export async function drawPane($: $, e: { surface: string; props: RenderPropsOf[
         {[...older, ...latest, ...asked, ...next].map(questionRow)}
         {more('questions', hidden, 'questions')}
         {heldShown.map(questionRow)}
+        {parked.map(questionRow)}
         {(heldFolded > 0 || isHeldOpen) && (
           <Box key="held-toggle-box" hover={{ scope: 'held-toggle' }}>
             <Button key="held-toggle" plain onPress={() => toggleExpanded($, 'held')}>
@@ -603,12 +620,16 @@ export async function drawPane($: $, e: { surface: string; props: RenderPropsOf[
     const entries = [
       { key: 'commit', scope: 'action-commit', label: 'Commit', onPress: run('commit') },
       { key: 'push', scope: 'action-push', label: 'Commit and Push', onPress: () => pressSubmit($, 'commit and push') },
-      ...(isRoundRole ? [{ key: 'release', scope: 'action-release', onPress: run(RELEASE_COMMAND), label: twin('release', 'Release Round') }] : []),
+      ...(isAutopilot ? [{ key: 'role-solo', scope: 'action-role-solo', onPress: () => pressRole($, 'solo'), label: <Text color="suggestion">Solo</Text> }] : []),
+      ...(role?.role === 'solo' ? [{ key: 'role-autopilot', scope: 'action-role-autopilot', onPress: () => pressRole($, 'autopilot'), label: 'Autopilot' }] : []),
+      ...(isRoundRole && !isAutopilot ? [{ key: 'release', scope: 'action-release', onPress: run(RELEASE_COMMAND), label: twin('release', 'Release Round') }] : []),
       { key: 'retro', scope: 'action-retro', label: 'Retro', onPress: run('retro') },
       { key: 'compact', scope: 'action-compact', label: twin('compact', 'Compact'), onPress: run('compact') },
     ]
     hint.add('action-commit', 'Runs /commit')
     hint.add('action-push', 'Sends "commit and push" as your message')
+    if (isAutopilot) hint.add('action-role-solo', 'Runs /role solo: you are back, rounds ask you again')
+    if (role?.role === 'solo') hint.add('action-role-autopilot', 'Runs /role autopilot: setup as solo, then away on your go')
     hint.add('action-release', 'Runs /release-round')
     hint.add('action-retro', 'Runs /retro')
     hint.add('action-compact', 'Runs /compact; the round state is kept')
@@ -642,14 +663,25 @@ export async function drawPane($: $, e: { surface: string; props: RenderPropsOf[
 export async function drawBand($: $, e: { props: RenderPropsOf['AbovePrompt'] } & Parameters<$['ui']['resolve']>[0]) {
   const role = await getRole($)
   const round = await getRound($)
-  if (e.props.hasSurvey || role === null || !ROUND_ROLES.includes(role.role) || round === null) return undefined
+  const isAutopilot = role?.role === 'autopilot'
+  if (e.props.hasSurvey || role === null || !ROUND_ROLES.includes(role.role) || (round === null && !isAutopilot)) return undefined
   const { Box, Text, Button } = $.ui.resolve(e) as any
-  if (!isRoundOpen(round)) {
-    const top = suggestions(round)[0]
+  // While away the band offers the way back, and no suggestion (nobody starts a round or a release for an absent person).
+  const solo = isAutopilot ? <Button key="band-role-solo" onPress={() => pressRole($, 'solo')}><Text color="suggestion">Solo</Text></Button> : null
+  if (round === null || !isRoundOpen(round)) {
+    if (isAutopilot) {
+      return (
+        <Box flexDirection="row" columnGap={1} flexWrap="wrap">
+          <Text color="inactive">Autopilot · away</Text>
+          {solo}
+        </Box>
+      )
+    }
+    const top = round === null ? undefined : suggestions(round)[0]
     if (top === undefined) return undefined
-    const what = top.kind === 'round' ? `${top.title} · ${plural(top.ids.length, 'question')}${top.keep !== null ? ' · compacts first' : ''} ·`
+    const what = top.kind === 'round' ? `${top.title}${top.isCompacting ? ' · compacts first' : ''} ·`
       : top.kind === 'release' ? `${plural(top.count, 'record')} decided ·`
-        : `Compact · keeps ${top.keep} ·`
+        : 'Compact ·'
     return (
       <Box flexDirection="row" columnGap={1} flexWrap="wrap">
         <Text color="inactive">{what}</Text>
@@ -663,6 +695,7 @@ export async function drawBand($: $, e: { props: RenderPropsOf['AbovePrompt'] } 
     <Box flexDirection="row" columnGap={1} flexWrap="wrap">
       <Text color="inactive">{runNoun(round)} {round.round}{round.protocol === 'release' && round.title ? ` · ${round.title}` : ''} · {roundWords(round)}</Text>
       {round.batch !== null && <Text color="warning">· waiting on your answer</Text>}
+      {solo}
       {(['step-back', 'ground'] as const).map(command => (
         <Button key={`band-${command}`} onPress={() => pressRun($, command, '')}>
           <Text color={round.pending?.command === command ? 'claude' : undefined}>{command === 'step-back' ? 'Step Back' : 'Ground'}</Text>

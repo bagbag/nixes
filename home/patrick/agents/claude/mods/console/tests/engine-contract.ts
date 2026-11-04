@@ -35,8 +35,7 @@ export const ENGINE_CONTRACT = {
     "pending": {
       "id": "p1",
       "command": "step-back",
-      "args": "goal foundations",
-      "reminder": null
+      "args": "goal foundations"
     },
     "questions": [
       {
@@ -88,90 +87,6 @@ export const ENGINE_CONTRACT = {
       {
         "at": "00:00",
         "text": "staged q1"
-      }
-    ],
-    "records": [],
-    "stopped": null,
-    "next": null
-  },
-  "reminder": {
-    "version": 1,
-    "session": "0000-contract",
-    "protocol": "round",
-    "round": "r1",
-    "title": "Cache policy",
-    "summary": "Which cache the service keeps, and why now.",
-    "step": "check",
-    "check": {
-      "cycle": 1,
-      "cap": 5,
-      "last": {
-        "step-back": {
-          "changes": 0,
-          "origin": "model"
-        }
-      }
-    },
-    "pending": {
-      "id": "p2",
-      "command": "step-back",
-      "args": "",
-      "reminder": "Reminder for /step-back. No argument: the current discussion. Run it anew.\nJudge greenfield: previous rulings, contracts and current usages are no\nauthority. Find the cleanest end state, keeping DX in mind; then judge the\nwhole picture: is the combined result clean and coherent? Ground and think\nyourself until you have strong recommendations; where none is strong, list the\ndecisive trade-offs.\n- **consumer:** walk a realistic consumer through the whole flow end to end\n  (for an API: set up, configure, use, handle failure, test), noting what each\n  step needs; judge the options against that walk.\n- **root-fix:** does it fix the root cause, not a symptom? Trace the cause;\n  the root may lie outside this module or repo, and changes there are allowed.\n- **bloat:** over-engineered? Too much magic?\n- **gaps:** under-built: does anything the goal or realistic consumers need\n  fall short?"
-    },
-    "questions": [
-      {
-        "id": "q1",
-        "board": null,
-        "text": "Which cache?",
-        "title": "Cache",
-        "kind": "decision",
-        "status": "draft",
-        "waitsOn": [],
-        "settles": [],
-        "overlaps": [],
-        "answer": null,
-        "answeredAt": null,
-        "changedBy": null,
-        "recommendation": "Keep",
-        "strength": "lean",
-        "leanBecause": {
-          "cause": "preference",
-          "detail": "taste"
-        },
-        "strongBecause": null
-      }
-    ],
-    "batch": null,
-    "counts": null,
-    "progress": {
-      "items": 0,
-      "points": 1,
-      "classified": 1,
-      "candidates": null,
-      "selected": [
-        "pt1"
-      ]
-    },
-    "log": [
-      {
-        "at": "00:00",
-        "text": "round started"
-      },
-      {
-        "at": "00:00",
-        "text": "classified 1 point: 1 user"
-      },
-      {
-        "at": "00:00",
-        "text": "selected pt1"
-      },
-      {
-        "at": "00:00",
-        "text": "staged q1"
-      },
-      {
-        "at": "00:00",
-        "text": "step-back (path): no change"
       }
     ],
     "records": [],
@@ -246,7 +161,8 @@ export const ENGINE_CONTRACT = {
           ],
           "multiSelect": false
         }
-      ]
+      ],
+      "notice": "**Cache**\n\nProblem: Which cache.\n\nCases: Reads; writes.\n\nPremises: Both read the cache.\n\n**Recommended (lean): Keep**\nYour call: taste\n- For: for it\n- Against: against it\n\n**Drop**\n- For: for it\n- Against: against it"
     },
     "counts": null,
     "progress": {
@@ -278,6 +194,10 @@ export const ENGINE_CONTRACT = {
       {
         "at": "00:00",
         "text": "step-back (path): no change"
+      },
+      {
+        "at": "00:00",
+        "text": "step-back (options): no change"
       },
       {
         "at": "00:00",
@@ -339,10 +259,9 @@ export const ENGINE_CONTRACT = {
       }
     },
     "pending": {
-      "id": "p8",
+      "id": "p9",
       "command": "challenge-rulings",
-      "args": "q1",
-      "reminder": null
+      "args": "q1"
     },
     "questions": [
       {
@@ -398,6 +317,10 @@ export const ENGINE_CONTRACT = {
       {
         "at": "00:00",
         "text": "step-back (path): no change"
+      },
+      {
+        "at": "00:00",
+        "text": "step-back (options): no change"
       },
       {
         "at": "00:00",
@@ -624,26 +547,21 @@ export const ENGINE_CONTRACT = {
     "next": {
       "rounds": [
         {
-          "ids": [
-            "fx-q1",
-            "fx-q2"
-          ],
           "title": "Cache questions",
+          "premise": "one cache store serves both modules",
           "why": "same module as the context read",
           "fresh": false
         },
         {
+          "title": "Queue retry",
+          "premise": "retries share one backoff",
+          "why": "highest priority left",
+          "fresh": true,
           "ids": [
             "fx-q3"
-          ],
-          "title": "Queue retry",
-          "why": "highest priority left",
-          "fresh": true
+          ]
         }
-      ],
-      "compact": {
-        "keep": "the cache decisions"
-      }
+      ]
     }
   },
   "compactOnly": {
@@ -670,9 +588,136 @@ export const ENGINE_CONTRACT = {
     "records": [],
     "stopped": null,
     "next": {
-      "compact": {
-        "keep": "all decisions of this session"
-      }
+      "rounds": []
     }
+  },
+  "parked": {
+    "version": 1,
+    "session": "0000-contract",
+    "protocol": "round",
+    "round": "r6",
+    "title": "Cache policy",
+    "summary": "Which cache the service keeps, and why now.",
+    "step": "record",
+    "check": {
+      "cycle": 1,
+      "cap": 5,
+      "last": {
+        "step-back": {
+          "changes": 0,
+          "origin": "model"
+        },
+        "ground": {
+          "changes": 0,
+          "origin": "model"
+        },
+        "challenge-rulings": {
+          "changes": 0,
+          "origin": "model"
+        }
+      }
+    },
+    "pending": null,
+    "questions": [
+      {
+        "id": "q3",
+        "board": "fx-q",
+        "text": "Which store?",
+        "title": "Store",
+        "kind": "decision",
+        "status": "parked",
+        "waitsOn": [],
+        "settles": [],
+        "overlaps": [],
+        "answer": null,
+        "answeredAt": null,
+        "changedBy": null,
+        "recommendation": "Keep",
+        "strength": "lean",
+        "leanBecause": {
+          "cause": "preference",
+          "detail": "taste"
+        },
+        "strongBecause": null
+      }
+    ],
+    "batch": null,
+    "counts": {
+      "questions": 0,
+      "decided": 0,
+      "toPlan": 0,
+      "inReview": 0,
+      "forUser": 0
+    },
+    "progress": {
+      "items": 1,
+      "points": 0,
+      "classified": 1,
+      "candidates": null,
+      "selected": [
+        "fx-q"
+      ]
+    },
+    "log": [
+      {
+        "at": "00:00",
+        "text": "round started"
+      },
+      {
+        "at": "00:00",
+        "text": "classified 1 point: 1 user"
+      },
+      {
+        "at": "00:00",
+        "text": "selected fx-q"
+      },
+      {
+        "at": "00:00",
+        "text": "staged q3"
+      },
+      {
+        "at": "00:00",
+        "text": "step-back (path): no change"
+      },
+      {
+        "at": "00:00",
+        "text": "step-back (options): no change"
+      },
+      {
+        "at": "00:00",
+        "text": "step-back: no change"
+      },
+      {
+        "at": "00:00",
+        "text": "ground: no change"
+      },
+      {
+        "at": "00:00",
+        "text": "step-back (refine): no change"
+      },
+      {
+        "at": "00:00",
+        "text": "ground (refine): no change"
+      },
+      {
+        "at": "00:00",
+        "text": "ground (lean q3): no change"
+      },
+      {
+        "at": "00:00",
+        "text": "challenge-rulings: no change"
+      },
+      {
+        "at": "00:00",
+        "text": "parked q3 → fx-q"
+      },
+      {
+        "at": "00:00",
+        "text": "away: acted none, parked q3"
+      }
+    ],
+    "records": [],
+    "stopped": null,
+    "next": null
   }
 } as const

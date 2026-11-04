@@ -4,12 +4,12 @@ import type { EngineInterface, ToolCallResult } from 'claude-code'
 
 import type { ConsoleBoard, ConsolePassOrigin, ConsoleRound, ConsoleSuggestion } from '../types'
 
-import { boardItem, boardViews, isRoundOpen, pass, PASS_COMMANDS, readRole, RELEASE_COMMAND, ROUND_ROLES, show, stampRelease, stateDir } from './engine'
+import { boardItem, boardViews, isRoundOpen, pass, PASS_COMMANDS, pending as readPending, readRole, RELEASE_COMMAND, ROUND_ROLES, setWorkers, show, stampRelease, stateDir } from './engine'
 import {
-  claimRefresh, getDrawn, getPaneDismissed, getPass, getRole, getRound, releaseRefresh, setBoard, setDrawn, setPass, setRole, setRound, setRoundError,
-  setStart, takeRefreshAgain, updateOpened, updateQueued,
+  claimRefresh, getAskSent, getDrawn, getPaneDismissed, getPass, getPrinted, getRole, getRound, releaseRefresh, setAskSent, setBoard, setDrawn, setPass, setPrinted, setRole,
+  setRound, setRoundError, setStart, takeRefreshAgain, updateOpened, updateQueued,
 } from './state'
-import { itemSlot } from './words'
+import { itemSlot, openDialogText } from './words'
 
 type $ = EngineInterface
 
@@ -31,6 +31,109 @@ export const message = (error: unknown): string => error instanceof Error ? erro
 /** A transcript notice: the person sees it, the model never reads it. */
 export async function notice($: $, text: string): Promise<void> {
   await $.session.append({ message: { type: 'system', content: [{ type: 'text', text: `console: ${text}` }] } })
+}
+
+/** The command that prints a batch's question text as its output (register.tsx registers and answers it by this literal name). */
+const QUESTIONS_COMMAND = 'console-questions'
+
+const DIALOG_PREFIX = 'Console round dialog '
+
+/** The question `$.ui.ask` carries: the host takes labels only, so the console's AskUserQuestion hook swaps it for the issued batch. */
+const dialogPlaceholder = (marker: string): string => `${DIALOG_PREFIX}${marker}?`
+
+/** The marker a placeholder question names, or null for any other question. */
+export const placeholderMarker = (question: unknown): string | null =>
+  typeof question === 'string' && question.startsWith(DIALOG_PREFIX) ? question.slice(DIALOG_PREFIX.length, -1) : null
+
+/** What the swapped dialog came to, set by the AskUserQuestion hook. `summary`: the visible line; `note`: the engine's text for the model; `needsModel`: typed text, a note or a decline. */
+export type DialogOutcome = { summary: string; note: string | null; needsModel: boolean }
+let dialogOutcome: DialogOutcome | null = null
+export const setDialogOutcome = (outcome: DialogOutcome): void => { dialogOutcome = outcome }
+
+/** Tells the model what came of the dialog: the engine's text as a note, then the visible line, which starts its turn. */
+async function wakeModel($: $, outcome: DialogOutcome): Promise<void> {
+  if (outcome.note !== null) {
+    await $.session.append({ message: { type: 'user', content: [{ type: 'text', text: `<console-note>${outcome.note}</console-note>` }] } })
+  }
+  await pressSubmit($, outcome.summary, async error => {
+    await notice($, `telling the model about the answers failed: ${message(error)}`).catch(() => undefined)
+  })
+}
+
+/**
+ * Opens the batch's whole dialog with no model turn (r32-q149): `$.ui.ask` with a placeholder the AskUserQuestion hook swaps for the
+ * batch, then records through its usual capture. `$.ui.ask` itself then has no answer to return, so it rejects; the hook's outcome
+ * counts. After plain picks a pending pass just runs; anything else, a next batch included, wakes the model: this hook's `$` cannot run
+ * `/console-questions` again (a `$` call skips the hook it came from), and the model's turn end opens that batch. Without an
+ * outcome the swap never ran, and the model opens the dialog instead.
+ */
+export async function openDialog($: $, marker: string, session: string): Promise<void> {
+  dialogOutcome = null
+  await $.ui.ask(dialogPlaceholder(marker), { options: ['Open the questions', 'Not now'], header: 'Round' }).catch(() => undefined)
+  const outcome = dialogOutcome as DialogOutcome | null
+  dialogOutcome = null
+  if (outcome === null) {
+    await pressSubmit($, openDialogText(marker), async error => {
+      await setAskSent($, null).catch(() => undefined)
+      await notice($, `sending the message that opens the dialog failed: ${message(error)}`).catch(() => undefined)
+    })
+    return
+  }
+  if (outcome.needsModel || !(await betweenTurns($, session, false, false))) await wakeModel($, outcome)
+}
+
+/**
+ * At a main-agent turn's end that was not aborted, with a batch out (r29-q138, r30-q140, r32-q149): runs `/console-questions`, whose
+ * hook prints the text and opens the dialog. A command's output draws whole between turns where a transcript row would not, and the hook's
+ * fresh `$` matters too: after an awaited call in a chain, `$.ui.ask` skips the swap in the console's hook. One dialog per batch marker until
+ * the person sends a new message (`prompt.submit` clears it); a batch already printed prints only a short line. Returns whether one is on its way.
+ */
+export async function openBatchDialog($: $, round: ConsoleRound | null): Promise<boolean> {
+  const batch = round?.batch
+  if (round === null || round === undefined || !isRoundOpen(round) || batch === null || batch === undefined || (await getAskSent($)) === batch.marker) return false
+  await setAskSent($, batch.marker)
+  const isNew = batch.notice.trim() !== '' && (await getPrinted($)) !== batch.marker
+  await setPrinted($, batch.marker)
+  void $.command.run({ command: QUESTIONS_COMMAND, args: isNew ? batch.marker : `${batch.marker} again` })
+    .catch(async error => {
+      await setPrinted($, null).catch(() => undefined)
+      await setAskSent($, null).catch(() => undefined)
+      await notice($, `printing the question text failed: ${message(error)}; nothing opens the dialog`).catch(() => undefined)
+    })
+  return true
+}
+
+/** What follows a turn or a dialog: the pending pass, else the issued batch's print and dialog. Whether either started. */
+export async function betweenTurns($: $, session: string, isAborted: boolean, opensDialog = true): Promise<boolean> {
+  const pending = await readPending($, session)
+  const run = await getPass($)
+  let started = false
+  if (pending !== null && run !== null && run.id === pending.id) {
+    if (run.phase !== 'noted' && isAborted) {
+      // Esc stops the loop: the pass stays pending and is not run again.
+      await setPass($, { ...run, phase: 'noted' })
+    } else if (run.phase === 'started') {
+      await setPass($, { ...run, phase: 'noted' })
+      await noteModel($, `The /${pending.command} pass (${pending.id}) ended without its report. Report its per-question updates through the protocol tool.`)
+    }
+  } else if (pending !== null && !isAborted) {
+    await setPass($, { id: pending.id, command: pending.command, phase: 'queued' })
+    await pass($, session, 'plugin', { command: pending.command, args: pending.args, pending: pending.id })
+      .catch(failOpen($, `recording /${pending.command}`))
+    void $.command.run({ command: pending.command, args: pending.args }).catch(failOpen($, `running /${pending.command}`))
+    started = true
+  }
+  // The issued batch's text prints between turns, then the console opens its dialog (an aborted turn does neither, as it runs no
+  // pass; an away session has no batch to open).
+  if (opensDialog && !isAborted && (await getRole($))?.role !== 'autopilot') {
+    started = await openBatchDialog($, await refreshRound($, session)) || started
+  }
+  return started
+}
+
+/** A role button's press: the person's own `/role <role>`. A prompt text beginning with `/` is refused by the host, so it runs as a command (the press route of Commit and Retro). */
+export async function pressRole($: $, role: 'solo' | 'autopilot'): Promise<void> {
+  await pressRun($, 'role', role)
 }
 
 /** A note the model reads at its next request, shown to the person as a notice too. */
@@ -170,7 +273,7 @@ async function registerTool($: $): Promise<void> {
     name: 'protocol',
     description: [
       "Runs the protocol engine for this session's round (`protocol <args>`): one call per step, per-question updates as JSON on stdin; the output is the next step.",
-      'Read: ["show","--json"], ["show"], ["show","q3"] (that question whole: options, previews, premises), ["pending"], ["status","--line"], ["history"], ["next"] (the ranked seeds of the next round and your stored proposal; it prints the ["next","--set"] format).',
+      'Read: ["show","--json"], ["show"], ["show","q3"] (that question whole), ["pending"], ["status","--line"], ["history"], ["next"].',
       'Record an answer the user typed in chat: ["answer"] with stdin {"question","answer","quote"}, the quote being the user\'s exact words.',
       'Apply a change the user asked for to the questions: ["edit"] with stdin {"updates","quote"}, the quote being the user\'s exact words.',
       'The console stamps --session and --origin; dialog answers, declines and passes are recorded by the console from the person\'s actions.',
@@ -253,31 +356,45 @@ export async function pressRun($: $, command: string, args: string, onFailed?: (
   })
 }
 
-/** Submits the person's own words as a prompt (Commit and Push). */
-export async function pressSubmit($: $, text: string): Promise<void> {
+/** A session row's worker select: sets that session's count, without a model turn. */
+export async function pressWorkers($: $, session: string, workers: string): Promise<void> {
+  await setWorkers($, session, workers).catch(failOpen($, 'setting the worker count'))
+  refreshLater($)
+}
+
+/** Submits a message as a prompt (Commit and Push, a role button, the dialog message); `onFailed` follows a submit that failed. */
+export async function pressSubmit($: $, text: string, onFailed?: (error: unknown) => Promise<void>): Promise<void> {
   if (!(await claimRun($, `prompt:${text}`))) {
     $.ui.toast(`"${text}" is already queued`)
     return
   }
-  void $.prompt.submit({ text }).catch(failOpen($, `sending "${text}"`))
+  const report = onFailed ?? failOpen($, `sending "${text}"`)
+  const failed = async (error: unknown) => {
+    await releaseRun($, key => key === `prompt:${text}`)  // it never started a turn: a retry is no repeat
+    await report(error)
+  }
+  // A prompt that did not enter resolves as a drop with its reason; a refused text (a leading `/`) rejects.
+  void $.prompt.submit({ text }).then(sent => { if (sent.drop !== undefined) return failed(new Error(sent.drop)) }).catch(failed)
 }
 
-/** The message a Start press sends (or stores, with compact): the proposal's title and the `start round <ids>` form naming its question ids. */
-export const startText = (suggestion: Extract<ConsoleSuggestion, { kind: 'round' }>): string =>
-  `Start the next round on ${suggestion.title}: protocol start round ${suggestion.ids.join(' ')}`
+/** The message a Start press sends (or stores, with compact): `protocol start round --topic '<title>: <premise>'`, then the ids that must lead. */
+export const startText = (suggestion: Extract<ConsoleSuggestion, { kind: 'round' }>): string => {
+  const topic = [suggestion.title, suggestion.premise].filter(part => part !== '').join(': ').replace(/'/g, `'\\''`)
+  return `Start the next round: protocol start round --topic '${topic}'${suggestion.ids.map(id => ` ${id}`).join('')}`
+}
 
 /**
  * A suggestion's [ Start ]. A round sends its start message as the person's prompt; one that compacts first stores the message
- * and runs /compact with the proposal's keep, and the compaction hook sends it once the compaction succeeded (register.tsx).
+ * and runs /compact (no focus text), and the compaction hook sends it once the compaction succeeded (register.tsx).
  * Release Round and a compact-only proposal run their commands.
  */
 export async function pressStart($: $, suggestion: ConsoleSuggestion): Promise<void> {
   if (suggestion.kind === 'release') return pressRun($, RELEASE_COMMAND, '')
-  if (suggestion.kind === 'compact') return pressRun($, 'compact', suggestion.keep)
+  if (suggestion.kind === 'compact') return pressRun($, 'compact', '')
   const text = startText(suggestion)
-  if (suggestion.keep === null) return pressSubmit($, text)
+  if (!suggestion.isCompacting) return pressSubmit($, text)
   await setStart($, { text, at: await $.clock.now() })
-  await pressRun($, 'compact', suggestion.keep, async () => {
+  await pressRun($, 'compact', '', async () => {
     await setStart($, null)
     await notice($, `/compact failed: the next round (${suggestion.title}) was not started`)
   })

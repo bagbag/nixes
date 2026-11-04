@@ -5,8 +5,8 @@ export type ConsoleStep = 'collect' | 'select' | 'stage' | 'related' | 'check' |
   | 'recheck' | 'board-check' | 'own-rulings' | 'scoped' | 'approval' | 'owners' | 'release'
 export type ConsolePassOrigin = 'plugin' | 'composer' | 'bridge' | 'press' | 'model'
 
-/** The pending pass; `reminder` is what the skill expands to for the console's own run (the engine's cut of SKILL.md), null when the full text is due. */
-export type ConsolePending = { id: string; command: string; args: string; reminder: string | null }
+/** The pending pass. */
+export type ConsolePending = { id: string; command: string; args: string }
 
 export type ConsoleOverlap = { id: string; title: string; outcome: string | null }
 
@@ -16,7 +16,8 @@ export type ConsoleQuestion = {
   text: string
   title: string
   kind: 'decision' | 'confirm-own-rulings'
-  status: 'draft' | 'ready' | 'asked' | 'answered' | 'held'
+  /** `parked`: an away round left it open and unassigned on the board for the person. */
+  status: 'draft' | 'ready' | 'asked' | 'answered' | 'held' | 'parked'
   waitsOn: string[]
   /** The selected items (board ids or pasted point ids) this rule question settles with one answer; empty for a plain question. */
   settles: string[]
@@ -38,7 +39,8 @@ export type ConsoleDialogQuestion = {
   options: { label: string; description?: string; preview?: string }[]
 }
 
-export type ConsoleBatch = { marker: string; questions: ConsoleDialogQuestion[] }
+/** The issued batch; `notice` is the engine-rendered text of its questions' parts, printed as `/console-questions` output at the lead's turn end; the console then sends the message that makes the model open the dialog (empty: nothing new to print, it sends at once). */
+export type ConsoleBatch = { marker: string; questions: ConsoleDialogQuestion[]; notice: string }
 
 export type ConsoleCounts = { questions: number; decided: number; toPlan: number; inReview: number; forUser: number }
 
@@ -51,17 +53,17 @@ export type ConsoleRecord = { id: string; title: string; state: 'set' | 'revised
 /** One line of the round's recent history, in plain words; `at` is local HH:MM. */
 export type ConsoleLogLine = { at: string; text: string }
 
-/** One proposed round: the question ids, a title, why this cluster, and whether it reuses nothing read so far (the console compacts first only when the context is large). */
-export type ConsoleProposal = { ids: string[]; title: string; why: string; fresh: boolean }
+/** One proposed round: a topic (title and premise), why it ranks here, whether it reuses nothing read so far (the console compacts first only when the context is large), and the question ids that must lead (often none; Collect selects the rest). */
+export type ConsoleProposal = { ids: string[]; title: string; premise: string; why: string; fresh: boolean }
 
 /**
- * A step the pane and the band offer: the engine's pending release, the model's proposed rounds (`keep`: what a
- * compacting one keeps) or a compact-only proposal. The first is the recommended one.
+ * A step the pane and the band offer: the engine's pending release, the model's proposed rounds (`isCompacting`: the Start
+ * runs /compact first) or a compact-only proposal. The first is the recommended one.
  */
 export type ConsoleSuggestion =
-  | ({ kind: 'round'; key: string; keep: string | null; isRecommended: boolean } & ConsoleProposal)
+  | ({ kind: 'round'; key: string; isCompacting: boolean; isRecommended: boolean } & ConsoleProposal)
   | { kind: 'release'; key: string; count: number; isRecommended: boolean }
-  | { kind: 'compact'; key: string; keep: string; isRecommended: boolean }
+  | { kind: 'compact'; key: string; isRecommended: boolean }
 
 /** `protocol show --json`; `round` null while no run is open (R-B3). A release run (`protocol` release) fills `records`. */
 export type ConsoleRound = {
@@ -88,8 +90,8 @@ export type ConsoleRound = {
   records: ConsoleRecord[]
   /** The last release, when it stopped: shown while no run is open, its records wait for a round. */
   stopped: { run: string; reason: string; ids: string[] } | null
-  /** What follows a close, the engine's knowledge: the release of the decided records the session holds (their count, read from the board at the last close or `protocol next`), and the model's stored proposal (`protocol next --set`). Null while a run is open or nothing waits; `rounds` is left out when empty. */
-  next: { release?: { count: number }; rounds?: ConsoleProposal[]; compact?: { keep: string } } | null
+  /** What follows a close, the engine's knowledge: the release of the decided records the session holds (their count, read from the board at the last close or `protocol next`), and the model's stored proposal (`protocol next --set`). Null while a run is open or nothing waits; `rounds` is present, possibly empty, once a proposal is stored: an empty one offers only a compaction. */
+  next: { release?: { count: number }; rounds?: ConsoleProposal[] } | null
   note: string | null
 }
 
@@ -126,8 +128,8 @@ export type ConsoleBoard = {
 /** The registry entry (`session-lead-mode show`). */
 export type ConsoleRole = { session: string; role: string; actor: string; tool: string }
 
-/** The machine-run pass this console started, by pending id (R-B4); `isOwn` marks the console's own run, which a typed or pressed one is not. */
-export type ConsolePassRun = { id: string; command: string; phase: 'queued' | 'started' | 'noted'; isOwn?: true }
+/** The machine-run pass this console started, by pending id (R-B4). */
+export type ConsolePassRun = { id: string; command: string; phase: 'queued' | 'started' | 'noted' }
 
 /** Runs a press queued that have not started yet (repeat-press guard). */
 export type ConsoleQueued = { key: string; at: number }[]
@@ -154,12 +156,21 @@ export type ConsoleStart = { text: string; at: number }
 export type ConsoleSection = 'questions' | 'held' | 'items' | 'sessions' | 'log'
 
 declare module 'claude-code' {
+  /** The console's tool, by hand: the generated snapshot (`.claude-plugin/types/claude-code-mcp`) can miss it at a save, while the mod reloads. Keep in step with the inputSchema in hooks/core.ts. */
+  interface McpToolInputs {
+    mcp__console__protocol: { args: string[]; stdin?: string }
+  }
+
   interface PluginState {
     console: {
       role: Shaped<ConsoleRole | null>
       isDrawn: boolean
       round: Shaped<ConsoleRound | null>
       roundError: string | null
+      /** The marker of the last batch whose text the console printed at a turn end (`/console-questions`); null before the first. */
+      printed: string | null
+      /** The marker of the last batch the console sent the open-the-dialog message for: one message per marker until the person sends a message; null before the first. */
+      askSent: string | null
       board: Shaped<ConsoleBoard | null>
       pass: Shaped<ConsolePassRun | null>
       queued: Shaped<ConsoleQueued>

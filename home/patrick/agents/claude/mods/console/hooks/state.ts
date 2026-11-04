@@ -15,6 +15,8 @@ const roleState = atom({ plugin: 'console', key: 'role' } as const, null, { shap
 const drawnState = atom({ plugin: 'console', key: 'isDrawn' } as const, false)
 const roundState = atom({ plugin: 'console', key: 'round' } as const, null, { shape: 'round-9' })
 const roundErrorState = atom({ plugin: 'console', key: 'roundError' } as const, null)
+const printedState = atom({ plugin: 'console', key: 'printed' } as const, null)
+const askSentState = atom({ plugin: 'console', key: 'askSent' } as const, null)
 const boardState = atom({ plugin: 'console', key: 'board' } as const, null, { shape: 'board-4' })
 const passState = atom({ plugin: 'console', key: 'pass' } as const, null, { shape: 'pass-3' })
 const queuedState = atom({ plugin: 'console', key: 'queued' } as const, [], { shape: 'queued-1' })
@@ -43,6 +45,14 @@ export async function setRound($: $, value: ConsoleRound | null): Promise<void> 
 
 export async function getRoundError($: $): Promise<string | null> { return read($, roundErrorState) }
 export async function setRoundError($: $, value: string | null): Promise<void> { await update($, roundErrorState, () => value) }
+
+/** The batch marker whose question text the console last printed; the dialog gate reads it. */
+export async function getPrinted($: $): Promise<string | null> { return read($, printedState) }
+export async function setPrinted($: $, value: string | null): Promise<void> { await update($, printedState, () => value) }
+
+/** The batch marker the console last sent the open-the-dialog message for; a message of the person clears it. */
+export async function getAskSent($: $): Promise<string | null> { return read($, askSentState) }
+export async function setAskSent($: $, value: string | null): Promise<void> { await update($, askSentState, () => value) }
 
 export async function getBoard($: $): Promise<ConsoleBoard | null> { return read($, boardState) }
 export async function setBoard($: $, value: ConsoleBoard | null): Promise<void> { await update($, boardState, () => value) }

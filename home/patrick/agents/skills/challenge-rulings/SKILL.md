@@ -16,6 +16,6 @@ each ruling's strongest alternative and its footguns; re-check every choice you
 left to another role; downgrade anything unsure to a question. Check each
 strong recommendation against the decision protocol's Recommendation strength
 (`$HOME/.agents/skills/shared/decision-protocol.md`) and its evidence; make it
-a lean where a criterion fails. Where the
-evidence points away from a user's ruling the set rests on, bring it as a
-question with that evidence.
+a lean where a criterion fails. For each decisive reason, say why it decides
+the choice. Where the evidence points away from a user's ruling or a project
+rule the set rests on, bring it as a question with that evidence.

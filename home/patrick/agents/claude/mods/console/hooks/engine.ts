@@ -11,7 +11,7 @@ import type {
 type $ = EngineInterface
 
 export const CONTRACT_VERSION = 1
-export const ROUND_ROLES: readonly string[] = ['lead', 'solo']
+export const ROUND_ROLES: readonly string[] = ['lead', 'solo', 'autopilot']
 export const PASS_COMMANDS: readonly string[] = ['step-back', 'ground', 'challenge-rulings']
 
 export class EngineError extends Error {}
@@ -194,6 +194,12 @@ export async function readRole($: $, session: string): Promise<ConsoleRole | nul
   return role === '' ? null : { session, role, actor: text(raw.actor), tool: text(raw.tool) }
 }
 
+/** Sets a named session's worker count, this session's or another's (`session-lead-mode set-workers`). */
+export async function setWorkers($: $, session: string, workers: string): Promise<void> {
+  const ran = await registry($, ['set-workers', session, '--workers', workers])
+  if (ran.exitCode !== 0) throw new EngineError(`session-lead-mode set-workers: exit ${ran.exitCode}: ${ran.stderr.trim()}`)
+}
+
 // Parsing: the engine owns the shape; a missing field reads as empty, a wrong version fails.
 
 const record = (value: unknown): Record<string, unknown> =>
@@ -209,7 +215,7 @@ export function parsePending(value: unknown): ConsolePending | null {
   const id = text(raw.id)
   const command = text(raw.command)
   if (id === '' || command === '') throw new EngineError('pending without id or command')
-  return { id, command, args: text(raw.args), reminder: nullableText(raw.reminder) }
+  return { id, command, args: text(raw.args) }
 }
 
 function parseCounts(value: unknown): ConsoleCounts | null {
@@ -218,7 +224,7 @@ function parseCounts(value: unknown): ConsoleCounts | null {
   return { questions: count(raw.questions), decided: count(raw.decided), toPlan: count(raw.toPlan), inReview: count(raw.inReview), forUser: count(raw.forUser) }
 }
 
-const STATUSES: readonly string[] = ['draft', 'ready', 'asked', 'answered', 'held']
+const STATUSES: readonly string[] = ['draft', 'ready', 'asked', 'answered', 'held', 'parked']
 
 function parseQuestion(value: unknown): ConsoleQuestion {
   const raw = record(value)
@@ -268,13 +274,11 @@ function parseNext(value: unknown): ConsoleRound['next'] {
   const release = record(raw.release)
   const rounds = list(raw.rounds).map((one): ConsoleProposal => {
     const proposed = record(one)
-    return { ids: list(proposed.ids).map(text).filter(id => id !== ''), title: text(proposed.title), why: text(proposed.why), fresh: proposed.fresh === true }
-  }).filter(one => one.ids.length > 0 && one.title !== '')
-  const keep = text(record(raw.compact).keep)
+    return { ids: list(proposed.ids).map(text).filter(id => id !== ''), title: text(proposed.title), premise: text(proposed.premise), why: text(proposed.why), fresh: proposed.fresh === true }
+  }).filter(one => one.title !== '')
   const next: NonNullable<ConsoleRound['next']> = {
     ...(count(release.count) === 0 ? {} : { release: { count: count(release.count) } }),
-    ...(rounds.length === 0 ? {} : { rounds }),
-    ...(keep === '' ? {} : { compact: { keep } }),
+    ...(Array.isArray(raw.rounds) ? { rounds } : {}),
   }
   return Object.keys(next).length === 0 ? null : next
 }
@@ -299,7 +303,7 @@ export function parseRound(value: unknown): ConsoleRound {
     },
     pending: parsePending(raw.pending),
     questions: list(raw.questions).map(parseQuestion),
-    batch: batch === null ? null : { marker: text(batch.marker), questions: list(batch.questions) as ConsoleDialogQuestion[] },
+    batch: batch === null ? null : { marker: text(batch.marker), questions: list(batch.questions) as ConsoleDialogQuestion[], notice: text(batch.notice) },
     counts: parseCounts(raw.counts),
     progress: parseProgress(raw.progress),
     log: list(raw.log).map(one => ({ at: text(record(one).at), text: text(record(one).text) })).filter(one => one.text !== ''),

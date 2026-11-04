@@ -2,7 +2,7 @@
 name: role
 description: >-
   Enter a workflow role: lead, agent, solo or autopilot.
-argument-hint: "[role] [pulls]"
+argument-hint: "[role] [pulls] [workers]"
 disable-model-invocation: true
 ---
 
@@ -42,8 +42,8 @@ An agent session runs each claimed item under the protocol for its kind:
 
 ## Entry
 
-The user invokes `/role`, optionally naming a role and, for agent, its pulls;
-or a session-recovery message asks to reload this skill.
+The user invokes `/role`, optionally naming a role, for agent its pulls, and a
+worker count; or a session-recovery message asks to reload this skill.
 
 ## Steps
 
@@ -51,7 +51,7 @@ Give each step's output as one line.
 
 1. **Known role.** When this conversation already registered a role, or a
    session-recovery message names one, and the invocation names no other
-   role, keep it and go to step 4.
+   role or worker count, keep it and go to step 4.
    Output: `role: <role> (known)`.
 2. **Ask.** Ask for what neither the argument nor step 1 gives, under
    [Question format](../shared/question-format.md)
@@ -61,13 +61,17 @@ Give each step's output as one line.
 3. **Register.**
 
    ```sh
-   bash $HOME/.agents/bin/session-lead-mode activate <role> [--pulls <pull>,<pull>]
+   bash $HOME/.agents/bin/session-lead-mode activate <role> [--pulls <pull>,<pull>] [--workers <n>]
    ```
 
-   Pass `--pulls` only for agent.
-   Output: `registered <role> [pulls]`.
-4. **Load.** Read the role's protocol files fully, and the shared files each
-   one's opening read list names (the others load where a step names them).
+   Pass `--pulls` only for agent, and `--workers` only when the invocation
+   names a worker count (`/role solo 5`). For autopilot register `solo`: the
+   setup registers autopilot on the user's go. Leaving autopilot, give the
+   unattended protocol's Return report first.
+   Output: `registered <role> [pulls] [workers]`.
+4. **Load.** Read the role's protocol files fully (autopilot's included, though
+   registered solo), and the shared files each one's opening read list names
+   (the others load where a step names them).
    An agent reads those of its pulls: plan → plan, design and implement →
    work, review → review.
    Output: `loaded <protocols>`.

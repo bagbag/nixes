@@ -1,10 +1,10 @@
 // The pane, the band, presses, /console and the idle-agent notification.
 import { describe, expect, test } from 'claude-code/testing'
 
-import { HOME, notices, PANE_PROPS, roundJson, SESSION, world } from './fixture'
+import { BATCH, HOME, NO_ROUND, notices, PANE_PROPS, roundJson, SESSION, world } from './fixture'
 import { parseRound } from '../hooks/engine'
 import { suggestions } from '../hooks/pane'
-import { protocolCallText, protocolResultText, pullsText, recommendationText, roundWords } from '../hooks/words'
+import { openDialogText, protocolCallText, protocolResultText, pullsText, recommendationText, roundWords } from '../hooks/words'
 
 const PANE = { plugin: 'console', component: 'Pane', requestId: 'console', props: PANE_PROPS } as const
 const BAND = {
@@ -187,7 +187,7 @@ describe('pane', () => {
     await ui.press({ key: 'ground-all' })
     await clock.settle()
     expect(w.commands).toEqual([
-      { command: 'step-back', args: 'goal decisions foundations consumer root-fix bloat gaps clean overfit mechanics the gate' },
+      { command: 'step-back', args: 'goal decisions foundations consumer root-fix bloat gaps clean overfit mechanics options the gate' },
       { command: 'ground', args: 'assumptions board sources probe' },
     ])
     expect(await texts(ui)).toContain('✓ Probe')
@@ -396,6 +396,166 @@ describe('band', () => {
     await ui.unmount()
   })
 
+  describe('no Ask button', () => {
+    const asking = (notice = 'Engine name\nProblem: which name.') => roundJson({ step: 'ask', batch: { ...BATCH, notice } })
+    const complete = (extra: Record<string, unknown> = {}) => ({ answer: '', durationMs: 1, isAborted: false, turnId: 't', reason: 'answer', ...extra }) as never
+
+    test('neither the band nor the Actions offer Ask, before or after the print: the dialog opens by itself (r29-q138)', async ($, on) => {
+      const { w, clock } = world(on, { round: asking() })
+      await ready($, clock)
+      for (const printed of [false, true]) {
+        if (printed) {
+          await $.turn.complete(complete())
+          await clock.settle()
+          expect(w.prompts).toEqual([openDialogText(BATCH.marker)])
+        }
+        const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
+        expect(await band.find({ key: 'band-ask' })).toBeUndefined()
+        expect(await texts(band)).not.toMatch(/\bAsk\b/)
+        await band.unmount()
+        const pane = await $.ui.mount({ ...PANE, surface: 'terminal' })
+        expect(await pane.find({ key: 'actions-row-ask' })).toBeUndefined()
+        expect(await texts(pane)).not.toMatch(/press Ask|reply ask|go-ahead/)
+        await pane.unmount()
+      }
+    })
+  })
+
+  describe('roles', () => {
+    const lead = { session: SESSION, role: 'lead', actor: '617adf08', tool: 'claude' }
+    const solo = { ...lead, role: 'solo' }
+    const autopilot = { ...lead, role: 'autopilot' }
+    const proposed = { rounds: [{ ids: [], title: 'Cache questions', premise: 'one store', why: 'same module', fresh: false }], release: { count: 2 } }
+    const closedWith = (next: unknown) => roundJson({ round: null, step: null, check: null, pending: null, batch: null, questions: [], next })
+
+    test("while autopilot a Solo button is in the band and the Actions; a press runs /role solo as the person's press", async ($, on) => {
+      const { w, clock } = world(on, { role: autopilot })
+      await ready($, clock)
+      const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
+      expect((await band.find({ key: 'band-role-solo' }))?.text).toContain('Solo')
+      expect(await texts(band)).not.toContain('Autopilot ')
+      await band.press({ key: 'band-role-solo' })
+      await clock.settle()
+      expect(w.commands).toEqual([{ command: 'role', args: 'solo' }])
+      expect(w.prompts).toEqual([])
+      await band.unmount()
+      const pane = await $.ui.mount({ ...PANE, surface: 'terminal' })
+      expect((await pane.find({ key: 'actions-row-role-solo' }))?.text).toContain('Solo')
+      expect(await pane.find({ key: 'actions-row-role-autopilot' })).toBeUndefined()
+      expect(await texts(pane)).toContain('Round r4')  // the round block stays: autopilot is a round role
+      await pane.unmount()
+    })
+
+    describe('worker selects in the session rows', () => {
+      const row = (session: string, role: string, workers: { active: number; cap: number } | null, state = 'active') =>
+        ({ session, role, actor: session.slice(-8), tool: 'claude', pulls: [], holds: 0, workers, state, idleSince: null, claimable: 0 })
+      const set = (w: { calls: { argv: string[] }[] }) => w.calls.filter(one => one.argv.includes('set-workers')).map(one => one.argv.slice(2))
+
+      test('a pick on another session sets that session, without a model turn', async ($, on) => {
+        const { w, clock } = world(on, { role: lead, sessions: [row(SESSION, 'lead', { active: 0, cap: 3 }), row('other-agent-1', 'agent', { active: 1, cap: 3 })] })
+        await ready($, clock)
+        const pane = await $.ui.mount({ ...PANE, surface: 'terminal' })
+        await pane.select({ key: 'workers-other-agent-1', value: '5' })
+        await clock.settle()
+        expect(set(w)).toEqual([['set-workers', 'other-agent-1', '--workers', '5']])
+        expect(w.prompts).toEqual([])
+        expect(w.commands).toEqual([])
+        await pane.unmount()
+      })
+
+      test('a failed set gives a toast', async ($, on) => {
+        const { w, clock } = world(on, { role: solo, activateError: 'nope', sessions: [row(SESSION, 'solo', { active: 0, cap: 3 })] })
+        await ready($, clock)
+        const pane = await $.ui.mount({ ...PANE, surface: 'terminal' })
+        await pane.select({ key: `workers-${SESSION}`, value: '2' })
+        await clock.settle()
+        expect(w.toasts.join(' ')).toContain('nope')
+        await pane.unmount()
+      })
+
+      test('leads, gone sessions and sessions without a count show text', async ($, on) => {
+        const { clock } = world(on, { role: lead, sessions: [row(SESSION, 'lead', { active: 1, cap: 3 }), row('gone-agent-1', 'agent', { active: 0, cap: 3 }, 'gone'), row('none-agent-1', 'agent', null)] })
+        await ready($, clock)
+        const pane = await $.ui.mount({ ...PANE, surface: 'terminal' })
+        expect(await pane.find({ key: `workers-${SESSION}` })).toBeUndefined()
+        expect(await pane.find({ key: 'workers-gone-agent-1' })).toBeUndefined()
+        expect(await pane.find({ key: 'workers-none-agent-1' })).toBeUndefined()
+        expect(await texts(pane)).toContain('workers 1/3')
+        await pane.unmount()
+      })
+    })
+
+    test('the band has its Solo button with no round open too', async ($, on) => {
+      const { clock } = world(on, { role: autopilot, round: NO_ROUND })
+      await ready($, clock)
+      const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
+      expect(await band.find({ key: 'band-role-solo' })).toBeDefined()
+      expect(await texts(band)).toContain('Autopilot · away')
+      await band.unmount()
+    })
+
+    test('while autopilot the pane hides Suggestions, Start and Release Round; solo shows them', async ($, on) => {
+      const { clock } = world(on, { role: autopilot, round: closedWith(proposed) })
+      await ready($, clock)
+      let pane = await $.ui.mount({ ...PANE, surface: 'terminal' })
+      expect(await pane.find({ key: 'sg-round-0-start' })).toBeUndefined()
+      expect(await pane.find({ key: 'sg-release-start' })).toBeUndefined()
+      expect(await pane.find({ key: 'actions-row-release' })).toBeUndefined()
+      expect(await texts(pane)).not.toContain('Suggestions')
+      await pane.unmount()
+      const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
+      expect(await band.find({ key: 'band-start' })).toBeUndefined()
+      expect(await band.find({ key: 'band-release' })).toBeUndefined()
+      await band.unmount()
+    })
+
+    test('while solo an Autopilot button is in the Actions only; a press runs /role autopilot', async ($, on) => {
+      const { w, clock } = world(on, { role: solo, round: closedWith(proposed) })
+      await ready($, clock)
+      const pane = await $.ui.mount({ ...PANE, surface: 'terminal' })
+      expect(await texts(pane)).toContain('Suggestions')
+      expect(await pane.find({ key: 'sg-round-0-start' })).toBeDefined()
+      expect(await pane.find({ key: 'actions-row-release' })).toBeDefined()
+      expect((await pane.find({ key: 'actions-row-role-autopilot' }))?.text).toContain('Autopilot')
+      expect(await pane.find({ key: 'actions-row-role-solo' })).toBeUndefined()
+      await pane.press({ key: 'actions-row-role-autopilot' })
+      await clock.settle()
+      expect(w.commands).toEqual([{ command: 'role', args: 'autopilot' }])
+      await pane.unmount()
+      const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
+      expect(await band.find({ key: 'band-role-autopilot' })).toBeUndefined()
+      expect(await band.find({ key: 'band-role-solo' })).toBeUndefined()
+      await band.unmount()
+    })
+
+    for (const role of ['lead', 'agent']) {
+      test(`a ${role} session has no role button`, async ($, on) => {
+        const { clock } = world(on, { role: { ...lead, role } })
+        on('ui.render', ($, e) => {
+          const { Text } = $.ui.resolve(e) as any
+          return <Text>engine</Text>
+        })
+        await ready($, clock)
+        const pane = await $.ui.mount({ ...PANE, surface: 'terminal' })
+        expect(await pane.find({ key: 'actions-row-role-solo' })).toBeUndefined()
+        expect(await pane.find({ key: 'actions-row-role-autopilot' })).toBeUndefined()
+        await pane.unmount()
+        const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
+        expect(await band.find({ key: 'band-role-solo' })).toBeUndefined()
+        await band.unmount()
+      })
+    }
+
+    test('a parked question shows in the round block', async ($, on) => {
+      const parked = { id: 'q7', board: 'tstdl-p1', text: 'Parked?', title: 'Parked one', kind: 'decision', status: 'parked', waitsOn: [], overlaps: [], answer: null }
+      const { clock } = world(on, { role: autopilot, round: roundJson({ questions: [parked] }) })
+      await ready($, clock)
+      const pane = await $.ui.mount({ ...PANE, surface: 'terminal' })
+      expect(await texts(pane)).toContain('Parked one')
+      await pane.unmount()
+    })
+  })
+
   test('the band stays away without a release next', async ($, on) => {
     const { clock } = world(on, { round: closed(null) })
     on('ui.render', ($, e) => {
@@ -548,6 +708,15 @@ describe('long lists', () => {
     expect(drawn).not.toContain('actor001\n')  // gone sorts last, past the cap
     await ui.press({ key: 'items-toggle' })
     expect(await texts(ui)).toContain('Item 12')
+  })
+
+  test('the role column shows autopilot as auto, so the row keeps to one line', async ($, on) => {
+    const row = { session: 's-a', role: 'autopilot', actor: 'auto0001', tool: 'claude', pulls: [], holds: 0, workers: null, state: 'active', idleSince: null, claimable: 0 }
+    const { clock } = world(on, { sessions: [row] })
+    await ready($, clock)
+    const drawn = await texts(await $.ui.mount({ ...PANE, surface: 'terminal' }))
+    expect(drawn).toContain('auto')
+    expect(drawn).not.toContain('autopilot')
   })
 
   test('stale sessions become one stale-holds line; pulls read as fixed-position initials', async ($, on) => {
@@ -754,11 +923,12 @@ describe('suggestions', () => {
   const closed = (next: unknown) => roundJson({ round: null, step: null, check: null, pending: null, batch: null, questions: [], next })
   const PROPOSED = {
     rounds: [
-      { ids: ['tstdl-a', 'tstdl-b'], title: 'Cache questions', why: 'same module as the context read', fresh: false },
-      { ids: ['tstdl-c'], title: 'Queue retry', why: 'highest priority left', fresh: true },
+      { ids: [], title: 'Cache questions', premise: 'one cache store serves both modules', why: 'same module as the context read', fresh: false },
+      { ids: ['tstdl-c'], title: 'Queue retry', premise: "retries share one backoff, the user's", why: 'highest priority left', fresh: true },
     ],
-    compact: { keep: 'the cache decisions' },
   }
+  const START_0 = "Start the next round: protocol start round --topic 'Cache questions: one cache store serves both modules'"
+  const START_1 = "Start the next round: protocol start round --topic 'Queue retry: retries share one backoff, the user'\\''s' tstdl-c"
   const parsed = (next: unknown) => ({ ...parseRound(closed(next)), isContextLarge: true })
 
   test('suggestions() offers rounds first (the first recommended), then Release Round, then a compact-only proposal', () => {
@@ -767,21 +937,21 @@ describe('suggestions', () => {
     expect(suggestions(parsed({ release: { count: 3 } }))).toEqual([
       { kind: 'release', key: 'release', count: 3, isRecommended: true }])
     expect(suggestions(parsed(PROPOSED)).map(one => [one.kind, one.key, one.isRecommended])).toEqual([['round', 'round-0', true], ['round', 'round-1', false]])
-    expect(suggestions(parsed(PROPOSED))[1]).toMatchObject({ ids: ['tstdl-c'], fresh: true, keep: 'the cache decisions' })
-    expect(suggestions(parsed(PROPOSED))[0]).toMatchObject({ fresh: false, keep: null })
+    expect(suggestions(parsed(PROPOSED))[1]).toMatchObject({ ids: ['tstdl-c'], fresh: true, isCompacting: true })
+    expect(suggestions(parsed(PROPOSED))[0]).toMatchObject({ ids: [], fresh: false, isCompacting: false })
     expect(suggestions(parsed({ ...PROPOSED, release: { count: 1 } })).map(one => [one.kind, one.isRecommended]))
       .toEqual([['round', true], ['round', false], ['release', false]])
-    expect(suggestions(parsed({ compact: { keep: 'all decisions' } }))).toEqual([{ kind: 'compact', key: 'compact', keep: 'all decisions', isRecommended: true }])
-    // a compact proposal beside rounds is the rounds' keep, not a Compact suggestion of its own
-    expect(suggestions(parsed({ rounds: [PROPOSED.rounds[0]], compact: { keep: 'x' } })).map(one => one.kind)).toEqual(['round'])
+    expect(suggestions(parsed({ rounds: [] }))).toEqual([{ kind: 'compact', key: 'compact', isRecommended: true }])
+    // a proposal with rounds has no Compact suggestion of its own
+    expect(suggestions(parsed({ rounds: [PROPOSED.rounds[0]] })).map(one => one.kind)).toEqual(['round'])
   })
 
   test('below the size limit no row compacts first and a compact-only proposal is not offered', () => {
     const small = (next: unknown) => parseRound(closed(next))
     expect(small(PROPOSED).isContextLarge).toBe(false)
-    expect(suggestions(small(PROPOSED)).map(one => one.kind === 'round' ? one.keep : 'other')).toEqual([null, null])
-    expect(suggestions(small({ compact: { keep: 'all decisions' } }))).toEqual([])
-    expect(suggestions(small({ compact: { keep: 'all decisions' }, release: { count: 1 } })).map(one => one.kind)).toEqual(['release'])
+    expect(suggestions(small(PROPOSED)).map(one => one.kind === 'round' ? one.isCompacting : 'other')).toEqual([false, false])
+    expect(suggestions(small({ rounds: [] }))).toEqual([])
+    expect(suggestions(small({ rounds: [], release: { count: 1 } })).map(one => one.kind)).toEqual(['release'])
   })
 
   test('suggestions() stays empty while a round is open or a dialog is', () => {
@@ -790,26 +960,27 @@ describe('suggestions', () => {
     expect(suggestions(parsed(PROPOSED), true)).toEqual([])
   })
 
-  test('the pane lists a row per round with its Start, the recommended one in the suggestion color; a row opens its ids inline', async ($, on) => {
+  test('the pane lists a row per round with its Start, the recommended one in the suggestion color; a row that names ids opens them inline', async ($, on) => {
     const { w, clock } = world(on, { round: closed(PROPOSED) })
     await ready($, clock)
     const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
     const color = async (text: string) => (await ui.findAll({ type: 'Text', text })).filter(one => one.text === text).map(one => one.props.color)
     expect(await texts(ui)).toContain('Suggestions')
-    expect(await color('Cache questions · 2 questions · same module as the context read')).toEqual(['suggestion'])
-    expect(await color('Queue retry · 1 question · highest priority left · compacts first')).toEqual([undefined])
+    expect(await color('Cache questions · one cache store serves both modules · same module as the context read')).toEqual(['suggestion'])
+    expect(await color("Queue retry · retries share one backoff, the user's · highest priority left · leads with tstdl-c · compacts first")).toEqual([undefined])
     expect((await ui.find({ key: 'sg-round-0-start' }))?.text).toBe('Start')
     expect(await ui.find({ key: 'sg-round-1-start' })).toBeDefined()
     expect(await texts(ui)).not.toContain('click an id to open it')
-    await ui.press({ key: 'sg-round-0-row' })
+    expect(await ui.find({ key: 'sg-round-0-row' })).toBeUndefined()  // no ids to list: a plain row
+    await ui.press({ key: 'sg-round-1-row' })
     expect(await texts(ui)).toContain('click an id to open it')
-    await ui.press({ key: 'sg-round-0-tstdl-b-open' })
+    await ui.press({ key: 'sg-round-1-tstdl-c-open' })
     await clock.settle()
     expect(await texts(ui)).toContain('Keep it.')
-    expect(w.calls.some(one => one.argv[1] === 'show' && one.argv[2] === 'tstdl-b')).toBe(true)
-    await ui.press({ key: 'sg-round-0-row' })  // the item replaced the list; the row lists the ids again, a second press closes
+    expect(w.calls.some(one => one.argv[1] === 'show' && one.argv[2] === 'tstdl-c')).toBe(true)
+    await ui.press({ key: 'sg-round-1-row' })  // the item replaced the list; the row lists the ids again, a second press closes
     expect(await texts(ui)).toContain('click an id to open it')
-    await ui.press({ key: 'sg-round-0-row' })
+    await ui.press({ key: 'sg-round-1-row' })
     expect(await texts(ui)).not.toContain('click an id to open it')
     await ui.unmount()
   })
@@ -840,16 +1011,15 @@ describe('suggestions', () => {
     await clock.settle()
     expect(w.commands).toEqual([{ command: 'release-round', args: '' }])
     await ui.unmount()
-    w.round = closed({ compact: { keep: 'all decisions' } })
+    w.round = closed({ rounds: [] })
     await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
     await clock.settle()
     ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
-    expect(await color('Compact · keeps all decisions')).toEqual(['suggestion'])
-    expect(await color('Compact')).toEqual(['suggestion'])
+    expect(await color('Compact')).toEqual(['suggestion', 'suggestion'])  // the row and its Actions twin
     expect(await color('Release Round')).toEqual([])
     await ui.press({ key: 'sg-compact-start' })
     await clock.settle()
-    expect(w.commands.at(-1)).toEqual({ command: 'compact', args: 'all decisions' })
+    expect(w.commands.at(-1)).toEqual({ command: 'compact', args: '' })
     await ui.unmount()
     w.round = closed(PROPOSED)  // rounds alone twin neither
     await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
@@ -865,28 +1035,28 @@ describe('suggestions', () => {
     const { w, clock } = world(on, { round: closed(PROPOSED) })
     await ready($, clock)
     const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
-    expect(await texts(ui)).toContain('Cache questions · 2 questions ·')
+    expect(await texts(ui)).toContain('Cache questions ·')
     expect(await texts(ui)).not.toContain('Queue retry')
     expect((await ui.findAll({ type: 'Text', text: 'Start' })).map(one => one.props.color)).toEqual(['suggestion'])
     await ui.press({ key: 'band-start' })
     await clock.settle()
-    expect(w.prompts).toEqual(['Start the next round on Cache questions: protocol start round tstdl-a tstdl-b'])
+    expect(w.prompts).toEqual([START_0])
     expect(w.commands).toEqual([])
     await ui.unmount()
   })
 
   test('the band offers a compact-only proposal, and leaves the prompt to a dialog', async ($, on) => {
-    const { w, clock } = world(on, { round: closed({ compact: { keep: 'all decisions' } }) })
+    const { w, clock } = world(on, { round: closed({ rounds: [] }) })
     on('ui.render', ($, e) => {
       const { Text } = $.ui.resolve(e) as any
       return <Text>engine</Text>
     })
     await ready($, clock)
     let ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
-    expect(await texts(ui)).toContain('Compact · keeps all decisions ·')
+    expect(await texts(ui)).toContain('Compact ·')
     await ui.press({ key: 'band-compact' })
     await clock.settle()
-    expect(w.commands).toEqual([{ command: 'compact', args: 'all decisions' }])
+    expect(w.commands).toEqual([{ command: 'compact', args: '' }])
     await ui.unmount()
     ui = await $.ui.mount({ ...BAND, props: { ...BAND.props, hasSurvey: true }, surface: 'terminal' })
     expect(await texts(ui)).toContain('engine')
@@ -901,13 +1071,13 @@ describe('suggestions', () => {
     await ui.press({ key: 'sg-round-0-start' })
     await ui.press({ key: 'sg-round-0-start' })
     await clock.settle()
-    expect(w.prompts).toEqual(['Start the next round on Cache questions: protocol start round tstdl-a tstdl-b'])
+    expect(w.prompts).toEqual([START_0])
     expect(w.commands).toEqual([])
     await ui.unmount()
   })
 
   describe('the context size decides whether a Start compacts first', () => {
-    const FIRST = 'Queue retry · 1 question · highest priority left'
+    const FIRST = "Queue retry · retries share one backoff, the user's · highest priority left · leads with tstdl-c"
     async function mounted($: any, on: any, tokens: number | undefined | 'fails') {
       const found = world(on, { round: closed(PROPOSED) })
       found.w.tokens = tokens
@@ -925,7 +1095,7 @@ describe('suggestions', () => {
         await ui.press({ key: 'sg-round-1-start' })
         await clock.settle()
         expect(w.commands).toEqual([])
-        expect(w.prompts).toEqual(['Start the next round on Queue retry: protocol start round tstdl-c'])
+        expect(w.prompts).toEqual([START_1])
         await ui.unmount()
       })
     }
@@ -933,10 +1103,10 @@ describe('suggestions', () => {
     test('at the limit the row says it and its Start compacts first; a row the model did not mark never does', async ($, on) => {
       const { w, clock, ui } = await mounted($, on, 150_000)
       expect(await texts(ui)).toContain(`${FIRST} · compacts first`)
-      expect(await texts(ui)).toContain('Cache questions · 2 questions · same module as the context read')
+      expect(await texts(ui)).toContain('Cache questions · one cache store serves both modules · same module as the context read')
       await ui.press({ key: 'sg-round-1-start' })
       await clock.settle()
-      expect(w.commands).toEqual([{ command: 'compact', args: 'the cache decisions' }])
+      expect(w.commands).toEqual([{ command: 'compact', args: '' }])
       await ui.unmount()
     })
 
@@ -977,11 +1147,11 @@ describe('suggestions', () => {
   })
 
   describe('a Start on a round that compacts first', () => {
-    const START = 'Start the next round on Queue retry: protocol start round tstdl-c'
+    const START = START_1
     const messages = [{ role: 'user' as const, text: 'hi', toolUses: [] }]
-    const compact = ($: any) => $.session.compact({ trigger: 'manual', instructions: 'the cache decisions', messages })
+    const compact = ($: any) => $.session.compact({ trigger: 'manual', messages })
 
-    /** The press: stores the start message and runs /compact with the proposal's keep. */
+    /** The press: stores the start message and runs /compact without focus text. */
     async function pressed($: any, on: any, answer: (instructions: string) => unknown = () => ({ messages: [{ role: 'user', text: 'summary', toolUses: [] }] })) {
       const found = world(on, { round: closed(PROPOSED) })
       const seen: string[] = []
@@ -994,14 +1164,12 @@ describe('suggestions', () => {
       return { ...found, seen }
     }
 
-    test('stores the message and runs /compact with the keep; the compaction hook keeps the proposal and sends it once compaction succeeded', async ($, on) => {
+    test('stores the message and runs /compact with no text; the compaction hook keeps the start and sends it once compaction succeeded', async ($, on) => {
       const { w, clock, seen } = await pressed($, on)
-      expect(w.commands).toEqual([{ command: 'compact', args: 'the cache decisions' }])
+      expect(w.commands).toEqual([{ command: 'compact', args: '' }])
       expect(w.prompts).toEqual([])  // nothing is sent before the compaction
       await compact($)
-      expect(seen[0]).toContain('the cache decisions')
-      expect(seen[0]).toContain(`Keep the proposed next round, which starts right after this compaction: ${START}.`)
-      expect(seen[0]?.match(/the cache decisions/g)).toHaveLength(1)  // the keep is in the instructions once
+      expect(seen[0]).toBe(`Keep the proposed next round, which starts right after this compaction: ${START}.`)  // only the real Start
       await clock.settle()
       expect(w.prompts).toEqual([START])
       await compact($)  // cleared: the next compaction sends nothing
@@ -1024,7 +1192,7 @@ describe('suggestions', () => {
       await compact($)
       await clock.settle()
       expect(w.prompts).toEqual([])
-      expect(notices(session).some(one => one.includes('the next round was not started (compaction skipped: vetoed by a hook)') && one.includes(START))).toBe(true)
+      expect(notices(session).some(one => one.includes('the next round was not started (compaction skipped: vetoed by a hook)') && one.includes(JSON.stringify(START).slice(1, -1)))).toBe(true)
       await $.session.compact({ trigger: 'manual', messages })
       await clock.settle()
       expect(w.prompts).toEqual([])
@@ -1035,7 +1203,7 @@ describe('suggestions', () => {
       await compact($).catch(() => undefined)
       await clock.settle()
       expect(w.prompts).toEqual([])
-      expect(notices(session).some(one => one.includes('the next round was not started (compaction failed') && one.includes(START))).toBe(true)
+      expect(notices(session).some(one => one.includes('the next round was not started (compaction failed') && one.includes(JSON.stringify(START).slice(1, -1)))).toBe(true)
     })
 
     test("a plugin's prompt or a hidden one does not clear it", async ($, on) => {

@@ -55,8 +55,9 @@ proposal starts nothing until the user presses Start or says go.
   review protocol's [Challenge](review.md#challenge).
 - Use `staged-review` when the user asks for an implementation review; turn
   the decisions it raises into questions.
-- While the user is away, raise blocked choices as unassigned questions and
-  list them in the return round.
+- While the user is away (autopilot), settle a round's Ask under the
+  [unattended protocol](unattended.md#authority); parked choices are the
+  return round.
 - On context warnings, identify bloat, bring the board and, when you plan,
   the checkpoint file up to date, and recommend compaction at a cheap-loss
   point; the user decides.
@@ -92,12 +93,11 @@ judgment it leaves to you.
    or requested; read `$HOME/.agents/skills/shared/reviewers.md` and propose
    the reviewer setup under its [Reviewers](../../shared/reviewers.md#reviewers)
    first, then spot-check decisive claims.
-   Output: one line per question: premises with their evidence, premises
-   still to ask.
-5. **Walk through and ask** under
-   [Asking the user](../../shared/asking.md#asking-the-user), from its Check
-   step.
-   Output: the walkthrough and the questions.
+   Output: one line per question: its deciding premises in plain words,
+   premises still to ask; sources go in the pass reports and the record.
+5. **Ask** under [Asking the user](../../shared/asking.md#asking-the-user),
+   from its Check step.
+   Output: the questions.
 6. **Record.** Give each answered decision its record under
    [Rulings](../../shared/board-coordination.md#rulings); when the user asks
    for the overall picture first, record the round after the walkthrough.
@@ -132,20 +132,17 @@ you.
    approval shows the record as revised.
 2. **Board check.** Act on every hit class the engine lists.
 3. **Own rulings.** Report them in the fields the engine asks for.
-4. **Approval.** Walk the user through steps 1-3 before the engine's dialog,
-   showing each changed or revised record with its correction.
+4. **Approval.** The engine asks it.
 5. **Owner writes.** Write each rule into its one owner, replacing the text it
    supersedes (old text to `history/` under project-memory). Write a rule a
-   topic's design-target doc states now; only READMEs, skills and source wait
-   for their work. Name repository paths from the board root and installed
-   files by their installed path, as rendered. For a convention, add an
-   enforcing check where realistic. Withdraw a wrong premise explicitly.
+   topic's design-target doc, `coding-style.md` or `module-authoring.md` states
+   now; only READMEs, other skills and source wait for their work. Name
+   repository paths from the board root and installed files by their installed
+   path, as rendered. For a convention, add an enforcing check where realistic.
+   Withdraw a wrong premise explicitly.
 6. **Release.** Fix what a board refusal names (a record failing
    `board bd lint`: its text), then rerun the step with `step {}`.
-7. **Next.** Run `protocol next`; recommend the next round as the cluster
-   asking.md Scope gives, naming its questions, or, when no question round
-   leads, the other next step by priority and what it unblocks; report up to 3
-   clusters with `protocol next --set`; wait for the user.
+7. **Next.** Run `protocol next` and follow its output; wait for the user.
    Output: the recommendation.
 
 **Stop:**
@@ -161,9 +158,8 @@ you.
 - A contained change to the user's decision (or an unsure one) or an open
   premise: only that record goes to a round, its reason shown at that round's
   Stage.
-- A contained change of your own parts: the record stays, revised, and the
-  release runs the scoped step-back and ground pass on it (once per release)
-  before the approval; a pass that finds the decision touched drops it.
+- A contained change of your own parts: the record stays, revised; a scoped
+  pass that finds the decision touched drops it.
 
 **Exit:** the set is released, each rule sits in its owner, and the counts are
 reported.

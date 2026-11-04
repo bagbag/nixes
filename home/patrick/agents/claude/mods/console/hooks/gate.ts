@@ -1,6 +1,6 @@
 // The dialog gate and answer capture, as pure functions over the round and the dialog
 // (console-spec 3 Dialog gate / Answer capture; contract-rulings R-B7).
-import type { ConsoleDialogQuestion, ConsoleRound } from '../types'
+import type { ConsoleBatch, ConsoleDialogQuestion, ConsoleRound } from '../types'
 
 import type { Answer } from './engine'
 
@@ -30,16 +30,28 @@ export function dialogKey(kind: string, input: DialogInput): string {
   return `${kind}:${input.metadata?.source ?? ''}:${shape(input.questions)}`
 }
 
+/** The issued batch's text the console has yet to print (non-empty notice, marker not printed): its dialog waits for the print. */
+export const isUnprinted = (batch: ConsoleBatch, printed: string | null): boolean => batch.notice.trim() !== '' && batch.marker !== printed
+
 /**
- * Judges a dialog inside an open round: a marked dialog must be the issued batch; an unmarked
- * one must not repeat a staged question; each is blocked once (keys in `blocked`). Other
- * unmarked dialogs pass with a note for the model.
+ * Judges a dialog inside an open round: a marked dialog must be the issued batch, and its text
+ * printed first (`printed`: the marker last printed); an unmarked one must not repeat a staged
+ * question; each is blocked once (keys in `blocked`). Other unmarked dialogs pass with a note
+ * for the model.
  */
-export function judgeDialog(round: ConsoleRound & { round: string }, input: DialogInput, blocked: readonly string[]): GateVerdict {
+export function judgeDialog(round: ConsoleRound & { round: string }, input: DialogInput, blocked: readonly string[], printed: string | null): GateVerdict {
   const marker = input.metadata?.source
   if (marker !== undefined && marker.startsWith(MARKER_PREFIX)) {
     const issued = round.batch
-    if (issued !== null && issued.marker === marker && shape(issued.questions) === shape(input.questions)) return { action: 'pass', marker }
+    if (issued !== null && issued.marker === marker && shape(issued.questions) === shape(input.questions)) {
+      const key = dialogKey('unprinted', input)
+      if (!isUnprinted(issued, printed) || blocked.includes(key)) return { action: 'pass', marker }
+      return {
+        action: 'block',
+        key,
+        reason: `${marker}: the console has not printed this batch's question text yet. Write nothing about the questions and end your turn now: the console prints them at the turn's end and opens the dialog.`,
+      }
+    }
     const key = dialogKey('marked', input)
     if (blocked.includes(key)) return { action: 'note', text: `This dialog (${marker}) differs from the batch round ${round.round} issued; its answers were not recorded in the round.` }
     const reason = issued === null
@@ -62,6 +74,18 @@ export function judgeDialog(round: ConsoleRound & { round: string }, input: Dial
     }
   }
   return { action: 'note', text: `This dialog was not from round ${round.round}; its answers were not recorded in the round.` }
+}
+
+/** Whether the model has to read this dialog's result: a decline, typed text instead of a pick, a note on an option, or a free reply. */
+export function needsModel(questions: readonly ConsoleDialogQuestion[], captured: Capture): boolean {
+  if (captured.kind !== 'answer') return true
+  const { answers, annotations, response, followUp } = captured.input as { answers: Record<string, string>; annotations: Record<string, unknown>; response: string | null; followUp?: true }
+  if (response !== null || followUp === true) return true
+  if (Object.values(annotations).some(one => typeof (one as { notes?: unknown } | null)?.notes === 'string')) return true
+  return questions.some(one => {
+    const answer = answers[one.question]
+    return answer !== undefined && !one.options.some(option => option.label === answer) && !(one.multiSelect && answer.split(', ').every(part => one.options.some(option => option.label === part)))
+  })
 }
 
 export type DialogResult = {

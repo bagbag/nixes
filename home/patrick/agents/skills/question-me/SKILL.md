@@ -10,8 +10,9 @@ disable-model-invocation: true
 
 <!-- @include shared/rerun.md -->
 
-Question me now. In a deciding session (lead or solo), run these steps
-through the decide protocol's Round in `protocol`
+Question me now. Under autopilot, first run Return in
+`$HOME/.agents/skills/role/protocols/unattended.md`. In a deciding session
+(lead or solo), run these steps through the decide protocol's Round in `protocol`
 (`$HOME/.agents/skills/role/protocols/decide.md`): resume the open round,
 abandon an open release (nothing releases; `start release` takes its records
 again), or

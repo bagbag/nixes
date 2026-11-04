@@ -7,11 +7,16 @@ command -v jq >/dev/null 2>&1 || { printf '\033[31m[missing: jq]\033[0m'; exit 0
 mapfile -t vals < <(jq -r '
  (.cwd // .workspace.current_dir // ""),
  (.model.display_name // ""),
+ (.effort.level // ""),
+ (.worktree.name // .workspace.git_worktree // ""),
+ (.agent.name // ""),
+ ((.cost.total_duration_ms // 0) / 1000 | floor),
+ (.cost.total_lines_added // 0),
+ (.cost.total_lines_removed // 0),
  (.context_window.used_percentage // ""),
- (.context_window.total_input_tokens // 0),
- (.context_window.total_output_tokens // 0),
- (.context_window.cache_read_input_tokens // 0),
- (.context_window.cache_creation_input_tokens // 0),
+ (.context_window.current_usage.input_tokens // 0),
+ (.context_window.current_usage.cache_read_input_tokens // 0),
+ (.context_window.current_usage.cache_creation_input_tokens // 0),
  (.rate_limits.five_hour.used_percentage // ""),
  (.rate_limits.five_hour.resets_at // ""),
  (.rate_limits.seven_day.used_percentage // ""),
@@ -20,26 +25,25 @@ mapfile -t vals < <(jq -r '
 ' <<<"$input")
 cwd=${vals[0]}
 model=${vals[1]}
-used=${vals[2]}
-total_input=${vals[3]}
-total_output=${vals[4]}
-cache_read=${vals[5]}
-cache_creation=${vals[6]}
-five_hour=${vals[7]}
-five_hour_resets=${vals[8]}
-seven_day=${vals[9]}
-seven_day_resets=${vals[10]}
-ctx_size=${vals[11]}
+effort=${vals[2]}
+worktree=${vals[3]}
+agent=${vals[4]}
+session_secs=${vals[5]}
+lines_added=${vals[6]}
+lines_removed=${vals[7]}
+used=${vals[8]}
+input_tokens=${vals[9]}
+cache_read=${vals[10]}
+cache_creation=${vals[11]}
+five_hour=${vals[12]}
+five_hour_resets=${vals[13]}
+seven_day=${vals[14]}
+seven_day_resets=${vals[15]}
+ctx_size=${vals[16]}
 
 printf -v now '%(%s)T' -1
 
-# Session timer (persists across renders via PPID-keyed temp file)
-session_file="/tmp/claude-session-${PPID}"
-if [ ! -f "$session_file" ]; then
- printf '%s' "$now" > "$session_file"
-fi
-read -r session_start < "$session_file"
-session_secs=$(( now - session_start ))
+# Session timer
 session_hrs=$(( session_secs / 3600 ))
 session_mins=$(( (session_secs % 3600) / 60 ))
 if (( session_hrs > 0 )); then
@@ -54,12 +58,35 @@ if [ -n "$cwd" ] && command -v git >/dev/null 2>&1 && git -C "$cwd" rev-parse --
  git_branch=$(git -C "$cwd" -c core.hooksPath=/dev/null symbolic-ref --short HEAD 2>/dev/null || git -C "$cwd" rev-parse --short HEAD 2>/dev/null)
 fi
 
-# Display dir: ~ for HOME, strip ~/projects/, drop trailing component if it equals branch
+# Display dir: ~ for HOME, strip ~/projects/. Inside a repo, name the checkout by its role:
+# - worktree project (repo has linked worktrees, or its folder is named after the branch):
+#   the parent folder is the project, as in ~/projects/tstdl/{main,solutec}. A folder named
+#   after the branch adds nothing, so tstdl/main on main shows as tstdl.
+# - plain repo: keeps its group, or starts at the repo name outside HOME.
+# Three or more folders inside the repo collapse to <checkout>/…/<leaf>.
+# Use --show-prefix rather than trimming cwd: git resolves symlinks, so /etc/x has toplevel
+# /private/etc/x on macOS.
 display_dir=${cwd/#$HOME/\~}
 display_dir=${display_dir/#\~\/projects\//}
 if [ -n "$git_branch" ]; then
- last_component=${display_dir##*/}
- [ "$last_component" = "$git_branch" ] && display_dir=${display_dir%/*}
+ mapfile -t repo_info < <(git -C "$cwd" rev-parse --show-prefix --path-format=absolute --show-toplevel --git-common-dir 2>/dev/null)
+ repo_prefix=${repo_info[0]%/}
+ repo_root=${repo_info[1]:-}
+ repo_common=${repo_info[2]:-}
+fi
+if [ -n "${repo_root:-}" ]; then
+ repo_name=${repo_root##*/}
+ repo_parent=${repo_root%/*}
+ checkout=$repo_name
+ if { [ -d "$repo_common/worktrees" ] || [ "$repo_name" = "$git_branch" ]; } \
+   && [ -n "$repo_parent" ] && [ "$repo_parent" != "$HOME" ] && [ "$repo_parent" != "$HOME/projects" ]; then
+   checkout=${repo_parent##*/}
+   [ "$repo_name" != "$git_branch" ] && checkout="$checkout/$repo_name"
+   display_dir=$checkout${repo_prefix:+/$repo_prefix}
+ elif [[ $display_dir == /* ]]; then
+   display_dir=$repo_name${repo_prefix:+/$repo_prefix}
+ fi
+ [[ $repo_prefix == */*/* ]] && display_dir="$checkout/…/${repo_prefix##*/}"
 fi
 
 # Model name: "Claude Opus 4.7 (1M context)" -> "Opus 4.7 1M"
@@ -123,14 +150,16 @@ make_rate_bar() {
  _bar="${BAR_FULL:0:filled}${BAR_GHOST:0:ghost}${BAR_EMPTY:0:empty}"
 }
 
-# Linearly extrapolate end-of-period usage from current usage and elapsed fraction
+# Linearly extrapolate end-of-period usage from current usage and elapsed fraction.
+# Before min_elapsed the projection is noise (2% one hour into 7d reads 336%), so
+# report actual usage instead.
 calc_expected() {
- local pct=$1 resets_at=$2 period_secs=$3
+ local pct=$1 resets_at=$2 period_secs=$3 min_elapsed=$4
  _expected=$pct
  [ -z "$resets_at" ] && return
  local period_start=$(( resets_at - period_secs ))
  local elapsed=$(( now - period_start ))
- (( elapsed <= 0 )) && return
+ (( elapsed < min_elapsed )) && return
  _expected=$(( pct * period_secs / elapsed ))
 }
 
@@ -172,17 +201,6 @@ cache_color() {
  fi
 }
 
-fmt_tokens() {
- local n=$1
- if (( n >= 1000000 )); then
-   printf -v _tokens '%d.%dM' $((n / 1000000)) $(( (n % 1000000) / 100000 ))
- elif (( n >= 1000 )); then
-   printf -v _tokens '%dk' $((n / 1000))
- else
-   _tokens=$n
- fi
-}
-
 DIM=$'\033[2m'
 RESET=$'\033[0m'
 BLUE=$'\033[34m'
@@ -204,12 +222,20 @@ if [ -n "$git_branch" ]; then
  loc="${loc}${GREEN}on ${RESET}${MAGENTA}${git_branch}${RESET}"
 fi
 [ -n "$loc" ] && add_part "$loc"
+[ -n "$worktree" ] && add_part "${DIM}wt${RESET} ${worktree}"
+[ -n "$agent" ] && add_part "${DIM}agent${RESET} ${agent}"
 
-# Model
+# Model and effort
+[ -n "$effort" ] && model="${model:+$model }${effort}"
 [ -n "$model" ] && add_part "${model_color}${model}${RESET}"
 
 # Session
 add_part "${DIM}${session_time}${RESET}"
+
+# Lines changed this session
+if (( lines_added > 0 || lines_removed > 0 )); then
+ add_part "${DIM}+${lines_added}/-${lines_removed}${RESET}"
+fi
 
 # Context window. Mark the auto-compaction cliff (autoCompactWindow minus the
 # CONTEXT_WATCH_RESERVE_PCT margin — same math as context-watch.sh) inside the
@@ -239,15 +265,8 @@ if [ -n "$used" ]; then
  add_part "${DIM}ctx${RESET} ${_color}${_bar} ${used_int}%${RESET}"
 fi
 
-# Token totals
-if { (( total_input > 0 )) || (( total_output > 0 )); }; then
- fmt_tokens "$total_input";  in_fmt=$_tokens
- fmt_tokens "$total_output"; out_fmt=$_tokens
- add_part "${DIM}${in_fmt}↑${out_fmt}↓${RESET}"
-fi
-
-# Cache-hit ratio
-cache_total=$(( cache_read + cache_creation + total_input ))
+# Cache-hit ratio of the latest request (the payload has no session-wide figure)
+cache_total=$(( cache_read + cache_creation + input_tokens ))
 if (( cache_read > 0 && cache_total > 0 )); then
  cache_pct=$(( cache_read * 100 / cache_total ))
  cache_color "$cache_pct"
@@ -257,7 +276,7 @@ fi
 # 5h rate limit
 if [ -n "$five_hour" ]; then
  printf -v five_int '%.0f' "$five_hour"
- calc_expected "$five_int" "$five_hour_resets" 18000;     five_expected=$_expected
+ calc_expected "$five_int" "$five_hour_resets" 18000 3600; five_expected=$_expected
  fmt_countdown "$five_hour_resets";                       countdown=$_countdown
  quota_color "$five_expected";                            color=$_color
  make_rate_bar "$five_int" "$five_expected";              bar=$_bar
@@ -270,7 +289,7 @@ fi
 # 7d rate limit
 if [ -n "$seven_day" ]; then
  printf -v seven_int '%.0f' "$seven_day"
- calc_expected "$seven_int" "$seven_day_resets" 604800;   seven_expected=$_expected
+ calc_expected "$seven_int" "$seven_day_resets" 604800 86400; seven_expected=$_expected
  fmt_countdown "$seven_day_resets";                       countdown=$_countdown
  quota_color "$seven_expected";                           color=$_color
  make_rate_bar "$seven_int" "$seven_expected";            bar=$_bar

@@ -5,15 +5,16 @@ a release runs the decide protocol's Release instead, whose engine asks the
 approval. Give each step's output compactly.
 
 1. **Scope.** Compose the round under the global instructions' Ask in rounds.
-   On a large board, scope it by [Priority](../shared/board-core.md#priority)
-   first: the highest-priority unblocked question and every ready question
-   sharing its premise, root cause, consumer concept, flow, or the module and
-   sources its grounding reads. When the user flagged one instance, find all
-   of its kind, including earlier rulings.
+   Group by default: take every ready question sharing a premise, root cause,
+   consumer concept, flow, or the module and sources its grounding reads; a
+   round of a single question names why none shares one. Without a proposal,
+   start from the highest-[priority](../shared/board-core.md#priority)
+   unblocked question. When the user flagged one instance, find all of its
+   kind, including earlier rulings.
    Output: the round's decisions; the instance list where one was flagged.
 2. **Check.** In a round run through `protocol` (decide protocol Round), the
-   engine sequences the passes below and caps the loop: follow its output and
-   report each pass's changes in its pass report. Otherwise invoke the
+   engine sequences the passes and caps the loop: follow its output and report
+   each pass's changes in its pass report. Otherwise invoke the
    step-back and ground skills on the whole set, in that order; invoke
    challenge-rulings last, before the questions or the approval request.
    Invoke each through the runtime's skill mechanism (Claude's Skill tool; in
@@ -26,14 +27,14 @@ approval. Give each step's output compactly.
    Derive process questions from the root fix; step up an abstraction level
    when all options feel wrong. Classify sequencing and process choices as the
    planning session's call.
-   A pass that changes nothing reports one line in chat: that it changed
-   nothing and what it covered; the full `checked` list goes only into its
-   pass report.
+   Write no chat line for a pass that changes nothing; put its `checked` list
+   only in its pass report.
    Output: each invocation and what it changed; what stays unsure, as
    questions.
-3. **Walk through.** In chat, readable without arc context: items and ids in
-   brackets, the answered question (and the posed one if different), one line
-   per decision-protocol step and every choice. Define each term, tool feature
+3. **Walk through.** Outside a round (retro, role, Accept): in chat, readable
+   without arc context: items and ids in brackets, the answered question (and
+   the posed one if different), one line per decision-protocol step and every
+   choice. Define each term, tool feature
    or earlier artifact an option relies on in one clause at first use (what it
    is, where it runs); drop arguments that do not apply to the case. Disclose
    your own rulings: entailed decisions, defect-fix behaviors, dropped or
@@ -42,7 +43,9 @@ approval. Give each step's output compactly.
    cleanliness test, principle or correctness property that alternative fails,
    and evidence; scale from one line to a mini decision packet by stakes. In an
    approval request, repeat the list with later rulings.
-   Output: the walkthrough, ending with an offer to ask.
+   In a round, put a term to define in the question's `note` and your own
+   rulings in its `rulings`.
+   Output: the walkthrough, ending with an offer to ask; in a round, none.
 4. **Ask.** Once the user accepts, ask under
    [Question format](#question-format): adopt the end state, then one question
    per contested choice and every ruling you cannot ground, no cap per round.

@@ -171,7 +171,8 @@ Establish the outcome's contribution to its milestone:
   blockers or serve authorized parallel tracks, within authority and
   priority. Among equally ready items, prefer needed patterns, then smaller
   items. Repairs name the work they unblock; return there at closure.
-- Keep a worker on every independent ready item up to the runtime's limit.
+- Keep a worker on every independent ready item up to the session's worker
+  cap (`board position`: `workers <active>/<cap>`).
   When a worker ends, finish the bookkeeping the next dispatch depends on (its
   hand-over and closure, the board state and file zones a new worker relies
   on), then refill before other bookkeeping.

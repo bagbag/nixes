@@ -12,7 +12,7 @@ export const STEP_BACK_BASE = 'Stance on the current focus (greenfield, cleanest
 export const GROUND_BASE = 'Ground every open recommendation until it is strong; re-verify the premises of every reversed one.'
 
 export const WHERE: readonly Lens[] = [
-  { name: 'goal', label: 'Goal', hint: 'Where: one level up; judge the design against the goal behind it.' },
+  { name: 'goal', label: 'Goal', hint: 'Where: one level up; judge the design against the goal behind it; dig into the real problem and the root fix (workaround, XY problem).' },
   { name: 'decisions', label: 'Decisions', hint: 'Where: every decision in the discussion together, not only the latest.' },
   { name: 'foundations', label: 'Foundations', hint: 'Where: what the design builds on: earlier rulings, conventions and contracts; re-judge them too.' },
 ]
@@ -25,6 +25,7 @@ export const WHAT: readonly Lens[] = [
   { name: 'clean', label: 'Clean', hint: 'What: the six cleanliness tests, one by one.' },
   { name: 'overfit', label: 'Overfit', hint: 'What: tailored to this case, or does it hold for the neighbouring cases?' },
   { name: 'mechanics', label: 'Mechanics', hint: 'What: how each part actually works end to end, and what breaks.' },
+  { name: 'options', label: 'Options', hint: 'What: radically different ways (other mechanisms, owners, removing the need), each at its strongest; dropped only for a stated constraint or sourced fact.' },
 ]
 
 export const GROUND: readonly Lens[] = [
@@ -48,6 +49,7 @@ export const REFINE_LENSES: readonly string[] = ['decisions', 'clean', 'overfit'
 export const LENS_SETS: Record<LensCommand, readonly { key: string; label: string; hint: string; lenses: readonly string[] }[]> = {
   'step-back': [
     { key: 'path', label: 'Path', hint: 'goal and foundations: is the direction right?', lenses: PATH_LENSES },
+    { key: 'options', label: 'Options', hint: 'options: radically different ways to the outcome.', lenses: ['options'] },
     { key: 'refine', label: 'Refine', hint: 'decisions, clean, overfit, mechanics: sharpen the path.', lenses: REFINE_LENSES },
     { key: 'all', label: 'All', hint: 'every lens, in list order.', lenses: ALL_LENSES['step-back'] },
   ],
@@ -59,6 +61,9 @@ export const lensArgs = (lenses: readonly string[], focus: string): string =>
   [...lenses, focus.trim()].filter(part => part !== '').join(' ')
 
 const PULLS: readonly string[] = ['plan', 'design', 'implement', 'review']
+
+/** A session's role for the pane's fixed column, which `autopilot` would overflow. */
+export const roleText = (role: string): string => role === 'autopilot' ? 'auto' : role
 
 /** An agent's pulls as fixed-position initials, a missing pull as `·`: `p d i r`, `· d i ·`; empty without pulls. */
 export const pullsText = (pulls: readonly string[]): string =>
@@ -218,6 +223,18 @@ export function roundWords(round: ConsoleRound): string {
   if (held > 0) parts.push(`${held} held`)
   return parts.join(' · ')
 }
+
+/** The message the console sends when it could not open a batch's dialog itself: the model opens it. */
+export const openDialogText = (marker: string): string => `The console could not open the dialog for batch ${marker}: call AskUserQuestion with the input protocol show gives`
+
+/** The visible line after a dialog: what was answered, one line, without the dialog's recommended mark. */
+export const answeredText = (questions: readonly { question: string }[], answers: Readonly<Record<string, string>>): string => {
+  const picked = questions.filter(one => answers[one.question] !== undefined)
+    .map((one, index) => `${index + 1}. ${cutAnswer((answers[one.question] ?? '').replace(/ \(recommended, (lean|strong)\)$/, ''))}`)
+  return picked.length > 0 ? `Answered: ${picked.join(' · ')}` : 'The dialog was declined.'
+}
+
+const cutAnswer = (text: string): string => text.length > 80 ? `${text.slice(0, 79)}…` : text
 
 /** `Round`, or `Release` for a release run (the same slot, r4-q17). */
 export const runNoun = (round: ConsoleRound): string => round.protocol === 'release' ? 'Release' : 'Round'

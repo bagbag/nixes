@@ -1,30 +1,24 @@
 // The console mod (console-spec 3): a thin adapter between Claude Code and the protocol engine
 // and board. It fails open (the CLI works without it) except for recovery, and idles without a
-// registered role or a drawing surface. Round features act for lead and solo only.
+// registered role or a drawing surface. Round features act for lead, solo and autopilot.
 import type { EngineInterface, Register } from 'claude-code'
 
-import type { ConsolePassRun, ConsoleStart } from '../types'
+import type { ConsoleStart } from '../types'
 
 import {
-  context, failOpen, message, notice, noteModel, PANE, pressSubmit, recordPass, refreshAll, refreshBoard, refreshLater,
-  refreshRole, refreshRound, releaseRun, resetSession, stampReleaseRun, withContext,
+  betweenTurns, context, failOpen, message, notice, noteModel, openDialog, PANE, placeholderMarker, pressSubmit, recordPass, refreshAll, refreshBoard, refreshLater,
+  refreshRole, refreshRound, releaseRun, resetSession, setDialogOutcome, stampReleaseRun, withContext,
 } from './core'
 import { answer, boardShow, decline, isRoundOpen, pass, pending as readPending, protocol, RELEASE_COMMAND, say, statusLine, toolArgv } from './engine'
-import { capture, judgeDialog } from './gate'
+import { capture, judgeDialog, needsModel } from './gate'
 import type { DialogInput } from './gate'
 import { drawBand, drawPane, PANE_MIN_COLUMNS } from './pane'
-import { addGate, getBoard, getGate, getPass, getRole, getRound, getStart, releaseRefresh, setPaneDismissed, setPass, setRound, setStart } from './state'
-import { consoleText, protocolCallText, protocolResultText } from './words'
+import { addGate, getBoard, getGate, getPass, getPrinted, getRole, getRound, getStart, releaseRefresh, setAskSent, setPaneDismissed, setPass, setRound, setStart } from './state'
+import { answeredText, consoleText, protocolCallText, protocolResultText } from './words'
 
 const PROTOCOL_TOOL = 'mcp__console__protocol'
 
 const REFRESH_MS = 60_000
-
-/** The engine's reminder for the console's own run of its pending pass; null when the pass is no longer pending or gets the full text. */
-async function ownReminder($: EngineInterface, run: ConsolePassRun): Promise<string | null> {
-  const pending = await readPending($, await $.session.id())
-  return pending !== null && pending.id === run.id && pending.command === run.command ? pending.reminder : null
-}
 
 /** A compaction that ran leaves a small context. Set, not read: `$.session.usage()` still gives the old size inside this hook (probed, r21). */
 async function settleContext<T extends { skip?: string }>($: EngineInterface, compacted: T, trigger: string): Promise<T> {
@@ -52,6 +46,7 @@ export const register: Register = on => {
     // $.state outlives a reload, the previous environment's refresh does not: its single-flight claim goes.
     await releaseRefresh($)
     await $.command.register({ name: 'console', description: 'Open the console pane (prints the board and round where no pane fits)' })
+    await $.command.register({ name: 'console-questions', description: "Print the issued batch's question text (the console runs it at the turn's end)", argumentHint: '[batch marker]' })
     await $.command.register({ name: 'console-item', description: "Print a board item's summary", argumentHint: '<id>' })
     await refreshRole($).catch(failOpen($, 'reading the session role'))
     $.clock.every(REFRESH_MS, () => refreshAll($).catch(failOpen($, 'refresh')))
@@ -68,12 +63,12 @@ export const register: Register = on => {
   // The model's tool: the console stamps session and origin (R-B11).
   on('tool.call', { tool: 'mcp__console__protocol' }, async ($, e) => {
     const ctx = await context($)
-    if (!ctx.isRoundRole) return { result: 'The console is idle in this session (no lead or solo role, or nothing draws); run `protocol` through Bash.' }
-    const input = e as unknown as { args?: unknown; stdin?: unknown }
-    const args = Array.isArray(input.args) ? input.args.filter((arg): arg is string => typeof arg === 'string') : []
+    if (!ctx.isRoundRole) return { result: 'The console is idle in this session (no lead, solo or autopilot role, or nothing draws); run `protocol` through Bash.' }
+    // The input comes from a model: the declared types are not checked at runtime.
+    const args = Array.isArray(e.args) ? e.args.filter((arg): arg is string => typeof arg === 'string') : []
     const allowed = toolArgv(args)
     if ('refusal' in allowed) return { result: `Refused: ${allowed.refusal}.` }
-    const ran = await protocol($, ctx.session, allowed.argv, typeof input.stdin === 'string' ? input.stdin : undefined)
+    const ran = await protocol($, ctx.session, allowed.argv, typeof e.stdin === 'string' ? e.stdin : undefined)
     await refreshRound($, ctx.session)
     refreshLater($)
     const output = [ran.stdout.trim(), ran.stderr.trim() === '' ? '' : `stderr:\n${ran.stderr.trim()}`].filter(part => part !== '').join('\n\n')
@@ -82,17 +77,21 @@ export const register: Register = on => {
 
   // Dialog gate and answer capture: only inside an open round.
   on('tool.call', { tool: 'AskUserQuestion' }, async ($, e, next) => {
+    const placeholder = placeholderMarker((e as unknown as { questions?: { question?: unknown }[] }).questions?.[0]?.question)
     const ctx = await context($)
-    if (!ctx.isRoundRole) return next(e)
+    if (!ctx.isRoundRole && placeholder === null) return next(e)
     const round = await refreshRound($, ctx.session)
+    if (placeholder !== null && (round === null || !isRoundOpen(round) || round.batch?.marker !== placeholder)) return { deny: `no batch ${placeholder} is out` }
     if (round === null || !isRoundOpen(round)) return next(e)
-    const verdict = judgeDialog(round, e as unknown as DialogInput, await getGate($))
+    // The console's own dialog: the placeholder becomes the issued batch, and the rest of this hook treats it as that batch's dialog.
+    const asked = placeholder !== null && round.batch !== null ? { ...e, questions: round.batch.questions, metadata: { source: placeholder } } as typeof e : e
+    const verdict = judgeDialog(round, asked as unknown as DialogInput, await getGate($), await getPrinted($))
     if (verdict.action === 'block') {
       await addGate($, verdict.key)
       await notice($, `blocked a dialog once: ${verdict.reason}`)
       return { deny: verdict.reason }
     }
-    const ran = await next(e)
+    const ran = await next(asked)
     if (verdict.action === 'note') {
       if (ran.deny !== undefined) return ran
       await notice($, verdict.text)
@@ -100,20 +99,25 @@ export const register: Register = on => {
     }
     const captured = capture(verdict.marker, ran)
     if (captured.kind === 'none') return ran
+    const issued = round.batch?.questions ?? []
+    const summary = captured.kind === 'answer' ? answeredText(issued, captured.input.answers as Record<string, string>) : 'The dialog was declined.'
     try {
       const recorded = captured.kind === 'answer'
         ? await answer($, ctx.session, captured.input)
         : await decline($, ctx.session, { marker: verdict.marker, partial: captured.partial })
       await setRound($, recorded)
+      if (placeholder !== null) setDialogOutcome({ summary, note: recorded.note, needsModel: needsModel(issued, captured) })
       if (recorded.note === null) return ran
       await notice($, recorded.note.split('\n')[0] ?? '')  // the headline; the model reads the whole note
       return withContext(ran, recorded.note)
     } catch (error) {
       const text = `the answers of ${verdict.marker} were not recorded: ${message(error)}. Record them with the protocol tool before going on.`
       await notice($, text)
+      if (placeholder !== null) setDialogOutcome({ summary, note: `${text} ${JSON.stringify(ran.result)}`, needsModel: true })
       return withContext(ran, text)
     }
-  }).catch(($, e, next) => next(e))
+    // Never draw the placeholder: a failure here falls back to the model opening the dialog.
+  }).catch(($, e, next) => placeholderMarker((e as unknown as { questions?: { question?: unknown }[] }).questions?.[0]?.question) !== null ? { deny: 'the console could not open its dialog' } : next(e))
 
   // Pass observation: the model's Skill call counts once it ran.
   on('tool.call', { tool: 'Skill' }, async ($, e, next) => {
@@ -139,19 +143,13 @@ export const register: Register = on => {
     return next(e)
   }).catch(($, e, next) => next(e))
 
-  // A run has started as its skill expands: a press's guard entry goes, and the machine's pass is started. The console's own pass
-  // reads the engine's reminder in place of the skill's full text when the run told that kind already (r22-q87); a typed
-  // command and the model's own Skill call keep the full text, and a failing read passes it through.
+  // A run has started as its skill expands: a press's guard entry goes, and the machine's pass is started.
   on('skill.prompt', async ($, e, next) => {
     const skill = e.skill.slice(e.skill.lastIndexOf(':') + 1)
     await releaseRun($, key => key === skill || key.startsWith(`${skill} `))
     const run = await getPass($)
     if (run !== null && run.phase === 'queued' && run.command === skill) await setPass($, { ...run, phase: 'started' })
-    const isOwnRun = run !== null && run.isOwn === true && run.phase !== 'noted' && run.command === skill
-    if (isOwnRun) await setPass($, { id: run.id, command: run.command, phase: 'started' })  // its one expansion: a later Skill call in the run is the model's own
-    const reminder = isOwnRun ? await ownReminder($, run).catch(() => null) : null
-    const expanded = await next(e)
-    return reminder === null ? expanded : { ...expanded, text: reminder }
+    return next(e)
   }).catch(($, e, next) => next(e))
 
   on('turn.start', async ($, e, next) => {
@@ -162,7 +160,10 @@ export const register: Register = on => {
   // Chat-typed messages of the person reach the engine's quote check (R-B9).
   on('prompt.submit', async ($, e, next) => {
     const origin = e.origin.kind
-    if ((origin === 'composer' || origin === 'bridge') && e.isMeta !== true) await setStart($, null)  // the person's own prompt: a stored start is moot
+    if ((origin === 'composer' || origin === 'bridge') && e.isMeta !== true) {
+      await setStart($, null)  // the person's own prompt: a stored start is moot
+      await setAskSent($, null)  // and the dialog message may go again for the batch still out
+    }
     if ((origin === 'composer' || origin === 'bridge') && e.isMeta !== true && e.command === undefined) {
       const ctx = await context($)
       const round = await getRound($)
@@ -183,22 +184,7 @@ export const register: Register = on => {
       return done
     }
     try {
-      const pending = await readPending($, ctx.session)
-      const run = await getPass($)
-      if (pending !== null && run !== null && run.id === pending.id) {
-        if (run.phase !== 'noted' && e.isAborted) {
-          // Esc stops the loop: the pass stays pending and is not run again.
-          await setPass($, { ...run, phase: 'noted' })
-        } else if (run.phase === 'started') {
-          await setPass($, { ...run, phase: 'noted' })
-          await noteModel($, `The /${pending.command} pass (${pending.id}) ended without its report. Report its per-question updates through the protocol tool.`)
-        }
-      } else if (pending !== null && !e.isAborted) {
-        await setPass($, { id: pending.id, command: pending.command, phase: 'queued', isOwn: true })
-        await pass($, ctx.session, 'plugin', { command: pending.command, args: pending.args, pending: pending.id })
-          .catch(failOpen($, `recording /${pending.command}`))
-        void $.command.run({ command: pending.command, args: pending.args }).catch(failOpen($, `running /${pending.command}`))
-      }
+      await betweenTurns($, ctx.session, e.isAborted)
     } catch (error) {
       $.ui.toast(`console: reading the pending pass failed: ${message(error)}`)
     }
@@ -217,11 +203,9 @@ export const register: Register = on => {
     // No round is open: a stored start (a suggestion that compacts first) is kept through the compaction and sent after it.
     const start = isOpen ? null : await getStart($)
     if (!isOpen && start === null) return settleContext($, await next(e), e.trigger)
-    const proposed = round?.next?.compact?.keep
     const keep = isOpen
       ? `Keep the protocol round state: round ${round.round}, step ${round.step}, each question's id, status and open overlap, the pending pass, and that the round runs through the protocol tool (mcp__console__protocol).`
-      : [`Keep the proposed next round, which starts right after this compaction: ${start?.text}.`,
-        proposed === undefined || e.instructions?.includes(proposed) === true ? '' : `Keep: ${proposed}`].filter(Boolean).join(' ')
+      : `Keep the proposed next round, which starts right after this compaction: ${start?.text}.`
     const compacted = await next({ ...e, instructions: [e.instructions, keep].filter(Boolean).join('\n\n') })
     await settleContext($, compacted, e.trigger)
     if (start !== null) await settleStart($, start, compacted, e.trigger)
@@ -268,6 +252,21 @@ export const register: Register = on => {
     const id = e.args.trim().split(/\s+/)[0] ?? ''
     if (id === '') return { text: 'Usage: /console-item <id>' }
     return { text: await boardShow($, await $.session.id(), id) }
+  })
+
+  // The batch's question text as command output: it draws whole between turns, and the model reads this one copy.
+  on('command.run', { command: 'console-questions' }, async ($, e) => {
+    const round = await getRound($)
+    const batch = round !== null && isRoundOpen(round) ? round.batch : null
+    const [wanted, again] = e.args.trim().split(' ')
+    const isOurs = e.origin.kind === 'plugin' && e.origin.name === 'console'
+    if (batch === null || (wanted !== '' && wanted !== undefined && wanted !== batch.marker)) return { text: 'No question text to print.' }
+    if (isOurs) {
+      const ctx = await context($)
+      void openDialog($, batch.marker, ctx.session).catch(failOpen($, 'opening the dialog'))
+    }
+    if (batch.notice.trim() === '' || again !== undefined) return { text: isOurs ? '\nNothing new to read for these questions.' : 'No question text to print.' }
+    return { text: `\n${batch.notice}` }  // the host prefixes the output with the plugin's name: the first question starts its own line
   })
 
   on('ui.render', { component: 'Pane', requestId: PANE }, ($, e) => drawPane($, e))

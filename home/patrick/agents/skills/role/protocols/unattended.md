@@ -5,27 +5,29 @@ safeguards to the decide and plan protocols.
 
 ## Entry
 
-Your session's role is autopilot; the decide and plan protocols are loaded.
-Read `$HOME/.agents/skills/role/protocols/review.md` too.
+`/role autopilot` registered solo for setup (step 1); the decide, plan and
+unattended protocols are loaded. Read
+`$HOME/.agents/skills/role/protocols/review.md` too. After a compaction during
+setup, run `/role autopilot` again.
 
 ## Authority
 
 - Decide under
   [Decision authority](../../shared/decision-protocol.md#decision-authority),
-  adapted for the user's absence:
+  adapted for the user's absence. Run every ruling that would become
+  `needs_ratification` through a decide round, grouped by shared premise; skip
+  it for a trivial default. In its Ask, report `act` or `park` by these classes.
   - **Trivial:** decide; record relevant defaults.
-  - **Entailed or other reversible:** run the decision protocol, compare
-    options as if presenting them to the user, act on the recommendation,
-    write it into its owner, and record an unassigned decision blocking
-    nothing with `board record <id> <file> --status needs_ratification`. Give
-    it a `## Reversal` section executable without remembered context or costly
-    downstream rework. For a revision, run `board supersede` when
-    recording it; its `## Reversal` runs `board bd reopen <old>` and
-    `board bd dep remove <old> <new>`.
-  - **Irreversible, outward-facing or scope-changing:** park as an unassigned
+  - **Entailed or other reversible:** `act`, a lean recommendation included.
+    Compare options as if presenting them to the user and write the
+    recommendation into its owner. Make its reversal executable without
+    remembered context or costly downstream rework. For a revision, run
+    `board supersede` when recording it; its reversal runs
+    `board bd reopen <old>` and `board bd dep remove <old> <new>`.
+  - **Irreversible, outward-facing or scope-changing:** `park` as an unassigned
     question for the user with a recommendation (`board unclaim <id>` when you
-    hold it). Parked questions form the user's next round; their dependents
-    wait. Continue independent tracks.
+    hold it outside a round). Parked questions form the user's next round;
+    their dependents wait. Continue independent tracks.
 - Accept in the user's place `in_review` design items and finished epics
   whose acceptance names the user: the decide protocol's Accept with the
   walkthrough as a written assessment, recorded as a `needs_ratification`
@@ -49,7 +51,7 @@ Read `$HOME/.agents/skills/role/protocols/review.md` too.
 Give each step's output as one line when it passes; add detail only for
 findings or stops.
 
-1. **Ratify and prepare** while the user is present:
+1. **Ratify and prepare** as solo, while the user is present:
    - Ask under
      [Asking the user](../../shared/asking.md#asking-the-user); orient from
      project sources and run `define-goal` for every new arc: outcome, value
@@ -65,7 +67,12 @@ findings or stops.
      [Frame](plan.md#frame). Link goal and contract owners and record the
      whole-repository baseline gate, or the strongest available gate, in the
      checkpoint file.
-   Output: ratified budget, authority, workspace and baseline, one line each.
+   - Ask last whether to start now, first naming a round or release still open
+     (`protocol status --line`) for the user to answer or abandon. On the user's
+     go run `bash $HOME/.agents/bin/session-lead-mode activate autopilot`. When
+     the user returns and leaves again, confirm only the budget and the go.
+   Output: ratified budget, authority, workspace and baseline, one line each;
+   `registered autopilot`.
 2. **Execute and reassess:**
    - Work only in the authorized workspace. Isolated-worktree work leaves the
      user's tree and branches untouched. Make authorized checkpoint commits as
@@ -92,13 +99,16 @@ findings or stops.
    affected gates. Park recovery that exceeds authority or the window. Update
    the board before window and context boundaries.
    Output: recovered position and remaining authority.
-4. **Return** at the done criteria or budget boundary: report verified
+4. **Return** at the done criteria or budget boundary, when the user says they
+   are back, or when the user asks for a round: report verified
    outcomes with actual gate numbers; ratification items and parked decisions
    with recommendations
    (`board health --root <epic> --items ratification,questions`);
    failure and park diagnoses; and workspace
    disposition (merge or discard for a branch). Keep incompleteness explicit.
-   Output: the return report.
+   Then run `bash $HOME/.agents/bin/session-lead-mode activate solo`. Stay on
+   autopilot through a passing message that does not end the run.
+   Output: the return report; `registered solo`.
 
 ## Stop
 

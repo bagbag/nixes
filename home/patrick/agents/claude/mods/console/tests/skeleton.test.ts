@@ -3,6 +3,7 @@
 import { describe, expect, test } from 'claude-code/testing'
 
 import { BATCH, NO_ROUND, notes, notices, PROTOCOL, roundJson, SESSION, world } from './fixture'
+import { openDialogText } from '../hooks/words'
 
 const start = async ($: any) => $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
 
@@ -32,6 +33,21 @@ describe('idle', () => {
     expect(w.opened).toEqual([])
     expect(w.calls.some(one => one.argv[1] === 'console')).toBe(true)
     expect(w.verbs()).toEqual([])
+  })
+
+  test('an autopilot role gets the round features too (r28-q127)', async ($, on) => {
+    const { w, clock } = world(on, { role: { session: SESSION, role: 'autopilot', actor: 'aut0cafe', tool: 'claude' } })
+    await start($)
+    await clock.settle()
+    expect(w.tools).toEqual([{ name: 'protocol', isDeferred: false }])
+    expect(w.opened).toEqual(['console'])
+  })
+
+  test('the idle message names the three round roles', async ($, on) => {
+    world(on, { role: { session: SESSION, role: 'agent', actor: 'eef8ae5c', tool: 'claude' } })
+    await start($)
+    const idle = await $.tool.call({ tool: 'mcp__console__protocol', args: ['show'] } as never)
+    expect(String(idle.result)).toContain('no lead, solo or autopilot role')
   })
 
   test('a lead registers the protocol tool undeferred and opens the pane unasked', async ($, on) => {
@@ -94,6 +110,259 @@ describe('dialog gate and capture', () => {
     const call = w.calls.find(one => one.argv[3] === 'answer')
     expect(call?.argv.slice(3)).toEqual(['answer', '--origin', 'dialog'])
     expect(JSON.parse(call?.stdin ?? '{}')).toEqual({ marker: BATCH.marker, answers: { 'Which engine name?': 'protocol' }, annotations: { 'Which engine name?': { notes: 'n' } }, response: null })
+  })
+
+  describe('the batch text prints between turns', () => {
+    const NOTICE = 'Engine name\nProblem: which name.\nCases: a typed command.\nOptions:\n- protocol: for: exact; against: long'
+    const asking = (notice = NOTICE) => roundJson({ step: 'ask', batch: { ...BATCH, notice } })
+    const complete = (extra: Record<string, unknown> = {}) => ({ answer: '', durationMs: 1, isAborted: false, turnId: 't', reason: 'answer', ...extra }) as never
+    const typed = { origin: { kind: 'composer' }, presentation: { isFullscreen: true, columns: 160 } } as const
+    const dialog = { tool: 'AskUserQuestion', questions: BATCH.questions, metadata: { source: BATCH.marker } } as never
+
+    test('/console-questions answers with the engine text of the issued batch, and says so when there is none', async ($, on) => {
+      const { w, clock } = world(on, { round: asking() })
+      await start($)
+      await clock.settle()
+      expect((await $.command.run({ command: 'console-questions', args: '', ...typed })).text).toBe(`\n${NOTICE}`)
+      expect((await $.command.run({ command: 'console-questions', args: BATCH.marker, ...typed })).text).toBe(`\n${NOTICE}`)
+      expect((await $.command.run({ command: 'console-questions', args: 'round:r4:9', ...typed })).text).toBe('No question text to print.')
+      w.round = asking('')
+      await $.tool.call({ tool: 'mcp__console__protocol', args: ['show', '--json'] } as never)
+      expect((await $.command.run({ command: 'console-questions', args: '', ...typed })).text).toBe('No question text to print.')
+    })
+
+    test('the dialog of a batch with text waits for the print: blocked once with the reason to end the turn, then it passes', async ($, on) => {
+      world(on, { round: asking() })
+      on('tool.call', { tool: 'AskUserQuestion' }, () => answered({ 'Which engine name?': 'protocol' }) as never)
+      await start($)
+      const first = await $.tool.call(dialog)
+      expect(String(first.deny)).toContain('end your turn')
+      expect(String(first.deny)).toContain('opens the dialog')
+      expect((await $.tool.call(dialog)).deny).toBeUndefined()
+    })
+
+    test('a turn end prints the batch once: the dialog then passes at once, and the answers are recorded', async ($, on) => {
+      const { w, clock } = world(on, { round: asking() })
+      on('tool.call', { tool: 'AskUserQuestion' }, () => answered({ 'Which engine name?': 'protocol' }) as never)
+      await start($)
+      await $.turn.complete(complete())
+      await $.turn.complete(complete())
+      await clock.settle()
+      expect((await $.tool.call(dialog)).deny).toBeUndefined()
+      expect(w.verbs().some(verb => verb.startsWith('answer'))).toBe(true)
+    })
+
+    test('an aborted turn end and a subagent turn end print nothing; an empty text needs no print', async ($, on) => {
+      const { w, clock } = world(on, { round: asking() })
+      on('tool.call', { tool: 'AskUserQuestion' }, () => answered({ 'Which engine name?': 'protocol' }) as never)
+      await start($)
+      await $.turn.complete(complete({ isAborted: true, reason: 'aborted' }))
+      await $.turn.complete(complete({ agentId: 'a1' }))
+      await clock.settle()
+      expect(String((await $.tool.call(dialog)).deny)).toContain('end your turn')  // still unprinted
+      w.round = asking('')
+      expect((await $.tool.call(dialog)).deny).toBeUndefined()
+    })
+
+    describe('the console opens the whole batch itself, with no model turn (r32-q149)', () => {
+      const QUESTION = 'Which engine name?'
+      const label = BATCH.questions[0]?.options[0]?.label ?? ''
+
+      test('the placeholder becomes the issued batch; a plain pick is recorded and the model hears one line', async ($, on) => {
+        const { w, clock } = world(on, { round: asking() })
+        let drawn: unknown
+        on('tool.call', { tool: 'AskUserQuestion' }, (_, e) => { drawn = (e as any); return answered({ [QUESTION]: label }) as never })
+        await start($)
+        await $.turn.complete(complete())
+        await clock.settle()
+        expect((drawn as any).questions).toEqual(BATCH.questions)
+        expect((drawn as any).metadata).toEqual({ source: BATCH.marker })
+        expect(w.verbs()).toContain('answer --origin dialog')
+        expect(w.prompts).toEqual([`Answered: 1. ${label}`])
+      })
+
+      test('a next batch wakes the model, and its turn end opens that batch', async ($, on) => {
+        const { w, clock } = world(on, { round: asking() })
+        const asked: string[] = []
+        on('tool.call', { tool: 'AskUserQuestion' }, (_, e) => {
+          asked.push(String((e as any).metadata?.source))
+          if (asked.length === 1) w.round = roundJson({ step: 'ask', batch: { ...BATCH, marker: 'round:r4:3', notice: '' } })
+          return answered({ [QUESTION]: label }) as never
+        })
+        await start($)
+        await $.turn.complete(complete())
+        await clock.settle()
+        expect(asked).toEqual([BATCH.marker])
+        expect(w.prompts).toEqual([`Answered: 1. ${label}`])
+        await $.turn.complete(complete())
+        await clock.settle()
+        expect(asked).toEqual([BATCH.marker, 'round:r4:3'])
+      })
+
+      test('a pending pass after a plain pick runs with no model turn', async ($, on) => {
+        const { w, clock } = world(on, { round: asking() })
+        on('tool.call', { tool: 'AskUserQuestion' }, () => {
+          w.round = roundJson({ step: 'check', batch: null, pending: { id: 'p9', command: 'challenge-rulings', args: 'q1' } })
+          return answered({ [QUESTION]: label }) as never
+        })
+        await start($)
+        await $.turn.complete(complete())
+        await clock.settle()
+        expect(w.commands.some(one => one.command === 'challenge-rulings')).toBe(true)
+        expect(w.prompts).toEqual([])
+      })
+
+      test('a typed reply or a note wakes the model even with a next batch out', async ($, on) => {
+        const { w, clock } = world(on, { round: asking() })
+        on('tool.call', { tool: 'AskUserQuestion' }, () => {
+          w.round = roundJson({ step: 'ask', batch: { ...BATCH, marker: 'round:r4:3', notice: '' } })
+          return answered({ [QUESTION]: 'my own words' }) as never
+        })
+        await start($)
+        await $.turn.complete(complete())
+        await clock.settle()
+        expect(w.prompts).toEqual(['Answered: 1. my own words'])
+      })
+
+      test('a declined dialog is recorded and wakes the model', async ($, on) => {
+        const { w, clock } = world(on, { round: asking() })
+        on('tool.call', { tool: 'AskUserQuestion' }, () => ({ isError: true, result: 'declined', text: 'declined' }) as never)
+        await start($)
+        await $.turn.complete(complete())
+        await clock.settle()
+        expect(w.verbs().some(one => one.startsWith('decline'))).toBe(true)
+        expect(w.prompts).toEqual(['The dialog was declined.'])
+      })
+
+      test('without a batch to swap in, the placeholder is never drawn', async ($, on) => {
+        world(on, { round: roundJson({ batch: null }) })
+        let reached = false
+        on('tool.call', { tool: 'AskUserQuestion' }, () => { reached = true; return answered({}) as never })
+        await start($)
+        const ran = await $.tool.call({ tool: 'AskUserQuestion', questions: [{ question: `Console round dialog ${BATCH.marker}?`, header: 'Round', multiSelect: false, options: [{ label: 'a', description: '' }, { label: 'b', description: '' }] }] } as never)
+        expect(String(ran.deny)).toContain('no batch')
+        expect(reached).toBe(false)
+      })
+    })
+
+    describe('when the console cannot open it, the model does (r29-q138, r30-q140)', () => {
+      const message = (w: { prompts: string[] }) => w.prompts.filter(text => text === openDialogText(BATCH.marker))
+      const composer = (text: string) => ({ text, origin: { kind: 'composer' }, wait: false }) as never
+
+      test('a turn end prints the batch, then sends the message that opens its dialog, once per marker', async ($, on) => {
+        const { w, clock } = world(on, { round: asking() })
+        await start($)
+        await $.turn.complete(complete())
+        await clock.settle()
+        expect(message(w)).toHaveLength(1)
+        // The model did not open it: the console does not ask again for the same batch, however often turns end. The message
+        // started its turn, which releases the press guard, so only the marker guard holds the repeat back.
+        await $.turn.start({ text: openDialogText(BATCH.marker), turnId: 't1' } as never)
+        await $.turn.complete(complete())
+        await $.turn.complete(complete())
+        await clock.settle()
+        expect(message(w)).toHaveLength(1)
+      })
+
+      test('a new message of the person resets it: the next turn end sends the message again', async ($, on) => {
+        const { w, clock } = world(on, { round: asking() })
+        await start($)
+        await $.turn.complete(complete())
+        await clock.settle()
+        await $.turn.start({ text: openDialogText(BATCH.marker), turnId: 't1' } as never)  // the message started its turn: the press guard is released
+        await $.prompt.submit({ text: 'hidden', origin: { kind: 'composer' }, isMeta: true, wait: false } as never)
+        await $.prompt.submit({ text: 'from a plugin', origin: { kind: 'plugin', name: 'x' }, wait: false } as never)
+        await $.turn.complete(complete())
+        await clock.settle()
+        expect(message(w)).toHaveLength(1)  // neither a hidden prompt nor a plugin's resets it, nor does the console's own message
+        await $.turn.start({ text: openDialogText(BATCH.marker), turnId: 't2' } as never)  // the first message started its turn: its repeat guard is released
+        await $.prompt.submit(composer('what does flow mean?'))
+        await $.turn.complete(complete())
+        await clock.settle()
+        expect(message(w)).toHaveLength(2)
+        await $.turn.start({ text: openDialogText(BATCH.marker), turnId: 't3' } as never)
+        await $.prompt.submit({ text: 'and from my phone', origin: { kind: 'bridge' }, wait: false } as never)
+        await $.turn.complete(complete())
+        await clock.settle()
+        expect(message(w)).toHaveLength(3)
+      })
+
+      test('another batch gets its own message', async ($, on) => {
+        const { w, clock } = world(on, { round: asking() })
+        await start($)
+        await $.turn.complete(complete())
+        w.round = roundJson({ step: 'ask', batch: { ...BATCH, marker: 'round:r4:3', notice: NOTICE } })
+        await $.tool.call({ tool: 'mcp__console__protocol', args: ['show', '--json'] } as never)
+        await $.turn.complete(complete())
+        await clock.settle()
+        expect(w.prompts.filter(text => text.startsWith('The console could not open'))).toEqual([openDialogText(BATCH.marker), openDialogText('round:r4:3')])
+      })
+
+      test('an empty text sends at once, with nothing to print', async ($, on) => {
+        const { w, clock } = world(on, { round: asking('') })
+        await start($)
+        await $.turn.complete(complete())
+        await clock.settle()
+        expect(message(w)).toHaveLength(1)
+      })
+
+      test('an aborted turn end, a subagent turn end, a round without a batch and the autopilot role send nothing', async ($, on) => {
+        const { w, clock } = world(on, { round: asking() })
+        await start($)
+        await $.turn.complete(complete({ isAborted: true, reason: 'aborted' }))
+        await $.turn.complete(complete({ agentId: 'a1' }))
+        w.round = roundJson({ batch: null })
+        await $.tool.call({ tool: 'mcp__console__protocol', args: ['show', '--json'] } as never)
+        await $.turn.complete(complete())
+        await clock.settle()
+        expect(w.prompts).toEqual([])
+        w.round = asking()
+        w.role = { session: SESSION, role: 'autopilot', actor: '617adf08', tool: 'claude' }
+        await $.turn.complete(complete())
+        await clock.settle()
+        expect(w.prompts).toEqual([])
+      })
+
+      test('a failed send gives a notice and sends nothing; the next turn end tries again', async ($, on) => {
+        const { w, clock, session } = world(on, { round: asking() })
+        await start($)
+        w.promptError = 'offline'
+        await $.turn.complete(complete())
+        await clock.settle()
+        expect(w.prompts).toEqual([])
+        expect(notices(session).some(text => text.includes('sending the message that opens the dialog failed') && text.includes('offline'))).toBe(true)
+        w.promptError = null
+        await $.turn.complete(complete())
+        await clock.settle()
+        expect(message(w)).toHaveLength(1)
+      })
+
+      test('a release approval takes the same path', async ($, on) => {
+        const { w, clock } = world(on, { round: roundJson({ protocol: 'release', step: 'ask', check: null, questions: [], batch: { ...BATCH, notice: 'Release fx-a\nMy ruling: x\nInstead: y\nWhy not: z' } }) })
+        await start($)
+        await $.turn.complete(complete())
+        await clock.settle()
+        expect(message(w)).toHaveLength(1)
+      })
+
+      test('the gate is unchanged: a dialog before the print is blocked once', async ($, on) => {
+        world(on, { round: asking() })
+        on('tool.call', { tool: 'AskUserQuestion' }, () => answered({ 'Which engine name?': 'protocol' }) as never)
+        await start($)
+        expect(String((await $.tool.call(dialog)).deny)).toContain('end your turn')
+        expect((await $.tool.call(dialog)).deny).toBeUndefined()
+      })
+    })
+
+    test('a dialog that is not the issued batch is judged as before, printed or not', async ($, on) => {
+      const { clock } = world(on, { round: asking() })
+      on('tool.call', { tool: 'AskUserQuestion' }, () => answered({}) as never)
+      await start($)
+      await $.turn.complete(complete())
+      await clock.settle()
+      const other = await $.tool.call({ tool: 'AskUserQuestion', questions: BATCH.questions, metadata: { source: 'round:r4:9' } } as never)
+      expect(String(other.deny)).toContain('issued round:r4:2')
+    })
   })
 
   test('free text is recorded verbatim as the response', async ($, on) => {
@@ -264,65 +533,18 @@ describe('machine-run passes', () => {
   })
 })
 
-describe('skill reminder', () => {
+describe('skill expansion', () => {
   const complete = () => ({ answer: '', durationMs: 1, isAborted: false, turnId: 't', reason: 'answer' }) as never
-  const REMINDER = 'Reminder for /ground. Argument: `assumptions`. Run it anew.'
-  const pending = (reminder: string | null) => roundJson({ pending: { id: 'p7', command: 'ground', args: 'assumptions', reminder } })
   const plugin = { kind: 'plugin', name: 'console' } as const
   const presentation = { isFullscreen: true, columns: 160 }
-  const expand = async ($: any) => ($.skill.prompt({ skill: 'ground', text: 'Ground, in full.' } as never) as Promise<{ text: string }>)
 
-  test("the console's own pass expands to the engine's reminder", async ($, on) => {
-    const { clock } = world(on, { round: pending(REMINDER) })
+  test("the console's own pass expands to the skill's full text", async ($, on) => {
+    const { clock } = world(on, { round: roundJson({ pending: { id: 'p7', command: 'ground', args: 'assumptions' } }) })
     await start($)
     await $.turn.complete(complete())
     await $.command.run({ command: 'ground', args: 'assumptions', origin: plugin, presentation })
-    expect((await expand($)).text).toBe(REMINDER)
-    await clock.settle()
-  })
-
-  test("a model's Skill call during the console's own pass keeps the full text", async ($, on) => {
-    const { clock } = world(on, { round: pending(REMINDER) })
-    await start($)
-    await $.turn.complete(complete())
-    await $.command.run({ command: 'ground', args: 'assumptions', origin: plugin, presentation })
-    expect((await expand($)).text).toBe(REMINDER)
-    expect((await expand($)).text).toBe('Ground, in full.')
-    await clock.settle()
-  })
-
-  test('a typed command keeps the full text, and so does the model\'s own Skill call', async ($, on) => {
-    const { clock } = world(on, { round: pending(REMINDER) })
-    await start($)
-    await $.command.run({ command: 'ground', args: 'assumptions', origin: { kind: 'composer' }, presentation })
-    expect((await expand($)).text).toBe('Ground, in full.')
-    await $.command.run({ command: 'ground', args: 'assumptions', origin: { kind: 'bridge' }, presentation })
-    expect((await expand($)).text).toBe('Ground, in full.')
-    await $.command.run({ command: 'step-back', args: '', origin: { kind: 'composer' }, presentation })
-    expect((await expand($)).text).toBe('Ground, in full.')  // the model's Skill call: no console run of this pass
-    await clock.settle()
-  })
-
-  test('a pass the engine gives its full text expands as the skill computed it', async ($, on) => {
-    const { clock } = world(on, { round: pending(null) })
-    await start($)
-    await $.turn.complete(complete())
-    await $.command.run({ command: 'ground', args: 'assumptions', origin: plugin, presentation })
-    expect((await expand($)).text).toBe('Ground, in full.')
-    await clock.settle()
-  })
-
-  test('a pass that is no longer pending, and a failing read, pass the full text through', async ($, on) => {
-    const { w, clock } = world(on, { round: pending(REMINDER) })
-    await start($)
-    await $.turn.complete(complete())
-    w.round = roundJson({ pending: { id: 'p8', command: 'step-back', args: '', reminder: REMINDER } })
-    await $.command.run({ command: 'ground', args: 'assumptions', origin: plugin, presentation })
-    expect((await expand($)).text).toBe('Ground, in full.')
-    w.round = pending(REMINDER)
-    w.protocolExit = 1
-    await $.command.run({ command: 'ground', args: 'assumptions', origin: plugin, presentation })
-    expect((await expand($)).text).toBe('Ground, in full.')
+    const expanded = await ($.skill.prompt({ skill: 'ground', text: 'Ground, in full.' } as never) as Promise<{ text: string }>)
+    expect(expanded.text).toBe('Ground, in full.')
     await clock.settle()
   })
 })
