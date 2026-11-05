@@ -695,3 +695,19 @@ Tool-specific names are optional and default to the canonical `name`. Shared
 `explore` overrides that default as Claude Code's `Explore` and Codex's
 `explorer`; shared `plan` becomes Claude Code's `Plan` and remains lowercase
 in Codex.
+
+## Sharing the setup
+
+`./build-agent-setup.sh [folder]` (flake root; default folder: home) runs
+`nix build .#agent-setup` and copies out `claude-codex-setup-<date>-<rev>.tar.gz`
+for someone without this nix config: new files must be tracked first, and a
+`-dirty` version names a build with uncommitted changes. `../agents-package.nix` owns what ships and builds this
+machine's links from the same lists, so a shipped hook or tool is added in one
+place; hook registrations come from `../claude/settings.json` and
+`../codex/hooks.json`, so only this setup's hooks belong in them.
+
+`setup/install.sh` (its use: `setup/README.md`) runs on stock macOS bash 3.2; the
+validator's hooks group holds the shipped shell to that and runs the installer in
+a fake home. It refuses symlinked targets, so it never runs over this machine's
+home-manager links. The `~/.agents/setup-state.json` it writes lists what it
+installed, which is how an upgrade or `--uninstall` finds what to remove.

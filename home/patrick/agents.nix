@@ -11,36 +11,37 @@ let
   claudeSrc = "${flakeRoot}/home/patrick/claude";
   codexSrc = "${flakeRoot}/home/patrick/codex";
   agentsSrc = "${flakeRoot}/home/patrick/agents";
-  agentsStoreSrc = ./agents;
-  agentArtifacts =
-    pkgs.runCommand "agent-artifacts"
-      {
-        nativeBuildInputs = [
-          # The build sandbox refuses the setuid /bin/ps; the registry liveness tests need a ps.
-          pkgs.ps
-          # The protocol owner-path tests run git init and git check-ignore.
-          pkgs.git
-          pkgs.jq
-          (pkgs.python3.withPackages (p: [ p.pyyaml ]))
-        ];
-      }
-      ''
-        python3 ${agentsStoreSrc}/bin/test-agent-configs.py ${agentsStoreSrc}
-        mkdir -p "$out/claude" "$out/codex" "$out/skills"
-        python3 ${agentsStoreSrc}/bin/generate-agent-configs.py \
-          --source ${agentsStoreSrc}/definitions \
-          --target claude \
-          --output "$out/claude"
-        python3 ${agentsStoreSrc}/bin/generate-agent-configs.py \
-          --source ${agentsStoreSrc}/definitions \
-          --target codex \
-          --output "$out/codex"
-        python3 ${agentsStoreSrc}/bin/expand-skills.py \
-          --source ${agentsStoreSrc}/skills \
-          --output "$out/skills"
-      '';
+  agentPackage = pkgs.callPackage ./agents-package.nix { };
+  agentArtifacts = agentPackage.artifacts;
+
+  # Out-of-store links for files named in the package, which the bundle ships too.
+  outOfStoreLinks =
+    target: source: names:
+    lib.listToAttrs (
+      map (
+        name:
+        lib.nameValuePair "${target}/${name}" {
+          source = config.lib.file.mkOutOfStoreSymlink "${source}/${name}";
+        }
+      ) names
+    );
 in
 {
+  imports = [
+    {
+      # Individual links, not the directories: ~/.claude/hooks/ also holds files
+      # from other plugins like context-mode plugin that home-manager must not clobber.
+      # ~/.agents/bin holds the stable, tool-neutral session role registry shared by
+      # Codex and Claude Code, and the protocol engine the console mod and Codex
+      # compact-reorient call.
+      home.file =
+        outOfStoreLinks ".claude/hooks" "${claudeSrc}/hooks" agentPackage.claudeOwnHooks
+        // outOfStoreLinks ".claude/hooks" "${agentsSrc}/hooks" agentPackage.claudeHooks
+        // outOfStoreLinks ".codex/hooks" "${agentsSrc}/hooks" agentPackage.codexHooks
+        // outOfStoreLinks ".agents/bin" "${agentsSrc}/bin" agentPackage.tools;
+    }
+  ];
+
   home.file.".claude/CLAUDE.md".source = config.lib.file.mkOutOfStoreSymlink "${agentsSrc}/AGENTS.md";
 
   # Codex and Claude Code deliberately use different filenames for their
@@ -72,68 +73,10 @@ in
   home.file.".claude/statusline-command.sh".source =
     config.lib.file.mkOutOfStoreSymlink "${claudeSrc}/statusline-command.sh";
 
-  # Individual links, not the directory: ~/.claude/hooks/ also holds files
-  # from other plugins like context-mode plugin that home-manager must not clobber.
-  home.file.".claude/hooks/context-watch.sh".source =
-    config.lib.file.mkOutOfStoreSymlink "${claudeSrc}/hooks/context-watch.sh";
-
-  home.file.".claude/hooks/fable-guard.sh".source =
-    config.lib.file.mkOutOfStoreSymlink "${claudeSrc}/hooks/fable-guard.sh";
-
-  home.file.".claude/hooks/compact-reorient.sh".source =
-    config.lib.file.mkOutOfStoreSymlink "${agentsSrc}/hooks/compact-reorient.sh";
-
-  home.file.".claude/hooks/readonly-guard.sh".source =
-    config.lib.file.mkOutOfStoreSymlink "${agentsSrc}/hooks/readonly-guard.sh";
-
-  home.file.".claude/hooks/git-stash-guard.sh".source =
-    config.lib.file.mkOutOfStoreSymlink "${agentsSrc}/hooks/git-stash-guard.sh";
-
-  home.file.".claude/hooks/bd-guard.sh".source =
-    config.lib.file.mkOutOfStoreSymlink "${agentsSrc}/hooks/bd-guard.sh";
-
-  home.file.".claude/hooks/session-register.sh".source =
-    config.lib.file.mkOutOfStoreSymlink "${agentsSrc}/hooks/session-register.sh";
-
-  home.file.".claude/hooks/session-activity.sh".source =
-    config.lib.file.mkOutOfStoreSymlink "${agentsSrc}/hooks/session-activity.sh";
-
   # Console mod, loaded through CLAUDE_CODE_PLUGIN_DIRS; out of store so edits hot-reload and Claude can lay its
   # API types into .claude-plugin/types/ (Git-ignored).
   home.file.".claude/mods/console".source =
     config.lib.file.mkOutOfStoreSymlink "${agentsSrc}/claude/mods/console";
-
-  home.file.".codex/hooks/compact-reorient.sh".source =
-    config.lib.file.mkOutOfStoreSymlink "${agentsSrc}/hooks/compact-reorient.sh";
-
-  home.file.".codex/hooks/git-stash-guard.sh".source =
-    config.lib.file.mkOutOfStoreSymlink "${agentsSrc}/hooks/git-stash-guard.sh";
-
-  home.file.".codex/hooks/bd-guard.sh".source =
-    config.lib.file.mkOutOfStoreSymlink "${agentsSrc}/hooks/bd-guard.sh";
-
-  home.file.".codex/hooks/session-register.sh".source =
-    config.lib.file.mkOutOfStoreSymlink "${agentsSrc}/hooks/session-register.sh";
-
-  home.file.".codex/hooks/session-activity.sh".source =
-    config.lib.file.mkOutOfStoreSymlink "${agentsSrc}/hooks/session-activity.sh";
-
-  # Stable, tool-neutral session role registry shared by Codex and Claude Code.
-  home.file.".agents/bin/session-lead-mode".source =
-    config.lib.file.mkOutOfStoreSymlink "${agentsSrc}/bin/session-lead-mode";
-
-  home.file.".agents/bin/board".source =
-    config.lib.file.mkOutOfStoreSymlink "${agentsSrc}/bin/board";
-
-  # Protocol engine for deciding sessions; the console mod and Codex compact-reorient call it.
-  home.file.".agents/bin/protocol".source =
-    config.lib.file.mkOutOfStoreSymlink "${agentsSrc}/bin/protocol";
-
-  home.file.".agents/bin/worker-last-use".source =
-    config.lib.file.mkOutOfStoreSymlink "${agentsSrc}/bin/worker-last-use";
-
-  home.file.".agents/bin/round-report".source =
-    config.lib.file.mkOutOfStoreSymlink "${agentsSrc}/bin/round-report";
 
   # Skills are rendered from the shared source tree so included instructions
   # remain single-sourced while each deployed SKILL.md is self-contained.

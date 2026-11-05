@@ -42,6 +42,7 @@
         ./hosts/macbook-pro-nixvm/default.nix
         ./modules/flake-parts/workarounds.nix
         ./modules/flake-parts/codex.nix
+        ./modules/flake-parts/agent-setup.nix
       ];
     };
 }

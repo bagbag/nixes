@@ -1193,6 +1193,250 @@ def validate_bd_guard(root: Path) -> None:
                     raise ValueError(f"{shell} did not pass the actor to board in {command!r}: {output!r}")
 
 
+SETUP_BASH4 = re.compile(r"\$\{[^}]*(?:,,|\^\^)[^}]*\}|\$\{\w+@[QEPAa]\}|\b(?:mapfile|readarray|coproc)\b|\b(?:declare|local|typeset) -\w*A\b"
+                         r"|&>>|\bwait -n\b|shopt -s globstar|\$EPOCHSECONDS")
+
+
+def validate_setup_portable(root: Path) -> None:
+    """The bundle's shell runs on the bash 3.2 macOS ships. The Claude-only hooks sit beside the agents root (absent
+    from the store copy the build checks)."""
+    shipped = [root / "setup" / "install.sh", root / "bin" / "session-lead-mode", *sorted((root / "hooks").glob("*.sh")),
+               *sorted((root.parent / "claude" / "hooks").glob("*.sh"))]
+    for path in shipped:
+        for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+            if not line.lstrip().startswith("#") and SETUP_BASH4.search(line):
+                raise ValueError(f"{path}:{number} needs a newer bash than 3.2: {line.strip()}")
+
+
+def validate_setup_installer(root: Path) -> None:
+    """setup/install.sh in a fake home: keeps the user's files, upgrades by its own state, stops before any change."""
+    installer = root / "setup" / "install.sh"
+    board_version = re.search(r"\(bd (\d+\.\d+\.\d+)\)", (root / "bin" / "board").read_text(encoding="utf-8"))
+    if board_version is None or f"bd_tested={board_version.group(1)}\n" not in installer.read_text(encoding="utf-8"):
+        raise ValueError("setup/install.sh bd_tested differs from the bd version bin/board names")
+
+    def hook(command: str) -> dict:
+        return {"hooks": {"PreToolUse": [{"matcher": "Bash", "hooks": [{"type": "command", "command": command}]}]}}
+
+    def bundle(base: Path, name: str, version: str, shipped: dict[str, str], claude: str, codex: str) -> Path:
+        folder = base / name
+        for rel, text in shipped.items():
+            target = folder / "files" / rel
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(text, encoding="utf-8")
+        (folder / "settings").mkdir()
+        (folder / "settings" / "claude-hooks.json").write_text(json.dumps(hook(claude)), encoding="utf-8")
+        (folder / "settings" / "codex-hooks.json").write_text(json.dumps(hook(codex)), encoding="utf-8")
+        (folder / "VERSION").write_text(f"{version}\n", encoding="utf-8")
+        shutil.copy2(installer, folder / "install.sh")
+        return folder
+
+    def tree(base: Path) -> dict[str, str]:
+        return {str(path.relative_to(base)): path.read_text(encoding="utf-8") for path in sorted(base.rglob("*")) if path.is_file()}
+
+    with tempfile.TemporaryDirectory() as directory:
+        base = Path(directory)
+        tools = base / "tools"
+        tools.mkdir()
+        for name in ("bash", "env", "jq", "python3", "cat", "cmp", "comm", "cp", "date", "dirname", "find", "grep", "head", "mkdir",
+                     "mktemp", "mv", "rm", "rmdir", "sed", "sort"):
+            located = shutil.which(name)
+            if located is None:
+                raise ValueError(f"the installer test needs {name} on PATH")
+            (tools / name).symlink_to(located)
+        fake_bd = tools / "bd"
+        fake_bd.write_text(f"#!/bin/sh\necho 'bd version {board_version.group(1)} (test)'\n", encoding="utf-8")
+        fake_bd.chmod(0o755)
+        home = base / "home"
+        home.mkdir()
+
+        def run(folder: Path, *flags: str, path: Path = tools):
+            return subprocess.run([str(tools / "bash"), str(folder / "install.sh"), *flags], capture_output=True, text=True, check=False,
+                                  stdin=subprocess.DEVNULL, env={"HOME": str(home), "PATH": str(path)})
+
+        def ok(folder: Path, *flags: str):
+            result = run(folder, *flags)
+            if result.returncode != 0:
+                raise ValueError(f"install.sh {flags} failed: {result.stdout}{result.stderr}")
+            return result
+
+        def refuses(what: str, folder: Path, fragment: str, path: Path = tools) -> None:
+            before = tree(home)
+            result = run(folder, path=path)
+            if result.returncode == 0 or fragment not in result.stderr or tree(home) != before:
+                raise ValueError(f"install.sh must stop on {what} before any change: {result.returncode} {result.stderr} {result.stdout}")
+
+        def commands(rel: str) -> list[str]:
+            config = json.loads((home / rel).read_text(encoding="utf-8"))
+            return [entry["command"] for groups in config.get("hooks", {}).values() for group in groups for entry in group["hooks"]]
+
+        v1 = bundle(base, "v1", "one", {
+            ".claude/CLAUDE.md": "setup rules\n",
+            ".codex/AGENTS.md": "setup rules\n",
+            ".claude/skills/kept/SKILL.md": "kept\n",
+            ".claude/skills/kept/dropped.md": "dropped\n",
+            ".claude/skills/gone/SKILL.md": "gone\n",
+            ".agents/bin/tool": "#!/bin/sh\n",
+            ".claude/mods/console/.claude-plugin/plugin.json": "{}\n",
+        }, 'bash "$HOME/.claude/hooks/one.sh"', 'bash "$HOME/.codex/hooks/one.sh"')
+        (v1 / "files" / ".agents" / "bin" / "tool").chmod(0o755)
+
+        own_hook = {"matcher": "Edit", "hooks": [{"type": "command", "command": "mine.sh"}]}
+        (home / ".claude" / "skills" / "mine").mkdir(parents=True)
+        (home / ".claude" / "skills" / "mine" / "SKILL.md").write_text("mine\n", encoding="utf-8")
+        (home / ".claude" / "CLAUDE.md").write_text("my rules\n", encoding="utf-8")
+        settings = home / ".claude" / "settings.json"
+        settings.write_text(json.dumps({"model": "mine", "env": {"KEEP": "1"}, "hooks": {"PreToolUse": [own_hook]}}), encoding="utf-8")
+        settings.chmod(0o640)
+
+        # Stops before any change.
+        without_bd = base / "without-bd"
+        without_bd.mkdir()
+        for tool in tools.iterdir():
+            if tool.name != "bd":
+                (without_bd / tool.name).symlink_to(tool.resolve())
+        refuses("a missing bd", v1, "missing required tool: bd", without_bd)
+        old_python = base / "old-python"
+        old_python.mkdir()
+        for tool in tools.iterdir():
+            if tool.name != "python3":
+                (old_python / tool.name).symlink_to(tool.resolve())
+        fake_python = old_python / "python3"
+        fake_python.write_text("#!/bin/sh\n[ \"$1\" = --version ] && echo 'Python 3.9.6'\nexit 1\n", encoding="utf-8")
+        fake_python.chmod(0o755)
+        refuses("an old python3", v1, "Python 3.9.6", old_python)
+        (home / ".codex").mkdir()
+        (home / ".codex" / "hooks.json").write_text("{broken", encoding="utf-8")
+        refuses("broken settings", v1, ".codex/hooks.json is not a JSON object", tools)
+        (home / ".codex" / "hooks.json").unlink()
+        (home / ".agents").mkdir()
+        (base / "elsewhere").mkdir()
+        (home / ".agents" / "bin").symlink_to(base / "elsewhere")
+        refuses("a symlinked folder", v1, "~/.agents/bin is a symlink", tools)
+        (home / ".agents" / "bin").unlink()
+        (home / ".agents").rmdir()
+
+        before = tree(home)
+        dry = ok(v1, "--dry-run")
+        if tree(home) != before or "install .claude/CLAUDE.md" not in dry.stdout:
+            raise ValueError(f"install.sh --dry-run changed files or said nothing: {dry.stdout}")
+
+        # First install: instructions replaced with a backup, the user's files and settings kept.
+        first = ok(v1)
+        backups = sorted((home / ".agent-config-backup").iterdir())
+        if len(backups) != 1 or (backups[0] / ".claude" / "CLAUDE.md").read_text(encoding="utf-8") != "my rules\n":
+            raise ValueError(f"install.sh must back up replaced instructions: {first.stdout}")
+        if (home / ".claude" / "CLAUDE.md").read_text(encoding="utf-8") != "setup rules\n":
+            raise ValueError("install.sh must replace the global instructions")
+        if not (home / ".claude" / "skills" / "mine" / "SKILL.md").is_file():
+            raise ValueError("install.sh removed the user's own skill")
+        if not os.access(home / ".agents" / "bin" / "tool", os.X_OK):
+            raise ValueError("install.sh lost a tool's executable bit")
+        merged = json.loads(settings.read_text(encoding="utf-8"))
+        if merged["model"] != "mine" or merged["env"] != {"KEEP": "1", "CLAUDE_CODE_PLUGIN_DIRS": "~/.claude/mods/console"}:
+            raise ValueError(f"install.sh mangled settings: {merged}")
+        if commands(".claude/settings.json") != ["mine.sh", 'bash "$HOME/.claude/hooks/one.sh"']:
+            raise ValueError(f"install.sh merged hooks wrongly: {commands('.claude/settings.json')}")
+        if commands(".codex/hooks.json") != ['bash "$HOME/.codex/hooks/one.sh"']:
+            raise ValueError("install.sh must create the Codex hooks file")
+        if settings.stat().st_mode & 0o777 != 0o640:
+            raise ValueError("install.sh changed the settings file's mode")
+
+        # A rerun of the same bundle changes nothing, not even a backup.
+        again = ok(v1)
+        if "already up to date (one)" not in again.stdout or len(list((home / ".agent-config-backup").iterdir())) != 1:
+            raise ValueError(f"a rerun of the same bundle must change nothing: {again.stdout}")
+        if commands(".claude/settings.json").count('bash "$HOME/.claude/hooks/one.sh"') != 1:
+            raise ValueError("a rerun duplicated a hook registration")
+
+        # Upgrade: what the last install shipped and this one doesn't goes; the user's additions stay.
+        (home / ".claude" / "skills" / "kept" / "note.md").write_text("my note\n", encoding="utf-8")
+        v2 = bundle(base, "v2", "two", {
+            ".claude/CLAUDE.md": "new rules\n",
+            ".codex/AGENTS.md": "new rules\n",
+            ".claude/skills/kept/SKILL.md": "kept\n",
+            ".agents/bin/tool": "#!/bin/sh\n",
+            ".claude/mods/console/.claude-plugin/plugin.json": "{}\n",
+        }, 'bash "$HOME/.claude/hooks/two.sh"', 'bash "$HOME/.codex/hooks/two.sh"')
+        ok(v2)
+        if (home / ".claude" / "skills" / "kept" / "dropped.md").exists() or (home / ".claude" / "skills" / "gone").exists():
+            raise ValueError("an upgrade must remove what it no longer ships, and the emptied folder")
+        if (home / ".claude" / "skills" / "kept" / "note.md").read_text(encoding="utf-8") != "my note\n":
+            raise ValueError("an upgrade removed the user's file inside a shipped folder")
+        if commands(".claude/settings.json") != ["mine.sh", 'bash "$HOME/.claude/hooks/two.sh"']:
+            raise ValueError(f"an upgrade must swap the setup's hooks: {commands('.claude/settings.json')}")
+        if commands(".codex/hooks.json") != ['bash "$HOME/.codex/hooks/two.sh"']:
+            raise ValueError("an upgrade must swap the Codex hooks")
+        removed = [path for backup in (home / ".agent-config-backup").iterdir() for path in backup.rglob("dropped.md")]
+        if not removed:
+            raise ValueError("an upgrade must back up what it removes")
+
+        # Without the mod: its files, API types and setting go.
+        types = home / ".claude" / "mods" / "console" / ".claude-plugin" / "types"
+        types.mkdir(parents=True)
+        (types / "index.d.ts").write_text("laid by Claude\n", encoding="utf-8")
+        ok(v2, "--no-mod")
+        if (home / ".claude" / "mods").exists() and any((home / ".claude" / "mods").iterdir()):
+            raise ValueError("--no-mod must remove an installed mod")
+        if "CLAUDE_CODE_PLUGIN_DIRS" in json.loads(settings.read_text(encoding="utf-8"))["env"]:
+            raise ValueError("--no-mod must clear the mod's setting")
+
+        # A setting holding other plugin folders is the user's to edit.
+        ok(v2)
+        current = json.loads(settings.read_text(encoding="utf-8"))
+        current["env"]["CLAUDE_CODE_PLUGIN_DIRS"] = "~/other"
+        settings.write_text(json.dumps(current), encoding="utf-8")
+        note = ok(v2)
+        if "add ~/.claude/mods/console to it by hand" not in note.stderr or \
+                json.loads(settings.read_text(encoding="utf-8"))["env"]["CLAUDE_CODE_PLUGIN_DIRS"] != "~/other":
+            raise ValueError(f"install.sh must leave another plugin folder setting alone: {note.stderr}")
+        current["env"]["CLAUDE_CODE_PLUGIN_DIRS"] = "~/.claude/mods/console"
+        settings.write_text(json.dumps(current), encoding="utf-8")
+
+        # A damaged state file never reaches outside the install's folders.
+        state = home / ".agents" / "setup-state.json"
+        intact = state.read_text(encoding="utf-8")
+        victim = home / "victim"
+        victim.write_text("keep\n", encoding="utf-8")
+        for entry in ("../victim", ".claude/../../victim", "victim", "/etc/hosts"):
+            state.write_text(json.dumps({**json.loads(intact), "files": [entry]}), encoding="utf-8")
+            refuses(f"the state entry {entry}", v2, "lists a path outside", tools)
+        state.write_text(intact, encoding="utf-8")
+        victim.unlink()
+
+        # An unusable HOME stops at once.
+        for value in ("", "/", "//", "/.", "relative", str(base / "no-such-home")):
+            result = subprocess.run([str(tools / "bash"), str(v2 / "install.sh"), "--dry-run"], capture_output=True, text=True, check=False,
+                                    stdin=subprocess.DEVNULL, env={"HOME": value, "PATH": str(tools)})
+            if result.returncode == 0 or "HOME is" not in result.stderr:
+                raise ValueError(f"install.sh must stop on HOME={value!r}: {result.returncode} {result.stderr}")
+
+        # A file target that is a symlink stays, and nothing changes.
+        rules = home / ".claude" / "CLAUDE.md"
+        rules.unlink()
+        rules.symlink_to(base / "elsewhere")
+        refuses("a symlinked file", v2, "~/.claude/CLAUDE.md is a symlink", tools)
+        rules.unlink()
+        rules.write_text("new rules\n", encoding="utf-8")
+
+        # Uninstall: the setup's files, hooks, setting and state go; the user's stay.
+        before = tree(home)
+        ok(v2, "--uninstall", "--dry-run")
+        if tree(home) != before:
+            raise ValueError("--uninstall --dry-run changed files")
+        ok(v2, "--uninstall")
+        for gone in (".claude/CLAUDE.md", ".codex/AGENTS.md", ".agents/bin/tool", ".agents/setup-state.json", ".claude/skills/kept/SKILL.md"):
+            if (home / gone).exists():
+                raise ValueError(f"--uninstall left {gone}")
+        if not (home / ".claude" / "skills" / "kept" / "note.md").is_file() or not (home / ".claude" / "skills" / "mine" / "SKILL.md").is_file():
+            raise ValueError("--uninstall removed the user's files")
+        final = json.loads(settings.read_text(encoding="utf-8"))
+        if commands(".claude/settings.json") != ["mine.sh"] or final["env"] != {"KEEP": "1"} or final["model"] != "mine":
+            raise ValueError(f"--uninstall must leave only the user's settings: {final}")
+        if commands(".codex/hooks.json"):
+            raise ValueError("--uninstall left Codex hooks")
+
+
 def validate_hook_registrations(root: Path) -> None:
     """The Claude and Codex hook configs beside the agents root (absent from the store copy the build checks):
     session-activity runs on SubagentStart, SubagentStop and every tool's PreToolUse (a group without matcher),
@@ -1218,6 +1462,8 @@ def validate_hook_registrations(root: Path) -> None:
 def validate_hooks(root: Path) -> None:
     hooks = root / "hooks"
     validate_hook_registrations(root)
+    validate_setup_portable(root)
+    validate_setup_installer(root)
     validate_session_registry(root)
     validate_session_register(root)
     validate_compact_reorient(root)

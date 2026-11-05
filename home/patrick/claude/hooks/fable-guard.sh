@@ -9,7 +9,7 @@ input=$(cat)
 command -v jq >/dev/null 2>&1 || exit 0
 
 model=$(jq -r '.tool_input.model // ""' <<<"$input")
-[[ "${model,,}" == *fable* ]] || exit 0
+[[ "$(tr "[:upper:]" "[:lower:]" <<<"$model")" == *fable* ]] || exit 0
 
 session_id=$(jq -r '.session_id // ""' <<<"$input")
 flag="/tmp/claude-context-watch/${session_id}.fable-ok"
