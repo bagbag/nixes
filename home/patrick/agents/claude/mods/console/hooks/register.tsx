@@ -6,7 +6,7 @@ import type { EngineInterface, Register } from 'claude-code'
 import type { ConsoleStart } from '../types'
 
 import {
-  betweenTurns, context, failOpen, message, notice, noteModel, openDialog, PANE, placeholderMarker, pressSubmit, recordPass, refreshAll, refreshBoard, refreshLater,
+  betweenTurns, context, failOpen, message, notice, openDialog, PANE, placeholderMarker, pressSubmit, recordPass, refreshAll, refreshBoard, refreshLater,
   refreshRole, refreshRound, releaseRun, resetSession, setDialogOutcome, stampReleaseRun, withContext,
   isNewText, setQuestionsAnswered,
 } from './core'
@@ -112,9 +112,15 @@ export const register: Register = on => {
       await notice($, recorded.note.split('\n')[0] ?? '')  // the headline; the model reads the whole note
       return withContext(ran, recorded.note)
     } catch (error) {
-      const text = `the answers of ${verdict.marker} were not recorded: ${message(error)}. Record them with the protocol tool before going on.`
+      if (captured.kind === 'decline') {
+        // Esc aborts this hook's runs and no retry here gets through; the console's own dialog records it once closed (openDialog).
+        if (placeholder !== null) setDialogOutcome({ summary, note: null, needsModel: true, unsavedDecline: { marker: verdict.marker, partial: captured.partial } })
+        return withContext(ran, `The dialog was declined; batch ${verdict.marker} stays out.`)
+      }
+      const text = `Your answers to ${verdict.marker} were not saved (${message(error)}), so the questions come again.`
+      await setAskSent($, null).catch(() => undefined)
       await notice($, text)
-      if (placeholder !== null) setDialogOutcome({ summary, note: `${text} ${JSON.stringify(ran.result)}`, needsModel: true })
+      if (placeholder !== null) setDialogOutcome({ summary: text, note: text, needsModel: true })
       return withContext(ran, text)
     }
     // Never draw the placeholder: a failure here falls back to the model opening the dialog.

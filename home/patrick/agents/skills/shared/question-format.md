@@ -8,8 +8,11 @@
   state a rule, ask a few cases and derive it.
 - Name the decisions each answer settles and derive them. Present them for one
   confirmation per rule (a rule question settles the items one answer settles the
-  same way) and per kind, never together with board actions, acceptance or
-  release. Write or act on them only after that.
+  same way), one ruling per confirmation, never together with board actions,
+  acceptance or release. Write or act on them only after that.
+- Merge questions only when no sensible answer would treat them differently: an
+  option that splits them means separate questions, and a shared premise puts
+  them in one round, not one question.
 - Ask each derived decision you are unsure is the only realistic clean option as
   its own question.
 - Ask a mechanism question only where the answers leave several clean mechanisms.

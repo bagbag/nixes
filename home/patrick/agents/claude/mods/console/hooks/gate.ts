@@ -49,7 +49,7 @@ export function judgeDialog(round: ConsoleRound & { round: string }, input: Dial
       return {
         action: 'block',
         key,
-        reason: `${marker}: the console has not printed this batch's question text yet. Write nothing about the questions and end your turn now: the console prints them at the turn's end and opens the dialog.`,
+        reason: `${marker}: the console has not printed this batch's question text yet. Write one short line that questions are coming, nothing about their content, and end your turn: the console prints them at the turn's end and opens the dialog.`,
       }
     }
     const key = dialogKey('marked', input)

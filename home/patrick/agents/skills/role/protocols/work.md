@@ -30,7 +30,9 @@ findings or stops.
    claims inform others and are never refused.
    Output: `areas: <list>`.
 4. **Do.** Design items: architecture where open, the package graph, and
-   needed decisions as questions blocking their dependents; no implementation.
+   needed decisions as questions blocking their dependents, merged only under
+   [Question format](../../shared/question-format.md#question-format); no
+   implementation.
    Before raising the questions and again before handing over, invoke
    `step-back`, then `ground`, on the design; repeat until a pass changes
    nothing. Implementation items: tests alongside the change. Rule trivial

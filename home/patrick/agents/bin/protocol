@@ -74,7 +74,7 @@ LIST_COMMAND = f'board health --items {COLLECT_VIEWS}'  # lists the open items C
 # Question fields a pass can change; a change to any of them counts (asking.md Check: premise, ruling, option or
 # question set).
 CONTENT = ('text', 'title', 'header', 'options', 'multiSelect', 'kind', 'board', 'waitsOn', 'for', 'settles', 'premises',
-           'problem', 'cases', 'rulings', 'note', 'recommendation', 'strength', 'leanBecause', 'strongBecause')
+           'problem', 'cases', 'rulings', 'note', 'recommendation', 'strength', 'leanBecause', 'strongBecause', 'priorRulings')
 # How a question is shown and backed, not what it asks (asking.md Check counts premise, ruling, option and question
 # set): an edit to these alone re-issues the batch without rerunning the check loop.
 PRESENTATION = ('title', 'header', 'note', 'strength', 'leanBecause', 'strongBecause')  # plus an option's `preview` (see substantive)
@@ -101,9 +101,18 @@ STRONG_CRITERIA = {
     'alternativesFail': 'each other realistic option, listed or not, fails a named criterion (cleanliness test, goal, correctness, consumer need); name the strongest unlisted one and why it fails or was added',
     'notPreference': 'the choice does not depend on what the user values',
     'consumerWalk': 'a realistic consumer walk supports it (does-not-apply for internal choices)',
-    'rulingsHold': 'released rulings hold, or each revision is raised as its own question',
+    'rulingsChallenged': 'judged as if no released ruling existed; each related ruling challenged in `priorRulings`, and each that fails raised as a revision',
 }
-MAY_NOT_APPLY = ('consumerWalk', 'rulingsHold')
+MAY_NOT_APPLY = ('consumerWalk', 'rulingsChallenged')
+MERGE_TEST = ('Merge questions only when no sensible answer would treat them differently: an option that splits them means separate '
+              'questions, and a shared premise puts them in one round, not one question.')  # skills/shared/question-format.md owns the test
+LEAN_JOB = (' (the lean pass: make each lean named in the argument strong with evidence (a rule, a consumer need, a source or a probe). '
+            'One that stays a preference recommends on merits, walks one real case (a caller read from the code, or what the person would see) '
+            'and says in `flipsIf` what would make them pick another option; a fact gets checked or marked evidence).')
+HAND_OVER = 'End your turn with one short line: what changed, or "No change."'
+NO_RUN = ('no /{command} ran since its last report: end your turn (the console runs a pass it has not run yet, and tells the person what to '
+          'type for one it has), or call the skill yourself; a model Skill call counts once it ran')
+THINK_MORE = 'Think more'  # a lean question's extra dialog choice: no answer, its checks rerun (r34-q171)
 
 
 def recommended_suffix(q: dict) -> str:
@@ -434,6 +443,11 @@ def question_errors(q: dict, where: str, marks: bool = True, parts: tuple[str, .
                                             and isinstance(because.get('detail'), str) and because['detail'].strip()):
         errors.append(f'{where}: a lean names its cause: `leanBecause` {{"cause": "preference" (what the choice depends on) or '
                       '"evidence" (the unchecked fact and how to check it), "detail": "…"}')
+    elif q.get('strength') == 'lean' and because['cause'] == 'preference' and not (isinstance(because.get('flipsIf'), str) and because['flipsIf'].strip()):
+        errors.append(f'{where}: a preference lean says what you would have to value to pick another option: `leanBecause.flipsIf`')
+    prior = q.get('priorRulings')
+    if prior is not None and not (isinstance(prior, list) and all(isinstance(x, dict) and x.get('verdict') in ('holds', 'fails') and all(isinstance(x.get(k), str) and x[k].strip() for k in ('ruling', 'why')) for x in prior)):
+        errors.append(f'{where}: `priorRulings` lists {{"ruling", "verdict": "holds" or "fails", "why"}}')
     return errors
 
 
@@ -465,7 +479,7 @@ def new_question(ctx: Context, raw: dict, where: str) -> dict:
     unknown = set(raw) - set(CONTENT) - {'key'}
     errors = [f"{where}: unknown fields {', '.join(sorted(unknown))}"] if unknown else []
     q = {'id': next_id(ctx.state, 'question', 'q'), 'board': None, 'kind': 'decision', 'multiSelect': False,
-         'waitsOn': [], 'for': None, 'settles': [], 'premises': None, 'recommendation': None, 'strength': None,
+         'waitsOn': [], 'for': None, 'settles': [], 'premises': None, 'priorRulings': None, 'recommendation': None, 'strength': None,
          'leanBecause': None, 'strongBecause': None,
          **{k: v for k, v in raw.items() if k != 'key'},
          'status': 'draft', 'overlaps': [], 'searched': False, 'answer': None, 'round': ctx.round['id']}
@@ -518,9 +532,37 @@ def board_keys(keys) -> list[str]:
     return [key for key in keys or [] if not POINT.fullmatch(key)]
 
 
+def join_outside(ctx: Context) -> None:
+    """An open decision named in an unanswered question's `board` or `settles` joins the round, claimed as at Select: a live
+    session's hold is refused, a gone session's taken over; closed, unknown and non-decision items are refused. A boardless
+    round has nothing to join: coverage_errors refuses its unknown keys."""
+    r = ctx.round
+    if not ctx.board or not r['selected']:
+        return
+    known = {*r['selected'], *(p['id'] for p in r['points'])}
+    named = [key for q in questions(ctx, 'draft', 'held', 'ready') for key in ([q['board']] if q['board'] else []) + (q.get('settles') or [])]
+    outside = [key for key in dict.fromkeys(named) if key not in known]
+    if not outside:
+        return
+    rows = ctx.board.json('show', *outside, '--json', '--field', 'issue_type', '--field', 'status', '--field', 'title', '--field', 'assignee')
+    errors = [f'{key} is unknown or closed, so it cannot join the round' for key in outside if (rows.get(key) or {}).get('status') in (None, 'closed')]
+    errors += non_decision_errors(ctx, outside)
+    live, gone = split_holds(ctx, {key: (rows.get(key) or {}).get('assignee') or '' for key in outside})
+    errors += [f'{key} is held by {holder}, a live session, so it cannot join the round' for key, holder in live.items()]
+    refuse_all(errors)
+    if gone:
+        ctx.board.checked('take', *gone)
+        r['claimed'] = [*r.get('claimed', []), *gone]
+    if free := [key for key in outside if key not in gone]:
+        claim_items(ctx, free)
+    r['selected'] = [*r['selected'], *outside]
+    r['items'] = [*r['items'], *({'id': key, 'title': rows[key].get('title') or ''} for key in outside)]
+    ctx.log('joined', items=outside)
+
+
 def coverage_errors(ctx: Context) -> list[str]:
     """The rule-question invariants of the round's question set: `settles` names selected keys other than the
-    question's own `board`/`for`, no key twice, none on confirm-own-rulings; and every selected key is covered by a
+    question's own `board`/`for`, no key twice; and every selected key is covered by a
     question's `board`, `for`, id or `settles`. Empty outside Stage and Check (nothing selected)."""
     r = ctx.round
     selected, errors = set(r['selected']), []
@@ -534,8 +576,6 @@ def coverage_errors(ctx: Context) -> list[str]:
     settled = {}
     for q in r['questions']:
         keys = q.get('settles') or []
-        if keys and q['kind'] == 'confirm-own-rulings':
-            errors.append(f"{q['id']}: `settles` is not for confirm-own-rulings questions")
         for key in dict.fromkeys(keys):
             if key not in selected:
                 errors.append(f"{q['id']}: settles {key}, which is not selected")
@@ -581,6 +621,7 @@ def apply_updates(ctx: Context, updates) -> int:
         place_before(ctx, qid, keys.get(before, before), where)
     resolve_waits(ctx, keys)
     unique_texts(ctx)
+    join_outside(ctx)
     refuse_all(coverage_errors(ctx) + non_decision_errors(ctx, [u['board'] for u in updates if isinstance(u, dict) and u.get('board')]))  # a merge or split is several updates: the set is checked once, after all of them
     for q in questions(ctx, 'draft', 'held', 'ready'):
         q['status'] = premise_status(ctx, q)
@@ -634,6 +675,8 @@ def apply_update(ctx: Context, update, where: str, keys: dict) -> tuple[int, str
                              for o in options]  # previews are presentation
     substantive = any((plain(merged[k]) != plain(q[k]) if k == 'options' else merged.get(k) != q.get(k))
                       for k in CONTENT if k not in PRESENTATION)
+    if q.get('printed') is not None and merged.get('recommendation') != q.get('recommendation'):
+        ctx.log('late-change', question=q['id'], was=q.get('recommendation'), now=merged.get('recommendation'))  # the person had seen it: bin/round-report counts these
     q.update(merged)
     return int(substantive), q['id']
 
@@ -881,8 +924,8 @@ def stage_text(ctx: Context) -> str:
         f"Round {r['id']} · Stage the questions for {', '.join(r['selected'])} under asking.md Question format, "
         'with a round `title` and `summary`. A board item keeps its id in `board`; a pasted point or new '
         'question is a draft (`board`: null, `for`: the point id)' + (', created on the board at Record' if ctx.board
-                                                                        else '') + '. `settles` lists the selected items '
-        'one answer settles the same way (a rule question). `waitsOn` names the questions a '
+                                                                        else '') + '. `settles` lists the items '
+        f'one answer settles the same way (a rule question); an open decision outside the selection named there or in `board` joins the round. {MERGE_TEST} `waitsOn` names the questions a '
         'decision rests on; kind confirm-own-rulings asks the user to confirm your rulings. Each question carries the parts the '
         'engine prints before its dialog, in your own words. Printed parts say what is decided and what each option means for the person '
         '(what they would see, what it costs), each thing once, in plain words; how it was found (sources, measurements beyond the deciding '
@@ -893,7 +936,9 @@ def stage_text(ctx: Context) -> str:
         'its questions. A rule question\'s `premises` says how the rule applies to each settled item; the engine prints each item\'s id and title. Mark each recommendation '
         'under decision-protocol.md Recommendation strength: strong sets `strongBecause` '
         f"{', '.join(STRONG_CRITERIA)} each to \"true: <evidence>\" (\"does-not-apply: <reason>\" for consumerWalk "
-        'and rulingsHold); lean sets `leanBecause` with cause preference or evidence. Questions go out in the listed '
+        'and rulingsChallenged); lean sets `leanBecause` with cause preference (`detail`: what it depends on; `flipsIf`: what you would have to value '
+        'to pick another option) or evidence. `priorRulings` holds one entry per released ruling a recommendation rests on or Related linked: '
+        '{"ruling", "verdict": "holds" or "fails", "why"}; judge the options as if no ruling existed first; an answer from this round stays a premise. Questions go out in the listed '
         f'order, {BATCH} at a time; `waitsOn` holds a dependent back until its premise is answered. Lengths to keep to in characters and who '
         f'reads each field: round `summary` {SUMMARY_MAX} (pane header); `title` {TITLE_MAX} (pane row; a question\'s '
         f"is also the board item's title); `text` {TEXT_MAX}, without a number (the engine numbers the dialog; it is the dialog "
@@ -962,6 +1007,7 @@ def stage_accept(ctx: Context, report: dict) -> str:
     describe(ctx, report.get('round'), 'stage', required=True)
     resolve_waits(ctx, keys)
     unique_texts(ctx)
+    join_outside(ctx)
     refuse_all(coverage_errors(ctx) + non_decision_errors(ctx, [q['board'] for q in ctx.round['questions'] if q.get('board')]))
     if not ctx.round['questions']:
         fail('stage at least one question')
@@ -1171,7 +1217,7 @@ def count_pass_args(ctx: Context, command: str, args: str) -> None:
             scope['seen'] = list(dict.fromkeys([*scope['seen'], 'path']))
     if command == 'step-back' and set(OPTIONS_LENSES) <= named:
         r['optionsRun'] = True
-        if scoped:
+        if scope and set(options_ids(ctx, rescope_ids(ctx))) <= named:  # its ids leave out restarted confirmations
             scope['seen'] = list(dict.fromkeys([*scope['seen'], 'options']))
     if command in REFINE_LENSES and set(REFINE_LENSES[command]) <= named:
         r['refineRun'] = list(dict.fromkeys([*r.get('refineRun', []), command]))
@@ -1271,8 +1317,8 @@ def pass_format(command: str) -> str:
         'After the pass, report each change as a per-question update: changed fields, a new question (no id; it goes last, '
         'or ahead of the question its `before` names), or '
         '{"id", "remove": true, "reason"}; report an empty list when nothing changed. A pass that would revise a '
-        "user's ruling raises it as a new question. Merge questions one answer settles the same way into one rule "
-        'question (`settles`: the selected keys it settles); split an item out when the rule\'s application to it is open. '
+        "user's ruling raises it as a new question. "
+        f'{MERGE_TEST} A merge is one rule question (`settles`: the keys it settles); split an item out when the rule\'s application to it is open. '
         f'A question that widens the round\'s scope: list the open items with `{LIST_COMMAND}`.',
         'Report with `protocol step` (stdin JSON), e.g. ' + json_block({
             'pass': command, 'updates': [{'id': 'q1', 'premises': '<revised premise>'}],
@@ -1349,8 +1395,7 @@ def record_pass(ctx: Context, report: dict) -> tuple[str, int, str]:
         fail(f"`pass` must be one of {', '.join(PASSES)}")
     observed = ctx.round['observed']
     if not ctx.codex and command not in observed:  # Codex has no console to observe its runs
-        fail(f'no /{command} ran since its last report: the console runs it as its own turn (end your turn), or the person '
-             'types or presses it; a model Skill call counts once it ran')
+        fail(NO_RUN.format(command=command))
     origin = observed.get(command, 'model')
     kind, scoped = pass_kind(ctx, command)
     describe(ctx, report.get('round'), 'pass report', required=False)
@@ -1398,6 +1443,17 @@ def finish_challenge(ctx: Context, changes: int) -> str:
     return 'ask'
 
 
+def nothing_to_check(ctx: Context) -> bool:
+    """No open question left, as after removing the only one under check: the pending pass has nothing to judge."""
+    return not ctx.round['batch'] and not questions(ctx, 'draft', 'held', 'ready', 'asked')
+
+
+def leave_check(ctx: Context) -> str:
+    ctx.round['pending'] = None
+    ctx.round.pop('rescope', None)
+    return 'ask'
+
+
 def check_accept(ctx: Context, report: dict) -> str:
     check = ctx.round['check']
     if ctx.round['batch']:
@@ -1410,6 +1466,8 @@ def check_accept(ctx: Context, report: dict) -> str:
         check['challenged'] = False  # a change after the last challenge-rulings run re-arms it
     if check.get('challenge') and command == expected == 'challenge-rulings':
         return finish_challenge(ctx, changes)
+    if nothing_to_check(ctx):
+        return leave_check(ctx)
     # A pending path or refine pass is that pass only once a run naming its lenses was observed (Codex has no observation:
     # it reports the pending pass it was told to run).
     scope = ctx.round.get('rescope') or {}
@@ -1483,7 +1541,20 @@ def pass_text(ctx: Context, command: str) -> str:
     scope = f'with the argument `{args}` (lenses, then the questions to strengthen)' if args else 'on the whole round'
     if ctx.codex:
         return f'Run the {command} skill now {scope} (read its SKILL.md), then report the pass.'
-    return 'End the turn after any other work for the user, without a closing status line; the console runs the next pass.'
+    return HAND_OVER
+
+
+def same_options_lines(ctx: Context) -> list[str]:
+    """Open questions offering identical option labels, ignoring case and order (r33-q157): advice, once per group."""
+    groups = {}
+    for q in questions(ctx, 'draft', 'held', 'ready'):
+        groups.setdefault(frozenset(o['label'].casefold() for o in q['options']), []).append(q['id'])
+    said = []
+    for ids in groups.values():
+        if len(ids) > 1 and first_time(ctx, f"same-options:{ctx.round['id']}:{' '.join(ids)}"):
+            named = f"{', '.join(ids[:-1])} and {ids[-1]}"
+            said.append(f'{named} offer identical options. Merge them only if no sensible answer would treat them differently.')
+    return said
 
 
 def check_text(ctx: Context) -> str:
@@ -1499,12 +1570,16 @@ def check_text(ctx: Context) -> str:
         rows = [f'{plural(len(rows), "question")} (protocol show lists them)']
     challenge = check.get('challenge') or {}
     return lines(
-        f"Round {r['id']} · Check cycle {check['cycle']}/{check['cap']}"
+        f"Round {r['id']} · Check" + ('' if not ctx.codex else f" cycle {check['cycle']}/{check['cap']}")
         + (' (after the last answer: challenge the answers and your own rulings in this round; a finding is a new question, '
            'checked before it is asked).'
            if challenge.get('kind') == 'answers' else
            f" (the strong recommendation raised on {' '.join(challenge['ids'])})."
            if challenge.get('kind') == 'raised' else
+           LEAN_JOB
+           if check.get('focusing') else
+           '.'
+           if not ctx.codex else  # Claude's model reads no pass sequence: the pass's own argument says what it is (r34-q165)
            ' (last before the batch).'
            if command == 'challenge-rulings' else
            f" (the path pass on the restarted questions {' '.join(rescope_ids(ctx))}: goal and foundations)."
@@ -1519,11 +1594,9 @@ def check_text(ctx: Context) -> str:
            if check.get('refineScoped') else
            " (the round's refine pass: the lenses named in the argument)."
            if check.get('refineNow') else
-           ' (the lean pass: make each lean named in the argument strong with evidence (a rule, a released ruling, a consumer '
-           'need, a source or a probe), or keep it lean and name exactly what it depends on).'
-           if check.get('focusing') else
            '.'),
         *rows,
+        *same_options_lines(ctx),
         pass_text(ctx, command),
         pass_report_format(ctx, command),
         options_report_format(ctx) if check.get('optionsNow') else '',
@@ -1538,7 +1611,8 @@ def lean_line(q: dict) -> list[str]:
     if q.get('strength') != 'lean':
         return []
     because = q.get('leanBecause') or {}
-    return [f"{'Unverified' if because.get('cause') == 'evidence' else 'Your call'}: {because.get('detail')}"]
+    return [f"{'Unverified' if because.get('cause') == 'evidence' else 'Your call'}: {because.get('detail')}",
+            *([f"What would change it: {because['flipsIf']}"] if because.get('flipsIf') else [])]
 
 
 def options_text(q: dict) -> str:
@@ -1577,6 +1651,15 @@ def ruling_block(x: dict, record: str = '') -> str:
                       f"- Instead: {x['alternative'].strip()}", f"- Why not: {x['fails'].strip()}"])
 
 
+def prior_rulings_text(q: dict) -> str:
+    """The earlier rulings as printed: how many held, and each that fails; the record keeps every line (r34-q163)."""
+    prior = q.get('priorRulings') or []
+    if not prior:
+        return ''
+    fails = [f"- Fails: {x['ruling'].strip()} - {x['why'].strip()}" for x in prior if x['verdict'] == 'fails']
+    return '\n'.join([f'{len(prior) - len(fails)} held.', *fails])
+
+
 def question_parts(ctx: Context, q: dict) -> dict[str, str]:
     """The printed parts of a question by name, in print order (empty and absent parts left out)."""
     if ctx.round['protocol'] == 'release' and q['kind'] == 'confirm-own-rulings':
@@ -1586,12 +1669,13 @@ def question_parts(ctx: Context, q: dict) -> dict[str, str]:
         'settles': '\n'.join(settled_lines(ctx, q)), 'premises': (q.get('premises') or '').strip(),
         'options': options_text(q), 'dropped': dropped_text(q),
         'rulings': '\n\n'.join(ruling_block(x) for x in q.get('rulings') or []),
+        'priorRulings': prior_rulings_text(q),
         'note': (q.get('note') or '').strip(),
     }
     return {name: text for name, text in parts.items() if text}
 
 
-PART_TITLES = {'problem': 'Problem', 'cases': 'Cases', 'settles': 'Settles', 'premises': 'Premises', 'note': 'Note',
+PART_TITLES = {'problem': 'Problem', 'cases': 'Cases', 'settles': 'Settles', 'premises': 'Premises', 'note': 'Note', 'priorRulings': 'Earlier rulings',
                'corrections': 'Corrections', 'boardCheck': 'Board check'}
 LIST_PARTS = ('settles', 'corrections', 'boardCheck')  # parts printed one line per entry
 SELF_TITLED = ('options', 'dropped', 'rulings')  # parts whose lines say what they are (`Recommended:`, `Dropped:`, `My ruling:`)
@@ -1662,6 +1746,8 @@ def dialog_question(q: dict, number: int | None = None) -> dict:
     dialog = lambda o: {k: v for k, v in o.items() if k not in ('for', 'against')}  # the engine prints them before the dialog
     options = [{**dialog(best), 'label': best['label'] + recommended_suffix(q), 'description': description},
                *(dialog(o) for o in q['options'] if o is not best)]
+    if q['strength'] == 'lean' and len(options) < 4 and not q['multiSelect']:  # the dialog allows four
+        options.append({'label': THINK_MORE, 'description': 'No answer yet: its checks rerun with a consumer walk, then it comes back to you.'})
     text = f"{q['text']} {replaced_words(q)}".rstrip()
     return {'question': f'{number}. {text}' if number else text, 'header': q['header'], 'options': options,
             'multiSelect': q['multiSelect']}
@@ -1870,8 +1956,8 @@ def ask_enter(ctx: Context) -> str | None:
         return hand_over(ctx)
     if ctx.away:
         return None  # no batch: the step text asks the model to settle them (away_settle)
-    # Only valid questions go out (an answer being recorded must not fail here). Only a question from before the limits
-    # can be invalid here (staging, pass and edit updates check them): it names its error and the model shortens it in a
+    # Only valid questions go out (an answer being recorded must not fail here). Only a question staged before a rule
+    # can be invalid here (staging, pass and edit updates check them): it names its error and the model fixes it in a
     # pass of its own (no automatic pass).
     valid, broken = [], {}
     for q in ready:
@@ -1881,7 +1967,7 @@ def ask_enter(ctx: Context) -> str | None:
         except ProtocolError as error:
             broken[q['id']] = str(error)
     if broken:
-        ctx.messages.append('Not asked yet: ' + '; '.join(broken.values()) + f". Shorten {', '.join(broken)} in a pass of its "
+        ctx.messages.append('Not asked yet: ' + '; '.join(broken.values()) + f". Fix {', '.join(broken)} in a pass of its "
                             'own: call the ground skill on it (that Skill call counts as the observed run), then report the pass.')
     if not valid:
         return None
@@ -1924,7 +2010,7 @@ def ask_text(ctx: Context) -> str:
     tool_input = {'questions': batch['questions'], 'metadata': {'source': batch['marker']}}
     notice = batch.get('notice') or ''
     order = ', in this order' + (', numbered like the dialog' if len(batch['questions']) > 1 else '')
-    console_opens = ('write nothing about the questions and end your turn now; a message tells you when you have something to do. '
+    console_opens = ('write one short line that questions are coming, nothing about their content, and end your turn; a message tells you when you have something to do. '
                      'After a reply the person typed instead of picking: answer it as the turn\'s last text and end the turn. '
                      'If a console message asks you to open the dialog: call AskUserQuestion with the input `protocol show` gives.')
     lead = f"Round {ctx.round['id']} · " + (f"Check cap reached: {'ask the user how to go on.' if ctx.codex else console_opens}" if batch['cap'] else
@@ -2017,6 +2103,7 @@ def record_file(ctx: Context, q: dict, fields: dict) -> str:
             f"## Decision\n{fields.get('decision') or chosen}\n\n## Rationale\n{fields['rationale'].strip()}\n\n{quoted}\n\n"
             + (f"## Premises\n{q['premises'].strip()}\n\n" if (q.get('premises') or '').strip() else '')
             + ('## Own rulings\n' + '\n'.join(f'- {ruling_line(x)}' for x in q['rulings']) + '\n\n' if q.get('rulings') else '')
+            + ('## Earlier rulings\n' + '\n'.join(f"- {x['ruling'].strip()}: {x['verdict']}. {x['why'].strip()}" for x in q['priorRulings']) + '\n\n' if q.get('priorRulings') else '')
             + f"## Rule owner\n{fields['ruleOwner'].strip()}\n"
             + (f"\n## Reversal\n{fields['reversal'].strip()}\n" if q['origin'] == AWAY else '')
             + (f"Reopen the questions it closed: `board bd reopen {' '.join(board_keys(q.get('settles')))}`.\n"
@@ -2852,7 +2939,7 @@ def scoped_text(ctx: Context) -> str:
             'corrected record text, each against its sources and the rest of the set. ')
     how = (f'Run the {command} skill now with the argument `{args}` (read its SKILL.md), then report the pass. '
            if ctx.codex else
-           'End the turn after any other work for the user, without a closing status line; the console runs the pass. ')
+           f'{HAND_OVER} ')
     return lines(lead + how + 'Report each revised record as "unchanged" or a change as in the re-check (a change of your own '
                  "parts rewrites it again; a change to the user's decision drops it; a spread stops the run):",
                  report_hint(ctx, 'scoped', {
@@ -2870,8 +2957,7 @@ def scoped_accept(ctx: Context, report: dict) -> str:
         fail(f"`pass` is {pending.get('command')}, the scoped pass waiting; the other follows its report")
     if not ctx.codex:  # Codex has no console to observe its runs
         if command not in r['observed']:
-            fail(f'no /{command} ran since its last report: the console runs it as its own turn (end your turn), or the '
-                 'person types or presses it; a model Skill call counts once it ran')
+            fail(NO_RUN.format(command=command))
         if command not in r['scoped']['seen']:
             fail(f"/{command} ran without the revised records as its argument (`{pending.get('args')}`)")
     origin = r['observed'].get(command, 'model')
@@ -3826,6 +3912,8 @@ def edit_round(ctx: Context, report: dict) -> str:
                 rescope_check(ctx, waiting)
             else:
                 r['check']['challenged'] = False
+    if r['step'] == 'check' and nothing_to_check(ctx):
+        return leave_check(ctx)
     return r['step']
 
 
@@ -3912,10 +4000,13 @@ def answer(ctx: Context, report: dict, origin: str) -> str:
         return note
     batch_seen(ctx, batch)
     now = utcnow()
-    done, typed, noted = [], [], []
+    done, typed, noted, rethink = [], [], [], []
     for text, qid in texts.items():
         q = by_id(ctx, qid)
         value = (answers.get(text) or '').strip()
+        if value == THINK_MORE and not any(o['label'] == THINK_MORE for o in q['options']):
+            rethink.append(qid)
+            continue
         pick = option_pick(q, value)
         if pick is None and value and origin != 'dialog':
             pick = value  # model-reported (Codex): the user's quoted words, read at Record
@@ -3937,7 +4028,7 @@ def answer(ctx: Context, report: dict, origin: str) -> str:
     if done and ctx.round['protocol'] == 'round':
         ctx.round['check']['challenged'] = False  # the answers are news to the last challenge-rulings run
     response = report.get('response')
-    ctx.log('answered', marker=batch['marker'], origin=origin, questions=done, typed=typed, response=response)
+    ctx.log('answered', marker=batch['marker'], origin=origin, questions=done, typed=typed, response=response, **({'thinkMore': rethink} if rethink else {}))
     notes = [f"Recorded answers to {', '.join(done)} ({origin})."] if done else []
     notes += [*noted, 'A note that states a criterion restarts its question (`protocol restart <id>`); otherwise the '
               'record carries it.'] if noted else []
@@ -3951,12 +4042,15 @@ def answer(ctx: Context, report: dict, origin: str) -> str:
         ctx.round['responses'].append({'marker': batch['marker'], 'text': response, 'origin': origin})
         notes.append(f'The user also wrote: "{response}" — not assigned to any question: it may state a criterion '
                      '(restart the affected questions) or ask for clarification.')
-    unanswered = [qid for qid in batch['ids'] if qid not in done and qid not in typed]
+    unanswered = [qid for qid in batch['ids'] if qid not in done and qid not in typed and qid not in rethink]
     if unanswered:
         notes.append(f"Unanswered, back to ready: {', '.join(unanswered)}.")
     if report.get('followUp'):
         notes.append('The user asked for another round of questions: ask what they want asked, and stage it '
                      '(a criterion restarts the affected questions).')
+    if rethink:
+        restart(ctx, rethink, THINK_MORE)
+        return ' '.join([*notes, f"{', '.join(rethink)}: {THINK_MORE}, so the checks rerun on them with a consumer walk."])
     ctx.go('ask')
     return ' '.join(notes)
 
@@ -4049,6 +4143,8 @@ def next_words(ctx: Context) -> str | None:
         check = r['check']
         if check.get('paused'):
             return 'check paused; `protocol resume` continues'
+        if not ctx.codex:
+            return None  # the pass sequence stays out of what Claude's model reads; the pane shows it (r34-q165)
         if check.get('challenge'):
             return 'challenge-rulings ' + ('after the last answer' if check['challenge']['kind'] == 'answers' else 'on the raised strong ' + ' '.join(check['challenge']['ids']))
         if check['expect'] == 'challenge-rulings':

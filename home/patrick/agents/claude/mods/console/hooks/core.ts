@@ -4,12 +4,12 @@ import type { EngineInterface, ToolCallResult } from 'claude-code'
 
 import type { ConsoleBoard, ConsolePassOrigin, ConsoleRound, ConsoleSuggestion } from '../types'
 
-import { boardItem, boardViews, isRoundOpen, pass, PASS_COMMANDS, pending as readPending, readRole, RELEASE_COMMAND, ROUND_ROLES, setWorkers, show, stampRelease, stateDir } from './engine'
+import { boardItem, boardViews, decline, isRoundOpen, pass, PASS_COMMANDS, pending as readPending, readRole, RELEASE_COMMAND, ROUND_ROLES, setWorkers, show, stampRelease, stateDir } from './engine'
 import {
   claimRefresh, getAskSent, getDrawn, getPaneDismissed, getPass, getPrinted, getRole, getRound, releaseRefresh, setAskSent, setBoard, setDrawn, setPass, setPrinted, setRole,
   setRound, setRoundError, setStart, takeRefreshAgain, updateOpened, updateQueued,
 } from './state'
-import { itemSlot, openDialogText } from './words'
+import { itemSlot, missingReportText, openDialogText, stuckPassText } from './words'
 
 type $ = EngineInterface
 
@@ -46,7 +46,7 @@ export const placeholderMarker = (question: unknown): string | null =>
   typeof question === 'string' && question.startsWith(DIALOG_PREFIX) ? question.slice(DIALOG_PREFIX.length, -1) : null
 
 /** What the swapped dialog came to, set by the AskUserQuestion hook. `summary`: the visible line; `note`: the engine's text for the model; `needsModel`: typed text, a note or a decline. */
-export type DialogOutcome = { summary: string; note: string | null; needsModel: boolean }
+export type DialogOutcome = { summary: string; note: string | null; needsModel: boolean; unsavedDecline?: { marker: string; partial: Record<string, string> | null } }
 let dialogOutcome: DialogOutcome | null = null
 export const setDialogOutcome = (outcome: DialogOutcome): void => { dialogOutcome = outcome }
 
@@ -75,6 +75,17 @@ export async function openDialog($: $, marker: string, session: string): Promise
   if (outcome === null) {
     await askModelToOpen($, marker)
     return
+  }
+  if (outcome.unsavedDecline !== undefined) {
+    // Esc aborts the dialog hook's own runs, a retry there included; a run from here, after the dialog closed, goes through.
+    try {
+      const recorded = await decline($, session, outcome.unsavedDecline)
+      await setRound($, recorded)
+      outcome.note = recorded.note
+    } catch (error) {
+      outcome.note = `Recording the decline of ${marker} failed: ${message(error)}. The batch stays out.`
+      await notice($, outcome.note)
+    }
   }
   if (outcome.needsModel || !(await betweenTurns($, session, false, false))) await wakeModel($, outcome)
 }
@@ -135,8 +146,12 @@ export async function betweenTurns($: $, session: string, isAborted: boolean, op
       // Esc stops the loop: the pass stays pending and is not run again.
       await setPass($, { ...run, phase: 'noted' })
     } else if (run.phase === 'started') {
+      await setPass($, { ...run, phase: 'asked' })
+      await pressSubmit($, missingReportText(pending.command, pending.id), undefined, true)
+      started = true
+    } else if (run.phase === 'asked') {
       await setPass($, { ...run, phase: 'noted' })
-      await noteModel($, `The /${pending.command} pass (${pending.id}) ended without its report. Report its per-question updates through the protocol tool.`)
+      await notice($, stuckPassText(pending.command, pending.args))
     }
   } else if (pending !== null && !isAborted) {
     await setPass($, { id: pending.id, command: pending.command, phase: 'queued' })
@@ -156,12 +171,6 @@ export async function betweenTurns($: $, session: string, isAborted: boolean, op
 /** A role button's press: the person's own `/role <role>`. A prompt text beginning with `/` is refused by the host, so it runs as a command (the press route of Commit and Retro). */
 export async function pressRole($: $, role: 'solo' | 'autopilot'): Promise<void> {
   await pressRun($, 'role', role)
-}
-
-/** A note the model reads at its next request, shown to the person as a notice too. */
-export async function noteModel($: $, text: string): Promise<void> {
-  await $.session.append({ message: { type: 'user', content: [{ type: 'text', text: `<console-note>${text}</console-note>` }] } })
-  await notice($, text)
 }
 
 /** Adds a note the model reads after the tool's result; a refusal stays as it is. */

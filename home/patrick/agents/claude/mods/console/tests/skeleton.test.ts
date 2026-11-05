@@ -183,6 +183,8 @@ describe('dialog gate and capture', () => {
 
       test('answers read as the person\'s own words, one line each; the console\'s own request stays framed', async ($, on) => {
         expect(answeredText([{ question: 'a' }, { question: 'b' }], { a: 'x', b: 'y' })).toBe('Answered:\n1. x\n2. y')
+        const long = 'y'.repeat(200)
+        expect(answeredText([{ question: 'a' }], { a: long })).toBe(`Answered:\n1. ${long}`)  // your words in full (r34-q159)
         const { w, clock } = world(on, { round: asking() })
         on('tool.call', { tool: 'AskUserQuestion' }, () => answered({ [QUESTION]: label }) as never)
         await start($)
@@ -242,6 +244,33 @@ describe('dialog gate and capture', () => {
         await clock.settle()
         expect(w.verbs().some(one => one.startsWith('decline'))).toBe(true)
         expect(w.prompts).toEqual(['The dialog was declined.'])
+      })
+
+      test('Esc cancels the save of a decline: it is saved once the dialog closed, with no error shown', async ($, on) => {
+        const { w, clock, session } = world(on, { round: asking() })
+        w.failVerbs = ['decline']
+        on('tool.call', { tool: 'AskUserQuestion' }, () => ({ isError: true, result: 'declined', text: 'declined' }) as never)
+        await start($)
+        await $.turn.complete(complete())
+        await clock.settle()
+        expect(w.verbs().filter(one => one.startsWith('decline'))).toHaveLength(2)
+        expect(w.prompts).toEqual(['The dialog was declined.'])
+        expect(notices(session).filter(text => text.includes('not recorded') || text.includes('not saved'))).toEqual([])
+      })
+
+      test('a failed save of answers says so plainly, and the questions come again', async ($, on) => {
+        const { w, clock, session } = world(on, { round: asking() })
+        w.failVerbs = ['answer']
+        let opened = 0
+        on('tool.call', { tool: 'AskUserQuestion' }, () => { opened += 1; return answered({ [QUESTION]: label }) as never })
+        await start($)
+        await $.turn.complete(complete())
+        await clock.settle()
+        expect(w.prompts.filter(text => text.includes('were not saved') && text.includes('come again'))).toHaveLength(1)
+        expect(notices(session).filter(text => text.includes('protocol tool'))).toEqual([])
+        await $.turn.complete(complete())
+        await clock.settle()
+        expect(opened).toBe(2)
       })
 
       test('without a batch to swap in, the placeholder is never drawn', async ($, on) => {
@@ -500,41 +529,46 @@ describe('machine-run passes', () => {
     expect(JSON.parse(pass?.stdin ?? '{}')).toEqual({ command: 'ground', args: '', pending: 'p7' })
   })
 
-  test('a pass turn that ends with the same pending id gets a note, and is not re-run', async ($, on) => {
+  test('a pass turn that ends with the same pending id asks the model once, then tells the person, and is not re-run', async ($, on) => {
     const { w, session, clock } = world(on, { round: roundJson({ pending: { id: 'p7', command: 'ground', args: '' } }) })
     await start($)
     await $.turn.complete(complete())
     // The queued run starts as a command the console itself ran.
     await $.command.run({ command: 'ground', args: '', origin: { kind: 'plugin', name: 'console' }, presentation: { isFullscreen: true, columns: 160 } })
     await $.turn.complete(complete())
+    await clock.settle()
+    expect(w.prompts.filter(text => text.includes('ended without its report'))).toHaveLength(1)
+    expect(notices(session).filter(text => text.includes('The round stopped'))).toHaveLength(0)
     await $.turn.complete(complete())
     await clock.settle()
-    expect(notes(session).filter(text => text.includes('ended without its report'))).toHaveLength(1)
-    expect(notices(session).some(text => text.includes('ended without its report'))).toBe(true)
+    expect(notices(session).filter(text => text.includes('The round stopped: the /ground pass has no report. Type /ground to run it again.'))).toHaveLength(1)
+    await $.turn.complete(complete())
     await clock.settle()
+    expect(w.prompts.filter(text => text.includes('ended without its report'))).toHaveLength(1)
+    expect(notices(session).filter(text => text.includes('The round stopped'))).toHaveLength(1)
     expect(w.commands.filter(one => one.command === 'ground' && one.args === '')).toHaveLength(2)
   })
 
-  test('a pending pass the person runs is not queued again, and is noted when it ends unreported', async ($, on) => {
-    const { w, session, clock } = world(on, { round: roundJson({ pending: { id: 'p7', command: 'ground', args: '' } }) })
+  test('a pending pass the person runs is not queued again, and is asked for when it ends unreported', async ($, on) => {
+    const { w, clock } = world(on, { round: roundJson({ pending: { id: 'p7', command: 'ground', args: '' } }) })
     await start($)
     await $.command.run({ command: 'ground', args: '', origin: { kind: 'composer' }, presentation: { isFullscreen: true, columns: 160 } })
     await $.skill.prompt({ skill: 'ground', text: 'Ground…' } as never)
     await $.turn.complete(complete())
     await clock.settle()
     expect(w.commands.filter(one => one.command === 'ground')).toHaveLength(1)
-    expect(notes(session).filter(text => text.includes('ended without its report'))).toHaveLength(1)
+    expect(w.prompts.filter(text => text.includes('ended without its report'))).toHaveLength(1)
   })
 
   test("the pass's skill expanding marks it started too", async ($, on) => {
-    const { session, clock } = world(on, { round: roundJson({ pending: { id: 'p7', command: 'ground', args: '' } }) })
+    const { w, clock } = world(on, { round: roundJson({ pending: { id: 'p7', command: 'ground', args: '' } }) })
     await start($)
     await $.turn.complete(complete())
     await clock.settle()
     await $.skill.prompt({ skill: 'ground', text: 'Ground…' } as never)
     await $.turn.complete(complete())
     await clock.settle()
-    expect(notes(session).filter(text => text.includes('ended without its report'))).toHaveLength(1)
+    expect(w.prompts.filter(text => text.includes('ended without its report'))).toHaveLength(1)
   })
 
   test('a new pending id runs again', async ($, on) => {

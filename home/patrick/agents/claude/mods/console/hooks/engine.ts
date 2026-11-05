@@ -245,7 +245,7 @@ function parseQuestion(value: unknown): ConsoleQuestion {
     recommendation: nullableText(raw.recommendation),
     strength: raw.strength === 'lean' || raw.strength === 'strong' ? raw.strength : null,
     leanBecause: raw.leanBecause === null || raw.leanBecause === undefined ? null
-      : { cause: text(record(raw.leanBecause).cause), detail: text(record(raw.leanBecause).detail) },
+      : { cause: text(record(raw.leanBecause).cause), detail: text(record(raw.leanBecause).detail), ...(record(raw.leanBecause).flipsIf === undefined ? {} : { flipsIf: text(record(raw.leanBecause).flipsIf) }) },
     strongBecause: raw.strongBecause === null || raw.strongBecause === undefined ? null
       : Object.fromEntries(Object.entries(record(raw.strongBecause)).map(([key, value]) => [key, text(value)])),
   }

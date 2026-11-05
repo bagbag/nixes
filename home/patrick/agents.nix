@@ -132,6 +132,9 @@ in
   home.file.".agents/bin/worker-last-use".source =
     config.lib.file.mkOutOfStoreSymlink "${agentsSrc}/bin/worker-last-use";
 
+  home.file.".agents/bin/round-report".source =
+    config.lib.file.mkOutOfStoreSymlink "${agentsSrc}/bin/round-report";
+
   # Skills are rendered from the shared source tree so included instructions
   # remain single-sourced while each deployed SKILL.md is self-contained.
   home.file.".claude/skills".source = "${agentArtifacts}/skills";

@@ -126,11 +126,17 @@ for each when asked or recorded:
   the user values.
 - **Consumer walk** (`consumerWalk`): a realistic consumer walk supports it;
   does not apply to internal choices.
-- **Rulings hold** (`rulingsHold`): released rulings hold, or each revision is
-  raised as its own question; does not apply when none touches it.
+- **Rulings challenged** (`rulingsChallenged`): judged as if no released ruling
+  existed; each released ruling it rests on or Related linked is challenged in
+  `priorRulings` (holds or fails, and why), and each that fails is raised as a
+  revision; does not apply when none touches it. An answer from the open round
+  stays a premise.
 
 Otherwise it is a lean that names its cause: `preference` (what the choice
-depends on) or `evidence` (the unchecked fact and how to check it). Ground
+depends on) or `evidence` (the unchecked fact and how to check it). A preference
+lean still recommends on merits, walks one real case (a caller read from the
+code, or what the person would see) and says in `flipsIf` what the person would
+have to value to pick another option; a question of fact is evidence. Ground
 evidence leans before asking; mark one left unverified. Write the marks as
 `strong: <option>`, `lean (unverified: <fact>): <option>` or
 `lean (your call: <what it depends on>): <option>`.

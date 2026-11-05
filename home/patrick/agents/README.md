@@ -291,9 +291,9 @@ A round:
   nor `against`.
 - A rule question settles several selected items (board ids or pasted
   points) that one answer settles the same way: its `settles` lists their
-  keys, and the items need no question of their own (never on a
-  confirm-own-rulings question; an item is settled once and is no other
-  question's `board`/`for`). Invariant: every selected key is covered by a
+  keys, and the items need no question of their own (an item is settled once
+  and is no other question's `board`/`for`). Merge only when no sensible answer
+  would treat them differently (`skills/shared/question-format.md`). Invariant: every selected key is covered by a
   question's `board`, `for` or `settles`; Stage and every update set (a pass
   report, `protocol edit`) is checked once after all its updates, and one that
   leaves a key uncovered is refused as a whole, naming the keys with the other
@@ -391,7 +391,7 @@ A round:
   does not count toward the description limit). A batch of two or more is numbered (`1. `, `2. `) in
   the dialog text, which keys the answers. The engine renders the text printed
   before the dialog from the question data and owns its format (below); the
-  Claude ask text tells the lead to write nothing about the questions and end its turn while the
+  Claude ask text tells the lead to write one short line that questions are coming and end its turn while the
   console prints them and sends the message that opens the dialog (the headline says
   `next: the console to print, then your answers`, or `the console to open the dialog` for an empty
   notice), the Codex ask text carries the text ("Text to show first") for the model to show, then asks. Answers
@@ -531,8 +531,27 @@ pass always gets the skill's full text; the engine cuts nothing. A new check run
 compaction print the question list again.
 
 Every step's output opens with a headline: the call's events in the Log's
-words, then the next step (`r1 · ground: q3 changed · next:
-step-back, cycle 2/5`); the console shows it as the call's chat row.
+words, then the next step (`r1 · related resolved · next: the next batch`); the
+console shows it as the call's chat row. In Claude the pass sequence stays out of
+what the model reads: no next pass and no cycle in the headline or check text, only
+`End your turn with one short line`. The pane shows `checking N/M`, `protocol show`
+keeps the cycle, and Codex, which runs its passes itself, keeps them all.
+
+`bin/round-report` prints passes by kind, how questions were answered and how often a
+recommendation changed after the person saw it (the `late-change` event);
+`--since <time>` compares before and after a change, `--transcripts` adds tool use
+and tokens per pass.
+
+A lean question with room in its dialog also offers `Think more`: no answer, so
+that question's checks rerun with no model reading and it comes back; the batch's
+other answers are recorded. A question with four options has no room, and the person
+types their request. A preference lean carries `leanBecause.flipsIf`, and `priorRulings`
+lists each released ruling a recommendation rests on or Related linked, with
+`holds` or `fails` and why: the record keeps them all, and the print shows how many
+held and each that fails. An open decision named in an unanswered question's `board` or `settles`
+joins the round and is claimed (a gone session's hold taken over, a live one's
+refused). When a pass ends with no report, the console asks the model once, then tells
+the person the round stopped and what to type.
 
 `show --json` is the console's contract (version 1; its real output in ten
 states is `claude/mods/console/tests/engine-contract.ts`, regenerated with

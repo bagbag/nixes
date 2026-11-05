@@ -1,0 +1,150 @@
+#!/usr/bin/env python3
+"""round-report: counts over every session's round history, to judge a change to the rounds before and after it.
+
+Prints passes by kind, how questions were answered and how often a recommendation changed after its question went out;
+with --transcripts, also how much each kind of pass did, read from Claude's transcripts (the host's format, so best effort).
+"""
+import argparse
+import collections
+import datetime
+import glob
+import json
+import os
+import re
+import statistics
+import sys
+
+
+def state_dir() -> str:
+    explicit = os.environ.get('AGENT_SESSION_STATE_DIR')
+    if explicit:
+        return explicit
+    base = os.environ.get('XDG_STATE_HOME') or os.path.expanduser('~/.local/state')
+    return os.path.join(base, 'agent-sessions')
+
+
+def moment(text: str) -> datetime.datetime:
+    return datetime.datetime.fromisoformat(text.replace('Z', '+00:00'))
+
+
+def events(since: datetime.datetime | None):
+    """Each session's history events in order: (session, event)."""
+    for path in sorted(glob.glob(os.path.join(state_dir(), '*.protocol', 'history.jsonl'))):
+        session = os.path.basename(os.path.dirname(path)).removesuffix('.protocol')
+        with open(path, encoding='utf-8') as lines:
+            for line in lines:
+                try:
+                    event = json.loads(line)
+                except ValueError:
+                    continue
+                if since is None or moment(event['at']) >= since:
+                    yield session, event
+
+
+def table(title: str, heads: list[str], rows: list[list]) -> str:
+    cells = [heads, *[[str(cell) for cell in row] for row in rows]]
+    widths = [max(len(row[i]) for row in cells) for i in range(len(heads))]
+    body = ['  '.join(cell.ljust(width) for cell, width in zip(row, widths)).rstrip() for row in cells]
+    return '\n'.join([title, *body]) if rows else f'{title}\nnone'
+
+
+def report(since: datetime.datetime | None) -> tuple[str, set[str]]:
+    passes, started = collections.defaultdict(list), {}
+    counts, sessions = collections.Counter(), set()
+    for session, event in events(since):
+        sessions.add(session)
+        kind = event['event']
+        if kind == 'pass-start':
+            started[session] = event
+        elif kind == 'pass':
+            begun = started.pop(session, None)
+            seconds = (moment(event['at']) - moment(begun['at'])).total_seconds() if begun else None
+            if seconds is None or seconds < 1800:  # longer: the session sat idle
+                passes[(event['command'], event.get('kind') or 'base')].append((bool(event['changes']), seconds or 0))
+        elif kind == 'answered' and event.get('origin') == 'dialog':
+            counts['picked'] += len(event.get('questions') or [])
+            counts['typed'] += len(event.get('typed') or [])
+            counts['think more'] += len(event.get('thinkMore') or [])
+        elif kind in ('edited', 'restart', 'late-change', 'asked'):
+            counts[kind] += 1
+    rows = []
+    for key, done in sorted(passes.items(), key=lambda pair: -len(pair[1])):
+        seconds = [one[1] for one in done]
+        changed = sum(one[0] for one in done)
+        rows.append([*key, len(done), changed, f'{100 * changed // len(done)}%', round(statistics.median(seconds)), f'{100 * sum(s < 10 for s in seconds) // len(done)}%'])
+    answers = counts['picked'] + counts['typed'] + counts['think more']
+    lines = [table('Passes', ['pass', 'kind', 'runs', 'changed', 'share', 'median s', 'under 10 s'], rows), '',
+             'Questions',
+             f"batches asked: {counts['asked']}",
+             f"answers: {answers}; picked {counts['picked']}, typed {counts['typed']} ({100 * counts['typed'] // max(answers, 1)}%), think more {counts['think more']}",
+             f"edits: {counts['edited']}; restarts: {counts['restart']}",
+             f"late changes (a recommendation changed after the person saw it): {counts['late-change']}"]
+    return '\n'.join(lines), sessions
+
+
+def pass_turns(session: str, since: datetime.datetime | None):
+    """One row per pass skill expansion in the session's transcript, counted to its turn's end."""
+    for path in glob.glob(os.path.expanduser(f'~/.claude/projects/*/{session}.jsonl')):
+        current, seen, args, command_by = None, set(), '', None
+        with open(path, encoding='utf-8') as lines:
+            for line in lines:
+                try:
+                    row = json.loads(line)
+                except ValueError:
+                    continue
+                message = row.get('message') or {}
+                content = message.get('content')
+                if row.get('type') == 'user':
+                    origin = row.get('origin') if isinstance(row.get('origin'), dict) else {}
+                    text = content if isinstance(content, str) else ' '.join(b.get('text', '') for b in content or [] if isinstance(b, dict) and b.get('type') == 'text')
+                    if '<command-name>' in text:
+                        found = re.search(r'<command-args>(.*?)</command-args>', text, re.S)
+                        args, command_by = found.group(1).strip() if found else '', origin.get('kind')
+                    skill = re.match(r'Base directory for this skill: \S*/skills/(step-back|ground|challenge-rulings)\b', text)
+                    if skill and (since is None or moment(row['timestamp']) >= since):
+                        if current:
+                            yield current
+                        who = 'console' if origin.get('kind') == 'plugin' else 'typed' if command_by == 'human' else 'model'
+                        current = {'pass': skill.group(1), 'run by': f"{who}, {'argument' if args else 'bare'}", 'tools': 0, 'tokens': 0}
+                elif current and row.get('type') == 'system' and row.get('subtype') in ('turn_duration', 'stop_hook_summary'):
+                    yield current
+                    current = None
+                elif current and row.get('type') == 'assistant':
+                    if message.get('id') not in seen:
+                        seen.add(message.get('id'))
+                        current['tokens'] += (message.get('usage') or {}).get('output_tokens', 0)
+                    for block in content or []:
+                        if block.get('type') == 'tool_use' and 'protocol' not in block['name'] and not re.search(r'protocol.*\bstep\b', json.dumps(block['input'])):
+                            current['tools'] += 1
+        if current:
+            yield current
+
+
+def effort(sessions: set[str], since: datetime.datetime | None) -> str:
+    groups = collections.defaultdict(list)
+    for session in sorted(sessions):
+        for one in pass_turns(session, since):
+            groups[(one['pass'], one['run by'])].append(one)
+    rows = [[*key, len(done), round(statistics.mean(one['tools'] for one in done), 1),
+             f"{100 * sum(one['tools'] == 0 for one in done) // len(done)}%", round(statistics.median(one['tokens'] for one in done))]
+            for key, done in sorted(groups.items())]
+    return table('Effort per pass (first turn; typed passes also write for the person, so tokens overstate them)',
+                 ['pass', 'run by', 'runs', 'tools', 'no tool', 'median tokens'], rows)
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__.split('\n', 1)[0])
+    parser.add_argument('--since', help='only events from this ISO time on, e.g. 2026-11-05T12:00:00Z')
+    parser.add_argument('--transcripts', action='store_true', help="also read Claude's transcripts for tool use and tokens per pass")
+    args = parser.parse_args()
+    since = moment(args.since) if args.since else None
+    text, sessions = report(since)
+    print(text)
+    if args.transcripts:
+        print()
+        print(effort(sessions, since))
+    return 0
+
+
+if __name__ == '__main__':
+    sys.exit(main())

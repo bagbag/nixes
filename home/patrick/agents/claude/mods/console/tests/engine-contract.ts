@@ -55,7 +55,8 @@ export const ENGINE_CONTRACT = {
         "strength": "lean",
         "leanBecause": {
           "cause": "preference",
-          "detail": "taste"
+          "detail": "taste",
+          "flipsIf": "a different taste"
         },
         "strongBecause": null
       }
@@ -138,7 +139,8 @@ export const ENGINE_CONTRACT = {
         "strength": "lean",
         "leanBecause": {
           "cause": "preference",
-          "detail": "taste"
+          "detail": "taste",
+          "flipsIf": "a different taste"
         },
         "strongBecause": null
       }
@@ -157,12 +159,16 @@ export const ENGINE_CONTRACT = {
             {
               "label": "Drop",
               "description": "drop it"
+            },
+            {
+              "label": "Think more",
+              "description": "No answer yet: its checks rerun with a consumer walk, then it comes back to you."
             }
           ],
           "multiSelect": false
         }
       ],
-      "notice": "**Cache**\n\nProblem: Which cache.\n\nCases: Reads; writes.\n\nPremises: Both read the cache.\n\n**Recommended (lean): Keep**\nYour call: taste\n- For: for it\n- Against: against it\n\n**Drop**\n- For: for it\n- Against: against it"
+      "notice": "**Cache**\n\nProblem: Which cache.\n\nCases: Reads; writes.\n\nPremises: Both read the cache.\n\n**Recommended (lean): Keep**\nYour call: taste\nWhat would change it: a different taste\n- For: for it\n- Against: against it\n\n**Drop**\n- For: for it\n- Against: against it"
     },
     "counts": null,
     "progress": {
@@ -281,7 +287,8 @@ export const ENGINE_CONTRACT = {
         "strength": "lean",
         "leanBecause": {
           "cause": "preference",
-          "detail": "taste"
+          "detail": "taste",
+          "flipsIf": "a different taste"
         },
         "strongBecause": null
       }
@@ -636,7 +643,8 @@ export const ENGINE_CONTRACT = {
         "strength": "lean",
         "leanBecause": {
           "cause": "preference",
-          "detail": "taste"
+          "detail": "taste",
+          "flipsIf": "a different taste"
         },
         "strongBecause": null
       }

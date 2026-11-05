@@ -28,7 +28,7 @@ export type ConsoleQuestion = {
   changedBy: string | null
   recommendation: string | null
   strength: 'lean' | 'strong' | null
-  leanBecause: { cause: string; detail: string } | null
+  leanBecause: { cause: string; detail: string; flipsIf?: string } | null
   strongBecause: Record<string, string> | null
 }
 
@@ -129,7 +129,7 @@ export type ConsoleBoard = {
 export type ConsoleRole = { session: string; role: string; actor: string; tool: string }
 
 /** The machine-run pass this console started, by pending id (R-B4). */
-export type ConsolePassRun = { id: string; command: string; phase: 'queued' | 'started' | 'noted' }
+export type ConsolePassRun = { id: string; command: string; phase: 'queued' | 'started' | 'asked' | 'noted' }
 
 /** Runs a press queued that have not started yet (repeat-press guard). */
 export type ConsoleQueued = { key: string; at: number }[]

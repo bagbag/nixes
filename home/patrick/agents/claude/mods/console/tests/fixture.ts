@@ -59,6 +59,8 @@ export type World = {
   held: unknown[]
   agents: { id: string; description: string; type: string; status: string }[]
   protocolExit: number
+  /** `protocol` verbs whose next run fails, one failure per entry (Esc aborting the dialog hook's save). */
+  failVerbs: string[]
   /** The reason `$.prompt.submit` drops a prompt with (the console's sends fail); null: it goes through. */
   promptError: string | null
   /** The size $.session.usage() reports; undefined until a response, 'fails' for a read that throws. */
@@ -84,6 +86,7 @@ export function world(on: On, init: Partial<Pick<World, 'round' | 'role' | 'surf
     held: init.held ?? [],
     agents: init.agents ?? [],
     protocolExit: 0,
+    failVerbs: [],
     promptError: null,
     tokens: 500_000,
     show: { record: { description: '## Decision\nKeep it.', dependencies: [], issue_type: 'decision', priority: 1, assignee: null, labels: [], comment_count: 0 }, exit: 0, bad: false },
@@ -134,6 +137,10 @@ export function world(on: On, init: Partial<Pick<World, 'round' | 'role' | 'surf
     if (argv[0] === PROTOCOL) {
       if (w.protocolExit !== 0) return { value: { exitCode: w.protocolExit, stdout: '', stderr: 'engine down', isStdoutTruncated: false, isStderrTruncated: false } }
       const verb = argv[3]
+      if (w.failVerbs.includes(verb as string)) {
+        w.failVerbs.splice(w.failVerbs.indexOf(verb as string), 1)
+        return { value: { exitCode: 1, stdout: '', stderr: 'aborted', isStdoutTruncated: false, isStderrTruncated: false } }
+      }
       if (verb === 'pending') return ok(w.round.pending ?? null)
       if (verb === 'status') return ok('round r4 · check 2/3 · next ground')
       if (verb === 'show' && argv[4] !== '--json') return ok('# round r4')
