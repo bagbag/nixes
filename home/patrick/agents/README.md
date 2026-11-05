@@ -130,6 +130,34 @@ Workflow owners:
   trigger descriptions, frontmatter and style for skills, definitions and
   instructions; loaded while writing, user-invoked to review.
 
+`board setup` ([beads-setup](skills/shared/beads-setup.md#beads-setup)) owns a board's settings:
+`TRAVELLING_CONFIG` (database, travels by sync), `LOCAL_CONFIG` (`.beads/config.yaml`, per clone),
+`SERVER_CONFIG` and `SHARED_CONFIG` in `bin/board`. It creates a board with `bd init --stealth`
+(`--server` for one to share later) or brings an existing one to these values, printing each old and
+new value, and reports `.git/info/exclude` lines matching tracked files; share and join apply the
+same lists. `no-git-ops` stays `true`, as stealth init sets it: bd 1.3's stealth handling keys on it
+(with `false`, `bd doctor --fix` writes a project `.gitignore`).
+
+Shared boards ([beads-setup](skills/shared/beads-setup.md#shared-boards), queues in
+[Routing](skills/shared/board-core.md#routing)): only board's own mark, `.beads/board-shared.json`,
+makes a board shared, so a board without it costs no bd call and a stray Dolt remote shares nothing.
+`board share` (two steps: it says what goes out, `--yes` sends) and `board join` write it after the
+first push or the clone; a failed join removes what it made. Every bd call sets `BD_NO_REMOTE_ADOPT=1`.
+`board route`, `board send` and `board create --for` move items between queues and inboxes (`for:`
+labels; every send stamps `sent_at` metadata, and an inbox item's row and `waitingSince` count from
+it); `board move` flattens to a fresh repository, leaving a moved note (`custom.board.moved`) on
+the old board that `Shared.check_moved` reads after each pull, so stale clones refuse writes until
+`board join` rejoins them. `Shared` in `bin/board` owns sync: `before` pulls,
+`after` opens the window, a detached `board _sync-wait` commits and syncs, and `.beads/board-sync/`
+holds its locks, stamps and reported problem. On these boards `board bd` runs bd as a child instead
+of exec'ing it, to retry `foreign key conflicts` and start the wait. `Board.listed` applies the queue
+filter, `queue_guard` refuses moves and cross-queue claims, and `rewritten_create` makes plain child
+ids on every board. `board console` adds `sync` (the problem line) and `queueLine` (other queues,
+unrouted with the count for you, blocking yours), both shown in the pane.
+`AGENT_BOARD_SYNC_SECONDS` shortens the window for tests. `bin/test-shared-board.py` runs the
+behaviour through real clones and a local bare remote; the validator's `validate_shared_board` holds
+the fake-bd checks the build sandbox can run.
+
 `bin/board` (installed as `$HOME/.agents/bin/board`, not on `PATH`) is the
 agents' only board interface: views and hand-offs from one snapshot sized to
 the command (`Board.load`: a `bd list` of the non-closed items plus one
@@ -260,10 +288,13 @@ A round:
   rule for every printed part, with no length check on them: say what is decided and
   what each option means for the person (what they would see, what it costs), each
   thing once, in plain words; how it was found (sources, measurements beyond the
-  deciding number, who said what) and how it gets built go to the record. A re-ask prints a question
-  as `(changed)` with only the parts that differ from what the person saw (a
-  snapshot per question, taken when a dialog for the batch comes back, so a batch
-  withdrawn before its dialog opened prints whole; nothing changed: no text). A release
+  deciding number, who said what) and how it gets built go to the record. Every dialog has its questions' full text
+  above it, re-asks and a reopened batch included; a question that changed since the
+  person saw it (a snapshot per question, taken when a dialog for the batch comes back)
+  names what moved, `(changed: options, premises)`. After a dialog the engine writes the
+  line the person reads: per question its number, title and outcome, a pick marked
+  `(recommended)` or `(not recommended)`, and a skip, a typed reply or Think more saying
+  so. A release
   approval prints its corrections (revised and dropped records), the board check
   (supersedes, closes, the other hit rows) and every own ruling in the same layout; a
   typed or pressed approval opens no dialog and prints nothing. In Claude
@@ -330,7 +361,9 @@ A round:
   `ground assumptions board sources probe`; a change in either reruns the Base
   loop under the cap, and the pair does not repeat), one targeted
   `ground assumptions sources probe <ids>` pass on every lean (evidence or
-  preference: make it strong with evidence, or name what it rests on; no
+  preference, r38-q213: redo it from scratch, walk a realistic consumer through
+  it and test the deciding fact by a probe or count; a lean still resting on
+  values comes back with the value question as its text, options unchanged; no
   loop), then challenge-rulings, last before a batch and again whenever a pass
   changed questions since its last run (its own changes rerun the Base loop,
   the cycle cap bounds the repeats, a run that changes nothing ends it). Once
@@ -544,7 +577,11 @@ and tokens per pass.
 
 A lean question with room in its dialog also offers `Think more`: no answer, so
 that question's checks rerun with no model reading and it comes back; the batch's
-other answers are recorded. A question with four options has no room, and the person
+other answers are recorded. Each rerun pass naming the question carries its goal
+after the lenses and ids: the person asked for a reasoned strong recommendation,
+and the lean they saw (its `leanBecause`) fell short; the goal ends when the
+question is asked again. Only the leading lens names and ids of a pass argument
+count; the rest is focus. A question with four options has no room, and the person
 types their request. A preference lean carries `leanBecause.flipsIf`, and `priorRulings`
 lists each released ruling a recommendation rests on or Related linked, with
 `holds` or `fails` and why: the record keeps them all, and the print shows how many

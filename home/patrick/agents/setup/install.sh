@@ -188,6 +188,17 @@ if [ "$dry" = 0 ]; then
   fi
 fi
 
+# ---- 5. the person shared boards route to ----
+if [ "$uninstall" = 0 ] && [ "$dry" = 0 ] && command -v git >/dev/null && [ -z "$(git config --global --get agents.person || true)" ]; then
+  if [ -t 0 ]; then
+    printf 'Your name for shared boards (git config --global agents.person; blank skips): '
+    read -r who || who=
+    [ -z "$who" ] || git config --global agents.person "$who"
+  else
+    echo "NOTE: for shared boards, set your name: git config --global agents.person <name>." >&2
+  fi
+fi
+
 [ "$backed" = 0 ] || [ "$dry" = 1 ] || echo "backup  $backup"
 if [ "$uninstall" = 1 ]; then
   echo "done. Your earlier instructions, if any, are in ~/.agent-config-backup/. Restart Claude Code and Codex."

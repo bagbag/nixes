@@ -6,7 +6,7 @@ import type { ConsoleBoard, ConsolePassOrigin, ConsoleRound, ConsoleSuggestion }
 
 import { boardItem, boardViews, decline, isRoundOpen, pass, PASS_COMMANDS, pending as readPending, readRole, RELEASE_COMMAND, ROUND_ROLES, setWorkers, show, stampRelease, stateDir } from './engine'
 import {
-  claimRefresh, getAskSent, getDrawn, getPaneDismissed, getPass, getPrinted, getRole, getRound, releaseRefresh, setAskSent, setBoard, setDrawn, setPass, setPrinted, setRole,
+  claimRefresh, getAskSent, getDrawn, getPaneDismissed, getPass, getRole, getRound, releaseRefresh, setAskSent, setBoard, setDrawn, setPass, setPrinted, setRole,
   setRound, setRoundError, setStart, takeRefreshAgain, updateOpened, updateQueued,
 } from './state'
 import { itemSlot, missingReportText, openDialogText, stuckPassText } from './words'
@@ -94,7 +94,7 @@ export async function openDialog($: $, marker: string, session: string): Promise
  * At a main-agent turn's end that was not aborted, with a batch out (r29-q138, r30-q140, r32-q149): runs `/console-questions`, whose
  * hook prints the text and opens the dialog. A command's output draws whole between turns where a transcript row would not, and the hook's
  * fresh `$` matters too: after an awaited call in a chain, `$.ui.ask` skips the swap in the console's hook. One dialog per batch marker until
- * the person sends a new message (`prompt.submit` clears it); a batch already printed prints only a short line. A run that settles unanswered
+ * the person sends a new message (`prompt.submit` clears it). A run that settles unanswered
  * by the hook takes the model's route instead of leaving the round waiting. Returns whether one is on its way.
  */
 export async function openBatchDialog($: $, round: ConsoleRound | null): Promise<boolean> {
@@ -116,14 +116,9 @@ export async function openBatchDialog($: $, round: ConsoleRound | null): Promise
 let questionsAnswered: string | null = null
 export const setQuestionsAnswered = (marker: string): void => { questionsAnswered = marker }
 
-/** Whether the person has yet to read this batch's text; the hook prints it once per batch. */
-export async function isNewText($: $, batch: { marker: string; notice: string }): Promise<boolean> {
-  return batch.notice.trim() !== '' && (await getPrinted($)) !== batch.marker
-}
-
 /** The command's hook never ran: the person reads any new text as a notice, and the model opens the dialog. */
 async function openUnanswered($: $, batch: { marker: string; notice: string }): Promise<void> {
-  if (await isNewText($, batch)) await notice($, `\n${batch.notice}`)
+  if (batch.notice.trim() !== '') await notice($, `\n${batch.notice}`)
   await setPrinted($, batch.marker)
   await askModelToOpen($, batch.marker)
 }

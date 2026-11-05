@@ -2,8 +2,8 @@
 // machine-run passes, pass observation and recovery.
 import { describe, expect, test } from 'claude-code/testing'
 
-import { BATCH, NO_ROUND, notes, notices, PROTOCOL, roundJson, SESSION, world } from './fixture'
-import { answeredText, openDialogText } from '../hooks/words'
+import { BATCH, engineLine, NO_ROUND, notes, notices, PROTOCOL, roundJson, SESSION, world } from './fixture'
+import { openDialogText } from '../hooks/words'
 
 const start = async ($: any) => $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
 
@@ -178,13 +178,10 @@ describe('dialog gate and capture', () => {
         expect((drawn as any).questions).toEqual(BATCH.questions)
         expect((drawn as any).metadata).toEqual({ source: BATCH.marker })
         expect(w.verbs()).toContain('answer --origin dialog')
-        expect(w.prompts).toEqual([`Answered:\n1. ${label}`])
+        expect(w.prompts).toEqual([engineLine([label])])
       })
 
-      test('answers read as the person\'s own words, one line each; the console\'s own request stays framed', async ($, on) => {
-        expect(answeredText([{ question: 'a' }, { question: 'b' }], { a: 'x', b: 'y' })).toBe('Answered:\n1. x\n2. y')
-        const long = 'y'.repeat(200)
-        expect(answeredText([{ question: 'a' }], { a: long })).toBe(`Answered:\n1. ${long}`)  // your words in full (r34-q159)
+      test('the engine\'s line reads as the person\'s own words; the console\'s own request stays framed', async ($, on) => {
         const { w, clock } = world(on, { round: asking() })
         on('tool.call', { tool: 'AskUserQuestion' }, () => answered({ [QUESTION]: label }) as never)
         await start($)
@@ -205,7 +202,7 @@ describe('dialog gate and capture', () => {
         await $.turn.complete(complete())
         await clock.settle()
         expect(asked).toEqual([BATCH.marker])
-        expect(w.prompts).toEqual([`Answered:\n1. ${label}`])
+        expect(w.prompts).toEqual([engineLine([label])])
         await $.turn.complete(complete())
         await clock.settle()
         expect(asked).toEqual([BATCH.marker, 'round:r4:3'])
@@ -233,7 +230,7 @@ describe('dialog gate and capture', () => {
         await start($)
         await $.turn.complete(complete())
         await clock.settle()
-        expect(w.prompts).toEqual(['Answered:\n1. my own words'])
+        expect(w.prompts).toEqual([engineLine(['my own words'])])
       })
 
       test('a declined dialog is recorded and wakes the model', async ($, on) => {
@@ -348,13 +345,13 @@ describe('dialog gate and capture', () => {
         expect(notices(session).join(' ')).toContain('Engine name')
       })
 
-      test('run by the console, the command prints a text once and a repeat says so', async ($, on) => {
+      test('run by the console, the command prints the text every time, also for a batch reopened (r36-q198)', async ($, on) => {
         const { clock } = world(on, { round: asking() })
         await start($)
         await clock.settle()
         const own = { command: 'console-questions', args: BATCH.marker, origin: { kind: 'plugin', name: 'console' }, presentation: typed.presentation } as never
         expect((await $.command.run(own)).text).toBe(`\n${NOTICE}`)
-        expect((await $.command.run(own)).text).toBe('\nNothing new to read for these questions.')
+        expect((await $.command.run(own)).text).toBe(`\n${NOTICE}`)
       })
 
       test('an empty text sends at once, with nothing to print', async ($, on) => {
@@ -529,12 +526,23 @@ describe('machine-run passes', () => {
     expect(JSON.parse(pass?.stdin ?? '{}')).toEqual({ command: 'ground', args: '', pending: 'p7' })
   })
 
+  test('a Think more rerun runs and records its argument verbatim, goal included (r38-q213)', async ($, on) => {
+    const args = 'goal foundations q3 Think more on q3: the person asked for a reasoned strong recommendation; what fell short: the lean (your call: taste)'
+    const { w, clock } = world(on, { round: roundJson({ pending: { id: 'p8', command: 'step-back', args } }) })
+    await start($)
+    await $.turn.complete(complete())
+    await clock.settle()
+    expect(w.commands.filter(one => one.command === 'step-back')).toEqual([{ command: 'step-back', args }])
+    const pass = w.calls.find(one => one.argv[3] === 'pass')
+    expect(JSON.parse(pass?.stdin ?? '{}')).toEqual({ command: 'step-back', args, pending: 'p8' })
+  })
+
   test('a pass turn that ends with the same pending id asks the model once, then tells the person, and is not re-run', async ($, on) => {
     const { w, session, clock } = world(on, { round: roundJson({ pending: { id: 'p7', command: 'ground', args: '' } }) })
     await start($)
     await $.turn.complete(complete())
-    // The queued run starts as a command the console itself ran.
     await $.command.run({ command: 'ground', args: '', origin: { kind: 'plugin', name: 'console' }, presentation: { isFullscreen: true, columns: 160 } })
+    await $.skill.prompt({ skill: 'ground', text: 'Ground…' } as never)  // the queued run starts as its skill expands
     await $.turn.complete(complete())
     await clock.settle()
     expect(w.prompts.filter(text => text.includes('ended without its report'))).toHaveLength(1)
@@ -557,6 +565,22 @@ describe('machine-run passes', () => {
     await $.turn.complete(complete())
     await clock.settle()
     expect(w.commands.filter(one => one.command === 'ground')).toHaveLength(1)
+    expect(w.prompts.filter(text => text.includes('ended without its report'))).toHaveLength(1)
+  })
+
+  test('a turn ending while the pass still waits in the queue asks for no report', async ($, on) => {
+    // The false alarm: another prompt runs first (the line after a dialog), and its turn ends before the pass began.
+    const { w, clock } = world(on, { round: roundJson({ pending: { id: 'p7', command: 'ground', args: '' } }) })
+    await start($)
+    await $.turn.complete(complete())
+    await clock.settle()
+    await $.command.run({ command: 'ground', args: '', origin: { kind: 'plugin', name: 'console' }, presentation: { isFullscreen: true, columns: 160 } })
+    await $.turn.complete(complete())
+    await clock.settle()
+    expect(w.prompts.filter(text => text.includes('ended without its report'))).toHaveLength(0)
+    await $.skill.prompt({ skill: 'ground', text: 'Ground…' } as never)
+    await $.turn.complete(complete())
+    await clock.settle()
     expect(w.prompts.filter(text => text.includes('ended without its report'))).toHaveLength(1)
   })
 

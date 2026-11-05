@@ -93,6 +93,8 @@ export type ConsoleRound = {
   /** What follows a close, the engine's knowledge: the release of the decided records the session holds (their count, read from the board at the last close or `protocol next`), and the model's stored proposal (`protocol next --set`). Null while a run is open or nothing waits; `rounds` is present, possibly empty, once a proposal is stored: an empty one offers only a compaction. */
   next: { release?: { count: number }; rounds?: ConsoleProposal[] } | null
   note: string | null
+  /** The line the person reads after a dialog, from `answer --origin dialog`. */
+  echo: string | null
 }
 
 export type ConsoleItem = { id: string; type: string; status: string; title: string; holder: string | null }
@@ -122,6 +124,10 @@ export type ConsoleBoard = {
   sessions: ConsoleSession[]
   held: ConsoleHeld[]
   agents: ConsoleAgent[]
+  /** A shared board's stopped or failing sync, or its store warning, with the fix; null otherwise. */
+  sync: string | null
+  /** A shared board's other queues as counts, unrouted items and other people's items blocking yours; null otherwise. */
+  queues: string | null
   error: string | null
 }
 

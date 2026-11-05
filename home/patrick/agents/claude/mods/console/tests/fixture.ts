@@ -36,6 +36,9 @@ export function roundJson(overrides: Record<string, unknown> = {}): Record<strin
   }
 }
 
+/** What the stand-in engine answers as the line after a dialog: the console prints the engine's line, whatever it says. */
+export const engineLine = (answers: readonly string[]): string => `Engine line: ${answers.join(', ')}`
+
 export const NO_ROUND = roundJson({ round: null, step: null, check: null, pending: null, batch: null, questions: [] })
 
 export type World = {
@@ -58,6 +61,8 @@ export type World = {
   items: unknown[]
   held: unknown[]
   agents: { id: string; description: string; type: string; status: string }[]
+  sync?: string | null
+  queueLine?: string | null
   protocolExit: number
   /** `protocol` verbs whose next run fails, one failure per entry (Esc aborting the dialog hook's save). */
   failVerbs: string[]
@@ -71,7 +76,7 @@ export type World = {
 }
 
 /** Registers the world's hooks beneath the console; returns it, the clock and the session record. */
-export function world(on: On, init: Partial<Pick<World, 'round' | 'role' | 'surfaces' | 'sessions' | 'items' | 'held' | 'agents' | 'activateError'>> = {}) {
+export function world(on: On, init: Partial<Pick<World, 'round' | 'role' | 'surfaces' | 'sessions' | 'items' | 'held' | 'agents' | 'sync' | 'queueLine' | 'activateError'>> = {}) {
   const w: World = {
     round: init.round ?? roundJson(),
     role: init.role === undefined ? { session: SESSION, role: 'lead', actor: '617adf08', tool: 'claude' } : init.role,
@@ -84,6 +89,8 @@ export function world(on: On, init: Partial<Pick<World, 'round' | 'role' | 'surf
     ],
     items: init.items ?? [{ id: 'tstdl-x1', type: 'decision', status: 'in_progress', title: 'Which engine name?', holder: '617adf08' }],
     held: init.held ?? [],
+    sync: init.sync,
+    queueLine: init.queueLine,
     agents: init.agents ?? [],
     protocolExit: 0,
     failVerbs: [],
@@ -145,10 +152,11 @@ export function world(on: On, init: Partial<Pick<World, 'round' | 'role' | 'surf
       if (verb === 'status') return ok('round r4 · check 2/3 · next ground')
       if (verb === 'show' && argv[4] !== '--json') return ok('# round r4')
       if (verb === 'say') return ok('')
+      if (verb === 'answer') return ok({ ...w.round, echo: engineLine(Object.values(JSON.parse(e.init?.stdin ?? '{}').answers ?? {}) as string[]) })
       return ok(w.round)
     }
     if (argv[0] === BOARD) {
-      if (argv[1] === 'console') return ok({ counts: { questions: 188, decided: 0, toPlan: 82, inReview: 14, forUser: 3 }, items: w.items, sessions: w.sessions, held: w.held })
+      if (argv[1] === 'console') return ok({ counts: { questions: 188, decided: 0, toPlan: 82, inReview: 14, forUser: 3 }, items: w.items, sessions: w.sessions, held: w.held, sync: w.sync, queueLine: w.queueLine })
       if (argv[1] === 'show' && w.show.exit !== 0) return { value: { exitCode: w.show.exit, stdout: '', stderr: 'no such item', isStdoutTruncated: false, isStderrTruncated: false } }
       if (argv[1] === 'show' && argv.includes('--json')) return ok(w.show.bad ? 'not json' : { [argv[2] as string]: w.show.record })
       if (argv[1] === 'show') return ok(`${argv[2]}: Which engine name?\nstatus: in_progress`)

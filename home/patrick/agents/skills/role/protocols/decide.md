@@ -15,13 +15,21 @@ engine asks for.
 planning); a recovered session resumes its open round (`protocol show`). A
 proposal starts nothing until the user presses Start or says go.
 
+**Inbox step:** on a shared board, `protocol next` also lists your person's
+inbox and the finds held for their check; show each to the user, who picks
+(moves: [Routing](../../shared/board-core.md#routing)).
+Never decide these alone.
+
 ## Authority
 
 - Rule under
   [Decision authority](../../shared/decision-protocol.md#decision-authority);
   bring every other choice to the user. State each ruling's scope and what you
   checked; make an unsure choice a question.
-- The user decides and releases rulings and owns staging and commits. Write
+- The user decides and releases rulings and owns staging and commits. On a
+  shared board, that is the person of the question's queue
+  ([Routing](../../shared/board-core.md#routing)): ask only your person's
+  questions; another person challenges a ruling with a new question. Write
   decision records, rule owners, your own artifacts, `/tmp` probes and inline
   changes under the global instructions' Orchestration; leave other
   implementation to work items. Run a spike a round question waits on

@@ -231,6 +231,8 @@ export async function drawPane($: $, e: { surface: string; props: RenderPropsOf[
         </Box>,
       )
     }
+    if (view.sync !== null) rows.push(<Box key="board-sync" marginTop={1}><Text color="warning">{view.sync}</Text></Box>)
+    if (view.queues !== null) rows.push(<Box key="board-queues" marginTop={1}><Text color="inactive">{view.queues}</Text></Box>)
     if (view.items.length > 0) {
       const items = capped('items', view.items)
       rows.push(

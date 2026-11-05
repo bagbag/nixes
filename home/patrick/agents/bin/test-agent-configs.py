@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import importlib.machinery
+import itertools
 import importlib.util
 import json
 import os
@@ -1512,6 +1513,248 @@ def validate_hooks(root: Path) -> None:
         raise ValueError("readonly-guard blocked a read-only search")
 
 
+def validate_shared_board(root: Path) -> None:
+    """Shared-board rules with bd faked; bin/test-shared-board.py runs the same behaviour through real clones, which the
+    build sandbox can't."""
+    import contextlib
+    import io
+    from types import SimpleNamespace
+    from unittest.mock import patch
+
+    loader = importlib.machinery.SourceFileLoader("board_shared", str(root / "bin" / "board"))
+    board = importlib.util.module_from_spec(importlib.util.spec_from_loader(loader.name, loader))
+    loader.exec_module(board)
+
+    def expect(ok: bool, what: str, detail: object = "") -> None:
+        if not ok:
+            raise ValueError(f"shared board: {what}: {detail}")
+
+    for given, wanted in (("git@github.com:me/x.git", "git+ssh://git@github.com/me/x.git"),
+                          ("https://github.com/me/x", "git+ssh://git@github.com/me/x.git"),
+                          ("https://github.com/me/x.git", "git+ssh://git@github.com/me/x.git"),
+                          ("ssh://git@host/me/x.git", "git+ssh://git@host/me/x.git"),
+                          ("git+ssh://git@host/me/x.git", "git+ssh://git@host/me/x.git"),
+                          ("/tmp/x.git", "git+file:///tmp/x.git"), ("file:///tmp/x.git", "git+file:///tmp/x.git")):
+        expect(board.normalized_remote(given) == wanted, "normalized_remote", (given, board.normalized_remote(given)))
+
+    def item(item_id, *labels, parents=(), status="open", kind="task", blockers=()):
+        deps = [{"issue_id": item_id, "depends_on_id": p, "type": "parent-child"} for p in parents] \
+            + [{"issue_id": item_id, "depends_on_id": b, "type": "blocks"} for b in blockers]
+        return {"id": item_id, "title": item_id, "status": status, "issue_type": kind, "labels": list(labels), "dependencies": deps}
+
+    issues = [item("top", "queue:anna"), item("kid", parents=["top"]), item("grandkid", parents=["kid"]),
+              item("other", "queue:ben"), item("own", "queue:ben", parents=["top"]), item("bare"),
+              item("two", parents=["top", "other"]), item("twolabels", "queue:anna", "queue:ben"), item("gate", kind="gate"),
+              item("waits", parents=["top"], blockers=["other"]), item("orphan", parents=["closed-parent"])]
+    snapshot = board.Board(issues, complete=False)
+    outside = {"closed-parent": {"id": "closed-parent", "labels": ["queue:anna"], "dependencies": []}}
+    with patch.object(board, "bd_show", lambda ids, *flags, **options: [outside[i] for i in ids if i in outside]):
+        for item_id, queue in (("top", "anna"), ("kid", "anna"), ("grandkid", "anna"), ("own", "ben"), ("bare", None), ("two", None),
+                               ("twolabels", None), ("orphan", "anna")):
+            expect(snapshot.queue(item_id) == queue, "queue of", (item_id, snapshot.queue(item_id)))
+        expect(snapshot.queues("two") == ["anna", "ben"], "disagreeing parents are named", snapshot.queues("two"))
+        snapshot.view = "anna"
+        expect({i["id"] for i in snapshot.listed(None)} == {"top", "kid", "grandkid", "waits", "orphan"}, "listed", snapshot.listed(None))
+        summary = board.queue_summary(snapshot, None)
+        expect(summary["others"] == {"ben": 2}, "others", summary["others"])
+        expect({i["id"] for i in summary["unrouted"]} == {"bare", "two", "twolabels"}, "unrouted leaves gates out", summary["unrouted"])
+        expect([i["id"] for i in summary["blocking"]] == ["other"], "blocking", summary["blocking"])
+        snapshot.view = None
+        expect(board.queue_summary(snapshot, None) is None, "no filter, no summary")
+
+        with patch.object(board, "shared", SimpleNamespace()), patch.object(board, "person", lambda: "anna"):
+            expect(board.foreign_claim(snapshot, "kid") is None, "own queue claims")
+            refusal = board.foreign_claim(snapshot, "bare") or ""
+            expect("unrouted" in refusal and "board route <person> bare" in refusal, "an unrouted item is refused until routed", refusal)
+            refusal = board.foreign_claim(snapshot, "other")
+            expect("ben's queue" in refusal and "board route anna other" in refusal, "a claim across queues names the route", refusal)
+        with patch.object(board, "shared", None):
+            expect(board.foreign_claim(snapshot, "other") is None, "an unshared board has no queues")
+
+    # The inbox (r37-q207): unrouted rows with age and for:, items for you first, oldest first; finds held for your person.
+    def aged(item_id, created, *labels, assignee=None):
+        return {**item(item_id, *labels), "created_at": created, **({"assignee": assignee} if assignee else {})}
+
+    inbox = board.Board([aged("old", "2026-01-01T00:00:00Z"), aged("forme", "2026-03-01T00:00:00Z", "for:anna"),
+                         aged("forben", "2026-02-01T00:00:00Z", "for:ben"), aged("find", "2026-01-05T00:00:00Z", "queue:anna", "for:ben", assignee="user"),
+                         aged("plainhold", "2026-01-05T00:00:00Z", "queue:anna", assignee="user")], complete=False)
+    inbox.view = "anna"
+    summary = board.queue_summary(inbox, None)
+    expect([i["id"] for i in summary["unrouted"]] == ["forme", "old", "forben"], "unrouted: for you first, then oldest", summary["unrouted"])
+    expect("1 for you" in (board.queue_line(inbox, None) or ""), "the console line counts the items for you", board.queue_line(inbox, None))
+    shown = io.StringIO()
+    with contextlib.redirect_stdout(shown):
+        board.queue_rows(inbox, None, "health")
+    row = next((r for r in shown.getvalue().splitlines() if "forben" in r), "")
+    expect("for:ben" in row and " old" in row, "an unrouted row names for: and its age", shown.getvalue())
+    queues = board.queues_json(inbox, None)["queues"]
+    expect([i["id"] for i in queues["inbox"]] == ["forme"] and [i["id"] for i in queues["toSend"]] == ["find"], "--json inbox and held finds", queues)
+    # r38-q217: an inbox item waits since `board send` stamped sent_at; others since created. Rows and JSON say which.
+    waiting = board.Board([aged("old", "2026-01-01T00:00:00Z"), {**aged("sentlate", "2025-12-01T00:00:00Z", "for:ben"), "metadata": {"sent_at": "2026-02-01T00:00:00Z"}},
+                           aged("unstamped", "2025-12-15T00:00:00Z", "for:ben")], complete=False)
+    waiting.view = "anna"
+    expect([i["id"] for i in board.queue_summary(waiting, None)["unrouted"]] == ["unstamped", "old", "sentlate"], "unrouted: oldest wait first, an inbox item by its send", board.queue_summary(waiting, None)["unrouted"])
+    shown = io.StringIO()
+    with contextlib.redirect_stdout(shown):
+        board.queue_rows(waiting, None, "health")
+    rows = {item_id: next((r for r in shown.getvalue().splitlines() if item_id in r), "") for item_id in ("old", "sentlate")}
+    expect(" ago" in rows["sentlate"] and "sent " in rows["sentlate"] and " old" in rows["old"] and "sent " not in rows["old"], "rows: time since sent, else age", rows)
+    unrouted = {i["id"]: i for i in board.queues_json(waiting, None)["queues"]["unrouted"]}
+    expect(unrouted["sentlate"]["waitingSince"] == "2026-02-01T00:00:00Z" and unrouted["old"]["waitingSince"] == "2026-01-01T00:00:00Z"
+           and unrouted["unstamped"]["waitingSince"] == "2025-12-15T00:00:00Z", "--json: waitingSince", unrouted)
+
+    # create: one rewrite on every board, the top-level label only on a shared one.
+    parent = [{"id": "fx-p", "labels": ["topic:a", "queue:ben"]}]
+    with patch.object(board, "bd_show", lambda ids, *flags: parent), patch.object(board, "shared", None):
+        for given in (["t", "--parent", "fx-p"], ["t", "--parent=fx-p"]):
+            expect(board.rewritten_create("create", given) == ["create", "t", "--deps", "parent-child:fx-p", "--labels", "topic:a"],
+                   "create --parent", board.rewritten_create("create", given))
+        try:
+            board.rewritten_create("q", ["t", "--parent", "fx-p"])
+            raise ValueError("shared board: q --parent must be refused")
+        except board.BoardError as error:
+            expect("board bd create" in str(error), "q --parent names create", error)
+        expect("--labels" not in board.rewritten_create("create", ["t", "--parent", "fx-p", "--no-inherit-labels"]), "--no-inherit-labels")
+        expect(board.rewritten_create("create", ["t", "-l", "topic:a", "--parent", "fx-p"]).count("topic:a") == 1, "a label not repeated")
+        expect(board.rewritten_create("create", ["t"]) == ["create", "t"], "an unshared top-level item stays bare")
+        expect(board.rewritten_create("list", ["--all"]) == ["list", "--all"], "other commands stay as they are")
+    with patch.object(board, "bd_show", lambda ids, *flags: []), patch.object(board, "shared", None):
+        try:
+            board.rewritten_create("create", ["t", "--parent", "fx-none"])
+            raise ValueError("shared board: an unknown parent must fail")
+        except board.BoardError:
+            pass
+    with patch.object(board, "shared", SimpleNamespace()), patch.object(board, "person", lambda: "anna"):
+        expect(board.rewritten_create("create", ["t"]) == ["create", "t", "--labels", "queue:anna"], "a top-level item takes its creator")
+        expect(board.rewritten_create("create", ["t", "-l", "queue:ben"]) == ["create", "t", "-l", "queue:ben"], "an explicit queue stays")
+        with tempfile.TemporaryDirectory() as directory:
+            plan = Path(directory) / "plan.json"
+            plan.write_text(json.dumps({"nodes": [{"key": "x", "title": "x"}, {"key": "y", "title": "y", "parent": "x"}]}), encoding="utf-8")
+            command = board.rewritten_create("create", ["--graph", str(plan)])
+            nodes = json.loads(Path(command[command.index("--graph") + 1]).read_text(encoding="utf-8"))["nodes"]
+            expect(nodes[0]["labels"] == ["queue:anna"] and "labels" not in nodes[1], "a graph labels its parentless nodes", nodes)
+
+    # Moves: who may, and what counts.
+    snapshot = board.Board(issues, complete=False)
+    with patch.object(board, "shared", SimpleNamespace()), patch.object(board, "person", lambda: "anna"), \
+            patch.object(board.Board, "load", classmethod(lambda cls, scope="status", ids=None: snapshot)), patch.object(board, "may_move", lambda: False):
+        for command, rest in (("label", ["add", "top", "queue:ben"]), ("label", ["remove", "top", "queue:anna"]),
+                              ("label", ["propagate", "top", "queue:anna"]), ("update", ["top", "--add-label", "queue:ben"]),
+                              ("update", ["top", "--add-label=queue:ben"]), ("update", ["top", "--remove-label", "queue:anna"]),
+                              ("update", ["top", "--set-labels", "x:y"]), ("update", ["kid", "--parent", "other"]),
+                              ("dep", ["add", "kid", "other", "--type", "parent-child"]), ("dep", ["remove", "kid", "top"]),
+                              ("sql", ["delete from labels where 1=1"]), ("create", ["t", "-l", "queue:ben"])):
+            expect("only lead and solo" in (board.queue_guard(command, rest) or ""), "a move is refused", (command, rest))
+        for command, rest in (("label", ["add", "top", "topic:x"]), ("update", ["top", "--add-label", "topic:x"]),
+                              ("update", ["top", "--set-labels", "queue:anna,x:y"]), ("update", ["own", "--parent", "top"]),
+                              ("dep", ["add", "top", "other"]), ("dep", ["remove", "top", "other"]),
+                              ("sql", ["select * from labels"]), ("create", ["t", "-l", "queue:anna"]), ("comments", ["add", "x", "queue:ben"])):
+            expect(board.queue_guard(command, rest) is None, "not a move", (command, rest))
+        expect("ben's queue" in (board.queue_guard("update", ["other", "--claim"]) or ""), "update --claim across queues")
+        expect("ids first" in (board.queue_guard("update", ["--claim", "other"]) or ""), "flags before the ids fail closed")
+        expect(board.queue_guard("create", ["--graph", "/nonexistent/plan.json"]) is None, "an unreadable plan is bd's to report")
+    with patch.object(board, "shared", SimpleNamespace()), patch.object(board, "person", lambda: "anna"), \
+            patch.object(board.Board, "load", classmethod(lambda cls, scope="status", ids=None: snapshot)), patch.object(board, "may_move", lambda: True):
+        expect(board.queue_guard("label", ["add", "top", "queue:ben"]) is None, "a lead moves")
+    expect(board.bd_env().get("BD_NO_REMOTE_ADOPT") == "1", "board stops bd adopting git origin on every call")
+    for argv, writes in ((["health"], False), (["show", "x"], False), (["bd", "list"], False), (["bd", "--json", "ready"], False), (["claim"], True),
+                         (["bd", "create", "t"], True), (["route", "ben", "x"], True), (["send", "ben", "x"], True), (["create", "--for", "ben", "t"], True),
+                         (["join"], False), (["bd", "dolt", "status"], False)):
+        expect(board.writes(argv) == writes, "which commands write", argv)
+    entries = [{"actor": "lead0001", "role": "lead"}, {"actor": "solo0001", "role": "solo"}, {"actor": "agnt0001", "role": "agent"}]
+    with patch.object(board, "registrations", lambda: entries):
+        for actor, allowed in (("lead0001", True), ("solo0001", True), ("agnt0001", False), ("gone0001", False), ("lead0001/wrkr", False), (None, True)):
+            with patch.object(board, "derived_actor", lambda: actor):
+                expect(board.may_move() == allowed, "may_move", actor)
+
+    # The retry: this one error on a shared board, counted on stderr; never a stopped merge, never unshared.
+    def attempts(message, is_shared, code=1):
+        calls, errors = [], io.StringIO()
+
+        def fake_run(command, **kwargs):
+            calls.append(command)
+            return subprocess.CompletedProcess(command, code if len(calls) == 1 else 0, "", message)
+
+        with patch.object(board.subprocess, "run", fake_run), patch.object(board, "ensure_server", lambda *a: None), \
+                patch.object(board, "bd_env", lambda: {}), patch.object(board.time, "sleep", lambda s: None), \
+                patch.object(board, "shared", SimpleNamespace() if is_shared else None), contextlib.redirect_stderr(errors):
+            board.bd("create", "t")
+        return len(calls), errors.getvalue()
+
+    count, said = attempts("Error: foreign key conflicts on commit", True)
+    expect(count == 2 and "retry 1 of 4" in said, "the write retry", (count, said))
+    expect(attempts("Error: Merge conflict detected", True)[0] == 1, "a stopped merge is not retried")
+    expect(attempts("Error: foreign key conflicts", False)[0] == 1, "an unshared board does not retry")
+
+    # What a command reports, and the reachable state of the wait's locks and files.
+    with tempfile.TemporaryDirectory() as directory:
+        beads = Path(directory) / ".beads"
+        (beads / "dolt" / "db" / ".dolt").mkdir(parents=True)
+        (beads / "metadata.json").write_text(json.dumps({"dolt_mode": "server", "dolt_database": "db"}), encoding="utf-8")
+        (beads / "dolt" / "db" / ".dolt" / "repo_state.json").write_text(json.dumps({"remotes": {"origin": {"url": "v"}}}), encoding="utf-8")
+
+        def no_process(*args, **kwargs):
+            raise AssertionError("a process started")
+
+        with patch.object(board.subprocess, "run", no_process), patch.object(board.subprocess, "Popen", no_process):
+            expect(board.find_shared(Path(directory)) is None, "a remote alone does not share: only board's mark, read with no process")
+        board.write_mark(beads, "origin")
+        sharing = board.find_shared(Path(directory))
+        expect(sharing is not None and sharing.remote == "origin", "the mark shares the board, naming its remote")
+        expect(sharing.moved() is None, "not moved")
+        sharing.update_state(moved="git+ssh://git@host/new.git")
+        expect("board join git+ssh://git@host/new.git" in (sharing.problem() or ""), "a moved board reports the join", sharing.problem())
+        expect("board join git+ssh://git@host/new.git" in board.moved_refusal("git+ssh://git@host/new.git"), "a moved board refuses writes with the join")
+        sharing.update_state(moved=None)
+        expect(sharing.problem() is None, "no state, no problem")
+        sharing.failed("no route")
+        sharing.failed("no route")
+        expect(sharing.problem() is None, "single failures stay quiet", sharing.state())
+        sharing.failed("no route")
+        expect("sync failing, 3 tries: no route" in sharing.problem() and "Fix:" in sharing.problem(), "repeated failures report", sharing.problem())
+        sharing.succeeded()
+        expect(sharing.problem() is None and not sharing.state().get("failures"), "a success clears them")
+        sharing.failed("", "conflict")
+        expect(all(word in sharing.problem() for word in ("bd conflicts resolve", "CALL DOLT_MERGE", "bd rename")), "a conflict's fixes", sharing.problem())
+        sharing.succeeded()
+        sharing.failed("a sync ran over 300 s", "stuck")
+        expect("sync stuck" in sharing.problem(), "a stuck sync reports at once", sharing.problem())
+        sharing.succeeded()
+        sharing.update_state(store_bytes=board.STORE_WARN_BYTES)
+        expect("flatten" in sharing.store_warning(), "the store warning", sharing.store_warning())
+        held = sharing.lock("wait.lock")
+        expect(sharing.wait_running(), "a held lock is a running wait")
+        expect(sharing.lock("wait.lock") is None, "one wait per board")
+        held.close()
+        expect(not sharing.wait_running(), "a dead wait frees its lock")
+        (beads / "board-shared.json").unlink()
+        expect(board.find_shared(Path(directory)) is None, "no mark, not shared")
+
+    # Docs: only board's mark shares a board; the r37 commands and the lead's inbox step.
+    texts = {name: (root / "skills" / path).read_text(encoding="utf-8") for name, path in
+             (("setup", "shared/beads-setup.md"), ("core", "shared/board-core.md"), ("decide", "role/protocols/decide.md"))}
+    texts["readme"] = (root / "README.md").read_text(encoding="utf-8")
+    for name, text in texts.items():
+        for stale in ("with a Dolt remote is shared", "with a sync remote", "An unrouted item can be claimed by id", "ask with a comment"):
+            expect(stale not in text, f"{name} still says {stale!r}")
+    for name, needle in (("setup", "board share --yes"), ("setup", "board move <url>"), ("setup", "bd import"), ("setup", "BD_NO_REMOTE_ADOPT"),
+                         ("core", "board route <person> <ids"), ("core", "board send <person> <ids"), ("core", "board create --for <person>"),
+                         ("core", "unrouted"), ("decide", "inbox"), ("decide", "ever decide these alone")):
+        expect(needle in texts[name], f"{name} names {needle!r}")
+    expect("git push <old url> --delete" not in texts["setup"].split("### History")[1].split("1.")[0], "the old data stays until everyone rejoined")
+    # r38-q218: `board setup` owns the settings; the setup doc points to it, migrate runs it, nothing else lists them.
+    migrate = (root / "skills" / "board-migrate" / "SKILL.md").read_text(encoding="utf-8")
+    installer_readme = (root / "setup" / "README.md").read_text(encoding="utf-8")
+    for name, text in (("setup", texts["setup"]), ("migrate", migrate), ("setup/README.md", installer_readme), ("readme", texts["readme"])):
+        expect("board setup" in text, f"{name} names board setup")
+        expect("bd config set" not in text and "no-git-ops false" not in text, f"{name} lists no settings of its own (board setup owns them)")
+    expect("@include shared/beads-setup.md" not in migrate, "board-migrate reads beads-setup.md by path, not by include")
+    expect(dict(board.LOCAL_CONFIG).get("no-git-ops") == "true", "stealth's no-git-ops stays true (bd doctor --fix writes a project .gitignore otherwise)")
+    shared_only = {key for key, _ in (*board.SERVER_CONFIG, *board.SHARED_CONFIG)}
+    expect(shared_only == {"dolt.auto-start", "dolt.auto-commit"} and not shared_only & {key for key, _ in (*board.LOCAL_CONFIG, *board.TRAVELLING_CONFIG)},
+           "the server and shared settings sit apart from every board's", shared_only)
+
+
 def validate_board(root: Path) -> None:
     """The board CLI against a fixture from `bd export` of a throwaway db
     (bd 1.3.1); bd writes are recorded, not run."""
@@ -2431,14 +2674,14 @@ def validate_board(root: Path) -> None:
                                       "--partial", "Rule 2"], fake, "lead0001")
             if code or output != "fx-new\n" or fake.writes() != [[
                     "create", "--type", "decision", "--title", "May B replace A?", "--body-file", "p.md", "--priority", "2",
-                    "--deps", f"tracks:{ids['Released ruling']}", "--parent", "fx-ovo", "--labels", "topic:store",
-                    "--metadata", '{"board.revises_rule": "Rule 2"}', "--json"]]:
+                    "--deps", f"tracks:{ids['Released ruling']}", "--labels", "topic:store",
+                    "--metadata", '{"board.revises_rule": "Rule 2"}', "--deps", "parent-child:fx-ovo", "--json"]]:
                 raise ValueError(f"board revise: {fake.writes()}\n{output}")
             fake = Fake(topical)
-            invoke(["revise", ids["Released ruling"], "--title", "t", "--body-file", "p.md", "-p", "1", "--parent", "fx-x",
+            invoke(["revise", ids["Released ruling"], "--title", "t", "--body-file", "p.md", "-p", "1", "--parent", goal,
                     "-l", "topic:a,topic:b"], fake, "lead0001")
-            if fake.writes()[0][8:] != ["1", "--deps", f"tracks:{ids['Released ruling']}", "--parent", "fx-x", "--labels",
-                                        "topic:a,topic:b", "--json"]:
+            if fake.writes()[0][8:] != ["1", "--deps", f"tracks:{ids['Released ruling']}", "--labels",
+                                        "topic:a,topic:b", "--deps", f"parent-child:{goal}", "--json"]:
                 raise ValueError(f"board revise ignored -p/--parent/-l or set metadata without --partial: {fake.writes()}")
             for refused in (question, ready):
                 fake = Fake(fixture)
@@ -3102,6 +3345,8 @@ STRONG_CLAIMS = {"noAssumptions": "true: task-queue.ts:1080 read", "alternatives
                  "rulingsChallenged": "true: no released ruling touched"}
 # The round's title and summary every Stage report carries.
 ROUND_INFO = {"round": {"title": "Cache policy", "summary": "Which cache the service keeps, and why now."}}
+# r38-q213: the dialog's Think more line says what the rerun does; the reruns carry the goal and what fell short.
+THINK_MORE_LINE = "No answer yet: its checks redo it aiming for a strong recommendation, with a consumer walk and a probe, then it comes back."
 
 CONSOLE_CONTRACT = Path("claude") / "mods" / "console" / "tests" / "engine-contract.ts"
 
@@ -3301,6 +3546,15 @@ def validate_strength_rules(root: Path) -> None:
         raise ValueError(f"question-format.md owns the merge test the engine repeats: {merge}")
     if "listed or not" not in flat or "strongest unlisted" not in flat or "listed or not" not in engine or "strongest unlisted" not in engine:
         raise ValueError("alternativesFail covers every realistic option, listed or not, and names the strongest unlisted one (engine and decision-protocol.md)")
+    # r38-q213: the lean pass aims for strong (from scratch, a consumer walk, a probe); a lean still resting on values asks the
+    # value question as its text. decision-protocol.md owns the rule, the engine's LEAN_JOB repeats it.
+    job = " ".join(re.findall(r"'([^']*)'", re.search(r"LEAN_JOB = \((.*?)\)\n", engine, re.S)[1]))
+    job = re.sub(r"\s+", " ", job)
+    for needle in ("from scratch", "consumer", "probe", "value question", "options unchanged", "`flipsIf`"):
+        if needle not in flat or needle not in job:
+            raise ValueError(f"the lean rule in decision-protocol.md and the engine's LEAN_JOB both say {needle!r}:\n{flat}\n{job}")
+    if "stays a preference" in job or "walks one real case" in flat:
+        raise ValueError("the lean pass no longer offers 'stays a preference' as an equal exit")
 
 
 def validate_console_programs(root: Path) -> None:
@@ -3424,7 +3678,7 @@ def validate_protocol(root: Path, part: str) -> None:
                 current = (json.loads(saved.read_text(encoding="utf-8")).get("round") or {}) if saved.is_file() else {}
                 words = ((current.get("pending") or {}).get("args") or "").split()
                 if words[:1] == ["options"]:
-                    ids = words[1:] or [q["id"] for q in current["questions"] if q["kind"] == "decision" and q["status"] in ("draft", "held", "ready")]
+                    ids = [w for w in itertools.takewhile(lambda w: re.fullmatch(r"q\d+", w), words[1:])] or [q["id"] for q in current["questions"] if q["kind"] == "decision" and q["status"] in ("draft", "held", "ready")]
                     stdin = {**stdin, "explored": {qid: "no other mechanism fits the fixture's one question" for qid in ids}}
             if observe and args[:1] == ("step",) and isinstance(stdin, dict) and stdin.get("pass") and session not in ("0000-cdx00001", "0000-cdxauto1"):
                 saved = state / f"{session}.protocol" / "state.json"
@@ -3669,7 +3923,7 @@ def validate_protocol(root: Path, part: str) -> None:
                     or asked["step"] != "ask" or asked["batch"]["marker"] != "round:r1:1" or asked["pending"] is not None \
                     or asked["batch"]["questions"] != [{"question": "Which cache?", "header": "Q", "options": [
                         {"label": "Keep (recommended, lean)", "description": "Your call: taste — keep it"}, {"label": "Drop", "description": "drop it"},
-                        {"label": "Think more", "description": "No answer yet: its checks rerun with a consumer walk, then it comes back to you."}],
+                        {"label": "Think more", "description": THINK_MORE_LINE}],
                         "multiSelect": False}]:
                 raise ValueError(f"protocol ask: {asked}")
             if '"metadata"' in out or "Record an answer the user types in chat" not in out or "model-reported" in out \
@@ -3711,6 +3965,8 @@ def validate_protocol(root: Path, part: str) -> None:
                     or result["pending"] != {"id": result["pending"]["id"], "command": "challenge-rulings", "args": "q1"} \
                     or not re.fullmatch(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ", result["questions"][0]["answeredAt"] or ""):
                 raise ValueError(f"protocol answer: {result}")
+            if not result["echo"].startswith("Your answers:\n") or not result["echo"].endswith(": Keep (recommended)") or "1. " in result["echo"]:
+                raise ValueError(f"protocol answer's line: {result['echo']!r}")
             refused("answer", "--origin", "dialog", stdin=answers, needle="no batch is out")
             out = proto("step", stdin={"pass": "challenge-rulings", "updates": [], "checked": ["the answer"]}).stdout  # C: nothing found
             if "challenge-rulings (after answers): no change" not in out.splitlines()[0] or shown()["step"] != "record":
@@ -4227,8 +4483,11 @@ def validate_protocol(root: Path, part: str) -> None:
             reissued = shown(cwd=repo)["batch"]
             if reissued["marker"] == out_marker or [q["options"][0]["description"] for q in reissued["questions"]] != ["keep it"] * 2:
                 raise ValueError(f"protocol must issue the updated batch anew: {reissued}")
-            if reissued["notice"] != "**2. Batch (changed)**\n\nPremises: bd batch keeps order (probe)\n\n**My ruling:** One batch.\n- Instead: Two.\n- Why not: order":
-                raise ValueError(f"a changed premise alone is what the re-ask prints:\n{reissued['notice']}")
+            # r36-q195, q196: a re-ask prints whole, an unchanged question with no mark, a changed one naming what moved.
+            if not reissued["notice"].startswith("**1. Order**\n\nProblem:") \
+                    or "**2. Batch (changed: premises, rulings)**\n\nProblem: Which one, and why now." not in reissued["notice"] \
+                    or "Premises: bd batch keeps order (probe)" not in reissued["notice"] or "**My ruling:** One batch." not in reissued["notice"]:
+                raise ValueError(f"a re-ask must print whole and name what changed:\n{reissued['notice']}")
             # A report applies whole (r23-q95): an invalid strong claim refuses the valid title beside it, with every error listed.
             refused("step", stdin={"pass": "ground", "checked": ["titles"], "updates": [
                 {"id": ids[0], "title": "Does bd batch keep order"}, {"id": ids[1], "strength": "strong", "strongBecause": {}}]},
@@ -4243,6 +4502,15 @@ def validate_protocol(root: Path, part: str) -> None:
             tail = [json.loads(line)["event"] for line in (state / "0000-lead0001.protocol" / "history.jsonl").read_text().splitlines()][-2:]
             if tail[-1] != "refused" or "batch-withdrawn" in tail:
                 raise ValueError(f"protocol history must not keep events of a failed call: {tail}")
+            # r36-q197: the engine's line keeps the dialog's numbers and says what became of each question.
+            before_echo = shown(cwd=repo)["batch"]
+            echoed = json.loads(proto("answer", "--origin", "dialog", cwd=repo, stdin={"marker": before_echo["marker"], "answers": {before_echo["questions"][1]["question"]: "my own words"}}).stdout)["echo"]
+            if echoed != "Your answers:\n1. Does bd batch keep order: no answer, asked again\n2. Batch: typed, not an answer yet: my own words":
+                raise ValueError(f"the line after a dialog must keep numbers and name outcomes: {echoed!r}")
+            alone = shown(cwd=repo)["batch"]
+            echoed = json.loads(proto("answer", "--origin", "dialog", cwd=repo, stdin={"marker": alone["marker"], "answers": {alone["questions"][0]["question"]: "Drop"}}).stdout)["echo"]
+            if echoed != "Your answers:\nDoes bd batch keep order: Drop (not recommended)":
+                raise ValueError(f"a one-question batch has no number, and a pick says whether it was the recommended one: {echoed!r}")
             proto("abandon", cwd=repo)
 
             # G: a hold ends with its work: abandon releases the round's unrecorded claims; Select and searches are logged.
@@ -4351,6 +4619,23 @@ def validate_protocol(root: Path, part: str) -> None:
             out = proto("next", cwd=repo).stdout
             if "1. Old row · leads with fx-n1 · wants a fresh context · older" not in out or shown(cwd=repo)["next"]["rounds"][0]["title"] != "Old row":
                 raise ValueError(f"an older stored proposal must read without a crash:\n{out}")
+            # r37-q207: the lead's inbox step: finds held for its person and its person's inbox, from the board's queue lists.
+            find = {"id": "fx-f1", "status": "open", "type": "bug", "priority": 2, "holder": "user", "title": "Find for ben",
+                    "labels": ["for:ben", "queue:anna"], "blockedBy": []}
+            sent = {**find, "id": "fx-i1", "holder": None, "title": "Sent to anna", "labels": ["for:anna"]}
+            before_inbox = config.read_text(encoding="utf-8")
+            configure(health={"counts": counts, "items": {"forUser": [find]},
+                              "queues": {"view": "anna", "others": {}, "unrouted": [sent], "blocking": [], "toSend": [find], "inbox": [sent]}})
+            out = proto("next", cwd=repo).stdout
+            held, _, mailbox = out.partition("Your inbox")
+            if "Finds held for you to check" not in held or "fx-f1" not in held.split("Finds held for you to check")[1] or "for ben" not in held \
+                    or "fx-i1" not in mailbox or "send, keep or close" not in out or "take, pass on or close with a reason" not in out \
+                    or "Keep or take: board route <you> <id>; send or pass on: board send <person> <id>" not in out \
+                    or "waiting on the user" in out.split("Finds held for you to check")[0] and "fx-f1" in out.split("Finds held for you to check")[0]:
+                raise ValueError(f"protocol next must list the finds held for the person and the inbox, apart from the open items:\n{out}")
+            config.write_text(before_inbox, encoding="utf-8")
+            if "Your inbox" in proto("next", cwd=repo).stdout:
+                raise ValueError("an unshared board's protocol next has no inbox step")
             proto("next", "--set", stdin=good, cwd=repo)
             proto("start", "round", cwd=repo)
             if shown(cwd=repo)["next"] is not None or "No proposal stored." not in proto("next", cwd=repo).stdout:
@@ -4444,7 +4729,7 @@ def validate_protocol(root: Path, part: str) -> None:
                 raise ValueError("protocol log lines: strip a leading 'no change', name the pass kind, 'classified 0 points', merge recorded lines")
             configure()
 
-            # R: a release run (r3-q7, r4-q12..q19): the default set from the last closed round, refusals, a contained
+            # R: a release run (r3-q7, r4-q12..q19): the default set (the session's held decided records), refusals, a contained
             # drop that lapses the typed approval into a dialog, owner checks, a resumable release, spreads, Codex.
             docs = repo / "docs"
             docs.mkdir(exist_ok=True)
@@ -4894,15 +5179,18 @@ def validate_protocol(root: Path, part: str) -> None:
             patch_config(check={})
             # Carried settled items: a rule record that closes another takes over the items it settled, and its release closes them.
             qid = replacing("Kappa point", ["fx-d5"], {"fx-d5": "supersedes"}, items={**items, "fx-d5": {**items["fx-d1"], "title": "D5"},
-                                                                                     "fx-set1": {"status": "open", "issue_type": "decision"}}, newIds=["fx-n9"])
-            edit_state(lambda document: document.setdefault("settles", {}).update({"fx-d5": ["fx-set1"]}))
+                                                                                     "fx-set1": {"status": "open", "issue_type": "decision"},
+                                                                                     "fx-set2": {"status": "decided", "issue_type": "decision"}}, newIds=["fx-n9"])
+            edit_state(lambda document: document.setdefault("settles", {}).update({"fx-d5": ["fx-set1", "fx-set2"]}))
             answered()
             proto("step", stdin={"records": {qid: {"rationale": "Replaces fx-d5.", "ruleOwner": "docs/x.md"}}}, cwd=repo)
             patch_config(items={**json.loads(config.read_text())["items"], "fx-n9": {**items["fx-d1"], "title": "N9"}})
             proto("start", "release", "fx-n9", cwd=repo)
             out = proto("step", stdin={"records": {"fx-n9": "unchanged"}}, cwd=repo).stdout
-            if "Pre-filled: fx-n9 answers fx-set1" not in out:
+            if "Pre-filled: fx-n9 answers fx-set1 " not in out:
                 raise ValueError(f"the items a closed record settled must belong to the new record's release:\n{out}")
+            if "Not closed: fx-n9 marks fx-set2 (decided)" not in out or "answers fx-set1, fx-set2" in out:
+                raise ValueError(f"a settled item that is no open question must be named, not closed:\n{out}")
             proto("abandon", cwd=repo)
             configure()
 
@@ -5144,10 +5432,11 @@ def validate_protocol(root: Path, part: str) -> None:
             proto("step", stdin={}, **texts)
             again = shown(**texts)["batch"]
             ask_again = proto("show", **texts).stdout
-            if again is None or again["marker"] == batch["marker"] or again["notice"] != "" \
+            # r36-q195: a re-ask with nothing changed still prints its whole text, with no changed mark.
+            if again is None or again["marker"] == batch["marker"] or "Problem:" not in again["notice"] or "(changed" in again["notice"] \
                     or "end your turn; a message tells you" not in ask_again \
-                    or "AskUserQuestion input" not in ask_again or "next: the console to open the dialog, then your answers (batch 2)" not in ask_again:
-                raise ValueError(f"a re-ask with nothing changed ends the turn for the console's message:\n{ask_again}")
+                    or "AskUserQuestion input" not in ask_again or "next: the console to print, then your answers (batch 2)" not in ask_again:
+                raise ValueError(f"a re-ask with nothing changed prints whole and ends the turn for the console's message:\n{ask_again}")
             proto("abandon", **texts)
             # The headline cuts a long pass summary at a word boundary and says so.
             proto("start", "round", "--no-board", str(notes), stdin={"points": ["Cut?"]}, **texts)
@@ -5177,11 +5466,11 @@ def validate_protocol(root: Path, part: str) -> None:
             proto("step", stdin={"classes": {point: "user"}}, **codex)
             proto("step", stdin={"select": [point]}, **codex)
             out = proto("step", **codex, stdin={**ROUND_INFO, "questions": [question("Codex?", **{"for": point})]}).stdout
-            if "Run the step-back skill now with the argument `goal foundations` (lenses, then the questions to strengthen) (read its SKILL.md), then report the pass." not in out \
+            if "Run the step-back skill now with the argument `goal foundations` (lenses, the questions to strengthen, then any focus) (read its SKILL.md), then report the pass." not in out \
                     or "After the pass, report each change" not in out or "Check cycle 1/5 (the round's path pass" not in out:
                 raise ValueError(f"protocol Codex check output: {out}")
             out = proto("step", **codex, stdin={"pass": "step-back", "updates": [], "checked": ["q"]}).stdout  # the path pass
-            if "Run the step-back skill now with the argument `options` (lenses, then the questions to strengthen)" not in out \
+            if "Run the step-back skill now with the argument `options` (lenses, the questions to strengthen, then any focus)" not in out \
                     or "The options pass also reports `explored`" not in out or "Check cycle 1/5 (the round's options pass" not in out:
                 raise ValueError(f"Codex runs the options pass after the path pass, with the explored format: {out}")
             refused("step", **codex, explore=False, stdin={"pass": "step-back", "updates": [], "checked": ["q"]}, needle="an options pass reports `explored`")
@@ -5557,9 +5846,11 @@ def validate_protocol(root: Path, part: str) -> None:
             if first["options"][-1]["label"] != "Think more":
                 raise ValueError(f"a lean question with room offers Think more: {first}")
             out = proto("answer", "--origin", "dialog", **texts, stdin={"marker": batch["marker"], "answers": {first["question"]: "Think more", second["question"]: "Keep (recommended, lean)"}}).stdout
+            if "Think more: its checks rerun" not in json.loads(out)["echo"] or ": Keep (recommended)" not in json.loads(out)["echo"]:
+                raise ValueError(f"the line after a dialog must say Think more reruns and mark the pick: {out}")
             view = shown(**texts)
             answers = {q["id"]: q["answer"] for q in view["questions"]}
-            if answers != {one: None, two: "Keep"} or view["step"] != "check" or pending_now() != ("step-back", f"goal foundations {one}"):
+            if answers != {one: None, two: "Keep"} or view["step"] != "check" or pending_now() != ("step-back", f"goal foundations {one} Think more on {one}: the person asked for a reasoned strong recommendation; what fell short: the lean (your call: taste)"):
                 raise ValueError(f"Think more reruns that question's checks and records the other answer: {answers} {pending_now()}\n{out}")
             report()
             report()
@@ -5577,6 +5868,33 @@ def validate_protocol(root: Path, part: str) -> None:
             view = shown(**texts)
             if view["pending"] and view["pending"]["command"] != "challenge-rulings":
                 raise ValueError(f"nothing left to check, so only the challenge over the answers runs: {view['pending']}")
+            proto("abandon", **texts)
+            # r38-q213: a Think more rerun carries its goal: every pass on that question says the person asked for a reasoned
+            # strong recommendation and names the lean that fell short; the lean pass runs again; the goal goes once it is asked.
+            qid = texts_round("Deeper?")
+            proto("step", **texts, stdin={"pass": "step-back", "updates": [{"id": qid, "leanBecause": {
+                "cause": "preference", "detail": "taste between `options` and \"speed\"", "flipsIf": "a different taste"}}], "checked": ["q"]})
+            converge(**texts)
+            batch = shown(**texts)["batch"]
+            proto("answer", "--origin", "dialog", **texts, stdin={"marker": batch["marker"], "answers": {batch["questions"][0]["question"]: "Think more"}})
+            focus = (f"Think more on {qid}: the person asked for a reasoned strong recommendation; "
+                     "what fell short: the lean (your call: taste between options and speed)")
+            rerun = []
+            while shown(**texts)["step"] == "check":
+                rerun.append(pending_now())
+                report()
+            expected = [("step-back", f"goal foundations {qid} {focus}"), ("step-back", f"options {qid} {focus}"), ("step-back", ""), ("ground", ""),
+                        ("step-back", f"decisions clean overfit mechanics {qid} {focus}"), ("ground", f"assumptions board sources probe {qid} {focus}"),
+                        ("ground", f"assumptions sources probe {qid} {focus}"), ("challenge-rulings", "")]
+            if rerun != expected:
+                raise ValueError(f"a Think more rerun carries its goal on every pass naming the question:\n{rerun}\n{expected}")
+            labels = [line["text"] for line in shown(**texts)["log"]]
+            if f"ground (lean {qid}): no change" not in labels or not any(text.startswith(f"step-back (path {qid}):") for text in labels):
+                raise ValueError(f"the goal's words are focus, not question ids or lenses: {labels}")
+            # Asked again, the goal is spent: a later criterion restart reruns without it.
+            proto("restart", qid, "--reason", "criterion", **texts)
+            if pending_now() != ("step-back", f"goal foundations {qid}"):
+                raise ValueError(f"the Think more goal ends when the question goes out again: {pending_now()}")
             proto("abandon", **texts)
             def lens_round(word):
                 """A round whose path pass and Base loop ran: the refine pair is pending."""
@@ -5831,7 +6149,8 @@ def validate_protocol(root: Path, part: str) -> None:
                     {"issue_id": "fx-b", "depends_on_id": "fx-y", "type": "blocks"},      # open: blocks the record
                     {"issue_id": "fx-b", "depends_on_id": "fx-a", "type": "blocks"}]},
                 "fx-c": {"status": "open", "issue_type": "decision", "title": "C", "assignee": "rules001"},
-                "fx-k": {"status": "closed"}}
+                "fx-k": {"status": "closed"},
+                "fx-dd": {"status": "decided", "issue_type": "decision", "title": "DD", "assignee": "rules001"}}
             open_questions = [{"id": i, "status": "open", "type": "decision", "title": f"{i}?", "priority": 1, "blockedBy": []}
                               for i in ("fx-a", "fx-b", "fx-c")]
             rule_config = {"health": {"counts": counts, "items": {"questions": open_questions}}, "items": board_items,
@@ -5851,6 +6170,20 @@ def validate_protocol(root: Path, part: str) -> None:
             rule = question("Rule: close both stores?", key="r", settles=["fx-a", "fx-b"])
             refused("step", stdin=stage(question("Rule: close both stores?", settles=["fx-k"]), store("a"), store("b"), store("c")),
                     needle="fx-k is unknown or closed", **rules)
+            refused("step", stdin=stage(question("Rule: refine a record?", settles=["fx-dd"]), store("a"), store("b"), store("c")),
+                    needle="settles fx-dd, which is decided", **rules)  # r12 in be3935d4: a refined record is related, not settled
+            # The same for a decided record picked at Select: settling it would have the release close a decision.
+            picked = {"session": "0000-rules002", "cwd": repo}
+            decided_row = {"id": "fx-de", "status": "decided", "type": "decision", "title": "DE", "priority": 1, "blockedBy": []}
+            configure(**{**rule_config, "items": {**board_items, "fx-de": {"status": "decided", "issue_type": "decision", "title": "DE"}},
+                         "health": {"counts": counts, "items": {"questions": open_questions, "decided": [decided_row]}}})
+            proto("start", "round", **picked)
+            proto("step", stdin={"classes": {"fx-a": "user", "fx-de": "user"}}, **picked)
+            proto("step", stdin={"select": ["fx-a", "fx-de"]}, **picked)
+            refused("step", stdin=stage(question("Rule: refine it?", settles=["fx-de"]), store("a")),
+                    needle="settles fx-de, which is decided", **picked)
+            configure(**rule_config)
+            calls()
             refused("step", stdin=stage(rule, store("a"), store("b"), store("c")),
                     needle="settles fx-a, which is the `board`/`for` of q2: remove q2 or drop fx-a from `settles`", **rules)
             refused("step", stdin=stage(rule, question("Rule: and the other?", settles=["fx-b"]), store("c")),
@@ -5907,8 +6240,8 @@ def validate_protocol(root: Path, part: str) -> None:
             refused("step", stdin={"pass": "ground", "updates": [{"id": store_c["id"], "remove": True, "reason": "x"}], "checked": ["x"]},
                     needle="is answered; restart it first", **rules)
             batch = shown(**rules)["batch"]
-            if batch["notice"] != "":
-                raise ValueError(f"the rule question was printed with the first batch, so its re-ask prints nothing:\n{batch['notice']}")
+            if "Problem:" not in batch["notice"] or "(changed" in batch["notice"]:
+                raise ValueError(f"the rule question's re-ask prints whole, unmarked (r36-q195):\n{batch['notice']}")
             proto("answer", "--origin", "dialog", stdin={"marker": batch["marker"], "answers": {batch["questions"][0]["question"]: "Keep"}}, **rules)
             after_answers(**rules)
             if shown(**rules)["step"] != "record":
@@ -6664,6 +6997,7 @@ def run_group(name: str, root: Path) -> None:
         validate_hooks(root)
     elif name == "board":
         validate_board(root)  # patches os.environ and stdout in-process: nothing else shares this process
+        validate_shared_board(root)
     elif name == "contract":
         validate_console_contract(root)
     elif name.startswith("engine-"):

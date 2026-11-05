@@ -133,11 +133,14 @@ for each when asked or recorded:
   stays a premise.
 
 Otherwise it is a lean that names its cause: `preference` (what the choice
-depends on) or `evidence` (the unchecked fact and how to check it). A preference
-lean still recommends on merits, walks one real case (a caller read from the
-code, or what the person would see) and says in `flipsIf` what the person would
-have to value to pick another option; a question of fact is evidence. Ground
-evidence leans before asking; mark one left unverified. Write the marks as
+depends on) or `evidence` (the unchecked fact and how to check it). Before a
+lean goes out, and again on Think more, aim it at strong: redo the question
+from scratch, walk a realistic consumer through it, and probe or count the
+deciding fact where one run settles it. A lean still resting on the person's
+values then asks the value question as its text, options unchanged, still
+recommending on merits, with `flipsIf` naming what they would have to value to
+pick another option. A question of fact is evidence; one you cannot check
+stays an evidence lean naming the check, marked unverified. Write the marks as
 `strong: <option>`, `lean (unverified: <fact>): <option>` or
 `lean (your call: <what it depends on>): <option>`.
 

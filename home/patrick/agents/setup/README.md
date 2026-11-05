@@ -28,8 +28,38 @@ The installer:
 6. Sets `env.CLAUDE_CODE_PLUGIN_DIRS` to the console mod. If it already holds a value, the installer
    prints a note and you add the mod path yourself.
 
+7. At a terminal, asks for your name for shared boards when `git config --global agents.person`
+   is unset. Leave it blank to skip; set it per repository with `git config agents.person <name>`.
+
 Nothing else in `settings.json` or `config.toml` is touched. Models, plugins, permissions and
 `env` stay yours. The `settings/` folder holds the unmerged hook templates for reference.
+
+## Boards
+
+Inside a project repository, with your go:
+
+    ~/.agents/bin/board setup                # creates the board, or updates an existing one's settings
+    ~/.agents/bin/board setup --server       # a new board you mean to share later
+
+Safe to rerun: it never re-creates a board, prints every setting it changes with its old and new
+value, and names `.git/info/exclude` lines that match tracked project files. Rerun it after an
+upgrade to bring existing boards to the current settings; on a shared board each person reruns it
+for the settings that stay on their machine.
+
+## Shared boards
+
+To share a beads board between people, inside the project repository:
+
+    ~/.agents/bin/board share [url]          # first person: says what goes out, changes nothing
+    ~/.agents/bin/board share [url] --yes    # then shares, on an existing server-mode board
+    ~/.agents/bin/board join [url]           # everyone else
+
+The url defaults to the project's own repository, which needs at least one commit. `share` without
+`--yes` says what goes out (the whole board, git emails included) and stops. Both are safe to
+repeat; a failed join cleans up after itself. Afterwards `board` syncs by itself and each person's
+sessions work their own queue. A Dolt remote added by hand shares nothing. Upgrade bd and Dolt
+together: one person migrates and pushes. When the board grows large, `board move <url>` moves it to
+a fresh repository and the others rejoin with `board join <url>`.
 
 ## Uninstall
 

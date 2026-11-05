@@ -97,8 +97,9 @@ Give each step's output compactly; detail only findings and stops.
    write the board or the sources; re-check every source hash and diff a
    fresh `board bd export` against `board-baseline.jsonl` (no board: hashes
    only), and stop on drift. Report when the paused
-   sessions may resume. Set up beads under the included setup when `.beads/`
-   is absent.
+   sessions may resume. Run `$HOME/.agents/bin/board setup`, which creates or
+   updates the board, and act on the exclude lines it reports
+   (`$HOME/.agents/skills/shared/beads-setup.md`).
    Apply only from the change set, directly, or for large boards through
    outcome-sized tasks under Cut work in
    `$HOME/.agents/skills/role/protocols/plan.md`. Mechanical fixes (edge
@@ -149,8 +150,6 @@ replaced trackers sit in `history/`, and sessions are told to enter with
   `{"_type":"memory","key":…,"value":…}`.
 
 ## Shared conventions
-
-<!-- @include shared/beads-setup.md -->
 
 <!-- @include shared/board-core.md -->
 

@@ -180,6 +180,8 @@ export async function boardViews($: $, session: string): Promise<ConsoleBoard> {
     items: view === null ? [] : list(view.items).map(parseItem),
     sessions: view === null ? [] : list(view.sessions).map(parseSession),
     held: view === null ? [] : list(view.held).map(parseHeld),
+    sync: view === null ? null : nullableText(view.sync),
+    queues: view === null ? null : nullableText(view.queueLine),
     agents,
     error: errors.length === 0 ? null : errors.join('; '),
   }
@@ -313,6 +315,7 @@ export function parseRound(value: unknown): ConsoleRound {
     next: parseNext(raw.next),
     isContextLarge: false,
     note: nullableText(raw.note),
+    echo: nullableText(raw.echo),
   }
 }
 

@@ -45,6 +45,14 @@ describe('pane', () => {
     })
   }
 
+  test('a shared board\'s stopped sync shows with its fix, and its other queues as counts', async ($, on) => {
+    const { clock } = world(on, { sync: 'sync stopped by a merge conflict. Fix: board bd conflicts show', queueLine: 'other queues: ben 3' })
+    await ready($, clock)
+    const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+    expect(await texts(ui)).toContain('sync stopped by a merge conflict')
+    expect(await texts(ui)).toContain('other queues: ben 3')
+  })
+
   test('an agent role sees the board and actions, no round block', async ($, on) => {
     const { clock } = world(on, { role: { session: SESSION, role: 'agent', actor: 'eef8ae5c', tool: 'claude' } })
     await ready($, clock)

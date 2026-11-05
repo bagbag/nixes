@@ -162,7 +162,7 @@ export const ENGINE_CONTRACT = {
             },
             {
               "label": "Think more",
-              "description": "No answer yet: its checks rerun with a consumer walk, then it comes back to you."
+              "description": "No answer yet: its checks redo it aiming for a strong recommendation, with a consumer walk and a probe, then it comes back."
             }
           ],
           "multiSelect": false

@@ -8,14 +8,14 @@ import type { ConsoleStart } from '../types'
 import {
   betweenTurns, context, failOpen, message, notice, openDialog, PANE, placeholderMarker, pressSubmit, recordPass, refreshAll, refreshBoard, refreshLater,
   refreshRole, refreshRound, releaseRun, resetSession, setDialogOutcome, stampReleaseRun, withContext,
-  isNewText, setQuestionsAnswered,
+  setQuestionsAnswered,
 } from './core'
 import { answer, boardShow, decline, isRoundOpen, pass, pending as readPending, protocol, RELEASE_COMMAND, say, statusLine, toolArgv } from './engine'
 import { capture, judgeDialog, needsModel } from './gate'
 import type { DialogInput } from './gate'
 import { drawBand, drawPane, PANE_MIN_COLUMNS } from './pane'
 import { addGate, getBoard, getGate, getPass, getPrinted, getRole, getRound, getStart, releaseRefresh, setAskSent, setPaneDismissed, setPass, setPrinted, setRound, setStart } from './state'
-import { answeredText, consoleText, protocolCallText, protocolResultText } from './words'
+import { consoleText, protocolCallText, protocolResultText } from './words'
 
 const PROTOCOL_TOOL = 'mcp__console__protocol'
 
@@ -101,20 +101,21 @@ export const register: Register = on => {
     const captured = capture(verdict.marker, ran)
     if (captured.kind === 'none') return ran
     const issued = round.batch?.questions ?? []
-    const summary = captured.kind === 'answer' ? answeredText(issued, captured.input.answers as Record<string, string>) : 'The dialog was declined.'
+    const declined = 'The dialog was declined.'
     try {
       const recorded = captured.kind === 'answer'
         ? await answer($, ctx.session, captured.input)
         : await decline($, ctx.session, { marker: verdict.marker, partial: captured.partial })
       await setRound($, recorded)
-      if (placeholder !== null) setDialogOutcome({ summary, note: recorded.note, needsModel: needsModel(issued, captured) })
+      // The engine knows what became of each question, so it writes the line the person reads (r36-q197).
+      if (placeholder !== null) setDialogOutcome({ summary: recorded.echo ?? declined, note: recorded.note, needsModel: needsModel(issued, captured) })
       if (recorded.note === null) return ran
       await notice($, recorded.note.split('\n')[0] ?? '')  // the headline; the model reads the whole note
       return withContext(ran, recorded.note)
     } catch (error) {
       if (captured.kind === 'decline') {
         // Esc aborts this hook's runs and no retry here gets through; the console's own dialog records it once closed (openDialog).
-        if (placeholder !== null) setDialogOutcome({ summary, note: null, needsModel: true, unsavedDecline: { marker: verdict.marker, partial: captured.partial } })
+        if (placeholder !== null) setDialogOutcome({ summary: declined, note: null, needsModel: true, unsavedDecline: { marker: verdict.marker, partial: captured.partial } })
         return withContext(ran, `The dialog was declined; batch ${verdict.marker} stays out.`)
       }
       const text = `Your answers to ${verdict.marker} were not saved (${message(error)}), so the questions come again.`
@@ -136,13 +137,11 @@ export const register: Register = on => {
     return ran
   }).catch(($, e, next) => next(e))
 
-  // Typed commands count as the person's passes; the console's own machine run is marked started.
+  // Typed commands count as the person's passes. The console's own run only counts once its skill expands (`skill.prompt`):
+  // this hook fires when the run is queued, and a turn ending before it begins must not ask for its report.
   on('command.run', async ($, e, next) => {
     const origin = e.origin
-    if (origin.kind === 'plugin' && origin.name === 'console') {
-      const run = await getPass($)
-      if (run !== null && run.phase === 'queued' && run.command === e.command) await setPass($, { ...run, phase: 'started' })
-    } else if ((origin.kind === 'composer' || origin.kind === 'bridge') && e.command === RELEASE_COMMAND) {
+    if ((origin.kind === 'composer' || origin.kind === 'bridge') && e.command === RELEASE_COMMAND) {
       await stampReleaseRun($, await context($), origin.kind, e.args)
     } else if (origin.kind === 'composer' || origin.kind === 'bridge') {
       await recordPass($, await context($), origin.kind, e.command, e.args)
@@ -269,13 +268,12 @@ export const register: Register = on => {
     const isOurs = e.origin.kind === 'plugin' && e.origin.name === 'console'
     if (batch === null || (wanted !== '' && wanted !== batch.marker)) return { text: 'No question text to print.' }
     if (isOurs) {
-      const isNew = await isNewText($, batch)
       await setPrinted($, batch.marker)
       const ctx = await context($)
       setQuestionsAnswered(batch.marker)
       void openDialog($, batch.marker, ctx.session).catch(failOpen($, 'opening the dialog'))
-      if (!isNew) return { text: '\nNothing new to read for these questions.' }
-    } else if (batch.notice.trim() === '') return { text: 'No question text to print.' }
+    }
+    if (batch.notice.trim() === '') return { text: 'No question text to print.' }
     return { text: `\n${batch.notice}` }  // the host prefixes the output with the plugin's name: the first question starts its own line
   })
 

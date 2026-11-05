@@ -233,13 +233,6 @@ export const missingReportText = (command: string, id: string): string => `The /
 /** A pass that still has no report: the round stopped, and what the person can type. */
 export const stuckPassText = (command: string, args: string): string => `The round stopped: the /${command} pass has no report. Type /${[command, args].filter(part => part !== '').join(' ')} to run it again.`
 
-/** The visible text after a dialog: what was answered, one line per question, without the dialog's recommended mark. */
-export const answeredText = (questions: readonly { question: string }[], answers: Readonly<Record<string, string>>): string => {
-  const picked = questions.filter(one => answers[one.question] !== undefined)
-    .map((one, index) => `${index + 1}. ${(answers[one.question] ?? '').replace(/ \(recommended, (lean|strong)\)$/, '')}`)
-  return picked.length > 0 ? `Answered:\n${picked.join('\n')}` : 'The dialog was declined.'
-}
-
 /** `Round`, or `Release` for a release run (the same slot, r4-q17). */
 export const runNoun = (round: ConsoleRound): string => round.protocol === 'release' ? 'Release' : 'Round'
 
@@ -254,6 +247,8 @@ export function consoleText(role: ConsoleRole, board: ConsoleBoard | null, round
     lines.push('  board views not read yet')
   } else {
     if (board.counts !== null) lines.push('  ' + COUNT_LABELS.map(([key, label]) => `${label} ${board.counts?.[key] ?? 0}`).join(' · '))
+    if (board.sync !== null) lines.push(`  ${board.sync}`)
+    if (board.queues !== null) lines.push(`  ${board.queues}`)
     for (const item of board.items) lines.push(`  ${item.id}  ${item.status}  ${item.title}`)
     const stale = staleSessions(board)
     for (const session of board.sessions.filter(one => !stale.has(one.actor))) {

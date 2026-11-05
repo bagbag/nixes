@@ -22,11 +22,13 @@ relying on the missing part.
   holder.
 
 Without `.beads/`: a project with existing trackers or backlog files moves onto
-the board through `/board-migrate`; otherwise follow
-`$HOME/.agents/skills/shared/beads-setup.md` with the user. A board in older
+the board through `/board-migrate`; otherwise run `$HOME/.agents/bin/board
+setup` with the user's confirmation
+(`$HOME/.agents/skills/shared/beads-setup.md`). A board in older
 conventions also moves through `/board-migrate`. Leave `bd setup` unrun; session
-hooks supply agent guidance. Remote sync (`bd dolt push`/`pull`) belongs to
-the user.
+hooks supply agent guidance. Share or join a board only on the user's request
+([Shared boards](../shared/beads-setup.md#shared-boards)); `board` syncs a
+shared board, the user an unshared one (`bd dolt push`/`pull`).
 
 ### Actors and holds
 
@@ -50,6 +52,8 @@ the user.
   `board position` marks the holder gone, or you judge an idle-marked holder
   gone. For your own workers' holds marked stopped in `board mine`: continue
   the worker, hand the item over or free it.
+- On a shared board, `held elsewhere` (with its last update) marks a holder
+  outside this machine's registry: ask its person instead of freeing the hold.
 
 ### Kinds
 
@@ -84,6 +88,27 @@ follow these rules yourself:
 
 Questions, autopilot's parked ones included, stay unassigned until a session
 claims them.
+
+On a shared board ([Shared boards](../shared/beads-setup.md#shared-boards)), every
+item sits in a person's queue (the person's sessions work it):
+
+- **Queue:** the item's `queue:<person>` label, else its nearest ancestor's. With
+  no label on or above it, or parents in different queues and no label of its own,
+  it is unrouted. A new item takes its parent's queue, else its creator's. Your
+  person is `git config agents.person`.
+- **Scope:** `health`, `position`, `holders`, `queue`, the console and a bare
+  `board claim` cover your queue (`--queue <person>|all` widens them) plus
+  unrouted items; everything else covers every queue. Claims take only your
+  queue's items.
+- **Moves:** only lead and solo sessions and a person's terminal change an item's
+  queue: `board route <person> <ids…>`, `board send <person> <ids…>` (into the
+  inbox), or a parent change for an item inheriting its queue. Other sessions ask
+  a lead.
+- **Finds for another person:** `board create --for <person> <title> …`
+  (top-level), held for your check until a lead sends it; their lead routes it
+  from the inbox (decide.md Inbox step).
+- **Questions:** the person of a question's queue decides and releases it
+  ([Authority](../role/protocols/decide.md#authority)).
 
 ### Work items
 
@@ -243,3 +268,5 @@ dispatch, `board bd dep cycles`.
 - Give `board bd create` a description and `board bd close` a reason of 20+
   characters.
 - Inspect board-wide changes with `board bd events tail --since <seq>`.
+- On a shared board, run the fix a `board: sync …` line names; other work
+  continues.

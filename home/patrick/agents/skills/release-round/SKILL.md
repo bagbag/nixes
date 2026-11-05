@@ -18,6 +18,6 @@ changes; otherwise the release asks me.
 Run the release through `protocol` under Release in
 `$HOME/.agents/skills/role/protocols/decide.md`, giving the outputs of its
 Re-check, Board check and Own rulings steps. The console has already started
-it (on the argument's ids, else the last closed round's records) or stamped
-the open one; without an open release, start it
+it (on the argument's ids, else every decided record this session holds that
+no release dropped) or stamped the open one; without an open release, start it
 (`protocol start release [<ids>]`).
