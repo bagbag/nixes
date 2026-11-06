@@ -225,8 +225,11 @@ ask it instead of restating the location.
 `bin/protocol` (installed as `$HOME/.agents/bin/protocol`) is the protocol
 engine of deciding sessions: it owns each session's protocol state in
 `<state dir>/<session>.protocol/` (with an append-only `history.jsonl`) and
-prints the next step, one call per step; `run_cli()` is the same CLI as a
-function, which the tests call in-process. Its protocols are `round` (the
+prints the next step, one call per step; `run_cli()` (in `cli.py`) is the same
+CLI as a function, which the tests call in-process. `bin/protocol` is a thin
+entry; the engine is the `bin/protocol_engine/` package beside it, one module
+per concern, layered so imports never cycle (`round.py` and `release.py`
+register their protocols in `engine.PROTOCOLS`). Its protocols are `round` (the
 decide protocol's Round from Collect to Record) and `release` (its Release).
 A question whose Related outcome supersedes a decided record closes it at Record
 (`board supersede`: waiting items, settled items and a pending revision move to
@@ -308,10 +311,9 @@ A round:
   empty or repeated notice prints a short line) and opens the dialog. The host's
   `$.ui.ask` takes labels only, so it asks a placeholder and the console's
   AskUserQuestion hook swaps it for the issued batch (never drawing the placeholder).
-  Plain picks then let a pending pass run; a typed reply, a note, a decline or anything
-  else wakes the model with the answers, one line each, as the person's own words (no plugin frame), and the engine's text as a note. A `$` call
-  skips the hook it came from, so that hook cannot print a next batch: the model's turn
-  end does. If the swap never ran, a one-line message asks the lead to open the dialog
+  Every outcome then wakes the model with the answers, one line each, as the person's own words (no plugin frame), and the engine's
+  text as a note; its turn end runs a pending pass or prints a next batch. A `$` call from a command hook skips every console hook
+  (Claude Code 2.1.318), so that hook can neither print the answers through a command nor the next batch. If the swap never ran, a one-line message asks the lead to open the dialog
   with the input `protocol show` gives; so does a run of the command its hook never
   answered, after printing any new text as a notice. There is no Ask button. At most one dialog per
   batch marker opens until the person sends a new message (a composer or bridge message
@@ -626,6 +628,7 @@ changes.
 into its `.claude-plugin/types/`, ignored by Git). It registers the `protocol`
 tool (`mcp__console__protocol`, stamping session and origin), runs the
 engine's pending pass and the issued batch's question text (`/console-questions`) at each turn's end, gates and captures round dialogs,
+runs a built-in command sent during a turn (`/compact`, which Claude Code delivers to the model as text) when the turn ends,
 relays the person's chat messages, presses and a typed or pressed
 `/release-round` (conditional approval), and keeps the round through
 compaction. Its round features act for lead, solo and autopilot. A `protocol` call reads as two rows in the chat: its arguments and

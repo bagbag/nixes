@@ -114,6 +114,7 @@ export function world(on: On, init: Partial<Pick<World, 'round' | 'role' | 'surf
   on('fs.write', (_, e) => { w.files.set(e.path, e.text); return { value: undefined } })
   on('agent.list', () => ({ value: w.agents as never }))
   on('command.register', (_, e) => ({ value: { command: e.name } }))
+  on('command.list', () => ({ value: [{ name: 'compact', description: '', source: 'builtin' }, { name: 'step-back', description: '', source: 'user' }] as never }))
   on('tool.register', (_, e) => { w.tools.push({ name: e.name, isDeferred: e.isDeferred }); return { value: { tool: `mcp__console__${e.name}` } } })
   on('ui.open', (_, e) => { w.opened.push(e.id); return { value: { isPlaced: true } } })
   on('ui.toast', (_, e) => { w.toasts.push(e.text); return { value: undefined } })

@@ -5,7 +5,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface } from 'claude-code'
 
-import type { ConsoleBoard, ConsoleLenses, ConsoleOpened, ConsolePassRun, ConsoleQueued, ConsoleRefresh, ConsoleRole, ConsoleRound, ConsoleSection, ConsoleStart } from '../types'
+import type { ConsoleBoard, ConsoleLenses, ConsoleOpened, ConsolePassRun, ConsoleQueued, ConsoleRefresh, ConsoleRole, ConsoleRound, ConsoleSection, ConsoleStart, ConsoleDeferred } from '../types'
 
 import { isRoundOpen } from './engine'
 
@@ -28,6 +28,7 @@ const expandedState = atom({ plugin: 'console', key: 'expanded' } as const, [] a
 
 const openedState = atom({ plugin: 'console', key: 'opened' } as const, null, { shape: 'opened-3' })
 const startState = atom({ plugin: 'console', key: 'start' } as const, null, { shape: 'start-1' })
+const deferredState = atom({ plugin: 'console', key: 'deferred' } as const, [] as ConsoleDeferred[], { shape: 'deferred-1' })
 
 const GATE_KEYS_KEPT = 200
 
@@ -76,6 +77,14 @@ export async function toggleExpanded($: $, section: ConsoleSection): Promise<voi
 /** The start message waiting for a compaction (the suggestion's Start with compact); null when none. */
 export async function getStart($: $): Promise<ConsoleStart | null> { return read($, startState) }
 export async function setStart($: $, value: ConsoleStart | null): Promise<void> { await update($, startState, () => value) }
+
+/** Built-in commands the person sent during the running turn; taking them empties the list. */
+export async function deferCommand($: $, command: ConsoleDeferred): Promise<void> { await update($, deferredState, all => [...all, command]) }
+export async function takeDeferred($: $): Promise<ConsoleDeferred[]> {
+  const all = await read($, deferredState)
+  if (all.length > 0) await update($, deferredState, () => [])
+  return all
+}
 
 export async function getOpened($: $): Promise<ConsoleOpened | null> { return read($, openedState) }
 export async function updateOpened($: $, change: (opened: ConsoleOpened | null) => ConsoleOpened | null): Promise<void> { await update($, openedState, change) }

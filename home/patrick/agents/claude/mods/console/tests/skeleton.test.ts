@@ -552,6 +552,33 @@ describe('machine-run passes', () => {
     expect(JSON.parse(pass?.stdin ?? '{}')).toEqual({ command: 'ground', args: '', pending: 'p7' })
   })
 
+  // What the person sends during a turn reaches the model inside it (Claude Code 2.1.318): a built-in command, which the model cannot run,
+  // runs when the turn ends (user, 2026-11-06).
+  const during = (text: string, kind: 'composer' | 'bridge' = 'bridge') => ({ text, origin: { kind }, turnId: 't', wait: false }) as never
+
+  test('a built-in command sent during a turn runs when it ends, ahead of the pass', async ($, on) => {
+    const { w, session, clock } = world(on, { round: roundJson({ pending: { id: 'p7', command: 'ground', args: '' } }) })
+    await start($)
+    expect((await $.prompt.submit(during('/compact keep the round'))).drop).toBe('/compact runs when this turn ends')
+    await $.turn.complete(complete())
+    await clock.settle()
+    expect(w.commands.map(one => one.command)).toEqual(['compact', 'ground'])
+    expect(w.commands[0]?.args).toBe('keep the round')
+    expect(w.prompts.filter(text => text.startsWith('/compact'))).toEqual([])
+    expect(notices(session).filter(text => text.includes('/compact runs when this turn ends'))).toHaveLength(1)
+  })
+
+  test('a message or skill command sent during a turn reaches the model, and the turn end still runs the pending pass', async ($, on) => {
+    const { w, clock } = world(on, { round: roundJson({ pending: { id: 'p7', command: 'ground', args: '' } }) })
+    await start($)
+    await $.prompt.submit(during('keep in mind q3 is a library choice'))
+    await $.prompt.submit(during('/step-back options', 'composer'))
+    await $.turn.complete(complete())
+    await clock.settle()
+    expect(w.prompts.slice(0, 2)).toEqual(['keep in mind q3 is a library choice', '/step-back options'])
+    expect(w.commands).toEqual([{ command: 'ground', args: '' }])
+  })
+
   test('a Think more rerun runs and records its argument verbatim, goal included (r38-q213)', async ($, on) => {
     const args = 'goal foundations on q3; Think more on q3: the lean fell short, try to get a reasoned strong recommendation'
     const { w, clock } = world(on, { round: roundJson({ pending: { id: 'p8', command: 'step-back', args } }) })

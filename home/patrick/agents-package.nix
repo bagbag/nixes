@@ -31,11 +31,13 @@ let
     "session-register.sh"
     "session-activity.sh"
   ];
-  # Installed under ~/.agents/bin; the rest of agents/bin is build and test tooling.
+  # Installed under ~/.agents/bin; the rest of agents/bin is build and test tooling. protocol_engine is the
+  # package bin/protocol imports from beside itself.
   tools = [
     "session-lead-mode"
     "board"
     "protocol"
+    "protocol_engine"
     "worker-last-use"
     "round-report"
   ];
@@ -88,7 +90,7 @@ let
     for f in ${toString claudeHooks}; do cp ${src}/hooks/"$f" "$files/.claude/hooks/"; done
     for f in ${toString claudeOwnHooks}; do cp ${./claude/hooks}/"$f" "$files/.claude/hooks/"; done
     for f in ${toString codexHooks}; do cp ${src}/hooks/"$f" "$files/.codex/hooks/"; done
-    for f in ${toString tools}; do cp ${src}/bin/"$f" "$files/.agents/bin/"; done
+    for f in ${toString tools}; do cp -r ${src}/bin/"$f" "$files/.agents/bin/"; done
     cp -r ${src}/claude/mods/console "$files/.claude/mods/console"
 
     # Store copies are read-only, which would stick to the installed files.

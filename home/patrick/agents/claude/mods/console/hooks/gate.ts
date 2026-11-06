@@ -3,6 +3,7 @@
 import type { ConsoleBatch, ConsoleDialogQuestion, ConsoleRound } from '../types'
 
 import type { Answer } from './engine'
+import { differingBatchText, differingDialogNote, foreignDialogNote, noBatchText, otherBatchText, stagedText, unprintedBatchText } from './words'
 
 export const MARKER_PREFIX = 'round:'
 
@@ -49,16 +50,16 @@ export function judgeDialog(round: ConsoleRound & { round: string }, input: Dial
       return {
         action: 'block',
         key,
-        reason: `${marker}: the console has not printed this batch's question text yet. Write one short line that questions are coming, nothing about their content, and end your turn: the console prints them at the turn's end and opens the dialog.`,
+        reason: unprintedBatchText(marker),
       }
     }
     const key = dialogKey('marked', input)
-    if (blocked.includes(key)) return { action: 'note', text: `This dialog (${marker}) differs from the batch round ${round.round} issued; its answers were not recorded in the round.` }
+    if (blocked.includes(key)) return { action: 'note', text: differingDialogNote(marker, round.round) }
     const reason = issued === null
-      ? `${marker}: round ${round.round} has no batch issued. Run the round's next step through the protocol tool; it issues the batch.`
+      ? noBatchText(marker, round.round)
       : issued.marker !== marker
-        ? `${marker}: round ${round.round} issued ${issued.marker}. Ask exactly that batch: ${JSON.stringify(issued.questions)}`
-        : `${marker} differs from the batch round ${round.round} issued. Ask it exactly as issued: ${JSON.stringify(issued.questions)}`
+        ? otherBatchText(marker, round.round, issued.marker, issued.questions)
+        : differingBatchText(marker, round.round, issued.questions)
     return { action: 'block', key, reason }
   }
   const staged = new Map(round.questions.filter(one => one.status !== 'answered').map(one => [squash(one.text), one.id]))
@@ -69,11 +70,11 @@ export function judgeDialog(round: ConsoleRound & { round: string }, input: Dial
       return {
         action: 'block',
         key,
-        reason: `${repeated.join(', ')} ${repeated.length === 1 ? 'is' : 'are'} staged in round ${round.round}; the round asks ${repeated.length === 1 ? 'it' : 'them'} in its own batch. Run the round's next step through the protocol tool instead of asking directly.`,
+        reason: stagedText(repeated, round.round),
       }
     }
   }
-  return { action: 'note', text: `This dialog was not from round ${round.round}; its answers were not recorded in the round.` }
+  return { action: 'note', text: foreignDialogNote(round.round) }
 }
 
 export type DialogResult = {

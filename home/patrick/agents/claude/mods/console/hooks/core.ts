@@ -9,7 +9,9 @@ import {
   claimRefresh, getAskSent, getDrawn, getPaneDismissed, getPass, getRole, getRound, releaseRefresh, setAskSent, setBoard, setDrawn, setPass, setPrinted, setRole,
   setRound, setRoundError, setStart, takeRefreshAgain, updateOpened, updateQueued,
 } from './state'
-import { itemSlot, missingReportText, openDialogText, stuckPassText } from './words'
+import {
+  declineFailedNote, itemSlot, missingReportText, openDialogText, PROTOCOL_ARGS_DESCRIPTION, PROTOCOL_STDIN_DESCRIPTION, PROTOCOL_TOOL_DESCRIPTION, startText, stuckPassText,
+} from './words'
 
 type $ = EngineInterface
 
@@ -31,6 +33,20 @@ export const message = (error: unknown): string => error instanceof Error ? erro
 /** A transcript notice: the person sees it, the model never reads it. */
 export async function notice($: $, text: string): Promise<void> {
   await $.session.append({ message: { type: 'system', content: [{ type: 'text', text: `console: ${text}` }] } })
+}
+
+/**
+ * A built-in command the person sent during a turn (`/compact`): its name and arguments, else null. Claude Code delivers what
+ * arrives during a turn into it as text, a command included (2.1.318), and the model cannot run a built-in; the console runs it
+ * when the turn ends instead (a run from the prompt hook would wait on that turn). Retire once Claude Code runs commands sent during
+ * a turn as commands.
+ */
+export async function midTurnBuiltin($: $, text: string): Promise<{ command: string; args: string } | null> {
+  const match = /^\/([\w:-]+)(?:\s+([\s\S]*))?$/.exec(text.trim())
+  if (match === null) return null
+  const [, name = '', args = ''] = match
+  const commands = await $.command.list()
+  return commands.some(one => one.name === name && one.source === 'builtin') ? { command: name, args: args.trim() } : null
 }
 
 /** The command that prints a batch's question text as its output (register.tsx registers and answers it by this literal name). */
@@ -102,7 +118,7 @@ async function finishDialog($: $, marker: string, session: string, outcome: Dial
       await setRound($, recorded)
       outcome.note = recorded.note
     } catch (error) {
-      outcome.note = `Recording the decline of ${marker} failed: ${message(error)}. The batch stays out.`
+      outcome.note = declineFailedNote(marker, message(error))
       await notice($, outcome.note)
     }
   }
@@ -311,18 +327,12 @@ async function notifyIdleAgents($: $, session: string, board: ConsoleBoard): Pro
 async function registerTool($: $): Promise<void> {
   await $.tool.register({
     name: 'protocol',
-    description: [
-      "Runs the protocol engine for this session's round (`protocol <args>`): one call per step, per-question updates as JSON on stdin; the output is the next step.",
-      'Read: ["show","--json"], ["show"], ["show","q3"] (that question whole), ["pending"], ["status","--line"], ["history"], ["next"].',
-      'Record an answer the user typed in chat: ["answer"] with stdin {"question","answer","quote"}, the quote being the user\'s exact words.',
-      'Apply a change the user asked for to the questions: ["edit"] with stdin {"updates","quote"}, the quote being the user\'s exact words.',
-      'The console stamps --session and --origin; dialog answers, declines and passes are recorded by the console from the person\'s actions.',
-    ].join(' '),
+    description: PROTOCOL_TOOL_DESCRIPTION,
     inputSchema: {
       type: 'object',
       properties: {
-        args: { type: 'array', items: { type: 'string' }, description: 'The verb and its arguments, e.g. ["start","round"], ["step"] or ["show","--json"]' },
-        stdin: { type: 'string', description: 'JSON text for the verb (per-question updates), when it reads stdin' },
+        args: { type: 'array', items: { type: 'string' }, description: PROTOCOL_ARGS_DESCRIPTION },
+        stdin: { type: 'string', description: PROTOCOL_STDIN_DESCRIPTION },
       },
       required: ['args'],
     },
@@ -415,12 +425,6 @@ export async function pressSubmit($: $, text: string, onFailed?: (error: unknown
   }
   // A prompt that did not enter resolves as a drop with its reason; a refused text (a leading `/`) rejects.
   void $.prompt.submit(isConsoleWords ? { text } : { text, asUser: true }).then(sent => { if (sent.drop !== undefined) return failed(new Error(sent.drop)) }).catch(failed)
-}
-
-/** The message a Start press sends (or stores, with compact): `protocol start round --topic '<title>: <premise>'`, then the ids that must lead. */
-export const startText = (suggestion: Extract<ConsoleSuggestion, { kind: 'round' }>): string => {
-  const topic = [suggestion.title, suggestion.premise].filter(part => part !== '').join(': ').replace(/'/g, `'\\''`)
-  return `Start the next round: protocol start round --topic '${topic}'${suggestion.ids.map(id => ` ${id}`).join('')}`
 }
 
 /**

@@ -1,7 +1,8 @@
-// Lens names and the words the pane, the band and /console print. Lens names and focus follow
+// Lens names, the words the pane, the band and /console print, and every text the model reads from the console (its tool's
+// description, notes on tool results, compaction instructions). Lens names and focus follow
 // skills/step-back/SKILL.md and skills/ground/SKILL.md, which own them: typed name = label in
 // lowercase with hyphens.
-import type { ConsoleBoard, ConsoleItemSlot, ConsoleQuestion, ConsoleRole, ConsoleRound } from '../types'
+import type { ConsoleBoard, ConsoleItemSlot, ConsoleQuestion, ConsoleRole, ConsoleRound, ConsoleSuggestion } from '../types'
 
 import { isRoundOpen } from './engine'
 
@@ -232,6 +233,55 @@ export const missingReportText = (command: string, id: string): string => `The /
 
 /** A pass that still has no report: the round stopped, and what the person can type. */
 export const stuckPassText = (command: string, args: string): string => `The round stopped: the /${command} pass has no report. Type /${[command, args].filter(part => part !== '').join(' ')} to run it again.`
+
+/** The console's `protocol` tool, as the model sees it. */
+export const PROTOCOL_TOOL_DESCRIPTION = [
+  "Runs the protocol engine for this session's round (`protocol <args>`): one call per step, per-question updates as JSON on stdin; the output is the next step.",
+  'Read: ["show","--json"], ["show"], ["show","q3"] (that question whole), ["pending"], ["status","--line"], ["history"], ["next"].',
+  'Record an answer the user typed in chat: ["answer"] with stdin {"question","answer","quote"}, the quote being the user\'s exact words.',
+  'Apply a change the user asked for to the questions: ["edit"] with stdin {"updates","quote"}, the quote being the user\'s exact words.',
+  'The console stamps --session and --origin; dialog answers, declines and passes are recorded by the console from the person\'s actions.',
+].join(' ')
+export const PROTOCOL_ARGS_DESCRIPTION = 'The verb and its arguments, e.g. ["start","round"], ["step"] or ["show","--json"]'
+export const PROTOCOL_STDIN_DESCRIPTION = 'JSON text for the verb (per-question updates), when it reads stdin'
+
+/** The tool's results when the console does not run the engine. */
+export const TOOL_IDLE_TEXT = 'The console is idle in this session (no lead, solo or autopilot role, or nothing draws); run `protocol` through Bash.'
+export const TOOL_FAILED_TEXT = 'The console failed to run protocol (see the debug log); run `protocol` through Bash.'
+
+/** The dialog gate's refusals and notes. */
+export const unprintedBatchText = (marker: string): string =>
+  `${marker}: the console has not printed this batch's question text yet. Write one short line that questions are coming, nothing about their content, and end your turn: the console prints them at the turn's end and opens the dialog.`
+export const differingDialogNote = (marker: string, round: string): string =>
+  `This dialog (${marker}) differs from the batch round ${round} issued; its answers were not recorded in the round.`
+export const noBatchText = (marker: string, round: string): string =>
+  `${marker}: round ${round} has no batch issued. Run the round's next step through the protocol tool; it issues the batch.`
+export const otherBatchText = (marker: string, round: string, issued: string, questions: unknown): string =>
+  `${marker}: round ${round} issued ${issued}. Ask exactly that batch: ${JSON.stringify(questions)}`
+export const differingBatchText = (marker: string, round: string, questions: unknown): string =>
+  `${marker} differs from the batch round ${round} issued. Ask it exactly as issued: ${JSON.stringify(questions)}`
+export const stagedText = (repeated: readonly string[], round: string): string =>
+  `${repeated.join(', ')} ${repeated.length === 1 ? 'is' : 'are'} staged in round ${round}; the round asks ${repeated.length === 1 ? 'it' : 'them'} in its own batch. Run the round's next step through the protocol tool instead of asking directly.`
+export const foreignDialogNote = (round: string): string => `This dialog was not from round ${round}; its answers were not recorded in the round.`
+
+/** Notes on a dialog's result: the line a decline sends, and those that did not reach the round. */
+export const DECLINED_TEXT = 'The dialog was declined.'
+export const declinedNote = (marker: string): string => `The dialog was declined; batch ${marker} stays out.`
+export const declineFailedNote = (marker: string, error: string): string => `Recording the decline of ${marker} failed: ${error}. The batch stays out.`
+export const NO_QUESTION_TEXT = 'No question text to print.'
+
+/** The message a Start press sends (or stores, with compact): `protocol start round --topic '<title>: <premise>'`, then the ids that must lead. */
+export const startText = (suggestion: Extract<ConsoleSuggestion, { kind: 'round' }>): string => {
+  const topic = [suggestion.title, suggestion.premise].filter(part => part !== '').join(': ').replace(/'/g, `'\\''`)
+  return `Start the next round: protocol start round --topic '${topic}'${suggestion.ids.map(id => ` ${id}`).join('')}`
+}
+export const unsavedNote = (marker: string, error: string): string => `Your answers to ${marker} were not saved (${error}), so the questions come again.`
+
+/** What compaction keeps, and the round line it adds after. */
+export const keepRoundText = (round: string, step: string | null): string =>
+  `Keep the protocol round state: round ${round}, step ${step}, each question's id, status and open overlap, the pending pass, and that the round runs through the protocol tool (mcp__console__protocol).`
+export const keepStartText = (start: string | undefined): string => `Keep the proposed next round, which starts right after this compaction: ${start}.`
+export const compactedNote = (line: string): string => `<console-note>Protocol state after compaction: ${line}</console-note>`
 
 /** `Round`, or `Release` for a release run (the same slot, r4-q17). */
 export const runNoun = (round: ConsoleRound): string => round.protocol === 'release' ? 'Release' : 'Round'

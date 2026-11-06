@@ -5,10 +5,10 @@ import type { EngineInterface, RenderPropsOf } from 'claude-code'
 
 import type { ConsoleBoard, ConsoleQuestion, ConsoleRecord, ConsoleRole, ConsoleRound, ConsoleSection, ConsoleSession, ConsoleSuggestion } from '../types'
 
-import { pressOpenItem, pressOpenOverlaps, pressOpenSettles, pressOpenSuggestion, pressRole, pressRun, pressStart, pressSubmit, pressView, pressWorkers, startText } from './core'
+import { pressOpenItem, pressOpenOverlaps, pressOpenSettles, pressOpenSuggestion, pressRole, pressRun, pressStart, pressSubmit, pressView, pressWorkers } from './core'
 import { isRoundOpen, RELEASE_COMMAND, ROUND_ROLES } from './engine'
 import { getBoard, getExpanded, getLenses, getOpened, getPass, getRole, getRound, getRoundError, toggleExpanded, updateLenses } from './state'
-import { answerText, COUNT_LABELS, GROUND, GROUND_BASE, lensArgs, LENS_SETS, plural, pullsText, recommendationMark, recommendationText, roleText, roundWords, runNoun, staleHolds, staleSessions, STEP_BACK_BASE, WHAT, WHERE } from './words'
+import { answerText, COUNT_LABELS, GROUND, GROUND_BASE, lensArgs, LENS_SETS, plural, pullsText, recommendationMark, recommendationText, roleText, roundWords, runNoun, staleHolds, staleSessions, startText, STEP_BACK_BASE, WHAT, WHERE } from './words'
 import type { Lens, LensCommand } from './words'
 
 type $ = EngineInterface

@@ -8,14 +8,16 @@ import type { ConsoleStart } from '../types'
 import {
   betweenTurns, context, failOpen, message, notice, openDialog, PANE, placeholderMarker, pressSubmit, recordPass, refreshAll, refreshBoard, refreshLater,
   refreshRole, refreshRound, releaseRun, resetSession, deliverDialogOutcome, stampReleaseRun, withContext,
-  setQuestionsAnswered,
+  midTurnBuiltin, setQuestionsAnswered,
 } from './core'
 import { answer, boardShow, decline, isRoundOpen, pass, pending as readPending, protocol, RELEASE_COMMAND, say, statusLine, toolArgv } from './engine'
 import { capture, judgeDialog } from './gate'
 import type { DialogInput } from './gate'
 import { drawBand, drawPane, PANE_MIN_COLUMNS } from './pane'
-import { addGate, getBoard, getGate, getPass, getPrinted, getRole, getRound, getStart, releaseRefresh, setAskSent, setPaneDismissed, setPass, setPrinted, setRound, setStart } from './state'
-import { consoleText, protocolCallText, protocolResultText } from './words'
+import { addGate, deferCommand, getBoard, getGate, getPass, getPrinted, getRole, getRound, getStart, releaseRefresh, setAskSent, setPaneDismissed, setPass, setPrinted, setRound, setStart, takeDeferred } from './state'
+import {
+  compactedNote, consoleText, DECLINED_TEXT, declinedNote, keepRoundText, NO_QUESTION_TEXT, keepStartText, protocolCallText, protocolResultText, TOOL_FAILED_TEXT, TOOL_IDLE_TEXT, unsavedNote,
+} from './words'
 
 const PROTOCOL_TOOL = 'mcp__console__protocol'
 
@@ -62,9 +64,9 @@ export const register: Register = on => {
   })
 
   // The model's tool: the console stamps session and origin (R-B11).
-  on('tool.call', { tool: 'mcp__console__protocol' }, async ($, e) => {
+  on('tool.call', { tool: PROTOCOL_TOOL }, async ($, e) => {
     const ctx = await context($)
-    if (!ctx.isRoundRole) return { result: 'The console is idle in this session (no lead, solo or autopilot role, or nothing draws); run `protocol` through Bash.' }
+    if (!ctx.isRoundRole) return { result: TOOL_IDLE_TEXT }
     // The input comes from a model: the declared types are not checked at runtime.
     const args = Array.isArray(e.args) ? e.args.filter((arg): arg is string => typeof arg === 'string') : []
     const allowed = toolArgv(args)
@@ -74,7 +76,7 @@ export const register: Register = on => {
     refreshLater($)
     const output = [ran.stdout.trim(), ran.stderr.trim() === '' ? '' : `stderr:\n${ran.stderr.trim()}`].filter(part => part !== '').join('\n\n')
     return { result: ran.exitCode === 0 ? output : `protocol exited ${ran.exitCode}.\n\n${output}` }
-  }).catch(() => ({ result: 'The console failed to run protocol (see the debug log); run `protocol` through Bash.' }))
+  }).catch(() => ({ result: TOOL_FAILED_TEXT }))
 
   // Dialog gate and answer capture: only inside an open round.
   on('tool.call', { tool: 'AskUserQuestion' }, async ($, e, next) => {
@@ -100,7 +102,7 @@ export const register: Register = on => {
     }
     const captured = capture(verdict.marker, ran)
     if (captured.kind === 'none') return ran
-    const declined = 'The dialog was declined.'
+    const declined = DECLINED_TEXT
     try {
       const recorded = captured.kind === 'answer'
         ? await answer($, ctx.session, captured.input)
@@ -115,9 +117,9 @@ export const register: Register = on => {
       if (captured.kind === 'decline') {
         // Esc aborts this hook's runs and no retry here gets through; the console's own dialog records it once closed (openDialog).
         if (placeholder !== null) deliverDialogOutcome($, verdict.marker, ctx.session, { summary: declined, note: null, unsavedDecline: { marker: verdict.marker, partial: captured.partial } })
-        return withContext(ran, `The dialog was declined; batch ${verdict.marker} stays out.`)
+        return withContext(ran, declinedNote(verdict.marker))
       }
-      const text = `Your answers to ${verdict.marker} were not saved (${message(error)}), so the questions come again.`
+      const text = unsavedNote(verdict.marker, message(error))
       await setAskSent($, null).catch(() => undefined)
       await notice($, text)
       if (placeholder !== null) deliverDialogOutcome($, verdict.marker, ctx.session, { summary: text, note: text })
@@ -165,11 +167,22 @@ export const register: Register = on => {
   // Chat-typed messages of the person reach the engine's quote check (R-B9).
   on('prompt.submit', async ($, e, next) => {
     const origin = e.origin.kind
-    if ((origin === 'composer' || origin === 'bridge') && e.isMeta !== true) {
+    const isPerson = (origin === 'composer' || origin === 'bridge') && e.isMeta !== true
+    if (isPerson && e.turnId !== undefined && e.command === undefined) {
+      // Sent during a turn: a built-in command runs when the turn ends, ahead of anything the console starts (user, 2026-11-06); anything
+      // else reaches the model in this turn.
+      const builtin = await midTurnBuiltin($, e.text).catch(() => null)
+      if (builtin !== null) {
+        await deferCommand($, builtin)
+        await notice($, `/${builtin.command} runs when this turn ends.`)
+        return { drop: `/${builtin.command} runs when this turn ends` }
+      }
+    }
+    if (isPerson) {
       await setStart($, null)  // the person's own prompt: a stored start is moot
       await setAskSent($, null)  // and the dialog message may go again for the batch still out
     }
-    if ((origin === 'composer' || origin === 'bridge') && e.isMeta !== true && e.command === undefined) {
+    if (isPerson && e.command === undefined) {
       const ctx = await context($)
       const round = await getRound($)
       if (ctx.isRoundRole && round !== null && isRoundOpen(round)) {
@@ -183,6 +196,7 @@ export const register: Register = on => {
   on('turn.complete', async ($, e, next) => {
     const done = await next(e)
     if (e.agentId !== undefined) return done
+    for (const command of await takeDeferred($)) void $.command.run(command).catch(failOpen($, `running /${command.command}`))
     const ctx = await refreshRole($)
     if (!ctx.isRoundRole) {
       refreshLater($)
@@ -209,8 +223,8 @@ export const register: Register = on => {
     const start = isOpen ? null : await getStart($)
     if (!isOpen && start === null) return settleContext($, await next(e), e.trigger)
     const keep = isOpen
-      ? `Keep the protocol round state: round ${round.round}, step ${round.step}, each question's id, status and open overlap, the pending pass, and that the round runs through the protocol tool (mcp__console__protocol).`
-      : `Keep the proposed next round, which starts right after this compaction: ${start?.text}.`
+      ? keepRoundText(round.round, round.step)
+      : keepStartText(start?.text)
     const compacted = await next({ ...e, instructions: [e.instructions, keep].filter(Boolean).join('\n\n') })
     await settleContext($, compacted, e.trigger)
     if (start !== null) await settleStart($, start, compacted, e.trigger)
@@ -218,7 +232,7 @@ export const register: Register = on => {
     try {
       const line = await statusLine($, ctx.session)
       $.clock.after(0, () => notice($, `after compaction: ${line}`).catch(() => undefined))
-      return { ...compacted, messages: [...compacted.messages, { role: 'user' as const, text: `<console-note>Protocol state after compaction: ${line}</console-note>`, toolUses: [] }] }
+      return { ...compacted, messages: [...compacted.messages, { role: 'user' as const, text: compactedNote(line), toolUses: [] }] }
     } catch (error) {
       $.clock.after(0, () => notice($, `after compaction the round line failed: ${message(error)}; run protocol status --line`).catch(() => undefined))
       return compacted
@@ -265,17 +279,16 @@ export const register: Register = on => {
     const batch = round !== null && isRoundOpen(round) ? round.batch : null
     const wanted = e.args.trim()
     const isOurs = e.origin.kind === 'plugin' && e.origin.name === 'console'
-    if (batch === null || (wanted !== '' && wanted !== batch.marker)) return { text: 'No question text to print.' }
+    if (batch === null || (wanted !== '' && wanted !== batch.marker)) return { text: NO_QUESTION_TEXT }
     if (isOurs) {
       await setPrinted($, batch.marker)
       const ctx = await context($)
       setQuestionsAnswered(batch.marker)
       void openDialog($, batch.marker, ctx.session).catch(failOpen($, 'opening the dialog'))
     }
-    if (batch.notice.trim() === '') return { text: 'No question text to print.' }
+    if (batch.notice.trim() === '') return { text: NO_QUESTION_TEXT }
     return { text: `\n${batch.notice}` }  // the host prefixes the output with the plugin's name: the first question starts its own line
   })
-
 
   on('ui.render', { component: 'Pane', requestId: PANE }, ($, e) => drawPane($, e))
 

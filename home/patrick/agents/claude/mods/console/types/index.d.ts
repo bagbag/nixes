@@ -158,6 +158,9 @@ export type ConsoleOpened =
 /** The start message a compacting suggestion sends once its compaction succeeded; it goes with the next compaction, typed prompt or round start. */
 export type ConsoleStart = { text: string; at: number }
 
+/** A built-in command the person sent during a turn, run when that turn ends. */
+export type ConsoleDeferred = { command: string; args: string }
+
 /** Pane lists the person expanded past their cap. */
 export type ConsoleSection = 'questions' | 'held' | 'items' | 'sessions' | 'log'
 
@@ -185,6 +188,8 @@ declare module 'claude-code' {
       expanded: Shaped<ConsoleSection[]>
       opened: Shaped<ConsoleOpened | null>
       start: Shaped<ConsoleStart | null>
+      /** Built-in commands the person sent during the running turn, in order: its end runs them, ahead of anything the console starts. */
+      deferred: Shaped<ConsoleDeferred[]>
       refresh: Shaped<ConsoleRefresh>
       isPaneDismissed: boolean
     }

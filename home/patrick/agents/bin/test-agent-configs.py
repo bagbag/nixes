@@ -3520,11 +3520,30 @@ def check_sets_problems(engine, words_ts: str) -> list[str]:
     return problems
 
 
+def load_engine(bin_dir: Path, name: str = "protocol_engine"):
+    """bin/protocol's engine, the protocol_engine package beside it, under the module name `name` (a copied install
+    loads its own copy under another) with every module imported (cli imports them all)."""
+    folder = bin_dir / "protocol_engine"
+    loaded = sys.modules.get(name)
+    if loaded is not None and list(loaded.__path__) == [str(folder)]:
+        return loaded
+    spec = importlib.util.spec_from_file_location(name, folder / "__init__.py", submodule_search_locations=[str(folder)])
+    package = importlib.util.module_from_spec(spec)
+    sys.modules[name] = package
+    sys.dont_write_bytecode = True  # as bin/protocol: the engine runs from the git tree, no __pycache__ beside it
+    spec.loader.exec_module(package)
+    importlib.import_module(f"{name}.cli")
+    return package
+
+
+def engine_text(root: Path) -> str:
+    """The engine's source, every module of bin/protocol_engine, for the checks that read it as text."""
+    return "\n".join(path.read_text(encoding="utf-8") for path in sorted((root / "bin" / "protocol_engine").glob("*.py")))
+
+
 def validate_lens_names(root: Path) -> None:
-    """bin/protocol ALL_LENSES, skills/step-back and skills/ground (the owners) and the console's words.ts list the same lenses."""
-    loader = importlib.machinery.SourceFileLoader("protocol_lenses", str(root / "bin" / "protocol"))
-    engine = importlib.util.module_from_spec(importlib.util.spec_from_loader("protocol_lenses", loader))
-    loader.exec_module(engine)
+    """The engine's ALL_LENSES, skills/step-back and skills/ground (the owners) and the console's words.ts list the same lenses."""
+    engine = load_engine(root / "bin").base
     step_back = (root / "skills" / "step-back" / "SKILL.md").read_text(encoding="utf-8")
     ground = (root / "skills" / "ground" / "SKILL.md").read_text(encoding="utf-8")
     words = (root / "claude" / "mods" / "console" / "hooks" / "words.ts").read_text(encoding="utf-8")
@@ -3546,7 +3565,7 @@ def validate_strength_rules(root: Path) -> None:
     """decision-protocol.md Recommendation strength owns the criteria and lean causes the engine enforces."""
     section = (root / "skills" / "shared" / "decision-protocol.md").read_text(encoding="utf-8").split("### Recommendation strength", 1)[1]
     section = section.split("\n### ", 1)[0]
-    engine = (root / "bin" / "protocol").read_text(encoding="utf-8")
+    engine = engine_text(root)
     criteria = re.findall(r"^    '(\w+)': '", engine.split("STRONG_CRITERIA = {", 1)[1].split("}", 1)[0], re.M)
     causes = re.findall(r"'(\w+)'", engine.split("LEAN_CAUSES = (", 1)[1].split(")", 1)[0])
     named = re.findall(r"`(\w+)`", section)
@@ -3594,7 +3613,7 @@ def validate_console_programs(root: Path) -> None:
 def validate_engine_board_fields(root: Path) -> None:
     """`board show --field` refuses a field no shown item carries, unless it is listed (ITEM_FIELDS): the fake board accepts
     anything, so a field the engine asks for but the real board can refuse would only show on a real run."""
-    engine, board = (root / "bin" / "protocol").read_text(), (root / "bin" / "board").read_text()
+    engine, board = engine_text(root), (root / "bin" / "board").read_text()
     asked = set(re.findall(r"'--field',\s*'(\w+)'", engine))
     listed = set(re.findall(r"'(\w+)'", re.search(r"^TEXT_FIELDS = .*$", board, re.M).group(0))) \
         | set(re.findall(r"'(\w+)'", re.search(r"^ITEM_FIELDS = \{.*?\}", board, re.M | re.S).group(0)))
@@ -3610,14 +3629,21 @@ def validate_copied_install(root: Path) -> None:
         installed = Path(directory)
         for name in ("board", "protocol", "session-lead-mode"):
             shutil.copy2(root / "bin" / name, installed / name)
-        for name in ("board", "protocol"):
-            loader = importlib.machinery.SourceFileLoader(f"copied_{name}", str(installed / name))
-            module = importlib.util.module_from_spec(importlib.util.spec_from_loader(loader.name, loader))
-            loader.exec_module(module)
-            siblings = [module.REGISTRY] + ([module.BOARD] if name == "protocol" else [])
+        shutil.copytree(root / "bin" / "protocol_engine", installed / "protocol_engine", ignore=shutil.ignore_patterns("__pycache__"))
+        loader = importlib.machinery.SourceFileLoader("copied_board", str(installed / "board"))
+        board = importlib.util.module_from_spec(importlib.util.spec_from_loader(loader.name, loader))
+        loader.exec_module(board)
+        engine = load_engine(installed, "copied_protocol_engine").base
+        for name, siblings in (("board", [board.REGISTRY]), ("protocol", [engine.REGISTRY, engine.BOARD])):
             missing = [path.name for path in siblings if not path.is_file()]
             if missing:
                 raise ValueError(f"a copied {name} looks for siblings {missing} that a copied install lacks")
+        # The entry imports the package beside its own file, not one on the caller's path, and writes no bytecode.
+        ran = subprocess.run([sys.executable, str(installed / "protocol"), "--help"], capture_output=True, text=True)
+        if ran.returncode != 0 or not ran.stdout.startswith("usage: protocol"):
+            raise ValueError(f"a copied protocol does not run: {ran.stderr.strip()}")
+        if any(installed.rglob("__pycache__")):
+            raise ValueError("a copied protocol left __pycache__ in the install")
 
 
 def validate_console_lenses(root: Path) -> None:
@@ -3678,9 +3704,7 @@ def validate_protocol(root: Path, part: str) -> None:
             log.unlink(missing_ok=True)
             return rows
 
-        loader = importlib.machinery.SourceFileLoader("protocol_engine", str(engine))
-        engine_module = importlib.util.module_from_spec(importlib.util.spec_from_loader("protocol_engine", loader))
-        loader.exec_module(engine_module)
+        engine_module = load_engine(root / "bin")
 
         def proto(*args, stdin=None, cwd=plain, session="0000-lead0001", ok=True, env=None, process=False, observe=True, explore=True):
             """The engine's `run_cli` in this process; `process=True` runs the real executable (the end-to-end path).
@@ -3717,7 +3741,7 @@ def validate_protocol(root: Path, part: str) -> None:
                 result = subprocess.run([sys.executable, "-B", str(engine), *argv], input=text, text=True,
                                         capture_output=True, cwd=cwd, env={**base, **(env or {})})
             else:
-                code, out, err = engine_module.run_cli(argv, {**base, **(env or {})}, Path(cwd), text)
+                code, out, err = engine_module.cli.run_cli(argv, {**base, **(env or {})}, Path(cwd), text)
                 result = subprocess.CompletedProcess(argv, code, out, err)
             if ok is not None and (result.returncode == 0) != ok:
                 raise ValueError(f"protocol {' '.join(args)} exited {result.returncode} (expected {'0' if ok else 'non-zero'}):"
@@ -4739,7 +4763,7 @@ def validate_protocol(root: Path, part: str) -> None:
                 raise ValueError(f"protocol chain: one Record writes all three: {round_events}\n{out}")
 
             # Log lines (r11 q43), as the pane's Log reads them.
-            log_line = engine_module.log_text
+            log_line = engine_module.views.log_text
             if log_line({"event": "pass", "command": "ground", "changes": 0, "summary": "No change: premises hold"}) != "ground: no change: premises hold" \
                     or log_line({"event": "pass", "command": "ground", "changes": 0, "summary": "no changes."}) != "ground: no change" \
                     or log_line({"event": "pass", "command": "ground", "changes": 0, "summary": "Nothing moved"}) != "ground: no change: Nothing moved" \
@@ -4748,8 +4772,8 @@ def validate_protocol(root: Path, part: str) -> None:
                     or log_line({"event": "pass", "command": "ground", "kind": "lean", "scoped": ["q39", "q40"]}) != "ground (lean q39 q40): no change" \
                     or log_line({"event": "classified", "classes": {}}) != "classified 0 points" \
                     or log_line({"event": "classified", "classes": {"user": 2}}) != "classified 2 points: 2 user" \
-                    or engine_module.recorded_line([{"question": "q39", "board": "fx-1"}, {"question": "q40", "board": "fx-2"}]) != "recorded q39, q40 → fx-1, fx-2" \
-                    or engine_module.recorded_line([{"question": "q39", "board": None}, {"question": "q40"}]) != "recorded q39, q40 → files":
+                    or engine_module.views.recorded_line([{"question": "q39", "board": "fx-1"}, {"question": "q40", "board": "fx-2"}]) != "recorded q39, q40 → fx-1, fx-2" \
+                    or engine_module.views.recorded_line([{"question": "q39", "board": None}, {"question": "q40"}]) != "recorded q39, q40 → files":
                 raise ValueError("protocol log lines: strip a leading 'no change', name the pass kind, 'classified 0 points', merge recorded lines")
             configure()
 
@@ -5168,10 +5192,10 @@ def validate_protocol(root: Path, part: str) -> None:
                                   "supersedes": [{"old": "fx-o", "new": "fx-a", "partial": "Rule 2"}], "closes": {"fx-q": ["fx-a"]},
                                   "checks": {"fx-a": {"answers": [{"item": "fx-q", "action": "answered: close"}], "doc": [{"item": "README.md", "action": "owner write"}],
                                                       "revises": "none"}}, "rulings": []}
-            if engine_module.approval_parts(approval_ctx) != {
+            if engine_module.render.approval_parts(approval_ctx) != {
                     "corrections": "- fx-a revised: size\n- fx-b left the set: premise",
                     "boardCheck": "- fx-o superseded by fx-a (rule: Rule 2)\n- fx-q closes, answered by fx-a\n- fx-a doc: README.md: owner write"}:
-                raise ValueError(f"approval parts: {engine_module.approval_parts(approval_ctx)}")
+                raise ValueError(f"approval parts: {engine_module.render.approval_parts(approval_ctx)}")
             refused("start", "round", "--discussion", stdin={"points": [{"text": "x"}]}, needle="takes the same records again", cwd=repo)
             out = proto("answer", "--origin", "dialog", cwd=repo, stdin={"marker": shown(cwd=repo)["batch"]["marker"], "answers": {dialog["question"]: "Hold"}}).stdout
             reasons = json.loads((session_dir / "state.json").read_text()).get("dropReasons")
@@ -6210,7 +6234,7 @@ def validate_protocol(root: Path, part: str) -> None:
             board_loader = importlib.machinery.SourceFileLoader("board_constants", str(root / "bin" / "board"))
             board_module = importlib.util.module_from_spec(importlib.util.spec_from_loader("board_constants", board_loader))
             board_loader.exec_module(board_module)
-            if (engine_module.REVISES, engine_module.REVISES_RULE) != (board_module.REVISES, board_module.REVISES_RULE):
+            if (engine_module.base.REVISES, engine_module.base.REVISES_RULE) != (board_module.REVISES, board_module.REVISES_RULE):
                 raise ValueError("bin/protocol REVISES and REVISES_RULE must equal bin/board's")
             # G: rule questions. One question settles the selected items one answer settles the same way: `settles` is checked at
             # Stage and again after every update set (pass report, edit); the record names each settled item, inherits their
@@ -6530,9 +6554,9 @@ def validate_protocol(root: Path, part: str) -> None:
                 raise ValueError("protocol compacted works without an open round and logs it")
 
             # r24-q108: abandon says which records stay decided, not "nothing recorded".
-            kept = engine_module.abandon_note([{"id": "q1", "board": "fx-a", "recorded": "fx-a"}, {"id": "q2", "board": None, "recorded": "file"},
+            kept = engine_module.record.abandon_note([{"id": "q1", "board": "fx-a", "recorded": "fx-a"}, {"id": "q2", "board": None, "recorded": "file"},
                                                {"id": "q3", "board": "fx-c", "recorded": None}, {"id": "q4", "board": "fx-d", "recorded": "deferred"}])
-            if kept != "recorded fx-a, q2 stay decided" or engine_module.abandon_note([{"id": "q3", "board": "fx-c", "recorded": None}]) != "nothing recorded":
+            if kept != "recorded fx-a, q2 stay decided" or engine_module.record.abandon_note([{"id": "q3", "board": "fx-c", "recorded": None}]) != "nothing recorded":
                 raise ValueError(f"abandon must name what stays decided: {kept}")
 
             # A4: Codex has no console: its pass text names the skill to read, in full every time (r24-q103).
@@ -6569,7 +6593,7 @@ def validate_protocol(root: Path, part: str) -> None:
             again = proto("next", **listing_session).stdout
             if "Open items (" in again or "- fx-a: A?" in again or "open questions · open" in again \
                     or "Open items: 1 decided, 2 open questions, 1 waiting on the user, 1 ready milestones, 1 finished epics" not in again \
-                    or f"`{engine_module.LIST_COMMAND}`" not in again or "board position" not in again or "Seeds for the next round" not in again:
+                    or f"`{engine_module.base.LIST_COMMAND}`" not in again or "board position" not in again or "Seeds for the next round" not in again:
                 raise ValueError(f"protocol next lists nothing the second time between compactions: counts and the command:\n{again}")
             calls()
             bare = proto("start", "round", **listing_session).stdout
