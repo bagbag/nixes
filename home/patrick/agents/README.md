@@ -320,7 +320,10 @@ A round:
   reply the person typed instead of picking, the lead answers it as the turn's last
   text (restating it in one line when it could be read more than one way), never in
   the same turn as the dialog, and ends the turn; the console reopens the dialog, also
-  when nothing new prints. The dialog options carry neither `for`
+  when nothing new prints. A dialog result the model reads first (typed text, a note,
+  a free reply, a follow-up request) holds every next batch (round `reading`): the
+  lead's `step {}` or pass report, a chat answer, an edit or a restart releases it, so
+  the typed question goes out again with the rest, a recommendation it changed applied. The dialog options carry neither `for`
   nor `against`.
 - A rule question settles several selected items (board ids or pasted
   points) that one answer settles the same way: its `settles` lists their

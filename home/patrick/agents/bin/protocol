@@ -1980,8 +1980,8 @@ def withdraw_away(ctx: Context) -> str:
 
 def ask_enter(ctx: Context) -> str | None:
     r = ctx.round
-    if r['batch']:
-        return None
+    if r['batch'] or r.get('reading'):
+        return None  # a reply the model reads first holds every next batch: its reading may change or restart questions
     for q in questions(ctx, 'draft'):
         if q.get('unchecked'):
             continue  # an edit added it or changed its recommendation: it waits for its check (hand_over)
@@ -2047,6 +2047,9 @@ def ask_text(ctx: Context) -> str:
         return away_ask_text(ctx)
     batch = ctx.round['batch']
     if not batch:
+        if ctx.round.get('reading'):
+            return (f"Round {ctx.round['id']} · Ask: the next batch waits for your reading of the user's reply: then `protocol step` "
+                    'with {} (or a pass report) issues it.')
         return f"Round {ctx.round['id']} · Ask: no batch out. `protocol step` with {{}} issues the next one."
     tool_input = {'questions': batch['questions'], 'metadata': {'source': batch['marker']}}
     notice = batch.get('notice') or ''
@@ -2089,6 +2092,7 @@ def ask_accept(ctx: Context, report: dict) -> str:
         fail(f"waiting on the user's answer to {ctx.round['batch']['marker']}; a pass report updates its questions")
     for q in questions(ctx):
         q.pop('typed', None)  # read: the step or pass report sends them out again
+    ctx.round.pop('reading', None)
     if report.get('pass'):
         if ctx.round['batch']:
             ctx.log('batch-withdrawn', marker=ctx.round['batch']['marker'], reason='pass report')
@@ -3110,6 +3114,7 @@ def release_ask_accept(ctx: Context, report: dict) -> str:
         fail(f"waiting on the user's answer to {ctx.round['batch']['marker']}")
     for q in questions(ctx):
         q.pop('typed', None)  # read: the question goes out again
+    ctx.round.pop('reading', None)
     return 'ask'
 
 
@@ -3913,6 +3918,7 @@ def chat_answer(ctx: Context, report: dict) -> str:
         if not batch['ids']:
             ctx.round['batch'] = None
     q.pop('typed', None)
+    ctx.round.pop('reading', None)  # a chat answer is the model's reading
     q.update(status='answered', answer=text, origin='chat', quote=quote, answeredAt=utcnow())
     ctx.state['answers'][qid] = text
     if ctx.round['protocol'] == 'round':
@@ -3972,6 +3978,7 @@ def edit_round(ctx: Context, report: dict) -> str:
         batch_back(ctx)
     for q in questions(ctx):
         q.pop('typed', None)
+    r.pop('reading', None)
     before = {q['id']: (recommended_index(q), q.get('strength')) for q in questions(ctx)}
     apply_updates(ctx, updates)
     mark_unchecked(ctx, before)
@@ -4146,8 +4153,8 @@ def answer(ctx: Context, report: dict, origin: str) -> str:
         notes.append(f'{qid}: the user typed "{by_id(ctx, qid)["typed"]}" instead of picking an option. Read it before '
                      f'{qid} goes out again: an option → the ["answer"] call with that text as quote; a criterion → '
                      f'`protocol restart {qid}`; a change to the questions → `protocol edit` (updates + the quote); another request '
-                     f'(explain, step back, ground, …) → run it on {qid}, then `protocol step` with {{}} (or the pass report) asks it again. '
-                     'Restate the reply in one line when it could be read more than one way.')
+                     f'(explain, step back, ground, …) → run it on {qid}; a reply that changes {qid} (its recommendation included) → a pass '
+                     'report updating it. Restate the reply in one line when it could be read more than one way.')
     if response:
         ctx.round['responses'].append({'marker': batch['marker'], 'text': response, 'origin': origin})
         notes.append(f'The user also wrote: "{response}" — not assigned to any question: it may state a criterion '
@@ -4158,9 +4165,17 @@ def answer(ctx: Context, report: dict, origin: str) -> str:
     if report.get('followUp'):
         notes.append('The user asked for another round of questions: ask what they want asked, and stage it '
                      '(a criterion restarts the affected questions).')
+    reading = origin == 'dialog' and bool(typed or noted or response or report.get('followUp'))
+    if reading:
+        notes.append('The next batch waits for your reading of these: `protocol step` with {} (or a pass report) issues it'
+                     + (f", {', '.join(typed)} in it." if typed else '.'))
     if rethink:
         restart(ctx, rethink, THINK_MORE)
+        if reading:
+            ctx.round['reading'] = True  # set after the restart, which counts as the model's reading
         return ' '.join([*notes, f"{', '.join(rethink)}: {THINK_MORE}, so the checks rerun on them aiming for a strong recommendation."])
+    if reading:
+        ctx.round['reading'] = True
     ctx.go('ask')
     return ' '.join(notes)
 
@@ -4197,6 +4212,7 @@ def restart(ctx: Context, ids: list[str], reason: str | None) -> None:
         q['status'] = premise_status(ctx, q)
     ctx.log('restart', questions=ids, reason=reason)
     r['batch'] = None
+    r.pop('reading', None)
     rescope_check(ctx, [*ids, *take_unchecked(ctx)])
     if resting:
         ctx.messages.append(f"Restarted with it, their answers rested on it: {', '.join(resting)}.")

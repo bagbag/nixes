@@ -4165,9 +4165,14 @@ def validate_protocol(root: Path, part: str) -> None:
                 raise ValueError(f"protocol batch must leave held questions out: {batch}")
             result = json.loads(proto("answer", "--origin", "dialog", cwd=repo, stdin={
                 "marker": "round:r3:2", "answers": {"1. A?": "Keep"}, "annotations": {}, "response": "And mind the tenancy."}).stdout)
-            if "And mind the tenancy." not in result["note"] or "not assigned" not in result["note"] \
-                    or result["batch"]["marker"] != "round:r3:3" or [q["question"] for q in result["batch"]["questions"]] != ["Pasted point? fx-old (Old ruling) is replaced at release."]:
+            # A free reply holds the next batch for the model's reading (lead 6aa2ec33, 2026-11-06); the step issues it.
+            if "And mind the tenancy." not in result["note"] or "not assigned" not in result["note"] or result["batch"] is not None \
+                    or "The next batch waits for your reading" not in result["note"]:
                 raise ValueError(f"protocol answer with a response: {result}")
+            proto("step", stdin={}, cwd=repo)
+            result = {"batch": shown(cwd=repo)["batch"]}
+            if result["batch"]["marker"] != "round:r3:3" or [q["question"] for q in result["batch"]["questions"]] != ["Pasted point? fx-old (Old ruling) is replaced at release."]:
+                raise ValueError(f"protocol step after the reading must issue the held batch: {result}")
             declined = json.loads(proto("decline", "--origin", "dialog", cwd=repo,
                                         stdin={"marker": "round:r3:3", "partial": {"Pasted point? fx-old (Old ruling) is replaced at release.": "Keep"}}).stdout)
             if declined["batch"] is not None or draft_q["id"] not in [q["id"] for q in declined["questions"] if q["status"] == "ready"] \
@@ -4522,6 +4527,10 @@ def validate_protocol(root: Path, part: str) -> None:
             echoed = json.loads(proto("answer", "--origin", "dialog", cwd=repo, stdin={"marker": before_echo["marker"], "answers": {before_echo["questions"][1]["question"]: "my own words"}}).stdout)["echo"]
             if echoed != "Your answers:\n1. Does bd batch keep order: no answer, asked again\n2. Batch: typed, not an answer yet: my own words":
                 raise ValueError(f"the line after a dialog must keep numbers and name outcomes: {echoed!r}")
+            # The typed reply holds the next batch until the model reads it: here it records the reply as a chat answer.
+            proto("answer", "--origin", "chat", cwd=repo, stdin={"question": ids[1], "answer": "my own words", "quote": "my own words"})
+            if shown(cwd=repo)["batch"] is None:
+                proto("step", stdin={}, cwd=repo)
             alone = shown(cwd=repo)["batch"]
             echoed = json.loads(proto("answer", "--origin", "dialog", cwd=repo, stdin={"marker": alone["marker"], "answers": {alone["questions"][0]["question"]: "Drop"}}).stdout)["echo"]
             if echoed != "Your answers:\nDoes bd batch keep order: Drop (not recommended)":
@@ -5268,6 +5277,26 @@ def validate_protocol(root: Path, part: str) -> None:
                            cwd=repo).stdout.splitlines()[0]
             if not re.fullmatch(r"r\d+ · recorded q\d+, q\d+ · round closed", closed):
                 raise ValueError(f"protocol's closing headline must name the file records: {closed!r}")
+
+            # I2: a reply the model must read first holds the next batch, so the typed question goes out again with the rest
+            # (lead 6aa2ec33, 2026-11-06: batch 6 went out while q139's typed question waited).
+            out = proto("start", "round", "--no-board", str(notes), stdin={"points": [f"Held {n}?" for n in range(1, 6)]}, cwd=repo).stdout
+            points = re.findall(r"(pt\d+) \[pasted\]", out)
+            proto("step", stdin={"classes": {point: "user" for point in points}}, cwd=repo)
+            proto("step", stdin={"select": points}, cwd=repo)
+            proto("step", stdin={**ROUND_INFO, "questions": [question(f"Held {n}?", **{"for": point}) for n, point in enumerate(points, 1)]}, cwd=repo)
+            converge(cwd=repo)
+            first = shown(cwd=repo)["batch"]
+            texts = [one["question"] for one in first["questions"]]
+            held = json.loads(proto("answer", "--origin", "dialog", cwd=repo, stdin={
+                "marker": first["marker"], "answers": {texts[0]: "why this one?", **{text: "Keep (recommended, lean)" for text in texts[1:]}}}).stdout)
+            if held["batch"] is not None or "The next batch waits for your reading" not in held["note"]:
+                raise ValueError(f"protocol must hold the next batch while a typed reply waits for the model's reading: {held['batch']} {held['note']}")
+            proto("step", stdin={}, cwd=repo)
+            second = shown(cwd=repo)["batch"]
+            if second is None or [one["question"].split(". ", 1)[-1] for one in second["questions"]] != ["Held 1?", "Held 5?"]:
+                raise ValueError(f"protocol step must send the read question out again with the rest: {second}")
+            proto("abandon", cwd=repo)
 
             # J: a pass that adds a question says so ("added", not "changed").
             out = proto("start", "round", "--no-board", str(notes), stdin={"points": ["Base?"]}, cwd=repo).stdout
