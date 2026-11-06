@@ -76,18 +76,6 @@ export function judgeDialog(round: ConsoleRound & { round: string }, input: Dial
   return { action: 'note', text: `This dialog was not from round ${round.round}; its answers were not recorded in the round.` }
 }
 
-/** Whether the model has to read this dialog's result: a decline, typed text instead of a pick, a note on an option, or a free reply. */
-export function needsModel(questions: readonly ConsoleDialogQuestion[], captured: Capture): boolean {
-  if (captured.kind !== 'answer') return true
-  const { answers, annotations, response, followUp } = captured.input as { answers: Record<string, string>; annotations: Record<string, unknown>; response: string | null; followUp?: true }
-  if (response !== null || followUp === true) return true
-  if (Object.values(annotations).some(one => typeof (one as { notes?: unknown } | null)?.notes === 'string')) return true
-  return questions.some(one => {
-    const answer = answers[one.question]
-    return answer !== undefined && !one.options.some(option => option.label === answer) && !(one.multiSelect && answer.split(', ').every(part => one.options.some(option => option.label === part)))
-  })
-}
-
 export type DialogResult = {
   isError?: true | undefined
   deny?: string | undefined

@@ -217,7 +217,9 @@ describe('dialog gate and capture', () => {
         expect(asked).toEqual([BATCH.marker, 'round:r4:3'])
       })
 
-      test('a pending pass after a plain pick runs with no model turn', async ($, on) => {
+      // A `$` call from the /console-questions hook skips every console hook (Claude Code 2.1.318), so no console command can
+      // print the answers line: the model's prompt carries it, and its turn end runs the pass.
+      test('a plain pick wakes the model with the answers line, and its turn end runs the pending pass', async ($, on) => {
         const { w, clock } = world(on, { round: asking() })
         on('tool.call', { tool: 'AskUserQuestion' }, () => {
           w.round = roundJson({ step: 'check', batch: null, pending: { id: 'p9', command: 'challenge-rulings', args: 'q1' } })
@@ -226,24 +228,11 @@ describe('dialog gate and capture', () => {
         await start($)
         await $.turn.complete(complete())
         await clock.settle()
-        expect(w.commands.some(one => one.command === 'challenge-rulings')).toBe(true)
-        expect(w.prompts).toEqual([])
-      })
-
-      test('with no model turn the person still reads their answers: /console-answers prints them (a row would not draw)', async ($, on) => {
-        const { w, clock, session } = world(on, { round: asking() })
-        on('tool.call', { tool: 'AskUserQuestion' }, () => {
-          w.round = roundJson({ step: 'check', batch: null, pending: { id: 'p9', command: 'step-back', args: 'options q1' } })
-          return answered({ [QUESTION]: label }) as never
-        })
-        await start($)
+        expect(w.prompts).toEqual([engineLine([label])])
+        expect(w.commands.some(one => one.command === 'challenge-rulings')).toBe(false)
         await $.turn.complete(complete())
         await clock.settle()
-        const own = { command: 'console-answers', args: '', origin: { kind: 'plugin', name: 'console' }, presentation: typed.presentation } as never
-        expect((await $.command.run(own)).text).toBe(`\n${engineLine([label])}`)
-        expect(w.commands.some(one => one.command === 'step-back')).toBe(true)
-        expect(notices(session).filter(text => text.includes(engineLine([label])))).toEqual([])
-        expect(w.prompts).toEqual([])
+        expect(w.commands.some(one => one.command === 'challenge-rulings')).toBe(true)
       })
 
       test('a typed reply or a note wakes the model even with a next batch out', async ($, on) => {

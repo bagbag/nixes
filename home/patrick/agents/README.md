@@ -295,7 +295,7 @@ A round:
   names what moved, `(changed: options, premises)`. After a dialog the engine writes the
   line the person reads: per question its number, title and outcome, a pick marked
   `(recommended)` or `(not recommended)`, and a skip, a typed reply or Think more saying
-  so. With no model turn after it (plain picks before a pass), `/console-answers` prints that line; a dialog answered after the console reloaded is carried on by
+  so. The console's own dialog sends that line to the model as its prompt, and the model's turn end runs a pending pass; a dialog answered after the console reloaded is carried on by
   the dialog hook itself. A release
   approval prints its corrections (revised and dropped records), the board check
   (supersedes, closes, the other hit rows) and every own ruling in the same layout; a

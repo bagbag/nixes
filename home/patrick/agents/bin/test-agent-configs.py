@@ -5251,8 +5251,10 @@ def validate_protocol(root: Path, part: str) -> None:
             if typed["status"] != "ready" or typed["answer"] is not None or result["batch"] is not None \
                     or '"explain this" instead of picking' not in result["note"] or 'with the note "but log it"' not in result["note"] \
                     or not result["note"].startswith(f"{result['round']} · answered q") or "; typed " + typed["id"] not in result["note"] \
-                    or "Restate the reply in one line when it could be read more than one way." not in result["note"]:
-                raise ValueError(f"protocol must hold a typed dialog answer for the model and pass on a pick's note, with the restate line: {result}")
+                    or "Restate the reply in one line when it could be read more than one way." not in result["note"] \
+                    or result["note"].count("Count a pick as the answer when the rest of the reply or note questions only a detail") != 1:
+                raise ValueError(f"protocol must hold a typed dialog answer for the model and pass on a pick's note, with the restate "
+                                 f"line and the pick-and-detail rule once: {result}")
             proto("step", stdin={}, cwd=repo)
             again = shown(cwd=repo)["batch"]
             if again is None or [q["question"] for q in again["questions"]] != ["Typed?"]:
@@ -5277,6 +5279,28 @@ def validate_protocol(root: Path, part: str) -> None:
                            cwd=repo).stdout.splitlines()[0]
             if not re.fullmatch(r"r\d+ · recorded q\d+, q\d+ · round closed", closed):
                 raise ValueError(f"protocol's closing headline must name the file records: {closed!r}")
+
+            # I1: a typed pick that questions a detail is recorded, then the detail is added as its own question (lead be3935d4,
+            # 2026-11-06: "Lifetime, but more then 1 hour max wait?" was folded into q161 and asked again). Answer first: an
+            # edit would send the typed question out again.
+            out = proto("start", "round", "--no-board", str(notes), stdin={"points": ["Span?"]}, cwd=repo).stdout
+            points = re.findall(r"(pt\d+) \[pasted\]", out)
+            proto("step", stdin={"classes": {point: "user" for point in points}}, cwd=repo)
+            proto("step", stdin={"select": points}, cwd=repo)
+            proto("step", stdin={**ROUND_INFO, "questions": [question("Span?", **{"for": points[0]})]}, cwd=repo)
+            converge(cwd=repo)
+            reply = "Keep, but how long between tries?"
+            result = json.loads(proto("answer", "--origin", "dialog", cwd=repo, stdin={
+                "marker": shown(cwd=repo)["batch"]["marker"], "answers": {"Span?": reply}}).stdout)
+            if "Record the pick (typed: the [\"answer\"] call with the option's label), then add the detail" not in result["note"]:
+                raise ValueError(f"a typed reply's note must say to record the pick, then add the detail: {result['note']}")
+            proto("answer", "--origin", "chat", cwd=repo, stdin={"question": result["questions"][0]["id"], "answer": "Keep", "quote": reply})
+            proto("edit", cwd=repo, stdin={"updates": [question("Wait?", **{"for": points[0]})], "quote": reply})
+            view = shown(cwd=repo)
+            if {q["text"]: q["status"] for q in view["questions"]} != {"Span?": "answered", "Wait?": "draft"} \
+                    or view["batch"] is not None or view["step"] != "check":
+                raise ValueError(f"the pick stays answered and the detail waits for its check, nothing asked again: {view}")
+            proto("abandon", cwd=repo)
 
             # I2: a reply the model must read first holds the next batch, so the typed question goes out again with the rest
             # (lead 6aa2ec33, 2026-11-06: batch 6 went out while q139's typed question waited).

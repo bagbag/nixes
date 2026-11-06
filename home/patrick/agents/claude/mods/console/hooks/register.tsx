@@ -6,12 +6,12 @@ import type { EngineInterface, Register } from 'claude-code'
 import type { ConsoleStart } from '../types'
 
 import {
-  answersText, betweenTurns, context, failOpen, message, notice, openDialog, PANE, placeholderMarker, pressSubmit, recordPass, refreshAll, refreshBoard, refreshLater,
+  betweenTurns, context, failOpen, message, notice, openDialog, PANE, placeholderMarker, pressSubmit, recordPass, refreshAll, refreshBoard, refreshLater,
   refreshRole, refreshRound, releaseRun, resetSession, deliverDialogOutcome, stampReleaseRun, withContext,
   setQuestionsAnswered,
 } from './core'
 import { answer, boardShow, decline, isRoundOpen, pass, pending as readPending, protocol, RELEASE_COMMAND, say, statusLine, toolArgv } from './engine'
-import { capture, judgeDialog, needsModel } from './gate'
+import { capture, judgeDialog } from './gate'
 import type { DialogInput } from './gate'
 import { drawBand, drawPane, PANE_MIN_COLUMNS } from './pane'
 import { addGate, getBoard, getGate, getPass, getPrinted, getRole, getRound, getStart, releaseRefresh, setAskSent, setPaneDismissed, setPass, setPrinted, setRound, setStart } from './state'
@@ -49,7 +49,6 @@ export const register: Register = on => {
     await $.command.register({ name: 'console', description: 'Open the console pane (prints the board and round where no pane fits)' })
     await $.command.register({ name: 'console-questions', description: "Print the issued batch's question text", argumentHint: '[batch marker]' })
     await $.command.register({ name: 'console-item', description: "Print a board item's summary", argumentHint: '<id>' })
-    await $.command.register({ name: 'console-answers', description: "Print your answers to the console's last dialog" })
     await refreshRole($).catch(failOpen($, 'reading the session role'))
     $.clock.every(REFRESH_MS, () => refreshAll($).catch(failOpen($, 'refresh')))
     refreshLater($)
@@ -101,7 +100,6 @@ export const register: Register = on => {
     }
     const captured = capture(verdict.marker, ran)
     if (captured.kind === 'none') return ran
-    const issued = round.batch?.questions ?? []
     const declined = 'The dialog was declined.'
     try {
       const recorded = captured.kind === 'answer'
@@ -109,20 +107,20 @@ export const register: Register = on => {
         : await decline($, ctx.session, { marker: verdict.marker, partial: captured.partial })
       await setRound($, recorded)
       // The engine knows what became of each question, so it writes the line the person reads (r36-q197).
-      if (placeholder !== null) deliverDialogOutcome($, verdict.marker, ctx.session, { summary: recorded.echo ?? declined, note: recorded.note, needsModel: needsModel(issued, captured) })
+      if (placeholder !== null) deliverDialogOutcome($, verdict.marker, ctx.session, { summary: recorded.echo ?? declined, note: recorded.note })
       if (recorded.note === null) return ran
       await notice($, recorded.note.split('\n')[0] ?? '')  // the headline; the model reads the whole note
       return withContext(ran, recorded.note)
     } catch (error) {
       if (captured.kind === 'decline') {
         // Esc aborts this hook's runs and no retry here gets through; the console's own dialog records it once closed (openDialog).
-        if (placeholder !== null) deliverDialogOutcome($, verdict.marker, ctx.session, { summary: declined, note: null, needsModel: true, unsavedDecline: { marker: verdict.marker, partial: captured.partial } })
+        if (placeholder !== null) deliverDialogOutcome($, verdict.marker, ctx.session, { summary: declined, note: null, unsavedDecline: { marker: verdict.marker, partial: captured.partial } })
         return withContext(ran, `The dialog was declined; batch ${verdict.marker} stays out.`)
       }
       const text = `Your answers to ${verdict.marker} were not saved (${message(error)}), so the questions come again.`
       await setAskSent($, null).catch(() => undefined)
       await notice($, text)
-      if (placeholder !== null) deliverDialogOutcome($, verdict.marker, ctx.session, { summary: text, note: text, needsModel: true })
+      if (placeholder !== null) deliverDialogOutcome($, verdict.marker, ctx.session, { summary: text, note: text })
       return withContext(ran, text)
     }
     // Never draw the placeholder: a failure here falls back to the model opening the dialog.
@@ -278,7 +276,6 @@ export const register: Register = on => {
     return { text: `\n${batch.notice}` }  // the host prefixes the output with the plugin's name: the first question starts its own line
   })
 
-  on('command.run', { command: 'console-answers' }, () => ({ text: answersText() === '' ? 'No answers to print.' : `\n${answersText()}` }))
 
   on('ui.render', { component: 'Pane', requestId: PANE }, ($, e) => drawPane($, e))
 

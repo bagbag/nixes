@@ -45,8 +45,8 @@ const dialogPlaceholder = (marker: string): string => `${DIALOG_PREFIX}${marker}
 export const placeholderMarker = (question: unknown): string | null =>
   typeof question === 'string' && question.startsWith(DIALOG_PREFIX) ? question.slice(DIALOG_PREFIX.length, -1) : null
 
-/** What the swapped dialog came to, set by the AskUserQuestion hook. `summary`: the visible line; `note`: the engine's text for the model; `needsModel`: typed text, a note or a decline. */
-export type DialogOutcome = { summary: string; note: string | null; needsModel: boolean; unsavedDecline?: { marker: string; partial: Record<string, string> | null } }
+/** What the swapped dialog came to, set by the AskUserQuestion hook. `summary`: the visible line; `note`: the engine's text for the model. */
+export type DialogOutcome = { summary: string; note: string | null; unsavedDecline?: { marker: string; partial: Record<string, string> | null } }
 let dialogOutcome: DialogOutcome | null = null
 /** The marker openDialog waits on in this instance of the console; a reload starts it over, with the dialog still open. */
 let dialogAwaited: string | null = null
@@ -74,10 +74,10 @@ async function wakeModel($: $, outcome: DialogOutcome): Promise<void> {
 /**
  * Opens the batch's whole dialog with no model turn (r32-q149): `$.ui.ask` with a placeholder the AskUserQuestion hook swaps for the
  * batch, then records through its usual capture. `$.ui.ask` itself then has no answer to return, so it rejects; the hook's outcome
- * counts. After plain picks `/console-answers` prints the answers line and a pending pass just runs; anything else, a next
- * batch included, wakes the model: this hook's `$` cannot run
- * `/console-questions` again (a `$` call skips the hook it came from), and the model's turn end opens that batch. Without an
- * outcome the swap never ran, and the model opens the dialog instead.
+ * counts. Every outcome wakes the model with the answers line as its prompt, and its turn end runs a pending pass or opens the
+ * next batch: a `$` call from this command hook skips every console hook (Claude Code 2.1.318, against its docs), so it can
+ * neither print the line through a console command nor run `/console-questions` again. Without an outcome the swap never ran,
+ * and the model opens the dialog instead.
  */
 export async function openDialog($: $, marker: string, session: string): Promise<void> {
   dialogOutcome = null
@@ -93,7 +93,7 @@ export async function openDialog($: $, marker: string, session: string): Promise
   await finishDialog($, marker, session, outcome)
 }
 
-/** What follows the console's own dialog: a decline Esc left unsaved is recorded, then the model wakes or the pass runs. */
+/** What follows the console's own dialog: a decline Esc left unsaved is recorded, then the model wakes. */
 async function finishDialog($: $, marker: string, session: string, outcome: DialogOutcome): Promise<void> {
   if (outcome.unsavedDecline !== undefined) {
     // Esc aborts the dialog hook's own runs, a retry there included; a run from here, after the dialog closed, goes through.
@@ -106,32 +106,7 @@ async function finishDialog($: $, marker: string, session: string, outcome: Dial
       await notice($, outcome.note)
     }
   }
-  if (outcome.needsModel) {
-    await wakeModel($, outcome)
-    return
-  }
-  // No prompt will carry the answers line: a command's output prints it, as a row appended between turns would not draw.
-  const printed = (await readPending($, session)) !== null && await printAnswers($, outcome.summary)
-  if (await betweenTurns($, session, false, false)) return
-  await wakeModel($, printed ? { ...outcome, summary: ANSWERS_PRINTED } : outcome)
-}
-
-/** The command that prints the last dialog's answers line (register.tsx answers it by this literal name). */
-const ANSWERS_COMMAND = 'console-answers'
-const ANSWERS_PRINTED = 'My answers are printed above.'
-let lastAnswers = ''
-/** What `/console-answers` prints: the answers line of the console's last dialog. */
-export const answersText = (): string => lastAnswers
-
-async function printAnswers($: $, summary: string): Promise<boolean> {
-  lastAnswers = summary
-  try {
-    await $.command.run({ command: ANSWERS_COMMAND, args: '' })
-    return true
-  } catch (error) {
-    await notice($, `printing your answers failed: ${message(error)}`).catch(() => undefined)
-    return false
-  }
+  await wakeModel($, outcome)
 }
 
 /**
@@ -139,11 +114,11 @@ async function printAnswers($: $, summary: string): Promise<boolean> {
  * hook prints the text and opens the dialog. A command's output draws whole between turns where a transcript row would not, and the hook's
  * fresh `$` matters too: after an awaited call in a chain, `$.ui.ask` skips the swap in the console's hook. One dialog per batch marker until
  * the person sends a new message (`prompt.submit` clears it). A run that settles unanswered
- * by the hook takes the model's route instead of leaving the round waiting. Returns whether one is on its way.
+ * by the hook takes the model's route instead of leaving the round waiting.
  */
-export async function openBatchDialog($: $, round: ConsoleRound | null): Promise<boolean> {
+export async function openBatchDialog($: $, round: ConsoleRound | null): Promise<void> {
   const batch = round?.batch
-  if (round === null || round === undefined || !isRoundOpen(round) || batch === null || batch === undefined || (await getAskSent($)) === batch.marker) return false
+  if (round === null || round === undefined || !isRoundOpen(round) || batch === null || batch === undefined || (await getAskSent($)) === batch.marker) return
   await setAskSent($, batch.marker)
   questionsAnswered = null
   void $.command.run({ command: QUESTIONS_COMMAND, args: batch.marker })
@@ -153,7 +128,6 @@ export async function openBatchDialog($: $, round: ConsoleRound | null): Promise
       await setAskSent($, null).catch(() => undefined)
       await notice($, `printing the question text failed: ${message(error)}; nothing opens the dialog`).catch(() => undefined)
     })
-  return true
 }
 
 /** The marker the `/console-questions` hook last answered; a run that settles without it never reached the hook. */
@@ -175,11 +149,10 @@ async function askModelToOpen($: $, marker: string): Promise<void> {
   }, true)
 }
 
-/** What follows a turn or a dialog: the pending pass, else the issued batch's print and dialog. Whether either started. */
-export async function betweenTurns($: $, session: string, isAborted: boolean, opensDialog = true): Promise<boolean> {
+/** What follows a turn: the pending pass, and the issued batch's print and dialog. */
+export async function betweenTurns($: $, session: string, isAborted: boolean): Promise<void> {
   const pending = await readPending($, session)
   const run = await getPass($)
-  let started = false
   if (pending !== null && run !== null && run.id === pending.id) {
     if (run.phase !== 'noted' && isAborted) {
       // Esc stops the loop: the pass stays pending and is not run again.
@@ -187,7 +160,6 @@ export async function betweenTurns($: $, session: string, isAborted: boolean, op
     } else if (run.phase === 'started') {
       await setPass($, { ...run, phase: 'asked' })
       await pressSubmit($, missingReportText(pending.command, pending.id), undefined, true)
-      started = true
     } else if (run.phase === 'asked') {
       await setPass($, { ...run, phase: 'noted' })
       await notice($, stuckPassText(pending.command, pending.args))
@@ -197,14 +169,12 @@ export async function betweenTurns($: $, session: string, isAborted: boolean, op
     await pass($, session, 'plugin', { command: pending.command, args: pending.args, pending: pending.id })
       .catch(failOpen($, `recording /${pending.command}`))
     void $.command.run({ command: pending.command, args: pending.args }).catch(failOpen($, `running /${pending.command}`))
-    started = true
   }
   // The issued batch's text prints between turns, then the console opens its dialog (an aborted turn does neither, as it runs no
   // pass; an away session has no batch to open).
-  if (opensDialog && !isAborted && (await getRole($))?.role !== 'autopilot') {
-    started = await openBatchDialog($, await refreshRound($, session)) || started
+  if (!isAborted && (await getRole($))?.role !== 'autopilot') {
+    await openBatchDialog($, await refreshRound($, session))
   }
-  return started
 }
 
 /** A role button's press: the person's own `/role <role>`. A prompt text beginning with `/` is refused by the host, so it runs as a command (the press route of Commit and Retro). */
