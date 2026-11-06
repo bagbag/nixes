@@ -3377,7 +3377,7 @@ def console_contract_states(root: Path) -> dict:
             if args[:1] == ("step",) and isinstance(stdin, dict) and stdin.get("pass"):  # the model's Skill call, recorded by the console
                 waiting = json.loads(run("show", "--json", cwd=cwd)).get("pending") or {}  # the run carries the pending pass's arguments
                 run("pass", "--origin", "model", stdin={"command": stdin["pass"], "args": waiting.get("args", "") if waiting.get("command") == stdin["pass"] else "",
-                                                       "pending": None}, cwd=cwd)
+                                                       "pending": waiting.get("id") if waiting.get("command") == stdin["pass"] else None}, cwd=cwd)
             result = subprocess.run([sys.executable, "-B", str(root / "bin" / "protocol"), "--session", "0000-contract", *args],
                                     input=json.dumps(stdin) if stdin is not None else "", text=True, capture_output=True,
                                     cwd=cwd, env=env)
@@ -3724,9 +3724,11 @@ def validate_protocol(root: Path, part: str) -> None:
                 current = (json.loads(saved.read_text(encoding="utf-8")).get("round") or {}) if saved.is_file() else {}
                 seen = current.get("observed") or {}
                 waiting = current.get("pending") or {}
-                if stdin["pass"] not in seen:  # the run is the pending pass with its arguments, like the console's
+                stamp = waiting.get("id") if waiting.get("command") == stdin["pass"] else None
+                if stdin["pass"] not in seen or seen[stdin["pass"]].get("pending") != stamp:  # a run left from an earlier pending pass is stale
+                    # the run is the pending pass with its arguments and id, like the console's
                     args_run = waiting.get("args", "") if waiting.get("command") == stdin["pass"] else ""
-                    proto("pass", "--origin", "model", stdin={"command": stdin["pass"], "args": args_run, "pending": None}, cwd=cwd,
+                    proto("pass", "--origin", "model", stdin={"command": stdin["pass"], "args": args_run, "pending": stamp}, cwd=cwd,
                           session=session, ok=None, env=env, process=process, observe=False)
             if observe and args[:1] == ("step",) and isinstance(stdin, dict) and ({"records", "defer"} & set(stdin)):
                 # The pass after the last answer (r13 q49) comes before Record: tests not about it run it without a change.
@@ -3885,6 +3887,8 @@ def validate_protocol(root: Path, part: str) -> None:
                                                                                        {"label": "Drop", "description": "d", "against": " "}]}]},
                     needle="option 'Keep' needs `for` and `against`")
             refused("step", stdin={**ROUND_INFO, "questions": [{**bare, "rulings": [{"ruling": "r", "alternative": "a"}]}]}, needle="`rulings`, when given, lists your own rulings")
+            refused("step", stdin={**ROUND_INFO, "questions": [{**bare, "rulings": [{"ruling": "r", "alternative": "a", "fails": "f", "evidence": "e"}]}]},
+                    needle="each with ruling, why, alternative, fails, evidence")  # Stage: a ruling without its why
             refused("step", stdin={"round": {**ROUND_INFO["round"], "overview": " "}, "questions": [bare]}, needle="round `overview` is one line")
             refused("step", stdin={**ROUND_INFO, "questions": [question("Which cache?", strength="strong", **{"for": "pt1"})]},
                     needle="strong is a claim: `strongBecause.noAssumptions`")
@@ -4007,6 +4011,11 @@ def validate_protocol(root: Path, part: str) -> None:
             if not result["echo"].startswith("Your answers:\n") or not result["echo"].endswith(": Keep (recommended)") or "1. " in result["echo"]:
                 raise ValueError(f"protocol answer's line: {result['echo']!r}")
             refused("answer", "--origin", "dialog", stdin=answers, needle="no batch is out")
+            # A run without the pending id (typed, other args) is an extra pass: the challenge after answers stays pending.
+            proto("pass", "--origin", "press", stdin={"command": "challenge-rulings", "args": "", "pending": None})
+            proto("step", stdin={"pass": "challenge-rulings", "updates": [], "checked": ["the answer"]}, observe=False)
+            if shown()["step"] != "check" or (shown()["pending"]["command"], shown()["pending"]["args"]) != ("challenge-rulings", "q1"):
+                raise ValueError(f"protocol: an unstamped challenge-rulings run must not settle the pending challenge: {shown()}")
             out = proto("step", stdin={"pass": "challenge-rulings", "updates": [], "checked": ["the answer"]}).stdout  # C: nothing found
             if "challenge-rulings (after answers): no change" not in out.splitlines()[0] or shown()["step"] != "record":
                 raise ValueError(f"a challenge after the last answer that changes nothing goes to Record:\n{out}")
@@ -4517,8 +4526,10 @@ def validate_protocol(root: Path, part: str) -> None:
             if not reissued["notice"].startswith("**1. Order**\n\nProblem:") or "**2. Batch**\n\nProblem:" not in reissued["notice"] or "(changed)" in reissued["notice"]:
                 raise ValueError(f"a batch withdrawn before its dialog must print whole again:\n{reissued['notice']}")
             proto("decline", "--origin", "dialog", stdin={"marker": reissued["marker"], "partial": None}, cwd=repo)  # the person saw this one
+            refused("step", stdin={"pass": "ground", "updates": [{"id": ids[1], "rulings": [{"ruling": "One batch.", "alternative": "Two.", "fails": "order", "evidence": "probe"}]}]},
+                    needle="each with ruling, why, alternative, fails, evidence", cwd=repo)  # a pass update: a ruling without its why
             proto("step", stdin={"pass": "ground", "updates": [{"id": ids[1], "premises": "bd batch keeps order (probe)",
-                                                                  "rulings": [{"ruling": "One batch.", "alternative": "Two.", "fails": "order", "evidence": "probe"}]}]}, cwd=repo)
+                                                                  "rulings": [{"ruling": "One batch.", "why": "meets the order goal", "alternative": "Two.", "fails": "order", "evidence": "probe"}]}]}, cwd=repo)
             if shown(cwd=repo)["pending"]["command"] != "step-back":
                 raise ValueError("protocol: a substantive change with a batch out must rerun the loop")
             issued = converge(cwd=repo).splitlines()[0]
@@ -4884,8 +4895,10 @@ def validate_protocol(root: Path, part: str) -> None:
                 {"item": "fx-q1", "action": "close"}, {"item": "fx-hq", "action": "close"}]}}, "closes": {"fx-q1": ["fx-r1"], "fx-hq": ["fx-r1"]}},
                     needle="closes.fx-hq: held by other001", cwd=repo)
             proto("step", stdin=board_check, cwd=repo)
-            refused("step", stdin={"rulings": [{"record": "fx-r1", "ruling": "x", "sure": True}]}, needle="needs alternative", cwd=repo)
-            proto("step", stdin={"rulings": [{"record": "fx-r1", "ruling": "bundled", "alternative": "split", "fails": "nothing",
+            refused("step", stdin={"rulings": [{"record": "fx-r1", "ruling": "x", "sure": True}]}, needle="needs why, alternative", cwd=repo)
+            refused("step", stdin={"rulings": [{"record": "fx-r1", "ruling": "bundled", "alternative": "split", "fails": "nothing", "evidence": "decide.md", "sure": True}]},
+                    needle="needs why", cwd=repo)  # an own ruling without its why is refused
+            proto("step", stdin={"rulings": [{"record": "fx-r1", "ruling": "bundled", "why": "one record, no trade-off", "alternative": "split", "fails": "nothing",
                                               "evidence": "decide.md", "sure": True}]}, cwd=repo)
             dialog = shown(cwd=repo)
             records = {r["id"]: r["state"] for r in dialog["records"]}
@@ -5026,7 +5039,7 @@ def validate_protocol(root: Path, part: str) -> None:
             refused("step", stdin={"pass": "step-back", "records": {"fx-s2": "unchanged"}}, needle="no /step-back ran", observe=False, cwd=repo)
             proto("pass", "--origin", "model", stdin={"command": "step-back", "args": "", "pending": None}, cwd=repo)
             refused("step", stdin={"pass": "step-back", "records": {"fx-s2": "unchanged"}}, needle="ran without the revised records", observe=False, cwd=repo)
-            proto("pass", "--origin", "model", stdin={"command": "step-back", "args": "fx-s2", "pending": None}, cwd=repo)
+            proto("pass", "--origin", "model", stdin={"command": "step-back", "args": "fx-s2", "pending": view["pending"]["id"]}, cwd=repo)
             refused("step", stdin={"pass": "step-back", "records": {"fx-s1": "unchanged"}}, needle="not in the revised records: fx-s1", cwd=repo)
             refused("step", stdin={"pass": "step-back", "records": {}}, needle="no line for fx-s2", cwd=repo)
             out = proto("step", stdin={"pass": "step-back", "records": {"fx-s2": "unchanged"}, "summary": "holds"}, cwd=repo).stdout
@@ -5175,12 +5188,12 @@ def validate_protocol(root: Path, part: str) -> None:
             proto("step", stdin={"records": {"fx-d3": "unchanged"}}, cwd=repo)
             proto("step", stdin={"checks": {"fx-d3": nones}}, cwd=repo)
             long_ruling = "reveal issues a fresh secret after a breach " * 6
-            proto("step", stdin={"rulings": [{"record": "fx-d3", "ruling": long_ruling, "alternative": "reveal refuses",
+            proto("step", stdin={"rulings": [{"record": "fx-d3", "ruling": long_ruling, "why": "meets the secret rule", "alternative": "reveal refuses",
                                               "fails": "nothing", "evidence": "x", "sure": False}]}, cwd=repo)
             dialog = shown(cwd=repo)["batch"]["questions"][0]
             release_option = dialog["options"][0]
             approval_notice = shown(cwd=repo)["batch"]["notice"]
-            if not approval_notice.startswith("**Release fx-d3**\n\n**My ruling:** ") or f"**My ruling:** {long_ruling.strip()} (fx-d3, unsure)\n- Instead: reveal refuses\n- Why not: nothing" not in approval_notice \
+            if not approval_notice.startswith("**Release fx-d3**\n\n**My ruling:** ") or f"**My ruling:** {long_ruling.strip()} (fx-d3, unsure)\n- Why: meets the secret rule\n- Instead: reveal refuses\n- Why not: nothing" not in approval_notice \
                     or "Evidence" in approval_notice:
                 raise ValueError(f"the approval prints the own rulings in full:\n{approval_notice}")
             if not dialog["question"].startswith("Release 1 record? Unsure: fx-d3 (reveal") or len(dialog["question"]) > 160 \
@@ -5408,7 +5421,7 @@ def validate_protocol(root: Path, part: str) -> None:
                 raise ValueError("start release must claim an unheld record")
             proto("step", stdin={"records": {"fx-c1": "unchanged"}}, **codex_repo)
             proto("step", stdin={"checks": {"fx-c1": nones}}, **codex_repo)
-            out = proto("step", stdin={"rulings": [{"record": "fx-c1", "ruling": "r", "alternative": "a", "fails": "f",
+            out = proto("step", stdin={"rulings": [{"record": "fx-c1", "ruling": "r", "why": "w", "alternative": "a", "fails": "f",
                                                     "evidence": "e", "sure": False}]}, **codex_repo).stdout
             batch = json.loads(proto("show", "--json", **codex_repo).stdout)["batch"]
             if "protocol answer --origin model-reported" not in out or "unsure: fx-c1 r" not in out \
@@ -5660,7 +5673,7 @@ def validate_protocol(root: Path, part: str) -> None:
             found = re.search(r"(pt\d+) \[pasted\]", proto("start", "round", "--no-board", str(notes), stdin={"points": ["Read?"]}, **texts).stdout)[1]
             proto("step", stdin={"classes": {found: "user"}}, **texts)
             proto("step", stdin={"select": [found]}, **texts)
-            proto("step", **texts, stdin={**ROUND_INFO, "questions": [question("Read?", premises="the grounded premise", rulings=[{"ruling": "One.", "alternative": "Two.", "fails": "order", "evidence": "probe"}], options=[
+            proto("step", **texts, stdin={**ROUND_INFO, "questions": [question("Read?", premises="the grounded premise", rulings=[{"ruling": "One.", "why": "no trade-off", "alternative": "Two.", "fails": "order", "evidence": "probe"}], options=[
                 {"label": "Keep", "description": "keep it", "for": "for it", "against": "against it", "preview": "x = 1"}, {"label": "Drop", "description": "", "for": "for it", "against": "against it"}], **{"for": found})]})
             qid = shown(**texts)["questions"][0]["id"]
             whole = proto("show", qid, **texts).stdout
@@ -5674,7 +5687,7 @@ def validate_protocol(root: Path, part: str) -> None:
             proto("answer", "--origin", "dialog", **texts, stdin={"marker": batch["marker"], "answers": {batch["questions"][0]["question"]: batch["questions"][0]["options"][0]["label"]}})
             out = proto("step", **texts, stdin={"records": {qid: {"rationale": "why", "ruleOwner": "docs/x.md#x"}}}).stdout
             written = next((notes / name).read_text(encoding="utf-8") for name in sorted(p.name for p in notes.iterdir()) if name.endswith(f"-{qid}.md"))
-            if "## Premises\nthe grounded premise" not in written or "## Own rulings\n- One. Alternative: Two. Fails: order Evidence: probe\n" not in written or "## Rule owner\ndocs/x.md#x" not in written:
+            if "## Premises\nthe grounded premise" not in written or "## Own rulings\n- One. Why: no trade-off Alternative: Two. Fails: order Evidence: probe\n" not in written or "## Rule owner\ndocs/x.md#x" not in written:
                 raise ValueError(f"the record carries the premises: {written}")
             # Dependencies: a circle and bad references are refused and say why (r23-q91, q93).
             def two_points(first, second, stage=None):
@@ -5759,9 +5772,9 @@ def validate_protocol(root: Path, part: str) -> None:
             def pending_now():
                 return (lambda p: (p["command"], p["args"]) if p else None)(shown(**texts)["pending"])
 
-            def report(command="", updates=None):
+            def report(command="", updates=None, observe=True):
                 command = command or shown(**texts)["pending"]["command"]
-                return proto("step", **texts, stdin={"pass": command, "updates": updates or [], "checked": ["q"]})
+                return proto("step", **texts, observe=observe, stdin={"pass": command, "updates": updates or [], "checked": ["q"]})
 
             qid = texts_round("Seq?")
             order = []
@@ -5783,16 +5796,12 @@ def validate_protocol(root: Path, part: str) -> None:
             if again != [("step-back", ""), ("ground", ""), ("ground", f"assumptions sources probe on {qid}"), ("challenge-rulings", "")]:
                 raise ValueError(f"a rebuilt check repeats neither path nor refine: {again}")
             proto("abandon", **texts)
-            # A pressed pass counts: All (every lens) as the path pass and the refine step-back; Refine as the refine step-back.
+            # A pressed pass is an extra pass whatever lenses it names: the pending pass settles by its run's id only.
             qid = texts_round("Pressed?")
             proto("pass", "--origin", "press", stdin={"command": "step-back", "args": "goal decisions foundations consumer root-fix bloat gaps clean overfit mechanics options the gate", "pending": None}, **texts)
-            report("step-back")
-            if pending_now() != ("step-back", ""):
-                raise ValueError(f"a pressed All pass counts as the path and the options pass: {pending_now()}")
-            report()
-            report()
-            if pending_now() != ("ground", "assumptions board sources probe"):
-                raise ValueError(f"a pressed All pass counts as the refine step-back pass: {pending_now()}")
+            report("step-back", observe=False)
+            if pending_now() != ("step-back", "goal foundations"):
+                raise ValueError(f"a pressed All pass is an extra pass; the path pass stays pending: {pending_now()}")
             proto("abandon", **texts)
             qid = texts_round("Refined?")
             report()  # the path pass
@@ -5804,9 +5813,13 @@ def validate_protocol(root: Path, part: str) -> None:
             if pending_now() != ("step-back", "decisions clean overfit mechanics"):
                 raise ValueError(f"an extra pass leaves the pending refine pass: {pending_now()}")
             proto("pass", "--origin", "press", stdin={"command": "step-back", "args": "clean decisions mechanics overfit", "pending": None}, **texts)
-            report("step-back", [{"id": qid, "premises": "moved by Refine"}])
-            if pending_now() != ("step-back", "") or shown(**texts)["check"]["cycle"] != 2:
-                raise ValueError(f"a pressed Refine counts as the refine step-back pass, and its change reruns Base: {pending_now()}")
+            report("step-back", [{"id": qid, "premises": "moved by Refine"}], observe=False)
+            if pending_now() != ("step-back", "") or shown(**texts)["check"]["cycle"] != 1:
+                raise ValueError(f"a pressed Refine is an extra pass: its change reruns Base without counting as the refine pass: {pending_now()}")
+            report()
+            report()
+            if pending_now() != ("step-back", "decisions clean overfit mechanics"):
+                raise ValueError(f"the refine pair runs after the rerun Base loop: {pending_now()}")
             report()
             report()
             if pending_now() != ("ground", f"assumptions sources probe on {qid}"):
@@ -5815,7 +5828,7 @@ def validate_protocol(root: Path, part: str) -> None:
             # A Base-only run reported while the path pass is pending does not count as it.
             qid = texts_round("Base only?")
             proto("pass", "--origin", "press", stdin={"command": "step-back", "args": "", "pending": None}, **texts)
-            report("step-back")
+            report("step-back", observe=False)
             if pending_now() != ("step-back", "goal foundations"):
                 raise ValueError(f"a Base run does not count as the path pass: {pending_now()}")
             proto("abandon", **texts)
@@ -5885,24 +5898,24 @@ def validate_protocol(root: Path, part: str) -> None:
                 raise ValueError(f"the round's once-per-round flags stay untouched by a restart: {before} {flags()}")
             while shown(**texts)["step"] == "check":
                 report()
-            # A scoped pass counts only when its argument names the full set plus the ids (a pressed Path on one id is not enough).
+            # A variant of the pending scoped pass (other arguments, the ids without `on`, a focus text) is an extra pass: only the stamped run settles it.
             proto("restart", three, "--reason", "again", **texts)
-            proto("pass", "--origin", "press", stdin={"command": "step-back", "args": "goal foundations", "pending": None}, **texts)
-            report("step-back")
-            if pending_now() != ("step-back", f"goal foundations on {three}"):
-                raise ValueError(f"the round-wide path set without the ids does not count as the scoped pass: {pending_now()}")
-            proto("pass", "--origin", "press", stdin={"command": "step-back", "args": f"goal foundations {three}", "pending": None}, **texts)
-            report("step-back")
+            for variant in ("goal foundations", f"goal foundations {three}"):
+                proto("pass", "--origin", "press", stdin={"command": "step-back", "args": variant, "pending": None}, **texts)
+                report("step-back", observe=False)
+                if pending_now() != ("step-back", f"goal foundations on {three}"):
+                    raise ValueError(f"`{variant}` is an extra pass, not the scoped path pass: {pending_now()}")
+            report()
             if pending_now() != ("step-back", f"options on {three}"):
-                raise ValueError(f"a pass naming the set and the ids, `on` left out, counts as the scoped path pass: {pending_now()}")
-            proto("pass", "--origin", "press", stdin={"command": "step-back", "args": "options", "pending": None}, **texts)
-            report("step-back")
-            if pending_now() != ("step-back", f"options on {three}"):
-                raise ValueError(f"the round-wide options set without the ids does not count as the scoped options pass: {pending_now()}")
-            proto("pass", "--origin", "press", stdin={"command": "step-back", "args": f"options on {three}; with a focus", "pending": None}, **texts)
-            report("step-back")
+                raise ValueError(f"the stamped run settles the scoped path pass: {pending_now()}")
+            for variant in ("options", f"options on {three}; with a focus"):
+                proto("pass", "--origin", "press", stdin={"command": "step-back", "args": variant, "pending": None}, **texts)
+                report("step-back", observe=False)
+                if pending_now() != ("step-back", f"options on {three}"):
+                    raise ValueError(f"`{variant}` is an extra pass, not the scoped options pass: {pending_now()}")
+            report()
             if pending_now() != ("step-back", ""):
-                raise ValueError(f"a pass naming the options set and the ids counts as the scoped options pass: {pending_now()}")
+                raise ValueError(f"the stamped run settles the scoped options pass: {pending_now()}")
             proto("abandon", **texts)
             # A scoped options pass leaves out a restarted confirmation (r30-q142), so it counts without that id.
             found = re.search(r"(pt\d+) \[pasted\]", proto("start", "round", "--no-board", str(notes), stdin={"points": ["Mixed?"]}, **texts).stdout)[1]
@@ -5920,6 +5933,54 @@ def validate_protocol(root: Path, part: str) -> None:
             report()  # the scoped options pass
             if pending_now() != ("step-back", ""):
                 raise ValueError(f"a scoped options pass without the restarted confirmation counts: {pending_now()}")
+            proto("abandon", **texts)
+            # Pass identity (plan engine-refactor): a run counts only when it carried the pending pass's id; any other report is an extra pass.
+            def ident_round(*words):
+                found = re.search(r"(pt\d+) \[pasted\]", proto("start", "round", "--no-board", str(notes), stdin={"points": [words[0]]}, **texts).stdout)[1]
+                proto("step", stdin={"classes": {found: "user"}}, **texts)
+                proto("step", stdin={"select": [found]}, **texts)
+                proto("step", **texts, stdin={**ROUND_INFO, "questions": [question(word, **{"for": found}) for word in words]})
+                return [q["id"] for q in shown(**texts)["questions"]]
+
+            def ran_unstamped(command, args):
+                proto("pass", "--origin", "press", stdin={"command": command, "args": args, "pending": None}, **texts)
+                return proto("step", **texts, observe=False, stdin={"pass": command, "updates": [], "checked": ["q"]})
+
+            # Restart two questions, remove the first, run the pending pass: its stamped run settles it although the argument names a gone id (the argument parse stopped there).
+            one, two = ident_round("Ident one?", "Ident two?")
+            while shown(**texts)["step"] == "check":
+                report()
+            proto("restart", one, two, "--reason", "criterion", **texts)
+            if pending_now() != ("step-back", f"goal foundations on {one} {two}"):
+                raise ValueError(f"a restart queues the scoped path pass: {pending_now()}")
+            proto("say", "--origin", "composer", stdin={"text": "drop the first one"}, **texts)
+            proto("edit", stdin={"updates": [{"id": one, "remove": True, "reason": "no need"}], "quote": "drop the first one"}, **texts)
+            report()  # the run carries the pending id, whatever the argument names
+            if pending_now() != ("step-back", f"options on {two}"):
+                raise ValueError(f"the stamped run settled the scoped path pass although {one} left: {pending_now()}")
+            proto("abandon", **texts)
+            # A plain /step-back reported while the path pass is pending does not settle it (the guard); the stamped run does.
+            ident_round("Guarded?")
+            ran_unstamped("step-back", "")
+            if pending_now() != ("step-back", "goal foundations") or shown(**texts)["check"]["cycle"] != 1:
+                raise ValueError(f"a plain step-back run is not the pending path pass: {pending_now()}")
+            report()
+            if pending_now() != ("step-back", "options"):
+                raise ValueError(f"the stamped run settles the path pass: {pending_now()}")
+            proto("abandon", **texts)
+            # A lens-selected step-back during the pending Base pass is an extra pass, labelled so; the pending pass stays.
+            ident_round("Lensed?")
+            report()
+            report()
+            if pending_now() != ("step-back", ""):
+                raise ValueError(f"the Base step-back is pending: {pending_now()}")
+            ran_unstamped("step-back", "clean overfit")
+            if pending_now() != ("step-back", "") or shown(**texts)["check"]["cycle"] != 1 \
+                    or not any(line["text"].startswith("step-back (extra):") for line in shown(**texts)["log"]):
+                raise ValueError(f"a lens-selected step-back is an extra pass, not the Base pass: {shown(**texts)['check']} {[line['text'] for line in shown(**texts)['log']]}")
+            report()
+            if pending_now() != ("ground", ""):
+                raise ValueError(f"the stamped Base run settles the Base pass: {pending_now()}")
             proto("abandon", **texts)
             # r33-q157, r34-q162, q163: identical options get one hint, a preference lean says what would flip it, earlier rulings print and record.
             found = re.search(r"(pt\d+) \[pasted\]", proto("start", "round", "--no-board", str(notes), stdin={"points": ["Same?"]}, **texts).stdout)[1]
@@ -6020,6 +6081,8 @@ def validate_protocol(root: Path, part: str) -> None:
                 raise ValueError(f"edit applies the change without rerunning the check loop or counting a pass:\n{out}\n{after}")
             refused("edit", **texts, stdin={"updates": [{"id": qid, "title": "t" * 61, "header": "Much too long"}], "quote": "please retitle it"},
                     needle="header")
+            refused("edit", **texts, stdin={"updates": [{"id": qid, "rulings": [{"ruling": "r", "alternative": "a", "fails": "f", "evidence": "e"}]}], "quote": "please retitle it"},
+                    needle="each with ruling, why, alternative, fails, evidence")  # an edit: a ruling without its why
             # With a batch out, edit withdraws and re-issues it; a previews-only change is presentation (no loop rerun).
             while shown(**texts)["step"] == "check":
                 proto("step", **texts, stdin={"pass": shown(**texts)["pending"]["command"], "updates": [], "checked": ["q"]})
@@ -6059,6 +6122,22 @@ def validate_protocol(root: Path, part: str) -> None:
             def log_texts():
                 return [line["text"] for line in shown(**texts)["log"]]
 
+            # An edit quote comes from the whole round: words the person sent while the question was a draft authorize its edit once the
+            # batch is out, and the edit pulls the batch back; a chat answer still needs words sent after the question went out.
+            found = re.search(r"(pt\d+) \[pasted\]", proto("start", "round", "--no-board", str(notes), stdin={"points": ["Early?"]}, **texts).stdout)[1]
+            proto("step", stdin={"classes": {found: "user"}}, **texts)
+            proto("step", stdin={"select": [found]}, **texts)
+            proto("step", **texts, stdin={**ROUND_INFO, "questions": [question("Early?", **{"for": found})]})
+            qid = shown(**texts)["questions"][0]["id"]
+            said("retitle the early one")  # sent while the question is a draft
+            converge(**texts)
+            first = shown(**texts)["batch"]["marker"]
+            proto("edit", **texts, stdin={"updates": [{"id": qid, "title": "Retitled early"}], "quote": "retitle the early one"})
+            view = shown(**texts)
+            if view["questions"][0]["title"] != "Retitled early" or view["batch"] is None or view["batch"]["marker"] == first:
+                raise ValueError(f"a message sent before the batch went out authorizes its edit, which pulls the batch back: {view}")
+            refused("answer", "--origin", "chat", **texts, stdin={"question": qid, "answer": "Keep", "quote": "retitle the early one"}, needle="since the question went out")
+            proto("abandon", **texts)
             # A: an added question waits while the batch is out (it stays out), is checked at the hand-over, then asked.
             point, (q1, q2) = multi_round("Add one?", "Add two?")
             first = shown(**texts)["batch"]
@@ -6218,7 +6297,7 @@ def validate_protocol(root: Path, part: str) -> None:
             proto("step", cwd=repo, **texts, stdin={"records": {rid: "unchanged" for rid in ids}})
             proto("step", cwd=repo, **texts, stdin={"checks": {rid: nones for rid in ids}})
             proto("step", cwd=repo, **texts, stdin={"rulings": [
-                {"record": rid, "ruling": "a fairly long ruling text " * 6, "alternative": "a", "fails": "f", "evidence": "e", "sure": n >= 3}
+                {"record": rid, "ruling": "a fairly long ruling text " * 6, "why": "w", "alternative": "a", "fails": "f", "evidence": "e", "sure": n >= 3}
                 for n, rid in enumerate(ids[:6])]})
             dialog = shown(cwd=repo, **texts)["batch"]["questions"][0]
             if len(dialog["question"]) > 160 or len(dialog["header"]) > 12 or any(len(o["description"]) > 150 for o in dialog["options"]) \
@@ -6936,7 +7015,7 @@ def validate_protocol(root: Path, part: str) -> None:
             proto("start", "release", "fx-r1", **flip)
             proto("step", stdin={"records": {"fx-r1": "unchanged"}}, **flip)
             proto("step", stdin={"checks": {"fx-r1": nones}}, **flip)
-            proto("step", stdin={"rulings": [{"record": "fx-r1", "ruling": "r", "alternative": "a", "fails": "f", "evidence": "e", "sure": False}]}, **flip)
+            proto("step", stdin={"rulings": [{"record": "fx-r1", "ruling": "r", "why": "w", "alternative": "a", "fails": "f", "evidence": "e", "sure": False}]}, **flip)
             if shown(**flip)["batch"] is None:
                 raise ValueError(f"an unsure ruling sends the approval to a dialog: {shown(**flip)}")
             activate("autopilot", "0000-flip0001", "claude")

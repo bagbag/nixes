@@ -287,8 +287,9 @@ A round:
   its for and a `-` line with its against, then every other option the same way
   under its label; no trailing recommendation line. A dropped idea (the options
   pass) is one `Dropped: <idea> - <why>` line each under the options. An own ruling is a block
-  (`My ruling:`, `Instead:`, `Why not:`) without its evidence, which only the
-  record keeps (`## Own rulings` has all four fields). The Stage text states one
+  (`My ruling:`, `Why:`, `Instead:`, `Why not:`) without its evidence, which only the
+  record keeps (`## Own rulings` has all five fields; `why`: what the ruling meets and why no
+  material trade-off remains). The Stage text states one
   rule for every printed part, with no length check on them: say what is decided and
   what each option means for the person (what they would see, what it costs), each
   thing once, in plain words; how it was found (sources, measurements beyond the
@@ -389,11 +390,14 @@ A round:
   (the same scoped re-check follows an edit and a released held question), the Base loop round-wide, then
   `step-back decisions clean overfit mechanics <ids>` and
   `ground assumptions board sources probe <ids>` (changes rerun Base once),
-  then the lean pass as usual. A pass (pressed, typed or model) whose argument names every lens
-  of the path set, of the options set, of the refine step-back set or of the refine ground set
-  counts as that pass for the round (a scoped rerun also needs the restarted ids
-  in the argument), and a pending path, options or refine pass is
-  accepted only after such a run (Codex: its report). The engine's lens lists
+  then the lean pass as usual. A pass settles the pending pass only when its run carried the
+  pending id: the console stamps `protocol pass` with the id when a run's command and arguments
+  match the pending pass's (whitespace collapsed, wording and case exact), whoever started it
+  (the engine's own run, a typed or pressed command, a model Skill call); the report of that
+  run settles it (Codex: a report of the pending command). Any other
+  report is an extra pass: its changes apply and restart the Base loop, the log labels it
+  `extra`, and the pending pass still runs (a variant with other arguments, a lens press with
+  focus text and a plain `/step-back` while the path pass waits are extra). The engine's lens lists
   (`ALL_LENSES`, `PATH_LENSES`, `OPTIONS_LENSES`, `REFINE_LENSES`) are checked against the
   skills and the console's words.ts. A
   pass that changes nothing lists what it `checked`; any pass report, also out
@@ -411,8 +415,8 @@ A round:
   invalid to ask (only one from before the limits can be) gets a plain message
   naming its error: the model shortens it in a pass of its own (its Skill call
   counts as the observed run); no pass runs automatically. `protocol edit` (stdin `{"updates", "quote"}`) applies a change the
-  user asked for: the quote must appear in a message the console relayed since
-  the touched questions went out (Codex: verbatim), the updates validate as in
+  user asked for: the quote must appear in a message the console relayed in this
+  round, one sent before the questions went out too (Codex: verbatim), the updates validate as in
   a pass report, a batch that is out comes back and goes out again with no pass
   (rows read `↻ edit`), except an edit that only adds questions, which leaves it
   out. A new question or a changed recommendation stays out of the batches until

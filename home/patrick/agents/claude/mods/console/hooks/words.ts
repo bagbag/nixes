@@ -226,7 +226,7 @@ export function roundWords(round: ConsoleRound): string {
 }
 
 /** The message the console sends when it could not open a batch's dialog itself: the model opens it. */
-export const openDialogText = (marker: string): string => `Open the dialog for batch ${marker}: call AskUserQuestion with the input protocol show gives`
+export const openDialogText = (marker: string): string => `Open the dialog for batch ${marker}: call AskUserQuestion with the input \`protocol show\` prints.`
 
 /** The console asks the model once for a report it did not give. */
 export const missingReportText = (command: string, id: string): string => `The /${command} pass (${id}) ended without its report. Report its per-question updates through the protocol tool.`
@@ -240,13 +240,13 @@ export const PROTOCOL_TOOL_DESCRIPTION = [
   'Read: ["show","--json"], ["show"], ["show","q3"] (that question whole), ["pending"], ["status","--line"], ["history"], ["next"].',
   'Record an answer the user typed in chat: ["answer"] with stdin {"question","answer","quote"}, the quote being the user\'s exact words.',
   'Apply a change the user asked for to the questions: ["edit"] with stdin {"updates","quote"}, the quote being the user\'s exact words.',
-  'The console stamps --session and --origin; dialog answers, declines and passes are recorded by the console from the person\'s actions.',
+  'The console stamps --session and --origin and records dialog answers, declines and pass runs itself.',
 ].join(' ')
 export const PROTOCOL_ARGS_DESCRIPTION = 'The verb and its arguments, e.g. ["start","round"], ["step"] or ["show","--json"]'
 export const PROTOCOL_STDIN_DESCRIPTION = 'JSON text for the verb (per-question updates), when it reads stdin'
 
 /** The tool's results when the console does not run the engine. */
-export const TOOL_IDLE_TEXT = 'The console is idle in this session (no lead, solo or autopilot role, or nothing draws); run `protocol` through Bash.'
+export const TOOL_IDLE_TEXT = 'The console is idle in this session (no lead, solo or autopilot role, or the console is not drawn); run `protocol` through Bash.'
 export const TOOL_FAILED_TEXT = 'The console failed to run protocol (see the debug log); run `protocol` through Bash.'
 
 /** The dialog gate's refusals and notes. */

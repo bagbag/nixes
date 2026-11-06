@@ -39,10 +39,11 @@ approval. Give each step's output compactly.
    is, where it runs); drop arguments that do not apply to the case. Disclose
    your own rulings: entailed decisions, defect-fix behaviors, dropped or
    narrowed parts, framing choices (excluded options, accepted premises,
-   question bundling). Give each its strongest realistic alternative, the
-   cleanliness test, principle or correctness property that alternative fails,
-   and evidence; scale from one line to a mini decision packet by stakes. In an
-   approval request, repeat the list with later rulings.
+   question bundling). Give each what it meets without a material trade-off, its
+   strongest realistic alternative, the cleanliness test, principle or
+   correctness property that alternative fails, and evidence; scale from one
+   line to a mini decision packet by stakes. In an approval request, repeat the
+   list with later rulings.
    In a round, put a term to define in the question's `note` and your own
    rulings in its `rulings`.
    Output: the walkthrough, ending with an offer to ask; in a round, none.

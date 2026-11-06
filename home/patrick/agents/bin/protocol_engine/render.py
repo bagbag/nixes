@@ -43,14 +43,14 @@ def settled_lines(ctx: Context, q: dict) -> list[str]:
 
 
 def ruling_line(x: dict) -> str:
-    """A ruling with all four disclosure fields: the record keeps them."""
-    return f"{x['ruling'].strip()} Alternative: {x['alternative'].strip()} Fails: {x['fails'].strip()} Evidence: {x['evidence'].strip()}"
+    """A ruling with all its disclosure fields: the record keeps them."""
+    return f"{x['ruling'].strip()} Why: {x['why'].strip()} Alternative: {x['alternative'].strip()} Fails: {x['fails'].strip()} Evidence: {x['evidence'].strip()}"
 
 
 def ruling_block(x: dict, record: str = '') -> str:
-    """A ruling as printed: the ruling, the alternative and why not, without the evidence (r29-q136); `record`: its release record."""
+    """A ruling as printed: the ruling, why it is mine, the alternative and why not, without the evidence (r29-q136); `record`: its release record."""
     return '\n'.join([f"**My ruling:** {x['ruling'].strip()}" + (f' ({record})' if record else ''),
-                      f"- Instead: {x['alternative'].strip()}", f"- Why not: {x['fails'].strip()}"])
+                      f"- Why: {x['why'].strip()}", f"- Instead: {x['alternative'].strip()}", f"- Why not: {x['fails'].strip()}"])
 
 
 def prior_rulings_text(q: dict) -> str:

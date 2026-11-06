@@ -27,7 +27,7 @@ def fresh_check(ctx: Context) -> None:
 
 def rescope_ids(ctx: Context) -> list[str]:
     """The restarted questions still in the round: `protocol restart` queues scoped reruns of the path, options and refine
-    passes on them (round['rescope']: ids, pending `path`, `options` and `refine` passes, `seen` observed runs); the round's flags stay."""
+    passes on them (round['rescope']: ids, pending `path`, `options` and `refine` passes); the round's flags stay."""
     scope = ctx.round.get('rescope') or {}
     live = {q['id'] for q in ctx.round['questions']}
     return [qid for qid in scope.get('ids', []) if qid in live]
@@ -35,7 +35,7 @@ def rescope_ids(ctx: Context) -> list[str]:
 
 def named_words(ctx: Context, args: str) -> list[str]:
     """The lens names and question ids leading a pass's argument (`<lenses> on <ids>; <focus>`, `on` and `;` optional); the
-    rest is the skill's focus (a Think more goal), whose words never count as lenses or ids."""
+    rest is the skill's focus (a Think more goal), whose words never count as lenses or ids. Names the lean pass's questions."""
     known = {lens for lenses in ALL_LENSES.values() for lens in lenses} | {q['id'] for q in ctx.round['questions']}
     named = []
     for word in str(args or '').split():
@@ -67,8 +67,8 @@ def rescope_check(ctx: Context, ids: list[str]) -> None:
     """The restarted (or released held, or edited) ids get their own path pass, options pass and refine pair, accumulating over
     restarts before the loop settles, then a fresh check; the round's once-per-round flags stay."""
     r = ctx.round
-    scope = r.get('rescope') or {'ids': [], 'path': True, 'refine': [], 'seen': []}
-    r['rescope'] = {'ids': list(dict.fromkeys([*scope['ids'], *ids])), 'path': True, 'options': True, 'refine': list(REFINE_LENSES), 'seen': []}
+    scope = r.get('rescope') or {'ids': []}
+    r['rescope'] = {'ids': list(dict.fromkeys([*scope['ids'], *ids])), 'path': True, 'options': True, 'refine': list(REFINE_LENSES)}
     fresh_check(ctx)
 
 
@@ -114,32 +114,6 @@ def start_base(ctx: Context) -> None:
         else:
             ctx.set_pending('step-back', ' '.join(OPTIONS_LENSES) if check['optionsNow'] else '')
     rescope_done(ctx)
-
-
-def count_pass_args(ctx: Context, command: str, args: str) -> None:
-    """A pass whose argument names every lens of the path set, the options set (or of a refine pass) counts as that pass for the
-    round; with the restarted ids as well, it counts for the scoped rerun."""
-    r = ctx.round
-    if r['protocol'] == 'release':  # the scoped pass counts once its run named the revised records
-        pending = r['pending'] or {}
-        if r['step'] == 'scoped' and pending.get('command') == command and set(pending.get('args', '').split()) <= set(args.split()):
-            r['scoped']['seen'] = list(dict.fromkeys([*r['scoped']['seen'], command]))
-        return
-    named = set(named_words(ctx, args))
-    scope = r.get('rescope')
-    scoped = bool(scope) and set(rescope_ids(ctx)) <= named
-    if command == 'step-back' and set(PATH_LENSES) <= named:
-        r['pathRun'] = True
-        if scoped:
-            scope['seen'] = list(dict.fromkeys([*scope['seen'], 'path']))
-    if command == 'step-back' and set(OPTIONS_LENSES) <= named:
-        r['optionsRun'] = True
-        if scope and set(options_ids(ctx, rescope_ids(ctx))) <= named:  # its ids leave out restarted confirmations
-            scope['seen'] = list(dict.fromkeys([*scope['seen'], 'options']))
-    if command in REFINE_LENSES and set(REFINE_LENSES[command]) <= named:
-        r['refineRun'] = list(dict.fromkeys([*r.get('refineRun', []), command]))
-        if scoped:
-            scope['seen'] = list(dict.fromkeys([*scope['seen'], command]))
 
 
 def check_enter(ctx: Context) -> str | None:
@@ -270,17 +244,21 @@ def refused_formats(ctx: Context, step: Step, report: dict, before: dict) -> str
     return '\n'.join(ctx.formats.values())
 
 
-def options_seen(ctx: Context) -> bool:
-    """Whether a run naming the pending options pass's lenses was observed (the scoped one: with the restarted ids)."""
-    scope = ctx.round.get('rescope') or {}
-    return 'options' in scope.get('seen', []) if ctx.round['check'].get('optionsScoped') else bool(ctx.round.get('optionsRun'))
+def settles(ctx: Context, command: str) -> bool:
+    """Whether a report of `command` settles the pending pass: the run it reports carried the pending pass's id (the console
+    stamps a run whose command and arguments match it, `protocol pass`); Codex has no console to observe its runs, so its
+    report of the pending command counts. Any other report is an extra pass."""
+    pending = ctx.round['pending']
+    if not pending or pending['command'] != command:
+        return False
+    return ctx.codex or (ctx.round['observed'].get(command) or {}).get('pending') == pending['id']
 
 
 def options_due(ctx: Context, command: str) -> list[str] | None:
-    """The question ids a step-back report must account for in `explored` when it is the options pass (the pending one, its run
-    observed; Codex has no observation), else None."""
+    """The question ids a step-back report must account for in `explored` when it is the options pass (the pending one, settled
+    by its run), else None."""
     check = ctx.round['check']
-    if command != 'step-back' or check.get('expect') != command or not check.get('optionsNow') or not (ctx.codex or options_seen(ctx)):
+    if command != 'step-back' or check.get('expect') != command or not check.get('optionsNow') or not settles(ctx, command):
         return None
     return options_ids(ctx, rescope_ids(ctx)) if check.get('optionsScoped') else options_ids(ctx)
 
@@ -313,7 +291,7 @@ def record_pass(ctx: Context, report: dict) -> tuple[str, int, str]:
     observed = ctx.round['observed']
     if not ctx.codex and command not in observed:  # Codex has no console to observe its runs
         fail(NO_RUN.format(command=command))
-    origin = observed.get(command, 'model')
+    origin = (observed.get(command) or {}).get('origin', 'model')
     kind, scoped = pass_kind(ctx, command)
     describe(ctx, report.get('round'), 'pass report', required=False)
     checked = report.get('checked')
@@ -378,33 +356,26 @@ def check_accept(ctx: Context, report: dict) -> str:
     if check['paused']:
         fail('the check loop is paused: protocol resume continues it')
     expected = check['expect']
+    settled = settles(ctx, report.get('pass'))
     command, changes, _ = record_pass(ctx, report)
     if changes and command != 'challenge-rulings':
         check['challenged'] = False  # a change after the last challenge-rulings run re-arms it
-    if check.get('challenge') and command == expected == 'challenge-rulings':
+    if check.get('challenge') and command == expected == 'challenge-rulings' and settled:
         return finish_challenge(ctx, changes)
     if nothing_to_check(ctx):
         return leave_check(ctx)
-    # A pending path or refine pass is that pass only once a run naming its lenses was observed (Codex has no observation:
-    # it reports the pending pass it was told to run).
     scope = ctx.round.get('rescope') or {}
-    path_seen = 'path' in scope.get('seen', []) if check.get('pathScoped') else ctx.round.get('pathRun')
-    refine_seen = command in scope.get('seen', []) if check.get('refineScoped') else command in ctx.round.get('refineRun', [])
-    path_open = not ctx.codex and check.get('pathNow') and not path_seen
-    options_open = not ctx.codex and check.get('optionsNow') and not options_seen(ctx)
-    refine_open = not ctx.codex and check.get('refineNow') == command and not refine_seen
-    if command != expected or path_open or options_open or refine_open:  # an extra pass between passes (pressed, typed, or asked for in chat)
+    if command != expected or not settled:  # an extra pass between passes (pressed, typed, or asked for in chat)
         if changes:
             check.pop('challenge', None)
             check.update(changes=0, expect='step-back', converged=False, challenged=False, focused=False, focusing=False, refineNow=None)
-            if not (path_open or options_open):
+            if not (check.get('pathNow') or check.get('optionsNow')):  # the pending path or options pass stays
                 start_base(ctx)
         return 'check'
     if check.get('refineNow') == command:
         check.update(refineNow=None, refineChanges=check.get('refineChanges', 0) + changes)
         if check.get('refineScoped'):
             scope['refine'].remove(command)
-            scope['seen'] = [one for one in scope['seen'] if one != command]
         else:
             ctx.round['refineRun'] = list(dict.fromkeys([*ctx.round.get('refineRun', []), command]))
         check['refineScoped'] = False
@@ -413,7 +384,6 @@ def check_accept(ctx: Context, report: dict) -> str:
         # The path pass: its changes flow into the Base loop that runs next; new or reworded drafts are searched first.
         if check.get('pathScoped'):
             scope['path'] = False
-            scope['seen'] = [one for one in scope['seen'] if one != 'path']
         else:
             ctx.round['pathRun'] = True
         check.update(changes=0, expect='step-back')
@@ -423,7 +393,6 @@ def check_accept(ctx: Context, report: dict) -> str:
         # The options pass: like the path pass, its changes flow into the Base loop that runs next.
         if check.get('optionsScoped'):
             scope['options'] = False
-            scope['seen'] = [one for one in scope['seen'] if one != 'options']
         else:
             ctx.round['optionsRun'] = True
         check.update(changes=0, expect='step-back')
@@ -454,11 +423,11 @@ def pending_view(ctx: Context) -> dict | None:
 
 
 def pass_kind(ctx: Context, command: str) -> tuple[str | None, list[str]]:
-    """The kind of the pass about to be reported (path, refine, lean) and the ids it is scoped to; None for a Base-loop,
-    challenge or extra pass (one the sequence did not expect)."""
+    """The kind of the pass about to be reported (path, options, refine, lean, challenge) and the ids it is scoped to; None for a
+    Base-loop pass, 'extra' for one that does not settle the pending pass."""
     check = ctx.round['check']
-    if check.get('expect') != command:
-        return None, []
+    if check.get('expect') != command or not settles(ctx, command):
+        return 'extra', []
     if command == 'step-back' and check.get('pathNow'):
         return 'path', rescope_ids(ctx) if check.get('pathScoped') else []
     if command == 'step-back' and check.get('optionsNow'):

@@ -702,6 +702,27 @@ describe('pass observation', () => {
     expect(JSON.parse(pass?.stdin ?? '{}')).toEqual({ command: 'step-back', args: 'bloat', pending: null })
   })
 
+  test('a run whose arguments differ only in whitespace carries the pending id', async ($, on) => {
+    const { w } = world(on, { round: roundJson({ pending: { id: 'p7', command: 'step-back', args: 'goal foundations on q3' } }) })
+    on('tool.call', { tool: 'Skill' }, () => ({ result: { success: true } }) as never)
+    await start($)
+    await $.tool.call({ tool: 'Skill', skill: 'step-back', args: ' goal  foundations\non   q3 ' } as never)
+    const pass = w.calls.find(one => one.argv[3] === 'pass')
+    expect(JSON.parse(pass?.stdin ?? '{}')).toEqual({ command: 'step-back', args: ' goal  foundations\non   q3 ', pending: 'p7' })
+  })
+
+  test('a run with other words or case carries no pending id, and the turn end still runs the pending pass', async ($, on) => {
+    const { w, clock } = world(on, { round: roundJson({ pending: { id: 'p7', command: 'ground', args: 'assumptions' } }) })
+    on('tool.call', { tool: 'Skill' }, () => ({ result: { success: true } }) as never)
+    await start($)
+    await $.tool.call({ tool: 'Skill', skill: 'ground', args: 'probe' } as never)
+    await $.tool.call({ tool: 'Skill', skill: 'ground', args: 'Assumptions' } as never)
+    expect(w.calls.filter(one => one.argv[3] === 'pass').map(one => JSON.parse(one.stdin ?? '{}').pending)).toEqual([null, null])
+    await $.turn.complete({ answer: '', durationMs: 1, isAborted: false, turnId: 't', reason: 'answer' } as never)
+    await clock.settle()
+    expect(w.commands).toEqual([{ command: 'ground', args: 'assumptions' }])
+  })
+
   test('a failed Skill call does not count', async ($, on) => {
     const { w } = world(on)
     on('tool.call', { tool: 'Skill' }, () => ({ isError: true, result: 'no', text: 'no' }) as never)

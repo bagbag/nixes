@@ -360,12 +360,15 @@ export async function releaseRun($: $, matches: (key: string) => boolean): Promi
   await updateQueued($, queued => queued.some(one => matches(one.key)) ? queued.filter(one => !matches(one.key)) : queued)
 }
 
+/** Arguments compare with whitespace collapsed: the same words typed with other spacing are the same run. */
+const collapsed = (args: string): string => args.split(/\s+/).filter(word => word !== '').join(' ')
+
 /** Records a pass with its origin while a round is open; the pending id when it is the pending pass. */
 export async function recordPass($: $, ctx: Context, origin: ConsolePassOrigin, command: string, args: string): Promise<void> {
   if (!ctx.isRoundRole || !PASS_COMMANDS.includes(command)) return
   const round = await refreshRound($, ctx.session)
   if (round === null || !isRoundOpen(round)) return
-  const pendingId = round.pending !== null && round.pending.command === command && round.pending.args === args ? round.pending.id : null
+  const pendingId = round.pending !== null && round.pending.command === command && collapsed(round.pending.args) === collapsed(args) ? round.pending.id : null
   if (pendingId !== null && (await getPass($))?.id !== pendingId) {
     // This run is the pending pass: turn.complete must not queue it again, and notes it if it ends unreported.
     // A model Skill call has already run; a typed or pressed command starts when its skill expands.

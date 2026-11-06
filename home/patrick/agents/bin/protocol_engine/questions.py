@@ -20,7 +20,7 @@ PARTS = ('problem', 'cases', 'premises', 'options', 'rulings')
 
 def part_errors(q: dict, where: str, fields: tuple[str, ...] = PARTS) -> list[str]:
     """The parts the engine prints before the dialog (r27-q123): `problem` and per option `for` and `against` are required; `cases`,
-    `premises`, `rulings` and `note` are the lead's own words, printed only when present (`rulings`, when given, with the four
+    `premises`, `rulings` and `note` are the lead's own words, printed only when present (`rulings`, when given, with the
     DISCLOSURE fields each). `fields` names the parts to check (a new question: all; an update: the ones it touches)."""
     errors = []
     if 'problem' in fields and not (isinstance(q.get('problem'), str) and q['problem'].strip()):
@@ -366,4 +366,4 @@ def describe(ctx: Context, raw, where: str, required: bool) -> None:
             ctx.round['overview'] = raw['overview'].strip()
 
 
-DISCLOSURE = ('ruling', 'alternative', 'fails', 'evidence')  # asking.md Walk through: own rulings
+DISCLOSURE = ('ruling', 'why', 'alternative', 'fails', 'evidence')  # asking.md Walk through: own rulings; `why`: the ruling meets the goals without a material trade-off

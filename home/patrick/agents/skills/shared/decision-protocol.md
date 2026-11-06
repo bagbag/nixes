@@ -60,7 +60,7 @@ uncertain.
 | Choice | Handling |
 |---|---|
 | Trivial: reversible, consumer-invisible, sets no convention | Decide; mention in one line. |
-| Entailed: no other realistic, coherent alternative; meets ratified goals, constraints and principles without material residual trade-off | Decide; report with one-line reason. |
+| Entailed (the only realistic clean option): meets ratified goals, constraints and principles without material residual trade-off; every other realistic option fails a cleanliness test, principle or correctness property (a preference is no failure) | Decide; report with one-line reason. |
 | Other reversible: semantics, naming, contracts, conventions, trade-offs | Ask the decider. |
 | Irreversible, outward-facing or scope-changing | Ask the decider; act only on confirmation. |
 

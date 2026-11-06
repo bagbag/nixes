@@ -131,7 +131,7 @@ def start_release(ctx: Context, ids: list[str]) -> None:
         'pending': None, 'observed': {}, 'batch': None, 'batchSeq': 0, 'responses': [], 'messages': [],
         'set': [{'id': rid, 'title': rows[rid].get('title') or '', 'state': 'set', 'reason': None} for rid in ids],
         'checks': {}, 'supersedes': [], 'closes': {}, 'rulings': None, 'conditional': None, 'approval': None,
-        'owners': {}, 'done': [], 'retry': False, 'stopped': None, 'outcome': None, 'scoped': {'done': [], 'seen': []},
+        'owners': {}, 'done': [], 'retry': False, 'stopped': None, 'outcome': None, 'scoped': {'done': []},
     }
     ctx.round['title'] = release_label(ctx)
     ctx.log('start', protocol='release', repo=ctx.board.repo, records=ids, taken=gone, source=source)

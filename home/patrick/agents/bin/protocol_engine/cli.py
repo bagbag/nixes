@@ -34,7 +34,7 @@ from .engine import Context, PROTOCOLS, fail
 from .told import forget_runs
 from .record import abandon_note, refresh_board, release_claims
 from .away import SWITCH_TO_SOLO
-from .check import count_pass_args, next_cycle, pending_view, refused_formats
+from .check import next_cycle, pending_view, refused_formats
 from .ask import CHAT_STDIN, EDIT_STDIN, batch_back, withdraw_away
 from .release_set import start_release
 from .release import stamp_release
@@ -317,8 +317,8 @@ def run(ctx: Context, args) -> str:
             fail(f"`command` must be one of {', '.join(PASSES)}")
         # Observation only: the pending pass stays until its report (`step`), so the console can tell a pass turn
         # that ended without one.
-        r['observed'][pass_command] = args.origin
-        count_pass_args(ctx, pass_command, report.get('args') or '')
+        stamp = report.get('pending')
+        r['observed'][pass_command] = {'origin': args.origin, 'pending': stamp if isinstance(stamp, str) else None}
         ctx.log('pass-start', command=pass_command, args=report.get('args') or '', origin=args.origin,
                 pending=report.get('pending'))
         return json.dumps({**show_json(ctx), 'note': None}, indent=1, ensure_ascii=False)

@@ -196,11 +196,11 @@ def board_targets(ctx: Context, closes: list[str], olds: list[str]) -> list[str]
 def own_rulings_text(ctx: Context) -> str:
     return lines(
         f"Release {ctx.round['id']} · Own rulings (decide.md Release 3): list every ruling you made in the set with "
-        "asking.md's disclosure fields: the ruling, its strongest realistic alternative, the test or principle that "
-        'alternative fails, and the evidence. Mark each `sure` only when it is the only realistic clean option and '
-        'grounded; an unsure ruling, like a dropped or revised record, sends the approval to a dialog.',
+        "asking.md's disclosure fields: the ruling, what it meets without a material trade-off, its strongest realistic alternative, the test or principle that "
+        'alternative fails, and the evidence. Mark each `sure` only when it is entailed (decision-protocol.md Decision '
+        'authority); an unsure ruling, like a dropped or revised record, sends the approval to a dialog.',
         *set_rows(ctx),
-        report_hint(ctx, 'own-rulings', {'rulings': [{'record': (in_set(ctx) or ['<id>'])[0], 'ruling': '<your ruling>',
+        report_hint(ctx, 'own-rulings', {'rulings': [{'record': (in_set(ctx) or ['<id>'])[0], 'ruling': '<your ruling>', 'why': '<what it meets, why no material trade-off remains>',
                                   'alternative': '<strongest alternative>', 'fails': '<what it fails>',
                                   'evidence': '<source>', 'sure': True}]}),
     )
@@ -230,7 +230,7 @@ def scoped_enter(ctx: Context) -> str | None:
     """The scoped step-back, then ground, on the revised records (r8-q36), once per release: the pending pass waits for
     its report; without revised records, or once both ran, the approval follows."""
     r = ctx.round
-    done = r.setdefault('scoped', {'done': [], 'seen': []})['done']
+    done = r.setdefault('scoped', {'done': []})['done']
     command = next((one for one in SCOPED_PASSES if one not in done), None)
     if command is None or not scoped_records(ctx):
         ctx.set_pending(None)
@@ -268,9 +268,9 @@ def scoped_accept(ctx: Context, report: dict) -> str:
     if not ctx.codex:  # Codex has no console to observe its runs
         if command not in r['observed']:
             fail(NO_RUN.format(command=command))
-        if command not in r['scoped']['seen']:
+        if r['observed'][command].get('pending') != pending.get('id'):
             fail(f"/{command} ran without the revised records as its argument (`{pending.get('args')}`)")
-    origin = r['observed'].get(command, 'model')
+    origin = (r['observed'].get(command) or {}).get('origin', 'model')
     raw = report.get('records')
     ids = scoped_records(ctx)
     changed = [rid for rid, value in raw.items() if value != 'unchanged'] if isinstance(raw, dict) else []
@@ -279,7 +279,6 @@ def scoped_accept(ctx: Context, report: dict) -> str:
             kind='scoped', scoped=ids)  # queued: a refusal drops it
     stopped = apply_changes(ctx, raw, 'records', every=True, scope=ids)
     r['observed'].pop(command, None)
-    r['scoped']['seen'] = [one for one in r['scoped']['seen'] if one != command]
     r['scoped']['done'].append(command)  # once per release: a later revision does not re-arm the pair
     r['pending'] = None
     return stopped or 'scoped'

@@ -29,7 +29,7 @@ def stage_text(ctx: Context) -> str:
         '(what they would see, what it costs), each thing once, in plain words; how it was found (sources, measurements beyond the deciding '
         'number, who said what) and how it gets built go to the record. Required: `problem` (what is decided and why now) and per option `for` and `against`. '
         'Optional, printed only when present: `cases` (the concrete cases that must and must not work), `premises` (what it rests on), '
-        '`rulings` (each ruling of yours with its strongest alternative, what that fails and the evidence, which only the record keeps) and `note` (a term to define, anything else); '
+        '`rulings` (each ruling of yours with why it meets the goals without a material trade-off, its strongest alternative, what that fails and the evidence, which only the record keeps) and `note` (a term to define, anything else); '
         'a round may carry one `overview` line across '
         'its questions. A rule question\'s `premises` says how the rule applies to each settled item; the engine prints each item\'s id and title. Mark each recommendation '
         'under decision-protocol.md Recommendation strength: strong sets `strongBecause` '
@@ -55,7 +55,7 @@ def stage_text(ctx: Context) -> str:
                                     'options': [{'label': 'A', 'description': '…', 'for': '<for>', 'against': '<against>',
                                                  'preview': '<code example>'},
                                                 {'label': 'B', 'description': '…', 'for': '<for>', 'against': '<against>'}],
-                                    'premises': '<optional: grounded premises>', 'rulings': [{'ruling': '<your ruling>', 'alternative': '<strongest alternative>',
+                                    'premises': '<optional: grounded premises>', 'rulings': [{'ruling': '<your ruling>', 'why': '<what it meets, why no material trade-off remains>', 'alternative': '<strongest alternative>',
                                                                        'fails': '<what it fails>', 'evidence': '<source>'}],
                                     'note': '<optional>', 'recommendation': 'A', 'strength': 'lean',
                                     'leanBecause': {'cause': 'evidence', 'detail': '<the unchecked fact and how to check it>'},
