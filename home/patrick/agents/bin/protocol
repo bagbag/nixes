@@ -4055,20 +4055,29 @@ def option_pick(q: dict, value: str) -> str | None:
     return ', '.join(parts) if value and all(part in labels for part in parts) else None
 
 
-def answered_line(ctx: Context, batch: dict, answers: dict) -> str:
+def typed_reply(report: dict, text: str, value: str) -> str:
+    """What the person wrote instead of a pick: the typed text and a note on the question; a note alone counts as the reply
+    (the console sends a note written with no pick as no answer plus the note)."""
+    annotation = (report.get('annotations') or {}).get(text)
+    note = str(annotation.get('notes') or '').strip() if isinstance(annotation, dict) else ''
+    return '; '.join(part for part in (value, note) if part)
+
+
+def answered_line(ctx: Context, batch: dict, report: dict) -> str:
     """What the person reads after a dialog (r36-q197): one row per question, numbered like the dialog, with its title and
     what became of it. Every dialog comes through here; a cap question has no record, so its text stands in for the title."""
     rows = []
     for index, shown in enumerate(batch['questions']):
         q = None if batch['cap'] else by_id(ctx, batch['ids'][index])
-        value = (answers.get(shown['question']) or '').strip()
+        value = ((report.get('answers') or {}).get(shown['question']) or '').strip()
         pick = option_pick(q, value) if q else value
-        if not value:
-            outcome = 'no answer, asked again'
-        elif q and value == THINK_MORE and pick is None:
+        reply = typed_reply(report, shown['question'], value) if pick is None else ''
+        if q and value == THINK_MORE and pick is None:
             outcome = f'{THINK_MORE}: its checks rerun'
-        elif pick is None:
-            outcome = f'typed, not an answer yet: {value}'
+        elif reply:
+            outcome = f'typed, not an answer yet: {reply}'
+        elif not value:
+            outcome = 'no answer, asked again'
         elif q and q.get('strength'):
             outcome = f"{pick} ({'recommended' if pick == q['recommendation'] else 'not recommended'})"
         else:
@@ -4120,9 +4129,10 @@ def answer(ctx: Context, report: dict, origin: str) -> str:
                 ctx.round['messages'].append({'text': annotation['notes'], 'origin': origin, 'at': now})  # the quote check reads these
         else:
             q['status'] = 'ready'
-            if value:  # typed instead of a pick: the model reads it before the question goes out again
-                q['typed'] = value
-                ctx.round['messages'].append({'text': value, 'origin': origin, 'at': now})
+            reply = typed_reply(report, text, value)
+            if reply:  # typed instead of a pick: the model reads it before the question goes out again
+                q['typed'] = reply
+                ctx.round['messages'].append({'text': reply, 'origin': origin, 'at': now})
                 typed.append(qid)
     ctx.round['batch'] = None
     if done and ctx.round['protocol'] == 'round':
@@ -4532,7 +4542,7 @@ def run(ctx: Context, args) -> str:
         ctx.messages.insert(0, note)
         if args.origin != 'dialog':  # the model reads this result: the note alone (the console's dialog path reads the state)
             return instructions(ctx)
-        return json.dumps({**show_json(ctx), 'note': instructions(ctx), **({'echo': answered_line(ctx, batch, report.get('answers') or {})} if batch else {})},
+        return json.dumps({**show_json(ctx), 'note': instructions(ctx), **({'echo': answered_line(ctx, batch, report)} if batch else {})},
                           indent=1, ensure_ascii=False)
     if command == 'pass':
         pass_command = report.get('command')

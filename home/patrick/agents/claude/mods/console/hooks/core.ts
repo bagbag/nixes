@@ -87,7 +87,12 @@ export async function openDialog($: $, marker: string, session: string): Promise
       await notice($, outcome.note)
     }
   }
-  if (outcome.needsModel || !(await betweenTurns($, session, false, false))) await wakeModel($, outcome)
+  if (outcome.needsModel) {
+    await wakeModel($, outcome)
+    return
+  }
+  if (await betweenTurns($, session, false, false)) await notice($, outcome.summary)  // no prompt carries it: the person reads it here
+  else await wakeModel($, outcome)
 }
 
 /**

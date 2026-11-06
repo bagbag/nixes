@@ -132,10 +132,11 @@ Workflow owners:
 
 `board setup` ([beads-setup](skills/shared/beads-setup.md#beads-setup)) owns a board's settings:
 `TRAVELLING_CONFIG` (database, travels by sync), `LOCAL_CONFIG` (`.beads/config.yaml`, per clone),
-`SERVER_CONFIG` and `SHARED_CONFIG` in `bin/board`. It creates a board with `bd init --stealth`
-(`--server` for one to share later) or brings an existing one to these values, printing each old and
-new value, and reports `.git/info/exclude` lines matching tracked files; share and join apply the
-same lists. `no-git-ops` stays `true`, as stealth init sets it: bd 1.3's stealth handling keys on it
+`SERVER_CONFIG` and `SHARED_CONFIG` in `bin/board`. It creates a server-mode board with `bd init
+--server --stealth` (`--embedded` opts out: embedded mode takes one writer at a time) or brings an
+existing one to these values, printing each old and new value; `--server` converts an embedded board
+in place (`to_server`: bd backup and restore, the old folder kept). It reports `.git/info/exclude`
+lines matching tracked files; share and join apply the same lists. `no-git-ops` stays `true`, as stealth init sets it: bd 1.3's stealth handling keys on it
 (with `false`, `bd doctor --fix` writes a project `.gitignore`).
 
 Shared boards ([beads-setup](skills/shared/beads-setup.md#shared-boards), queues in

@@ -657,7 +657,7 @@ def t_inbox() -> None:
     check(mine == 0 and 'for:ben' in rows[0] and 'sent ' in rows[0] and ' ago' in rows[0], 'unrouted rows: time since sent and for:, items for me on top', out)
     check(any(stray in row and ' old' in row and 'sent ' not in row for row in rows), 'unrouted rows: an item sent to nobody shows its age', out)
     sent_at = (items('b')[found].get('metadata') or {}).get('sent_at', '')
-    check(sent_at > items('b')[found]['created_at'], 'send stamps sent_at', items('b')[found].get('metadata'))
+    check(sent_at != '' and sent_at >= items('b')[found]['created_at'][:19] + 'Z', 'send stamps sent_at', items('b')[found].get('metadata'))
     check(any(stray in row for row in rows[1:]), 'unrouted rows: the rest follow', out)
     _, out, _, _ = run('a', 'health')
     rows = [row for row in out.split('unrouted:')[1].splitlines() if row.startswith('  ')]
@@ -776,9 +776,9 @@ def t_setup() -> None:
     (ROOT / 'setupproj' / 'kept.db').write_text('project data')
     git('add', 'kept.db', cwd=ROOT / 'setupproj')
     git('commit', '-q', '-m', 'a tracked db file', cwd=ROOT / 'setupproj')
-    rc, out, err, _ = run('setupproj', 'setup', role=None)
+    rc, out, err, _ = run('setupproj', 'setup', '--embedded', role=None)
     meta = json.loads((ROOT / 'setupproj/.beads/metadata.json').read_text()) if (ROOT / 'setupproj/.beads/metadata.json').is_file() else {}
-    check(rc == 0 and meta.get('dolt_mode') == 'embedded' and meta.get('dolt_database') == 'setupproj', 'setup: a new board, embedded, named after the project', (err + out, meta))
+    check(rc == 0 and meta.get('dolt_mode') == 'embedded' and meta.get('dolt_database') == 'setupproj', 'setup --embedded: a new embedded board, named after the project', (err + out, meta))
     wrong = {key: setting('setupproj', key) for key in SETTINGS if setting('setupproj', key) != SETTINGS[key]}
     check(not wrong, 'setup: a new board gets every setting', wrong)
     check('*.db' in out and 'kept.db' in out, 'setup: reports the exclude line hiding a tracked project file', out)
@@ -795,12 +795,29 @@ def t_setup() -> None:
     check('already has a board' in out, 'setup: an existing board is never re-created', out)
     rc, out, err, _ = run('setupproj', 'setup', role=None)
     check(rc == 0 and ' -> ' not in out and 'up to date' in out, 'setup again: nothing to do', err + out)
+    rc, out, err, _ = run('setupproj', 'share', role=None)
+    check(rc == 1 and 'board setup --server' in err, 'share on an embedded board: refused, naming the conversion', err + out)
+    made = [bd('setupproj', 'create', title, '--description', f'{title}, an item the conversion keeps', '--silent', role=None)[1].strip()
+            for title in ('first kept', 'second kept')]
     rc, out, err, _ = run('setupproj', 'setup', '--server', role=None)
-    check(rc == 1 and 'embedded' in err, 'setup --server on an embedded board: refused, saying why', err + out)
-    rc, out, err, _ = run('setupsrv', 'setup', '--server', '--prefix', 'srv', role=None)
+    meta = json.loads((ROOT / 'setupproj/.beads/metadata.json').read_text()) if (ROOT / 'setupproj/.beads/metadata.json').is_file() else {}
+    kept = sorted((ROOT / 'setupproj').glob('.beads.before-server-*'))
+    rc_list, listed, _, _ = bd('setupproj', 'list', '--all', '--json', role=None)
+    present = {item['id'] for item in json.loads(listed or '[]')} if rc_list == 0 else set()
+    check(rc == 0 and meta.get('dolt_mode') == 'server' and meta.get('dolt_database') == 'setupproj' and set(made) <= present and len(kept) == 1,
+          'setup --server on an embedded board: converts it in place, every item kept, the old folder beside it', (err + out, meta, made, present, kept))
+    check(setting('setupproj', 'dolt.auto-start') == 'false' and setting('setupproj', 'validation.on-close') == 'error',
+          'setup --server: the converted board has the server settings and the rest', (setting('setupproj', 'dolt.auto-start'), err + out))
+    status = bd('setupproj', 'backup', 'status', role=None)[1]
+    check('Destination' not in status, "setup --server: the conversion's backup is not left registered", status)
+    check(not git('status', '--short', cwd=ROOT / 'setupproj').strip(), 'setup --server: the kept folder stays out of git status',
+          git('status', '--short', cwd=ROOT / 'setupproj'))
+    rc, out, err, _ = run('setupproj', 'setup', '--embedded', role=None)
+    check(rc == 1 and 'server' in err, 'setup --embedded on a server board: refused, a board is never converted back', err + out)
+    rc, out, err, _ = run('setupsrv', 'setup', '--prefix', 'srv', role=None)
     meta = json.loads((ROOT / 'setupsrv/.beads/metadata.json').read_text()) if (ROOT / 'setupsrv/.beads/metadata.json').is_file() else {}
     check(rc == 0 and meta.get('dolt_mode') == 'server' and meta.get('dolt_database') == 'srv' and setting('setupsrv', 'dolt.auto-start') == 'false',
-          'setup --server: a server-mode board that board starts itself', (err + out, meta))
+          'setup: a new board is a server board that board starts itself', (err + out, meta))
     check(setting('setupsrv', 'dolt.auto-commit') != 'batch', 'setup: an unshared board keeps per-write commits', setting('setupsrv', 'dolt.auto-commit'))
     rc, out, err, _ = run('a', 'setup', role=None)
     check(rc == 0 and 'up to date' in out and ' -> ' not in out, 'setup on a shared board: share applied the same lists, the shared ones included', err + out)

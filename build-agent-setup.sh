@@ -3,9 +3,10 @@
 # Usage: ./build-agent-setup.sh [output-folder]   (default: your home folder)
 set -euo pipefail
 
-cd "$(dirname "${BASH_SOURCE[0]}")"
 output=${1:-$HOME}
 [ -d "$output" ] || { echo "not a folder: $output" >&2; exit 1; }
+output=$(cd "$output" && pwd)  # the caller's folder, before the build moves to the flake root
+cd "$(dirname "${BASH_SOURCE[0]}")"
 
 # A flake build sees tracked files only, so an untracked one would be missing without any error.
 untracked=$(git ls-files --others --exclude-standard -- home/patrick/agents home/patrick/agents-package.nix home/patrick/claude home/patrick/codex modules/flake-parts flake.nix)

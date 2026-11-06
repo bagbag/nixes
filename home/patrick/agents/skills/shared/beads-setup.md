@@ -1,11 +1,13 @@
 ## Beads setup
 
 With the user's confirmation, run `$HOME/.agents/bin/board setup` in the
-repository; it is safe to rerun. Without a board it runs `bd init --stealth`
-(embedded; `--server` for a board to share later; `--prefix` overrides the
-origin repository's name), then the settings; an existing board keeps its mode
-and prefix and gets missing and differing settings set. `bin/board` owns the
-settings.
+repository; it is safe to rerun. Without a board it runs `bd init --server
+--stealth` (`--embedded` for a board one session writes at a time, never
+shared; `--prefix` overrides the origin repository's name), then the settings;
+an existing board keeps its mode and prefix and gets missing and differing
+settings set. `--server` converts an existing embedded board in place, keeping
+the old folder as `.beads.before-server-<time>/`; pause the sessions writing to
+it first. `bin/board` owns the settings.
 
 - Initialize a board only through `board setup` or `board join`: their stealth
   init keeps exclusions in `.git/info/exclude`, while plain `bd init` stages

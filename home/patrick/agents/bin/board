@@ -2843,10 +2843,52 @@ def hiding_excludes() -> list[str]:
     return found
 
 
+KEPT_EMBEDDED = '.beads.before-server-'  # an embedded board's folder, kept beside the server board made from it
+
+
+def to_server(beads: Path) -> None:
+    """`board setup --server` on an embedded board: bd's backup into a new server board, restored whole (Dolt history
+    included), the old folder kept beside it. A failure removes what it made and puts the old folder back."""
+    root, exclude = beads.parent, git_exclude()
+    database = json.loads((beads / 'metadata.json').read_text(encoding='utf-8')).get('dolt_database') or default_prefix(root)
+    before = {json.loads(row)['id'] for row in bd_checked('export').splitlines() if row.strip()}
+    saved = exclude.read_bytes() if exclude.exists() else None
+    kept = root / f"{KEPT_EMBEDDED}{utcnow().strftime('%Y%m%d-%H%M%S')}"
+    with tempfile.TemporaryDirectory(prefix='board-to-server-') as store:
+        bd_checked('backup', 'init', store)
+        try:
+            bd_checked('backup', 'sync')
+        except BaseException:
+            bd('backup', 'remove')  # the embedded board keeps no registration of a backup that never came to be
+            raise
+        beads.rename(kept)
+        try:
+            bd_checked('init', '--server', '--stealth', '--prefix', database, '--skip-hooks', '--skip-agents', stdin='')
+            bd_checked('backup', 'restore', '--force', store)
+            bd_checked('backup', 'remove')  # the restore registers the temporary backup for future syncs
+            lost = before - {json.loads(row)['id'] for row in bd_checked('export').splitlines() if row.strip()}
+            if lost:
+                raise BoardError(f"the server board lacks {', '.join(sorted(lost))}; nothing converted")
+        except BaseException:
+            stop_server(root)
+            shutil.rmtree(beads, ignore_errors=True)
+            kept.rename(beads)
+            if saved is not None:
+                exclude.write_bytes(saved)
+            bd('backup', 'remove')
+            raise
+    pattern = f'/{KEPT_EMBEDDED}*/'
+    if pattern not in (exclude.read_text(encoding='utf-8') if exclude.exists() else '').splitlines():
+        with exclude.open('a', encoding='utf-8') as handle:
+            handle.write(f"\n# board setup --server: an embedded board's old folder\n{pattern}\n")
+    print(f'converted the board to server mode, {len(before)} items; the embedded board is kept in {kept}')
+
+
 def setup(args) -> int:
-    """Safe to repeat (r38-q218): no board → `bd init --stealth` (embedded; --server for one to share later), then the settings.
-    An existing board is never re-created: a missing setting is set and a differing one reset, each printed with its old and new
-    value. A shared board also gets the shared settings, and its travelling ones reach the others by sync."""
+    """Safe to repeat (r38-q218, server default): no board → `bd init --server --stealth` (--embedded opts out), then the
+    settings. An existing board is never re-created: `--server` converts an embedded one in place (`to_server`), a missing
+    setting is set and a differing one reset, each printed with its old and new value. A shared board also gets the shared
+    settings, and its travelling ones reach the others by sync."""
     toplevel = subprocess.run(['git', 'rev-parse', '--show-toplevel'], capture_output=True, text=True)
     if toplevel.returncode != 0:
         raise BoardError('run board setup inside the project repository')
@@ -2856,17 +2898,20 @@ def setup(args) -> int:
         prefix = args.prefix or default_prefix(Path.cwd())
         if not re.fullmatch(r'[a-z0-9][a-z0-9-]*', prefix):
             raise BoardError(f'{prefix!r} does not fit an id prefix: lowercase letters, digits and dashes')
-        bd_checked('init', *(['--server'] if args.server else []), '--stealth', '--prefix', prefix, '--skip-hooks', '--skip-agents', stdin='')
+        bd_checked('init', *([] if args.embedded else ['--server']), '--stealth', '--prefix', prefix, '--skip-hooks', '--skip-agents', stdin='')
         beads = Path.cwd() / '.beads'
-        print(f"created the board {prefix} ({'server' if args.server else 'embedded'} mode) in {beads}")
+        print(f"created the board {prefix} ({'embedded' if args.embedded else 'server'} mode) in {beads}")
     else:
         mode = json.loads((beads / 'metadata.json').read_text(encoding='utf-8')).get('dolt_mode') or 'embedded'
-        if args.server and mode != 'server':
-            raise BoardError(f'this board is {mode}; board setup never re-creates a board, so --server applies only to a new one')
+        if args.embedded and mode != 'embedded':
+            raise BoardError(f'this board is {mode}; --embedded applies only to a new board, and board setup never converts one back')
         if args.prefix:
             raise BoardError('this project already has a board, which keeps its prefix: drop --prefix')
         os.chdir(beads.parent)
-        print(f'this project already has a board ({mode} mode); applying the current settings')
+        if args.server and mode == 'embedded':
+            to_server(beads)
+        else:
+            print(f'this project already has a board ({mode} mode); applying the current settings')
     server = json.loads((beads / 'metadata.json').read_text(encoding='utf-8')).get('dolt_mode') == 'server'
     changed = []
     for key, value in (*LOCAL_CONFIG, *TRAVELLING_CONFIG, *(SERVER_CONFIG if server else ()), *(SHARED_CONFIG if read_mark(beads) else ())):
@@ -2893,9 +2938,10 @@ def share(args) -> int:
     left unrouted."""
     beads = beads_dir()
     if beads is None:
-        raise BoardError('no board here: board setup --server creates one to share, or board join joins one')
+        raise BoardError('no board here: board setup creates one to share, or board join joins one')
     if json.loads((beads / 'metadata.json').read_text(encoding='utf-8')).get('dolt_mode') != 'server':
-        raise BoardError('a shared board needs server mode: its background sync runs beside other commands, which an embedded board refuses')
+        raise BoardError('a shared board needs server mode, and this board is embedded: board setup --server converts it in place '
+                         '(pause the sessions writing to it first)')
     os.chdir(beads.parent)
     remotes = bd_remotes()
     if remotes:
@@ -3413,7 +3459,9 @@ def run_command(argv: list[str]) -> int:
     sub.add_argument('--for', dest='for_', required=True, metavar='PERSON')
     sub.add_argument('args', nargs=argparse.REMAINDER, help='bd create arguments')
     sub = add('setup', 'create this project\'s board, or bring an existing one to the current settings (safe to rerun)', setup)
-    sub.add_argument('--server', action='store_true', help='a new board in server mode, to share later (default: embedded)')
+    modes = sub.add_mutually_exclusive_group()
+    modes.add_argument('--server', action='store_true', help='convert an existing embedded board to server mode (a new board is one already)')
+    modes.add_argument('--embedded', action='store_true', help='a new board in embedded mode: one writer at a time, never shared')
     sub.add_argument('--prefix', help="a new board's id prefix (default: the origin repository's name, else the folder's)")
     sub = add('share', "share this board: without --yes, say what goes out and stop; with it: remote (default: the project's "
               "repository), first push, config, and your queue on existing items", share)

@@ -39,9 +39,11 @@ Nothing else in `settings.json` or `config.toml` is touched. Models, plugins, pe
 Inside a project repository, with your go:
 
     ~/.agents/bin/board setup                # creates the board, or updates an existing one's settings
-    ~/.agents/bin/board setup --server       # a new board you mean to share later
+    ~/.agents/bin/board setup --server       # converts an existing embedded board to server mode
 
-Safe to rerun: it never re-creates a board, prints every setting it changes with its old and new
+A new board runs in server mode, so several sessions can write at once; `--embedded` makes a
+single-writer board instead. Pause the sessions writing to a board before converting it. Safe to
+rerun: it never re-creates a board, prints every setting it changes with its old and new
 value, and names `.git/info/exclude` lines that match tracked project files. Rerun it after an
 upgrade to bring existing boards to the current settings; on a shared board each person reruns it
 for the settings that stay on their machine.

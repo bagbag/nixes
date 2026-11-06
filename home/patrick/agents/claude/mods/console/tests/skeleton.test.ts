@@ -101,6 +101,15 @@ describe('dialog gate and capture', () => {
   const answered = (answers: Record<string, string>, extra: Record<string, unknown> = {}) =>
     ({ result: { questions: BATCH.questions, answers, ...extra } })
 
+  test('a note with no pick reaches the engine as no answer plus its note, not as the host\'s placeholder', async ($, on) => {
+    const { w } = world(on)
+    on('tool.call', { tool: 'AskUserQuestion' }, () => answered({ 'Which engine name?': '(notes only)' }, { annotations: { 'Which engine name?': { notes: 'group them by risk' } } }) as never)
+    await start($)
+    await $.tool.call({ tool: 'AskUserQuestion', questions: BATCH.questions, metadata: { source: BATCH.marker } } as never)
+    const call = w.calls.find(one => one.argv[3] === 'answer')
+    expect(JSON.parse(call?.stdin ?? '{}')).toEqual({ marker: BATCH.marker, answers: { 'Which engine name?': '' }, annotations: { 'Which engine name?': { notes: 'group them by risk' } }, response: null })
+  })
+
   test('the issued batch passes and its answers are recorded with origin dialog', async ($, on) => {
     const { w } = world(on)
     on('tool.call', { tool: 'AskUserQuestion' }, () => answered({ 'Which engine name?': 'protocol' }, { annotations: { 'Which engine name?': { notes: 'n' } } }) as never)
@@ -218,6 +227,19 @@ describe('dialog gate and capture', () => {
         await $.turn.complete(complete())
         await clock.settle()
         expect(w.commands.some(one => one.command === 'challenge-rulings')).toBe(true)
+        expect(w.prompts).toEqual([])
+      })
+
+      test('with no model turn the person still reads their answers, once, as a console row', async ($, on) => {
+        const { w, clock, session } = world(on, { round: asking() })
+        on('tool.call', { tool: 'AskUserQuestion' }, () => {
+          w.round = roundJson({ step: 'check', batch: null, pending: { id: 'p9', command: 'step-back', args: 'options q1' } })
+          return answered({ [QUESTION]: label }) as never
+        })
+        await start($)
+        await $.turn.complete(complete())
+        await clock.settle()
+        expect(notices(session).filter(text => text.includes(engineLine([label])))).toHaveLength(1)
         expect(w.prompts).toEqual([])
       })
 

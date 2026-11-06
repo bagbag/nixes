@@ -104,17 +104,21 @@ const strings = (value: unknown): Record<string, string> => {
   return Object.fromEntries(Object.entries(value as Record<string, unknown>).filter((entry): entry is [string, string] => typeof entry[1] === 'string'))
 }
 
+const NOTES_ONLY = '(notes only)'
+
 /**
  * What a marked dialog's result records: an error result (any decline kind) or a dialog that
  * resolved itself (`afkTimeoutMs`) declines with nothing; otherwise the answers, annotations
  * and free text are recorded, with `followUp` when the person asked for another round.
  */
+
 export function capture(marker: string, ran: DialogResult): Capture {
   if (ran.deny !== undefined) return { kind: 'none' }
   if (ran.isError === true) return { kind: 'decline', partial: null }
   const result = (typeof ran.result === 'object' && ran.result !== null ? ran.result : {}) as Record<string, unknown>
   if (typeof result.afkTimeoutMs === 'number') return { kind: 'decline', partial: null }
-  const answers = strings(result.answers)
+  // Claude Code answers a note written without a pick with this placeholder; the note itself sits in `annotations`.
+  const answers = Object.fromEntries(Object.entries(strings(result.answers)).map(([question, answer]) => [question, answer === NOTES_ONLY ? '' : answer]))
   const annotations = typeof result.annotations === 'object' && result.annotations !== null ? result.annotations as Record<string, unknown> : {}
   const response = typeof result.response === 'string' && result.response.trim() !== '' ? result.response : null
   return { kind: 'answer', input: { marker, answers, annotations, response, ...(result.followUp === true ? { followUp: true } : {}) } }

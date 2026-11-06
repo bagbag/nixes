@@ -1310,6 +1310,11 @@ def validate_setup_installer(root: Path) -> None:
         (home / ".codex" / "hooks.json").write_text("{broken", encoding="utf-8")
         refuses("broken settings", v1, ".codex/hooks.json is not a JSON object", tools)
         (home / ".codex" / "hooks.json").unlink()
+        # A JSON object whose hooks the merge can't read stops before the payload is replaced (install review, 2026-11-05).
+        kept_settings = settings.read_text(encoding="utf-8")
+        settings.write_text(json.dumps({"hooks": {"PreToolUse": "invalid"}}), encoding="utf-8")
+        refuses("unmergeable hooks", v1, ".claude/settings.json has hooks the installer cannot merge", tools)
+        settings.write_text(kept_settings, encoding="utf-8")
         (home / ".agents").mkdir()
         (base / "elsewhere").mkdir()
         (home / ".agents" / "bin").symlink_to(base / "elsewhere")
@@ -1359,7 +1364,17 @@ def validate_setup_installer(root: Path) -> None:
             ".agents/bin/tool": "#!/bin/sh\n",
             ".claude/mods/console/.claude-plugin/plugin.json": "{}\n",
         }, 'bash "$HOME/.claude/hooks/two.sh"', 'bash "$HOME/.codex/hooks/two.sh"')
+        # A leftover or planted `<file>.new` never redirects the settings or state write (install review, 2026-11-05).
+        outside = base / "outside"
+        outside.write_text("keep\n", encoding="utf-8")
+        planted = [home / ".claude" / "settings.json.new", home / ".agents" / "setup-state.json.new"]
+        for link in planted:
+            link.symlink_to(outside)
         ok(v2)
+        if outside.read_text(encoding="utf-8") != "keep\n" or settings.is_symlink() or (home / ".agents" / "setup-state.json").is_symlink():
+            raise ValueError("install.sh must write settings and state through files of its own, not a planted .new")
+        for link in planted:
+            link.unlink()
         if (home / ".claude" / "skills" / "kept" / "dropped.md").exists() or (home / ".claude" / "skills" / "gone").exists():
             raise ValueError("an upgrade must remove what it no longer ships, and the emptied folder")
         if (home / ".claude" / "skills" / "kept" / "note.md").read_text(encoding="utf-8") != "my note\n":
@@ -5233,6 +5248,15 @@ def validate_protocol(root: Path, part: str) -> None:
             again = shown(cwd=repo)["batch"]
             if again is None or [q["question"] for q in again["questions"]] != ["Typed?"]:
                 raise ValueError(f"protocol step must send a read typed question out again: {again}")
+            # A note written with no pick (the console sends no answer) is the person's typed reply, not lost (vitrass, 2026-11-06).
+            noted = json.loads(proto("answer", "--origin", "dialog", cwd=repo, stdin={
+                "marker": again["marker"], "answers": {"Typed?": ""}, "annotations": {"Typed?": {"notes": "group them by risk"}}}).stdout)
+            if next(q for q in noted["questions"] if q["text"] == "Typed?")["status"] != "ready" \
+                    or '"group them by risk" instead of picking' not in noted["note"] \
+                    or noted.get("echo") != "Your answers:\nTyped: typed, not an answer yet: group them by risk":
+                raise ValueError(f"protocol must take a note without a pick as the typed reply, echo included: {noted}")
+            proto("step", stdin={}, cwd=repo)
+            again = shown(cwd=repo)["batch"]
             proto("answer", "--origin", "dialog", cwd=repo, stdin={"marker": again["marker"], "answers": {"Typed?": "Drop, but keep the log"}})
             proto("answer", "--origin", "chat", cwd=repo, stdin={"question": typed["id"], "answer": "Drop", "quote": "Drop, but keep the log"})
             mapped = shown(cwd=repo)
