@@ -564,7 +564,7 @@ describe('machine-run passes', () => {
   })
 
   test('a Think more rerun runs and records its argument verbatim, goal included (r38-q213)', async ($, on) => {
-    const args = 'goal foundations q3 Think more on q3: the person asked for a reasoned strong recommendation; what fell short: the lean (your call: taste)'
+    const args = 'goal foundations on q3; Think more on q3: the lean fell short, try to get a reasoned strong recommendation'
     const { w, clock } = world(on, { round: roundJson({ pending: { id: 'p8', command: 'step-back', args } }) })
     await start($)
     await $.turn.complete(complete())

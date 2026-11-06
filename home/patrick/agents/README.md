@@ -582,11 +582,12 @@ and tokens per pass.
 
 A lean question with room in its dialog also offers `Think more`: no answer, so
 that question's checks rerun with no model reading and it comes back; the batch's
-other answers are recorded. Each rerun pass naming the question carries its goal
-after the lenses and ids: the person asked for a reasoned strong recommendation,
-and the lean they saw (its `leanBecause`) fell short; the goal ends when the
-question is asked again. Only the leading lens names and ids of a pass argument
-count; the rest is focus. A question with four options has no room, and the person
+other answers are recorded. A pass argument reads `<lenses> on <ids>; <focus>`;
+each rerun pass naming the question carries its goal as that focus
+(`Think more on q138: the lean fell short, try to get a reasoned strong
+recommendation`); `protocol show` keeps the lean the person saw (`thinkMore`), and
+the goal ends when the question is asked again. Only the leading lens names and
+ids count (`on` and the `;` optional). A question with four options has no room, and the person
 types their request. A preference lean carries `leanBecause.flipsIf`, and `priorRulings`
 lists each released ruling a recommendation rests on or Related linked, with
 `holds` or `fails` and why: the record keeps them all, and the print shows how many

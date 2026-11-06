@@ -1165,24 +1165,33 @@ def rescope_ids(ctx: Context) -> list[str]:
 
 
 def named_words(ctx: Context, args: str) -> list[str]:
-    """The lens names and question ids leading a pass's argument; the rest is the skill's focus (a Think more goal), whose
-    words never count as lenses or ids."""
+    """The lens names and question ids leading a pass's argument (`<lenses> on <ids>; <focus>`, `on` and `;` optional); the
+    rest is the skill's focus (a Think more goal), whose words never count as lenses or ids."""
     known = {lens for lenses in ALL_LENSES.values() for lens in lenses} | {q['id'] for q in ctx.round['questions']}
-    return list(itertools.takewhile(known.__contains__, str(args or '').split()))
+    named = []
+    for word in str(args or '').split():
+        name = word.removesuffix(';')
+        if name == 'on' and name == word:
+            continue
+        if name not in known:
+            break
+        named.append(name)
+        if name != word:
+            break
+    return named
 
 
-def with_goal(ctx: Context, words: list[str], ids: list[str]) -> str:
-    """A pass argument: its lenses and ids, then the Think more goal of those ids (r38-q213): the person asked for a reasoned
-    strong recommendation, and the lean they saw fell short. One line without quotes, so a typed rerun matches it."""
-    goals = []
-    for qid in ids:
-        lean = next((q.get('thinkMore') for q in ctx.round['questions'] if q['id'] == qid), None)
-        if isinstance(lean, dict):
-            kind = 'unverified' if lean.get('cause') == 'evidence' else 'your call'
-            detail = cut(' '.join(re.sub(r'[`"]', '', str(lean.get('detail') or '')).split()), 200)
-            goals.append(f'Think more on {qid}: the person asked for a reasoned strong recommendation; what fell short: the lean'
-                         + (f' ({kind}: {detail})' if detail else ''))
-    return ' '.join([*words, *goals])
+def with_goal(ctx: Context, lenses: tuple[str, ...], ids: list[str]) -> str:
+    """A pass argument: `<lenses> on <ids>`, then the Think more goal of those ids (r38-q213): the lean the person saw fell
+    short (`protocol show <id>` keeps it as `thinkMore`), try to get a reasoned strong recommendation. One line without quotes,
+    so a typed rerun matches it."""
+    head = ' '.join([*lenses, *(['on', *ids] if ids else [])])
+    rethink = [q['id'] for q in ctx.round['questions'] if q['id'] in ids and isinstance(q.get('thinkMore'), dict)]
+    if not rethink:
+        return head
+    many = len(rethink) > 1
+    return (f"{head}; Think more on {' '.join(rethink)}: the lean{'s' if many else ''} fell short, try to get "
+            + ('reasoned strong recommendations' if many else 'a reasoned strong recommendation'))
 
 
 def rescope_check(ctx: Context, ids: list[str]) -> None:
@@ -1221,7 +1230,7 @@ def start_base(ctx: Context) -> None:
     check['optionsNow'] = check['optionsScoped'] = False
     if check['pathScoped']:
         check['pathNow'] = True
-        ctx.set_pending('step-back', with_goal(ctx, [*PATH_LENSES, *rescope_ids(ctx)], rescope_ids(ctx)))
+        ctx.set_pending('step-back', with_goal(ctx, PATH_LENSES, rescope_ids(ctx)))
     elif check['pathNow']:
         ctx.set_pending('step-back', ' '.join(PATH_LENSES))
     else:
@@ -1232,7 +1241,7 @@ def start_base(ctx: Context) -> None:
             scope['options'] = False  # the round-wide pass covers the restarted ids, or none of them has options to explore
         if check['optionsScoped']:
             check['optionsNow'] = True
-            ctx.set_pending('step-back', with_goal(ctx, [*OPTIONS_LENSES, *scoped], scoped))
+            ctx.set_pending('step-back', with_goal(ctx, OPTIONS_LENSES, scoped))
         else:
             ctx.set_pending('step-back', ' '.join(OPTIONS_LENSES) if check['optionsNow'] else '')
     rescope_done(ctx)
@@ -1305,7 +1314,7 @@ def gate_ask(ctx: Context) -> str:
                     scope['refine'].remove(command)
                     continue
                 check.update(expect=command, refineNow=command, refineScoped=True)
-                ctx.set_pending(command, with_goal(ctx, [*lenses, *rescope_ids(ctx)], rescope_ids(ctx)))
+                ctx.set_pending(command, with_goal(ctx, lenses, rescope_ids(ctx)))
                 return 'check'
         rescope_done(ctx)
         if check.get('refineChanges'):  # the pair's changes rerun the Base loop (under the cap); the pair does not run again
@@ -1315,7 +1324,7 @@ def gate_ask(ctx: Context) -> str:
     if leans and not check.get('focused') and not check['askNow']:
         # One targeted pass on every lean, evidence or preference, aiming it at strong (LEAN_JOB); a value lean asks its value question.
         check.update(expect='ground', focusing=True)
-        ctx.set_pending('ground', with_goal(ctx, [*LEAN_LENSES, *leans], leans))
+        ctx.set_pending('ground', with_goal(ctx, LEAN_LENSES, leans))
         return 'check'
     if needs_challenge(ctx):
         check['expect'] = 'challenge-rulings'

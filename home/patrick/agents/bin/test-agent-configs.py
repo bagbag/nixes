@@ -3693,7 +3693,7 @@ def validate_protocol(root: Path, part: str) -> None:
                 current = (json.loads(saved.read_text(encoding="utf-8")).get("round") or {}) if saved.is_file() else {}
                 words = ((current.get("pending") or {}).get("args") or "").split()
                 if words[:1] == ["options"]:
-                    ids = [w for w in itertools.takewhile(lambda w: re.fullmatch(r"q\d+", w), words[1:])] or [q["id"] for q in current["questions"] if q["kind"] == "decision" and q["status"] in ("draft", "held", "ready")]
+                    ids = [w.rstrip(";") for w in itertools.takewhile(lambda w: re.fullmatch(r"q\d+;?", w), words[2:] if words[1:2] == ["on"] else [])] or [q["id"] for q in current["questions"] if q["kind"] == "decision" and q["status"] in ("draft", "held", "ready")]
                     stdin = {**stdin, "explored": {qid: "no other mechanism fits the fixture's one question" for qid in ids}}
             if observe and args[:1] == ("step",) and isinstance(stdin, dict) and stdin.get("pass") and session not in ("0000-cdx00001", "0000-cdxauto1"):
                 saved = state / f"{session}.protocol" / "state.json"
@@ -3923,7 +3923,7 @@ def validate_protocol(root: Path, part: str) -> None:
             proto("step", stdin={"pass": "ground", "updates": [], "checked": ["every question"]})
             # The Base loop converged: the refine pair (round-wide), then the lean pass (a preference lean counts), once each.
             for command, args in (("step-back", "decisions clean overfit mechanics"),
-                                  ("ground", "assumptions board sources probe"), ("ground", "assumptions sources probe q1")):
+                                  ("ground", "assumptions board sources probe"), ("ground", "assumptions sources probe on q1")):
                 if (shown()["pending"]["command"], shown()["pending"]["args"]) != (command, args):
                     raise ValueError(f"protocol must run {command} {args} before challenge-rulings: {shown()['pending']}")
                 out = proto("step", stdin={"pass": command, "updates": [], "checked": ["every question"]}).stdout
@@ -4195,7 +4195,7 @@ def validate_protocol(root: Path, part: str) -> None:
                 raise ValueError(f"a chat answer prints the note only:\n{note}")
             released = next(q for q in recording["questions"] if q["id"] == held_q["id"])
             if recording["step"] != "check" or next(q for q in recording["questions"] if q["id"] == draft_q["id"])["answer"] != "Keep" \
-                    or released["status"] != "draft" or (recording["pending"]["command"], recording["pending"]["args"]) != ("step-back", f"goal foundations {held_q['id']}") \
+                    or released["status"] != "draft" or (recording["pending"]["command"], recording["pending"]["args"]) != ("step-back", f"goal foundations on {held_q['id']}") \
                     or f"released {held_q['id']} from held" not in note.splitlines()[0]:
                 raise ValueError(f"protocol chat answer must release the held question into a scoped rerun: {recording}")
             for _ in range(12):  # the scoped path pass, the Base loop, the scoped refine pair, the lean pass, challenge-rulings
@@ -4462,7 +4462,7 @@ def validate_protocol(root: Path, part: str) -> None:
             proto("step", stdin={"pass": "ground", "updates": [], "checked": ["every question"]}, cwd=repo)
             focused = shown(cwd=repo)
             ids = [q["id"] for q in focused["questions"]]
-            if focused["pending"]["command"] != "ground" or focused["pending"]["args"] != f"assumptions sources probe {ids[0]} {ids[1]}":
+            if focused["pending"]["command"] != "ground" or focused["pending"]["args"] != f"assumptions sources probe on {ids[0]} {ids[1]}":
                 raise ValueError(f"protocol must run one focused ground pass on evidence leans: {focused['pending']}")
             proto("step", stdin={"pass": "ground", "updates": [{"id": ids[0], "strength": "strong", "leanBecause": None, "strongBecause": STRONG_CLAIMS}],
                                  "checked": ["bd batch order (probe)"]}, cwd=repo)
@@ -4703,7 +4703,7 @@ def validate_protocol(root: Path, part: str) -> None:
                 released = json.loads(proto("answer", "--origin", "dialog", cwd=repo, stdin={
                     "marker": shown(cwd=repo)["batch"]["marker"], "answers": {asked_text: "Keep"}}).stdout)
                 if released["step"] != "check" or released["check"]["cycle"] != 1 or released["batch"] is not None \
-                        or (released["pending"]["command"], released["pending"]["args"]) != ("step-back", f"goal foundations {next_id_}") \
+                        or (released["pending"]["command"], released["pending"]["args"]) != ("step-back", f"goal foundations on {next_id_}") \
                         or f"released {next_id_} from held" not in released["note"].splitlines()[0] \
                         or {q["id"]: q["status"] for q in released["questions"]}[chain[0]] != "answered":
                     raise ValueError(f"protocol chain step {position}: the answer releases {next_id_} into a scoped rerun: {released}")
@@ -4715,10 +4715,10 @@ def validate_protocol(root: Path, part: str) -> None:
                     seen.append((view["pending"]["command"], view["pending"]["args"]))
                     proto("step", stdin={"pass": view["pending"]["command"], "updates": [], "checked": ["every question"]}, cwd=repo)
                 lenses = ("goal foundations", "decisions clean overfit mechanics", "assumptions board sources probe", "assumptions sources probe")
-                if not (seen[0] == ("step-back", f"goal foundations {next_id_}") and seen[1] == ("step-back", f"options {next_id_}")
+                if not (seen[0] == ("step-back", f"goal foundations on {next_id_}") and seen[1] == ("step-back", f"options on {next_id_}")
                         and seen[2] == ("step-back", "") and seen[3] == ("ground", "")
-                        and seen[4] == ("step-back", f"{lenses[1]} {next_id_}") and seen[5] == ("ground", f"{lenses[2]} {next_id_}")
-                        and seen[6][1] == f"{lenses[3]} {next_id_}" and seen[-1] == ("challenge-rulings", "")):
+                        and seen[4] == ("step-back", f"{lenses[1]} on {next_id_}") and seen[5] == ("ground", f"{lenses[2]} on {next_id_}")
+                        and seen[6][1] == f"{lenses[3]} on {next_id_}" and seen[-1] == ("challenge-rulings", "")):
                     raise ValueError(f"protocol chain step {position}: the scoped rerun runs the full sequence on the released id: {seen}")
                 batch = shown(cwd=repo)["batch"]
                 if [q["question"] for q in batch["questions"]] != [f"Chain {'BC'[position - 1]}?"]:
@@ -5537,10 +5537,10 @@ def validate_protocol(root: Path, part: str) -> None:
                 out = proto("step", **codex, stdin={"pass": json.loads(proto("show", "--json", **codex).stdout)["pending"]["command"], "updates": [], "checked": ["q"]}).stdout
             scoped_id = json.loads(proto("show", "--json", **codex).stdout)["questions"][0]["id"]
             out = proto("restart", scoped_id, "--reason", "criterion", **codex).stdout
-            if f"with the argument `goal foundations {scoped_id}`" not in out or f"the path pass on the restarted questions {scoped_id}" not in out:
+            if f"with the argument `goal foundations on {scoped_id}`" not in out or f"the path pass on the restarted questions {scoped_id}" not in out:
                 raise ValueError(f"Codex scoped path pass:\n{out}")
             out = proto("step", **codex, stdin={"pass": "step-back", "updates": [], "checked": ["q"]}).stdout
-            if f"with the argument `options {scoped_id}`" not in out or f"the options pass on the restarted questions {scoped_id}" not in out:
+            if f"with the argument `options on {scoped_id}`" not in out or f"the options pass on the restarted questions {scoped_id}" not in out:
                 raise ValueError(f"Codex: the scoped path pass leads into the scoped options pass:\n{out}")
             out = proto("step", **codex, stdin={"pass": "step-back", "updates": [], "checked": ["q"]}).stdout
             if "path pass" in out.splitlines()[0] or "options pass" in out.splitlines()[0] or "Check cycle 1/5." not in out:
@@ -5722,7 +5722,7 @@ def validate_protocol(root: Path, part: str) -> None:
                 report()
             expected = [("step-back", "goal foundations"), ("step-back", "options"), ("step-back", ""), ("ground", ""),
                         ("step-back", "decisions clean overfit mechanics"), ("ground", "assumptions board sources probe"),
-                        ("ground", f"assumptions sources probe {qid}"), ("challenge-rulings", "")]
+                        ("ground", f"assumptions sources probe on {qid}"), ("challenge-rulings", "")]
             if order != expected:
                 raise ValueError(f"the check sequence: {order}")
             # A check rebuilt while asking (a pass with changes) repeats neither the path pass nor the refine pair.
@@ -5732,7 +5732,7 @@ def validate_protocol(root: Path, part: str) -> None:
             while shown(**texts)["step"] == "check":
                 again.append(pending_now())
                 report()
-            if again != [("step-back", ""), ("ground", ""), ("ground", f"assumptions sources probe {qid}"), ("challenge-rulings", "")]:
+            if again != [("step-back", ""), ("ground", ""), ("ground", f"assumptions sources probe on {qid}"), ("challenge-rulings", "")]:
                 raise ValueError(f"a rebuilt check repeats neither path nor refine: {again}")
             proto("abandon", **texts)
             # A pressed pass counts: All (every lens) as the path pass and the refine step-back; Refine as the refine step-back.
@@ -5761,7 +5761,7 @@ def validate_protocol(root: Path, part: str) -> None:
                 raise ValueError(f"a pressed Refine counts as the refine step-back pass, and its change reruns Base: {pending_now()}")
             report()
             report()
-            if pending_now() != ("ground", f"assumptions sources probe {qid}"):
+            if pending_now() != ("ground", f"assumptions sources probe on {qid}"):
                 raise ValueError(f"the refine pair ran once; the lean pass follows with the fixed trio: {pending_now()}")
             proto("abandon", **texts)
             # A Base-only run reported while the path pass is pending does not count as it.
@@ -5788,7 +5788,7 @@ def validate_protocol(root: Path, part: str) -> None:
                 raise ValueError(f"a change in the refine pair reruns the Base loop: {pending_now()}")
             report()
             report()
-            if pending_now() != ("ground", f"assumptions sources probe {qid}"):
+            if pending_now() != ("ground", f"assumptions sources probe on {qid}"):
                 raise ValueError(f"the pair runs once; the lean pass follows: {pending_now()}")
             report()
             if pending_now() != ("challenge-rulings", ""):
@@ -5808,23 +5808,23 @@ def validate_protocol(root: Path, part: str) -> None:
                              if key in ("pathRun", "refineRun")}
             before = flags()
             out = proto("restart", one, "--reason", "criterion: new goal", **texts).stdout
-            if pending_now() != ("step-back", f"goal foundations {one}"):
+            if pending_now() != ("step-back", f"goal foundations on {one}"):
                 raise ValueError(f"a restart runs a scoped path pass first:\n{out}\n{pending_now()}")
             proto("restart", two, "--reason", "same criterion", **texts)  # a second restart before the loop settles adds its ids
-            if pending_now() != ("step-back", f"goal foundations {one} {two}"):
+            if pending_now() != ("step-back", f"goal foundations on {one} {two}"):
                 raise ValueError(f"a second restart adds its ids: {pending_now()}")
             report()  # the scoped path pass
-            if pending_now() != ("step-back", f"options {one} {two}"):
+            if pending_now() != ("step-back", f"options on {one} {two}"):
                 raise ValueError(f"the scoped options pass follows the scoped path pass: {pending_now()}")
             report()  # the scoped options pass
             if pending_now() != ("step-back", "") or shown(**texts)["check"]["cycle"] != 1:
                 raise ValueError(f"the Base loop runs round-wide after the scoped options pass: {pending_now()}")
             report()
             out = report().stdout
-            if pending_now() != ("step-back", f"decisions clean overfit mechanics {one} {two}"):
+            if pending_now() != ("step-back", f"decisions clean overfit mechanics on {one} {two}"):
                 raise ValueError(f"the scoped refine step-back follows the Base loop:\n{out}")
             report()
-            if pending_now() != ("ground", f"assumptions board sources probe {one} {two}"):
+            if pending_now() != ("ground", f"assumptions board sources probe on {one} {two}"):
                 raise ValueError(f"the scoped refine ground follows: {pending_now()}")
             report("ground", [{"id": one, "premises": "moved by the scoped pair"}])
             if pending_now() != ("step-back", "") or shown(**texts)["check"]["cycle"] != 2:
@@ -5841,17 +5841,17 @@ def validate_protocol(root: Path, part: str) -> None:
             proto("restart", three, "--reason", "again", **texts)
             proto("pass", "--origin", "press", stdin={"command": "step-back", "args": "goal foundations", "pending": None}, **texts)
             report("step-back")
-            if pending_now() != ("step-back", f"goal foundations {three}"):
+            if pending_now() != ("step-back", f"goal foundations on {three}"):
                 raise ValueError(f"the round-wide path set without the ids does not count as the scoped pass: {pending_now()}")
             proto("pass", "--origin", "press", stdin={"command": "step-back", "args": f"goal foundations {three}", "pending": None}, **texts)
             report("step-back")
-            if pending_now() != ("step-back", f"options {three}"):
-                raise ValueError(f"a pass naming the set and the ids counts as the scoped path pass: {pending_now()}")
+            if pending_now() != ("step-back", f"options on {three}"):
+                raise ValueError(f"a pass naming the set and the ids, `on` left out, counts as the scoped path pass: {pending_now()}")
             proto("pass", "--origin", "press", stdin={"command": "step-back", "args": "options", "pending": None}, **texts)
             report("step-back")
-            if pending_now() != ("step-back", f"options {three}"):
+            if pending_now() != ("step-back", f"options on {three}"):
                 raise ValueError(f"the round-wide options set without the ids does not count as the scoped options pass: {pending_now()}")
-            proto("pass", "--origin", "press", stdin={"command": "step-back", "args": f"options {three}", "pending": None}, **texts)
+            proto("pass", "--origin", "press", stdin={"command": "step-back", "args": f"options on {three}; with a focus", "pending": None}, **texts)
             report("step-back")
             if pending_now() != ("step-back", ""):
                 raise ValueError(f"a pass naming the options set and the ids counts as the scoped options pass: {pending_now()}")
@@ -5867,7 +5867,7 @@ def validate_protocol(root: Path, part: str) -> None:
                 report()
             proto("restart", decision, confirmation, "--reason", "criterion", **texts)
             report()  # the scoped path pass
-            if pending_now() != ("step-back", f"options {decision}"):
+            if pending_now() != ("step-back", f"options on {decision}"):
                 raise ValueError(f"the scoped options pass names the decision only: {pending_now()}")
             report()  # the scoped options pass
             if pending_now() != ("step-back", ""):
@@ -5903,7 +5903,7 @@ def validate_protocol(root: Path, part: str) -> None:
                 raise ValueError(f"the line after a dialog must say Think more reruns and mark the pick: {out}")
             view = shown(**texts)
             answers = {q["id"]: q["answer"] for q in view["questions"]}
-            if answers != {one: None, two: "Keep"} or view["step"] != "check" or pending_now() != ("step-back", f"goal foundations {one} Think more on {one}: the person asked for a reasoned strong recommendation; what fell short: the lean (your call: taste)"):
+            if answers != {one: None, two: "Keep"} or view["step"] != "check" or pending_now() != ("step-back", f"goal foundations on {one}; Think more on {one}: the lean fell short, try to get a reasoned strong recommendation"):
                 raise ValueError(f"Think more reruns that question's checks and records the other answer: {answers} {pending_now()}\n{out}")
             report()
             report()
@@ -5922,23 +5922,22 @@ def validate_protocol(root: Path, part: str) -> None:
             if view["pending"] and view["pending"]["command"] != "challenge-rulings":
                 raise ValueError(f"nothing left to check, so only the challenge over the answers runs: {view['pending']}")
             proto("abandon", **texts)
-            # r38-q213: a Think more rerun carries its goal: every pass on that question says the person asked for a reasoned
-            # strong recommendation and names the lean that fell short; the lean pass runs again; the goal goes once it is asked.
+            # r38-q213: a Think more rerun carries its goal: every pass on that question says its lean fell short and asks for a
+            # reasoned strong recommendation; the lean pass runs again; the goal goes once it is asked.
             qid = texts_round("Deeper?")
             proto("step", **texts, stdin={"pass": "step-back", "updates": [{"id": qid, "leanBecause": {
                 "cause": "preference", "detail": "taste between `options` and \"speed\"", "flipsIf": "a different taste"}}], "checked": ["q"]})
             converge(**texts)
             batch = shown(**texts)["batch"]
             proto("answer", "--origin", "dialog", **texts, stdin={"marker": batch["marker"], "answers": {batch["questions"][0]["question"]: "Think more"}})
-            focus = (f"Think more on {qid}: the person asked for a reasoned strong recommendation; "
-                     "what fell short: the lean (your call: taste between options and speed)")
+            focus = f"Think more on {qid}: the lean fell short, try to get a reasoned strong recommendation"
             rerun = []
             while shown(**texts)["step"] == "check":
                 rerun.append(pending_now())
                 report()
-            expected = [("step-back", f"goal foundations {qid} {focus}"), ("step-back", f"options {qid} {focus}"), ("step-back", ""), ("ground", ""),
-                        ("step-back", f"decisions clean overfit mechanics {qid} {focus}"), ("ground", f"assumptions board sources probe {qid} {focus}"),
-                        ("ground", f"assumptions sources probe {qid} {focus}"), ("challenge-rulings", "")]
+            expected = [("step-back", f"goal foundations on {qid}; {focus}"), ("step-back", f"options on {qid}; {focus}"), ("step-back", ""), ("ground", ""),
+                        ("step-back", f"decisions clean overfit mechanics on {qid}; {focus}"), ("ground", f"assumptions board sources probe on {qid}; {focus}"),
+                        ("ground", f"assumptions sources probe on {qid}; {focus}"), ("challenge-rulings", "")]
             if rerun != expected:
                 raise ValueError(f"a Think more rerun carries its goal on every pass naming the question:\n{rerun}\n{expected}")
             labels = [line["text"] for line in shown(**texts)["log"]]
@@ -5946,7 +5945,7 @@ def validate_protocol(root: Path, part: str) -> None:
                 raise ValueError(f"the goal's words are focus, not question ids or lenses: {labels}")
             # Asked again, the goal is spent: a later criterion restart reruns without it.
             proto("restart", qid, "--reason", "criterion", **texts)
-            if pending_now() != ("step-back", f"goal foundations {qid}"):
+            if pending_now() != ("step-back", f"goal foundations on {qid}"):
                 raise ValueError(f"the Think more goal ends when the question goes out again: {pending_now()}")
             proto("abandon", **texts)
             def lens_round(word):
@@ -6022,11 +6021,11 @@ def validate_protocol(root: Path, part: str) -> None:
                 raise ValueError(f"an edit that only adds leaves the batch out and the question unasked: {view}")
             proto("answer", "--origin", "dialog", **texts, stdin={"marker": first["marker"], "answers": {"1. Add one?": "Keep", "2. Add two?": "Keep"}})
             view = shown(**texts)
-            if view["step"] != "check" or (view["pending"]["command"], view["pending"]["args"]) != ("step-back", f"goal foundations {third['id']}") \
+            if view["step"] != "check" or (view["pending"]["command"], view["pending"]["args"]) != ("step-back", f"goal foundations on {third['id']}") \
                     or not any(text.startswith(f"{third['id']}: checked before they are asked") for text in log_texts()):
                 raise ValueError(f"the added question gets the scoped check at the hand-over, before the challenge after the answers: {view['pending']}\n{log_texts()}")
             proto("step", **texts, stdin={"pass": "step-back", "updates": [], "checked": ["every question"]})  # r30-q142: the edited question's options pass follows its path pass
-            if (shown(**texts)["pending"]["command"], shown(**texts)["pending"]["args"]) != ("step-back", f"options {third['id']}"):
+            if (shown(**texts)["pending"]["command"], shown(**texts)["pending"]["args"]) != ("step-back", f"options on {third['id']}"):
                 raise ValueError(f"an edited (added) question gets a scoped options pass after its path pass: {shown(**texts)['pending']}")
             converge(**texts)
             view = shown(**texts)
@@ -6059,7 +6058,7 @@ def validate_protocol(root: Path, part: str) -> None:
                 raise ValueError(f"renaming the recommended option's label is wording: {view}")
             proto("answer", "--origin", "dialog", **texts, stdin={"marker": view["batch"]["marker"], "answers": {"Rec two, reworded?": "Keep it"}})
             view = shown(**texts)
-            if (view["pending"]["command"], view["pending"]["args"]) != ("step-back", f"goal foundations {q1}"):
+            if (view["pending"]["command"], view["pending"]["args"]) != ("step-back", f"goal foundations on {q1}"):
                 raise ValueError(f"the re-recommended question gets the scoped check at the hand-over: {view['pending']}")
             converge(**texts)
             asked = shown(**texts)["batch"]["questions"][0]
@@ -6071,7 +6070,7 @@ def validate_protocol(root: Path, part: str) -> None:
             first = shown(**texts)["batch"]
             proto("edit", **texts, stdin={"updates": [{"id": q1, "recommendation": "Drop"}], "quote": said("recommend Drop")})
             view = shown(**texts)
-            if view["batch"] is not None or view["step"] != "check" or view["pending"]["command"] != "step-back" or view["pending"]["args"] != f"goal foundations {q1}":
+            if view["batch"] is not None or view["step"] != "check" or view["pending"]["command"] != "step-back" or view["pending"]["args"] != f"goal foundations on {q1}":
                 raise ValueError(f"with nothing left to ask the scoped check starts at once: {view}")
             proto("abandon", **texts)
             # Before Ask the running check takes an added question: no extra hand-over check, both go out together.
@@ -6134,7 +6133,7 @@ def validate_protocol(root: Path, part: str) -> None:
             view = shown(**texts)
             found_id = view["questions"][1]["id"]
             if f"challenge-rulings (after answers): {found_id} added" not in out.splitlines()[0] or view["step"] != "check" \
-                    or (view["pending"]["command"], view["pending"]["args"]) != ("step-back", f"goal foundations {found_id}"):
+                    or (view["pending"]["command"], view["pending"]["args"]) != ("step-back", f"goal foundations on {found_id}"):
                 raise ValueError(f"a finding is a new question that takes the scoped check:\n{out}")
             converge(**texts)
             view = shown(**texts)
@@ -6467,7 +6466,7 @@ def validate_protocol(root: Path, part: str) -> None:
                 seen.append((view["pending"]["command"], view["pending"]["args"]))
                 outputs.append(run_pass(**home)[1])
             expected = [("step-back", "goal foundations"), ("step-back", "options"), ("step-back", ""), ("ground", ""), ("step-back", "decisions clean overfit mechanics"),
-                        ("ground", "assumptions board sources probe"), ("ground", f"assumptions sources probe {qid}"), ("challenge-rulings", "")]
+                        ("ground", "assumptions board sources probe"), ("ground", f"assumptions sources probe on {qid}"), ("challenge-rulings", "")]
             if seen != expected:
                 raise ValueError(f"the check sequence changed under the cadence test: {seen}")
             if any("told" in e for e in history(**home) if e["event"] in ("pass", "pass-start")):
