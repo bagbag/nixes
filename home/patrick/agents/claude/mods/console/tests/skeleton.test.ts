@@ -230,7 +230,7 @@ describe('dialog gate and capture', () => {
         expect(w.prompts).toEqual([])
       })
 
-      test('with no model turn the person still reads their answers, once, as a console row', async ($, on) => {
+      test('with no model turn the person still reads their answers: /console-answers prints them (a row would not draw)', async ($, on) => {
         const { w, clock, session } = world(on, { round: asking() })
         on('tool.call', { tool: 'AskUserQuestion' }, () => {
           w.round = roundJson({ step: 'check', batch: null, pending: { id: 'p9', command: 'step-back', args: 'options q1' } })
@@ -239,7 +239,10 @@ describe('dialog gate and capture', () => {
         await start($)
         await $.turn.complete(complete())
         await clock.settle()
-        expect(notices(session).filter(text => text.includes(engineLine([label])))).toHaveLength(1)
+        const own = { command: 'console-answers', args: '', origin: { kind: 'plugin', name: 'console' }, presentation: typed.presentation } as never
+        expect((await $.command.run(own)).text).toBe(`\n${engineLine([label])}`)
+        expect(w.commands.some(one => one.command === 'step-back')).toBe(true)
+        expect(notices(session).filter(text => text.includes(engineLine([label])))).toEqual([])
         expect(w.prompts).toEqual([])
       })
 
@@ -290,6 +293,18 @@ describe('dialog gate and capture', () => {
         await $.turn.complete(complete())
         await clock.settle()
         expect(opened).toBe(2)
+      })
+
+      test('answered after a reload, with no openDialog waiting, the console still hands the answers on', async ($, on) => {
+        const { w, clock } = world(on, { round: asking('') })
+        on('tool.call', { tool: 'AskUserQuestion' }, () => answered({ [QUESTION]: 'my own words' }) as never)
+        await start($)
+        await clock.settle()
+        // The placeholder dialog arrives as if an earlier instance of the console had opened it: nothing here waits on it.
+        await $.tool.call({ tool: 'AskUserQuestion', questions: [{ question: `Console round dialog ${BATCH.marker}?`, header: 'Round', multiSelect: false, options: [{ label: 'Open the questions', description: '' }, { label: 'Not now', description: '' }] }] } as never)
+        await clock.settle()
+        expect(w.verbs()).toContain('answer --origin dialog')
+        expect(w.prompts).toEqual([engineLine(['my own words'])])
       })
 
       test('without a batch to swap in, the placeholder is never drawn', async ($, on) => {

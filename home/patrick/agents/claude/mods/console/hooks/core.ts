@@ -48,7 +48,18 @@ export const placeholderMarker = (question: unknown): string | null =>
 /** What the swapped dialog came to, set by the AskUserQuestion hook. `summary`: the visible line; `note`: the engine's text for the model; `needsModel`: typed text, a note or a decline. */
 export type DialogOutcome = { summary: string; note: string | null; needsModel: boolean; unsavedDecline?: { marker: string; partial: Record<string, string> | null } }
 let dialogOutcome: DialogOutcome | null = null
-export const setDialogOutcome = (outcome: DialogOutcome): void => { dialogOutcome = outcome }
+/** The marker openDialog waits on in this instance of the console; a reload starts it over, with the dialog still open. */
+let dialogAwaited: string | null = null
+
+/** The AskUserQuestion hook's outcome of the console's own dialog: to the openDialog waiting on it, else (opened before a reload)
+ * the hook finishes it itself, so the answers are never left recorded and unannounced. */
+export function deliverDialogOutcome($: $, marker: string, session: string, outcome: DialogOutcome): void {
+  if (dialogAwaited === marker) {
+    dialogOutcome = outcome
+    return
+  }
+  void finishDialog($, marker, session, outcome).catch(failOpen($, 'handing on the dialog\'s answers'))
+}
 
 /** Tells the model what came of the dialog: the engine's text as a note, then the visible line, which starts its turn. */
 async function wakeModel($: $, outcome: DialogOutcome): Promise<void> {
@@ -63,19 +74,27 @@ async function wakeModel($: $, outcome: DialogOutcome): Promise<void> {
 /**
  * Opens the batch's whole dialog with no model turn (r32-q149): `$.ui.ask` with a placeholder the AskUserQuestion hook swaps for the
  * batch, then records through its usual capture. `$.ui.ask` itself then has no answer to return, so it rejects; the hook's outcome
- * counts. After plain picks a pending pass just runs; anything else, a next batch included, wakes the model: this hook's `$` cannot run
+ * counts. After plain picks `/console-answers` prints the answers line and a pending pass just runs; anything else, a next
+ * batch included, wakes the model: this hook's `$` cannot run
  * `/console-questions` again (a `$` call skips the hook it came from), and the model's turn end opens that batch. Without an
  * outcome the swap never ran, and the model opens the dialog instead.
  */
 export async function openDialog($: $, marker: string, session: string): Promise<void> {
   dialogOutcome = null
+  dialogAwaited = marker
   await $.ui.ask(dialogPlaceholder(marker), { options: ['Open the questions', 'Not now'], header: 'Round' }).catch(() => undefined)
   const outcome = dialogOutcome as DialogOutcome | null
   dialogOutcome = null
+  dialogAwaited = null
   if (outcome === null) {
     await askModelToOpen($, marker)
     return
   }
+  await finishDialog($, marker, session, outcome)
+}
+
+/** What follows the console's own dialog: a decline Esc left unsaved is recorded, then the model wakes or the pass runs. */
+async function finishDialog($: $, marker: string, session: string, outcome: DialogOutcome): Promise<void> {
   if (outcome.unsavedDecline !== undefined) {
     // Esc aborts the dialog hook's own runs, a retry there included; a run from here, after the dialog closed, goes through.
     try {
@@ -91,8 +110,28 @@ export async function openDialog($: $, marker: string, session: string): Promise
     await wakeModel($, outcome)
     return
   }
-  if (await betweenTurns($, session, false, false)) await notice($, outcome.summary)  // no prompt carries it: the person reads it here
-  else await wakeModel($, outcome)
+  // No prompt will carry the answers line: a command's output prints it, as a row appended between turns would not draw.
+  const printed = (await readPending($, session)) !== null && await printAnswers($, outcome.summary)
+  if (await betweenTurns($, session, false, false)) return
+  await wakeModel($, printed ? { ...outcome, summary: ANSWERS_PRINTED } : outcome)
+}
+
+/** The command that prints the last dialog's answers line (register.tsx answers it by this literal name). */
+const ANSWERS_COMMAND = 'console-answers'
+const ANSWERS_PRINTED = 'My answers are printed above.'
+let lastAnswers = ''
+/** What `/console-answers` prints: the answers line of the console's last dialog. */
+export const answersText = (): string => lastAnswers
+
+async function printAnswers($: $, summary: string): Promise<boolean> {
+  lastAnswers = summary
+  try {
+    await $.command.run({ command: ANSWERS_COMMAND, args: '' })
+    return true
+  } catch (error) {
+    await notice($, `printing your answers failed: ${message(error)}`).catch(() => undefined)
+    return false
+  }
 }
 
 /**
