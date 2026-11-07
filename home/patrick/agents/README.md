@@ -123,7 +123,8 @@ Workflow owners:
   [ask-advisor](skills/ask-advisor/SKILL.md),
   [question-me](skills/question-me/SKILL.md),
   [release-round](skills/release-round/SKILL.md),
-  [start-round](skills/start-round/SKILL.md) and
+  [start-round](skills/start-round/SKILL.md),
+  [round-intake](skills/round-intake/SKILL.md) (a list you hand over) and
   [explain](skills/explain/SKILL.md) are user-invoked only. Their
   argument names the focus and follow-ups.
 - [Retro](skills/retro/SKILL.md): rule proposals and regression cases.
@@ -711,7 +712,8 @@ with their state, and a stopped release its reason and next round), Controls
 (the passes, with the pending one marked next or running; Step Back offers
 Base, Path (`goal foundations`), Options (`options`), Refine (`decisions clean overfit mechanics`)
 and All (every lens in list order), Ground Base and All, each with the focus
-for Step Back, without changing the selection; Decide; Actions,
+for Step Back, without changing the selection; Decide (Question Me, Intake running
+`/round-intake`, which asks for your list, Challenge Rulings, Explain); Actions,
 whose Release Round and Compact take the `suggestion` color exactly when the
 Suggestions area offers them, and which hold the role button: Autopilot while solo, Solo while
 autopilot, each running the `/role` command (the host refuses a prompt text starting with `/`);

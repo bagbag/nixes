@@ -18,7 +18,8 @@ abandon an open release (nothing releases; `start release` takes its records
 again), or
 start one with `--discussion` and step 1's decisions as points; add
 `--no-board <dir>` when they concern a topic outside this repository's board
-or it has none.
+or it has none. A list of items handed over runs under
+`$HOME/.agents/skills/round-intake/SKILL.md` instead.
 
 1. **Collect** every open decision in this discussion, plus related items
    building on the same premises and related open board items (search the

@@ -243,12 +243,13 @@ describe('pane', () => {
     await ui.press({ key: 'q-q3-explain' })
     await ui.press({ key: 'q-q3-sb' })
     await ui.press({ key: 'decide-row-question-me' })
+    await ui.press({ key: 'decide-row-intake' })
     await ui.press({ key: 'actions-row-compact' })
     await ui.press({ key: 'actions-row-push' })
     await clock.settle()
     expect(w.commands).toEqual([
       { command: 'explain', args: 'q3 Pane layout' }, { command: 'step-back', args: 'q3 Pane layout' },
-      { command: 'question-me', args: '' }, { command: 'compact', args: '' },
+      { command: 'question-me', args: '' }, { command: 'round-intake', args: '' }, { command: 'compact', args: '' },
     ])
     expect(w.prompts).toEqual(['commit and push'])
     await ui.unmount()

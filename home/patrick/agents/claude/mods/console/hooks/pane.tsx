@@ -604,12 +604,14 @@ export async function drawPane($: $, e: { surface: string; props: RenderPropsOf[
       labelled('ground-lenses', <Text> </Text>, toggles('ground-row', 'ground', GROUND)),
       labelled('decide', <Text bold>Decide</Text>, divided('decide-row', [
         { key: 'question-me', scope: 'decide-question-me', label: 'Question Me', onPress: run('question-me') },
+        { key: 'intake', scope: 'decide-intake', label: 'Intake', onPress: run('round-intake') },
         { key: 'challenge-rulings', scope: 'decide-challenge-rulings', onPress: run('challenge-rulings'),
           label: pendingPass === 'challenge-rulings' ? <Text color="claude">Challenge Rulings ◂ {passWord}</Text> : 'Challenge Rulings' },
         { key: 'explain', scope: 'decide-explain', label: 'Explain', onPress: run('explain') },
       ]), 1),
     )
     hint.add('decide-question-me', 'Runs /question-me: starts or resumes the round')
+    hint.add('decide-intake', 'Runs /round-intake: asks for your list, then takes it into a round')
     hint.add('decide-challenge-rulings', 'Runs /challenge-rulings')
     hint.add('decide-explain', 'Runs /explain')
     return rows

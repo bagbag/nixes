@@ -23,7 +23,7 @@ import yaml
 
 
 # User-only: Claude `disable-model-invocation: true` plus Codex's implicit-invocation policy.
-USER_ONLY_SKILLS = {"ask-advisor", "board-migrate", "question-me", "release-round", "retro", "role", "explain", "start-round"}
+USER_ONLY_SKILLS = {"ask-advisor", "board-migrate", "question-me", "release-round", "retro", "role", "explain", "start-round", "round-intake"}
 EXPLICIT_ONLY_SKILLS = USER_ONLY_SKILLS
 ROLE_PROTOCOLS = ("decide", "plan", "work", "review", "unattended")
 RETIRED_SKILL_PATHS = (
