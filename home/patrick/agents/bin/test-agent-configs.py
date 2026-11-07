@@ -3584,13 +3584,13 @@ def validate_strength_rules(root: Path) -> None:
     if "listed or not" not in flat or "strongest unlisted" not in flat or "listed or not" not in engine or "strongest unlisted" not in engine:
         raise ValueError("alternativesFail covers every realistic option, listed or not, and names the strongest unlisted one (engine and decision-protocol.md)")
     # r38-q213: the lean pass aims for strong (from scratch, a consumer walk, a probe); a lean still resting on values asks the
-    # value question as its text. decision-protocol.md owns the rule, the engine's LEAN_JOB repeats it.
-    job = " ".join(re.findall(r"'([^']*)'", re.search(r"LEAN_JOB = \((.*?)\)\n", engine, re.S)[1]))
-    job = re.sub(r"\s+", " ", job)
+    # value question as its text. decision-protocol.md owns the rule; the engine's LEAN_JOB points to it.
     for needle in ("from scratch", "consumer", "probe", "value question", "options unchanged", "`flipsIf`"):
-        if needle not in flat or needle not in job:
-            raise ValueError(f"the lean rule in decision-protocol.md and the engine's LEAN_JOB both say {needle!r}:\n{flat}\n{job}")
-    if "stays a preference" in job or "walks one real case" in flat:
+        if needle not in flat:
+            raise ValueError(f"decision-protocol.md's lean rule says {needle!r}:\n{flat}")
+    if "decision-protocol.md Recommendation strength" not in re.search(r"LEAN_JOB = (.*)\n", engine)[1]:
+        raise ValueError("the engine's LEAN_JOB points to decision-protocol.md Recommendation strength")
+    if "walks one real case" in flat:
         raise ValueError("the lean pass no longer offers 'stays a preference' as an equal exit")
 
 
@@ -4022,7 +4022,7 @@ def validate_protocol(root: Path, part: str) -> None:
                             ["--orig", "dialog", "answer"]):
                 refused(*spelled, stdin=answers, needle="protocol: error:")
             result = json.loads(proto("--origin", "dialog", "answer", stdin=answers).stdout)
-            if result["step"] != "check" or result["questions"][0]["answer"] != "Keep" or "after the last answer" not in result["note"] \
+            if result["step"] != "check" or result["questions"][0]["answer"] != "Keep" or "· Check.\n" not in result["note"] or "after the last answer" in result["note"] \
                     or result["pending"] != {"id": result["pending"]["id"], "command": "challenge-rulings", "args": "q1"} \
                     or not re.fullmatch(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ", result["questions"][0]["answeredAt"] or ""):
                 raise ValueError(f"protocol answer: {result}")
@@ -5683,8 +5683,12 @@ def validate_protocol(root: Path, part: str) -> None:
                 raise ValueError(f"protocol Codex later passes carry no format: {out}")
             # Codex has no observation: it reports the scoped path pass it was told to run, with the ids in the run line.
             out = proto("step", **codex, stdin={"pass": "step-back", "updates": [], "checked": ["q"]}).stdout
+            outs = []
             while json.loads(proto("show", "--json", **codex).stdout)["step"] == "check":
                 out = proto("step", **codex, stdin={"pass": json.loads(proto("show", "--json", **codex).stdout)["pending"]["command"], "updates": [], "checked": ["q"]}).stdout
+                outs.append(out)
+            if not any("(the lean pass: aim each lean named in the argument at strong, decision-protocol.md Recommendation strength)." in o for o in outs):
+                raise ValueError(f"Codex's lean pass points to its rule's owner: {outs}")
             scoped_id = json.loads(proto("show", "--json", **codex).stdout)["questions"][0]["id"]
             out = proto("restart", scoped_id, "--reason", "criterion", **codex).stdout
             if f"with the argument `goal foundations on {scoped_id}`" not in out or f"the path pass on the restarted questions {scoped_id}" not in out:
@@ -5866,10 +5870,13 @@ def validate_protocol(root: Path, part: str) -> None:
                 return proto("step", **texts, observe=observe, stdin={"pass": command, "updates": updates or [], "checked": ["q"]})
 
             qid = texts_round("Seq?")
-            order = []
+            order, outs = [], []
             while shown(**texts)["step"] == "check":
                 order.append(pending_now())
-                report()
+                outs.append(report().stdout)
+            # Claude's hand-over names no pass (r34-q165): the console runs it, and its skill and argument say what it is.
+            if "· Check.\n" not in outs[5] or "lean pass" in outs[5]:
+                raise ValueError(f"the hand-over before the lean pass is the plain Check title: {outs[5]}")
             expected = [("step-back", "goal foundations"), ("step-back", "options"), ("step-back", ""), ("ground", ""),
                         ("step-back", "decisions clean overfit mechanics"), ("ground", "assumptions board sources probe"),
                         ("ground", f"assumptions sources probe on {qid}"), ("challenge-rulings", "")]

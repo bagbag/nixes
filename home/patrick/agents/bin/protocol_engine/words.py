@@ -16,11 +16,7 @@ from .base import (
 
 MERGE_TEST = ('Merge questions only when no sensible answer would treat them differently: an option that splits them means separate '
               'questions, and a shared premise puts them in one round, not one question.')  # skills/shared/question-format.md owns the test
-# The lean pass aims for strong (r38-q213): decision-protocol.md#recommendation-strength owns the rule; the validator keeps both in step.
-LEAN_JOB = (' (the lean pass, aiming each lean named in the argument at strong: redo the question from scratch, walk a realistic consumer '
-            'through it (a caller read from the code, or what the person would see), and probe or count the deciding fact where one run settles '
-            'it. A lean still resting on what the person values comes back as the value question in its `text`, options unchanged, still '
-            'recommending on merits with `flipsIf`; an unchecked fact stays an evidence lean naming the check).')
+LEAN_JOB = ' (the lean pass: aim each lean named in the argument at strong, decision-protocol.md Recommendation strength).'
 HAND_OVER = 'End your turn with one short line: what changed, or "No change."'
 PICK_DETAIL = ('Count a pick as the answer when the rest of the reply or note questions only a detail the pick doesn\'t hinge on; '
                'leave the question open only when the doubt could change the pick. Record the pick (typed: the ["answer"] call with '

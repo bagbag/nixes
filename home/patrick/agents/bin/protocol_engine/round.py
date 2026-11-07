@@ -37,14 +37,14 @@ def check_why(ctx: Context) -> str:
     """The Check title's closing words: why this pass runs now."""
     check = ctx.round['check']
     challenge = check.get('challenge') or {}
-    return (words.CHECK_AFTER_ANSWERS
+    return (words.CHECK_PLAIN
+            if not ctx.codex else  # Claude's model reads no pass sequence: the pass's own skill and argument say what it is (r34-q165)
+            words.CHECK_AFTER_ANSWERS
             if challenge.get('kind') == 'answers' else
             words.check_raised(challenge['ids'])
             if challenge.get('kind') == 'raised' else
             words.LEAN_JOB
             if check.get('focusing') else
-            words.CHECK_PLAIN
-            if not ctx.codex else  # Claude's model reads no pass sequence: the pass's own argument says what it is (r34-q165)
             words.CHECK_LAST
             if check['expect'] == 'challenge-rulings' else
             words.check_path_scoped(rescope_ids(ctx))
