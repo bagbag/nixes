@@ -17,7 +17,7 @@ from .base import (
 MERGE_TEST = ('Merge questions only when no sensible answer would treat them differently: an option that splits them means separate '
               'questions, and a shared premise puts them in one round, not one question.')  # skills/shared/question-format.md owns the test
 LEAN_JOB = ' (the lean pass: aim each lean named in the argument at strong, decision-protocol.md Recommendation strength).'
-HAND_OVER = 'End your turn with one short line: what changed, or "No change."'
+HAND_OVER = 'End your turn with one short line: what changed, or "No change." The console runs the next pass, not you.'  # r8-q30
 PICK_DETAIL = ('Count a pick as the answer when the rest of the reply or note questions only a detail the pick doesn\'t hinge on; '
                'leave the question open only when the doubt could change the pick. Record the pick (typed: the ["answer"] call with '
                'the option\'s label), then add the detail as a new question through `protocol edit` instead of folding it into the '
@@ -48,7 +48,7 @@ def check_paused(round_id: str, cycle: int) -> str:
 
 def check_row(q: dict) -> str:
     return (f"- {q['id']} {q['status']}{' (' + q['kind'] + ')' if q['kind'] != 'decision' else ''}: {q['text']}"
-            + (f" — waits on {', '.join(q['waitsOn'])}" if q['status'] == 'held' else ''))
+            + (f" — {held_detail(q)}" if q['status'] == 'held' else ''))
 
 
 def questions_counted(n: int) -> str:
@@ -103,13 +103,24 @@ def cap_question(round_id: str, cycle: int) -> str:
     return f"Round {round_id}: the check loop ran {cycle} cycles and still changes the questions. How to go on?"
 
 
+WAITS_FOR = ('`waitsFor` names the outside result a question waits for (a spike, a review, the person\'s own try, another '
+             'session\'s ruling) and where it lands: it holds the question out of the batches. Set it to null once the result is in; '
+             'the question is checked again before it goes out. Still waiting at Record, it is deferred with the questions that wait on it.')
+
+
+def held_detail(q: dict) -> str:
+    """What a held question waits on: its premise questions, the outside result it waits for (r8-q31), or both."""
+    return '; '.join([*([f"waits on {', '.join(q['waitsOn'])}"] if q.get('waitsOn') else []),
+                      *([f"waits for {q['waitsFor']}"] if q.get('waitsFor') else [])])
+
+
 def pass_format(command: str) -> str:
     return lines(
         'After the pass, report each change as a per-question update: changed fields, a new question (no id; it goes last, '
         'or ahead of the question its `before` names), or '
         '{"id", "remove": true, "reason"}; report an empty list when nothing changed. A pass that would revise a '
         "user's ruling raises it as a new question. "
-        f'{MERGE_TEST} A merge is one rule question (`settles`: the keys it settles); split an item out when the rule\'s application to it is open. '
+        f'{WAITS_FOR} Name a hold you set for your own spike or review in `summary`. {MERGE_TEST} A merge is one rule question (`settles`: the keys it settles); split an item out when the rule\'s application to it is open. '
         f'A question that widens the round\'s scope: list the open items with `{LIST_COMMAND}`.',
         'Key `checked` by question: for each id the step names as this pass\'s scope, what you examined in it this run (an update '
         'to it covers it too); `round` holds a round-wide note, the only entry an empty scope needs.',
@@ -263,7 +274,7 @@ def stage_instructions(round_id: str, selected: list[str], has_board: bool, prop
         'and rulingsChallenged); lean sets `leanBecause` with cause preference (`detail`: what it depends on; `flipsIf`: what you would have to value '
         'to pick another option) or evidence. `priorRulings` holds one entry per released ruling a recommendation rests on or Related linked: '
         '{"ruling", "verdict": "holds" or "fails", "why"}; judge the options as if no ruling existed first; an answer from this round stays a premise. Questions go out in the listed '
-        f'order, {BATCH} at a time; `waitsOn` holds a dependent back until its premise is answered. Lengths to keep to in characters and who '
+        f'order, {BATCH} at a time; `waitsOn` holds a dependent back until its premise is answered; {WAITS_FOR} Lengths to keep to in characters and who '
         f'reads each field: round `summary` {SUMMARY_MAX} (pane header); `title` {TITLE_MAX} (pane row; a question\'s '
         f"is also the board item's title); `text` {TEXT_MAX}, without a number (the engine numbers the dialog; it is the dialog "
         f"question and the board item's Question); `header` "
@@ -440,6 +451,16 @@ def record_row(q: dict, note: str | None) -> str:
                'record keeps or changes' if q.get('replaces') else '')
             + ('\n  away answer: the record also needs `reversal`, the steps that undo it (a `## Reversal` section; the record is '
                'written as needs_ratification)' if q['origin'] == AWAY else ''))
+
+
+def waits_on_deferred(premise: str, reason: str, outside: bool) -> str:
+    """Why a question whose premise waits on an outside result is deferred with it at Record (r8-q31)."""
+    return f"waits on {premise}, which " + (f'waits for {reason}' if outside else reason)
+
+
+def record_deferred(qid: str, reason: str, outside: bool) -> str:
+    """A question Record defers because it still waits on an outside result (`outside`), or on a question that does."""
+    return f"- {qid}: deferred at Record, it " + (f'waits for {reason}' if outside else reason)
 
 
 def record_intro(round_id: str) -> str:
@@ -699,7 +720,8 @@ def show_markdown(r: dict | None, counts: dict | None, next_step: str | None) ->
     for q in r['questions']:
         overlap = ''.join(f" (overlaps {h['id']}: {h['outcome'] or 'open'})" for h in q['overlaps'])
         lines.append(f"| {q['id']} | {q['board'] or 'draft'} | {q['status']}"
-                     + (f" on {', '.join(q['waitsOn'])}" if q['status'] == 'held' else '')
+                     + ((f" on {', '.join(q['waitsOn'])}" if q['waitsOn'] else '') + (f", waits for {q['waitsFor']}" if q.get('waitsFor') else '')
+                        if q['status'] == 'held' else '')
                      + f" | {q['kind']} | {q['text']}{overlap} | {q['answer'] or ''} |")
     if counts:
         lines += ['', 'Board: ' + ', '.join(f'{k} {v}' for k, v in counts.items())]

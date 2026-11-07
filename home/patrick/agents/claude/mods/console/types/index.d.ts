@@ -19,6 +19,8 @@ export type ConsoleQuestion = {
   /** `parked`: an away round left it open and unassigned on the board for the person. */
   status: 'draft' | 'ready' | 'asked' | 'answered' | 'held' | 'parked'
   waitsOn: string[]
+  /** The outside result a held question waits for (a spike, a review, the person's own try) and where it lands; null when none. */
+  waitsFor: string | null
   /** The selected items (board ids or pasted point ids) this rule question settles with one answer; empty for a plain question. */
   settles: string[]
   overlaps: ConsoleOverlap[]
@@ -148,7 +150,7 @@ export type ConsolePassRun = { id: string; command: string; args: string; phase:
 /** What a queued console action was queued for: the engine's pending pass, or an issued batch (isStale decides whether the round still holds it). */
 export type ConsoleAction = { kind: 'pass'; id: string; command: string; args: string } | { kind: 'batch'; marker: string }
 
-/** Runs a press queued that have not started yet (repeat-press guard); a prompt carries its action, re-checked where it is delivered. */
+/** Runs queued that have not started yet: a press's (repeat-press guard), a prompt's with its action, and each pass command the console queued (key `pass:<id>`, kept until its skill expands or for an hour); an action is re-checked where it is delivered. */
 export type ConsoleQueued = { key: string; at: number; action?: ConsoleAction }[]
 
 export type ConsoleLenses = { 'step-back': string[]; ground: string[]; focus: string }

@@ -19,12 +19,29 @@ def note_of(q: dict) -> bool:
     return isinstance(q.get('annotations'), dict) and bool(str(q['annotations'].get('notes') or '').strip())
 
 
+def waiting_outside(ctx: Context) -> dict[str, str]:
+    """The held questions still waiting on an outside result at Record (r8-q31), by id with the reason they are deferred:
+    the `waitsFor` text, and for a question whose `waitsOn` reaches one, that chain (deferred with it, r11-q42)."""
+    held = {q['id']: q for q in questions(ctx, 'held') if not q.get('recorded')}
+    reasons = {qid: q['waitsFor'] for qid, q in held.items() if q.get('waitsFor')}
+    grew = True
+    while grew:
+        grew = False
+        for qid, q in held.items():
+            premise = next((other for other in q.get('waitsOn') or [] if other in reasons), None)
+            if qid not in reasons and premise:
+                reasons[qid] = words.waits_on_deferred(premise, reasons[premise], bool(held[premise].get('waitsFor')))
+                grew = True
+    return reasons
+
+
 def record_text(ctx: Context) -> str:
     todo = [q for q in questions(ctx, 'answered') if not q.get('recorded')]
     rows = [words.record_row(q, q['annotations']['notes'].strip() if note_of(q) else None) for q in todo]
     return lines(
         words.record_intro(ctx.round['id']),
         *rows,
+        *(words.record_deferred(qid, reason, bool(by_id(ctx, qid).get('waitsFor'))) for qid, reason in waiting_outside(ctx).items()),
         words.RECORD_GIVE,
         report_hint(ctx, 'record', words.record_example(todo[:1])),
     )
@@ -199,7 +216,9 @@ def record_accept(ctx: Context, report: dict) -> str:
     records, deferred = report.get('records') or {}, report.get('defer') or {}
     if not isinstance(records, dict) or not isinstance(deferred, dict):
         fail('`records` and `defer` map question ids to objects and reasons')
-    waiting = [f"{q['id']} on {', '.join(q['waitsOn'])}" for q in questions(ctx, 'held')]
+    outside = waiting_outside(ctx)
+    waiting = [f"{q['id']} on {', '.join(q['waitsOn'])}" for q in questions(ctx, 'held')
+               if q['id'] not in outside and not q.get('recorded')]
     if waiting:  # waitsOn refuses a circle and an unknown id, and an answer releases its dependents: nothing should reach this
         fail(f"questions still wait at Record: {'; '.join(waiting)}. A question waits only within its round: `protocol abandon`")
     todo = [q for q in questions(ctx, 'answered') if not q.get('recorded')]
@@ -217,7 +236,7 @@ def record_accept(ctx: Context, report: dict) -> str:
             fail(f'records.{qid}: an away answer needs a `reversal` (the steps that undo it, executable without remembered context)')
     # A question asked once its premise was answered rests on that answer: when the premise is deferred instead (the
     # engine learns of a deferral only here), the dependent's answer has no settled premise: it is deferred or restarted too (r11-q42).
-    put_off = set(deferred) | {q['id'] for q in ctx.round['questions'] if q.get('recorded') == 'deferred'}
+    put_off = set(deferred) | set(outside) | {q['id'] for q in ctx.round['questions'] if q.get('recorded') == 'deferred'}
     resting = [f"{qid} rests on deferred {', '.join(w for w in q['waitsOn'] if w in put_off)}"
                for q in todo if (qid := q['id']) in records and any(w in put_off for w in q['waitsOn'])]
     if resting:
@@ -239,6 +258,10 @@ def record_accept(ctx: Context, report: dict) -> str:
     folder = Path(ctx.round['records']) if ctx.round.get('records') else ctx.store.dir / 'records'
     folder.mkdir(parents=True, exist_ok=True)
     errors = []
+    for qid, reason in outside.items():  # still waiting on an outside result: deferred with its reason, nothing asked again
+        by_id(ctx, qid)['recorded'] = 'deferred'
+        ctx.log('deferred', question=qid, reason=reason)
+        checkpoint(ctx)
     for q in todo:
         if q['id'] in deferred:
             q['recorded'] = 'deferred'

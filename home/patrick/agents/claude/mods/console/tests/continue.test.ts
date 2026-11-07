@@ -1,6 +1,6 @@
 // /console-continue (r7-q24): the turn-end decision on the person's request, for a round that stalled. It queues the pending
 // pass whatever became of its stored run but a run still in hand, reopens the issued batch past the repeat guard, else wakes the
-// model at the open step (r8-q26), and logs each use with what it did (`nudged`).
+// model at the open step (r7-q24 revision), and logs each use with what it did (`nudged`).
 import { describe, expect, test } from 'claude-code/testing'
 
 import { BATCH, engineLine, NO_ROUND, notices, roundJson, SESSION, world } from './fixture'
@@ -149,7 +149,7 @@ describe('/console-continue', () => {
     expect(notices(session).some(text => text.includes('reading the round\'s status failed'))).toBe(true)
   })
 
-  test('at stage with nothing to start, wakes the model too (r8-q26)', async ($, on) => {
+  test('at stage with nothing to start, wakes the model too (r7-q24)', async ($, on) => {
     const { w, clock } = world(on, { round: roundJson({ step: 'stage', batch: null }) })
     await start($)
     await clock.settle()
@@ -158,7 +158,7 @@ describe('/console-continue', () => {
     expect(nudges(w).map(one => one.report)).toEqual([{ step: 'stage' }])
   })
 
-  test('at ask with nothing to start, wakes the model too (r8-q26)', async ($, on) => {
+  test('at ask with nothing to start, wakes the model too (r7-q24)', async ($, on) => {
     const { w, clock } = world(on, { round: roundJson({ step: 'ask', batch: null }) })
     await start($)
     await clock.settle()

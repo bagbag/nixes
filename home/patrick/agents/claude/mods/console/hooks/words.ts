@@ -228,7 +228,7 @@ export function roundWords(round: ConsoleRound): string {
 /** The message the console sends when it could not open a batch's dialog itself: the model opens it. */
 export const openDialogText = (marker: string): string => `Open the dialog for batch ${marker}: call AskUserQuestion with the input \`protocol show\` prints.`
 
-/** What /console-continue (r7-q24, r8-q26) sends the model with nothing pending or out: the engine's status line. */
+/** What /console-continue (r7-q24) sends the model with nothing pending or out: the engine's status line. */
 export const continueText = (line: string): string => `Continue the round: ${line}`
 /** /console-continue's notices when it starts nothing. */
 export const CONTINUE_NO_ROUND = 'nothing to continue: no round is open'
@@ -250,7 +250,7 @@ export const stuckPassText = (command: string, args: string): string => `The rou
 /** The console's `protocol` tool, as the model sees it. */
 export const PROTOCOL_TOOL_DESCRIPTION = [
   "Runs the protocol engine for this session's round (`protocol <args>`): one call per step, per-question updates as JSON on stdin; the output is the next step.",
-  'Read: ["show","--json"], ["show"], ["show","q3"] (that question whole), ["pending"], ["status","--line"], ["history"], ["next"].',
+  'Read: ["show","--json"], ["show"], ["show","q3"] (that question whole), ["status","--line"], ["history"], ["next"].',
   'Record an answer the user typed in chat: ["answer"] with stdin {"question","answer","quote"}, the quote being the user\'s exact words.',
   'Apply a change the user asked for to the questions: ["edit"] with stdin {"updates","quote"}, the quote being the user\'s exact words.',
   'Leave --session, --origin and recording dialog answers, declines and pass runs to the console.',

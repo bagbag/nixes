@@ -120,11 +120,16 @@ Follow the engine's output; the steps below add the judgment it leaves to you.
 Apply a change the user asks for to the round's questions through
 `protocol edit` with their words as the quote, not through a pass.
 
+Hold a question on an outside result it waits on (a spike, a review, the
+user's own try) with `waitsFor` instead of asking it; free it when the
+result lands.
+
 **Stop:** an answer states a criterion, or a later step changes the premise:
 restart the affected questions under the decision protocol's
 [Changed premises](../../shared/decision-protocol.md#changed-premises).
 
-**Exit:** each round question is decided or deferred by the user.
+**Exit:** each round question is decided or deferred by the user, or deferred
+at Record while it waits on an outside result.
 
 ## Release
 

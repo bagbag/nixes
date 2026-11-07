@@ -50,8 +50,8 @@ COLLECT_VIEWS = 'decided,questions,ratification,review,user'
 LIST_COMMAND = f'board health --items {COLLECT_VIEWS}'  # lists the open items Collect offers, but for the ready milestones and finished epics `board position` lists
 # Question fields a pass can change; a change to any of them counts (asking.md Check: premise, ruling, option or
 # question set).
-CONTENT = ('text', 'title', 'header', 'options', 'multiSelect', 'kind', 'board', 'waitsOn', 'for', 'settles', 'premises',
-           'problem', 'cases', 'rulings', 'note', 'recommendation', 'strength', 'leanBecause', 'strongBecause', 'priorRulings')
+CONTENT = ('text', 'title', 'header', 'options', 'multiSelect', 'kind', 'board', 'waitsOn', 'waitsFor', 'for', 'settles',
+           'premises', 'problem', 'cases', 'rulings', 'note', 'recommendation', 'strength', 'leanBecause', 'strongBecause', 'priorRulings')
 # How a question is shown and backed, not what it asks (asking.md Check counts premise, ruling, option and question
 # set): an edit to these alone re-issues the batch without rerunning the check loop.
 PRESENTATION = ('title', 'header', 'note', 'strength', 'leanBecause', 'strongBecause')  # plus an option's `preview` (see substantive)

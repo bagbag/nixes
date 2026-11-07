@@ -2,7 +2,7 @@
 // declarations throughout: past an import, the engine follows $ only into those.
 import type { EngineInterface, ToolCallResult } from 'claude-code'
 
-import type { ConsoleAction, ConsoleBatch, ConsoleBoard, ConsolePassOrigin, ConsolePassRun, ConsolePending, ConsoleRound, ConsoleSuggestion } from '../types'
+import type { ConsoleAction, ConsoleBatch, ConsoleBoard, ConsolePassOrigin, ConsolePassRun, ConsolePending, ConsoleQueued, ConsoleRound, ConsoleSuggestion } from '../types'
 
 import { boardItem, boardViews, decline, dropped, isRoundOpen, nudged, pass, PASS_COMMANDS, pending as readPending, readRole, RELEASE_COMMAND, ROUND_ROLES, setWorkers, show, stampRelease, START_COMMAND, stateDir, statusLine } from './engine'
 import type { ConsoleNudge } from './engine'
@@ -18,15 +18,19 @@ type $ = EngineInterface
 
 export const PANE = 'console'
 const QUEUED_EXPIRY_MS = 10 * 60_000
+const QUEUED_PASS_EXPIRY_MS = 60 * 60_000  // a queued pass command waits out the turns before it; a record past this is an orphan the host never ran
 const REFRESH_STALE_MS = 2 * 60_000  // a run this old is stuck (a board call that never returns): take over
 
 // Module state a reload may lose without harm: session.start resets it.
 let isToolRegistered = false
 let isPaneOpenedUnasked = false
+/** The person's typed or pressed pass commands not yet expanded, by command: their expansion is no console-queued pass (startedPass). */
+const personRuns = new Map<string, number>()
 
 export function resetSession(): void {
   isToolRegistered = false
   isPaneOpenedUnasked = false
+  personRuns.clear()
 }
 
 export const message = (error: unknown): string => error instanceof Error ? error.message : String(error)
@@ -280,7 +284,7 @@ export const CONTINUE_COMMAND = 'console-continue'
 
 /**
  * A continue the person asked for (r7-q24): a round that stalled picks up where the turn-end decision would take it. With nothing
- * pending or out, it wakes the model at the open step with the engine's status line (r8-q26): the press is the request. Each use is
+ * pending or out, it wakes the model at the open step with the engine's status line: the press is the request. Each use is
  * logged with what it did (`nudged`). It runs only while no turn does: asked during one, it waits for the turn's end (continueLater).
  * `taken`: the batch a typed continue's own hook already took (continueTyped).
  */
@@ -365,17 +369,26 @@ async function reportNudge($: $, session: string, report: ConsoleNudge): Promise
 }
 
 /**
- * Queues the engine's pending pass: stores it, records it with origin plugin, and runs it. The run goes last: later `$` calls in the
- * chain skip the console's hooks. A run the host refuses (an unknown name, past a Stop) clears its stored run, so nothing
- * counts as in hand for the next turn end or a continue (r8-q26).
+ * Queues the engine's pending pass: stores it, remembers the queued command until its skill expands (r8-q26), records it with origin
+ * plugin, and runs it. The run goes last: later `$` calls in the chain skip the console's hooks. A run the host refuses (an unknown
+ * name, past a Stop) clears its stored run and its queued record, so nothing counts as in hand for the next turn end or a continue
+ * (r7-q24).
  */
 async function queuePending($: $, session: string, pending: ConsolePending): Promise<void> {
+  const action: ConsoleAction = { kind: 'pass', id: pending.id, command: pending.command, args: pending.args }
+  const key = `${QUEUED_PASS_KEY}${pending.id}`
   await setPass($, { id: pending.id, command: pending.command, args: pending.args, phase: 'queued' })
+  const now = await $.clock.now()
+  await updateQueued($, queued => [...queued, { key, at: now, action }])  // not claimRun: a pass queued again is a second command
   await pass($, session, 'plugin', { command: pending.command, args: pending.args, pending: pending.id })
     .catch(failOpen($, `recording /${pending.command}`))
   void $.command.run({ command: pending.command, args: pending.args }).catch(async error => {
     const run = await getPass($).catch(() => null)
     if (run !== null && run.id === pending.id && run.phase === 'queued') await setPass($, null).catch(() => undefined)
+    await updateQueued($, queued => {
+      const at = queued.findLastIndex(one => one.key === key)
+      return at < 0 ? queued : queued.filter((_, index) => index !== at)
+    }).catch(() => undefined)
     failOpen($, `running /${pending.command}`)(error)
   })
 }
@@ -539,12 +552,18 @@ async function registerTool($: $): Promise<void> {
 
 const runKey = (command: string, args: string): string => `${command} ${args}`.trim()
 
+/** The key prefix of a pass command the console queued (queuePending): it waits in the host's queue behind whole turns, so it keeps the longer expiry. */
+const QUEUED_PASS_KEY = 'pass:'
+
+const isLive = (one: { key: string; at: number }, now: number): boolean =>
+  now - one.at < (one.key.startsWith(QUEUED_PASS_KEY) ? QUEUED_PASS_EXPIRY_MS : QUEUED_EXPIRY_MS)
+
 /** Claims a run unless the same one is still queued; false for a dropped repeat. A prompt's `action` is re-checked where it is delivered. */
 export async function claimRun($: $, key: string, action?: ConsoleAction): Promise<boolean> {
   const now = await $.clock.now()
   let isClaimed = false
   await updateQueued($, queued => {
-    const live = queued.filter(one => now - one.at < QUEUED_EXPIRY_MS)
+    const live = queued.filter(one => isLive(one, now))
     isClaimed = !live.some(one => one.key === key)
     return isClaimed ? [...live, { key, at: now, ...(action === undefined ? {} : { action }) }] : live
   })
@@ -594,17 +613,74 @@ export async function staleDelivery($: $, text: string): Promise<string | null> 
   return STALE_DROP
 }
 
-/** The pass a skill expansion belongs to: the stored queued run of that command; null when there is none or the engine's pending pass is another (a stale run, dropped and reported). */
-export async function startedPass($: $, skill: string): Promise<{ run: ConsolePassRun; isStale: boolean } | null> {
+/** A typed or pressed pass command, as it is queued: its expansion is the person's run (startedPass). */
+export function notePersonRun(command: string): void {
+  if (PASS_COMMANDS.includes(command)) personRuns.set(command, (personRuns.get(command) ?? 0) + 1)
+}
+
+function takePersonRun(command: string): boolean {
+  const count = personRuns.get(command) ?? 0
+  if (count > 1) personRuns.set(command, count - 1)
+  else personRuns.delete(command)
+  return count > 0
+}
+
+const isQueuedPassOf = (one: ConsoleQueued[number], skill: string): boolean => one.key.startsWith(QUEUED_PASS_KEY) && one.action?.kind === 'pass' && one.action.command === skill
+
+/**
+ * The pass command the console queued for this skill that this expansion is, taken off the list (expired records go too): one still
+ * pending, else the oldest. An orphan (a queued command the host never ran) thus never takes a fresh run's place; the other records
+ * stay for the commands still waiting behind it.
+ */
+async function takeQueuedPass($: $, skill: string, round: ConsoleRound | null): Promise<ConsoleAction | null> {
+  const now = await $.clock.now()
+  let taken: ConsoleAction | null = null
+  await updateQueued($, all => {
+    const queued = all.filter(one => isLive(one, now))
+    const fresh = queued.findIndex(one => isQueuedPassOf(one, skill) && one.action !== undefined && !isStale(round, one.action))
+    const at = fresh >= 0 ? fresh : queued.findIndex(one => isQueuedPassOf(one, skill))
+    taken = queued[at]?.action ?? null
+    return at < 0 && queued.length === all.length ? all : queued.filter((_, index) => index !== at)
+  })
+  return taken
+}
+
+/**
+ * A skill expansion other than the model's own Skill call (modelStartedPass): the console's queued pass command (its queued
+ * record of the skill, r8-q26), else the person's run, which only the stored queued run of that command can belong to. Starts the
+ * stored run it belongs to; true when the round has left that pass: the caller rewrites the expansion, the drop is reported and the
+ * stored run noted (one stale run per stored pass: a later run of the command is not it).
+ */
+export async function startedPass($: $, skill: string): Promise<boolean> {
+  const isPerson = takePersonRun(skill)
   const run = await getPass($)
-  if (run === null || run.phase !== 'queued' || run.command !== skill) return null
+  const stored = run !== null && run.phase === 'queued' && run.command === skill ? run : null
+  const isRecorded = !isPerson && (await getQueued($)).some(one => isQueuedPassOf(one, skill))
+  if (stored === null && !isRecorded) return false
   const session = await $.session.id()
-  const stale = isStale(await refreshRound($, session), { kind: 'pass', ...run })
+  const round = await refreshRound($, session)
+  const queued = isRecorded ? await takeQueuedPass($, skill, round) : null
+  const action: ConsoleAction | null = queued ?? (stored === null ? null : { kind: 'pass', id: stored.id, command: stored.command, args: stored.args })
+  if (action === null || action.kind !== 'pass') return false
+  const stale = isStale(round, action)
+  const isStored = stored !== null && stored.id === action.id
   if (stale) {
-    await setPass($, { ...run, phase: 'noted' })  // one stale run per stored pass: a later run of the command is not it
-    await reportDrop($, session, { kind: 'pass', ...run })
+    if (isStored) await setPass($, { ...stored, phase: 'noted' })
+    await reportDrop($, session, action)
+  } else if (isStored) {
+    await setPass($, { ...stored, phase: 'started' })
   }
-  return { run, isStale: stale }
+  return stale
+}
+
+/**
+ * The model's own Skill call expanding a pass skill: it never takes the console's queued record, is never rewritten and drops nothing.
+ * It starts the stored queued run of that command while that run is the pending pass, so a turn end asks for its report.
+ */
+export async function modelStartedPass($: $, skill: string): Promise<void> {
+  const run = await getPass($)
+  if (run === null || run.phase !== 'queued' || run.command !== skill) return
+  if (!isStale(await refreshRound($, await $.session.id()), { kind: 'pass', ...run })) await setPass($, { ...run, phase: 'started' })
 }
 
 /** Records a pass with its origin while a round is open; the pending id when it is the pending pass. */
@@ -646,7 +722,9 @@ export async function pressRun($: $, command: string, args: string, onFailed?: (
   }
   if (command === RELEASE_COMMAND) await stampReleaseRun($, await context($), 'press', args)
   else await recordPass($, await context($), 'press', command, args)
+  notePersonRun(command)
   void $.command.run({ command, args }).catch(error => {
+    takePersonRun(command)
     void releaseRun($, one => one === key)
     $.ui.toast(`console: /${command} failed: ${message(error)}`)
     if (onFailed !== undefined) void onFailed().catch(failOpen($, `clearing the stored start after /${command}`))

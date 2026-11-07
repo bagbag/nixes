@@ -71,6 +71,9 @@ def question_errors(q: dict, where: str, marks: bool = True, parts: tuple[str, .
         errors.append(f"{where}: `kind` must be one of {', '.join(KINDS)}")
     if not isinstance(q.get('waitsOn', []), list) or not all(isinstance(i, str) for i in q.get('waitsOn', [])):
         errors.append(f'{where}: `waitsOn` must be a list of question ids')
+    if q.get('waitsFor') is not None and not (isinstance(q['waitsFor'], str) and q['waitsFor'].strip()):
+        errors.append(f'{where}: `waitsFor` must be a non-empty string (the outside result it waits for and where it lands) '
+                      'or null (frees it)')
     if q.get('board') is not None and not isinstance(q['board'], str):
         errors.append(f'{where}: `board` must be a board id or null')
     if not isinstance(q.get('settles') or [], list) or not all(isinstance(i, str) and i for i in q.get('settles') or []):
@@ -136,14 +139,14 @@ def new_question(ctx: Context, raw: dict, where: str) -> dict:
     unknown = set(raw) - set(CONTENT) - {'key'}
     errors = [f"{where}: unknown fields {', '.join(sorted(unknown))}"] if unknown else []
     q = {'id': next_id(ctx.state, 'question', 'q'), 'board': None, 'kind': 'decision', 'multiSelect': False,
-         'waitsOn': [], 'for': None, 'settles': [], 'premises': None, 'priorRulings': None, 'recommendation': None, 'strength': None,
+         'waitsOn': [], 'waitsFor': None, 'for': None, 'settles': [], 'premises': None, 'priorRulings': None, 'recommendation': None, 'strength': None,
          'leanBecause': None, 'strongBecause': None,
          **{k: v for k, v in raw.items() if k != 'key'},
          'status': 'draft', 'overlaps': [], 'searched': False, 'answer': None, 'round': ctx.round['id']}
     refuse_all(errors + question_errors(q, where, parts=PARTS))
     q['options'] = [{'label': o['label'], 'description': o.get('description', ''), 'for': o['for'].strip(), 'against': o['against'].strip(),
                      **({'preview': o['preview']} if 'preview' in o else {})} for o in q['options']]
-    for field in ('problem', 'cases', 'note'):
+    for field in ('problem', 'cases', 'note', 'waitsFor'):
         if isinstance(q.get(field), str):
             q[field] = q[field].strip()
     return q
@@ -340,6 +343,8 @@ def apply_update(ctx: Context, update, where: str, keys: dict) -> tuple[int, str
     merged = {**q, **{k: v for k, v in update.items() if k in CONTENT}}
     check_question(merged, f"{where} ({q['id']})", marks=any(k in update for k in MARK_FIELDS),
                    parts=tuple(k for k in PARTS if k in update))
+    if isinstance(merged.get('waitsFor'), str):
+        merged['waitsFor'] = merged['waitsFor'].strip()
     if not any(merged.get(k) != q.get(k) for k in CONTENT):
         return 0, None
     if merged['board'] is None and (merged['text'] != q['text'] or merged['title'] != q['title']):
@@ -350,6 +355,8 @@ def apply_update(ctx: Context, update, where: str, keys: dict) -> tuple[int, str
                       for k in CONTENT if k not in PRESENTATION)
     if q.get('printed') is not None and merged.get('recommendation') != q.get('recommendation'):
         ctx.log('late-change', question=q['id'], was=q.get('recommendation'), now=merged.get('recommendation'))  # the person had seen it: bin/round-report counts these
+    if q.get('waitsFor') and not merged.get('waitsFor'):
+        merged['unchecked'] = 'scoped'  # freed: no pass covered it while held, so it takes the scoped check before it is asked
     q.update(merged)
     return int(substantive), q['id']
 

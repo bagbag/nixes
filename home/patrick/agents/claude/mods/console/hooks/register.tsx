@@ -8,13 +8,13 @@ import type { ConsoleStart } from '../types'
 import {
   afterTurn, context, continueLater, continueTyped, CONTINUE_COMMAND, dropIfStale, failOpen, message, notice, PANE, placeholderMarker, pressRun, pressSubmit, recordPass, refreshAll, refreshBoard, refreshLater,
   refreshRole, refreshRound, releaseRun, rerunStoppedPass, resetSession, deliverDialogOutcome, stampReleaseRun, withContext,
-  midTurnBuiltin, showQuestions, staleDelivery, startedPass,
+  midTurnBuiltin, modelStartedPass, notePersonRun, showQuestions, staleDelivery, startedPass,
 } from './core'
 import { answer, boardShow, decline, isRoundOpen, pass, pending as readPending, protocol, RELEASE_COMMAND, say, statusLine, toolArgv } from './engine'
 import { capture, judgeDialog } from './gate'
 import type { DialogInput } from './gate'
 import { drawBand, drawPane, PANE_MIN_COLUMNS, suggestions } from './pane'
-import { addGate, deferCommand, getBoard, getGate, getPass, getPrinted, getRole, getRound, getStart, releaseRefresh, setAskSent, setPaneDismissed, setPass, setPrinted, setRound, setStart, setTurnRunning, takeDeferred } from './state'
+import { addGate, deferCommand, getBoard, getGate, getPass, getPrinted, getRole, getRound, getStart, releaseRefresh, setAskSent, setPaneDismissed, setPrinted, setRound, setStart, setTurnRunning, takeDeferred } from './state'
 import {
   compactedNote, consoleText, DECLINED_TEXT, declinedNote, keepRoundText, NO_QUESTION_TEXT, keepStartText, protocolCallText, protocolResultText, STALE_PASS_TEXT, startAbandonedText, toolFailedText, TOOL_IDLE_TEXT, unsavedNote,
 } from './words'
@@ -23,9 +23,24 @@ const PROTOCOL_TOOL = 'mcp__console__protocol'
 
 const REFRESH_MS = 60_000
 
-/** A subagent's Skill calls in flight, by skill name: `skill.prompt` carries no agent id, so the expansion inside such a call is told apart here. */
+/**
+ * Skill calls in flight, by skill name: a subagent's, and the main agent's own (r8-q26). `skill.prompt` carries no agent id and fires
+ * inside the call's `next(e)`, so these expansions are told apart from a queued command's here.
+ */
 const subagentSkills = new Map<string, number>()
+const modelSkills = new Map<string, number>()
 const bareSkill = (skill: string): string => skill.slice(skill.lastIndexOf(':') + 1)
+
+async function counted<T>(calls: Map<string, number>, name: string, run: () => Promise<T>): Promise<T> {
+  calls.set(name, (calls.get(name) ?? 0) + 1)
+  try {
+    return await run()
+  } finally {
+    const left = (calls.get(name) ?? 1) - 1
+    if (left > 0) calls.set(name, left)
+    else calls.delete(name)
+  }
+}
 
 /** A compaction that ran leaves a small context. Set, not read: `$.session.usage()` still gives the old size inside this hook (probed, r21). */
 async function settleContext<T extends { skip?: string }>($: EngineInterface, compacted: T, trigger: string): Promise<T> {
@@ -140,18 +155,9 @@ export const register: Register = on => {
   // Pass observation: the main agent's Skill call counts once it ran. A subagent's is its own work, not the round's pass.
   on('tool.call', { tool: 'Skill' }, async ($, e, next) => {
     const skill = e as unknown as { skill?: unknown; args?: unknown }
-    if (e.agentId !== undefined) {
-      const name = typeof skill.skill === 'string' ? bareSkill(skill.skill) : ''
-      subagentSkills.set(name, (subagentSkills.get(name) ?? 0) + 1)
-      try {
-        return await next(e)
-      } finally {
-        const left = (subagentSkills.get(name) ?? 1) - 1
-        if (left > 0) subagentSkills.set(name, left)
-        else subagentSkills.delete(name)
-      }
-    }
-    const ran = await next(e)
+    const name = typeof skill.skill === 'string' ? bareSkill(skill.skill) : ''
+    if (e.agentId !== undefined) return counted(subagentSkills, name, () => next(e))
+    const ran = await counted(modelSkills, name, () => next(e))
     if (ran.deny === undefined && ran.isError !== true && typeof skill.skill === 'string') {
       await recordPass($, await context($), 'model', skill.skill, typeof skill.args === 'string' ? skill.args : '')
     }
@@ -165,19 +171,23 @@ export const register: Register = on => {
     if ((origin.kind === 'composer' || origin.kind === 'bridge') && e.command === RELEASE_COMMAND) {
       await stampReleaseRun($, await context($), origin.kind, e.args)
     } else if (origin.kind === 'composer' || origin.kind === 'bridge') {
+      notePersonRun(e.command)
       await recordPass($, await context($), origin.kind, e.command, e.args)
     }
     return next(e)
   }).catch(($, e, next) => next(e))
 
-  // A run has started as its skill expands: a press's guard entry goes, and the machine's pass is started.
+  // A run has started as its skill expands: a press's guard entry goes, and the machine's pass is started. The model's own Skill call
+  // runs as called; a queued run the round has left becomes a no-op (r3-q9), the console's own even after the model ran its pass (r8-q26).
   on('skill.prompt', async ($, e, next) => {
     const skill = bareSkill(e.skill)
     if (subagentSkills.has(skill)) return next(e)  // a subagent's call expands here: not the round's pass
+    if (modelSkills.has(skill)) {
+      await modelStartedPass($, skill)
+      return next(e)
+    }
     await releaseRun($, key => key === skill || key.startsWith(`${skill} `))
-    const started = await startedPass($, skill)
-    if (started?.isStale) return next({ ...e, text: STALE_PASS_TEXT })
-    if (started !== null) await setPass($, { ...started.run, phase: 'started' })
+    if (await startedPass($, skill)) return next({ ...e, text: STALE_PASS_TEXT })
     return next(e)
   }).catch(($, e, next) => next(e))
 

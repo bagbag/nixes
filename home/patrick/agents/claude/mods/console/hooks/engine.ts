@@ -125,6 +125,9 @@ const STAMPED_FLAGS: readonly string[] = ['--origin', '--session']
 /** Verbs only the mod relays from person-origin events or its own observation. */
 const MOD_ONLY_VERBS: readonly string[] = ['decline', 'say', 'pass', 'dropped', 'nudged']
 
+/** Why the model's tool refuses `pending` (r8-q28): the console reads it itself and runs the pass (engine `pending()` above). */
+export const PENDING_REFUSAL = 'the console runs the next pass; end your turn'
+
 /**
  * The argv the model's tool may run, or why not. The tool stamps origins itself: `answer` is
  * the chat route (`--origin chat`, checked by the engine's quote check); every other verb runs
@@ -137,6 +140,7 @@ export function toolArgv(args: readonly string[]): { argv: string[] } | { refusa
     return { refusal: 'the console stamps --origin and --session itself; leave them out' }
   }
   if (MOD_ONLY_VERBS.includes(verb)) return { refusal: `\`${verb}\` is relayed by the console from the person's own actions, never called by the model` }
+  if (verb === 'pending') return { refusal: PENDING_REFUSAL }
   return { argv: [verb, '--origin', verb === 'answer' ? 'chat' : 'model', ...args.slice(1)] }
 }
 
@@ -261,6 +265,7 @@ function parseQuestion(value: unknown): ConsoleQuestion {
     kind: raw.kind === 'confirm-own-rulings' ? 'confirm-own-rulings' : 'decision',
     status: (STATUSES.includes(status) ? status : 'draft') as ConsoleQuestion['status'],
     waitsOn: list(raw.waitsOn).map(text).filter(id => id !== ''),
+    waitsFor: nullableText(raw.waitsFor),
     settles: list(raw.settles).map(text).filter(id => id !== ''),
     overlaps: list(raw.overlaps).map(one => ({ id: text(record(one).id), title: text(record(one).title), outcome: nullableText(record(one).outcome) })).filter(one => one.id !== ''),
     answer: nullableText(raw.answer),

@@ -45,6 +45,23 @@ describe('pane', () => {
     })
   }
 
+  // r8-q31: a question held on an outside result names it on its row, as the engine's Check list does.
+  test('a question held on an outside result names what it waits for', async ($, on) => {
+    const { clock } = world(on, {
+      round: roundJson({ questions: [
+        ...(roundJson().questions as unknown[]),
+        { id: 'q4', board: null, text: 'Lens sets?', title: 'Lens sets', kind: 'decision', status: 'held', waitsOn: [], waitsFor: 'the lens spike, in .scratch/lens', overlaps: [], answer: null },
+        { id: 'q5', board: null, text: 'Lens order?', title: 'Lens order', kind: 'decision', status: 'held', waitsOn: ['q4'], waitsFor: null, overlaps: [], answer: null },
+      ] }),
+    })
+    await ready($, clock)
+    const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+    const drawn = await texts(ui)
+    expect(drawn).toContain('(waits for the lens spike, in .scratch/lens)')
+    expect(drawn).toContain('(waits on q4)')
+    await ui.unmount()
+  })
+
   test('a shared board\'s stopped sync shows with its fix, and its other queues as counts', async ($, on) => {
     const { clock } = world(on, { sync: 'sync stopped by a merge conflict. Fix: board bd conflicts show', queueLine: 'other queues: ben 3' })
     await ready($, clock)

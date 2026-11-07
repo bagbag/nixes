@@ -330,8 +330,10 @@ A round:
   answered, after printing any new text as a notice. There is no Ask button. At most one dialog per
   batch marker opens until the person sends a new message (a composer or bridge message
   clears it) and none is open. The host queues what the console sends and cannot recall
-  it, so a console action is checked where it is delivered: a pass run the round has left
-  becomes a no-op, and a prompt or dialog outcome for a pass or batch the round has left
+  it, so a console action is checked where it is delivered: a queued pass run the round has left
+  becomes a no-op as its skill expands, the console's own even after the model ran that pass itself (r8-q26: the console
+  remembers each pass it queues until its command expands, for up to an hour; an expansion takes a record of the pass
+  still pending first, else the oldest, and the model's own Skill calls leave the records alone), and a prompt or dialog outcome for a pass or batch the round has left
   is dropped, each logged with `dropped`; the person's own messages are never dropped.
   The dialog gate still blocks a marked dialog whose notice is not printed yet once,
   telling the lead to end its turn. After a reply the person typed instead of
@@ -403,7 +405,7 @@ A round:
   before the loop settles, ids accumulating) queues scoped reruns on the
   restarted questions, kept apart from the round's flags: a path pass
   `step-back goal foundations <ids>` first, an options pass `step-back options <ids>`
-  (the same scoped re-check follows an edit and a released held question), the Base loop round-wide, then
+  (the same scoped re-check follows an edit, a released held question and a freed `waitsFor` one), the Base loop round-wide, then
   `step-back decisions clean overfit mechanics <ids>` and
   `ground assumptions board sources probe <ids>` (changes rerun Base once),
   then the lean pass as usual. A pass settles the pending pass only when its run carried the
@@ -520,8 +522,11 @@ A round:
   round made and did not record (a hold the session had before, such as a
   decided record, stays). A question waits only within its round: `waitsOn` refuses
   a circle, abandoning keeps no held question, and the board owns what a later
-  round asks. A round that closes while the session holds decided
-  board records closes naming the release.
+  round asks. A question still held on an outside result (`waitsFor`, below) at
+  Record is deferred with that text as its reason (logged `deferred`), and the
+  questions whose `waitsOn` reaches it with it; the Record step lists them. A
+  round that closes while the session holds decided board records closes naming
+  the release.
 
 A release runs in the same slot with the next run id (`r5 release · the
 session's records`), one run per session, on a board only:
@@ -574,7 +579,15 @@ re-recommended): Ask hands over to a scoped
 rerun like `restart`'s (a fresh check cycle on their ids, answered questions
 untouched; the path pass, the options pass, the Base loop, the refine pair on their ids, the lean
 pass and `challenge-rulings`), then the next batch asks them; chains release
-batch by batch, and Record runs once, when nothing is left to ask. `restart`
+batch by batch, and Record runs once, when nothing is left to ask. A question
+can also wait on a named outside result (r8-q31): `waitsFor`, a non-empty string
+saying what (a spike, a review, the person's own try, another session's ruling)
+and where it lands, holds it out of the batches like `waitsOn`, and its
+dependents with it; `show`, the Check list and the pane's row name it ("waits
+for …"). It is set and freed (`waitsFor`: null) through a pass report (the
+model's own spike or review, disclosed in the report) or `edit` with the
+person's quote; a freed question gets the scoped check of an edited one before
+it is asked. `restart`
 takes answered dependents along, through chains, and names them. Questions go out
 in listed order, four at a time; a new question goes last, or ahead of the one
 its `before` names, and existing questions stay put. `show <ids>` prints
@@ -630,8 +643,8 @@ compaction print the question list again.
 Every step's output opens with a headline: the call's events in the Log's
 words, then the next step (`r1 · related resolved · next: the next batch`); the
 console shows it as the call's chat row. In Claude the pass sequence stays out of
-what the model reads: no next pass and no cycle in the headline or check text, only
-`End your turn with one short line`. The pane shows `checking N/M`, `protocol show`
+what the model reads: no named next pass and no cycle in the headline or check text, only
+`End your turn with one short line` and that the console runs the next pass, not the model (r8-q30). The pane shows `checking N/M`, `protocol show`
 keeps the cycle, and Codex, which runs its passes itself, keeps them all.
 
 `bin/round-report` prints passes by kind, how questions were answered, how often a
@@ -684,7 +697,8 @@ changes.
 `~/.claude/mods/console` and loaded through `CLAUDE_CODE_PLUGIN_DIRS` in
 `~/.claude/settings.json`, so its edits hot-reload (Claude lays the API types
 into its `.claude-plugin/types/`, ignored by Git). It registers the `protocol`
-tool (`mcp__console__protocol`, stamping session and origin), runs the
+tool (`mcp__console__protocol`, stamping session and origin; it refuses the model the verbs the console relays and
+`pending`, since the console runs the next pass, r8-q28), runs the
 engine's pending pass and the issued batch's question text (`/console-questions`) at each turn's end, gates and captures round dialogs,
 runs a built-in command sent during a turn (`/compact`, which Claude Code delivers to the model as text) when the turn ends,
 relays the person's chat messages, presses and a typed or pressed
@@ -693,7 +707,7 @@ compaction. Its round features act for lead, solo and autopilot. A `protocol` ca
 the engine's headline. Every call may run up to ten minutes (`$.process.run`'s maximum); one that fails or is cut answers the model
 with the error and that it may have run in part (read `protocol show` before running it again; a Record step runs again safely).
 Esc at a turn end stops the pass loop; a successful compaction right after reruns the stopped pass once (not a skipped or precompute
-one; a pass given up as stuck is never rerun). `/console-continue` (r7-q24, r8-q26) runs the turn-end decision on demand: it queues the pending pass (a stopped, asked-for or noted
+one; a pass given up as stuck is never rerun). `/console-continue` (r7-q24) runs the turn-end decision on demand: it queues the pending pass (a stopped, asked-for or noted
 run of it included) unless a run of it is queued already (a run the host refused counts as none), reopens the issued batch past the
 repeat guard, else wakes the model at the open step with `protocol status --line`; during a turn it runs at the turn's end (Esc drops it); logged as `nudged`. A model Skill call of a pass skill counts as the round's pass; a subagent's does not. The Console pane (`/console` shows it as text;
 `/console-item <id>` prints an item's summary in the chat; `/console-questions` prints the issued batch's text) shows Board

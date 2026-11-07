@@ -3970,7 +3970,7 @@ def validate_protocol(root: Path, part: str) -> None:
                     or first["questions"][0]["status"] != "draft" or first["questions"][0]["overlaps"] != []:
                 raise ValueError(f"protocol stage → check: {first}")
             body = out.split("\n", 1)[1]
-            if 'End your turn with one short line: what changed, or "No change."' not in out or "model-reported" in out \
+            if 'End your turn with one short line: what changed, or "No change." The console runs the next pass, not you.' not in out or "model-reported" in out \
                     or "step-back" in body.replace("report_hint", "").split("After the pass")[0] \
                     or "cycle" in out.split("After the pass")[0] or "next:" in out.splitlines()[0] or "Round r1 · Check." not in out:
                 raise ValueError(f"protocol Claude check output (hand-off names no pass and no cycle, r34-q165): {out}")
@@ -5543,6 +5543,75 @@ def validate_protocol(root: Path, part: str) -> None:
                         or "call a pass's skill on it, then report that pass" not in solo_note:
                     raise ValueError(f"a note or a response carries the shared routes of the person's own words: {solo_note}")
                 proto("abandon", cwd=repo)
+
+            # H2: a question can wait on a named outside result (r8-q31, `waitsFor`): held out of the batches like a `waitsOn` one,
+            # its dependents held with it; freeing it is a change the scoped check re-checks; still waiting at Record, it is
+            # deferred with its reason, and its dependents with it.
+            spike = "the cache spike, in .scratch/cache/spike.md"
+            out = proto("start", "round", "--no-board", str(notes), stdin={"points": ["Hold A?", "Hold B?", "Hold C?"]}, cwd=repo).stdout
+            points = re.findall(r"(pt\d+) \[pasted\]", out)
+            proto("step", stdin={"classes": {point: "user" for point in points}}, cwd=repo)
+            proto("step", stdin={"select": points}, cwd=repo)
+            refused("step", cwd=repo, needle="`waitsFor` must be a non-empty string", stdin={**ROUND_INFO, "questions": [
+                question("Hold A?", **{"for": points[0]}), question("Hold B?", waitsFor=" ", **{"for": points[1]}),
+                question("Hold C?", **{"for": points[2]})]})
+            proto("step", cwd=repo, stdin={**ROUND_INFO, "questions": [
+                question("Hold A?", **{"for": points[0]}), question("Hold B?", key="b", **{"for": points[1]}),
+                question("Hold C?", waitsOn=["b"], **{"for": points[2]})]})
+            hold = [q["id"] for q in shown(cwd=repo)["questions"]]
+            converge(cwd=repo)
+            if [q["question"] for q in shown(cwd=repo)["batch"]["questions"]] != ["1. Hold A?", "2. Hold B?"]:
+                raise ValueError(f"protocol hold: both unheld questions go out first: {shown(cwd=repo)['batch']}")
+            # The person's hold goes through `edit` with their words: the batch comes back without B, C stays held with it.
+            proto("say", "--origin", "composer", stdin={"text": "skip B until the spike reports"}, cwd=repo)
+            proto("edit", cwd=repo, stdin={"updates": [{"id": hold[1], "waitsFor": spike}], "quote": "skip B until the spike reports"})
+            view = shown(cwd=repo)
+            if [q["question"] for q in view["batch"]["questions"]] != ["Hold A?"] \
+                    or [(q["status"], q["waitsFor"]) for q in view["questions"]] != [("asked", None), ("held", spike), ("held", None)]:
+                raise ValueError(f"protocol hold: a question held on an outside result stays out of the batch, its dependent with it: {view}")
+            listed = proto("show", cwd=repo).stdout
+            if f"| {hold[1]} | draft | held, waits for {spike} |" not in listed or f"| {hold[2]} | draft | held on {hold[1]} |" not in listed:
+                raise ValueError(f"protocol show names the outside result a question waits for:\n{listed}")
+            check_row = engine_module.words.check_row
+            if check_row({"id": "q5", "status": "held", "kind": "decision", "text": "B?", "waitsOn": [], "waitsFor": spike}) != f"- q5 held: B? — waits for {spike}" \
+                    or check_row({"id": "q6", "status": "held", "kind": "decision", "text": "C?", "waitsOn": ["q5"]}) != "- q6 held: C? — waits on q5":
+                raise ValueError("protocol hold: the Check list names the outside result a question waits for")
+            proto("answer", "--origin", "dialog", cwd=repo, stdin={"marker": view["batch"]["marker"], "answers": {"Hold A?": "Keep"}})
+            # The spike landed: the model frees B in a pass report (its own result); B takes the scoped check before it goes out.
+            proto("step", cwd=repo, stdin={"pass": "challenge-rulings", "updates": [{"id": hold[1], "waitsFor": None}],
+                                           "checked": ["the answers"]})
+            freed = shown(cwd=repo)
+            if freed["step"] != "check" or (freed["pending"]["command"], freed["pending"]["args"]) != ("step-back", f"goal foundations on {hold[1]}") \
+                    or [q["status"] for q in freed["questions"]] != ["answered", "draft", "held"]:
+                raise ValueError(f"protocol hold: freeing a question rescopes the check on it: {freed}")
+            converge(cwd=repo)
+            if [q["question"] for q in shown(cwd=repo)["batch"]["questions"]] != ["Hold B?"]:
+                raise ValueError(f"protocol hold: the freed question goes out after its check: {shown(cwd=repo)}")
+            proto("abandon", cwd=repo)
+            # Still waiting at Record: deferred with its reason, and its dependent with it; the Record step names both.
+            out = proto("start", "round", "--no-board", str(notes), stdin={"points": ["Wait A?", "Wait B?", "Wait C?"]}, cwd=repo).stdout
+            points = re.findall(r"(pt\d+) \[pasted\]", out)
+            proto("step", stdin={"classes": {point: "user" for point in points}}, cwd=repo)
+            proto("step", stdin={"select": points}, cwd=repo)
+            proto("step", cwd=repo, stdin={**ROUND_INFO, "questions": [
+                question("Wait A?", **{"for": points[0]}), question("Wait B?", key="b", waitsFor=spike, **{"for": points[1]}),
+                question("Wait C?", waitsOn=["b"], **{"for": points[2]})]})
+            wait = [q["id"] for q in shown(cwd=repo)["questions"]]
+            converge(cwd=repo)
+            if [q["question"] for q in shown(cwd=repo)["batch"]["questions"]] != ["Wait A?"]:
+                raise ValueError(f"protocol hold: a question staged held on a result skips the batch: {shown(cwd=repo)}")
+            proto("answer", "--origin", "dialog", cwd=repo, stdin={"marker": shown(cwd=repo)["batch"]["marker"], "answers": {"Wait A?": "Keep"}})
+            after_answers(cwd=repo)
+            record_view = proto("show", cwd=repo).stdout
+            if shown(cwd=repo)["step"] != "record" or f"- {wait[1]}: deferred at Record, it waits for {spike}" not in record_view \
+                    or f"- {wait[2]}: deferred at Record, it waits on {wait[1]}, which waits for {spike}" not in record_view:
+                raise ValueError(f"protocol hold: Record names the questions it defers for an outside result:\n{record_view}")
+            out = proto("step", cwd=repo, stdin={"records": {wait[0]: {"rationale": "R.", "ruleOwner": "docs/c.md#c"}}}).stdout
+            events = [e for e in (json.loads(row) for row in (state / "0000-lead0001.protocol" / "history.jsonl").read_text().splitlines())
+                      if e.get("round") == out.split()[0]]
+            reasons = {e["question"]: e["reason"] for e in events if e["event"] == "deferred"}
+            if "round closed" not in out.splitlines()[0] or reasons != {wait[1]: spike, wait[2]: f"waits on {wait[1]}, which waits for {spike}"}:
+                raise ValueError(f"protocol hold: Record defers the held question and its dependent with the reason: {reasons}\n{out}")
 
             # I1: a typed pick that questions a detail is recorded, then the detail is added as its own question (lead be3935d4,
             # 2026-11-06: "Lifetime, but more then 1 hour max wait?" was folded into q161 and asked again). Answer first: an

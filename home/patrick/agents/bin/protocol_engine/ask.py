@@ -65,7 +65,8 @@ def hand_over(ctx: Context) -> str:
     - questions an edit raised to strong alone get one challenge-rulings pass on them (r13 q48);
     - once the last answer is in, one challenge-rulings over the answered set (r13 q49): a finding is a new question that
       takes the first path, and the pass runs again after its answer; a pass that changed nothing goes to Record.
-    A question waits only within its round (r23-q91): nothing is held when the last answer is in."""
+    A question waits only within its round (r23-q91): one still held on an outside result (`waitsFor`, r8-q31) when the last
+    answer is in is deferred at Record, with the questions that wait on it."""
     r = ctx.round
     if r['protocol'] != 'round':
         return PROTOCOLS[r['protocol']].after_ask

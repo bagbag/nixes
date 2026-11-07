@@ -66,6 +66,92 @@ describe('a pass run the console queued', () => {
   })
 })
 
+describe('a pass the console queued that the model ran itself (r8-q26)', () => {
+  const expand = async ($: any) => ($.skill.prompt({ skill: 'ground', text: 'Ground, in full.' } as never) as Promise<{ text: string }>)
+  /** The model's Skill call of /ground, whose skill expands inside it; returns the text the model read. */
+  const modelRuns = (on: any, $: any) => {
+    const read: string[] = []
+    on('tool.call', { tool: 'Skill' }, async () => { read.push((await expand($)).text); return { result: { success: true } } as never })
+    return async () => {
+      await $.tool.call({ tool: 'Skill', skill: 'ground', args: '' } as never)
+      return read.at(-1)
+    }
+  }
+  const queued = async ($: any, clock: { settle: () => Promise<void> }) => {
+    await start($)
+    await $.turn.complete(complete())
+    await clock.settle()
+  }
+
+  test("the queued command expanding after the round moved on is dropped", async ($, on) => {
+    const { w, clock } = world(on, { round: pending('p7') })
+    const run = modelRuns(on, $)
+    await queued($, clock)
+    expect(await run()).toBe('Ground, in full.')
+    w.round = pending('p8', '', 'step-back')  // the model reported p7
+    expect((await expand($)).text).toBe(STALE_PASS_TEXT)
+    expect(drops(w)).toEqual([{ origin: ['--origin', 'plugin'], report: { kind: 'pass', id: 'p7' } }])
+  })
+
+  test('the queued command expanding while its pass is still pending runs', async ($, on) => {
+    const { w, clock } = world(on, { round: pending('p7') })
+    const run = modelRuns(on, $)
+    await queued($, clock)
+    await run()
+    expect((await expand($)).text).toBe('Ground, in full.')
+    expect(drops(w)).toEqual([])
+  })
+
+  test("the model's Skill calls leave the queued record, whatever passes they run", async ($, on) => {
+    const { w, clock } = world(on, { round: pending('p7') })
+    const run = modelRuns(on, $)
+    await queued($, clock)
+    await run()
+    w.round = pending('p8')  // the next pass runs the same skill: the model runs it too, and it is not rewritten
+    expect(await run()).toBe('Ground, in full.')
+    expect(drops(w)).toEqual([])
+    w.round = pending('p9', '', 'step-back')
+    expect((await expand($)).text).toBe(STALE_PASS_TEXT)
+    expect(drops(w)).toEqual([{ origin: ['--origin', 'plugin'], report: { kind: 'pass', id: 'p7' } }])
+  })
+
+  test('the queued record outlives the ten-minute press expiry', async ($, on) => {
+    const { w, clock } = world(on, { round: pending('p7') })
+    const run = modelRuns(on, $)
+    await queued($, clock)
+    await run()
+    w.round = roundJson({ step: 'stage', pending: null, batch: null })
+    await clock.advance(11 * 60_000)
+    await $.command.run({ command: 'console-continue', args: '', origin: { kind: 'composer' }, presentation })  // wakes the model: a press claim prunes expired runs
+    await clock.settle()
+    expect((await expand($)).text).toBe(STALE_PASS_TEXT)
+    expect(drops(w)).toEqual([{ origin: ['--origin', 'plugin'], report: { kind: 'pass', id: 'p7' } }])
+  })
+
+  test("an orphan record of an older pass never takes the fresh command's place; a real stale command behind it is still dropped", async ($, on) => {
+    const { w, clock } = world(on, { round: pending('p7') })
+    await queued($, clock)
+    w.round = pending('p8')  // p7's command never expanded (the orphan); the next turn end queues p8 of the same skill
+    await $.turn.complete(complete())
+    await clock.settle()
+    expect((await expand($)).text).toBe('Ground, in full.')
+    expect(drops(w)).toEqual([])
+    expect((await expand($)).text).toBe(STALE_PASS_TEXT)  // had p7's command been real after all: one run of the pending pass in total
+    expect(drops(w)).toEqual([{ origin: ['--origin', 'plugin'], report: { kind: 'pass', id: 'p7' } }])
+  })
+
+  test('a queued record older than an hour is pruned', async ($, on) => {
+    const { w, clock } = world(on, { round: pending('p7') })
+    const run = modelRuns(on, $)
+    await queued($, clock)
+    await run()
+    w.round = roundJson({ step: 'stage', pending: null, batch: null })
+    await clock.advance(61 * 60_000)
+    expect((await expand($)).text).toBe('Ground, in full.')
+    expect(drops(w)).toEqual([])
+  })
+})
+
 describe('a plain-text prompt the console queued', () => {
   const reportedMeanwhile = async ($: any, on: any, flip: (verb: string, shows: number) => boolean) => {
     const { w, clock, session } = world(on, { round: pending('p7') })

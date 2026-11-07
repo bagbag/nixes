@@ -363,7 +363,7 @@ export async function drawPane($: $, e: { surface: string; props: RenderPropsOf[
         <Box flexGrow={1} flexShrink={1} flexDirection="row">
           {/* The title shrinks and truncates; the answer, marks and overlap link keep their width on the line. */}
           <Box key={`q-${question.id}-text-box`} flexShrink={1} hover={{ scope: `q-${question.id}-text` }}>
-            <Text wrap="truncate-end">{question.title}{question.waitsOn.length > 0 ? <Text color="inactive"> (waits on {question.waitsOn.join(', ')})</Text> : ''}</Text>
+            <Text wrap="truncate-end">{question.title}{question.waitsOn.length > 0 ? <Text color="inactive"> (waits on {question.waitsOn.join(', ')})</Text> : ''}{question.waitsFor !== null ? <Text color="inactive"> (waits for {question.waitsFor})</Text> : ''}</Text>
           </Box>
           <Box key={`q-${question.id}-marks`} flexShrink={0} flexDirection="row">
             {question.status === 'answered' && question.answer !== null && <Text color="inactive"> → {answerText(question.answer)}</Text>}

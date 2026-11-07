@@ -80,7 +80,9 @@ def touch(ctx: Context, ids) -> None:
 
 
 def premise_status(ctx: Context, q: dict) -> str:
-    return 'held' if any(not answered(ctx, other) for other in q.get('waitsOn') or []) else 'draft'
+    """Held while a premise question is unanswered or a named outside result (`waitsFor`: a spike, a review, the person's
+    own try) has not landed (r8-q31)."""
+    return 'held' if q.get('waitsFor') or any(not answered(ctx, other) for other in q.get('waitsOn') or []) else 'draft'
 
 
 def unresolved(ctx: Context) -> list[tuple[dict, dict]]:
