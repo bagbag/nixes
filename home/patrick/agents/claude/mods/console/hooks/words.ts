@@ -4,7 +4,7 @@
 // lowercase with hyphens.
 import type { ConsoleBoard, ConsoleItemSlot, ConsoleQuestion, ConsoleRole, ConsoleRound, ConsoleSuggestion } from '../types'
 
-import { isRoundOpen } from './engine'
+import { isRoundOpen, START_COMMAND } from './engine'
 
 export type Lens = { name: string; label: string; hint: string }
 export type LensCommand = 'step-back' | 'ground'
@@ -240,7 +240,7 @@ export const PROTOCOL_TOOL_DESCRIPTION = [
   'Read: ["show","--json"], ["show"], ["show","q3"] (that question whole), ["pending"], ["status","--line"], ["history"], ["next"].',
   'Record an answer the user typed in chat: ["answer"] with stdin {"question","answer","quote"}, the quote being the user\'s exact words.',
   'Apply a change the user asked for to the questions: ["edit"] with stdin {"updates","quote"}, the quote being the user\'s exact words.',
-  'The console stamps --session and --origin and records dialog answers, declines and pass runs itself.',
+  'Leave --session, --origin and recording dialog answers, declines and pass runs to the console.',
 ].join(' ')
 export const PROTOCOL_ARGS_DESCRIPTION = 'The verb and its arguments, e.g. ["start","round"], ["step"] or ["show","--json"]'
 export const PROTOCOL_STDIN_DESCRIPTION = 'JSON text for the verb (per-question updates), when it reads stdin'
@@ -270,17 +270,32 @@ export const declinedNote = (marker: string): string => `The dialog was declined
 export const declineFailedNote = (marker: string, error: string): string => `Recording the decline of ${marker} failed: ${error}. The batch stays out.`
 export const NO_QUESTION_TEXT = 'No question text to print.'
 
-/** The message a Start press sends (or stores, with compact): `protocol start round --topic '<title>: <premise>'`, then the ids that must lead. */
-export const startText = (suggestion: Extract<ConsoleSuggestion, { kind: 'round' }>): string => {
-  const topic = [suggestion.title, suggestion.premise].filter(part => part !== '').join(': ').replace(/'/g, `'\\''`)
-  return `Start the next round: protocol start round --topic '${topic}'${suggestion.ids.map(id => ` ${id}`).join('')}`
-}
+type RoundSuggestion = Extract<ConsoleSuggestion, { kind: 'round' }>
+
+const approx = (n: number, word: string): string => `~${n} ${n === 1 ? word : `${word}s`}`
+
+/** A proposed round on one line: the title, the model's estimates, and that Start compacts first. A row stored before the estimates shows its title alone. */
+export const suggestionText = (suggestion: RoundSuggestion): string =>
+  [
+    suggestion.title,
+    ...(suggestion.estimate === null ? [] : [approx(suggestion.estimate.questions, 'question'), `unblocks ${approx(suggestion.estimate.unblocks, 'item')}`]),
+    ...(suggestion.isCompacting ? ['compacts first'] : []),
+  ].join(' · ')
+
+/** The proposed round's hover hint: the model's reason for its rank, and what its Start runs. */
+export const startHint = (suggestion: RoundSuggestion): string =>
+  [
+    suggestion.why,
+    `Start runs /${START_COMMAND} ${suggestion.number}${suggestion.isCompacting ? ' after /compact' : ''}${suggestion.ids.length > 0 ? '; click the row to list the leading questions' : ''}`,
+  ].filter(part => part !== '').join(' · ')
 export const unsavedNote = (marker: string, error: string): string => `Your answers to ${marker} were not saved (${error}), so the questions come again.`
 
 /** What compaction keeps, and the round line it adds after. */
 export const keepRoundText = (round: string, step: string | null): string =>
   `Keep the protocol round state: round ${round}, step ${step}, each question's id, status and open overlap, the pending pass, and that the round runs through the protocol tool (mcp__console__protocol).`
-export const keepStartText = (start: string | undefined): string => `Keep the proposed next round, which starts right after this compaction: ${start}.`
+export const keepStartText = (title: string | undefined): string => `Keep the proposed next round, which starts right after this compaction: ${title}.`
+export const startAbandonedText = (why: string, start: { command: string; args: string; title: string }): string =>
+  `the next round was not started (${why}): ${start.title}; type /${start.command} ${start.args} to start it`
 export const compactedNote = (line: string): string => `<console-note>Protocol state after compaction: ${line}</console-note>`
 
 /** `Round`, or `Release` for a release run (the same slot, r4-q17). */
@@ -291,7 +306,7 @@ export const COUNT_LABELS: readonly [keyof NonNullable<ConsoleBoard['counts']>, 
 ]
 
 /** `/console` as text: what the pane shows, for a bridge client or a narrow terminal. */
-export function consoleText(role: ConsoleRole, board: ConsoleBoard | null, round: ConsoleRound | null, isRoundRole: boolean): string {
+export function consoleText(role: ConsoleRole, board: ConsoleBoard | null, round: ConsoleRound | null, isRoundRole: boolean, offered: readonly ConsoleSuggestion[]): string {
   const lines: string[] = [`Board · ${role.role} ${role.actor}`]
   if (board === null) {
     lines.push('  board views not read yet')
@@ -308,6 +323,11 @@ export function consoleText(role: ConsoleRole, board: ConsoleBoard | null, round
     const holds = staleHolds(board, stale)
     if (holds.length > 0) lines.push(`  stale holds: ${holds.map(one => `${one.id} (${one.actor})`).join(', ')}`)
     if (board.error !== null) lines.push(`  board error: ${board.error}`)
+  }
+  const proposed = isRoundRole ? offered.flatMap(one => one.kind === 'round' ? [one] : []) : []
+  if (proposed.length > 0) {
+    lines.push('', 'Suggestions')
+    for (const one of proposed) lines.push(`  ${one.number}. ${[suggestionText(one), one.summary, `type /${START_COMMAND} ${one.number}`].filter(part => part !== '').join(' · ')}`)
   }
   if (isRoundRole && round !== null && !isRoundOpen(round) && round.stopped !== null) {
     lines.push('', `Release ${round.stopped.run} stopped: ${round.stopped.reason} · next: a round on ${round.stopped.ids.join(', ')}`)

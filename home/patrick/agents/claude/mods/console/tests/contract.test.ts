@@ -30,8 +30,8 @@ describe('engine contract', () => {
     // the stopped release dropped its record from the default set: no release beside the proposal
     expect(parseRound(ENGINE_CONTRACT.proposed).next).toEqual({
       rounds: [
-        { ids: [], title: 'Cache questions', premise: 'one cache store serves both modules', why: 'same module as the context read', fresh: false },
-        { ids: ['fx-q3'], title: 'Queue retry', premise: 'retries share one backoff', why: 'highest priority left', fresh: true },
+        { ids: [], idTitles: {}, title: 'Cache questions', summary: 'Which cache store both modules use.', estimate: { questions: 3, unblocks: 8 }, why: 'same module as the context read', fresh: false },
+        { ids: ['fx-q3'], idTitles: { 'fx-q3': 'Retry backoff' }, title: 'Queue retry', summary: 'How a failed queue job is retried.', estimate: { questions: 1, unblocks: 5 }, why: 'highest priority left', fresh: true },
       ],
     })
     expect(parseRound(ENGINE_CONTRACT.compactOnly).next).toEqual({ rounds: [] })

@@ -23,7 +23,7 @@ import yaml
 
 
 # User-only: Claude `disable-model-invocation: true` plus Codex's implicit-invocation policy.
-USER_ONLY_SKILLS = {"ask-advisor", "board-migrate", "question-me", "release-round", "retro", "role", "explain"}
+USER_ONLY_SKILLS = {"ask-advisor", "board-migrate", "question-me", "release-round", "retro", "role", "explain", "start-round"}
 EXPLICIT_ONLY_SKILLS = USER_ONLY_SKILLS
 ROLE_PROTOCOLS = ("decide", "plan", "work", "review", "unattended")
 RETIRED_SKILL_PATHS = (
@@ -3415,8 +3415,9 @@ def console_contract_states(root: Path) -> dict:
         # A board round that recorded one decision: closed, the release of its records next.
         config.write_text(json.dumps({"log": str(Path(tmp) / "calls.jsonl"), "health": {"counts": {}, "items": {"questions": [
             {"id": "fx-q", "status": "open", "type": "decision", "title": "Store?", "priority": 1, "blockedBy": []}]}}, "items": {
-            rid: {"status": "decided", "issue_type": "decision", "title": title, **({"assignee": "contract"} if rid == "fx-a" else {})}
-            for rid, title in (("fx-a", "Cache store"), ("fx-b", "Cache size"))}}))
+            **{rid: {"status": "decided", "issue_type": "decision", "title": title, **({"assignee": "contract"} if rid == "fx-a" else {})}
+               for rid, title in (("fx-a", "Cache store"), ("fx-b", "Cache size"))},
+            "fx-q3": {"status": "open", "issue_type": "decision", "title": "Retry backoff"}}}))
         run("start", "round", cwd=repo)
         run("step", stdin={"classes": {"fx-q": "user"}}, cwd=repo)
         run("step", stdin={"select": ["fx-q"]}, cwd=repo)
@@ -3447,8 +3448,10 @@ def console_contract_states(root: Path) -> dict:
         # The model's proposal for the next rounds, stored while no round is open: two rounds (the second wants a fresh context), then compact only (a proposal without rounds).
         run("abandon", cwd=repo)
         run("next", "--set", stdin={"rounds": [
-            {"title": "Cache questions", "premise": "one cache store serves both modules", "why": "same module as the context read", "fresh": False},
-            {"title": "Queue retry", "premise": "retries share one backoff", "why": "highest priority left", "fresh": True, "ids": ["fx-q3"]}]}, cwd=repo)
+            {"title": "Cache questions", "summary": "Which cache store both modules use.", "estimate": {"questions": 3, "unblocks": 8},
+             "why": "same module as the context read", "fresh": False},
+            {"title": "Queue retry", "summary": "How a failed queue job is retried.", "estimate": {"questions": 1, "unblocks": 5},
+             "why": "highest priority left", "fresh": True, "ids": ["fx-q3"]}]}, cwd=repo)
         states["proposed"] = show(cwd=repo)
         run("next", "--set", stdin={"rounds": []}, cwd=repo)
         states["compactOnly"] = show(cwd=repo)
@@ -3668,6 +3671,21 @@ def validate_console_lenses(root: Path) -> None:
 
 
 PROTOCOL_PARTS = ("rounds", "release", "answers", "texts", "rules", "context", "away")
+
+
+def validate_start_round(root: Path) -> None:
+    """The console's Start press runs /start-round <row>; the skill of that name starts the stored proposal's row (a bare
+    command starts row 1, the recommended one) through the engine's `start round --proposal`."""
+    engine = (root / "claude" / "mods" / "console" / "hooks" / "engine.ts").read_text(encoding="utf-8")
+    command = re.search(r"export const START_COMMAND = '([\w-]+)'", engine)
+    if command is None or not (root / "skills" / command[1] / "SKILL.md").is_file():
+        raise ValueError("the console's START_COMMAND must name a skill")
+    body = (root / "skills" / command[1] / "SKILL.md").read_text(encoding="utf-8").split("---", 2)[2]
+    for needle in ("protocol start round --proposal", "the argument's number, else row 1"):
+        if needle not in body:
+            raise ValueError(f"skills/{command[1]}/SKILL.md must say {needle!r}")
+    if "--proposal" not in (root / "bin" / "protocol_engine" / "cli.py").read_text(encoding="utf-8"):
+        raise ValueError("the engine's start must take --proposal")
 
 
 def validate_protocol(root: Path, part: str) -> None:
@@ -4628,7 +4646,10 @@ def validate_protocol(root: Path, part: str) -> None:
                       position={"held": [{"id": "fx-n5", "holder": "other001", "mark": None}, {"id": "fx-n7", "holder": "gone0001", "mark": "gone"}],
                                 "questionsHoldingWork": [{"id": "fx-n3", "holds": 1, "holdsAll": 51}, {"id": "fx-n4", "holds": 5, "holdsAll": 55}, {"id": "fx-n8", "holds": 9, "holdsAll": 9}]},
                       roots={"fx-m1": {"items": {"questions": [{"id": "fx-n2"}, {"id": "fx-n3"}]}},
-                             "fx-m2": {"items": {"questions": [{"id": "fx-n4"}, {"id": "fx-n3"}]}}})
+                             "fx-m2": {"items": {"questions": [{"id": "fx-n4"}, {"id": "fx-n3"}]}}},
+                      items={"fx-n1": {"status": "open", "issue_type": "decision", "title": "Plain p0?"},
+                             "fx-n2": {"status": "open", "issue_type": "decision", "title": "Member p2?"}},
+                      fail=["show fx-gone", "show step-back", "show follow-up"])
             calls()
             out = proto("next", cwd=repo).stdout
             seeds_only = out.split("Open items (")[0]
@@ -4644,39 +4665,58 @@ def validate_protocol(root: Path, part: str) -> None:
             # r24-q104/q105: the open questions by topic label and priority print every time, and the lead ranks topics itself.
             if "Open questions by topic" not in out or "- store 1 p1, 1 p2" not in out or "- cache 1 p2" not in out or "- (no topic) 3 p0, 2 p1" not in out \
                     or "Propose topics, not question sets" not in out or "how many questions each settles" not in out or "--set" not in out \
-                    or "the other next step by priority" not in out or "start round --topic" not in out:
+                    or "the other next step by priority" not in out or "start round --proposal <n>" not in out \
+                    or "`summary`" not in out or "`estimate`" not in out or "asking.md's Question format" not in out \
+                    or "start round --topic" in out:
                 raise ValueError(f"protocol next must count the open questions by topic and priority and tell the lead to weigh them:\n{out}")
             if "Open questions by topic" not in proto("next", cwd=repo).stdout:
                 raise ValueError("the topic counts print every time, not once between compactions")
-            good = {"rounds": [{"title": "Member questions", "premise": "members share one cache", "why": "same module as the context read; p1 first",
-                                "fresh": False},
-                               {"title": "Plain question", "premise": "no member shares it", "why": "highest priority outside a milestone", "fresh": True,
+            good = {"rounds": [{"title": "Member questions", "summary": "How the members share one cache, and what that leaves open.",
+                                "estimate": {"questions": 2, "unblocks": 6}, "why": "same module as the context read; p1 first", "fresh": False},
+                               {"title": "Plain question", "summary": "A question no member covers, the highest priority outside a milestone.",
+                                "estimate": {"questions": 1, "unblocks": 3}, "why": "highest priority outside a milestone", "fresh": True,
                                 "ids": ["fx-n1"]}]}
+            stored = {"rounds": [good["rounds"][0], {**good["rounds"][1], "idTitles": {"fx-n1": "Plain p0?"}}]}  # the board's title of each leading id
             refused("next", "--set", stdin={"rounds": [{**good["rounds"][0], "extra": 1}]}, needle="unknown fields extra", cwd=repo)
             refused("next", "--set", stdin={**good, "compact": {"keep": "x"}}, needle="unknown fields compact", cwd=repo)
-            errors = proto("next", "--set", stdin={"rounds": [{"ids": [], "title": "x" * 76, "why": "", "fresh": "yes"}] * 4, "extra": 1},
+            refused("next", "--set", stdin={"rounds": [{**good["rounds"][0], "premise": "old field"}]}, needle="unknown fields premise", cwd=repo)
+            errors = proto("next", "--set", stdin={"rounds": [{"ids": [], "title": "x" * 76, "why": "", "fresh": "yes", "estimate": {"questions": "many"}}] * 4, "extra": 1},
                            ok=False, cwd=repo).stderr
             for needle in ("unknown fields extra", "`rounds` holds at most 3, not 4", "rounds[0]: `ids`, when given, lists the question ids that must lead",
-                           "rounds[0]: `title` is 76 characters, over the limit of 75", "rounds[0]: `premise` must be a non-empty string",
-                           "rounds[0]: `why` must be a non-empty string", "rounds[0]: `fresh` must be true or false", "rounds[3]: `fresh` must be true or false"):
+                           "rounds[0]: `title` is 76 characters, over the limit of 75", "rounds[0]: `summary` must be a non-empty string",
+                           "rounds[0]: `estimate` is your estimate as whole numbers", "rounds[0]: `why` must be a non-empty string",
+                           "rounds[0]: `fresh` must be true or false", "rounds[3]: `fresh` must be true or false"):
                 if needle not in errors:
                     raise ValueError(f"protocol next --set must list every error in one refusal, missing {needle!r}:\n{errors}")
+            # Plain words: no question id and no board id in a title or summary (a hyphenated word is no id unless the board knows it).
+            for field in ("title", "summary"):
+                for text, needle in (("Settle q12 first", "names q12"), ("Settle fx-n1 first", "names fx-n1"), ("Why q7 and fx-n2", "names q7, fx-n2")):
+                    refused("next", "--set", stdin={"rounds": [{**good["rounds"][0], field: text}]}, needle=f"rounds[0]: `{field}` {needle}", cwd=repo)
+            proto("next", "--set", stdin={"rounds": [{**good["rounds"][0], "title": "The step-back follow-up", "summary": "A follow-up on the step-back pass."}]}, cwd=repo)
+            refused("next", "--set", stdin={"rounds": [{**good["rounds"][1], "ids": ["fx-n1", "fx-gone"]}]}, needle="rounds[0]: `ids` names fx-gone, which the board does not know", cwd=repo)
+            refused("next", "--set", stdin={"rounds": [{**good["rounds"][1], "ids": ["fx-n1"]}]}, needle="`ids` need a board", cwd=plain)
             proto("next", "--set", stdin={"rounds": [good["rounds"][0]]}, cwd=repo)
             proto("next", "--set", stdin=good, cwd=repo)
             out = proto("next", cwd=repo).stdout
-            if "1. Member questions · members share one cache · keeps the context · same module" not in out \
-                    or "2. Plain question · no member shares it · leads with fx-n1 · wants a fresh context" not in out or "compaction keeps" in out:
+            if "1. Member questions · ~2 questions · unblocks ~6 items · How the members share one cache, and what that leaves open. · keeps the context · same module" not in out \
+                    or "2. Plain question · ~1 question · unblocks ~3 items · A question no member covers, the highest priority outside a milestone. · leads with fx-n1 · wants a fresh context" not in out \
+                    or "compaction keeps" in out:
                 raise ValueError(f"protocol next must print the stored proposal:\n{out}")
-            if shown(cwd=repo)["next"] != good:
+            if shown(cwd=repo)["next"] != stored:
                 raise ValueError(f"show --json next carries the stored proposal while no round is open: {shown(cwd=repo)['next']}")
             proto("next", "--set", stdin={"rounds": []}, cwd=repo)  # nothing proposed: the console offers a compaction
             if shown(cwd=repo)["next"] != {"rounds": []} or "no rounds" not in proto("next", cwd=repo).stdout:
                 raise ValueError(f"a proposal without rounds shows an empty list: {shown(cwd=repo)['next']}")
-            # A stored proposal an older engine wrote (ids, no premise, a compact field) reads without a crash.
-            edit_state(lambda document: document.__setitem__("proposal", {"rounds": [{"ids": ["fx-n1"], "title": "Old row", "why": "older", "fresh": True}],
+            # A stored row without a title shows and starts nowhere: show --json and `--proposal` number the same rows.
+            edit_state(lambda document: document.__setitem__("proposal", {"rounds": [{"why": "untitled", "fresh": False}, {"title": "Second", "why": "w", "fresh": False}]}))
+            if [row["title"] for row in shown(cwd=repo)["next"]["rounds"]] != ["Second"] or "1. Second" not in proto("next", cwd=repo).stdout:
+                raise ValueError("a stored row without a title must show nowhere")
+            # A stored proposal an older engine wrote (ids, a premise, no summary or estimate, a compact field) reads without a crash and
+            # shows with its title alone.
+            edit_state(lambda document: document.__setitem__("proposal", {"rounds": [{"ids": ["fx-n1"], "title": "Old row", "premise": "an old premise", "why": "older", "fresh": True}],
                                                                            "compact": {"keep": "old"}}))
             out = proto("next", cwd=repo).stdout
-            if "1. Old row · leads with fx-n1 · wants a fresh context · older" not in out or shown(cwd=repo)["next"]["rounds"][0]["title"] != "Old row":
+            if "1. Old row · leads with fx-n1 · wants a fresh context · older" not in out or "an old premise" in out or shown(cwd=repo)["next"]["rounds"][0]["title"] != "Old row":
                 raise ValueError(f"an older stored proposal must read without a crash:\n{out}")
             # r37-q207: the lead's inbox step: finds held for its person and its person's inbox, from the board's queue lists.
             find = {"id": "fx-f1", "status": "open", "type": "bug", "priority": 2, "holder": "user", "title": "Find for ben",
@@ -4700,6 +4740,55 @@ def validate_protocol(root: Path, part: str) -> None:
             if shown(cwd=repo)["next"] is not None or "No proposal stored." not in proto("next", cwd=repo).stdout:
                 raise ValueError("start round must clear the stored proposal")
             refused("next", "--set", stdin=good, needle="is open: propose the next rounds once it closes", cwd=repo)
+            proto("abandon", cwd=repo)
+            # `start round --proposal <n>` starts the stored row: its topic (`<title>: <summary>`), its leading ids, and its title and
+            # summary as the round's own; the proposal is spent, and a refusal spends nothing.
+            proto("next", "--set", stdin=good, cwd=repo)
+            refused("start", "round", "--proposal", "3", needle="no proposal row 3: the stored proposal has 2", cwd=repo)
+            refused("start", "round", "--proposal", "0", needle="no proposal row 0", cwd=repo)
+            refused("start", "round", "--proposal", "2", "--topic", "x", needle="--proposal takes the row's topic", cwd=repo)
+            refused("start", "round", "--proposal", "2", "fx-n2", needle="--proposal takes the row's ids", cwd=repo)
+            refused("start", "release", "--proposal", "1", needle="start release takes record ids only", cwd=repo)
+            if shown(cwd=repo)["next"] != stored:
+                raise ValueError("a refused start must leave the proposal stored")
+            out = proto("start", "round", "--proposal", "2", cwd=repo).stdout
+            topic = "Plain question: A question no member covers, the highest priority outside a milestone."
+            if f"Topic: {topic}" not in out or "Named for this round: fx-n1." not in out or "Open items (" not in out:
+                raise ValueError(f"--proposal starts the row's topic round on its leading ids:\n{out}")
+            refused("start", "round", "--proposal", "1", needle="is open at collect", cwd=repo)  # the open run is named, not a missing proposal
+            started = shown(cwd=repo)
+            if (started["title"], started["summary"], started["next"]) != ("Plain question", good["rounds"][1]["summary"], None) \
+                    or json.loads((session_dir / "state.json").read_text())["round"]["topic"] != topic:
+                raise ValueError(f"the round takes the proposal's title and summary at once, and the proposal is spent: {started}")
+            # Stage keeps them: a report without `round` is accepted and its text says to replace them where the questions differ.
+            proto("step", stdin={"classes": {"fx-n1": "user"}}, cwd=repo)
+            staged = proto("step", stdin={"select": ["fx-n1"]}, cwd=repo).stdout
+            if "keeps the proposal's `title` and `summary`" not in staged or "where the selected questions differ from the proposal" not in staged \
+                    or "with a round `title` and `summary`" in staged:
+                raise ValueError(f"Stage names the proposal's title and summary and says when to replace them:\n{staged}")
+            proto("step", stdin={"questions": [question("Plain?", board="fx-n1")]}, cwd=repo)
+            if (shown(cwd=repo)["title"], shown(cwd=repo)["summary"]) != ("Plain question", good["rounds"][1]["summary"]):
+                raise ValueError("a Stage report without `round` keeps the proposal's title and summary")
+            proto("abandon", cwd=repo)
+            refused("start", "round", "--proposal", "1", needle="no proposal stored", cwd=repo)
+            proto("next", "--set", stdin=good, cwd=repo)
+            proto("start", "round", "--proposal", "2", cwd=repo)
+            proto("step", stdin={"classes": {"fx-n1": "user"}}, cwd=repo)
+            proto("step", stdin={"select": ["fx-n1"]}, cwd=repo)
+            proto("step", stdin={"round": {"title": "Narrower", "summary": "Only the fallback of the plain question."}, "questions": [question("Plain?", board="fx-n1")]}, cwd=repo)
+            if (shown(cwd=repo)["title"], shown(cwd=repo)["summary"]) != ("Narrower", "Only the fallback of the plain question."):
+                raise ValueError("a Stage report with `round` replaces the proposal's title and summary")
+            proto("abandon", cwd=repo)
+            # A row stored before the swap starts with its title alone and Stage asks for the rest.
+            edit_state(lambda document: document.__setitem__("proposal", {"rounds": [{"ids": ["fx-n1"], "title": "Old row", "premise": "an old premise", "why": "older", "fresh": True}]}))
+            out = proto("start", "round", "--proposal", "1", cwd=repo).stdout
+            if "Topic: Old row." not in out or (shown(cwd=repo)["title"], shown(cwd=repo)["summary"]) != ("Old row", None):
+                raise ValueError(f"an old row starts with its title as the topic:\n{out}")
+            proto("step", stdin={"classes": {"fx-n1": "user"}}, cwd=repo)
+            staged = proto("step", stdin={"select": ["fx-n1"]}, cwd=repo).stdout
+            if "with a round `title` and `summary`" not in staged:
+                raise ValueError(f"a round without a stored summary asks Stage for its title and summary:\n{staged}")
+            refused("step", stdin={"questions": [question("Plain?", board="fx-n1")]}, needle="`round` needs a plain-words", cwd=repo)
             proto("abandon", cwd=repo)
             # r24-q104: a topic round's Collect prints the whole open list every time, with the grouping steer; a bare or named
             # round prints it once between compactions.
@@ -7169,6 +7258,7 @@ def run_group(name: str, root: Path) -> None:
         validate_copied_install(root)
         validate_engine_board_fields(root)
         validate_console_lenses(root)
+        validate_start_round(root)
         validate_console_programs(root)
         validate_strength_rules(root)
         validate_lens_names(root)

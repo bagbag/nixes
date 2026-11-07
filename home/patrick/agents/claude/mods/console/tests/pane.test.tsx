@@ -4,7 +4,7 @@ import { describe, expect, test } from 'claude-code/testing'
 import { BATCH, HOME, NO_ROUND, notices, PANE_PROPS, roundJson, SESSION, world } from './fixture'
 import { parseRound } from '../hooks/engine'
 import { suggestions } from '../hooks/pane'
-import { openDialogText, protocolCallText, protocolResultText, pullsText, recommendationText, roundWords } from '../hooks/words'
+import { consoleText, openDialogText, protocolCallText, protocolResultText, pullsText, recommendationText, roundWords, suggestionText } from '../hooks/words'
 
 const PANE = { plugin: 'console', component: 'Pane', requestId: 'console', props: PANE_PROPS } as const
 const BAND = {
@@ -433,7 +433,7 @@ describe('band', () => {
     const lead = { session: SESSION, role: 'lead', actor: '617adf08', tool: 'claude' }
     const solo = { ...lead, role: 'solo' }
     const autopilot = { ...lead, role: 'autopilot' }
-    const proposed = { rounds: [{ ids: [], title: 'Cache questions', premise: 'one store', why: 'same module', fresh: false }], release: { count: 2 } }
+    const proposed = { rounds: [{ ids: [], title: 'Cache questions', summary: 'one store', estimate: { questions: 3, unblocks: 8 }, why: 'same module', fresh: false }], release: { count: 2 } }
     const closedWith = (next: unknown) => roundJson({ round: null, step: null, check: null, pending: null, batch: null, questions: [], next })
 
     test("while autopilot a Solo button is in the band and the Actions; a press runs /role solo as the person's press", async ($, on) => {
@@ -931,12 +931,12 @@ describe('suggestions', () => {
   const closed = (next: unknown) => roundJson({ round: null, step: null, check: null, pending: null, batch: null, questions: [], next })
   const PROPOSED = {
     rounds: [
-      { ids: [], title: 'Cache questions', premise: 'one cache store serves both modules', why: 'same module as the context read', fresh: false },
-      { ids: ['tstdl-c'], title: 'Queue retry', premise: "retries share one backoff, the user's", why: 'highest priority left', fresh: true },
+      { ids: [], title: 'Cache questions', summary: 'Which cache store both modules use.', estimate: { questions: 3, unblocks: 8 }, why: 'same module as the context read', fresh: false },
+      { ids: ['tstdl-c'], idTitles: { 'tstdl-c': 'Retry backoff' }, title: 'Queue retry', summary: "How a failed queue job is retried, the user's way.", estimate: { questions: 1, unblocks: 5 }, why: 'highest priority left', fresh: true },
     ],
   }
-  const START_0 = "Start the next round: protocol start round --topic 'Cache questions: one cache store serves both modules'"
-  const START_1 = "Start the next round: protocol start round --topic 'Queue retry: retries share one backoff, the user'\\''s' tstdl-c"
+  const START_0 = { command: 'start-round', args: '1' }
+  const START_1 = { command: 'start-round', args: '2' }
   const parsed = (next: unknown) => ({ ...parseRound(closed(next)), isContextLarge: true })
 
   test('suggestions() offers rounds first (the first recommended), then Release Round, then a compact-only proposal', () => {
@@ -945,8 +945,8 @@ describe('suggestions', () => {
     expect(suggestions(parsed({ release: { count: 3 } }))).toEqual([
       { kind: 'release', key: 'release', count: 3, isRecommended: true }])
     expect(suggestions(parsed(PROPOSED)).map(one => [one.kind, one.key, one.isRecommended])).toEqual([['round', 'round-0', true], ['round', 'round-1', false]])
-    expect(suggestions(parsed(PROPOSED))[1]).toMatchObject({ ids: ['tstdl-c'], fresh: true, isCompacting: true })
-    expect(suggestions(parsed(PROPOSED))[0]).toMatchObject({ ids: [], fresh: false, isCompacting: false })
+    expect(suggestions(parsed(PROPOSED))[1]).toMatchObject({ ids: ['tstdl-c'], idTitles: { 'tstdl-c': 'Retry backoff' }, number: 2, fresh: true, isCompacting: true })
+    expect(suggestions(parsed(PROPOSED))[0]).toMatchObject({ ids: [], idTitles: {}, number: 1, fresh: false, isCompacting: false })
     expect(suggestions(parsed({ ...PROPOSED, release: { count: 1 } })).map(one => [one.kind, one.isRecommended]))
       .toEqual([['round', true], ['round', false], ['release', false]])
     expect(suggestions(parsed({ rounds: [] }))).toEqual([{ kind: 'compact', key: 'compact', isRecommended: true }])
@@ -974,14 +974,20 @@ describe('suggestions', () => {
     const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
     const color = async (text: string) => (await ui.findAll({ type: 'Text', text })).filter(one => one.text === text).map(one => one.props.color)
     expect(await texts(ui)).toContain('Suggestions')
-    expect(await color('Cache questions · one cache store serves both modules · same module as the context read')).toEqual(['suggestion'])
-    expect(await color("Queue retry · retries share one backoff, the user's · highest priority left · leads with tstdl-c · compacts first")).toEqual([undefined])
+    expect(await color('Cache questions · ~3 questions · unblocks ~8 items')).toEqual(['suggestion'])
+    expect(await color('Queue retry · ~1 question · unblocks ~5 items · compacts first')).toEqual([undefined])
+    // the summary is the dim wrapping second line; the model's `why` is the Start's hover hint, with what Start runs
+    expect(await texts(ui)).toContain('Which cache store both modules use.')
+    expect(await color('Which cache store both modules use.')).toEqual(['inactive'])
+    expect(await texts(ui)).toContain('highest priority left · Start runs /start-round 2 after /compact; click the row to list the leading questions')
+    expect(await texts(ui)).toContain('same module as the context read · Start runs /start-round 1')
     expect((await ui.find({ key: 'sg-round-0-start' }))?.text).toBe('Start')
     expect(await ui.find({ key: 'sg-round-1-start' })).toBeDefined()
     expect(await texts(ui)).not.toContain('click an id to open it')
     expect(await ui.find({ key: 'sg-round-0-row' })).toBeUndefined()  // no ids to list: a plain row
     await ui.press({ key: 'sg-round-1-row' })
     expect(await texts(ui)).toContain('click an id to open it')
+    expect(await texts(ui)).toContain('Retry backoff')  // a leading question is listed by its title
     await ui.press({ key: 'sg-round-1-tstdl-c-open' })
     await clock.settle()
     expect(await texts(ui)).toContain('Keep it.')
@@ -1039,17 +1045,17 @@ describe('suggestions', () => {
     await ui.unmount()
   })
 
-  test('the band shows the recommended suggestion; its Start sends the start message', async ($, on) => {
+  test('the band shows the recommended suggestion; its Start runs /start-round for it', async ($, on) => {
     const { w, clock } = world(on, { round: closed(PROPOSED) })
     await ready($, clock)
     const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
-    expect(await texts(ui)).toContain('Cache questions ·')
+    expect(await texts(ui)).toContain('Cache questions · ~3 questions · unblocks ~8 items ·')
     expect(await texts(ui)).not.toContain('Queue retry')
     expect((await ui.findAll({ type: 'Text', text: 'Start' })).map(one => one.props.color)).toEqual(['suggestion'])
     await ui.press({ key: 'band-start' })
     await clock.settle()
-    expect(w.prompts).toEqual([START_0])
-    expect(w.commands).toEqual([])
+    expect(w.commands).toEqual([START_0])  // the press runs /start-round 1 as a command; no prompt
+    expect(w.prompts).toEqual([])
     await ui.unmount()
   })
 
@@ -1072,20 +1078,21 @@ describe('suggestions', () => {
     await ui.unmount()
   })
 
-  test('a Start on a round that does not compact sends the start message at once; a repeat is dropped', async ($, on) => {
+  test('a Start on a round that does not compact runs /start-round at once; a repeat is dropped', async ($, on) => {
     const { w, clock } = world(on, { round: closed(PROPOSED) })
     await ready($, clock)
     const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
     await ui.press({ key: 'sg-round-0-start' })
     await ui.press({ key: 'sg-round-0-start' })
     await clock.settle()
-    expect(w.prompts).toEqual([START_0])
-    expect(w.commands).toEqual([])
+    expect(w.commands).toEqual([START_0])
+    expect(w.prompts).toEqual([])
+    expect(w.verbs().filter(verb => verb.startsWith('pass'))).toEqual([])  // the press is the go-ahead: no stamp, unlike /release-round
     await ui.unmount()
   })
 
   describe('the context size decides whether a Start compacts first', () => {
-    const FIRST = "Queue retry · retries share one backoff, the user's · highest priority left · leads with tstdl-c"
+    const FIRST = 'Queue retry · ~1 question · unblocks ~5 items'
     async function mounted($: any, on: any, tokens: number | undefined | 'fails') {
       const found = world(on, { round: closed(PROPOSED) })
       found.w.tokens = tokens
@@ -1102,8 +1109,8 @@ describe('suggestions', () => {
         expect(await texts(ui)).not.toContain(`${FIRST} · compacts first`)
         await ui.press({ key: 'sg-round-1-start' })
         await clock.settle()
-        expect(w.commands).toEqual([])
-        expect(w.prompts).toEqual([START_1])
+        expect(w.commands).toEqual([START_1])
+        expect(w.prompts).toEqual([])
         await ui.unmount()
       })
     }
@@ -1111,7 +1118,8 @@ describe('suggestions', () => {
     test('at the limit the row says it and its Start compacts first; a row the model did not mark never does', async ($, on) => {
       const { w, clock, ui } = await mounted($, on, 150_000)
       expect(await texts(ui)).toContain(`${FIRST} · compacts first`)
-      expect(await texts(ui)).toContain('Cache questions · one cache store serves both modules · same module as the context read')
+      expect(await texts(ui)).toContain('Cache questions · ~3 questions · unblocks ~8 items')
+      expect(await texts(ui)).not.toContain('Cache questions · ~3 questions · unblocks ~8 items · compacts first')
       await ui.press({ key: 'sg-round-1-start' })
       await clock.settle()
       expect(w.commands).toEqual([{ command: 'compact', args: '' }])
@@ -1137,7 +1145,7 @@ describe('suggestions', () => {
       expect(await texts(ui)).not.toContain(`${FIRST} · compacts first`)
       await ui.press({ key: 'sg-round-1-start' })
       await clock.settle()
-      expect(w.commands).toEqual([])
+      expect(w.commands).toEqual([START_1])  // it starts; no /compact first
       await ui.unmount()
     })
 
@@ -1172,46 +1180,46 @@ describe('suggestions', () => {
       return { ...found, seen }
     }
 
-    test('stores the message and runs /compact with no text; the compaction hook keeps the start and sends it once compaction succeeded', async ($, on) => {
+    test('stores the command and runs /compact with no text; the compaction hook keeps the proposal and runs the command once compaction succeeded', async ($, on) => {
       const { w, clock, seen } = await pressed($, on)
-      expect(w.commands).toEqual([{ command: 'compact', args: '' }])
-      expect(w.prompts).toEqual([])  // nothing is sent before the compaction
+      expect(w.commands).toEqual([{ command: 'compact', args: '' }])  // nothing else runs before the compaction
       await compact($)
-      expect(seen[0]).toBe(`Keep the proposed next round, which starts right after this compaction: ${START}.`)  // only the real Start
+      expect(seen[0]).toBe('Keep the proposed next round, which starts right after this compaction: Queue retry.')  // only the real Start
       await clock.settle()
-      expect(w.prompts).toEqual([START])
-      await compact($)  // cleared: the next compaction sends nothing
+      expect(w.commands).toEqual([{ command: 'compact', args: '' }, START])
+      expect(w.prompts).toEqual([])
+      await compact($)  // cleared: the next compaction runs nothing
       await clock.settle()
-      expect(w.prompts).toEqual([START])
+      expect(w.commands).toEqual([{ command: 'compact', args: '' }, START])
     })
 
     test('a precompute installs nothing: the stored message waits for the compaction itself', async ($, on) => {
       const { w, clock } = await pressed($, on)
       await $.session.compact({ trigger: 'precompute', messages })
       await clock.settle()
-      expect(w.prompts).toEqual([])
+      expect(w.commands).toEqual([{ command: 'compact', args: '' }])
       await compact($)
       await clock.settle()
-      expect(w.prompts).toEqual([START])
+      expect(w.commands).toEqual([{ command: 'compact', args: '' }, START])
     })
 
     test('a skipped compaction clears it and says so', async ($, on) => {
       const { w, clock, session } = await pressed($, on, () => ({ skip: 'vetoed by a hook' }))
       await compact($)
       await clock.settle()
-      expect(w.prompts).toEqual([])
-      expect(notices(session).some(one => one.includes('the next round was not started (compaction skipped: vetoed by a hook)') && one.includes(JSON.stringify(START).slice(1, -1)))).toBe(true)
+      expect(w.commands).toEqual([{ command: 'compact', args: '' }])
+      expect(notices(session).some(one => one.includes('the next round was not started (compaction skipped: vetoed by a hook)') && one.includes('Queue retry') && one.includes('type /start-round 2'))).toBe(true)
       await $.session.compact({ trigger: 'manual', messages })
       await clock.settle()
-      expect(w.prompts).toEqual([])
+      expect(w.commands).toEqual([{ command: 'compact', args: '' }])
     })
 
     test('a failing compaction clears it and says so', async ($, on) => {
       const { w, clock, session } = await pressed($, on, () => { throw new Error('summarizer down') })
       await compact($).catch(() => undefined)
       await clock.settle()
-      expect(w.prompts).toEqual([])
-      expect(notices(session).some(one => one.includes('the next round was not started (compaction failed') && one.includes(JSON.stringify(START).slice(1, -1)))).toBe(true)
+      expect(w.commands).toEqual([{ command: 'compact', args: '' }])
+      expect(notices(session).some(one => one.includes('the next round was not started (compaction failed') && one.includes('Queue retry') && one.includes('type /start-round 2'))).toBe(true)
     })
 
     test("a plugin's prompt or a hidden one does not clear it", async ($, on) => {
@@ -1220,7 +1228,8 @@ describe('suggestions', () => {
       await $.prompt.submit({ text: 'hidden', origin: { kind: 'composer' }, isMeta: true, wait: false } as never)
       await compact($)
       await clock.settle()
-      expect(w.prompts).toEqual(['from a plugin', 'hidden', START])
+      expect(w.prompts).toEqual(['from a plugin', 'hidden'])
+      expect(w.commands).toEqual([{ command: 'compact', args: '' }, START])
     })
 
     for (const kind of ['composer', 'bridge'] as const) {
@@ -1230,6 +1239,7 @@ describe('suggestions', () => {
         await compact($)
         await clock.settle()
         expect(w.prompts).toEqual(['use flow, not protocol'])
+        expect(w.commands).toEqual([{ command: 'compact', args: '' }])
       })
     }
 
@@ -1240,7 +1250,41 @@ describe('suggestions', () => {
       await clock.settle()
       await compact($)
       await clock.settle()
-      expect(w.prompts).toEqual([])
+      expect(w.commands).toEqual([{ command: 'compact', args: '' }])
+    })
+  })
+
+  describe('a row stored before the swap, and /console', () => {
+    const OLD = { rounds: [{ ids: [], title: 'Old row', premise: 'an old premise', why: 'older', fresh: false }] }
+
+    test('a row without a summary or estimate shows its title alone and still starts', async ($, on) => {
+      const { w, clock } = world(on, { round: closed(OLD) })
+      await ready($, clock)
+      const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+      expect(await texts(ui)).toContain('Old row')
+      expect(await texts(ui)).not.toContain('an old premise')
+      expect(await texts(ui)).not.toContain('unblocks')
+      await ui.press({ key: 'sg-round-0-start' })
+      await clock.settle()
+      expect(w.commands).toEqual([START_0])
+      await ui.unmount()
+    })
+
+    test('suggestionText: the title, the model\'s estimates, and what Start does first', () => {
+      const rows = suggestions(parsed(PROPOSED)).flatMap(one => one.kind === 'round' ? [suggestionText(one)] : [])
+      expect(rows).toEqual(['Cache questions · ~3 questions · unblocks ~8 items', 'Queue retry · ~1 question · unblocks ~5 items · compacts first'])
+      const old = suggestions(parsed(OLD))[0]
+      expect(old?.kind === 'round' ? suggestionText(old) : '').toBe('Old row')
+    })
+
+    test('/console text lists a line per proposal with its summary and the command to type', () => {
+      const role = { session: SESSION, role: 'lead', actor: '617adf08', tool: 'claude' } as never
+      const round = parsed(PROPOSED)
+      const text = consoleText(role, null, round, true, suggestions(round))
+      expect(text).toContain('Suggestions\n  1. Cache questions · ~3 questions · unblocks ~8 items · Which cache store both modules use. · type /start-round 1\n')
+      expect(text).toContain("  2. Queue retry · ~1 question · unblocks ~5 items · compacts first · How a failed queue job is retried, the user's way. · type /start-round 2")
+      expect(consoleText(role, null, round, true, [])).not.toContain('Suggestions')
+      expect(consoleText(role, null, round, false, suggestions(round))).not.toContain('Suggestions')  // an agent has no rounds
     })
   })
 })

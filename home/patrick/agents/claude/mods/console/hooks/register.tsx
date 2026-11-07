@@ -6,17 +6,17 @@ import type { EngineInterface, Register } from 'claude-code'
 import type { ConsoleStart } from '../types'
 
 import {
-  betweenTurns, context, failOpen, message, notice, openDialog, PANE, placeholderMarker, pressSubmit, recordPass, refreshAll, refreshBoard, refreshLater,
+  betweenTurns, context, failOpen, message, notice, openDialog, PANE, placeholderMarker, pressRun, pressSubmit, recordPass, refreshAll, refreshBoard, refreshLater,
   refreshRole, refreshRound, releaseRun, resetSession, deliverDialogOutcome, stampReleaseRun, withContext,
   midTurnBuiltin, setQuestionsAnswered,
 } from './core'
 import { answer, boardShow, decline, isRoundOpen, pass, pending as readPending, protocol, RELEASE_COMMAND, say, statusLine, toolArgv } from './engine'
 import { capture, judgeDialog } from './gate'
 import type { DialogInput } from './gate'
-import { drawBand, drawPane, PANE_MIN_COLUMNS } from './pane'
+import { drawBand, drawPane, PANE_MIN_COLUMNS, suggestions } from './pane'
 import { addGate, deferCommand, getBoard, getGate, getPass, getPrinted, getRole, getRound, getStart, releaseRefresh, setAskSent, setPaneDismissed, setPass, setPrinted, setRound, setStart, takeDeferred } from './state'
 import {
-  compactedNote, consoleText, DECLINED_TEXT, declinedNote, keepRoundText, NO_QUESTION_TEXT, keepStartText, protocolCallText, protocolResultText, TOOL_FAILED_TEXT, TOOL_IDLE_TEXT, unsavedNote,
+  compactedNote, consoleText, DECLINED_TEXT, declinedNote, keepRoundText, NO_QUESTION_TEXT, keepStartText, protocolCallText, protocolResultText, startAbandonedText, TOOL_FAILED_TEXT, TOOL_IDLE_TEXT, unsavedNote,
 } from './words'
 
 const PROTOCOL_TOOL = 'mcp__console__protocol'
@@ -30,17 +30,17 @@ async function settleContext<T extends { skip?: string }>($: EngineInterface, co
   return compacted
 }
 
-/** The stored start goes with the compaction that was to precede it: sent once that succeeded, dropped with a notice when it was skipped (a precompute installs nothing and keeps it). */
+/** The stored start goes with the compaction that was to precede it: run once that succeeded, dropped with a notice when it was skipped (a precompute installs nothing and keeps it). */
 async function settleStart($: EngineInterface, start: ConsoleStart, compacted: { skip?: string }, trigger: string): Promise<void> {
   if (trigger === 'precompute') return
   if (compacted.skip !== undefined) return abandonStart($, start, `compaction skipped: ${compacted.skip}`)
   await setStart($, null)
-  $.clock.after(0, () => pressSubmit($, start.text).catch(failOpen($, 'sending the next round')))
+  $.clock.after(0, () => pressRun($, start.command, start.args).catch(failOpen($, 'starting the next round')))
 }
 
 async function abandonStart($: EngineInterface, start: ConsoleStart, why: string): Promise<void> {
   await setStart($, null)
-  $.clock.after(0, () => notice($, `the next round was not started (${why}): ${start.text}`).catch(() => undefined))
+  $.clock.after(0, () => notice($, startAbandonedText(why, start)).catch(() => undefined))
 }
 
 export const register: Register = on => {
@@ -224,7 +224,7 @@ export const register: Register = on => {
     if (!isOpen && start === null) return settleContext($, await next(e), e.trigger)
     const keep = isOpen
       ? keepRoundText(round.round, round.step)
-      : keepStartText(start?.text)
+      : keepStartText(start?.title)
     const compacted = await next({ ...e, instructions: [e.instructions, keep].filter(Boolean).join('\n\n') })
     await settleContext($, compacted, e.trigger)
     if (start !== null) await settleStart($, start, compacted, e.trigger)
@@ -264,7 +264,8 @@ export const register: Register = on => {
     }
     if (ctx.isRoundRole) await refreshRound($, ctx.session)
     const board = ctx.isActive ? await refreshBoard($, ctx) : await getBoard($)
-    return { text: consoleText(role, board, await getRound($), ctx.isRoundRole) }
+    const round = await getRound($)
+    return { text: consoleText(role, board, round, ctx.isRoundRole, role.role === 'autopilot' ? [] : suggestions(round)) }
   })
 
   on('command.run', { command: 'console-item' }, async ($, e) => {

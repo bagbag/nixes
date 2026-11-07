@@ -122,7 +122,8 @@ Workflow owners:
   the engine's sequence);
   [ask-advisor](skills/ask-advisor/SKILL.md),
   [question-me](skills/question-me/SKILL.md),
-  [release-round](skills/release-round/SKILL.md) and
+  [release-round](skills/release-round/SKILL.md),
+  [start-round](skills/start-round/SKILL.md) and
   [explain](skills/explain/SKILL.md) are user-invoked only. Their
   argument names the focus and follow-ups.
 - [Retro](skills/retro/SKILL.md): rule proposals and regression cases.
@@ -252,7 +253,8 @@ A round:
   stay out, named in one line; a gone session's hold is offered, marked.
   `start round <ids>` names the open items to look at first (an id that is closed,
   held by another live session or no item a round offers is refused by name);
-  `--topic '<title>: <premise>'` starts a topic round (see `protocol next`);
+  `--topic '<title>: <summary>'` starts a topic round and `--proposal <n>` starts
+  row n of the stored proposal (see `protocol next`);
   the engine keeps every open item either way, so a round can classify an id it
   did not print. The open-item list prints whole, grouped under a heading per view
   and status, the first time between compactions that `protocol next` or a
@@ -554,18 +556,26 @@ seeds. `next` tells the lead to rank rows by priority and by how many questions
 each settles, to state the trade in `why`, and to put a follow-up that reuses what
 was just read first, to recommend the other next step when no question round leads,
 and how to start a row. `protocol next --set` (stdin `{"rounds": [{"title",
-"premise", "why", "fresh", "ids"?}]}`) stores the model's proposal while no round
-is open: at most 3 rows, each a topic (`title` within 75 characters) and its
-premise; `ids` optionally names questions that must lead; `fresh` marks a round
-that reuses nothing read so far. An empty `rounds` offers only a compaction (the
-console shows it while the context is large). Unknown fields, `compact`
-included, are refused, every error in one refusal; a stored row of an older
-engine still reads. `start round` clears the proposal. `start round --topic
-'<title>: <premise>' [ids]` keeps the topic on the round: Collect prints the
-whole open list every time, with the steer to group by default (a round takes
-every ready question sharing a premise, root cause, flow or sources; a single
-question names why none does), and Select repeats it. The release's close text
-tells the model to run `protocol next`.
+"summary", "estimate": {"questions", "unblocks"}, "why", "fresh", "ids"?}]}`)
+stores the model's proposal while no round is open: at most 3 rows. `title`
+(75 characters) and `summary` (one sentence, 240) are plain words: a question id
+(`q12`) or a board item in them is refused (a hyphenated word is an item only
+when the board shows it). `estimate` holds the model's whole-number estimates:
+questions settled, board items waiting on the answers. `ids` optionally names
+questions that must lead; each must be on the board and is stored with its
+title (`idTitles`). `fresh` marks a round that reuses nothing read so far. An
+empty `rounds` offers only a compaction (the console shows it while the context
+is large). Unknown fields, `compact` and the former `premise` included, are
+refused, every error in one refusal; a row an older engine stored shows its
+title alone. `start round` clears the proposal. `start round --proposal <n>`
+starts row n: topic `<title>: <summary>`, the row's `ids` named, the row's title
+and summary the round's; not with `--topic` or ids. Stage then requires `round`
+only when the round has no title and summary. `start round --topic '<title>:
+<summary>' [ids]` keeps the topic on the round. Either way Collect prints the whole open list every
+time, with the steer to group by default (a round takes every ready question
+sharing a premise, root cause, flow or sources; a single question names why none
+does), and Select repeats it. The release's close text tells the model to run
+`protocol next`.
 
 What a session was told is one record, `state['told']`, cleared by `protocol
 compacted` (no stdin, open round or not; `hooks/compact-reorient.sh` calls it for a
@@ -618,7 +628,7 @@ lines merge), a release's `records` with their state, and `stopped` (the last re
 shown while no run is open), and `next` (no run open: `{"release": {"count"}}` while the session holds decided
 board records a bare release would take, counted at a round's or release's close
 and by `protocol next` (`show` never reads the board), and the stored proposal's
-`rounds`, present once a proposal is stored and empty when it proposes only a compaction; null when none). The engine-issued release approval question is `Release the
+`rounds` (each `title`, `summary`, `estimate`, `why`, `fresh`, `ids` and `idTitles`), present once a proposal is stored and empty when it proposes only a compaction; null when none). The engine-issued release approval question is `Release the
 session's 3 records?`, an unsure ruling first and cut to fit, in full in the
 Release option's preview (all reasons for asking go to the model's ask text and
 the Log). `start` with a release open refuses and says that for a question to the
@@ -645,13 +655,14 @@ the engine's headline. The Console pane (`/console` shows it as text;
 `/console-item <id>` prints an item's summary in the chat; `/console-questions` prints the issued batch's text) shows Board
 (counts, this session's items, sessions with runtime and pull initials, `auto` for autopilot, stale
 holds, live workers), Suggestions while no run is open and the engine's `next`
-offers something (one row per proposed round: `[ Start ] <title> · <premise> · <why>`,
-plus `· leads with <ids>` when it names questions and `· compacts first` for a
+offers something (one row per proposed round: `[ Start ] <title> · ~N questions ·
+unblocks ~M items`, plus `· compacts first` for a
 `fresh` round while the context is at 150k tokens or more
 (`$.session.usage()`; no reading counts as small, and a compact-only row, a
 stored proposal without rounds, shows only then too), the first row recommended
-in the theme's `suggestion` color; a click on a row that names ids lists them,
-each opening its item; Release Round and a compact-only proposal show here too; none of it while the role is
+in the theme's `suggestion` color; the summary is a dim wrapping second line, the
+model's `why` the Start's hover hint; a click on a row that names ids lists the
+leading questions by title, each opening its item; Release Round and a compact-only proposal show here too; none of it while the role is
 autopilot, which nobody starts a round or a release for), Round (title,
 summary, step words, questions: up to 10 of any kind show whole, beyond that 10
 show, the asked ones and the 2 latest answered first, then upcoming, held and
@@ -681,15 +692,17 @@ open at a time. A pane the
 person closed stays closed until `/console`. The band above the prompt shows
 the round during one (a release run the same way), with Solo beside the passes
 while autopilot (and alone, `Autopilot · away`, with no run open), and with no run open the
-recommended suggestion (`<title> ·` with Start, `M records
+recommended suggestion (the row's first line `·` with Start, `M records
 decided ·` with Release Round, or Compact), nothing while a dialog is
-open or nothing is offered. Start sends `Start the next round: protocol start
-round --topic '<title>: <premise>' <ids>` as your prompt; for a row that
-compacts first it stores that message and runs `/compact` with no focus text; the
-compaction hook keeps the message in the summary (the only text it adds) and
-sends it once the compaction succeeded (a
-skipped or failed compaction drops it with a notice; so do your next typed
-prompt and a round start); the idle-agent notification goes out
+open or nothing is offered. Start runs `/start-round <n>` (bare: row 1) without a
+stamp: the press is the go-ahead, not an approval like `/release-round`. A row
+that compacts first stores the command and runs `/compact` with no focus text;
+the compaction hook keeps the proposal's title in the summary and runs the
+command once the compaction succeeded (a skipped or failed compaction drops it
+with a notice naming the command; so do your next typed prompt and a round
+start).
+`/console` prints a line per proposal below the board (`<n>. <first line> ·
+<summary> · type /start-round <n>`); the idle-agent notification goes out
 once per idle episode across consoles. It idles without a registered role or a
 drawing surface and fails open except for recovery. Test it with `claude
 plugin test home/patrick/agents/claude/mods/console`.

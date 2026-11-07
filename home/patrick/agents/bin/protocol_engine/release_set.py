@@ -4,7 +4,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from .base import lines, utcnow
+from .base import lines
 from . import words
 from .store import next_id
 from .boards import held_decided
@@ -118,11 +118,11 @@ def start_release(ctx: Context, ids: list[str]) -> None:
         ctx.board.checked('claim', *claim)
     forget_runs(ctx)
     ctx.state['round'] = {
-        'id': next_id(ctx.state, 'round', 'r'), 'protocol': 'release', 'step': 'recheck', 'startedAt': utcnow(),
+        'id': next_id(ctx.state, 'round', 'r'), 'protocol': 'release', 'step': 'recheck',
         'repo': ctx.board.repo, 'scope': 'release', 'source': source, 'title': None, 'summary': None,
         # the round keys the shared views and the ask machinery read
         'records': None, 'items': [], 'points': [], 'classes': {}, 'selected': [], 'questions': [], 'check': {},
-        'pending': None, 'observed': {}, 'batch': None, 'batchSeq': 0, 'responses': [], 'messages': [],
+        'pending': None, 'observed': {}, 'batch': None, 'batchSeq': 0, 'messages': [],
         'set': [{'id': rid, 'title': rows[rid].get('title') or '', 'state': 'set', 'reason': None} for rid in ids],
         'checks': {}, 'supersedes': [], 'closes': {}, 'rulings': None, 'conditional': None, 'approval': None,
         'owners': {}, 'done': [], 'retry': False, 'stopped': None, 'outcome': None, 'scoped': {'done': []},

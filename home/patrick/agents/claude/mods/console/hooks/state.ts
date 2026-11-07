@@ -13,7 +13,7 @@ type $ = EngineInterface
 
 const roleState = atom({ plugin: 'console', key: 'role' } as const, null, { shape: 'role-1' })
 const drawnState = atom({ plugin: 'console', key: 'isDrawn' } as const, false)
-const roundState = atom({ plugin: 'console', key: 'round' } as const, null, { shape: 'round-9' })
+const roundState = atom({ plugin: 'console', key: 'round' } as const, null, { shape: 'round-10' })
 const roundErrorState = atom({ plugin: 'console', key: 'roundError' } as const, null)
 const printedState = atom({ plugin: 'console', key: 'printed' } as const, null)
 const askSentState = atom({ plugin: 'console', key: 'askSent' } as const, null)
@@ -26,8 +26,8 @@ const refreshState = atom({ plugin: 'console', key: 'refresh' } as const, { sinc
 const dismissedState = atom({ plugin: 'console', key: 'isPaneDismissed' } as const, false)
 const expandedState = atom({ plugin: 'console', key: 'expanded' } as const, [] as ConsoleSection[], { shape: 'expanded-1' })
 
-const openedState = atom({ plugin: 'console', key: 'opened' } as const, null, { shape: 'opened-3' })
-const startState = atom({ plugin: 'console', key: 'start' } as const, null, { shape: 'start-1' })
+const openedState = atom({ plugin: 'console', key: 'opened' } as const, null, { shape: 'opened-4' })
+const startState = atom({ plugin: 'console', key: 'start' } as const, null, { shape: 'start-2' })
 const deferredState = atom({ plugin: 'console', key: 'deferred' } as const, [] as ConsoleDeferred[], { shape: 'deferred-1' })
 
 const GATE_KEYS_KEPT = 200

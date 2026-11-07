@@ -8,7 +8,7 @@ import type { ConsoleBoard, ConsoleQuestion, ConsoleRecord, ConsoleRole, Console
 import { pressOpenItem, pressOpenOverlaps, pressOpenSettles, pressOpenSuggestion, pressRole, pressRun, pressStart, pressSubmit, pressView, pressWorkers } from './core'
 import { isRoundOpen, RELEASE_COMMAND, ROUND_ROLES } from './engine'
 import { getBoard, getExpanded, getLenses, getOpened, getPass, getRole, getRound, getRoundError, toggleExpanded, updateLenses } from './state'
-import { answerText, COUNT_LABELS, GROUND, GROUND_BASE, lensArgs, LENS_SETS, plural, pullsText, recommendationMark, recommendationText, roleText, roundWords, runNoun, staleHolds, staleSessions, startText, STEP_BACK_BASE, WHAT, WHERE } from './words'
+import { answerText, COUNT_LABELS, GROUND, GROUND_BASE, lensArgs, LENS_SETS, plural, pullsText, recommendationMark, recommendationText, roleText, roundWords, runNoun, staleHolds, staleSessions, startHint, STEP_BACK_BASE, suggestionText, WHAT, WHERE } from './words'
 import type { Lens, LensCommand } from './words'
 
 type $ = EngineInterface
@@ -34,7 +34,7 @@ export function suggestions(round: ConsoleRound | null, isDialogOpen = false): C
   const { release, rounds } = round.next
   const isLarge = round.isContextLarge
   const found: ConsoleSuggestion[] = [
-    ...(rounds ?? []).map((one, i) => ({ ...one, kind: 'round' as const, key: `round-${i}`, isCompacting: one.fresh && isLarge, isRecommended: false })),
+    ...(rounds ?? []).map((one, i) => ({ ...one, kind: 'round' as const, key: `round-${i}`, number: i + 1, isCompacting: one.fresh && isLarge, isRecommended: false })),
     ...(release === undefined ? [] : [{ kind: 'release' as const, key: 'release', count: release.count, isRecommended: false }]),
     ...(rounds !== undefined && rounds.length === 0 && isLarge ? [{ kind: 'compact' as const, key: 'compact', isRecommended: false }] : []),
   ]
@@ -153,9 +153,10 @@ export async function drawPane($: $, e: { surface: string; props: RenderPropsOf[
     return (
       <Box key={`open-sg-${key}`} flexDirection="column" paddingLeft={2}>
         <Text color="inactive">click an id to open it</Text>
-        {opened.ids.map(id => (
-          <Box key={`sg-${key}-${id}`} flexDirection="row">
-            <Button key={`sg-${key}-${id}-open`} plain onPress={() => pressOpenItem($, id, key)}><Text bold>{id}</Text></Button>
+        {opened.leads.map(one => (
+          <Box key={`sg-${key}-${one.id}`} flexDirection="row">
+            <Box width={14} flexShrink={0}><Button key={`sg-${key}-${one.id}-open`} plain onPress={() => pressOpenItem($, one.id, key)}><Text bold>{one.id}</Text></Button></Box>
+            <Box flexGrow={1} flexShrink={1}><Text wrap="truncate-end">{one.title}</Text></Box>
           </Box>
         ))}
       </Box>
@@ -169,23 +170,22 @@ export async function drawPane($: $, e: { surface: string; props: RenderPropsOf[
         {suggested.map(one => {
           const color = one.isRecommended ? 'suggestion' : undefined
           const what = one.kind === 'round'
-            ? `${[one.title, one.premise, one.why].filter(part => part !== '').join(' · ')}${one.ids.length > 0 ? ` · leads with ${one.ids.join(', ')}` : ''}${one.isCompacting ? ' · compacts first' : ''}`
+            ? suggestionText(one)
             : one.kind === 'release'
               ? `Release Round · ${plural(one.count, 'record')} decided`
               : 'Compact'
-          hint.add(`sg-${one.key}`, one.kind === 'round'
-            ? `Start sends "${startText(one)}"${one.isCompacting ? ', after /compact' : ''}${one.ids.length > 0 ? '; click the row to list the question that leads' : ''}`
-            : one.kind === 'release' ? 'Runs /release-round' : 'Runs /compact')
+          hint.add(`sg-${one.key}`, one.kind === 'round' ? startHint(one) : one.kind === 'release' ? 'Runs /release-round' : 'Runs /compact')
           return (
             <Box key={`sg-${one.key}`} flexDirection="column">
               <Box flexDirection="row" columnGap={1}>
                 <Box key={`sg-${one.key}-start-box`} flexShrink={0} hover={{ scope: `sg-${one.key}` }}>
                   <Button key={`sg-${one.key}-start`} onPress={() => pressStart($, one)}>Start</Button>
                 </Box>
-                <Box key={`sg-${one.key}-row-box`} flexGrow={1} flexShrink={1}>
+                <Box key={`sg-${one.key}-row-box`} flexGrow={1} flexShrink={1} flexDirection="column">
                   {one.kind === 'round' && one.ids.length > 0
-                    ? <Button key={`sg-${one.key}-row`} plain onPress={() => pressOpenSuggestion($, one.key, one.ids)}><Text color={color} wrap="truncate-end">{what}</Text></Button>
+                    ? <Button key={`sg-${one.key}-row`} plain onPress={() => pressOpenSuggestion($, one.key, one.ids.map(id => ({ id, title: one.idTitles[id] ?? '' })))}><Text color={color} wrap="truncate-end">{what}</Text></Button>
                     : <Text color={color} wrap="truncate-end">{what}</Text>}
+                  {one.kind === 'round' && one.summary !== '' ? <Text color="inactive">{one.summary}</Text> : null}
                 </Box>
               </Box>
               {suggestionSlot(one.key)}
@@ -681,7 +681,7 @@ export async function drawBand($: $, e: { props: RenderPropsOf['AbovePrompt'] } 
     }
     const top = round === null ? undefined : suggestions(round)[0]
     if (top === undefined) return undefined
-    const what = top.kind === 'round' ? `${top.title}${top.isCompacting ? ' · compacts first' : ''} ·`
+    const what = top.kind === 'round' ? `${suggestionText(top)} ·`
       : top.kind === 'release' ? `${plural(top.count, 'record')} decided ·`
         : 'Compact ·'
     return (

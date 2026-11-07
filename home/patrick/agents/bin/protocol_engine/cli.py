@@ -39,7 +39,7 @@ from .ask import batch_back, withdraw_away
 from . import words
 from .release_set import start_release
 from .release import stamp_release
-from .seeds import next_text, set_proposal
+from .seeds import next_text, proposal_row, set_proposal
 from .views import (
     headline, history_events, history_text, instructions, show_json, show_markdown, show_questions, status_line
 )
@@ -63,7 +63,8 @@ def read_stdin() -> dict:
 
 
 def start(ctx: Context, name: str, report: dict, scope: str = 'board', records: Path | None = None,
-          ids: list[str] | None = None, topic: str | None = None) -> None:
+          ids: list[str] | None = None, topic: str | None = None, proposal: int | None = None) -> None:
+    """`proposal`: the number of the stored proposal row the round starts from (its topic, ids, title and summary)."""
     if ctx.round and ctx.round['step'] != 'closed':
         fail(f"{ctx.round['protocol']} {ctx.round['id']} is open at {ctx.round['step']}: finish it, or `protocol abandon`"
              + (' (for a question to the user, abandon it: nothing is released, and `protocol start release` takes the same '
@@ -71,10 +72,13 @@ def start(ctx: Context, name: str, report: dict, scope: str = 'board', records: 
     if ctx.away and records is not None:
         fail(f'--no-board is refused on autopilot: nothing would track its records for ratification; {SWITCH_TO_SOLO}')
     if name == 'release':
-        if scope != 'board' or records is not None or report or topic:
-            fail('start release takes record ids only (no --discussion, --no-board, --topic or stdin)')
+        if scope != 'board' or records is not None or report or topic or proposal is not None:
+            fail('start release takes record ids only (no --discussion, --no-board, --topic, --proposal or stdin)')
         start_release(ctx, ids or [])
         return
+    row = proposal_row(ctx, proposal, topic, ids or []) if proposal is not None else None
+    if row:
+        ids, topic = row.get('ids') or [], words.proposal_topic(row)
     if ids and (scope != 'board' or ctx.board is None):
         fail('start round <ids> names open board items: not with --discussion or --no-board')
     if ctx.board is None and records is None:
@@ -82,11 +86,13 @@ def start(ctx: Context, name: str, report: dict, scope: str = 'board', records: 
     ctx.state.pop('proposal', None)  # a round starts from its proposal or without one: the next proposal is made after it
     forget_runs(ctx)
     ctx.state['round'] = {'id': next_id(ctx.state, 'round', 'r'), 'protocol': name, 'step': 'collect',
-                          'startedAt': utcnow(), 'repo': ctx.board.repo if ctx.board else None, 'scope': scope,
+                          'repo': ctx.board.repo if ctx.board else None, 'scope': scope,
                           'records': str(records.resolve()) if records else None, 'items': [],
                           'named': list(dict.fromkeys(ids or [])), 'topic': (topic or '').strip() or None,
                           'points': [], 'classes': {}, 'selected': [], 'questions': [], 'check': {}, 'pending': None,
-                          'observed': {}, 'batch': None, 'batchSeq': 0, 'responses': [], 'messages': []}
+                          'observed': {}, 'batch': None, 'batchSeq': 0, 'messages': []}
+    if row:
+        ctx.round.update(title=row['title'].strip(), **({'summary': row['summary'].strip()} if row.get('summary') else {}))
     ctx.log('start', protocol=name, repo=ctx.state['round']['repo'], scope=scope, named=ctx.round['named'] or None,
             topic=ctx.round['topic'])
     for point in report.get('points') or []:
@@ -160,7 +166,8 @@ def cli(argv: list[str]) -> int:
     sub.add_argument('name', choices=sorted(PROTOCOLS))
     sub.add_argument('ids', nargs='*', help="release: the decided records (default: the decided records this session holds, "
                                             "minus dropped ones); round: the open items to look at first (default: the whole list)")
-    sub.add_argument('--topic', metavar='TEXT', help="round: the topic and its premise ('<title>: <premise>')")
+    sub.add_argument('--topic', metavar='TEXT', help="round: the topic, '<title>: <summary>'")
+    sub.add_argument('--proposal', metavar='N', type=int, help="round: start row N of the stored proposal; not with --topic or ids")
     sub.add_argument('--discussion', action='store_true',
                      help="the pasted points alone (question-me): no board list at Collect; board items join through Related")
     sub.add_argument('--no-board', metavar='DIR', type=Path,
@@ -177,8 +184,8 @@ def cli(argv: list[str]) -> int:
     sub.add_argument('ids', nargs='+')
     sub.add_argument('--reason')
     sub = verb('next', 'the seed questions, the open questions by topic and the stored proposal; --set stores the proposal (stdin)')
-    sub.add_argument('--set', action='store_true', help='store the proposal: stdin {"rounds": [{"title", "premise", "why", "fresh", '
-                                                        '"ids"?}]}')
+    sub.add_argument('--set', action='store_true', help='store the proposal: stdin {"rounds": [{"title", "summary", "estimate": '
+                                                        '{"questions", "unblocks"}, "why", "fresh", "ids"?}]}')
     verb('compacted', "the session's context was compacted: what it was told prints in full again")
     verb('resume', 'continue a paused check loop')
     verb('abandon', 'close the open round without records')
@@ -268,7 +275,7 @@ def run(ctx: Context, args) -> str:
     if command == 'next':
         return set_proposal(ctx, report)
     if command == 'start':
-        start(ctx, args.name, report, 'discussion' if args.discussion else 'board', args.no_board, args.ids, args.topic)
+        start(ctx, args.name, report, 'discussion' if args.discussion else 'board', args.no_board, args.ids, args.topic, args.proposal)
         prune(ctx.store)
         return instructions(ctx)
     if command == 'pass' and report.get('command') == 'release-round':

@@ -13,6 +13,7 @@ from .engine import Context, PROTOCOLS, by_id, fail
 from .record import release_next
 from .check import options_ids, pending_view, rescope_ids
 from .collect import candidates
+from .seeds import proposal_rows
 
 
 # Views
@@ -65,7 +66,7 @@ def next_run(ctx: Context) -> dict | None:
     proposal = ctx.state.get('proposal')
     release = release_next(ctx)
     found = {**({'release': release} if release else {}),
-             **({'rounds': [one for one in proposal.get('rounds') or [] if isinstance(one, dict)]} if isinstance(proposal, dict) else {})}
+             **({'rounds': proposal_rows(proposal) or []} if isinstance(proposal, dict) else {})}
     return found or None
 
 

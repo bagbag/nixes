@@ -53,15 +53,23 @@ export type ConsoleRecord = { id: string; title: string; state: 'set' | 'revised
 /** One line of the round's recent history, in plain words; `at` is local HH:MM. */
 export type ConsoleLogLine = { at: string; text: string }
 
-/** One proposed round: a topic (title and premise), why it ranks here, whether it reuses nothing read so far (the console compacts first only when the context is large), and the question ids that must lead (often none; Collect selects the rest). */
-export type ConsoleProposal = { ids: string[]; title: string; premise: string; why: string; fresh: boolean }
+/**
+ * One proposed round, in the model's words: a title, a plain summary of what it decides, its estimates (questions it settles,
+ * board items waiting on its answers; null in a row stored before they existed), why it ranks here, whether it reuses nothing
+ * read so far (the console compacts first only when the context is large), and the question ids that must lead (often none;
+ * Collect selects the rest) with the titles the engine read from the board.
+ */
+export type ConsoleProposal = {
+  ids: string[]; idTitles: Record<string, string>; title: string; summary: string
+  estimate: { questions: number; unblocks: number } | null; why: string; fresh: boolean
+}
 
 /**
  * A step the pane and the band offer: the engine's pending release, the model's proposed rounds (`isCompacting`: the Start
  * runs /compact first) or a compact-only proposal. The first is the recommended one.
  */
 export type ConsoleSuggestion =
-  | ({ kind: 'round'; key: string; isCompacting: boolean; isRecommended: boolean } & ConsoleProposal)
+  | ({ kind: 'round'; key: string; number: number; isCompacting: boolean; isRecommended: boolean } & ConsoleProposal)  // `number`: its row in the proposal, 1-based: what /start-round takes
   | { kind: 'release'; key: string; count: number; isRecommended: boolean }
   | { kind: 'compact'; key: string; isRecommended: boolean }
 
@@ -153,10 +161,10 @@ export type ConsoleOpened =
   | { kind: 'item'; id: string; from: string | null; phase: 'reading' | 'read' | 'failed'; text: string; slot: ConsoleItemSlot | null }  // `from`: the question whose overlaps listed it; `text`: the failure
   | { kind: 'overlaps'; question: string; overlaps: { id: string; title: string }[] }
   | { kind: 'settles'; question: string; ids: string[] }
-  | { kind: 'suggestion'; key: string; ids: string[] }
+  | { kind: 'suggestion'; key: string; leads: { id: string; title: string }[] }
 
-/** The start message a compacting suggestion sends once its compaction succeeded; it goes with the next compaction, typed prompt or round start. */
-export type ConsoleStart = { text: string; at: number }
+/** The command a compacting suggestion runs once its compaction succeeded (`title`: the proposal's, for the summary and the notice); it goes with the next compaction, typed prompt or round start. */
+export type ConsoleStart = { command: string; args: string; title: string; at: number }
 
 /** A built-in command the person sent during a turn, run when that turn ends. */
 export type ConsoleDeferred = { command: string; args: string }

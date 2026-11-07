@@ -11,10 +11,9 @@ argument-hint: "[focus and follow-ups]"
 
 <!-- @include shared/rerun.md -->
 
-1. **Inventory.** List your own rulings (asking.md's disclosure kinds:
-   entailed decisions, defect-fix behaviors, dropped or narrowed parts, framing
-   choices), each choice you left to another role, each strong recommendation,
-   and each released ruling a recommendation rests on or Related linked
+1. **Inventory.** List your own rulings (asking.md's disclosure kinds), each
+   choice you left to another role, each strong recommendation, and each
+   released ruling a recommendation rests on or Related linked
    (`priorRulings`).
    Output: the list.
 2. **Own rulings and left choices.** Check that each is entailed (Decision

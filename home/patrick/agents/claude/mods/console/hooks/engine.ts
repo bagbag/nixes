@@ -81,6 +81,9 @@ export async function pass($: $, session: string, origin: ConsolePassOrigin, inp
 /** The skill a typed or pressed command runs as the person's conditional approval of the release (r4-q16). */
 export const RELEASE_COMMAND = 'release-round'
 
+/** A Start press on a proposed round: the skill starts the stored proposal's row (`/start-round <row>`); the press is the go-ahead, so no stamp (unlike /release-round, which is the approval). */
+export const START_COMMAND = 'start-round'
+
 /** A typed or pressed /release-round: the engine starts the release (typed ids, else the default set) or stamps the open one. */
 export async function stampRelease($: $, session: string, origin: 'composer' | 'bridge' | 'press', args: string): Promise<ConsoleRound> {
   return parseRound(await protocolJson($, session, ['pass', '--origin', origin], { command: RELEASE_COMMAND, args, pending: null }))
@@ -276,7 +279,14 @@ function parseNext(value: unknown): ConsoleRound['next'] {
   const release = record(raw.release)
   const rounds = list(raw.rounds).map((one): ConsoleProposal => {
     const proposed = record(one)
-    return { ids: list(proposed.ids).map(text).filter(id => id !== ''), title: text(proposed.title), premise: text(proposed.premise), why: text(proposed.why), fresh: proposed.fresh === true }
+    const estimate = record(proposed.estimate)
+    const titles = record(proposed.idTitles)
+    const ids = list(proposed.ids).map(text).filter(id => id !== '')
+    return {
+      ids, idTitles: Object.fromEntries(ids.map(id => [id, text(titles[id])])), title: text(proposed.title), summary: text(proposed.summary),
+      estimate: typeof estimate.questions === 'number' && typeof estimate.unblocks === 'number' ? { questions: estimate.questions, unblocks: estimate.unblocks } : null,
+      why: text(proposed.why), fresh: proposed.fresh === true,
+    }
   }).filter(one => one.title !== '')
   const next: NonNullable<ConsoleRound['next']> = {
     ...(count(release.count) === 0 ? {} : { release: { count: count(release.count) } }),

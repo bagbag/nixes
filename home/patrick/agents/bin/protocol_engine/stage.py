@@ -13,11 +13,16 @@ from .told import report_hint
 from .check import gate_ask
 
 
+def titled(ctx: Context) -> bool:
+    """The round has its title and summary already (from a stored proposal): Stage replaces them only when its report names new ones."""
+    return bool(ctx.round.get('title') and ctx.round.get('summary'))
+
+
 def stage_text(ctx: Context) -> str:
     r = ctx.round
     dropped = {key: (ctx.state.get('dropReasons') or {})[key] for key in r['selected'] if key in (ctx.state.get('dropReasons') or {})}
     return lines(
-        words.stage_instructions(r['id'], r['selected'], bool(ctx.board)),
+        words.stage_instructions(r['id'], r['selected'], bool(ctx.board), titled(ctx)),
         *(words.stage_dropped(dropped) if dropped else []),
         report_hint(ctx, 'stage', words.stage_example(r['selected'][0] if r['selected'] else None)),
     )
@@ -25,7 +30,7 @@ def stage_text(ctx: Context) -> str:
 
 def stage_accept(ctx: Context, report: dict) -> str:
     raw = report.get('questions')
-    errors = describe_errors(report.get('round'), 'stage', required=True)
+    errors = describe_errors(report.get('round'), 'stage', required=not titled(ctx))
     if not isinstance(raw, list):
         fail('; '.join([*errors, '`questions` must be a list']))
     keys = {}
@@ -40,7 +45,7 @@ def stage_accept(ctx: Context, report: dict) -> str:
         ctx.round['questions'].append(q)
         keys[item.get('key') or q['id']] = q['id']
     refuse_all(errors)
-    describe(ctx, report.get('round'), 'stage', required=True)
+    describe(ctx, report.get('round'), 'stage', required=not titled(ctx))
     resolve_waits(ctx, keys)
     unique_texts(ctx)
     join_outside(ctx)

@@ -4,13 +4,13 @@ import type { EngineInterface, ToolCallResult } from 'claude-code'
 
 import type { ConsoleBoard, ConsolePassOrigin, ConsoleRound, ConsoleSuggestion } from '../types'
 
-import { boardItem, boardViews, decline, isRoundOpen, pass, PASS_COMMANDS, pending as readPending, readRole, RELEASE_COMMAND, ROUND_ROLES, setWorkers, show, stampRelease, stateDir } from './engine'
+import { boardItem, boardViews, decline, isRoundOpen, pass, PASS_COMMANDS, pending as readPending, readRole, RELEASE_COMMAND, ROUND_ROLES, setWorkers, show, stampRelease, START_COMMAND, stateDir } from './engine'
 import {
   claimRefresh, getAskSent, getDrawn, getPaneDismissed, getPass, getRole, getRound, releaseRefresh, setAskSent, setBoard, setDrawn, setPass, setPrinted, setRole,
   setRound, setRoundError, setStart, takeRefreshAgain, updateOpened, updateQueued,
 } from './state'
 import {
-  declineFailedNote, itemSlot, missingReportText, openDialogText, PROTOCOL_ARGS_DESCRIPTION, PROTOCOL_STDIN_DESCRIPTION, PROTOCOL_TOOL_DESCRIPTION, startText, stuckPassText,
+  declineFailedNote, itemSlot, missingReportText, openDialogText, PROTOCOL_ARGS_DESCRIPTION, PROTOCOL_STDIN_DESCRIPTION, PROTOCOL_TOOL_DESCRIPTION, stuckPassText,
 } from './words'
 
 type $ = EngineInterface
@@ -431,25 +431,25 @@ export async function pressSubmit($: $, text: string, onFailed?: (error: unknown
 }
 
 /**
- * A suggestion's [ Start ]. A round sends its start message as the person's prompt; one that compacts first stores the message
- * and runs /compact (no focus text), and the compaction hook sends it once the compaction succeeded (register.tsx).
- * Release Round and a compact-only proposal run their commands.
+ * A suggestion's [ Start ]. A round runs `/start-round <row>`, which starts that row of the stored proposal (the press is the
+ * go-ahead, so no stamp); one that compacts first stores the command and runs /compact (no focus text), and the compaction hook
+ * runs it once the compaction succeeded (register.tsx). Release Round and a compact-only proposal run their commands.
  */
 export async function pressStart($: $, suggestion: ConsoleSuggestion): Promise<void> {
   if (suggestion.kind === 'release') return pressRun($, RELEASE_COMMAND, '')
   if (suggestion.kind === 'compact') return pressRun($, 'compact', '')
-  const text = startText(suggestion)
-  if (!suggestion.isCompacting) return pressSubmit($, text)
-  await setStart($, { text, at: await $.clock.now() })
+  const args = String(suggestion.number)
+  if (!suggestion.isCompacting) return pressRun($, START_COMMAND, args)
+  await setStart($, { command: START_COMMAND, args, title: suggestion.title, at: await $.clock.now() })
   await pressRun($, 'compact', '', async () => {
     await setStart($, null)
     await notice($, `/compact failed: the next round (${suggestion.title}) was not started`)
   })
 }
 
-/** Opens (or closes) a suggestion's questions inline below its row; each listed id opens its item. */
-export async function pressOpenSuggestion($: $, key: string, ids: readonly string[]): Promise<void> {
-  await updateOpened($, current => current?.kind === 'suggestion' && current.key === key ? null : { kind: 'suggestion', key, ids: [...ids] })
+/** Opens (or closes) a suggestion's leading questions inline below its row, each with its title; each listed id opens its item. */
+export async function pressOpenSuggestion($: $, key: string, leads: readonly { id: string; title: string }[]): Promise<void> {
+  await updateOpened($, current => current?.kind === 'suggestion' && current.key === key ? null : { kind: 'suggestion', key, leads: leads.map(one => ({ id: one.id, title: one.title })) })
 }
 
 /**

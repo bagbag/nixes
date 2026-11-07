@@ -269,7 +269,6 @@ def answer(ctx: Context, report: dict, origin: str) -> str:
     if typed or noted:
         notes.append(words.PICK_DETAIL)
     if response:
-        ctx.round['responses'].append({'marker': batch['marker'], 'text': response, 'origin': origin})
         notes.append(words.answer_response(response))
     unanswered = [qid for qid in batch['ids'] if qid not in done and qid not in typed and qid not in rethink]
     if unanswered:

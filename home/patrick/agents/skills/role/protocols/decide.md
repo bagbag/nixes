@@ -85,8 +85,8 @@ console's `protocol` tool): `start round` (stdin `{"points": [...]}` for
 pasted points), then `step` with each step's report; resume an open round from
 `protocol show`. Add `--discussion` for a round of the discussion's points
 alone and `--no-board <dir>` for a topic outside this repository's board, or a
-repository without one. Follow the engine's output; the steps below add the
-judgment it leaves to you.
+repository without one; `--proposal <n>` starts row n of the stored proposal.
+Follow the engine's output; the steps below add the judgment it leaves to you.
 
 1. **Collect.** Check each point against the current tree before classifying
    it.

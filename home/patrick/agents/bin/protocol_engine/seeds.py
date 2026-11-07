@@ -1,7 +1,9 @@
 """Next: the seeds of the next round and the stored proposal."""
 from __future__ import annotations
 
-from .base import PROPOSAL_ROUNDS, SEEDS, TEXT_LIMIT, TITLE_LIMIT, lines
+import re
+
+from .base import PROPOSAL_ROUNDS, ProtocolError, SEEDS, SUMMARY_MAX, TEXT_LIMIT, TITLE_LIMIT, lines
 from . import words
 from .boards import foreign_holds
 from .engine import Context, fail
@@ -71,23 +73,57 @@ def next_text(ctx: Context) -> str:
         *([words.seed_line(seed, priority_of(seed)) for seed in seeded] or ([words.SEEDS_NONE] if ctx.board else [])),
         items_text(ctx, items, elsewhere, waiting),
         *(topic_counts(items) if ctx.board else []),
-        *words.proposal_text(ctx.state.get('proposal')),
+        *words.proposal_text(proposal_rows(ctx.state.get('proposal'))),
         words.next_recommend(),
     )
 
 
-PROPOSAL_FIELDS = {'title', 'premise', 'why', 'fresh', 'ids'}
+PROPOSAL_FIELDS = {'title', 'summary', 'estimate', 'why', 'fresh', 'ids'}
+QUESTION_NAME = re.compile(r'(?<![\w-])q\d+\b')  # a round's question id
+ITEM_CANDIDATE = re.compile(r'\b[A-Za-z][A-Za-z0-9]*(?:-[A-Za-z0-9]+)+(?:\.\d+)*\b')  # hyphenated words: an id only when the board knows it
 
 
-def proposal_errors(raw) -> list[str]:
+def names_in(ctx: Context, text: str, known: dict[str, bool]) -> list[str]:
+    """The question ids and board items a text names, in reading order. A hyphenated word is a board item only when the board
+    shows it (`step-back` is a word); `known` caches the reads. Without a board nothing is an item."""
+    found = [(match.start(), match.group()) for match in QUESTION_NAME.finditer(text)]
+    for match in ITEM_CANDIDATE.finditer(text) if ctx.board else ():
+        word = match.group()
+        if word not in known:
+            try:
+                ctx.board.checked('show', word, '--json', '--field', 'status')
+                known[word] = True
+            except ProtocolError:
+                known[word] = False  # the board refuses an unknown id
+        if known[word]:
+            found.append((match.start(), word))
+    return list(dict.fromkeys(name for _, name in sorted(found)))
+
+
+def lead_titles(ctx: Context, ids: list[str], where: str) -> tuple[dict[str, str], list[str]]:
+    """The board's title of each leading id; an id the board does not know is an error (`start round <ids>` needs them open)."""
+    if not ctx.board:
+        return {}, [f'{where}: `ids` need a board (a round names open board items)']
+    titles, errors = {}, []
+    for qid in dict.fromkeys(ids):
+        try:
+            titles[qid] = ((ctx.board.json('show', qid, '--json', '--field', 'title').get(qid) or {}).get('title') or '').strip()
+        except ProtocolError:
+            errors.append(f'{where}: `ids` names {qid}, which the board does not know')
+    return titles, errors
+
+
+def proposal_errors(ctx: Context, raw) -> tuple[list[str], dict[int, dict[str, str]]]:
+    """Every error in a proposal (structure, plain words, leading ids against the board) and the leading ids' titles per row."""
     if not isinstance(raw, dict):
-        return ['stdin must be an object with `rounds`']
+        return ['stdin must be an object with `rounds`'], {}
     errors = [f"unknown fields {', '.join(sorted(set(raw) - {'rounds'}))}"] if set(raw) - {'rounds'} else []
     rounds = raw.get('rounds', [])
     if not isinstance(rounds, list):
-        return [*errors, '`rounds` must be a list']
+        return [*errors, '`rounds` must be a list'], {}
     if len(rounds) > PROPOSAL_ROUNDS:
         errors.append(f'`rounds` holds at most {PROPOSAL_ROUNDS}, not {len(rounds)}')
+    titles, known = {}, {}
     for index, one in enumerate(rounds):
         where = f'rounds[{index}]'
         if not isinstance(one, dict):
@@ -98,23 +134,57 @@ def proposal_errors(raw) -> list[str]:
         ids = one.get('ids')
         if ids is not None and (not isinstance(ids, list) or not ids or not all(isinstance(i, str) and i.strip() for i in ids)):
             errors.append(f'{where}: `ids`, when given, lists the question ids that must lead')
-        for field, limit in (('title', TITLE_LIMIT), ('premise', TEXT_LIMIT), ('why', TEXT_LIMIT)):
+        elif ids:
+            titles[index], lead_errors = lead_titles(ctx, [i.strip() for i in ids], where)
+            errors += lead_errors
+        for field, limit in (('title', TITLE_LIMIT), ('summary', SUMMARY_MAX), ('why', TEXT_LIMIT)):
             if not isinstance(one.get(field), str) or not one[field].strip():
                 errors.append(f'{where}: `{field}` must be a non-empty string')
             elif len(one[field]) > limit:
                 errors.append(f'{where}: `{field}` is {len(one[field])} characters, over the limit of {limit}')
+            elif field != 'why' and (named := names_in(ctx, one[field], known)):
+                errors.append(f"{where}: `{field}` names {', '.join(named)}: say it in plain words, without ids")
+        estimate = one.get('estimate')
+        if not (isinstance(estimate, dict) and set(estimate) == {'questions', 'unblocks'}
+                and all(isinstance(n, int) and not isinstance(n, bool) and n >= 0 for n in estimate.values())):
+            errors.append(f'{where}: `estimate` is your estimate as whole numbers: {{"questions": n, "unblocks": n}}')
         if not isinstance(one.get('fresh'), bool):
             errors.append(f'{where}: `fresh` must be true or false')
-    return errors
+    return errors, titles
 
 
 def set_proposal(ctx: Context, report: dict) -> str:
     if ctx.round and ctx.round['step'] != 'closed':
         fail(f"{ctx.round['protocol']} {ctx.round['id']} is open: propose the next rounds once it closes")
-    refuse_all([f'next --set: {error}' for error in proposal_errors(report)])
-    proposal = {'rounds': [{'title': one['title'].strip(), 'premise': one['premise'].strip(), 'why': one['why'].strip(),
-                            'fresh': one['fresh'], **({'ids': [i.strip() for i in one['ids']]} if one.get('ids') else {})}
-                           for one in report.get('rounds', [])]}
+    errors, titles = proposal_errors(ctx, report)
+    refuse_all([f'next --set: {error}' for error in errors])
+    proposal = {'rounds': [{'title': one['title'].strip(), 'summary': one['summary'].strip(),
+                            'estimate': {'questions': one['estimate']['questions'], 'unblocks': one['estimate']['unblocks']},
+                            'why': one['why'].strip(), 'fresh': one['fresh'],
+                            **({'ids': [i.strip() for i in one['ids']], 'idTitles': titles[index]} if one.get('ids') else {})}
+                           for index, one in enumerate(report.get('rounds', []))]}
     ctx.state['proposal'] = proposal
     ctx.store.log({'round': None, 'event': 'proposed', 'rounds': [one['title'] for one in proposal['rounds']]})
-    return words.proposal_stored(proposal)
+    return words.proposal_stored(proposal_rows(proposal))
+
+
+def proposal_rows(proposal: dict | None) -> list[dict] | None:
+    """The rows of a stored proposal that show and start, in the order `show --json` exposes them and the console numbers them
+    (a row without a title shows nowhere); None when no proposal is stored."""
+    if not proposal:
+        return None
+    return [one for one in proposal.get('rounds') or [] if isinstance(one, dict) and str(one.get('title') or '').strip()]
+
+
+def proposal_row(ctx: Context, number: int, topic: str | None, ids: list[str]) -> dict:
+    """Row `number` (1-based) of the stored proposal, for `start round --proposal`; its topic and ids come from the row."""
+    if topic:
+        fail("--proposal takes the row's topic: not with --topic")
+    if ids:
+        fail("--proposal takes the row's ids: not with ids of your own")
+    rows = proposal_rows(ctx.state.get('proposal'))
+    if rows is None:
+        fail('no proposal stored: `protocol next --set` stores one')
+    if not 1 <= number <= len(rows):
+        fail(f'no proposal row {number}: the stored proposal has {len(rows)}')
+    return rows[number - 1]

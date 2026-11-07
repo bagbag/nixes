@@ -218,10 +218,13 @@ SELECT_NONE = '- none: report {"select": []} to close the round'
 
 # Stage and Related (stage.py).
 
-def stage_instructions(round_id: str, selected: list[str], has_board: bool) -> str:
+def stage_instructions(round_id: str, selected: list[str], has_board: bool, proposed: bool) -> str:
+    """`proposed`: the round took its title and summary from a stored proposal."""
     return (
-        f"Round {round_id} · Stage the questions for {', '.join(selected)} under asking.md Question format, "
-        'with a round `title` and `summary`. A board item keeps its id in `board`; a pasted point or new '
+        f"Round {round_id} · Stage the questions for {', '.join(selected)} under asking.md Question format"
+        + (". The round keeps the proposal's `title` and `summary`; report a `round` with both to replace them "
+           "where the selected questions differ from the proposal." if proposed else ', with a round `title` and `summary`.')
+        + ' A board item keeps its id in `board`; a pasted point or new '
         'question is a draft (`board`: null, `for`: the point id)' + (', created on the board at Record' if has_board else '') + '. `settles` lists the items '
         f'one answer settles the same way (a rule question); an open decision outside the selection named there or in `board` joins the round. {MERGE_TEST} `waitsOn` names the questions a '
         'decision rests on; kind confirm-own-rulings asks the user to confirm your rulings. Each question carries the parts the '
@@ -1011,7 +1014,7 @@ def own_rulings_intro(round_id: str) -> str:
     return (f"Release {round_id} · Own rulings (decide.md Release 3): list every ruling you made in the set with "
             "asking.md's disclosure fields: the ruling, what it meets without a material trade-off, its strongest realistic alternative, the test or principle that "
             'alternative fails, and the evidence. Mark each `sure` only when it is entailed (decision-protocol.md Decision '
-            'authority); an unsure ruling, like a dropped or revised record, sends the approval to a dialog.')
+            'authority).')
 
 
 def own_rulings_example(first: str) -> dict:
@@ -1047,14 +1050,25 @@ def seed_line(seed: dict, priority: int) -> str:
             + (f"milestone {seed['milestone']}" if seed['milestone'] else 'no milestone') + f" · {seed['title']}")
 
 
-def proposal_text(proposal: dict | None) -> list[str]:
-    """A stored proposal's rows; a stored row may lack fields a later version wrote (a read never fails on it)."""
-    if not proposal:
+def approx(n: int, word: str) -> str:
+    return f"~{n} {word}{'' if n == 1 else 's'}"
+
+
+def proposal_estimate(estimate) -> str:
+    """The model's estimates of a stored row; a row stored before they existed has none."""
+    if not isinstance(estimate, dict):
+        return ''
+    return f" · {approx(estimate.get('questions', 0), 'question')} · unblocks {approx(estimate.get('unblocks', 0), 'item')}"
+
+
+def proposal_text(rows: list[dict] | None) -> list[str]:
+    """A stored proposal's rows (`rows` None: none stored); a stored row may lack fields a later version wrote (a read never fails on it)."""
+    if rows is None:
         return ['No proposal stored.']
-    rows = [f"{index}. {r.get('title', '')}" + (f" · {r['premise']}" if r.get('premise') else '')
+    rows = [f"{index}. {r.get('title', '')}" + proposal_estimate(r.get('estimate')) + (f" · {r['summary']}" if r.get('summary') else '')
             + (f" · leads with {' '.join(r['ids'])}" if r.get('ids') else '')
             + f" · {'wants a fresh context' if r.get('fresh') else 'keeps the context'} · {r.get('why', '')}"
-            for index, r in enumerate(proposal.get('rounds') or [], 1)]
+            for index, r in enumerate(rows, 1)]
     return ['Stored proposal' + (' (the first row is the recommended one):' if rows else ' (no rounds: the console offers a compaction when the context is large):'),
             *rows]
 
@@ -1086,20 +1100,30 @@ SEEDS_NONE = '- none'
 
 def next_recommend() -> str:
     return ('Recommend the next round or, when no question round leads, the other next step by priority and what it unblocks. '
-            'Propose topics, not question sets: a row names a topic and its premise, and the round selects its questions at Collect. '
+            'Propose topics, not question sets. '
             'Rank the rows by priority and by how many questions each settles, and state the trade in `why`; a follow-up that '
             'reuses what was just read goes first, and milestone members stay ahead of the rest. '
+            'Write `title` and `summary` for a reader who was not in the discussion: plain words, no code names, no board or question '
+            'ids; `summary` is one sentence on what the round decides and what its questions share. '
+            '`estimate`: the questions the round settles and the board items that wait on its answers, downstream included. '
             'Record the proposal with `protocol next --set` (stdin '
-            + json_block({'rounds': [{'title': '<the topic in plain words>', 'premise': '<the premise its questions share>',
+            + json_block({'rounds': [{'title': '<the topic in plain words>', 'summary': '<what the round decides and what its questions share>',
+                                      'estimate': {'questions': '<n>', 'unblocks': '<n>'},
                                       'why': '<why this topic, and the priority/size trade>', 'fresh': False,
                                       'ids': ['<a question that must lead (optional)>']}]})
             + f'): at most {PROPOSAL_ROUNDS} rounds, the one that reuses the read context first with fresh false, other topics with '
             'fresh true; `rounds` may be empty to offer only a compaction. Do not tell the user a round will compact. '
-            "Start a row with `protocol start round --topic '<title>: <premise>'`.")
+            "Present the rows in chat under asking.md's Question format. "
+            'Start row n with `protocol start round --proposal <n>`.')
 
 
-def proposal_stored(proposal: dict) -> str:
-    return '\n'.join(['Stored.', *proposal_text(proposal)])
+def proposal_topic(row: dict) -> str:
+    """A proposal row's round topic: its title and summary (a row stored before summaries has the title alone)."""
+    return f"{row['title']}: {row['summary']}" if row.get('summary') else row['title']
+
+
+def proposal_stored(rows: list[dict]) -> str:
+    return '\n'.join(['Stored.', *proposal_text(rows)])
 
 
 # The text printed before a dialog (render.py): the question data owns the format.
