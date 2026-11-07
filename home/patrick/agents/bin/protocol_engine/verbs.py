@@ -5,7 +5,7 @@ import json
 import shutil
 from datetime import datetime, timedelta, timezone
 
-from .base import CAP_CHOICES, CHECK_CAP, PRUNE_DAYS, THINK_MORE, VERB_ORIGINS, recommended_suffix, utcnow
+from .base import CAP_CHOICES, CHECK_CAP, DROP_KINDS, PRUNE_DAYS, THINK_MORE, VERB_ORIGINS, recommended_suffix, utcnow
 from . import words
 from .session import state_root
 from .store import Store
@@ -25,6 +25,23 @@ def require_origin(ctx: Context, verb: str, origin: str | None) -> None:
     if origin == 'model-reported' and not ctx.codex:
         fail(f'{verb}: origin model-reported is the Codex path only; in Claude the console records the dialog, and '
              'an answer typed in chat goes through answer --origin chat with its quote')
+
+
+def drop_report(ctx: Context, report: dict) -> None:
+    """The console dropped a stale pass run or batch dialog: logged, and the pass's observed run goes, but only a run of that
+    pass (a newer run of the same command stays)."""
+    kind = report.get('kind')
+    if kind not in DROP_KINDS:
+        fail(f"dropped: `kind` must be one of {', '.join(DROP_KINDS)}")
+    key = 'id' if kind == 'pass' else 'marker'
+    ref = report.get(key)
+    if not isinstance(ref, str) or not ref:
+        fail(f'dropped: kind {kind} needs `{key}` in stdin')
+    if ctx.round and kind == 'pass':
+        observed = ctx.round['observed']
+        for command in [c for c, run in observed.items() if run.get('pending') == ref]:
+            del observed[command]
+    ctx.log('dropped', kind=kind, **{key: ref})
 
 
 def normalized(text: str) -> str:

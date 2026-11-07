@@ -2,15 +2,15 @@
 // declarations throughout: past an import, the engine follows $ only into those.
 import type { EngineInterface, ToolCallResult } from 'claude-code'
 
-import type { ConsoleBoard, ConsolePassOrigin, ConsoleRound, ConsoleSuggestion } from '../types'
+import type { ConsoleAction, ConsoleBoard, ConsolePassOrigin, ConsolePassRun, ConsoleRound, ConsoleSuggestion } from '../types'
 
-import { boardItem, boardViews, decline, isRoundOpen, pass, PASS_COMMANDS, pending as readPending, readRole, RELEASE_COMMAND, ROUND_ROLES, setWorkers, show, stampRelease, START_COMMAND, stateDir } from './engine'
+import { boardItem, boardViews, decline, dropped, isRoundOpen, pass, PASS_COMMANDS, pending as readPending, readRole, RELEASE_COMMAND, ROUND_ROLES, setWorkers, show, stampRelease, START_COMMAND, stateDir } from './engine'
 import {
-  claimRefresh, getAskSent, getDrawn, getPaneDismissed, getPass, getRole, getRound, releaseRefresh, setAskSent, setBoard, setDrawn, setPass, setPrinted, setRole,
+  claimRefresh, getAskSent, getDrawn, getPaneDismissed, getPass, getQueued, getRole, getRound, releaseRefresh, setAskSent, setBoard, setDrawn, setPass, setPrinted, setRole,
   setRound, setRoundError, setStart, takeRefreshAgain, updateOpened, updateQueued,
 } from './state'
 import {
-  declineFailedNote, itemSlot, missingReportText, openDialogText, PROTOCOL_ARGS_DESCRIPTION, PROTOCOL_STDIN_DESCRIPTION, PROTOCOL_TOOL_DESCRIPTION, stuckPassText,
+  declineFailedNote, itemSlot, missingReportText, openDialogText, PROTOCOL_ARGS_DESCRIPTION, PROTOCOL_STDIN_DESCRIPTION, PROTOCOL_TOOL_DESCRIPTION, STALE_DROP, stuckPassText,
 } from './words'
 
 type $ = EngineInterface
@@ -67,8 +67,8 @@ const dialogPlaceholder = (marker: string): string => `${DIALOG_PREFIX}${marker}
 export const placeholderMarker = (question: unknown): string | null =>
   typeof question === 'string' && question.startsWith(DIALOG_PREFIX) ? question.slice(DIALOG_PREFIX.length, -1) : null
 
-/** What the swapped dialog came to, set by the AskUserQuestion hook. `summary`: the visible line; `note`: the engine's text for the model. */
-export type DialogOutcome = { summary: string; note: string | null; unsavedDecline?: { marker: string; partial: Record<string, string> | null } }
+/** What the swapped dialog came to, set by the AskUserQuestion hook. `summary`: the visible line; `note`: the engine's text for the model; `isDropped`: the batch was no longer out, so nothing follows. */
+export type DialogOutcome = { summary: string; note: string | null; unsavedDecline?: { marker: string; partial: Record<string, string> | null }; isDropped?: true }
 let dialogOutcome: DialogOutcome | null = null
 /** The marker openDialog waits on in this instance of the console; a reload starts it over, with the dialog still open. */
 let dialogAwaited: string | null = null
@@ -119,6 +119,7 @@ export async function openDialog($: $, marker: string, session: string): Promise
 
 /** What follows the console's own dialog: a decline Esc left unsaved is recorded, then the model wakes. */
 async function finishDialog($: $, marker: string, session: string, outcome: DialogOutcome): Promise<void> {
+  if (outcome.isDropped) return
   if (outcome.unsavedDecline !== undefined) {
     // Esc aborts the dialog hook's own runs, a retry there included; a run from here, after the dialog closed, goes through.
     try {
@@ -137,12 +138,16 @@ async function finishDialog($: $, marker: string, session: string, outcome: Dial
  * At a main-agent turn's end that was not aborted, with a batch out (r29-q138, r30-q140, r32-q149): runs `/console-questions`, whose
  * hook prints the text and opens the dialog. A command's output draws whole between turns where a transcript row would not, and the hook's
  * fresh `$` matters too: after an awaited call in a chain, `$.ui.ask` skips the swap in the console's hook. One dialog per batch marker until
- * the person sends a new message (`prompt.submit` clears it). A run that settles unanswered
+ * the person sends a new message (`prompt.submit` clears it) and none is open. A run that settles unanswered
  * by the hook takes the model's route instead of leaving the round waiting.
  */
 export async function openBatchDialog($: $, round: ConsoleRound | null): Promise<void> {
   const batch = round?.batch
   if (round === null || round === undefined || !isRoundOpen(round) || batch === null || batch === undefined || (await getAskSent($)) === batch.marker) return
+  if (dialogAwaited === batch.marker) {  // the person's message cleared the repeat guard while this console's dialog is still open
+    await reportDrop($, await $.session.id(), { kind: 'batch', marker: batch.marker })
+    return
+  }
   await setAskSent($, batch.marker)
   questionsAnswered = null
   void $.command.run({ command: QUESTIONS_COMMAND, args: batch.marker })
@@ -170,7 +175,7 @@ async function askModelToOpen($: $, marker: string): Promise<void> {
   await pressSubmit($, openDialogText(marker), async error => {
     await setAskSent($, null).catch(() => undefined)
     await notice($, `sending the message that opens the dialog failed: ${message(error)}`).catch(() => undefined)
-  }, true)
+  }, true, { kind: 'batch', marker })
 }
 
 /** What follows a turn: the pending pass, and the issued batch's print and dialog. */
@@ -183,13 +188,13 @@ export async function betweenTurns($: $, session: string, isAborted: boolean): P
       await setPass($, { ...run, phase: 'noted' })
     } else if (run.phase === 'started') {
       await setPass($, { ...run, phase: 'asked' })
-      await pressSubmit($, missingReportText(pending.command, pending.id), undefined, true)
+      await pressSubmit($, missingReportText(pending.command, pending.id), undefined, true, { kind: 'pass', id: pending.id, command: pending.command, args: pending.args })
     } else if (run.phase === 'asked') {
       await setPass($, { ...run, phase: 'noted' })
       await notice($, stuckPassText(pending.command, pending.args))
     }
   } else if (pending !== null && !isAborted) {
-    await setPass($, { id: pending.id, command: pending.command, phase: 'queued' })
+    await setPass($, { id: pending.id, command: pending.command, args: pending.args, phase: 'queued' })
     await pass($, session, 'plugin', { command: pending.command, args: pending.args, pending: pending.id })
       .catch(failOpen($, `recording /${pending.command}`))
     void $.command.run({ command: pending.command, args: pending.args }).catch(failOpen($, `running /${pending.command}`))
@@ -352,14 +357,14 @@ async function registerTool($: $): Promise<void> {
 
 const runKey = (command: string, args: string): string => `${command} ${args}`.trim()
 
-/** Claims a run unless the same one is still queued; false for a dropped repeat. */
-export async function claimRun($: $, key: string): Promise<boolean> {
+/** Claims a run unless the same one is still queued; false for a dropped repeat. A prompt's `action` is re-checked where it is delivered. */
+export async function claimRun($: $, key: string, action?: ConsoleAction): Promise<boolean> {
   const now = await $.clock.now()
   let isClaimed = false
   await updateQueued($, queued => {
     const live = queued.filter(one => now - one.at < QUEUED_EXPIRY_MS)
     isClaimed = !live.some(one => one.key === key)
-    return isClaimed ? [...live, { key, at: now }] : live
+    return isClaimed ? [...live, { key, at: now, ...(action === undefined ? {} : { action }) }] : live
   })
   return isClaimed
 }
@@ -371,6 +376,55 @@ export async function releaseRun($: $, matches: (key: string) => boolean): Promi
 /** Arguments compare with whitespace collapsed: the same words typed with other spacing are the same run. */
 const collapsed = (args: string): string => args.split(/\s+/).filter(word => word !== '').join(' ')
 
+/**
+ * The one staleness test of every queued console action: whether the round no longer holds what the action was queued for.
+ * The host queues what the console sends and cannot recall it, so each delivery point asks this against a fresh read.
+ */
+export function isStale(round: ConsoleRound | null, action: ConsoleAction): boolean {
+  if (round === null || !isRoundOpen(round)) return true
+  if (action.kind === 'batch') return round.batch?.marker !== action.marker
+  const waiting = round.pending
+  return waiting === null || waiting.id !== action.id || waiting.command !== action.command || collapsed(waiting.args) !== collapsed(action.args)
+}
+
+/** Logs a dropped action in the engine's history; a failed report is a toast, the drop stands. */
+export async function reportDrop($: $, session: string, action: ConsoleAction): Promise<void> {
+  await dropped($, session, action).catch(failOpen($, 'reporting a dropped action'))
+}
+
+/** Reads the round and, when the action is stale, reports the drop: true means the caller drops it. A failed read keeps the last one. */
+export async function dropIfStale($: $, action: ConsoleAction): Promise<boolean> {
+  const session = await $.session.id()
+  if (!isStale(await refreshRound($, session), action)) return false
+  await reportDrop($, session, action)
+  return true
+}
+
+/**
+ * A prompt the console queued, as the host delivers it (`prompt.submit`, origin the console's): the reason to drop it when the
+ * round moved on meanwhile, else null. The prompts are registered by their text with their action (claimRun).
+ */
+export async function staleDelivery($: $, text: string): Promise<string | null> {
+  const key = `prompt:${text}`
+  const action = (await getQueued($)).find(one => one.key === key)?.action
+  if (action === undefined || !(await dropIfStale($, action))) return null
+  await releaseRun($, one => one === key)  // a dropped prompt starts no turn, which would release it
+  return STALE_DROP
+}
+
+/** The pass a skill expansion belongs to: the stored queued run of that command; null when there is none or the engine's pending pass is another (a stale run, dropped and reported). */
+export async function startedPass($: $, skill: string): Promise<{ run: ConsolePassRun; isStale: boolean } | null> {
+  const run = await getPass($)
+  if (run === null || run.phase !== 'queued' || run.command !== skill) return null
+  const session = await $.session.id()
+  const stale = isStale(await refreshRound($, session), { kind: 'pass', ...run })
+  if (stale) {
+    await setPass($, { ...run, phase: 'noted' })  // one stale run per stored pass: a later run of the command is not it
+    await reportDrop($, session, { kind: 'pass', ...run })
+  }
+  return { run, isStale: stale }
+}
+
 /** Records a pass with its origin while a round is open; the pending id when it is the pending pass. */
 export async function recordPass($: $, ctx: Context, origin: ConsolePassOrigin, command: string, args: string): Promise<void> {
   if (!ctx.isRoundRole || !PASS_COMMANDS.includes(command)) return
@@ -380,7 +434,7 @@ export async function recordPass($: $, ctx: Context, origin: ConsolePassOrigin, 
   if (pendingId !== null && (await getPass($))?.id !== pendingId) {
     // This run is the pending pass: turn.complete must not queue it again, and notes it if it ends unreported.
     // A model Skill call has already run; a typed or pressed command starts when its skill expands.
-    await setPass($, { id: pendingId, command, phase: origin === 'model' ? 'started' : 'queued' })
+    await setPass($, { id: pendingId, command, args, phase: origin === 'model' ? 'started' : 'queued' })
   }
   try {
     const recorded = await pass($, ctx.session, origin, { command, args, pending: pendingId })
@@ -423,9 +477,11 @@ export async function pressWorkers($: $, session: string, workers: string): Prom
   refreshLater($)
 }
 
-/** Submits the person's press or picks as their own words, read without the host's plugin frame; `isConsoleWords` keeps the frame on the console's own request. `onFailed` follows a submit that failed. */
-export async function pressSubmit($: $, text: string, onFailed?: (error: unknown) => Promise<void>, isConsoleWords = false): Promise<void> {
-  if (!(await claimRun($, `prompt:${text}`))) {
+/** Submits the person's press or picks as their own words, read without the host's plugin frame; `isConsoleWords` keeps the frame on the console's own request. `onFailed` follows a submit that failed; `action` is what the prompt is about, dropped where it is delivered if the round moved on. */
+export async function pressSubmit($: $, text: string, onFailed?: (error: unknown) => Promise<void>, isConsoleWords = false, action?: ConsoleAction): Promise<void> {
+  // Checked here as well as at delivery: the console's own prompt reaches its prompt.submit hook only from some call chains (the kit skips it after an awaited console command).
+  if (action !== undefined && (await dropIfStale($, action))) return
+  if (!(await claimRun($, `prompt:${text}`, action))) {
     $.ui.toast(`"${text}" is already queued`)
     return
   }
@@ -435,7 +491,7 @@ export async function pressSubmit($: $, text: string, onFailed?: (error: unknown
     await report(error)
   }
   // A prompt that did not enter resolves as a drop with its reason; a refused text (a leading `/`) rejects.
-  void $.prompt.submit(isConsoleWords ? { text } : { text, asUser: true }).then(sent => { if (sent.drop !== undefined) return failed(new Error(sent.drop)) }).catch(failed)
+  void $.prompt.submit(isConsoleWords ? { text } : { text, asUser: true }).then(sent => { if (sent.drop !== undefined && sent.drop !== STALE_DROP) return failed(new Error(sent.drop)) }).catch(failed)
 }
 
 /**

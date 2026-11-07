@@ -29,7 +29,7 @@ export const ENGINE_CONTRACT = {
     "step": "check",
     "check": {
       "cycle": 1,
-      "cap": 5,
+      "cap": 10,
       "last": {}
     },
     "pending": {
@@ -104,7 +104,7 @@ export const ENGINE_CONTRACT = {
     "step": "ask",
     "check": {
       "cycle": 1,
-      "cap": 5,
+      "cap": 10,
       "last": {
         "step-back": {
           "changes": 0,
@@ -248,7 +248,7 @@ export const ENGINE_CONTRACT = {
     "step": "check",
     "check": {
       "cycle": 1,
-      "cap": 5,
+      "cap": 10,
       "last": {
         "step-back": {
           "changes": 0,
@@ -619,7 +619,7 @@ export const ENGINE_CONTRACT = {
     "step": "record",
     "check": {
       "cycle": 1,
-      "cap": 5,
+      "cap": 10,
       "last": {
         "step-back": {
           "changes": 0,

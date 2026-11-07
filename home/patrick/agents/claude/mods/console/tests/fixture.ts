@@ -72,6 +72,8 @@ export type World = {
   tokens: number | undefined | 'fails'
   /** `board show --json`'s fields for any id, or an exit code to fail with (`bad`: print text that is no JSON). */
   show: { record: Record<string, unknown>; exit: number; bad: boolean }
+  /** Called after the stand-in engine answered each verb: a test moves the round on from here, as a queued action's delay does. */
+  onVerb: ((verb: string) => void) | null
   verbs: () => string[]
 }
 
@@ -97,6 +99,7 @@ export function world(on: On, init: Partial<Pick<World, 'round' | 'role' | 'surf
     promptError: null,
     tokens: 500_000,
     show: { record: { description: '## Decision\nKeep it.', dependencies: [], issue_type: 'decision', priority: 1, assignee: null, labels: [], comment_count: 0 }, exit: 0, bad: false },
+    onVerb: null,
     verbs: () => w.calls.filter(one => one.argv[0] === PROTOCOL).map(one => one.argv.slice(3).join(' ')),
   }
   const clock = mock.clock(on, { now: 1_000_000 })
@@ -143,18 +146,22 @@ export function world(on: On, init: Partial<Pick<World, 'round' | 'role' | 'surf
     if (argv[0] === 'bash' && argv[1] === REGISTRY && argv[2] === 'state-dir') return ok(`${HOME}/.local/state/agent-sessions\n`)
     if (argv[0] === 'bash' && argv[1] === REGISTRY) return ok({ role: null, ...(w.role ?? {}), session: argv[3] })
     if (argv[0] === PROTOCOL) {
-      if (w.protocolExit !== 0) return { value: { exitCode: w.protocolExit, stdout: '', stderr: 'engine down', isStdoutTruncated: false, isStderrTruncated: false } }
-      const verb = argv[3]
-      if (w.failVerbs.includes(verb as string)) {
-        w.failVerbs.splice(w.failVerbs.indexOf(verb as string), 1)
-        return { value: { exitCode: 1, stdout: '', stderr: 'aborted', isStdoutTruncated: false, isStderrTruncated: false } }
-      }
-      if (verb === 'pending') return ok(w.round.pending ?? null)
-      if (verb === 'status') return ok('round r4 · check 2/3 · next ground')
-      if (verb === 'show' && argv[4] !== '--json') return ok('# round r4')
-      if (verb === 'say') return ok('')
-      if (verb === 'answer') return ok({ ...w.round, echo: engineLine(Object.values(JSON.parse(e.init?.stdin ?? '{}').answers ?? {}) as string[]) })
-      return ok(w.round)
+      const served = (() => {
+        if (w.protocolExit !== 0) return { value: { exitCode: w.protocolExit, stdout: '', stderr: 'engine down', isStdoutTruncated: false, isStderrTruncated: false } }
+        const verb = argv[3]
+        if (w.failVerbs.includes(verb as string)) {
+          w.failVerbs.splice(w.failVerbs.indexOf(verb as string), 1)
+          return { value: { exitCode: 1, stdout: '', stderr: 'aborted', isStdoutTruncated: false, isStderrTruncated: false } }
+        }
+        if (verb === 'pending') return ok(w.round.pending ?? null)
+        if (verb === 'status') return ok('round r4 · check 2/3 · next ground')
+        if (verb === 'show' && argv[4] !== '--json') return ok('# round r4')
+        if (verb === 'say' || verb === 'dropped') return ok('')
+        if (verb === 'answer') return ok({ ...w.round, echo: engineLine(Object.values(JSON.parse(e.init?.stdin ?? '{}').answers ?? {}) as string[]) })
+        return ok(w.round)
+      })()
+      w.onVerb?.(argv[3] as string)
+      return served
     }
     if (argv[0] === BOARD) {
       if (argv[1] === 'console') return ok({ counts: { questions: 188, decided: 0, toPlan: 82, inReview: 14, forUser: 3 }, items: w.items, sessions: w.sessions, held: w.held, sync: w.sync, queueLine: w.queueLine })

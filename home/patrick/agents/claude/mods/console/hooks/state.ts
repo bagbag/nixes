@@ -18,8 +18,8 @@ const roundErrorState = atom({ plugin: 'console', key: 'roundError' } as const, 
 const printedState = atom({ plugin: 'console', key: 'printed' } as const, null)
 const askSentState = atom({ plugin: 'console', key: 'askSent' } as const, null)
 const boardState = atom({ plugin: 'console', key: 'board' } as const, null, { shape: 'board-4' })
-const passState = atom({ plugin: 'console', key: 'pass' } as const, null, { shape: 'pass-3' })
-const queuedState = atom({ plugin: 'console', key: 'queued' } as const, [], { shape: 'queued-1' })
+const passState = atom({ plugin: 'console', key: 'pass' } as const, null, { shape: 'pass-4' })
+const queuedState = atom({ plugin: 'console', key: 'queued' } as const, [], { shape: 'queued-2' })
 const gateState = atom({ plugin: 'console', key: 'gate' } as const, [], { shape: 'gate-1' })
 const lensState = atom({ plugin: 'console', key: 'lenses' } as const, { 'step-back': [], ground: [], focus: '' } as ConsoleLenses, { shape: 'lenses-1' })
 const refreshState = atom({ plugin: 'console', key: 'refresh' } as const, { since: null, again: false } as ConsoleRefresh, { shape: 'refresh-1' })
@@ -61,6 +61,7 @@ export async function setBoard($: $, value: ConsoleBoard | null): Promise<void> 
 export async function getPass($: $): Promise<ConsolePassRun | null> { return read($, passState) }
 export async function setPass($: $, value: ConsolePassRun | null): Promise<void> { await update($, passState, () => value) }
 
+export async function getQueued($: $): Promise<ConsoleQueued> { return read($, queuedState) }
 export async function updateQueued($: $, change: (queued: ConsoleQueued) => ConsoleQueued): Promise<void> { await update($, queuedState, change) }
 
 export async function getGate($: $): Promise<string[]> { return read($, gateState) }

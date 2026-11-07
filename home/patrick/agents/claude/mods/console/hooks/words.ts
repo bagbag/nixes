@@ -231,6 +231,12 @@ export const openDialogText = (marker: string): string => `Open the dialog for b
 /** The console asks the model once for a report it did not give. */
 export const missingReportText = (command: string, id: string): string => `The /${command} pass (${id}) ended without its report. Report its per-question updates through the protocol tool.`
 
+/** Why the console drops a stale queued prompt: the host hands this back to the console's own send, which expects it. */
+export const STALE_DROP = 'stale console action'
+
+/** Replaces the skill text of a queued pass run the round has left. */
+export const STALE_PASS_TEXT = "This pass is no longer pending; reply 'stale' and end your turn."
+
 /** A pass that still has no report: the round stopped, and what the person can type. */
 export const stuckPassText = (command: string, args: string): string => `The round stopped: the /${command} pass has no report. Type /${[command, args].filter(part => part !== '').join(' ')} to run it again.`
 

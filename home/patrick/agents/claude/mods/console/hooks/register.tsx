@@ -6,9 +6,9 @@ import type { EngineInterface, Register } from 'claude-code'
 import type { ConsoleStart } from '../types'
 
 import {
-  betweenTurns, context, failOpen, message, notice, openDialog, PANE, placeholderMarker, pressRun, pressSubmit, recordPass, refreshAll, refreshBoard, refreshLater,
+  betweenTurns, context, dropIfStale, failOpen, message, notice, openDialog, PANE, placeholderMarker, pressRun, pressSubmit, recordPass, refreshAll, refreshBoard, refreshLater,
   refreshRole, refreshRound, releaseRun, resetSession, deliverDialogOutcome, stampReleaseRun, withContext,
-  midTurnBuiltin, setQuestionsAnswered,
+  midTurnBuiltin, setQuestionsAnswered, staleDelivery, startedPass,
 } from './core'
 import { answer, boardShow, decline, isRoundOpen, pass, pending as readPending, protocol, RELEASE_COMMAND, say, statusLine, toolArgv } from './engine'
 import { capture, judgeDialog } from './gate'
@@ -16,7 +16,7 @@ import type { DialogInput } from './gate'
 import { drawBand, drawPane, PANE_MIN_COLUMNS, suggestions } from './pane'
 import { addGate, deferCommand, getBoard, getGate, getPass, getPrinted, getRole, getRound, getStart, releaseRefresh, setAskSent, setPaneDismissed, setPass, setPrinted, setRound, setStart, takeDeferred } from './state'
 import {
-  compactedNote, consoleText, DECLINED_TEXT, declinedNote, keepRoundText, NO_QUESTION_TEXT, keepStartText, protocolCallText, protocolResultText, startAbandonedText, TOOL_FAILED_TEXT, TOOL_IDLE_TEXT, unsavedNote,
+  compactedNote, consoleText, DECLINED_TEXT, declinedNote, keepRoundText, NO_QUESTION_TEXT, keepStartText, protocolCallText, protocolResultText, STALE_PASS_TEXT, startAbandonedText, TOOL_FAILED_TEXT, TOOL_IDLE_TEXT, unsavedNote,
 } from './words'
 
 const PROTOCOL_TOOL = 'mcp__console__protocol'
@@ -102,6 +102,10 @@ export const register: Register = on => {
     }
     const captured = capture(verdict.marker, ran)
     if (captured.kind === 'none') return ran
+    if (await dropIfStale($, { kind: 'batch', marker: verdict.marker })) {  // the batch moved on while the dialog was open: nothing to record or announce
+      if (placeholder !== null) deliverDialogOutcome($, verdict.marker, ctx.session, { summary: '', note: null, isDropped: true })
+      return ran
+    }
     const declined = DECLINED_TEXT
     try {
       const recorded = captured.kind === 'answer'
@@ -154,8 +158,9 @@ export const register: Register = on => {
   on('skill.prompt', async ($, e, next) => {
     const skill = e.skill.slice(e.skill.lastIndexOf(':') + 1)
     await releaseRun($, key => key === skill || key.startsWith(`${skill} `))
-    const run = await getPass($)
-    if (run !== null && run.phase === 'queued' && run.command === skill) await setPass($, { ...run, phase: 'started' })
+    const started = await startedPass($, skill)
+    if (started?.isStale) return next({ ...e, text: STALE_PASS_TEXT })
+    if (started !== null) await setPass($, { ...started.run, phase: 'started' })
     return next(e)
   }).catch(($, e, next) => next(e))
 
@@ -167,6 +172,10 @@ export const register: Register = on => {
   // Chat-typed messages of the person reach the engine's quote check (R-B9).
   on('prompt.submit', async ($, e, next) => {
     const origin = e.origin.kind
+    if (e.origin.kind === 'plugin' && e.origin.name === 'console') {
+      const stale = e.command === undefined ? await staleDelivery($, e.text).catch(() => null) : null
+      if (stale !== null) return { drop: stale }
+    }
     const isPerson = (origin === 'composer' || origin === 'bridge') && e.isMeta !== true
     if (isPerson && e.turnId !== undefined && e.command === undefined) {
       // Sent during a turn: a built-in command runs when the turn ends, ahead of anything the console starts (user, 2026-11-06); anything

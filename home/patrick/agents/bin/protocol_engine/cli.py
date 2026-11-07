@@ -43,7 +43,7 @@ from .seeds import next_text, proposal_row, set_proposal
 from .views import (
     headline, history_events, history_text, instructions, show_json, show_markdown, show_questions, status_line
 )
-from .verbs import answer, answered_line, decline, edit_round, prune, require_origin, restart
+from .verbs import answer, answered_line, decline, drop_report, edit_round, prune, require_origin, restart
 
 
 # CLI
@@ -156,7 +156,7 @@ def cli(argv: list[str]) -> int:
     origin = Parser(add_help=False, allow_abbrev=False)
     origin.add_argument('--origin', help='who caused the call: answer dialog|chat|model-reported, decline '
                                          'dialog|model-reported, pass composer|bridge|press|plugin|model, say '
-                                         'composer|bridge; other verbs model')
+                                         'composer|bridge, dropped plugin; other verbs model')
     commands = parser.add_subparsers(dest='command', required=True)
 
     def verb(name: str, text: str):
@@ -180,6 +180,7 @@ def cli(argv: list[str]) -> int:
     verb('edit', "apply the user's requested change to the questions (stdin {\"updates\", \"quote\"}); no pass for wording, options "
                  "or a mark lowered to lean; a new question or changed recommendation gets the scoped check, a raise to strong one challenge")
     verb('say', "store the person's message for the chat quote check (stdin {\"text\"})")
+    verb('dropped', 'the console dropped a stale action (stdin {"kind": "pass", "id"} or {"kind": "batch", "marker"})')
     sub = verb('restart', 'questions back to draft after a criterion answer; the check loop reruns')
     sub.add_argument('ids', nargs='+')
     sub.add_argument('--reason')
@@ -283,6 +284,9 @@ def run(ctx: Context, args) -> str:
         ctx.messages.insert(0, note)
         ctx.complete = True  # the console does not forward this note: nothing here counts as told
         return json.dumps({**show_json(ctx), 'note': instructions(ctx)}, indent=1, ensure_ascii=False)
+    if command == 'dropped':  # a late drop may follow the round's close
+        drop_report(ctx, report)
+        return ''
     r = ctx.round
     if not r or r['step'] == 'closed':
         fail('no open round: protocol start round')

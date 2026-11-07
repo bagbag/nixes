@@ -12,7 +12,7 @@ VERSION = 1  # the show --json contract and the state file schema
 BIN = Path(__file__).resolve().parent.parent  # the bin folder: this package's parent
 REGISTRY = BIN / 'session-lead-mode'
 BOARD = BIN / 'board'
-CHECK_CAP = 5  # check cycles before the machine asks the user how to go on
+CHECK_CAP = 10  # check cycles before the machine asks the user how to go on
 BATCH = 4  # AskUserQuestion takes 1-4 questions
 HEADER_MAX = 12  # AskUserQuestion's header chip
 # Lengths: the Stage text states the targets; a report is refused only above the limit, since a model cannot count exactly and
@@ -35,12 +35,14 @@ PASSES = ('step-back', 'ground', 'challenge-rulings')
 PASS_ORIGINS = ('composer', 'bridge', 'press', 'plugin', 'model')
 AWAY = 'away'  # the origin of an answer an away round took from the recommendation: no verb accepts it, so no person origin passes as it (r28-q128)
 SETTLES = ('act', 'park')
+DROP_KINDS = ('pass', 'batch')  # what a dropped console action was: a pass run or prompt, a batch's dialog
 EXPLORED_VERDICTS = ('kept', 'dropped')
 VERB_ORIGINS = {
     'answer': ('dialog', 'chat', 'model-reported'),  # model-reported: Codex sessions only
     'decline': ('dialog', 'model-reported'),
     'pass': PASS_ORIGINS,
     'say': ('composer', 'bridge'),  # the person's own messages, stored for the chat quote check
+    'dropped': ('plugin',),  # a stale console action the console did not deliver (r3-q10)
 }
 COLLECT_VIEWS = 'decided,questions,ratification,review,user'
 LIST_COMMAND = f'board health --items {COLLECT_VIEWS}'  # lists the open items Collect offers, but for the ready milestones and finished epics `board position` lists

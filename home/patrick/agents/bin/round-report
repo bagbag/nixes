@@ -65,7 +65,7 @@ def report(since: datetime.datetime | None) -> tuple[str, set[str]]:
             counts['picked'] += len(event.get('questions') or [])
             counts['typed'] += len(event.get('typed') or [])
             counts['think more'] += len(event.get('thinkMore') or [])
-        elif kind in ('edited', 'restart', 'late-change', 'asked'):
+        elif kind in ('edited', 'restart', 'late-change', 'asked', 'dropped'):
             counts[kind] += 1
     rows = []
     for key, done in sorted(passes.items(), key=lambda pair: -len(pair[1])):
@@ -78,7 +78,8 @@ def report(since: datetime.datetime | None) -> tuple[str, set[str]]:
              f"batches asked: {counts['asked']}",
              f"answers: {answers}; picked {counts['picked']}, typed {counts['typed']} ({100 * counts['typed'] // max(answers, 1)}%), think more {counts['think more']}",
              f"edits: {counts['edited']}; restarts: {counts['restart']}",
-             f"late changes (a recommendation changed after the person saw it): {counts['late-change']}"]
+             f"late changes (a recommendation changed after the person saw it): {counts['late-change']}",
+             f"stale console actions dropped: {counts['dropped']}"]
     return '\n'.join(lines), sessions
 
 

@@ -117,8 +117,8 @@ Follow the engine's output; the steps below add the judgment it leaves to you.
    records. Close ratified `needs_ratification` records under the same
    reference.
 
-Apply a change the user asks for to staged questions through `protocol edit`
-with their words as the quote, not through a pass.
+Apply a change the user asks for to the round's questions through
+`protocol edit` with their words as the quote, not through a pass.
 
 **Stop:** an answer states a criterion, or a later step changes the premise:
 restart the affected questions under the decision protocol's

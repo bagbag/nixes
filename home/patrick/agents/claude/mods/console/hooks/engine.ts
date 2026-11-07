@@ -4,7 +4,7 @@
 import type { EngineInterface } from 'claude-code'
 
 import type {
-  ConsoleAgent, ConsoleBoard, ConsoleCounts, ConsoleDialogQuestion, ConsoleHeld, ConsoleItem, ConsolePassOrigin, ConsolePending, ConsoleProgress, ConsoleProposal, ConsoleQuestion,
+  ConsoleAction, ConsoleAgent, ConsoleBoard, ConsoleCounts, ConsoleDialogQuestion, ConsoleHeld, ConsoleItem, ConsolePassOrigin, ConsolePending, ConsoleProgress, ConsoleProposal, ConsoleQuestion,
   ConsoleRecord, ConsoleRole, ConsoleRound, ConsoleSession,
 } from '../types'
 
@@ -78,6 +78,13 @@ export async function pass($: $, session: string, origin: ConsolePassOrigin, inp
   return parseRound(await protocolJson($, session, ['pass', '--origin', origin], input))
 }
 
+/** Tells the engine the console dropped a stale action (logged in the round's history). */
+export async function dropped($: $, session: string, action: ConsoleAction): Promise<void> {
+  const report = action.kind === 'pass' ? { kind: action.kind, id: action.id } : { kind: action.kind, marker: action.marker }
+  const ran = await protocol($, session, ['dropped', '--origin', 'plugin'], JSON.stringify(report))
+  if (ran.exitCode !== 0) throw new EngineError(`protocol dropped: exit ${ran.exitCode}: ${ran.stderr.trim()}`)
+}
+
 /** The skill a typed or pressed command runs as the person's conditional approval of the release (r4-q16). */
 export const RELEASE_COMMAND = 'release-round'
 
@@ -104,7 +111,7 @@ function isStampedFlag(arg: string): boolean {
 const STAMPED_FLAGS: readonly string[] = ['--origin', '--session']
 
 /** Verbs only the mod relays from person-origin events or its own observation. */
-const MOD_ONLY_VERBS: readonly string[] = ['decline', 'say', 'pass']
+const MOD_ONLY_VERBS: readonly string[] = ['decline', 'say', 'pass', 'dropped']
 
 /**
  * The argv the model's tool may run, or why not. The tool stamps origins itself: `answer` is

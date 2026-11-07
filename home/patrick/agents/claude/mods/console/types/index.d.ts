@@ -143,10 +143,13 @@ export type ConsoleBoard = {
 export type ConsoleRole = { session: string; role: string; actor: string; tool: string }
 
 /** The machine-run pass this console started, by pending id (R-B4). */
-export type ConsolePassRun = { id: string; command: string; phase: 'queued' | 'started' | 'asked' | 'noted' }
+export type ConsolePassRun = { id: string; command: string; args: string; phase: 'queued' | 'started' | 'asked' | 'noted' }
 
-/** Runs a press queued that have not started yet (repeat-press guard). */
-export type ConsoleQueued = { key: string; at: number }[]
+/** What a queued console action was queued for: the engine's pending pass, or an issued batch (isStale decides whether the round still holds it). */
+export type ConsoleAction = { kind: 'pass'; id: string; command: string; args: string } | { kind: 'batch'; marker: string }
+
+/** Runs a press queued that have not started yet (repeat-press guard); a prompt carries its action, re-checked where it is delivered. */
+export type ConsoleQueued = { key: string; at: number; action?: ConsoleAction }[]
 
 export type ConsoleLenses = { 'step-back': string[]; ground: string[]; focus: string }
 

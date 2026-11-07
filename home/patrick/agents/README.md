@@ -327,11 +327,15 @@ A round:
   with the input `protocol show` gives; so does a run of the command its hook never
   answered, after printing any new text as a notice. There is no Ask button. At most one dialog per
   batch marker opens until the person sends a new message (a composer or bridge message
-  clears it). The dialog gate still blocks a
-  marked dialog whose notice is not printed yet once, telling the lead to end its turn. After a
-  reply the person typed instead of picking, the lead answers it as the turn's last
-  text (restating it in one line when it could be read more than one way), never in
-  the same turn as the dialog, and ends the turn; the console reopens the dialog, also
+  clears it) and none is open. The host queues what the console sends and cannot recall
+  it, so a console action is checked where it is delivered: a pass run the round has left
+  becomes a no-op, and a prompt or dialog outcome for a pass or batch the round has left
+  is dropped, each logged with `dropped`; the person's own messages are never dropped.
+  The dialog gate still blocks a marked dialog whose notice is not printed yet once,
+  telling the lead to end its turn. After a reply the person typed instead of
+  picking, the lead answers it as the turn's last text (restating it in one line
+  when it could be read more than one way), never in the same turn as the dialog,
+  and ends the turn; the console reopens the dialog, also
   when nothing new prints. A dialog result the model reads first (typed text, a note,
   a free reply, a follow-up request) holds every next batch (round `reading`): the
   lead's `step {}` or pass report, a chat answer, an edit or a restart releases it, so
@@ -373,8 +377,8 @@ A round:
   reason there is no other way, and is refused without it; a
   `confirm-own-rulings` question is skipped; the dropped ideas print under the
   options), then step-back and
-  ground until a cycle changes nothing (cap 5 cycles, then a dialog whose
-  Continue adds 5; an open round keeps its stored cap), then the refine pair
+  ground until a cycle changes nothing (cap 10 cycles, then a dialog whose
+  Continue adds 10; an open round keeps its stored cap), then the refine pair
   once (round-wide `step-back decisions clean overfit mechanics`, then
   `ground assumptions board sources probe`; a change in either reruns the Base
   loop under the cap, and the pair does not repeat), one targeted
@@ -457,7 +461,11 @@ A round:
   dialog answer counts only as an option pick: typed text returns its
   question to the model with the words stored for the quote check (an
   option, a criterion or a request such as explain, which it runs before
-  `step` asks again), and a pick's note reaches the model and Record.
+  `step` asks again), and a pick's note reaches the model and Record. The console
+  reports each stale action it dropped (`dropped`, origin `plugin`; stdin
+  `{"kind": "pass", "id"}` or `{"kind": "batch", "marker"}`): the history logs it,
+  and a dropped pass run removes that pass's observed run, not a newer run of the
+  same command.
 - Away rounds (r28-q126..q131, r29): the registered role says whether the person can
   answer, in Claude and Codex alike (the engine reads it from the registry entry as
   it reads the tool): `autopilot` means away, `solo` means back. At Ask while away

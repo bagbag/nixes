@@ -3,7 +3,7 @@
 import { describe, expect, test } from 'claude-code/testing'
 
 import { BATCH, engineLine, NO_ROUND, notes, notices, PROTOCOL, roundJson, SESSION, world } from './fixture'
-import { holdsQuestions } from '../hooks/core'
+import { holdsQuestions, openDialog } from '../hooks/core'
 import { openDialogText } from '../hooks/words'
 
 const start = async ($: any) => $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
@@ -81,7 +81,7 @@ describe('tool', () => {
   test('refuses a caller origin, session, and the verbs the console relays', async ($, on) => {
     const { w } = world(on)
     await start($)
-    for (const args of [['answer', '--origin', 'dialog'], ['answer', '--orig', 'dialog'], ['show', '--o=dialog'], ['step', '--session=x'], ['step', '--sess', 'x'], ['decline'], ['say'], ['pass']]) {
+    for (const args of [['answer', '--origin', 'dialog'], ['answer', '--orig', 'dialog'], ['show', '--o=dialog'], ['step', '--session=x'], ['step', '--sess', 'x'], ['decline'], ['say'], ['pass'], ['dropped']]) {
       const ran = await $.tool.call({ tool: 'mcp__console__protocol', args } as never)
       expect(String(ran.result)).toMatch(/^Refused/)
     }
@@ -205,7 +205,7 @@ describe('dialog gate and capture', () => {
         const asked: string[] = []
         on('tool.call', { tool: 'AskUserQuestion' }, (_, e) => {
           asked.push(String((e as any).metadata?.source))
-          if (asked.length === 1) w.round = roundJson({ step: 'ask', batch: { ...BATCH, marker: 'round:r4:3', notice: '' } })
+          if (asked.length === 1) w.onVerb = verb => { if (verb === 'answer') w.round = roundJson({ step: 'ask', batch: { ...BATCH, marker: 'round:r4:3', notice: '' } }) }
           return answered({ [QUESTION]: label }) as never
         })
         await start($)
@@ -223,7 +223,7 @@ describe('dialog gate and capture', () => {
       test('a plain pick wakes the model with the answers line, and its turn end runs the pending pass', async ($, on) => {
         const { w, clock } = world(on, { round: asking() })
         on('tool.call', { tool: 'AskUserQuestion' }, () => {
-          w.round = roundJson({ step: 'check', batch: null, pending: { id: 'p9', command: 'challenge-rulings', args: 'q1' } })
+          w.onVerb = verb => { if (verb === 'answer') w.round = roundJson({ step: 'check', batch: null, pending: { id: 'p9', command: 'challenge-rulings', args: 'q1' } }) }
           return answered({ [QUESTION]: label }) as never
         })
         await start($)
@@ -239,7 +239,7 @@ describe('dialog gate and capture', () => {
       test('a typed reply or a note wakes the model even with a next batch out', async ($, on) => {
         const { w, clock } = world(on, { round: asking() })
         on('tool.call', { tool: 'AskUserQuestion' }, () => {
-          w.round = roundJson({ step: 'ask', batch: { ...BATCH, marker: 'round:r4:3', notice: '' } })
+          w.onVerb = verb => { if (verb === 'answer') w.round = roundJson({ step: 'ask', batch: { ...BATCH, marker: 'round:r4:3', notice: '' } }) }
           return answered({ [QUESTION]: 'my own words' }) as never
         })
         await start($)
@@ -360,6 +360,16 @@ describe('dialog gate and capture', () => {
           expect(holdsQuestions('not now, later')).toBe(false)  // free text under "Other"
         })
 
+        // Not now touches nothing past ui.ask, so a stub reaches it; Open the questions needs the console's own $, out of the kit's reach.
+        test('Not now sends nothing: the batch waits for the person', async ($, on) => {
+          const { w, clock } = world(on, { round: asking() })
+          await start($)
+          const notNow = { ...$, ui: { ...$.ui, ask: async () => 'Not now' } }
+          await openDialog(notNow as never, BATCH.marker, SESSION)
+          await clock.settle()
+          expect(w.prompts).toEqual([])
+        })
+
         // A held batch (Not now) leaves askSent set, so the repeat guard is what keeps the console from asking again.
         test('a batch whose dialog was left unhandled is not opened again at later turn ends, only after the person writes', async ($, on) => {
           const { w, clock } = world(on, { round: asking() })
@@ -382,6 +392,7 @@ describe('dialog gate and capture', () => {
         const { w, clock } = world(on, { round: asking() })
         await start($)
         await $.turn.complete(complete())
+        await clock.settle()  // the first message is sent while its batch is out: one sent after the round moved on is dropped
         w.round = roundJson({ step: 'ask', batch: { ...BATCH, marker: 'round:r4:3', notice: NOTICE } })
         await $.tool.call({ tool: 'mcp__console__protocol', args: ['show', '--json'] } as never)
         await $.turn.complete(complete())
