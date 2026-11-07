@@ -16,8 +16,6 @@ from .check import gate_ask, leave_check, next_cycle, nothing_to_check, rescope_
 from .ask import batch_back, take_unchecked, unchecked
 
 
-# Write verbs relayed by the console (and the Codex model-reported path).
-
 def require_origin(ctx: Context, verb: str, origin: str | None) -> None:
     allowed = VERB_ORIGINS.get(verb, ('model',))
     if origin is None and verb not in VERB_ORIGINS:
@@ -91,9 +89,9 @@ def mark_unchecked(ctx: Context, before: dict[str, tuple]) -> None:
 
 def edit_round(ctx: Context, report: dict) -> str:
     """The user's requested change to the questions: the quote must appear in a message the console relayed (or a typed
-    dialog text) in this round, also one sent before the questions went out (Codex quotes verbatim). Changes apply
-    without a pass and a batch that is out comes back and goes out again, except an edit that only adds questions, which
-    leaves it out. A new question or a changed recommendation then gets the scoped check, a raise to strong one
+    dialog text) in this round, also one sent before the questions went out (Codex has no relay: its quote is not checked).
+    Changes apply without a pass and a batch that is out comes back and goes out again, except an edit that only adds
+    questions, which leaves it out. A new question or a changed recommendation then gets the scoped check, a raise to strong one
     challenge-rulings pass, before it is asked (`mark_unchecked`): at the hand-over, or at once when nothing else waits."""
     r = ctx.round
     if r['protocol'] != 'round' or r['step'] not in ('related', 'check', 'ask'):
@@ -230,8 +228,7 @@ def answer(ctx: Context, report: dict, origin: str) -> str:
     if batch['cap']:
         if not answers:
             fail('the cap question has no answer')
-        note = cap_decision(ctx, next(iter(answers.values())), origin)
-        return note
+        return cap_decision(ctx, next(iter(answers.values())), origin)
     batch_seen(ctx, batch)
     now = utcnow()
     done, typed, noted, rethink = [], [], [], []

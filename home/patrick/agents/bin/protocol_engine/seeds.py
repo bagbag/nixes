@@ -30,7 +30,7 @@ def seeds(ctx: Context, found: dict, position: dict) -> list[dict]:
     return ordered[:SEEDS]
 
 
-def topic_counts(ctx: Context, items: list[dict]) -> list[str]:
+def topic_counts(items: list[dict]) -> list[str]:
     """Open questions per topic label and priority, `orm-schema-migrations 7 p1, 7 p2`, the largest topic first
     (r24-q104, q105): the lead weighs priority against how many questions a round settles. A topic label only approximates a
     premise, so a count is an upper bound for a round on it; a question with two topic labels counts under both."""
@@ -70,7 +70,7 @@ def next_text(ctx: Context) -> str:
         words.SEEDS_HEAD if ctx.board else '',
         *([words.seed_line(seed, priority_of(seed)) for seed in seeded] or ([words.SEEDS_NONE] if ctx.board else [])),
         items_text(ctx, items, elsewhere, waiting),
-        *(topic_counts(ctx, items) if ctx.board else []),
+        *(topic_counts(items) if ctx.board else []),
         *words.proposal_text(ctx.state.get('proposal')),
         words.next_recommend(),
     )

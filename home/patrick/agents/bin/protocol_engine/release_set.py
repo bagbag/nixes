@@ -39,10 +39,6 @@ def in_set(ctx: Context) -> list[str]:
     return [rec['id'] for rec in ctx.round['set'] if rec['state'] in ('set', 'revised')]
 
 
-def revised(ctx: Context) -> list[str]:
-    return [rec['id'] for rec in ctx.round['set'] if rec['state'] == 'revised']
-
-
 def scoped_records(ctx: Context) -> list[str]:
     """The revised records whose Decision text changed: only these get the scoped passes (r24-q102)."""
     return [rec['id'] for rec in ctx.round['set'] if rec['state'] == 'revised' and rec.get('decisionChanged', True)]

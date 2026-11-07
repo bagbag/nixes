@@ -6,8 +6,8 @@ from . import words
 
 
 # What a session was told, in one place: `state['told']`, a list of keys, cleared by `protocol compacted` (r17-q62, q63, q67,
-# r18-q68..q70). Keys: `format:<step>` (a step's report format), `ask`, `owners`, `items`, and per check cycle
-# `cycle:<what>:<round>:<check run>.<cycle>` (the question list).
+# r18-q68..q70). Keys: `format:<step>` (a step's report format), `ask`, `owners`, `items`, `same-options:<round>:<ids>` (advice on
+# questions offering identical options), and per check cycle `cycle:<what>:<round>:<check run>.<cycle>` (the question list).
 
 def first_time(ctx: Context, key: str) -> bool:
     """True when this session was not told `key` since its last compaction, and records it. A read the model asked for says

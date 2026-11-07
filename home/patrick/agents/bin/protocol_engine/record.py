@@ -30,7 +30,7 @@ def record_text(ctx: Context) -> str:
     )
 
 
-def record_file(ctx: Context, q: dict, fields: dict) -> str:
+def record_file(q: dict, fields: dict) -> str:
     chosen = q['answer'] or ''
     # AskUserQuestion answers carry the chosen labels (comma-joined for multiSelect) or the user's own words.
     picked = {part.strip() for part in chosen.split(',')}
@@ -222,7 +222,7 @@ def record_accept(ctx: Context, report: dict) -> str:
             ctx.log('deferred', question=q['id'], reason=deferred[q['id']])
             continue
         path = folder / f"{ctx.round['id']}-{q['id']}.md"
-        path.write_text(record_file(ctx, q, records[q['id']]), encoding='utf-8')
+        path.write_text(record_file(q, records[q['id']]), encoding='utf-8')
         q['recordFile'] = str(path)
         if not ctx.board:
             q['recorded'] = 'file'

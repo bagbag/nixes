@@ -199,7 +199,10 @@ def ask_accept(ctx: Context, report: dict) -> str:
         _, changes, _ = record_pass(ctx, report)
         if changes:
             waiting = take_unchecked(ctx)
-            rescope_check(ctx, waiting) if waiting else fresh_check(ctx)
+            if waiting:
+                rescope_check(ctx, waiting)
+            else:
+                fresh_check(ctx)
             return 'check'
     return 'ask'
 
