@@ -543,8 +543,8 @@ def answer_typed_note(qid: str, typed: str) -> str:
             f'{qid} goes out again and act on each part: an option it picks → the ["answer"] call with the option\'s label '
             f'and that text as quote; a criterion → `protocol restart {qid}`; a change to the questions → `protocol edit` '
             f'(updates + the quote); another request (explain, step back, ground, …) → run it on {qid}; a reply that changes '
-            f'{qid} (its recommendation included) → a pass report updating it. Restate the reply in one line when it could be '
-            'read more than one way.')
+            f'{qid} (its recommendation included) → call a pass\'s skill on it, then report that pass. Restate the reply in one '
+            'line when it could be read more than one way.')
 
 
 def answer_response(response: str) -> str:
@@ -1104,7 +1104,7 @@ def next_recommend() -> str:
             '`estimate`: the questions the round settles and the board items that wait on its answers, downstream included. '
             'Record the proposal with `protocol next --set` (stdin '
             + json_block({'rounds': [{'title': '<the topic in plain words>', 'summary': '<what the round decides and what its questions share>',
-                                      'estimate': {'questions': '<n>', 'unblocks': '<n>'},
+                                      'estimate': {'questions': 2, 'unblocks': 6},
                                       'why': '<why this topic, and the priority/size trade>', 'fresh': False,
                                       'ids': ['<a question that must lead (optional)>']}]})
             + f'): at most {PROPOSAL_ROUNDS} rounds, the one that reuses the read context first with fresh false, other topics with '

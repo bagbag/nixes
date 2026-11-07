@@ -4671,6 +4671,9 @@ def validate_protocol(root: Path, part: str) -> None:
                 raise ValueError(f"protocol next must count the open questions by topic and priority and tell the lead to weigh them:\n{out}")
             if "Open questions by topic" not in proto("next", cwd=repo).stdout:
                 raise ValueError("the topic counts print every time, not once between compactions")
+            # The printed example passes the check it describes (r28, r30, r34: quoted "<n>" estimates were copied and refused).
+            example = json.loads(re.search(r'\{"rounds": .*?\}\]\}', out).group(0))
+            proto("next", "--set", stdin={"rounds": [{k: v for k, v in one.items() if k != "ids"} for one in example["rounds"]]}, cwd=repo)
             good = {"rounds": [{"title": "Member questions", "summary": "How the members share one cache, and what that leaves open.",
                                 "estimate": {"questions": 2, "unblocks": 6}, "why": "same module as the context read; p1 first", "fresh": False},
                                {"title": "Plain question", "summary": "A question no member covers, the highest priority outside a milestone.",
@@ -5378,6 +5381,7 @@ def validate_protocol(root: Path, part: str) -> None:
                     or '"explain this" instead of picking' not in result["note"] or 'with the note "but log it"' not in result["note"] \
                     or not result["note"].startswith(f"{result['round']} · answered q") or "; typed " + typed["id"] not in result["note"] \
                     or "Restate the reply in one line when it could be read more than one way." not in result["note"] \
+                    or f"a reply that changes {typed['id']} (its recommendation included) → call a pass's skill on it, then report that pass" not in result["note"] \
                     or result["note"].count("Count a pick as the answer when the rest of the reply or note questions only a detail") != 1:
                 raise ValueError(f"protocol must hold a typed dialog answer for the model and pass on a pick's note, with the restate "
                                  f"line and the pick-and-detail rule once: {result}")

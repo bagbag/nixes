@@ -19,9 +19,11 @@ pass: the stance on the current focus, judged by the default criteria.
 
 Judge greenfield: previous rulings, contracts and current usages are no
 authority. Find the cleanest end state, keeping DX in mind; then judge the
-whole picture: is the combined result clean and coherent? Ground and think
-yourself until you have strong recommendations; where none is strong, list the
-decisive trade-offs.
+whole picture: is the combined result clean and coherent? Name each known bad
+practice in the design, a recommendation or a requested behavior, with its
+source; push back and recommend the established practice instead. Ground and
+think yourself until you have strong recommendations; where none is strong,
+list the decisive trade-offs.
 
 ## Where
 
@@ -53,6 +55,7 @@ focus; keep the other default criteria to a line each.
   cases?
 - **mechanics:** how each part actually works end to end, and what breaks.
 - **options:** find radically different ways to solve the problem: other
-  mechanisms, other owners, or removing the need, not variants. Argue each at
-  its strongest; drop one only for a stated constraint or sourced fact. Say for
-  each whether it is kept or dropped, and why.
+  mechanisms, other owners, or removing the need, not variants, plus the
+  established practice. Argue each at its strongest; drop one only for a
+  stated constraint or sourced fact. Say for each whether it is kept or
+  dropped, and why.

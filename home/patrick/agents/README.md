@@ -365,11 +365,12 @@ A round:
   which also digs into the real problem behind the ask and whether the design
   fixes its root; its changes flow on, and new or reworded drafts are searched
   through Related first), then the options pass once (`step-back options`, r30-q142:
-  radically different ways, other mechanisms or owners or removing the need, each
-  argued at its strongest; the report carries `explored`, per question a list of
-  `{idea, verdict: kept|dropped, why}` or the reason there is no other way, and is
-  refused without it; a `confirm-own-rulings` question is skipped; the dropped
-  ideas print under the options), then step-back and
+  radically different ways, other mechanisms or owners or removing the need, plus
+  the established practice, each argued at its strongest; the report carries
+  `explored`, per question a list of `{idea, verdict: kept|dropped, why}` or the
+  reason there is no other way, and is refused without it; a
+  `confirm-own-rulings` question is skipped; the dropped ideas print under the
+  options), then step-back and
   ground until a cycle changes nothing (cap 5 cycles, then a dialog whose
   Continue adds 5; an open round keeps its stored cap), then the refine pair
   once (round-wide `step-back decisions clean overfit mechanics`, then
