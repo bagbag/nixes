@@ -1,6 +1,6 @@
 // /console-continue (r7-q24): the turn-end decision on the person's request, for a round that stalled. It queues the pending
-// pass whatever became of its stored run but a run still in hand, reopens the issued batch past the repeat guard, wakes the model
-// at Record or a release step, and logs each use with what it did (`nudged`).
+// pass whatever became of its stored run but a run still in hand, reopens the issued batch past the repeat guard, else wakes the
+// model at the open step (r8-q26), and logs each use with what it did (`nudged`).
 import { describe, expect, test } from 'claude-code/testing'
 
 import { BATCH, engineLine, NO_ROUND, notices, roundJson, SESSION, world } from './fixture'
@@ -149,14 +149,22 @@ describe('/console-continue', () => {
     expect(notices(session).some(text => text.includes('reading the round\'s status failed'))).toBe(true)
   })
 
-  test('at another step with nothing to start, it says so with the status line and wakes nobody', async ($, on) => {
-    const { w, clock, session } = world(on, { round: roundJson({ step: 'stage', batch: null }) })
+  test('at stage with nothing to start, wakes the model too (r8-q26)', async ($, on) => {
+    const { w, clock } = world(on, { round: roundJson({ step: 'stage', batch: null }) })
     await start($)
     await clock.settle()
     await proceed($, clock)
-    expect(w.prompts).toEqual([])
-    expect(notices(session).some(text => text.includes('nothing to continue at stage') && text.includes(STATUS))).toBe(true)
-    expect(nudges(w).map(one => one.report)).toEqual([{}])
+    expect(w.prompts).toEqual([continueText(STATUS)])
+    expect(nudges(w).map(one => one.report)).toEqual([{ step: 'stage' }])
+  })
+
+  test('at ask with nothing to start, wakes the model too (r8-q26)', async ($, on) => {
+    const { w, clock } = world(on, { round: roundJson({ step: 'ask', batch: null }) })
+    await start($)
+    await clock.settle()
+    await proceed($, clock)
+    expect(w.prompts).toEqual([continueText(STATUS)])
+    expect(nudges(w).map(one => one.report)).toEqual([{ step: 'ask' }])
   })
 
   test('with no round open, it says so', async ($, on) => {

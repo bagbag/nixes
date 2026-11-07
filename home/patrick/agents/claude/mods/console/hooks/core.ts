@@ -11,7 +11,7 @@ import {
   setRound, setRoundError, setStart, takeContinueAsked, takeRefreshAgain, updateOpened, updateQueued,
 } from './state'
 import {
-  CONTINUE_NO_ROUND, continueIdleText, continueInHandText, continueText, declineFailedNote, itemSlot, missingReportText, openDialogText, PROTOCOL_ARGS_DESCRIPTION, PROTOCOL_STDIN_DESCRIPTION, PROTOCOL_TOOL_DESCRIPTION, STALE_DROP, stuckPassText,
+  CONTINUE_NO_ROUND, continueInHandText, continueText, declineFailedNote, itemSlot, missingReportText, openDialogText, PROTOCOL_ARGS_DESCRIPTION, PROTOCOL_STDIN_DESCRIPTION, PROTOCOL_TOOL_DESCRIPTION, STALE_DROP, stuckPassText,
 } from './words'
 
 type $ = EngineInterface
@@ -278,12 +278,9 @@ export async function betweenTurns($: $, session: string, isAborted: boolean): P
 /** The command that runs the turn-end decision on the person's request (register.tsx registers and answers it by this literal name). */
 export const CONTINUE_COMMAND = 'console-continue'
 
-/** Steps where the model acts with no pending pass or batch, so a stalled round there needs only waking: Record, and every release step. */
-const isModelStep = (round: ConsoleRound): boolean => round.step === 'record' || round.protocol === 'release'
-
 /**
- * A continue the person asked for (r7-q24): a round that stalled picks up where the turn-end decision would take it. Nothing pending
- * or out, Record and a release step wake the model with the engine's status line; anything else is said as a notice. Each use is
+ * A continue the person asked for (r7-q24): a round that stalled picks up where the turn-end decision would take it. With nothing
+ * pending or out, it wakes the model at the open step with the engine's status line (r8-q26): the press is the request. Each use is
  * logged with what it did (`nudged`). It runs only while no turn does: asked during one, it waits for the turn's end (continueLater).
  * `taken`: the batch a typed continue's own hook already took (continueTyped).
  */
@@ -311,8 +308,8 @@ async function continueRound($: $, taken?: { batch: string | null }): Promise<vo
   } catch (error) {
     return notice($, `reading the round's status failed: ${message(error)}; nothing was continued`)
   }
-  if (!isRoundOpen(round) || !isModelStep(round)) {
-    await notice($, continueIdleText(round.step, line))
+  if (!isRoundOpen(round)) {
+    await notice($, CONTINUE_NO_ROUND)
     return reportNudge($, ctx.session, {})
   }
   await pressSubmit($, continueText(line), async error => {
@@ -367,12 +364,20 @@ async function reportNudge($: $, session: string, report: ConsoleNudge): Promise
   await nudged($, session, report).catch(failOpen($, 'logging the continue'))
 }
 
-/** Queues the engine's pending pass: stores it, records it with origin plugin, and runs it. The run goes last: later `$` calls in the chain skip the console's hooks. */
+/**
+ * Queues the engine's pending pass: stores it, records it with origin plugin, and runs it. The run goes last: later `$` calls in the
+ * chain skip the console's hooks. A run the host refuses (an unknown name, past a Stop) clears its stored run, so nothing
+ * counts as in hand for the next turn end or a continue (r8-q26).
+ */
 async function queuePending($: $, session: string, pending: ConsolePending): Promise<void> {
   await setPass($, { id: pending.id, command: pending.command, args: pending.args, phase: 'queued' })
   await pass($, session, 'plugin', { command: pending.command, args: pending.args, pending: pending.id })
     .catch(failOpen($, `recording /${pending.command}`))
-  void $.command.run({ command: pending.command, args: pending.args }).catch(failOpen($, `running /${pending.command}`))
+  void $.command.run({ command: pending.command, args: pending.args }).catch(async error => {
+    const run = await getPass($).catch(() => null)
+    if (run !== null && run.id === pending.id && run.phase === 'queued') await setPass($, null).catch(() => undefined)
+    failOpen($, `running /${pending.command}`)(error)
+  })
 }
 
 /** After a successful compaction: runs the pass an Esc stopped once more, if it is still the engine's pending pass. Queued again, so it never runs twice. */

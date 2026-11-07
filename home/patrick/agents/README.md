@@ -693,9 +693,9 @@ compaction. Its round features act for lead, solo and autopilot. A `protocol` ca
 the engine's headline. Every call may run up to ten minutes (`$.process.run`'s maximum); one that fails or is cut answers the model
 with the error and that it may have run in part (read `protocol show` before running it again; a Record step runs again safely).
 Esc at a turn end stops the pass loop; a successful compaction right after reruns the stopped pass once (not a skipped or precompute
-one; a pass given up as stuck is never rerun). `/console-continue` (r7-q24) runs the turn-end decision on demand: it queues the pending pass (a stopped, asked-for or noted run of it
-included) unless a run of it is queued already, reopens the issued batch past the repeat guard, else at Record or a release step wakes the
-model with `protocol status --line`, else says why nothing ran; during a turn it runs at the turn's end (Esc drops it); logged as `nudged`. A model Skill call of a pass skill counts as the round's pass; a subagent's does not. The Console pane (`/console` shows it as text;
+one; a pass given up as stuck is never rerun). `/console-continue` (r7-q24, r8-q26) runs the turn-end decision on demand: it queues the pending pass (a stopped, asked-for or noted
+run of it included) unless a run of it is queued already (a run the host refused counts as none), reopens the issued batch past the
+repeat guard, else wakes the model at the open step with `protocol status --line`; during a turn it runs at the turn's end (Esc drops it); logged as `nudged`. A model Skill call of a pass skill counts as the round's pass; a subagent's does not. The Console pane (`/console` shows it as text;
 `/console-item <id>` prints an item's summary in the chat; `/console-questions` prints the issued batch's text) shows Board
 (counts, this session's items, sessions with runtime and pull initials, `auto` for autopilot, stale
 holds, live workers), Suggestions while no run is open and the engine's `next`
