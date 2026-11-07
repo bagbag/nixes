@@ -1,8 +1,8 @@
 """What a session was told: report formats and lists said once."""
 from __future__ import annotations
 
-from .base import json_block
 from .engine import Context
+from . import words
 
 
 # What a session was told, in one place: `state['told']`, a list of keys, cleared by `protocol compacted` (r17-q62, q63, q67,
@@ -39,4 +39,4 @@ def report_format(ctx: Context, kind: str, text: str) -> str:
 
 
 def report_hint(ctx: Context, kind: str, example) -> str:
-    return report_format(ctx, kind, f'Report with `protocol step` (stdin JSON), e.g. {json_block(example)}')
+    return report_format(ctx, kind, words.report_hint(example))

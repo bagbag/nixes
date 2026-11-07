@@ -6,7 +6,8 @@ from pathlib import Path
 from .base import AWAY, SETTLES, utcnow
 from .engine import Context, by_id, fail, premise_status, questions
 from .questions import refuse_all
-from .render import part_block, question_parts
+from .render import question_parts
+from . import words
 from .record import board_item
 
 
@@ -28,7 +29,7 @@ def away_guard(ctx: Context) -> None:
 
 def parked_text(ctx: Context, q: dict) -> str:
     """What a parked question's board item carries: the question with the parts the person would have seen, recommendation included."""
-    parts = '\n\n'.join(part_block(name, text) for name, text in question_parts(ctx, q).items())
+    parts = '\n\n'.join(words.part_block(name, text) for name, text in question_parts(ctx, q).items())
     waits = [by_id(ctx, other)['title'] for other in q.get('waitsOn') or []]
     return (f"## Question\n{q['text']}\n\n{parts}\n\nParked in round {ctx.round['id']} while the person was away (autopilot): "
             'the recommendation was not acted on.\n' + (f"Waits on: {'; '.join(waits)}.\n" if waits else ''))

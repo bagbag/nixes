@@ -5,12 +5,12 @@ import json
 import re
 from pathlib import Path
 
-from .base import AWAY, ProtocolError, REVISES, lines, plural, utcnow
+from .base import AWAY, ProtocolError, REVISES, lines, utcnow
+from . import words
 from .boards import COUNT_KEYS, held_decided, split_holds, statuses
 from .engine import Context, by_id, fail, questions
 from .questions import board_keys
 from .told import report_hint
-from .render import ruling_line
 
 
 # Record: the engine writes each record and runs board record (which lints it).
@@ -21,23 +21,12 @@ def note_of(q: dict) -> bool:
 
 def record_text(ctx: Context) -> str:
     todo = [q for q in questions(ctx, 'answered') if not q.get('recorded')]
-    rows = [f"- {q['id']}{' ' + q['board'] if q['board'] else ' (draft)'}: {q['text']}\n  answer ({q['origin']}): "
-            f"{q['answer']}" + (f"\n  note: {q['annotations']['notes'].strip()}" if note_of(q) else '')
-            + (f"\n  rule question, settles {', '.join(q['settles'])}: name each in the rationale or decision with how the "
-               'rule applies' if q.get('settles') else '')
-             + (f"\n  recording closes {', '.join(q['replaces'])}: name each in the rationale or decision with what the new "
-                'record keeps or changes' if q.get('replaces') else '')
-             + ('\n  away answer: the record also needs `reversal`, the steps that undo it (a `## Reversal` section; the record is '
-                'written as needs_ratification)' if q['origin'] == AWAY else '') for q in todo]
+    rows = [words.record_row(q, q['annotations']['notes'].strip() if note_of(q) else None) for q in todo]
     return lines(
-        f"Round {ctx.round['id']} · Record (board-coordination.md#rulings). Check each answer against the option's "
-        'wording; an answer stating a criterion restarts the affected questions instead (`protocol restart <ids>`).',
+        words.record_intro(ctx.round['id']),
         *rows,
-        'Give each a rationale and its rule owner; decision and alternatives default to the answer and the options '
-        'not chosen. A question the user deferred goes under `defer` with the reason.',
-        report_hint(ctx, 'record', {'records': {q['id']: {'rationale': '<why, with provenance>', 'ruleOwner': '<path#anchor>',
-                                                          **({'reversal': '<the steps that undo it>'} if q['origin'] == AWAY else {})}
-                                 for q in todo[:1]}, 'defer': {}}),
+        words.RECORD_GIVE,
+        report_hint(ctx, 'record', words.record_example(todo[:1])),
     )
 
 
@@ -55,7 +44,7 @@ def record_file(ctx: Context, q: dict, fields: dict) -> str:
     return (f"## Question\n{q['text']}\n\n## Alternatives Considered\n{alternatives or '- none offered'}\n\n"
             f"## Decision\n{fields.get('decision') or chosen}\n\n## Rationale\n{fields['rationale'].strip()}\n\n{quoted}\n\n"
             + (f"## Premises\n{q['premises'].strip()}\n\n" if (q.get('premises') or '').strip() else '')
-            + ('## Own rulings\n' + '\n'.join(f'- {ruling_line(x)}' for x in q['rulings']) + '\n\n' if q.get('rulings') else '')
+            + ('## Own rulings\n' + '\n'.join(f'- {words.ruling_line(x)}' for x in q['rulings']) + '\n\n' if q.get('rulings') else '')
             + ('## Earlier rulings\n' + '\n'.join(f"- {x['ruling'].strip()}: {x['verdict']}. {x['why'].strip()}" for x in q['priorRulings']) + '\n\n' if q.get('priorRulings') else '')
             + f"## Rule owner\n{fields['ruleOwner'].strip()}\n"
             + (f"\n## Reversal\n{fields['reversal'].strip()}\n" if q['origin'] == AWAY else '')
@@ -179,8 +168,7 @@ def close_replaced(ctx: Context, q: dict, item: str) -> None:
             if after != 'closed':  # a failure before bd closed it; a later failure (blocks) leaves it closed
                 fail(f"`board supersede {old} --with {item}` exited {result.returncode}: {(result.stderr or result.stdout).strip()}")
             if result.returncode != 0:
-                ctx.messages.append(f"`board supersede {old} --with {item}` closed {old} but exited {result.returncode}: "
-                                    f"{(result.stderr or result.stdout).strip()}")
+                ctx.messages.append(words.supersede_exited(old, item, result.returncode, (result.stderr or result.stdout).strip()))
         move_settled(ctx, item, ctx.state.get('settles', {}).pop(old, []))
         q['closed'].append(old)
 
@@ -259,7 +247,7 @@ def record_accept(ctx: Context, report: dict) -> str:
             q['reported'].append(old)
             ctx.log('superseded', question=q['id'], old=old, new=q['board'], partial=None)
     if errors:
-        ctx.messages.append('Not recorded (fix and report again; recorded questions stay recorded):\n' + '\n'.join(errors))
+        ctx.messages.append(words.not_recorded(errors))
         return 'record'
     return 'closed'
 
@@ -267,7 +255,7 @@ def record_accept(ctx: Context, report: dict) -> str:
 def abandon_note(round_questions: list[dict]) -> str:
     """What an abandoned round leaves behind: records written before the abandon stay decided (r24-q108)."""
     kept = [q.get('board') or q['id'] for q in round_questions if q.get('recorded') not in (None, 'deferred')]
-    return f"recorded {', '.join(kept)} stay decided" if kept else 'nothing recorded'
+    return words.abandoned_records(kept)
 
 
 def release_claims(ctx: Context) -> None:
@@ -282,7 +270,7 @@ def release_claims(ctx: Context) -> None:
         ctx.board.checked('unclaim', *release)
         ctx.log('released', items=release)
     except ProtocolError as error:
-        ctx.messages.append(f"Claims not released ({error}); run `board unclaim {' '.join(release)}`.")
+        ctx.messages.append(words.claims_not_released(error, release))
 
 
 def refresh_board(ctx: Context) -> bool:
@@ -292,7 +280,7 @@ def refresh_board(ctx: Context) -> bool:
     try:
         found = ctx.board.json('health', '--json', '--items', 'decided')
     except ProtocolError as error:
-        ctx.messages.append(f'Board counts unavailable ({error}); run `board health`.')
+        ctx.messages.append(words.counts_unavailable(error))
         return False
     ctx.state['counts'] = {key: (found.get('counts') or {}).get(key, 0) for key in COUNT_KEYS}
     dropped = ctx.state.get('dropReasons') or {}
@@ -312,25 +300,14 @@ def closed_enter(ctx: Context) -> None:
 
 def closed_text(ctx: Context) -> str:
     r = ctx.round
-    done = [f"- {q['id']} → {q['recorded'] if q['recorded'] not in ('file',) else q['recordFile']}"
-            + (f", closed {', '.join(q['closed'])}" if q.get('closed') else '')
-            for q in r['questions'] if q.get('recorded')]
+    done = [words.closed_done(q) for q in r['questions'] if q.get('recorded')]
     counts = ctx.state.get('counts')
-    parked = [f"- {q['id']} parked → {q['parked']}: open and unassigned for the person" for q in r['questions'] if q['status'] == 'parked']
+    parked = [words.closed_parked(q) for q in r['questions'] if q['status'] == 'parked']
     return '\n'.join([
-        f"Round {r['id']} closed.", *done, *parked,
-        (f"Board: {counts['questions']} open questions, {counts['decided']} decided awaiting release, "
-         f"{counts['toPlan']} released to plan, {counts['inReview']} in review, {counts['forUser']} waiting on the user."
-         if counts and r.get('countsAt') else 'No board counts.' if ctx.board else ''),
-        *([f"Next: a release (decide.md Release) takes {release_takes(waiting)}, on the user's /release-round or request."]
-          if (waiting := release_next(ctx)) else []),
+        words.round_closed(r['id']), *done, *parked,
+        words.board_line(counts if counts and r.get('countsAt') else None, bool(ctx.board)),
+        *([words.closed_next(waiting['count'])] if (waiting := release_next(ctx)) else []),
     ])
-
-
-def release_takes(waiting: dict) -> str:
-    """What a bare release takes, for the closed round's text."""
-    return (f"all {plural(waiting['count'], 'decided record')} this session holds, minus dropped ones; "
-            'name ids to take fewer')
 
 
 def release_next(ctx: Context) -> dict | None:

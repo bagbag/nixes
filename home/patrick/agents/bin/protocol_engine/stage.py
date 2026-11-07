@@ -1,10 +1,8 @@
 """The round's Stage and Related steps."""
 from __future__ import annotations
 
-from .base import (
-    BATCH, DESCRIPTION_MAX, HEADER_MAX, LIST_COMMAND, MERGE_TEST, OUTCOMES, ProtocolError, REVISES, REVISES_RULE,
-    STRONG_CRITERIA, SUMMARY_MAX, TEXT_MAX, TITLE_MAX, lines
-)
+from .base import OUTCOMES, ProtocolError, REVISES, REVISES_RULE, lines
+from . import words
 from .boards import related_hits, split_holds
 from .engine import Context, by_id, fail, premise_status, unresolved
 from .questions import (
@@ -19,47 +17,9 @@ def stage_text(ctx: Context) -> str:
     r = ctx.round
     dropped = {key: (ctx.state.get('dropReasons') or {})[key] for key in r['selected'] if key in (ctx.state.get('dropReasons') or {})}
     return lines(
-        f"Round {r['id']} · Stage the questions for {', '.join(r['selected'])} under asking.md Question format, "
-        'with a round `title` and `summary`. A board item keeps its id in `board`; a pasted point or new '
-        'question is a draft (`board`: null, `for`: the point id)' + (', created on the board at Record' if ctx.board
-                                                                        else '') + '. `settles` lists the items '
-        f'one answer settles the same way (a rule question); an open decision outside the selection named there or in `board` joins the round. {MERGE_TEST} `waitsOn` names the questions a '
-        'decision rests on; kind confirm-own-rulings asks the user to confirm your rulings. Each question carries the parts the '
-        'engine prints before its dialog, in your own words. Printed parts say what is decided and what each option means for the person '
-        '(what they would see, what it costs), each thing once, in plain words; how it was found (sources, measurements beyond the deciding '
-        'number, who said what) and how it gets built go to the record. Required: `problem` (what is decided and why now) and per option `for` and `against`. '
-        'Optional, printed only when present: `cases` (the concrete cases that must and must not work), `premises` (what it rests on), '
-        '`rulings` (each ruling of yours with why it meets the goals without a material trade-off, its strongest alternative, what that fails and the evidence, which only the record keeps) and `note` (a term to define, anything else); '
-        'a round may carry one `overview` line across '
-        'its questions. A rule question\'s `premises` says how the rule applies to each settled item; the engine prints each item\'s id and title. Mark each recommendation '
-        'under decision-protocol.md Recommendation strength: strong sets `strongBecause` '
-        f"{', '.join(STRONG_CRITERIA)} each to \"true: <evidence>\" (\"does-not-apply: <reason>\" for consumerWalk "
-        'and rulingsChallenged); lean sets `leanBecause` with cause preference (`detail`: what it depends on; `flipsIf`: what you would have to value '
-        'to pick another option) or evidence. `priorRulings` holds one entry per released ruling a recommendation rests on or Related linked: '
-        '{"ruling", "verdict": "holds" or "fails", "why"}; judge the options as if no ruling existed first; an answer from this round stays a premise. Questions go out in the listed '
-        f'order, {BATCH} at a time; `waitsOn` holds a dependent back until its premise is answered. Lengths to keep to in characters and who '
-        f'reads each field: round `summary` {SUMMARY_MAX} (pane header); `title` {TITLE_MAX} (pane row; a question\'s '
-        f"is also the board item's title); `text` {TEXT_MAX}, without a number (the engine numbers the dialog; it is the dialog "
-        f"question and the board item's Question); `header` "
-        f'{HEADER_MAX} (dialog chip); option `label`, `description` {DESCRIPTION_MAX} and optional `preview` (dialog; '
-        'single-select questions only).',
-        *(['A release dropped or held back these records earlier (the reason says what changed; ask what it leaves open):',
-           *(f'- {key}: {reason}' for key, reason in dropped.items())] if dropped else []),
-        report_hint(ctx, 'stage', {'round': {'title': '<what this round decides>', 'summary': '<the topic in plain words>',
-                                             'overview': '<optional: one line across the questions>'},
-                     'questions': [{'key': 'a', 'board': None, 'for': r['selected'][0] if r['selected'] else None,
-                                    'settles': [], 'text': '<question>?',
-                                    'title': '<the decision as a short question>', 'header': '<topic noun>',
-                                    'kind': 'decision',
-                                    'problem': '<what is decided and why now>', 'cases': '<optional: the cases that must and must not work>',
-                                    'options': [{'label': 'A', 'description': '…', 'for': '<for>', 'against': '<against>',
-                                                 'preview': '<code example>'},
-                                                {'label': 'B', 'description': '…', 'for': '<for>', 'against': '<against>'}],
-                                    'premises': '<optional: grounded premises>', 'rulings': [{'ruling': '<your ruling>', 'why': '<what it meets, why no material trade-off remains>', 'alternative': '<strongest alternative>',
-                                                                       'fails': '<what it fails>', 'evidence': '<source>'}],
-                                    'note': '<optional>', 'recommendation': 'A', 'strength': 'lean',
-                                    'leanBecause': {'cause': 'evidence', 'detail': '<the unchecked fact and how to check it>'},
-                                    'waitsOn': []}]}),
+        words.stage_instructions(r['id'], r['selected'], bool(ctx.board)),
+        *(words.stage_dropped(dropped) if dropped else []),
+        report_hint(ctx, 'stage', words.stage_example(r['selected'][0] if r['selected'] else None)),
     )
 
 
@@ -108,16 +68,9 @@ def related_enter(ctx: Context) -> str | None:
 
 
 def related_text(ctx: Context) -> str:
-    rows = [f"- {q['id']} ({q['title']}) overlaps {hit['id']}" for q, hit in unresolved(ctx)]
+    rows = [words.related_row(q, hit) for q, hit in unresolved(ctx)]
     return lines(
-        f"Round {ctx.round['id']} · Related: each new draft's board hits need an outcome before asking: duplicate or "
-        'extend (the question takes that item over, in place: the same question answered again), relate (link at Record), '
-        'supersedes (a different question, or one replacing several records: Record closes each decided record it '
-        'replaces once the answer is recorded, and opens a released one as a revision, replaced at release; a change to '
-        'one clause is no replacement), unrelated. Mark `supersedes` on any decided record the question replaces, a hit or '
-        'not (name the id under outcomes). Inspect with `board show <id>`; comment on or hand off overlaps '
-        'other sessions hold. Also search the exact names of the modules, APIs and sibling cases the options build on '
-        f'(`board related <terms>`). A hit that widens the round: list the open items with `{LIST_COMMAND}`.',
+        words.related_instructions(ctx.round['id']),
         *rows,
         report_hint(ctx, 'related', {'outcomes': {q['id']: {hit['id']: 'unrelated'} for q, hit in unresolved(ctx)[:1]}}),
     )

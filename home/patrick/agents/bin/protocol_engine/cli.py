@@ -35,7 +35,8 @@ from .told import forget_runs
 from .record import abandon_note, refresh_board, release_claims
 from .away import SWITCH_TO_SOLO
 from .check import next_cycle, pending_view, refused_formats
-from .ask import CHAT_STDIN, EDIT_STDIN, batch_back, withdraw_away
+from .ask import batch_back, withdraw_away
+from . import words
 from .release_set import start_release
 from .release import stamp_release
 from .seeds import next_text, set_proposal
@@ -253,7 +254,7 @@ def run(ctx: Context, args) -> str:
     if command == 'compacted':
         ctx.state['told'] = []
         ctx.store.log({'round': (ctx.round or {}).get('id'), 'event': 'compacted'})
-        return 'Compaction recorded: the next steps print their full text again.'
+        return words.COMPACTED
     if command == 'status':
         return status_line(ctx)
     if command == 'history':
@@ -293,7 +294,7 @@ def run(ctx: Context, args) -> str:
         try:
             ctx.go(edit_round(ctx, report))
         except ProtocolError as error:
-            raise ProtocolError(str(error), formats=f'Edit format: `protocol edit` with stdin {EDIT_STDIN}.') from None
+            raise ProtocolError(str(error), formats=words.EDIT_FORMAT) from None
         return instructions(ctx)
     if command == 'say':
         if not isinstance(report.get('text'), str) or not report['text'].strip():
@@ -305,7 +306,7 @@ def run(ctx: Context, args) -> str:
         try:
             note = answer(ctx, report, args.origin) if command == 'answer' else decline(ctx, report, args.origin, 'declined')
         except ProtocolError as error:
-            raise ProtocolError(str(error), formats=f'Chat answer format: stdin {CHAT_STDIN}.' if args.origin == 'chat' else '') from None
+            raise ProtocolError(str(error), formats=words.CHAT_FORMAT if args.origin == 'chat' else '') from None
         ctx.messages.insert(0, note)
         if args.origin != 'dialog':  # the model reads this result: the note alone (the console's dialog path reads the state)
             return instructions(ctx)
@@ -341,12 +342,11 @@ def run(ctx: Context, args) -> str:
         ctx.log('abandoned', step=r['step'])
         if r['protocol'] == 'release':  # the records stay decided and held
             r['step'], r['closedAt'] = 'closed', utcnow()
-            return '\n'.join([headline(ctx), *ctx.messages, f"Release {r['id']} abandoned at its step; nothing released, "
-                              'the records stay decided and held; `protocol start release` takes them again.'])
+            return words.release_abandoned(headline(ctx), ctx.messages, r['id'])
         release_claims(ctx)
         r['step'] = 'closed'
         r['closedAt'] = utcnow()
         if ctx.board and any(q.get('recorded') not in (None, 'deferred', 'file') for q in r['questions']):
             refresh_board(ctx)  # records written before the abandon are decided and held
-        return '\n'.join([headline(ctx), *ctx.messages, f"Round {r['id']} abandoned at its step; {abandon_note(r['questions'])}."])
+        return words.round_abandoned(headline(ctx), ctx.messages, r['id'], abandon_note(r['questions']))
     fail(f'unknown command {command}')

@@ -229,8 +229,13 @@ prints the next step, one call per step; `run_cli()` (in `cli.py`) is the same
 CLI as a function, which the tests call in-process. `bin/protocol` is a thin
 entry; the engine is the `bin/protocol_engine/` package beside it, one module
 per concern, layered so imports never cycle (`round.py` and `release.py`
-register their protocols in `engine.PROTOCOLS`). Its protocols are `round` (the
-decide protocol's Round from Collect to Record) and `release` (its Release).
+register their protocols in `engine.PROTOCOLS`). `words.py` holds every text
+the engine prints for a model or the person (step texts, notes, report formats,
+headlines, log lines), shaped like the console's `hooks/words.ts`: constants
+and functions taking the values they interpolate, imported by the modules that
+decide what to say; error and refusal messages and the CLI help stay where
+they are raised or defined. Its protocols are `round` (the decide protocol's
+Round from Collect to Record) and `release` (its Release).
 A question whose Related outcome supersedes a decided record closes it at Record
 (`board supersede`: waiting items, settled items and a pending revision move to
 the new record; the dialog names it by id and title); a released record is

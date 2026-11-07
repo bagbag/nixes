@@ -77,23 +77,9 @@ STRONG_CRITERIA = {
     'rulingsChallenged': 'judged as if no released ruling existed; each related ruling challenged in `priorRulings`, and each that fails raised as a revision',
 }
 MAY_NOT_APPLY = ('consumerWalk', 'rulingsChallenged')
-MERGE_TEST = ('Merge questions only when no sensible answer would treat them differently: an option that splits them means separate '
-              'questions, and a shared premise puts them in one round, not one question.')  # skills/shared/question-format.md owns the test
-# The lean pass aims for strong (r38-q213): decision-protocol.md#recommendation-strength owns the rule; the validator keeps both in step.
-LEAN_JOB = (' (the lean pass, aiming each lean named in the argument at strong: redo the question from scratch, walk a realistic consumer '
-            'through it (a caller read from the code, or what the person would see), and probe or count the deciding fact where one run settles '
-            'it. A lean still resting on what the person values comes back as the value question in its `text`, options unchanged, still '
-            'recommending on merits with `flipsIf`; an unchecked fact stays an evidence lean naming the check).')
-HAND_OVER = 'End your turn with one short line: what changed, or "No change."'
 NO_RUN = ('no /{command} ran since its last report: end your turn (the console runs a pass it has not run yet, and tells the person what to '
           'type for one it has), or call the skill yourself; a model Skill call counts once it ran')
-PICK_DETAIL = ('Count a pick as the answer when the rest of the reply or note questions only a detail the pick doesn\'t hinge on; '
-               'leave the question open only when the doubt could change the pick. Record the pick (typed: the ["answer"] call with '
-               'the option\'s label), then add the detail as a new question through `protocol edit` instead of folding it into the '
-               'picked one; the pick\'s record names that question.')  # answer first: an edit sends a typed question out again
 THINK_MORE = 'Think more'  # a lean question's extra dialog choice: no answer, its checks rerun (r34-q171)
-THINK_MORE_LINE = ('No answer yet: its checks redo it aiming for a strong recommendation, with a consumer walk and a probe, '
-                   'then it comes back.')  # the consumer walk and the probe are the lean pass's (r38-q213)
 
 
 def recommended_suffix(q: dict) -> str:

@@ -3,14 +3,13 @@ from __future__ import annotations
 
 import copy
 
-from .base import HAND_OVER, NO_RUN, ProtocolError, lines
+from .base import NO_RUN, ProtocolError, lines
+from . import words
 from .boards import statuses
 from .engine import Context, fail
 from .questions import DISCLOSURE
 from .told import report_hint
-from .release_set import (
-    HIT_CLASSES, SCOPED_PASSES, apply_changes, drop, in_set, scoped_records, set_rows, stop, touches_hint
-)
+from .release_set import HIT_CLASSES, SCOPED_PASSES, apply_changes, drop, in_set, scoped_records, set_rows, stop
 
 
 def board_check_enter(ctx: Context) -> None:
@@ -22,33 +21,21 @@ def board_check_enter(ctx: Context) -> None:
         found = [row for row in (rows.get('unlinkedRevisions') if isinstance(rows, dict) else None) or []
                  if row.get('id') in in_set(ctx) or row.get('other') in in_set(ctx)]
     except ProtocolError as error:
-        ctx.messages.append(f'Unlinked revisions unavailable ({error}); run `board check`.')
+        ctx.messages.append(words.unlinked_unavailable(error))
     ctx.round['unlinked'] = found
 
 
 def board_check_text(ctx: Context) -> str:
     unlinked = ctx.round.get('unlinked') or []
     return lines(
-        f"Release {ctx.round['id']} · Board check (decide.md Release 2): run `board related <terms>` across the set, "
-        'closed items and canonical docs included (`--docs <paths>`), and act on every hit. Report per record one '
-        'entry per hit class ("none", or rows {item, action}):',
-        *(f'- {name}: {meaning}' for name, meaning in HIT_CLASSES.items()),
+        words.board_check_intro(ctx.round['id']),
+        *(words.hit_class_row(name, meaning) for name, meaning in HIT_CLASSES.items()),
         *set_rows(ctx),
-        *([f"Unlinked revisions the set's texts name (`board check`; a question missed them): "
-           + '; '.join(f"{row['id']} {row['word']} {row['other']}: `board supersede {row['old']} --with {row['new']}`"
-                       for row in unlinked) + '. Treat each as a `revises` hit of the record that replaces the other.']
-          if unlinked else []),
-        *(f"Pre-filled: {rid} answers {', '.join(settled)} (the items its rule question settled): the engine adds the "
-          f"answers and the closes." for rid, settled in settled_in_set(ctx).items()),
-        *(f"Not closed: {rid} marks {', '.join(items)} as settled, but only an open question closes as answered. Correct a "
-          'record it changes at Re-check (relate) or replace it (supersedes).' for rid, items in settled_split(ctx)[1].items()),
-        'Name the supersedes and the answered questions: the engine runs `board supersede` and closes those questions '
-        'after the release ("Answered by released <record>"); every other action is yours. A ruling the check changes '
-        f'goes under `changed` with its reach and, when contained, what it {touches_hint()}',
-        report_hint(ctx, 'board-check', {'checks': {(in_set(ctx) or ['<id>'])[0]: {**{name: 'none' for name in HIT_CLASSES},
-                                                              'answers': [{'item': '<question>', 'action': 'answered: close'}]}},
-                     'supersedes': [{'old': '<record>', 'new': (in_set(ctx) or ['<id>'])[0], 'partial': '<rule, or leave out>'}],
-                     'closes': {'<question>': [(in_set(ctx) or ['<id>'])[0]]}, 'changed': {}}),
+        *([words.unlinked_revisions(unlinked)] if unlinked else []),
+        *(words.prefilled(rid, settled) for rid, settled in settled_in_set(ctx).items()),
+        *(words.not_closed(rid, items) for rid, items in settled_split(ctx)[1].items()),
+        words.BOARD_CHECK_NAMES,
+        report_hint(ctx, 'board-check', words.board_check_example((in_set(ctx) or ['<id>'])[0], HIT_CLASSES)),
     )
 
 
@@ -153,7 +140,7 @@ def board_check_accept(ctx: Context, report: dict) -> str:
     for rid in in_set(ctx):  # decide.md: an open question its premise rests on holds the record
         waiting = sorted(hit_items(checks, rid, 'premise'))
         if waiting:
-            drop(ctx, rid, f"its premise waits on {', '.join(waiting)}")
+            drop(ctx, rid, words.premise_waits(waiting))
     # board release refuses a record waiting on an unsettled item outside the set: it leaves the set now, while the
     # report can still change, not after the approval (a blocker dropped here can drop its dependents in turn).
     blocked = {item['id']: item.get('blockedBy') or []
@@ -165,9 +152,9 @@ def board_check_accept(ctx: Context, report: dict) -> str:
             break
         found = statuses(ctx, [b for blockers in waiting.values() for b in blockers])
         for rid, blockers in waiting.items():
-            drop(ctx, rid, 'waits on ' + ', '.join(f"{b} ({found[b] or 'not found'})" for b in blockers))
+            drop(ctx, rid, words.blocker_waits(blockers, found))
     if not in_set(ctx):
-        return stop(ctx, 'every record left the set', [])
+        return stop(ctx, words.EMPTY_SET, [])
     return 'own-rulings'
 
 
@@ -195,14 +182,9 @@ def board_targets(ctx: Context, closes: list[str], olds: list[str]) -> list[str]
 
 def own_rulings_text(ctx: Context) -> str:
     return lines(
-        f"Release {ctx.round['id']} · Own rulings (decide.md Release 3): list every ruling you made in the set with "
-        "asking.md's disclosure fields: the ruling, what it meets without a material trade-off, its strongest realistic alternative, the test or principle that "
-        'alternative fails, and the evidence. Mark each `sure` only when it is entailed (decision-protocol.md Decision '
-        'authority); an unsure ruling, like a dropped or revised record, sends the approval to a dialog.',
+        words.own_rulings_intro(ctx.round['id']),
         *set_rows(ctx),
-        report_hint(ctx, 'own-rulings', {'rulings': [{'record': (in_set(ctx) or ['<id>'])[0], 'ruling': '<your ruling>', 'why': '<what it meets, why no material trade-off remains>',
-                                  'alternative': '<strongest alternative>', 'fails': '<what it fails>',
-                                  'evidence': '<source>', 'sure': True}]}),
+        report_hint(ctx, 'own-rulings', words.own_rulings_example((in_set(ctx) or ['<id>'])[0])),
     )
 
 
@@ -245,18 +227,8 @@ def scoped_text(ctx: Context) -> str:
     r = ctx.round
     pending = r['pending'] or {}
     command, args = pending.get('command'), pending.get('args')
-    lead = (f"Release {r['id']} · Scoped {command} pass (decide.md Release 4) on the revised records {args}: the "
-            'corrected record text, each against its sources and the rest of the set. ')
-    how = (f'Run the {command} skill now with the argument `{args}` (read its SKILL.md), then report the pass. '
-           if ctx.codex else
-           f'{HAND_OVER} ')
-    return lines(lead + how + 'Report each revised record as "unchanged" or a change as in the re-check (a change of your own '
-                 "parts rewrites it again; a change to the user's decision drops it; a spread stops the run):",
-                 report_hint(ctx, 'scoped', {
-                     'pass': command, 'records': {rid: 'unchanged' for rid in scoped_records(ctx)[:1]}
-                     | {'<id>': {'change': '<what changed>', 'reach': 'contained', 'why': '<why nothing else moves>',
-                                 'touches': 'own', 'file': '<corrected record text, for own>'}},
-                     'summary': '<one line: what the pass found>'}))
+    return lines(words.scoped_text(r['id'], command, args, ctx.codex),
+                 report_hint(ctx, 'scoped', words.scoped_example(command, scoped_records(ctx)[:1])))
 
 
 def scoped_accept(ctx: Context, report: dict) -> str:

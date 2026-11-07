@@ -4,9 +4,10 @@ from __future__ import annotations
 import contextlib
 
 from .base import (
-    ALL_LENSES, CHECK_CAP, EXPLORED_VERDICTS, LEAN_LENSES, LIST_COMMAND, MERGE_TEST, NO_RUN, OPTIONS_LENSES, PASSES,
-    PATH_LENSES, REFINE_LENSES, json_block, lines
+    ALL_LENSES, CAP_CHOICES, CHECK_CAP, EXPLORED_VERDICTS, LEAN_LENSES, NO_RUN, OPTIONS_LENSES, PASSES, PATH_LENSES,
+    REFINE_LENSES
 )
+from . import words
 from .engine import Context, Step, by_id, fail, questions, unresolved
 from .questions import apply_updates, describe, refuse_all
 from .told import report_format
@@ -58,9 +59,7 @@ def with_goal(ctx: Context, lenses: tuple[str, ...], ids: list[str]) -> str:
     rethink = [q['id'] for q in ctx.round['questions'] if q['id'] in ids and isinstance(q.get('thinkMore'), dict)]
     if not rethink:
         return head
-    many = len(rethink) > 1
-    return (f"{head}; Think more on {' '.join(rethink)}: the lean{'s' if many else ''} fell short, try to get "
-            + ('reasoned strong recommendations' if many else 'a reasoned strong recommendation'))
+    return words.think_more_goal(head, rethink)
 
 
 def rescope_check(ctx: Context, ids: list[str]) -> None:
@@ -182,12 +181,9 @@ def cap_batch(ctx: Context) -> None:
     r['pending'] = None
     r['batchSeq'] += 1
     r['batch'] = {'marker': f"round:{r['id']}:{r['batchSeq']}", 'cap': True, 'ids': [], 'questions': [{
-        'question': f"Round {r['id']}: the check loop ran {r['check']['cycle']} cycles and still changes the questions. "
-                    'How to go on?',
-        'header': 'Check cap', 'multiSelect': False,
-        'options': [{'label': 'Continue', 'description': f'{CHECK_CAP} more step-back and ground cycles'},
-                    {'label': 'Ask now', 'description': 'Ask the current questions as they stand'},
-                    {'label': 'Pause', 'description': 'Stop the loop; protocol resume continues it'}]}]}
+        'question': words.cap_question(r['id'], r['check']['cycle']),
+        'header': words.CAP_HEADER, 'multiSelect': False,
+        'options': [{'label': choice, 'description': words.CAP_DESCRIPTIONS[choice]} for choice in CAP_CHOICES]}]}
     ctx.log('cap', cycle=r['check']['cycle'], marker=r['batch']['marker'])
 
 
@@ -203,34 +199,12 @@ def next_cycle(ctx: Context) -> str:
     return 'check'
 
 
-def pass_format(command: str) -> str:
-    return lines(
-        'After the pass, report each change as a per-question update: changed fields, a new question (no id; it goes last, '
-        'or ahead of the question its `before` names), or '
-        '{"id", "remove": true, "reason"}; report an empty list when nothing changed. A pass that would revise a '
-        "user's ruling raises it as a new question. "
-        f'{MERGE_TEST} A merge is one rule question (`settles`: the keys it settles); split an item out when the rule\'s application to it is open. '
-        f'A question that widens the round\'s scope: list the open items with `{LIST_COMMAND}`.',
-        'Report with `protocol step` (stdin JSON), e.g. ' + json_block({
-            'pass': command, 'updates': [{'id': 'q1', 'premises': '<revised premise>'}],
-            'checked': ['<what you examined, when nothing changed>'],
-            'summary': '<one line: what the pass found>'}))
-
-
 def pass_report_format(ctx: Context, command: str) -> str:
-    return report_format(ctx, 'pass', pass_format(command))
+    return report_format(ctx, 'pass', words.pass_format(command))
 
 
 def options_report_format(ctx: Context) -> str:
-    """The options pass adds `explored` to its report: told apart from the pass format, which a session is told once."""
-    return report_format(ctx, 'options', lines(
-        'The options pass also reports `explored`: for each question the argument covers, the radically different ways you found '
-        '(other mechanisms, other owners, removing the need; not variants) as {"idea", "verdict": "kept" or "dropped", "why"}, or '
-        'one sentence saying why no other way exists. A dropped idea names the stated constraint or sourced fact that rules it out '
-        'and prints under the question\'s options; a kept one shows in the options or the recommendation. e.g. ' + json_block({
-            'pass': 'step-back', 'updates': [], 'explored': {'q1': [{'idea': '<another mechanism>', 'verdict': 'dropped',
-                                                                      'why': '<the constraint or fact>'}], 'q2': '<why no other way exists>'},
-            'checked': ['<what you examined>'], 'summary': '<one line>'})))
+    return report_format(ctx, 'options', words.options_format())
 
 
 def refused_formats(ctx: Context, step: Step, report: dict, before: dict) -> str:
@@ -240,7 +214,7 @@ def refused_formats(ctx: Context, step: Step, report: dict, before: dict) -> str
     with contextlib.suppress(Exception):
         step.text(ctx)
     if report.get('pass') in PASSES:
-        ctx.formats.setdefault('pass', pass_format(report['pass']))
+        ctx.formats.setdefault('pass', words.pass_format(report['pass']))
     return '\n'.join(ctx.formats.values())
 
 

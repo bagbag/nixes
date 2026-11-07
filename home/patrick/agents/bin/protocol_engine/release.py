@@ -6,7 +6,8 @@ import re
 import subprocess
 from pathlib import Path
 
-from .base import ProtocolError, TEXT_MAX, TITLE_MAX, cut, env, lines, plural, utcnow
+from .base import ProtocolError, TITLE_MAX, env, lines, utcnow
+from . import words
 from .store import next_id
 from .boards import statuses
 from .engine import Context, PROTOCOLS, Protocol, Step, fail, questions
@@ -25,17 +26,14 @@ from .release_checks import (
 def release_question_text(ctx: Context) -> str:
     """`Release 3 records? Unsure: tstdl-a (…) Revised: tstdl-b (…)`: an unsure ruling first (r14 q56), within the dialog
     limits whatever the set holds; `unsure_rulings` gives it in full."""
-    count = plural(len(in_set(ctx)), 'record')
-    text = f"Release the session's {count}?" if ctx.round.get('source') else f"Release {count}?"
-    unsure = '; '.join(f"{x['record']} ({x['ruling']})" for x in ctx.round['rulings'] or [] if not x['sure'])
-    changes = '; '.join(f"{rec['id']} ({cut(rec['change'], 80)})" for rec in ctx.round['set'] if rec['state'] == 'revised')
-    return cut(' '.join(filter(None, [text, f'Unsure: {unsure}' if unsure else '', f'Revised: {changes}' if changes else ''])), TEXT_MAX)
+    return words.release_question_text(len(in_set(ctx)), bool(ctx.round.get('source')),
+                                       [x for x in ctx.round['rulings'] or [] if not x['sure']],
+                                       [rec for rec in ctx.round['set'] if rec['state'] == 'revised'])
 
 
 def unsure_rulings(ctx: Context) -> str:
     """The unsure rulings in full, for the Release option's preview: the question text cuts them."""
-    return '\n\n'.join(f"{x['record']}: {x['ruling']}\nAlternative: {x['alternative']}"
-                        for x in ctx.round['rulings'] or [] if not x['sure'])
+    return words.unsure_rulings([x for x in ctx.round['rulings'] or [] if not x['sure']])
 
 
 def approve(ctx: Context, origin: str, how: str, quote: str | None = None) -> str:
@@ -55,12 +53,11 @@ def approval_enter(ctx: Context) -> str | None:
         if q['answer'] == APPROVE:
             return approve(ctx, q['origin'], 'dialog question', q.get('quote'))
         if q['answer'] == HOLD:
-            return stop(ctx, f"held at approval ({q['origin']})", [], hold=True)
+            return stop(ctx, words.held_at_approval(q['origin']), [], hold=True)
         # the user's own words (Codex model-reported) pick no option: ask again
         q.update(status='ready', answer=None, typed=q['answer'])
         ctx.state['answers'].pop(q['id'], None)
-        ctx.messages.append(f"The approval needs the user's pick of {APPROVE} or {HOLD}; they wrote \"{q['typed']}\". "
-                            'Ask again (`protocol step` with {}).')
+        ctx.messages.append(words.approval_retry(APPROVE, HOLD, q['typed']))
         return 'ask'
     changed = [rec['id'] for rec in r['set'] if rec['state'] != 'set']
     unsure = [x for x in r['rulings'] or [] if not x['sure']]
@@ -72,10 +69,10 @@ def approval_enter(ctx: Context) -> str | None:
              'waitsOn': [], 'for': None, 'settles': [], 'premises': None, 'round': r['id'], 'status': 'draft', 'overlaps': [],
              'searched': True, 'answer': None,
              'text': release_question_text(ctx),
-             'title': f'Release {release_label(ctx)}'[:TITLE_MAX], 'header': 'Release',
-             'options': [{'label': APPROVE, 'description': 'Owner writes, then board release',
+             'title': words.approval_title(release_label(ctx))[:TITLE_MAX], 'header': words.APPROVE_HEADER,
+             'options': [{'label': APPROVE, 'description': words.APPROVE_DESCRIPTION,
                           **({'preview': unsure_rulings(ctx)} if unsure else {})},
-                         {'label': HOLD, 'description': 'Nothing releases; the records stay decided. Say why: a round takes what you held'}],
+                         {'label': HOLD, 'description': words.HOLD_DESCRIPTION}],
              'recommendation': APPROVE, 'strength': None, 'strongBecause': None, 'leanBecause': None}
         r['questions'].append(q)
         ctx.log('approval-asked', question=q['id'], reasons=reasons)
@@ -83,9 +80,7 @@ def approval_enter(ctx: Context) -> str | None:
 
 
 def approval_text(ctx: Context) -> str:
-    reasons = approval_reasons(ctx)
-    return f"Release {ctx.round['id']} · Approval: `protocol step` with {{}} continues." \
-        + (f" The dialog asks because: {'; '.join(reasons)}." if reasons else '')
+    return words.approval_text(ctx.round['id'], approval_reasons(ctx))
 
 
 def release_ask_accept(ctx: Context, report: dict) -> str:
@@ -155,21 +150,16 @@ def memory_section(name: str) -> str:
     except OSError:
         match = None
     if match is None or not match.group(1).strip():
-        return f'{name}: the `## {name}` section of {path} is missing; read it before writing durable docs.'
-    return f'## {name} (project-memory.md)' + match.group(1).rstrip()
+        return words.memory_missing(name, path)
+    return words.memory_heading(name, match.group(1))
 
 
 def owners_text(ctx: Context) -> str:
     return lines(
-        f"Release {ctx.round['id']} · Owner writes (decide.md Release 5): write each rule into its one owner, replacing "
-        "the text it supersedes, and name each path (with its anchor) in the record's `## Rule owner` (rewrite the "
-        'record with `board record <id> <file>`). A rule a topic\'s design-target doc states is written now, not pending. Report per record its owners: written {path, anchor} (a repo path '
-        'from the board root, or absolute/~; installed files by their installed path), none {reason}, or '
-        'pending {item} (an open board item).',
+        words.owners_intro(ctx.round['id']),
         lines(memory_section('Durable owners'), memory_section('Closure')) if first_time(ctx, 'owners') else '',
         *set_rows(ctx),
-        report_hint(ctx, 'owners', {'owners': {(in_set(ctx) or ['<id>'])[0]: [{'written': {'path': 'docs/x.md', 'anchor': 'the-rule'}},
-                                                                              {'pending': {'item': '<task id>'}}]}}),
+        report_hint(ctx, 'owners', words.owners_example((in_set(ctx) or ['<id>'])[0])),
     )
 
 
@@ -240,8 +230,7 @@ def release_enter(ctx: Context) -> str | None:
     now = statuses(ctx, [*ids, *fulls, *r['closes']])
     stray = [rid for rid in ids if now[rid] not in ('decided', 'released')]
     if stray:
-        ctx.messages.append('Not released: ' + ', '.join(f'{rid} is {now[rid]}' for rid in stray)
-                            + '; settle them on the board, then `protocol step` with {}.')
+        ctx.messages.append(words.stray_records(stray, now))
         return None
     still = [q for q in r['closes'] if now[q] != 'closed']
     if r['retry'] or still or any(now[rid] == 'decided' for rid in ids):
@@ -250,8 +239,7 @@ def release_enter(ctx: Context) -> str | None:
         r['retry'] = result.returncode != 0
         ctx.log('board-release', records=ids, closes=still, exit=result.returncode)
         if result.returncode != 0:
-            ctx.messages.append(f"`board {' '.join(argv)}` exited {result.returncode}:\n"
-                                + (result.stderr.strip() or result.stdout.strip()))
+            ctx.messages.append(words.board_exited(argv, result.returncode, result.stderr.strip() or result.stdout.strip()))
     for sup in r['supersedes']:
         key = f"{sup['old']}>{sup['new']}"
         if key in r['done'] or (sup['partial'] is None and now.get(sup['old']) == 'closed'):
@@ -262,12 +250,12 @@ def release_enter(ctx: Context) -> str | None:
             r['done'].append(key)
             ctx.log('superseded', old=sup['old'], new=sup['new'], partial=sup['partial'])
         else:
-            ctx.messages.append(f"`board supersede {sup['old']} --with {sup['new']}` exited {result.returncode}: "
-                                + (result.stderr.strip() or result.stdout.strip()))
+            ctx.messages.append(words.supersede_failed(sup['old'], sup['new'], result.returncode,
+                                                       result.stderr.strip() or result.stdout.strip()))
     try:  # the writes above stand: a failing read leaves the step to rerun, statuses first
         after = statuses(ctx, [*ids, *fulls, *r['closes']])
     except ProtocolError as error:
-        ctx.messages.append(f'Board statuses unavailable after the writes ({error}); `protocol step` with {{}} rereads them.')
+        ctx.messages.append(words.statuses_unavailable(error))
         return None
     for rid in ids:
         if after[rid] == 'released':
@@ -280,15 +268,14 @@ def release_enter(ctx: Context) -> str | None:
     finished = not r['retry'] and all(after[rid] == 'released' for rid in ids) and not r['outcome']['open'] \
         and all(f"{sup['old']}>{sup['new']}" in r['done'] for sup in r['supersedes'])
     if not finished:
-        ctx.messages.append('Release not finished: fix what the board reported, then `protocol step` with {} reruns '
-                            'only what remains (released records, closed questions and done supersedes stay done).')
+        ctx.messages.append(words.RELEASE_UNFINISHED)
         return None
     ctx.log('release-done', records=ids, closed=r['outcome']['closed'])
     return 'closed'
 
 
 def release_text(ctx: Context) -> str:
-    return f"Release {ctx.round['id']} · Release: waiting for a rerun (`protocol step` with {{}})."
+    return words.release_waiting(ctx.round['id'])
 
 
 def release_step_accept(ctx: Context, report: dict) -> str:
@@ -319,34 +306,12 @@ def release_closed_enter(ctx: Context) -> None:
 def release_closed_text(ctx: Context) -> str:
     r = ctx.round
     counts = ctx.state.get('counts')
-    board = (f"Board: {counts['questions']} open questions, {counts['decided']} decided awaiting release, "
-             f"{counts['toPlan']} released to plan, {counts['inReview']} in review, {counts['forUser']} waiting on the user."
-             if counts and r.get('countsAt') else 'No board counts.')
+    board = words.board_line(counts if counts and r.get('countsAt') else None, True)
     if r['stopped'] and r['stopped'].get('hold'):
-        return '\n'.join([
-            f"Release {r['id']} held: nothing released; the records stay decided and held.",
-            'Next: ask what it was held for, then a round on those records, or on the set when the reason spreads to the others '
-            '(`protocol start round`; its check loop opens with step-back). A later `protocol start release` takes the rest.', board])
+        return words.release_closed_held(r['id'], board)
     if r['stopped']:
-        ids = ', '.join(r['stopped']['ids'])
-        return '\n'.join([
-            f"Release {r['id']} stopped: {r['stopped']['reason']}. Nothing released; {ids} stay decided and held.",
-            f'Next: a round on {ids} (`protocol start round`, then classify and select them; its check loop opens '
-            'with step-back).', board])
-    dropped = [rec for rec in r['set'] if rec['state'] == 'dropped']
-    outcome = r.get('outcome') or {'closed': [], 'open': []}
-    return '\n'.join([
-        f"Release {r['id']} closed.",
-        *(f"- released {rec['id']}: {rec['title']}" + (f" (revised: {rec['change']})" if rec.get('change') else '')
-          for rec in r['set'] if rec['state'] == 'released'),
-        *(f"- superseded {sup['old']} by {sup['new']}" + (f" (rule: {sup['partial']})" if sup['partial'] is not None else '')
-          for sup in r['supersedes']),
-        *(f"- closed {q}: answered by released {', '.join(r['closes'][q])}" for q in outcome['closed']),
-        *(f"- dropped {rec['id']} ({rec['reason']}): it stays decided and held for a round" for rec in dropped),
-        board,
-        'Next (decide.md Release 7): run `protocol next`.'
-        + (f" Dropped records go to a round: {', '.join(rec['id'] for rec in dropped)}." if dropped else '') + ' Wait for the user.',
-    ])
+        return words.release_closed_stopped(r['id'], r['stopped']['reason'], r['stopped']['ids'], board)
+    return words.release_closed(r, board)
 
 
 ID_WORD = re.compile(r'^[A-Za-z][\w]*-[\w.]+$')
@@ -369,11 +334,10 @@ def stamp_release(ctx: Context, origin: str, args: str = '') -> str:
         fail(f"release {r['id']} is open on {', '.join(rec['id'] for rec in r['set'])}: finish it, or `protocol abandon`, "
              'before releasing other ids')
     if r['approval']:
-        return f"Release {r['id']} is approved already."
+        return words.release_approved(r['id'])
     r['conditional'] = {'origin': origin, 'at': utcnow()}
     ctx.log('stamped', origin=origin)
-    return (f"Release {r['id']}: the /release-round approves it if every own ruling is sure and no record "
-            'leaves the set or is revised; otherwise a dialog asks.')
+    return words.release_stamped(r['id'])
 
 
 RELEASE = Protocol('release', [

@@ -5,10 +5,8 @@ import json
 import shutil
 from datetime import datetime, timedelta, timezone
 
-from .base import (
-    CAP_CHOICES, CHECK_CAP, LIST_COMMAND, PICK_DETAIL, PRUNE_DAYS, THINK_MORE, VERB_ORIGINS, recommended_suffix,
-    utcnow
-)
+from .base import CAP_CHOICES, CHECK_CAP, PRUNE_DAYS, THINK_MORE, VERB_ORIGINS, recommended_suffix, utcnow
+from . import words
 from .session import state_root
 from .store import Store
 from .engine import Context, by_id, fail, premise_status, questions
@@ -63,7 +61,7 @@ def chat_answer(ctx: Context, report: dict) -> str:
     ctx.log('answered', origin='chat', questions=[qid], quote=quote)
     if ctx.round['step'] == 'ask':
         ctx.go('ask')
-    return f'Recorded the chat answer to {qid} with its quote.'
+    return words.chat_recorded(qid)
 
 
 def recommended_index(q: dict) -> int | None:
@@ -154,12 +152,7 @@ def decline(ctx: Context, report: dict, origin: str, reason: str) -> str:
     ctx.log('decline', marker=batch['marker'], origin=origin, reason=reason, partial=partial or None)
     if batch['cap']:
         ctx.round['check']['paused'] = True  # nothing decided: the loop waits for the user
-    note = f"Batch {batch['marker']} {reason}: nothing recorded; its questions are back to ready."
-    if partial:
-        note += (' Answers given inside the declined batch (confirm them in the next batch, do not record them): '
-                 + '; '.join(f'{text!r}: {answer!r}' for text, answer in partial.items()))
-    return note + (' Ask the user what to change, or `protocol step` with {} to ask again.' if not batch['cap']
-                   else ' The check loop is paused: `protocol resume` continues it.')
+    return words.declined_note(batch['marker'], reason, partial, batch['cap'])
 
 
 def cap_decision(ctx: Context, answer: str, origin: str) -> str:
@@ -169,18 +162,17 @@ def cap_decision(ctx: Context, answer: str, origin: str) -> str:
     ctx.log('cap-decision', choice=choice or answer, origin=origin)
     if choice is None:
         check['paused'] = True
-        return f'The user answered the cap question in their own words: "{answer}". Loop paused; act on it, then ' \
-               '`protocol resume` or restart questions.'
+        return words.cap_own_words(answer)
     if choice == 'Continue':
         check['cap'] = check['cycle'] + CHECK_CAP
         next_cycle(ctx)
-        return 'Continue: more check cycles.'
+        return words.CAP_CONTINUED
     if choice == 'Pause':
         check['paused'] = True
-        return 'Paused: `protocol resume` continues the check loop.'
+        return words.CAP_PAUSED
     check['askNow'] = True
     ctx.go(gate_ask(ctx))
-    return 'Ask now: the questions go out as they stand.'
+    return words.CAP_ASK_NOW
 
 
 def option_pick(q: dict, value: str) -> str | None:
@@ -208,19 +200,18 @@ def answered_line(ctx: Context, batch: dict, report: dict) -> str:
         pick = option_pick(q, value) if q else value
         reply = typed_reply(report, shown['question'], value) if pick is None else ''
         if q and value == THINK_MORE and pick is None:
-            outcome = f'{THINK_MORE}: its checks rerun'
+            outcome = words.ANSWER_THINK_MORE
         elif reply:
-            outcome = f'typed, not an answer yet: {reply}'
+            outcome = words.answer_typed(reply)
         elif not value:
-            outcome = 'no answer, asked again'
+            outcome = words.ANSWER_NONE
         elif q and q.get('strength'):
-            outcome = f"{pick} ({'recommended' if pick == q['recommendation'] else 'not recommended'})"
+            outcome = words.answer_pick(pick, pick == q['recommendation'])
         else:
             outcome = pick
         title = q['title'] if q else shown['question']
-        number = f'{index + 1}. ' if len(batch['questions']) > 1 else ''
-        rows.append(f"{number}{title}{' ' if title.endswith('?') else ': '}{outcome}")
-    return '\n'.join(['Your answers:', *rows])
+        rows.append(words.answered_row(index, len(batch['questions']), title, outcome))
+    return words.answered_rows(rows)
 
 
 def answer(ctx: Context, report: dict, origin: str) -> str:
@@ -260,7 +251,7 @@ def answer(ctx: Context, report: dict, origin: str) -> str:
             ctx.state['answers'][qid] = pick
             done.append(qid)
             if isinstance(annotation, dict) and str(annotation.get('notes') or '').strip():
-                noted.append(f'{qid}: picked "{pick}" with the note "{annotation["notes"].strip()}".')
+                noted.append(words.answer_noted(qid, pick, annotation["notes"].strip()))
                 ctx.round['messages'].append({'text': annotation['notes'], 'origin': origin, 'at': now})  # the quote check reads these
         else:
             q['status'] = 'ready'
@@ -274,37 +265,28 @@ def answer(ctx: Context, report: dict, origin: str) -> str:
         ctx.round['check']['challenged'] = False  # the answers are news to the last challenge-rulings run
     response = report.get('response')
     ctx.log('answered', marker=batch['marker'], origin=origin, questions=done, typed=typed, response=response, **({'thinkMore': rethink} if rethink else {}))
-    notes = [f"Recorded answers to {', '.join(done)} ({origin})."] if done else []
-    notes += [*noted, 'A note that states a criterion restarts its question (`protocol restart <id>`); otherwise the '
-              'record carries it.'] if noted else []
+    notes = [words.answers_recorded(done, origin)] if done else []
+    notes += [*noted, words.NOTE_CRITERION] if noted else []
     for qid in typed:
-        notes.append(f'{qid}: the user typed "{by_id(ctx, qid)["typed"]}" instead of picking an option. Read it before '
-                     f'{qid} goes out again and act on each part: an option it picks → the ["answer"] call with the option\'s label '
-                     f'and that text as quote; a criterion → `protocol restart {qid}`; a change to the questions → `protocol edit` '
-                     f'(updates + the quote); another request (explain, step back, ground, …) → run it on {qid}; a reply that changes '
-                     f'{qid} (its recommendation included) → a pass report updating it. Restate the reply in one line when it could be '
-                     'read more than one way.')
+        notes.append(words.answer_typed_note(qid, by_id(ctx, qid)["typed"]))
     if typed or noted:
-        notes.append(PICK_DETAIL)
+        notes.append(words.PICK_DETAIL)
     if response:
         ctx.round['responses'].append({'marker': batch['marker'], 'text': response, 'origin': origin})
-        notes.append(f'The user also wrote: "{response}" — not assigned to any question: it may state a criterion '
-                     '(restart the affected questions) or ask for clarification.')
+        notes.append(words.answer_response(response))
     unanswered = [qid for qid in batch['ids'] if qid not in done and qid not in typed and qid not in rethink]
     if unanswered:
-        notes.append(f"Unanswered, back to ready: {', '.join(unanswered)}.")
+        notes.append(words.answers_unanswered(unanswered))
     if report.get('followUp'):
-        notes.append('The user asked for another round of questions: ask what they want asked, and stage it '
-                     '(a criterion restarts the affected questions).')
+        notes.append(words.FOLLOW_UP)
     reading = origin == 'dialog' and bool(typed or noted or response or report.get('followUp'))
     if reading:
-        notes.append('The next batch waits for your reading of these: `protocol step` with {} (or a pass report) issues it'
-                     + (f", {', '.join(typed)} in it." if typed else '.'))
+        notes.append(words.answer_reading(typed))
     if rethink:
         restart(ctx, rethink, THINK_MORE)
         if reading:
             ctx.round['reading'] = True  # set after the restart, which counts as the model's reading
-        return ' '.join([*notes, f"{', '.join(rethink)}: {THINK_MORE}, so the checks rerun on them aiming for a strong recommendation."])
+        return ' '.join([*notes, words.answer_rethink(rethink)])
     if reading:
         ctx.round['reading'] = True
     ctx.go('ask')
@@ -346,8 +328,8 @@ def restart(ctx: Context, ids: list[str], reason: str | None) -> None:
     r.pop('reading', None)
     rescope_check(ctx, [*ids, *take_unchecked(ctx)])
     if resting:
-        ctx.messages.append(f"Restarted with it, their answers rested on it: {', '.join(resting)}.")
-    ctx.messages.append(f'A restart that widens the round: list the open items with `{LIST_COMMAND}`.')
+        ctx.messages.append(words.restart_resting(resting))
+    ctx.messages.append(words.restart_widens())
     ctx.go('check')
 
 

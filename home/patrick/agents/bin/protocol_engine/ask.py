@@ -1,9 +1,8 @@
 """Ask: dialog batches and the Ask step."""
 from __future__ import annotations
 
-from .base import (
-    BATCH, ProtocolError, THINK_MORE, THINK_MORE_LINE, TITLE_MAX, cut, json_block, lines, recommended_suffix
-)
+from .base import BATCH, ProtocolError, THINK_MORE, TITLE_MAX, cut, lines, recommended_suffix
+from . import words
 from .engine import Context, PROTOCOLS, by_id, fail, premise_status, questions
 from .questions import check_question
 from .told import first_time, report_hint
@@ -20,16 +19,13 @@ def dialog_question(q: dict, number: int | None = None) -> dict:
     best = next(o for o in q['options'] if o['label'] == q['recommendation'])
     description = best['description']
     if q['strength'] == 'lean':
-        because = q.get('leanBecause') or {}
-        kind = 'Unverified' if because.get('cause') == 'evidence' else 'Your call'
-        description = f"{kind}: {because.get('detail')}" + (f' — {description}' if description else '')
+        description = words.lean_description(q.get('leanBecause') or {}, description)
     dialog = lambda o: {k: v for k, v in o.items() if k not in ('for', 'against')}  # the engine prints them before the dialog
     options = [{**dialog(best), 'label': best['label'] + recommended_suffix(q), 'description': description},
                *(dialog(o) for o in q['options'] if o is not best)]
     if q['strength'] == 'lean' and len(options) < 4 and not q['multiSelect']:  # the dialog allows four
-        options.append({'label': THINK_MORE, 'description': THINK_MORE_LINE})
-    text = f"{q['text']} {replaced_words(q)}".rstrip()
-    return {'question': f'{number}. {text}' if number else text, 'header': q['header'], 'options': options,
+        options.append({'label': THINK_MORE, 'description': words.THINK_MORE_LINE})
+    return {'question': words.dialog_text(q['text'], replaced_words(q), number), 'header': q['header'], 'options': options,
             'multiSelect': q['multiSelect']}
 
 
@@ -40,8 +36,7 @@ def replaced_words(q: dict) -> str:
     closes, revised = q.get('replaces') or [], q.get('revises')
     titles = {hit['id']: hit.get('title') or '' for hit in q['overlaps']}
     named = lambda rid: f"{rid} ({cut(titles[rid], TITLE_MAX)})" if titles.get(rid) else rid
-    return '; '.join(filter(None, [f"Recording it closes {', '.join(map(named, closes))}" if closes else '',
-                                   f"{named(revised)} is replaced at release" if revised else ''])) + ('.' if closes or revised else '')
+    return words.replaced_text(closes, revised, named)
 
 
 def released_held(ctx: Context) -> list[str]:
@@ -137,8 +132,7 @@ def ask_enter(ctx: Context) -> str | None:
         except ProtocolError as error:
             broken[q['id']] = str(error)
     if broken:
-        ctx.messages.append('Not asked yet: ' + '; '.join(broken.values()) + f". Fix {', '.join(broken)} in a pass of its "
-                            'own: call the ground skill on it (that Skill call counts as the observed run), then report the pass.')
+        ctx.messages.append(words.not_asked(broken))
     if not valid:
         return None
     chosen = valid[:BATCH]
@@ -153,22 +147,13 @@ def ask_enter(ctx: Context) -> str | None:
     return None
 
 
-EDIT_STDIN = '{"updates": [...], "quote": "<the user\'s exact words>"}'
-CHAT_STDIN = '{"question": "<q id>", "answer": "<the answer>", "quote": "<the user\'s exact words>"}'
-EDIT_WORDS = 'a question the edit adds or whose recommendation it changes is checked before it is asked.'
-
-
 def away_ask_text(ctx: Context) -> str:
     """Ask while the role is autopilot: no batch, no dialog, no print (r28-q126, q128). The classes are unattended.md's."""
     ready = [q for q in questions(ctx, 'draft', 'ready') if not q.get('unchecked')]
-    rows = [f"- {q['id']}: {q['text']} Recommendation: {q.get('recommendation')} ({q.get('strength')})" for q in ready]
     return lines(
-        f"Round {ctx.round['id']} · Ask (away: the role is autopilot, so no dialog opens, nothing prints and the person is not asked). "
-        'Settle each question by the Authority classes of unattended.md: `act` takes the recommendation as the answer (Record then asks '
-        'its rationale, rule owner and reversal), `park` leaves it open and unassigned on the board for the person; a question waiting '
-        'on a parked one parks with it. If the person is back, run `session-lead-mode activate solo` first.',
-        *rows,
-        report_hint(ctx, 'settle', {'settle': {q['id']: 'act' for q in ready[:1]} | {'<id>': 'park'}}),
+        words.away_ask_intro(ctx.round['id']),
+        *map(words.away_ask_row, ready),
+        report_hint(ctx, 'settle', words.settle_example([q['id'] for q in ready[:1]])),
     )
 
 
@@ -178,39 +163,23 @@ def ask_text(ctx: Context) -> str:
     batch = ctx.round['batch']
     if not batch:
         if ctx.round.get('reading'):
-            return (f"Round {ctx.round['id']} · Ask: the next batch waits for your reading of the user's reply: then `protocol step` "
-                    'with {} (or a pass report) issues it.')
-        return f"Round {ctx.round['id']} · Ask: no batch out. `protocol step` with {{}} issues the next one."
+            return words.ask_reading(ctx.round['id'])
+        return words.ask_no_batch(ctx.round['id'])
     tool_input = {'questions': batch['questions'], 'metadata': {'source': batch['marker']}}
     notice = batch.get('notice') or ''
-    order = ', in this order' + (', numbered like the dialog' if len(batch['questions']) > 1 else '')
-    console_opens = ('write one short line that questions are coming, nothing about their content, and end your turn; a message tells you when you have something to do. '
-                     'After a reply the person typed instead of picking: answer it as the turn\'s last text and end the turn. '
-                     'If a console message asks you to open the dialog: call AskUserQuestion with the input `protocol show` gives.')
-    lead = f"Round {ctx.round['id']} · " + (f"Check cap reached: {'ask the user how to go on.' if ctx.codex else console_opens}" if batch['cap'] else
-                                             f"Ask batch {batch['marker']}" + (f' (show the user the text below first, then ask{order}).' if ctx.codex else f': {console_opens}'))
+    numbered = len(batch['questions']) > 1
+    lead = words.ask_lead(ctx.round['id'], batch['marker'], batch['cap'], ctx.codex, numbered)
     approval = approval_question(ctx) if ctx.round['protocol'] == 'release' else None
     if approval and approval['id'] in batch['ids'] and approval_reasons(ctx):
-        lead += f" The dialog stays short; why it asks: {'; '.join(approval_reasons(ctx))}."
+        lead += words.approval_why(approval_reasons(ctx))
     once = first_time(ctx, 'ask')  # the dialog itself always prints; the instructions around it once
     if ctx.codex:
-        answer_how = ('Then record the reply: `protocol answer --origin model-reported` with stdin '
-                      + json_block({'marker': batch['marker'], 'answers': {batch['questions'][0]['question']: "<the user's own words, quoted verbatim>"}})
-                      + ". Key each answer by the question's exact text and quote only what the user wrote; leave out questions "
-                      'the user did not answer. If the user declines, run `protocol decline --origin model-reported` with stdin '
-                      + json_block({'marker': batch['marker'], 'partial': None}) + '. To apply a change the user asked for to a question, '
-                      f'run `protocol edit` (stdin {EDIT_STDIN}); ' + EDIT_WORDS)
-        return lines(lead, *([f'Text to show first:\n{notice}'] if notice else []),
-                     f'Ask the user exactly these questions: {json_block(batch["questions"])}',
-                     answer_how if once else f"Record the reply as before: `protocol answer --origin model-reported` (or `decline`), marker {batch['marker']}.")
-    return lines(lead, f'AskUserQuestion input{order}: {json_block(tool_input)}' if ctx.complete else '',
-                 f'To apply a change the user asked for to a question before they answer, use `protocol edit` (stdin {EDIT_STDIN}); '
-                 + EDIT_WORDS +
-                 ' A pass report updates questions only for a pass.\n'
-                 'Record an answer the user types in chat with the protocol tool\'s ["answer"] (through Bash, `protocol '
-                 'answer --origin chat`) and stdin '
-                 + json_block({'question': batch['ids'][0] if batch['ids'] else '<q id>', 'answer': '<the answer>',
-                               'quote': "<the user's exact words>"}) + '.' if once else '')
+        return lines(lead, *([words.text_to_show(notice)] if notice else []),
+                     words.ask_exactly(batch['questions']),
+                     words.codex_answer_how(batch['marker'], batch['questions'][0]['question']) if once
+                     else words.codex_answer_again(batch['marker']))
+    return lines(lead, words.dialog_input(words.ask_order(numbered), tool_input) if ctx.complete else '',
+                 words.claude_answer_how(batch['ids'][0] if batch['ids'] else None) if once else '')
 
 
 def ask_accept(ctx: Context, report: dict) -> str:
@@ -236,10 +205,7 @@ def ask_accept(ctx: Context, report: dict) -> str:
 
 
 def approval_reasons(ctx: Context) -> list[str]:
-    """Why the approval is asked (unsure rulings, revised records, records that left the set): for the model and the Log."""
-    return [f"unsure: {x['record']} {x['ruling']}" for x in ctx.round['rulings'] or [] if not x['sure']] + \
-           [f"revised: {rec['id']} ({rec['change']})" for rec in ctx.round['set'] if rec['state'] == 'revised'] + \
-           [f"left the set: {rec['id']} ({rec['reason']})" for rec in ctx.round['set'] if rec['state'] in ('dropped', 'changed')]
+    return words.approval_reasons(ctx.round['rulings'], ctx.round['set'])
 
 
 def approval_question(ctx: Context) -> dict | None:

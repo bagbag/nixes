@@ -1,24 +1,12 @@
 """The round's Collect and Select steps and the open-item lists."""
 from __future__ import annotations
 
-from .base import CLASSES, COLLECT_VIEWS, LIST_COMMAND, ProtocolError, lines
+from .base import CLASSES, COLLECT_VIEWS, ProtocolError, lines
+from . import words
 from .store import next_id
 from .boards import COUNT_KEYS, claim_items, foreign_holds
 from .engine import Context, fail
 from .told import first_time, report_hint
-
-
-VIEW_LABELS = {  # the views Collect offers, in listing order (`collect_enter`): heading, name in the counts
-    'decided': ('decided, awaiting release', 'decided'), 'questions': ('open questions', 'open questions'),
-    'ratification': ('awaiting ratification', 'awaiting ratification'), 'inReview': ('in review', 'in review'),
-    'forUser': ('waiting on the user', 'waiting on the user'), 'readyMilestone': ('ready milestones', 'ready milestones'),
-    'finishedEpic': ('finished epics (close one whose acceptance names the user)', 'finished epics'),
-}
-
-
-def item_row(item: dict) -> str:
-    return (f"- {item['id']}" + (f" [{item['type']}]" if item.get('type') not in (None, 'decision') else '')
-            + (f", held by {item['heldBy']}" if item.get('heldBy') else '') + f": {item['title']}")
 
 
 def items_text(ctx: Context, items: list[dict], elsewhere: dict[str, list[str]], waiting: list[dict],
@@ -33,47 +21,30 @@ def items_text(ctx: Context, items: list[dict], elsewhere: dict[str, list[str]],
         groups: dict[tuple[str, str], list[dict]] = {}
         for item in items:
             groups.setdefault((item['view'], str(item['status'])), []).append(item)
-        out = [f'Open items ({len(items) + len(waiting)}):'] + ([f"Named for this round: {', '.join(named)}."] if named else [])
-        for view, (heading, _) in VIEW_LABELS.items():
-            for (group_view, status), rows in groups.items():
-                if group_view == view:
-                    out += [f'{heading} · {status} ({len(rows)}):', *map(item_row, rows)]
-        if waiting:
-            out += [f'waiting on the user · held by the user, not offered ({len(waiting)}):', *map(item_row, waiting)]
-        out += [f"Held by live session {holder}, not offered: {', '.join(ids)}" for holder, ids in elsewhere.items()]
-        return '\n'.join(out)
+        listed = [(heading, status, rows) for view, (heading, _) in words.VIEW_LABELS.items()
+                  for (group_view, status), rows in groups.items() if group_view == view]
+        return words.items_whole(len(items) + len(waiting), named, listed, waiting, elsewhere)
     by_id = {item['id']: item for item in items}
-    tally = {view: sum(1 for item in [*items, *waiting] if item['view'] == view) for view in VIEW_LABELS}
-    counts = ', '.join(f'{n} {VIEW_LABELS[view][1]}' for view, n in tally.items() if n)
-    return lines(
-        *(['Named:', *(item_row(by_id[rid]) for rid in named or [] if rid in by_id)] if named else []),
-        f'Open items: {counts or "none"} (listed earlier). List them again with `{LIST_COMMAND}`, '
-        'and `board position` for the ready milestones and finished epics.' + (' List them before you select.' if bare else ''))
-
-
-GROUP_STEER = ('Group by default: the round takes every ready question sharing a premise, root cause, flow or sources '
-               '(`board related` finds them); a round of a single question names why no other shares one.')
+    tally = {view: sum(1 for item in [*items, *waiting] if item['view'] == view) for view in words.VIEW_LABELS}
+    counts = ', '.join(f'{n} {words.VIEW_LABELS[view][1]}' for view, n in tally.items() if n)
+    return words.items_counted([by_id[rid] for rid in named or [] if rid in by_id] if named else None, counts, bare)
 
 
 def collect_text(ctx: Context) -> str:
     r = ctx.round
     named = r.get('named') or []
-    points = [f"- {point['id']} [pasted]: {point['text']}" for point in r['points']]
+    points = [words.collect_point(point) for point in r['points']]
     missing = [p['id'] for p in r['points'] if p['id'] not in r['classes']]
     topic = r.get('topic')
     listing = items_text(ctx, r['items'], r.get('heldElsewhere') or {}, r.get('waiting') or [], named, bare=not named,
                          whole=bool(topic))
     return lines(
-        f"Round {r['id']} · Collect (decide.md Round 1): classify every pasted point and the board items in this "
-        "round's scope (asking.md Scope): ruled (cite its owner), planning (the planning session's call), own (your "
-        "ruling), user (the user's decision); unclassified board items stay out of this round. Check pasted points "
-        "against the current tree.",
-        *([f'Topic: {topic}. {GROUP_STEER}'] if topic else []),
-        listing or ('- (no open items' + ('' if ctx.board else ': no board here') + '; add pasted points)' if not points else ''),
+        words.collect_intro(r['id']),
+        *([words.collect_topic(topic)] if topic else []),
+        listing or (words.collect_empty(bool(ctx.board)) if not points else ''),
         *points,
-        f"Unclassified pasted points: {', '.join(missing) or 'none'}.",
-        report_hint(ctx, 'collect', {'classes': {'<id>': {'class': 'ruled', 'owner': 'docs/x.md#rule'}, '<id2>': 'user'},
-                                     'points': [{'text': '<another point>', 'class': 'user'}]}),
+        words.collect_unclassified(missing),
+        report_hint(ctx, 'collect', words.COLLECT_EXAMPLE),
     )
 
 
@@ -147,17 +118,12 @@ def candidates(ctx: Context) -> list[dict]:
 
 
 def select_text(ctx: Context) -> str:
-    rows = [f"- {c['key']} p{c.get('priority', '?')} ({ctx.round['classes'].get(c['key'], {}).get('class')})"
-            + (f" waits on {', '.join(c['blockedBy'])}" if c.get('blockedBy') else '') + f": {c['title']}"
+    rows = [words.select_row(c['key'], c.get('priority', '?'), ctx.round['classes'].get(c['key'], {}).get('class'),
+                             c.get('blockedBy') or [], c['title'])
             for c in candidates(ctx)]
     return lines(
-        f"Round {ctx.round['id']} · Select one round (asking.md Scope)"
-        + (f" on the topic: {ctx.round['topic']}" if ctx.round.get('topic') else '')
-        + ': every ready question sharing a premise, root cause, consumer concept, flow, or the module and sources the '
-        'grounding reads, a named question leading; ' + ('a round of a single question names why no other shares one. ' if ctx.round.get('topic') or
-                                                           ctx.round.get('named') else 'start from the highest-priority unblocked question. ')
-        + 'Candidates in order:',
-        *(rows or ['- none: report {"select": []} to close the round']),
+        words.select_intro(ctx.round['id'], ctx.round.get('topic'), bool(ctx.round.get('topic') or ctx.round.get('named'))),
+        *(rows or [words.SELECT_NONE]),
         report_hint(ctx, 'select', {'select': [c['key'] for c in candidates(ctx)[:2]] or ['<id>']}),
     )
 

@@ -1,7 +1,8 @@
 """Next: the seeds of the next round and the stored proposal."""
 from __future__ import annotations
 
-from .base import PROPOSAL_ROUNDS, SEEDS, TEXT_LIMIT, TITLE_LIMIT, json_block, lines
+from .base import PROPOSAL_ROUNDS, SEEDS, TEXT_LIMIT, TITLE_LIMIT, lines
+from . import words
 from .boards import foreign_holds
 from .engine import Context, fail
 from .questions import refuse_all
@@ -29,23 +30,6 @@ def seeds(ctx: Context, found: dict, position: dict) -> list[dict]:
     return ordered[:SEEDS]
 
 
-def seed_line(seed: dict) -> str:
-    return (f"- {seed['id']} · p{priority_of(seed)} · holds {seed['holds']}/{seed['holdsAll']} · "
-            + (f"milestone {seed['milestone']}" if seed['milestone'] else 'no milestone') + f" · {seed['title']}")
-
-
-def proposal_text(proposal: dict | None) -> list[str]:
-    """A stored proposal's rows; a stored row may lack fields a later version wrote (a read never fails on it)."""
-    if not proposal:
-        return ['No proposal stored.']
-    rows = [f"{index}. {r.get('title', '')}" + (f" · {r['premise']}" if r.get('premise') else '')
-            + (f" · leads with {' '.join(r['ids'])}" if r.get('ids') else '')
-            + f" · {'wants a fresh context' if r.get('fresh') else 'keeps the context'} · {r.get('why', '')}"
-            for index, r in enumerate(proposal.get('rounds') or [], 1)]
-    return ['Stored proposal' + (' (the first row is the recommended one):' if rows else ' (no rounds: the console offers a compaction when the context is large):'),
-            *rows]
-
-
 def topic_counts(ctx: Context, items: list[dict]) -> list[str]:
     """Open questions per topic label and priority, `orm-schema-migrations 7 p1, 7 p2`, the largest topic first
     (r24-q104, q105): the lead weighs priority against how many questions a round settles. A topic label only approximates a
@@ -58,10 +42,7 @@ def topic_counts(ctx: Context, items: list[dict]) -> list[str]:
         for topic in [label.removeprefix('topic:') for label in item['labels'] if label.startswith('topic:')] or ['(no topic)']:
             by_priority = tally.setdefault(topic, {})
             by_priority[priority_of(item)] = by_priority.get(priority_of(item), 0) + 1
-    ordered = sorted(tally.items(), key=lambda row: (-sum(row[1].values()), row[0]))
-    return ['Open questions by topic (a label approximates a premise: a round on it takes the part that shares one):',
-            *(f"- {topic} " + ', '.join(f'{n} p{priority}' if priority != 9 else f'{n} unprioritized'
-                                        for priority, n in sorted(by_priority.items())) for topic, by_priority in ordered)]
+    return words.topic_counts_lines(sorted(tally.items(), key=lambda row: (-sum(row[1].values()), row[0])))
 
 
 def inbox_text(found: dict) -> tuple[str, set[str]]:
@@ -72,15 +53,7 @@ def inbox_text(found: dict) -> tuple[str, set[str]]:
     held, inbox = queues.get('toSend') or [], queues.get('inbox') or []
     if not held and not inbox:
         return '', set()
-    row = lambda item: (f"- {item['id']} [{item.get('type')}] for "
-                        + ', '.join(label[len('for:'):] for label in item.get('labels') or [] if label.startswith('for:'))
-                        + f": {item.get('title', '')}")
-    return lines(
-        'Inbox step (decide.md): show each item to the user, who picks; never decide these alone.',
-        *([f'Finds held for you to check, filed for another person: send, keep or close ({len(held)}):', *map(row, held)] if held else []),
-        *([f'Your inbox, sent to you: take, pass on or close with a reason ({len(inbox)}):', *map(row, inbox)] if inbox else []),
-        'Keep or take: board route <you> <id>; send or pass on: board send <person> <id>.',
-    ), {item['id'] for item in held}
+    return words.inbox_text(held, inbox), {item['id'] for item in held}
 
 
 def next_text(ctx: Context) -> str:
@@ -94,24 +67,12 @@ def next_text(ctx: Context) -> str:
     waiting = [item for item in waiting if item['id'] not in finds]
     return lines(
         inbox,
-        f'Seeds for the next round (top {SEEDS} open questions, unblocked, not held by another live session; open-milestone '
-        'members first, then priority, then the work they hold; holds: stopping at a milestone/everything downstream):'
-        if ctx.board else '',
-        *([seed_line(seed) for seed in seeded] or (['- none'] if ctx.board else [])),
+        words.SEEDS_HEAD if ctx.board else '',
+        *([words.seed_line(seed, priority_of(seed)) for seed in seeded] or ([words.SEEDS_NONE] if ctx.board else [])),
         items_text(ctx, items, elsewhere, waiting),
         *(topic_counts(ctx, items) if ctx.board else []),
-        *proposal_text(ctx.state.get('proposal')),
-        'Recommend the next round or, when no question round leads, the other next step by priority and what it unblocks. '
-        'Propose topics, not question sets: a row names a topic and its premise, and the round selects its questions at Collect. '
-        'Rank the rows by priority and by how many questions each settles, and state the trade in `why`; a follow-up that '
-        'reuses what was just read goes first, and milestone members stay ahead of the rest. '
-        'Record the proposal with `protocol next --set` (stdin '
-        + json_block({'rounds': [{'title': '<the topic in plain words>', 'premise': '<the premise its questions share>',
-                                  'why': '<why this topic, and the priority/size trade>', 'fresh': False,
-                                  'ids': ['<a question that must lead (optional)>']}]})
-        + f'): at most {PROPOSAL_ROUNDS} rounds, the one that reuses the read context first with fresh false, other topics with '
-        'fresh true; `rounds` may be empty to offer only a compaction. Do not tell the user a round will compact. '
-        "Start a row with `protocol start round --topic '<title>: <premise>'`.",
+        *words.proposal_text(ctx.state.get('proposal')),
+        words.next_recommend(),
     )
 
 
@@ -156,4 +117,4 @@ def set_proposal(ctx: Context, report: dict) -> str:
                            for one in report.get('rounds', [])]}
     ctx.state['proposal'] = proposal
     ctx.store.log({'round': None, 'event': 'proposed', 'rounds': [one['title'] for one in proposal['rounds']]})
-    return '\n'.join(['Stored.', *proposal_text(proposal)])
+    return words.proposal_stored(proposal)

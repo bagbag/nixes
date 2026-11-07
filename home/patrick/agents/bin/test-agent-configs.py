@@ -4774,7 +4774,7 @@ def validate_protocol(root: Path, part: str) -> None:
                 raise ValueError(f"protocol chain: one Record writes all three: {round_events}\n{out}")
 
             # Log lines (r11 q43), as the pane's Log reads them.
-            log_line = engine_module.views.log_text
+            log_line = engine_module.words.log_text
             if log_line({"event": "pass", "command": "ground", "changes": 0, "summary": "No change: premises hold"}) != "ground: no change: premises hold" \
                     or log_line({"event": "pass", "command": "ground", "changes": 0, "summary": "no changes."}) != "ground: no change" \
                     or log_line({"event": "pass", "command": "ground", "changes": 0, "summary": "Nothing moved"}) != "ground: no change: Nothing moved" \
@@ -4783,8 +4783,8 @@ def validate_protocol(root: Path, part: str) -> None:
                     or log_line({"event": "pass", "command": "ground", "kind": "lean", "scoped": ["q39", "q40"]}) != "ground (lean q39 q40): no change" \
                     or log_line({"event": "classified", "classes": {}}) != "classified 0 points" \
                     or log_line({"event": "classified", "classes": {"user": 2}}) != "classified 2 points: 2 user" \
-                    or engine_module.views.recorded_line([{"question": "q39", "board": "fx-1"}, {"question": "q40", "board": "fx-2"}]) != "recorded q39, q40 → fx-1, fx-2" \
-                    or engine_module.views.recorded_line([{"question": "q39", "board": None}, {"question": "q40"}]) != "recorded q39, q40 → files":
+                    or engine_module.words.recorded_line([{"question": "q39", "board": "fx-1"}, {"question": "q40", "board": "fx-2"}]) != "recorded q39, q40 → fx-1, fx-2" \
+                    or engine_module.words.recorded_line([{"question": "q39", "board": None}, {"question": "q40"}]) != "recorded q39, q40 → files":
                 raise ValueError("protocol log lines: strip a leading 'no change', name the pass kind, 'classified 0 points', merge recorded lines")
             configure()
 
