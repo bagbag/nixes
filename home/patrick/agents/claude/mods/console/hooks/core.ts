@@ -2,15 +2,16 @@
 // declarations throughout: past an import, the engine follows $ only into those.
 import type { EngineInterface, ToolCallResult } from 'claude-code'
 
-import type { ConsoleAction, ConsoleBoard, ConsolePassOrigin, ConsolePassRun, ConsolePending, ConsoleRound, ConsoleSuggestion } from '../types'
+import type { ConsoleAction, ConsoleBatch, ConsoleBoard, ConsolePassOrigin, ConsolePassRun, ConsolePending, ConsoleRound, ConsoleSuggestion } from '../types'
 
-import { boardItem, boardViews, decline, dropped, isRoundOpen, pass, PASS_COMMANDS, pending as readPending, readRole, RELEASE_COMMAND, ROUND_ROLES, setWorkers, show, stampRelease, START_COMMAND, stateDir } from './engine'
+import { boardItem, boardViews, decline, dropped, isRoundOpen, nudged, pass, PASS_COMMANDS, pending as readPending, readRole, RELEASE_COMMAND, ROUND_ROLES, setWorkers, show, stampRelease, START_COMMAND, stateDir, statusLine } from './engine'
+import type { ConsoleNudge } from './engine'
 import {
-  claimRefresh, getAskSent, getDrawn, getPaneDismissed, getPass, getQueued, getRole, getRound, releaseRefresh, setAskSent, setBoard, setDrawn, setPass, setPrinted, setRole,
-  setRound, setRoundError, setStart, takeRefreshAgain, updateOpened, updateQueued,
+  claimRefresh, getAskSent, getDrawn, getPaneDismissed, getPass, getQueued, getRole, getRound, getTurnRunning, releaseRefresh, setAskSent, setBoard, setContinueAsked, setDrawn, setPass, setPrinted, setRole,
+  setRound, setRoundError, setStart, takeContinueAsked, takeRefreshAgain, updateOpened, updateQueued,
 } from './state'
 import {
-  declineFailedNote, itemSlot, missingReportText, openDialogText, PROTOCOL_ARGS_DESCRIPTION, PROTOCOL_STDIN_DESCRIPTION, PROTOCOL_TOOL_DESCRIPTION, STALE_DROP, stuckPassText,
+  CONTINUE_NO_ROUND, continueIdleText, continueInHandText, continueText, declineFailedNote, itemSlot, missingReportText, openDialogText, PROTOCOL_ARGS_DESCRIPTION, PROTOCOL_STDIN_DESCRIPTION, PROTOCOL_TOOL_DESCRIPTION, STALE_DROP, stuckPassText,
 } from './words'
 
 type $ = EngineInterface
@@ -67,20 +68,34 @@ const dialogPlaceholder = (marker: string): string => `${DIALOG_PREFIX}${marker}
 export const placeholderMarker = (question: unknown): string | null =>
   typeof question === 'string' && question.startsWith(DIALOG_PREFIX) ? question.slice(DIALOG_PREFIX.length, -1) : null
 
-/** What the swapped dialog came to, set by the AskUserQuestion hook. `summary`: the visible line; `note`: the engine's text for the model; `isDropped`: the batch was no longer out, so nothing follows. */
-export type DialogOutcome = { summary: string; note: string | null; unsavedDecline?: { marker: string; partial: Record<string, string> | null }; isDropped?: true }
+/**
+ * What the swapped dialog came to, set by the AskUserQuestion hook. `summary`: the visible line; `note`: the engine's text for the model;
+ * `unsavedDecline`: a decline Esc kept the hook from saving; `isDropped`: the batch was no longer out, so nothing follows; `isWoken`: the
+ * hook already woke the model with it.
+ */
+export type DialogOutcome = { summary: string; note: string | null; unsavedDecline?: { marker: string; partial: Record<string, string> | null }; isDropped?: true; isWoken?: true }
 let dialogOutcome: DialogOutcome | null = null
 /** The marker openDialog waits on in this instance of the console; a reload starts it over, with the dialog still open. */
 let dialogAwaited: string | null = null
 
-/** The AskUserQuestion hook's outcome of the console's own dialog: to the openDialog waiting on it, else (opened before a reload)
- * the hook finishes it itself, so the answers are never left recorded and unannounced. */
+/**
+ * The AskUserQuestion hook's outcome of the console's own dialog (r7-q25). What the hook recorded, or failed to save for a reason other
+ * than Esc, wakes the model from here at once: the opener's `$.ui.ask` may never settle (a reload while the dialog was open), and a
+ * recorded answer must never wait on it. The opener, when this instance has one, only learns that it was handled. A drop and a decline
+ * Esc left unsaved go to the opener (Esc aborts the hook's own runs, a retry included), else the hook finishes them itself.
+ */
 export function deliverDialogOutcome($: $, marker: string, session: string, outcome: DialogOutcome): void {
+  const isWaking = outcome.unsavedDecline === undefined && !outcome.isDropped
+  if (isWaking) {
+    void wakeModel($, outcome).catch(async error => {
+      await notice($, `telling the model about the answers failed: ${message(error)}`).catch(() => undefined)
+    })
+  }
   if (dialogAwaited === marker) {
-    dialogOutcome = outcome
+    dialogOutcome = isWaking ? { ...outcome, isWoken: true } : outcome
     return
   }
-  void finishDialog($, marker, session, outcome).catch(failOpen($, 'handing on the dialog\'s answers'))
+  if (!isWaking) void finishDialog($, marker, session, outcome).catch(failOpen($, 'handing on the dialog\'s answers'))
 }
 
 /** Tells the model what came of the dialog: the engine's text as a note, then the visible line, which starts its turn. */
@@ -96,11 +111,11 @@ async function wakeModel($: $, outcome: DialogOutcome): Promise<void> {
 /**
  * Opens the batch's whole dialog with no model turn (r32-q149): `$.ui.ask` with a placeholder the AskUserQuestion hook swaps for the
  * batch, then records through its usual capture. `$.ui.ask` itself then has no answer to return, so it rejects; the hook's outcome
- * counts. Every outcome wakes the model with the answers line as its prompt, and its turn end runs a pending pass or opens the
- * next batch: a `$` call from this command hook skips every console hook (Claude Code 2.1.318, against its docs), so it can
- * neither print the line through a console command nor run `/console-questions` again. Without an outcome the swap never ran
- * and the stand-in was drawn: Not now holds the batch until the person's next message, anything else (a pick of Open, a close, a
- * timeout) has the model open the dialog.
+ * counts. Every outcome wakes the model with the answers line as its prompt (the hook itself, r7-q25, but for a decline Esc left
+ * unsaved, recorded and announced here), and its turn end runs a pending pass or opens the next batch: a `$` call from this command
+ * hook skips every console hook (Claude Code 2.1.318, against its docs), so it can neither print the line through a console command
+ * nor run `/console-questions` again. Without an outcome the swap never ran and the stand-in was drawn: Not now holds the batch until
+ * the person's next message, anything else (a pick of Open, a close, a timeout) has the model open the dialog.
  */
 export async function openDialog($: $, marker: string, session: string): Promise<void> {
   dialogOutcome = null
@@ -114,10 +129,10 @@ export async function openDialog($: $, marker: string, session: string): Promise
     if (!holdsQuestions(chosen)) await askModelToOpen($, marker)
     return
   }
-  await finishDialog($, marker, session, outcome)
+  if (!outcome.isWoken) await finishDialog($, marker, session, outcome)
 }
 
-/** What follows the console's own dialog: a decline Esc left unsaved is recorded, then the model wakes. */
+/** What follows a drop or a decline Esc left unsaved: the decline is recorded, then the model wakes; a drop ends here. */
 async function finishDialog($: $, marker: string, session: string, outcome: DialogOutcome): Promise<void> {
   if (outcome.isDropped) return
   if (outcome.unsavedDecline !== undefined) {
@@ -135,20 +150,41 @@ async function finishDialog($: $, marker: string, session: string, outcome: Dial
 }
 
 /**
- * At a main-agent turn's end that was not aborted, with a batch out (r29-q138, r30-q140, r32-q149): runs `/console-questions`, whose
- * hook prints the text and opens the dialog. A command's output draws whole between turns where a transcript row would not, and the hook's
- * fresh `$` matters too: after an awaited call in a chain, `$.ui.ask` skips the swap in the console's hook. One dialog per batch marker until
- * the person sends a new message (`prompt.submit` clears it) and none is open. A run that settles unanswered
- * by the hook takes the model's route instead of leaving the round waiting.
+ * Takes the issued batch for its dialog: null when no batch is out, the repeat guard holds it (one dialog per batch marker until the
+ * person sends a new message, `prompt.submit` clearing it) or this console's dialog for it is still open (a drop, reported).
  */
-export async function openBatchDialog($: $, round: ConsoleRound | null): Promise<void> {
+async function claimBatch($: $, round: ConsoleRound | null): Promise<ConsoleBatch | null> {
   const batch = round?.batch
-  if (round === null || round === undefined || !isRoundOpen(round) || batch === null || batch === undefined || (await getAskSent($)) === batch.marker) return
+  if (round === null || round === undefined || !isRoundOpen(round) || batch === null || batch === undefined || (await getAskSent($)) === batch.marker) return null
   if (dialogAwaited === batch.marker) {  // the person's message cleared the repeat guard while this console's dialog is still open
     await reportDrop($, await $.session.id(), { kind: 'batch', marker: batch.marker })
-    return
+    return null
   }
   await setAskSent($, batch.marker)
+  return batch
+}
+
+/**
+ * The batch's dialog from a console hook whose `$` reaches the console's own hooks (`/console-questions` run by the console, a typed
+ * `/console-continue`): marks its text printed and opens the dialog, unless this console's dialog for it is open already. The caller
+ * prints the text as its command output.
+ */
+export async function showQuestions($: $, marker: string, session: string): Promise<void> {
+  await setPrinted($, marker)
+  questionsAnswered = marker
+  if (dialogAwaited !== marker) void openDialog($, marker, session).catch(failOpen($, 'opening the dialog'))
+}
+
+/**
+ * At a main-agent turn's end that was not aborted, or a continue the person asked for, with a batch out (r29-q138, r30-q140,
+ * r32-q149): runs `/console-questions`, whose hook prints the text and opens the dialog. A command's output draws whole between turns
+ * where a transcript row would not, and the hook's fresh `$` matters too: after an awaited call in a chain, `$.ui.ask` skips the swap
+ * in the console's hook. A run that settles unanswered by the hook (one from a press or a console command hook, whose `$` skips the
+ * console's own hooks) takes the model's route instead of leaving the round waiting. Returns the marker it took, else null.
+ */
+export async function openBatchDialog($: $, round: ConsoleRound | null): Promise<string | null> {
+  const batch = await claimBatch($, round)
+  if (batch === null) return null
   questionsAnswered = null
   void $.command.run({ command: QUESTIONS_COMMAND, args: batch.marker })
     .then(() => questionsAnswered === batch.marker ? undefined : openUnanswered($, batch))
@@ -157,11 +193,11 @@ export async function openBatchDialog($: $, round: ConsoleRound | null): Promise
       await setAskSent($, null).catch(() => undefined)
       await notice($, `printing the question text failed: ${message(error)}; nothing opens the dialog`).catch(() => undefined)
     })
+  return batch.marker
 }
 
 /** The marker the `/console-questions` hook last answered; a run that settles without it never reached the hook. */
 let questionsAnswered: string | null = null
-export const setQuestionsAnswered = (marker: string): void => { questionsAnswered = marker }
 
 /** The command's hook never ran: the person reads any new text as a notice, and the model opens the dialog. */
 async function openUnanswered($: $, batch: { marker: string; notice: string }): Promise<void> {
@@ -178,29 +214,157 @@ async function askModelToOpen($: $, marker: string): Promise<void> {
   }, true, { kind: 'batch', marker })
 }
 
-/** What follows a turn: the pending pass, and the issued batch's print and dialog. */
-export async function betweenTurns($: $, session: string, isAborted: boolean): Promise<void> {
+/** When the turn-end decision runs: at a main-agent turn's end (`ended`, `aborted`), or on the person's /console-continue (`asked`). */
+type Occasion = 'ended' | 'aborted' | 'asked'
+
+/** How the batch's dialog opens: `openBatchDialog`, or from a typed /console-continue's own hook (continueTyped). Returns the marker taken, else null. */
+type BatchOpener = (round: ConsoleRound | null) => Promise<string | null>
+
+/** What the turn-end decision started: the pending pass it queued, the batch whose dialog it took; `inHand`: the pending pass, left alone as queued already. */
+type Started = { pass: ConsolePending | null; batch: string | null; inHand: ConsolePending | null }
+
+/**
+ * The turn-end decision's pass part. Asked for (/console-continue, r7-q24), it queues the pending pass whatever its stored run came to
+ * (stopped, asked for or noted) unless that run is still queued; a started one gets the turn end's request for its report.
+ */
+async function decidePass($: $, session: string, occasion: Occasion): Promise<Omit<Started, 'batch'>> {
   const pending = await readPending($, session)
   const run = await getPass($)
-  if (pending !== null && run !== null && run.id === pending.id) {
-    if (run.phase !== 'noted' && run.phase !== 'stopped' && isAborted) {
+  const isStored = pending !== null && run !== null && run.id === pending.id
+  if (isStored && run.phase === 'started' && occasion !== 'aborted') {
+    await setPass($, { ...run, phase: 'asked' })
+    await pressSubmit($, missingReportText(pending.command, pending.id, pending.args), undefined, true, { kind: 'pass', id: pending.id, command: pending.command, args: pending.args })
+  } else if (occasion === 'asked' && pending !== null) {
+    if (isStored && run.phase === 'queued') return { pass: null, inHand: pending }
+    await queuePending($, session, pending)
+    return { pass: pending, inHand: null }
+  } else if (isStored) {
+    if (run.phase !== 'noted' && run.phase !== 'stopped' && occasion === 'aborted') {
       // Esc stops the loop: the pass stays pending and is not run again, except by a compaction right after (rerunStoppedPass).
       await setPass($, { ...run, phase: 'stopped' })
-    } else if (run.phase === 'started') {
-      await setPass($, { ...run, phase: 'asked' })
-      await pressSubmit($, missingReportText(pending.command, pending.id, pending.args), undefined, true, { kind: 'pass', id: pending.id, command: pending.command, args: pending.args })
     } else if (run.phase === 'asked') {
       await setPass($, { ...run, phase: 'noted' })
       await notice($, stuckPassText(pending.command, pending.args))
     }
-  } else if (pending !== null && !isAborted) {
+  } else if (pending !== null && occasion === 'ended') {
     await queuePending($, session, pending)
+    return { pass: pending, inHand: null }
   }
-  // The issued batch's text prints between turns, then the console opens its dialog (an aborted turn does neither, as it runs no
-  // pass; an away session has no batch to open).
-  if (!isAborted && (await getRole($))?.role !== 'autopilot') {
-    await openBatchDialog($, await refreshRound($, session))
+  return { pass: null, inHand: null }
+}
+
+/**
+ * The turn-end decision's batch part: the issued batch's text prints between turns, then the console opens its dialog (an aborted
+ * turn does neither, as it runs no pass; an away session has no batch to open). Asked for, it reopens a batch the repeat guard holds,
+ * as the person's own message would.
+ */
+async function decideBatch($: $, session: string, occasion: Occasion, openBatch: BatchOpener): Promise<string | null> {
+  if (occasion === 'aborted' || (await getRole($))?.role === 'autopilot') return null
+  if (occasion === 'asked') await setAskSent($, null)
+  return openBatch(await refreshRound($, session))
+}
+
+/** The turn-end decision: the pending pass, and the issued batch's print and dialog. */
+async function decideNext($: $, session: string, occasion: Occasion): Promise<Started> {
+  const passed = await decidePass($, session, occasion)
+  return { ...passed, batch: await decideBatch($, session, occasion, round => openBatchDialog($, round)) }
+}
+
+/** What follows a turn. */
+export async function betweenTurns($: $, session: string, isAborted: boolean): Promise<void> {
+  await decideNext($, session, isAborted ? 'aborted' : 'ended')
+}
+
+/** The command that runs the turn-end decision on the person's request (register.tsx registers and answers it by this literal name). */
+export const CONTINUE_COMMAND = 'console-continue'
+
+/** Steps where the model acts with no pending pass or batch, so a stalled round there needs only waking: Record, and every release step. */
+const isModelStep = (round: ConsoleRound): boolean => round.step === 'record' || round.protocol === 'release'
+
+/**
+ * A continue the person asked for (r7-q24): a round that stalled picks up where the turn-end decision would take it. Nothing pending
+ * or out, Record and a release step wake the model with the engine's status line; anything else is said as a notice. Each use is
+ * logged with what it did (`nudged`). It runs only while no turn does: asked during one, it waits for the turn's end (continueLater).
+ * `taken`: the batch a typed continue's own hook already took (continueTyped).
+ */
+async function continueRound($: $, taken?: { batch: string | null }): Promise<void> {
+  const ctx = await refreshRole($)
+  if (!ctx.isRoundRole) return notice($, CONTINUE_NO_ROUND)
+  const before = await refreshRound($, ctx.session)
+  if (before === null || !isRoundOpen(before)) {
+    await notice($, CONTINUE_NO_ROUND)
+    return reportNudge($, ctx.session, {})
   }
+  const started = taken === undefined ? await decideNext($, ctx.session, 'asked') : { ...await decidePass($, ctx.session, 'asked'), batch: taken.batch }
+  if (started.pass !== null || started.batch !== null) {
+    return reportNudge($, ctx.session, { ...(started.pass === null ? {} : { pass: started.pass.id }), ...(started.batch === null ? {} : { batch: started.batch }) })
+  }
+  if (started.inHand !== null) {
+    await notice($, continueInHandText(started.inHand.command, started.inHand.id))
+    return reportNudge($, ctx.session, {})
+  }
+  const round = (await getRound($)) ?? before
+  if (round.pending !== null) return reportNudge($, ctx.session, {})  // a started pass: asked for its report above
+  let line: string
+  try {
+    line = await statusLine($, ctx.session)
+  } catch (error) {
+    return notice($, `reading the round's status failed: ${message(error)}; nothing was continued`)
+  }
+  if (!isRoundOpen(round) || !isModelStep(round)) {
+    await notice($, continueIdleText(round.step, line))
+    return reportNudge($, ctx.session, {})
+  }
+  await pressSubmit($, continueText(line), async error => {
+    await notice($, `waking the model to continue the round failed: ${message(error)}`).catch(() => undefined)
+  }, true)
+  await reportNudge($, ctx.session, { step: round.step ?? '' })
+}
+
+/**
+ * A typed /console-continue, from its command hook; returns the command's output, a reopened batch's text. The batch's dialog opens
+ * here, as `/console-questions` opens it: from a later event `$.ui.ask` would skip the console's own swap. The rest runs on a timer
+ * once the hook answered, as the host refuses a command run from a command hook (it would wait on the turn the hook holds).
+ */
+export async function continueTyped($: $): Promise<string | undefined> {
+  const ctx = await refreshRole($)
+  let text: string | undefined
+  const opened = ctx.isRoundRole ? await decideBatch($, ctx.session, 'asked', async round => {
+    const batch = await claimBatch($, round)
+    if (batch === null) return null
+    await showQuestions($, batch.marker, ctx.session)
+    if (batch.notice.trim() !== '') text = `\n${batch.notice}`
+    return batch.marker
+  }) : null
+  $.clock.after(0, () => continueRound($, { batch: opened }).catch(failOpen($, 'continuing the round')))
+  return text
+}
+
+/** A continue asked for during a turn, by a press or typed: the turn's end runs it (register.tsx) unless Esc ended the turn. */
+export async function continueLater($: $): Promise<void> {
+  await setContinueAsked($, true)
+  await notice($, '/console-continue runs when this turn ends (Esc drops it).')
+}
+
+/**
+ * The Continue press: runs at once while the session is idle (off the press's budget), else at the turn's end. A press's `$` skips the
+ * console's own hooks, so an idle press hands a batch to the model to open.
+ */
+export async function pressContinue($: $): Promise<void> {
+  if (await getTurnRunning($)) return continueLater($)
+  $.clock.after(0, () => continueRound($).catch(failOpen($, 'continuing the round')))
+}
+
+/** At a main-agent turn's end: a continue asked for during the turn runs in place of the plain decision; Esc drops it. */
+export async function afterTurn($: $, session: string, isAborted: boolean): Promise<void> {
+  const isAsked = await takeContinueAsked($)
+  if (isAsked && !isAborted) return continueRound($)
+  await betweenTurns($, session, isAborted)
+}
+
+/** Logs a continue in the engine's history; a failed report is a toast, what it did stands. */
+async function reportNudge($: $, session: string, report: ConsoleNudge): Promise<void> {
+  await nudged($, session, report).catch(failOpen($, 'logging the continue'))
 }
 
 /** Queues the engine's pending pass: stores it, records it with origin plugin, and runs it. The run goes last: later `$` calls in the chain skip the console's hooks. */

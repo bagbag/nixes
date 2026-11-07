@@ -203,6 +203,10 @@ declare module 'claude-code' {
       deferred: Shaped<ConsoleDeferred[]>
       refresh: Shaped<ConsoleRefresh>
       isPaneDismissed: boolean
+      /** A main-agent turn runs (turn.start until turn.complete); false while the session is idle. */
+      isTurnRunning: boolean
+      /** A /console-continue asked for during the running turn (a press, or typed): its end runs it, unless Esc ended it. */
+      isContinueAsked: boolean
     }
   }
 }

@@ -6,15 +6,15 @@ import type { EngineInterface, Register } from 'claude-code'
 import type { ConsoleStart } from '../types'
 
 import {
-  betweenTurns, context, dropIfStale, failOpen, message, notice, openDialog, PANE, placeholderMarker, pressRun, pressSubmit, recordPass, refreshAll, refreshBoard, refreshLater,
+  afterTurn, context, continueLater, continueTyped, CONTINUE_COMMAND, dropIfStale, failOpen, message, notice, PANE, placeholderMarker, pressRun, pressSubmit, recordPass, refreshAll, refreshBoard, refreshLater,
   refreshRole, refreshRound, releaseRun, rerunStoppedPass, resetSession, deliverDialogOutcome, stampReleaseRun, withContext,
-  midTurnBuiltin, setQuestionsAnswered, staleDelivery, startedPass,
+  midTurnBuiltin, showQuestions, staleDelivery, startedPass,
 } from './core'
 import { answer, boardShow, decline, isRoundOpen, pass, pending as readPending, protocol, RELEASE_COMMAND, say, statusLine, toolArgv } from './engine'
 import { capture, judgeDialog } from './gate'
 import type { DialogInput } from './gate'
 import { drawBand, drawPane, PANE_MIN_COLUMNS, suggestions } from './pane'
-import { addGate, deferCommand, getBoard, getGate, getPass, getPrinted, getRole, getRound, getStart, releaseRefresh, setAskSent, setPaneDismissed, setPass, setPrinted, setRound, setStart, takeDeferred } from './state'
+import { addGate, deferCommand, getBoard, getGate, getPass, getPrinted, getRole, getRound, getStart, releaseRefresh, setAskSent, setPaneDismissed, setPass, setPrinted, setRound, setStart, setTurnRunning, takeDeferred } from './state'
 import {
   compactedNote, consoleText, DECLINED_TEXT, declinedNote, keepRoundText, NO_QUESTION_TEXT, keepStartText, protocolCallText, protocolResultText, STALE_PASS_TEXT, startAbandonedText, toolFailedText, TOOL_IDLE_TEXT, unsavedNote,
 } from './words'
@@ -54,6 +54,7 @@ export const register: Register = on => {
     await releaseRefresh($)
     await $.command.register({ name: 'console', description: 'Open the console pane (prints the board and round where no pane fits)' })
     await $.command.register({ name: 'console-questions', description: "Print the issued batch's question text", argumentHint: '[batch marker]' })
+    await $.command.register({ name: 'console-continue', description: 'Continue a stalled round: run its pending pass, reopen its dialog or wake the model at its step' })
     await $.command.register({ name: 'console-item', description: "Print a board item's summary", argumentHint: '<id>' })
     await refreshRole($).catch(failOpen($, 'reading the session role'))
     $.clock.every(REFRESH_MS, () => refreshAll($).catch(failOpen($, 'refresh')))
@@ -181,6 +182,7 @@ export const register: Register = on => {
   }).catch(($, e, next) => next(e))
 
   on('turn.start', async ($, e, next) => {
+    if (e.agentId === undefined) await setTurnRunning($, true)
     if (e.agentId === undefined && e.text !== '') await releaseRun($, key => key === `prompt:${e.text}`)
     return next(e)
   }).catch(($, e, next) => next(e))
@@ -196,6 +198,10 @@ export const register: Register = on => {
     if (isPerson && e.turnId !== undefined && e.command === undefined) {
       // Sent during a turn: a built-in command runs when the turn ends, ahead of anything the console starts (user, 2026-11-06); anything
       // else reaches the model in this turn.
+      if (new RegExp(`^/${CONTINUE_COMMAND}(\\s|$)`).test(e.text.trim())) {  // the console's own command: the model cannot run it either
+        await continueLater($)
+        return { drop: `/${CONTINUE_COMMAND} runs when this turn ends` }
+      }
       const builtin = await midTurnBuiltin($, e.text).catch(() => null)
       if (builtin !== null) {
         await deferCommand($, builtin)
@@ -221,6 +227,7 @@ export const register: Register = on => {
   on('turn.complete', async ($, e, next) => {
     const done = await next(e)
     if (e.agentId !== undefined) return done
+    await setTurnRunning($, false)
     for (const command of await takeDeferred($)) void $.command.run(command).catch(failOpen($, `running /${command.command}`))
     const ctx = await refreshRole($)
     if (!ctx.isRoundRole) {
@@ -228,7 +235,7 @@ export const register: Register = on => {
       return done
     }
     try {
-      await betweenTurns($, ctx.session, e.isAborted)
+      await afterTurn($, ctx.session, e.isAborted)
     } catch (error) {
       $.ui.toast(`console: reading the pending pass failed: ${message(error)}`)
     }
@@ -307,15 +314,13 @@ export const register: Register = on => {
     const wanted = e.args.trim()
     const isOurs = e.origin.kind === 'plugin' && e.origin.name === 'console'
     if (batch === null || (wanted !== '' && wanted !== batch.marker)) return { text: NO_QUESTION_TEXT }
-    if (isOurs) {
-      await setPrinted($, batch.marker)
-      const ctx = await context($)
-      setQuestionsAnswered(batch.marker)
-      void openDialog($, batch.marker, ctx.session).catch(failOpen($, 'opening the dialog'))
-    }
+    if (isOurs) await showQuestions($, batch.marker, await $.session.id())
     if (batch.notice.trim() === '') return { text: NO_QUESTION_TEXT }
     return { text: `\n${batch.notice}` }  // the host prefixes the output with the plugin's name: the first question starts its own line
   })
+
+  // The turn-end decision on the person's request (r7-q24); a reopened batch's text is its output.
+  on('command.run', { command: 'console-continue' }, async $ => ({ text: await continueTyped($) }))
 
   on('ui.render', { component: 'Pane', requestId: PANE }, ($, e) => drawPane($, e))
 

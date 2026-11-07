@@ -228,6 +228,13 @@ export function roundWords(round: ConsoleRound): string {
 /** The message the console sends when it could not open a batch's dialog itself: the model opens it. */
 export const openDialogText = (marker: string): string => `Open the dialog for batch ${marker}: call AskUserQuestion with the input \`protocol show\` prints.`
 
+/** What /console-continue (r7-q24) sends the model at Record or a release step with no pending pass: the engine's status line. */
+export const continueText = (line: string): string => `Continue the round: ${line}`
+/** /console-continue's notices when it starts nothing. */
+export const CONTINUE_NO_ROUND = 'nothing to continue: no round is open'
+export const continueInHandText = (command: string, id: string): string => `nothing to continue: /${command} (${id}) is already queued or running`
+export const continueIdleText = (step: string | null, line: string): string => `nothing to continue at ${step}: no pending pass or batch, and the console wakes the model only at Record or a release step; ${line}`
+
 /** The console asks the model once for a report it did not give. */
 export const missingReportText = (command: string, id: string, args: string): string =>
   `The /${command} pass (${id}) ended without its report. Report its per-question updates through the protocol tool; if it did not run, run /${[command, args].filter(part => part !== '').join(' ')} with the Skill tool first.`

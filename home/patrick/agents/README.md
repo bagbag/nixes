@@ -307,8 +307,9 @@ A round:
   names what moved, `(changed: options, premises)`. After a dialog the engine writes the
   line the person reads: per question its number, title and outcome, a pick marked
   `(recommended)` or `(not recommended)`, and a skip, a typed reply or Think more saying
-  so. The console's own dialog sends that line to the model as its prompt, and the model's turn end runs a pending pass; a dialog answered after the console reloaded is carried on by
-  the dialog hook itself. A release
+  so. The console's own dialog sends that line to the model as its prompt, and the model's turn end runs a pending pass; the
+  dialog hook records the answers and wakes the model itself right away, so a console reload while the dialog is open loses
+  no wake-up, and only a decline Esc kept from saving is recorded and sent once the dialog closed. A release
   approval prints its corrections (revised and dropped records), the board check
   (supersedes, closes, the other hit rows) and every own ruling in the same layout; a
   typed or pressed approval opens no dialog and prints nothing. In Claude
@@ -481,7 +482,9 @@ A round:
   reports each stale action it dropped (`dropped`, origin `plugin`; stdin
   `{"kind": "pass", "id"}` or `{"kind": "batch", "marker"}`): the history logs it,
   and a dropped pass run removes that pass's observed run, not a newer run of the
-  same command.
+  same command. It logs each `/console-continue` or Continue press (`nudged`, origin
+  `plugin`; stdin what it did: `{"pass": <id>}`, `{"batch": <marker>}`, both, `{"step": <step>}`, or `{}`
+  when it queued, reopened and woke none of these), with no change to the round.
 - Away rounds (r28-q126..q131, r29): the registered role says whether the person can
   answer, in Claude and Codex alike (the engine reads it from the registry entry as
   it reads the tool): `autopilot` means away, `solo` means back. At Ask while away
@@ -631,8 +634,9 @@ what the model reads: no next pass and no cycle in the headline or check text, o
 `End your turn with one short line`. The pane shows `checking N/M`, `protocol show`
 keeps the cycle, and Codex, which runs its passes itself, keeps them all.
 
-`bin/round-report` prints passes by kind, how questions were answered and how often a
-recommendation changed after the person saw it (the `late-change` event);
+`bin/round-report` prints passes by kind, how questions were answered, how often a
+recommendation changed after the person saw it (the `late-change` event), the console's dropped actions and its continues
+(`nudged`, by what each did);
 `--since <time>` compares before and after a change, `--transcripts` adds tool use
 and tokens per pass.
 
@@ -689,7 +693,9 @@ compaction. Its round features act for lead, solo and autopilot. A `protocol` ca
 the engine's headline. Every call may run up to ten minutes (`$.process.run`'s maximum); one that fails or is cut answers the model
 with the error and that it may have run in part (read `protocol show` before running it again; a Record step runs again safely).
 Esc at a turn end stops the pass loop; a successful compaction right after reruns the stopped pass once (not a skipped or precompute
-one; a pass given up as stuck is never rerun). A model Skill call of a pass skill counts as the round's pass; a subagent's does not. The Console pane (`/console` shows it as text;
+one; a pass given up as stuck is never rerun). `/console-continue` (r7-q24) runs the turn-end decision on demand: it queues the pending pass (a stopped, asked-for or noted run of it
+included) unless a run of it is queued already, reopens the issued batch past the repeat guard, else at Record or a release step wakes the
+model with `protocol status --line`, else says why nothing ran; during a turn it runs at the turn's end (Esc drops it); logged as `nudged`. A model Skill call of a pass skill counts as the round's pass; a subagent's does not. The Console pane (`/console` shows it as text;
 `/console-item <id>` prints an item's summary in the chat; `/console-questions` prints the issued batch's text) shows Board
 (counts, this session's items, sessions with runtime and pull initials, `auto` for autopilot, stale
 holds, live workers), Suggestions while no run is open and the engine's `next`
@@ -713,7 +719,8 @@ with their state, and a stopped release its reason and next round), Controls
 Base, Path (`goal foundations`), Options (`options`), Refine (`decisions clean overfit mechanics`)
 and All (every lens in list order), Ground Base and All, each with the focus
 for Step Back, without changing the selection; Decide (Question Me, Intake running
-`/round-intake`, which asks for your list, Challenge Rulings, Explain); Actions,
+`/round-intake`, which asks for your list, Continue while a round is open, doing what `/console-continue` does (but an idle press hands a batch to the model to open)
+and in the `suggestion` color while the session is idle and nothing has queued or started the pending pass, Challenge Rulings, Explain); Actions,
 whose Release Round and Compact take the `suggestion` color exactly when the
 Suggestions area offers them, and which hold the role button: Autopilot while solo, Solo while
 autopilot, each running the `/role` command (the host refuses a prompt text starting with `/`);

@@ -5,9 +5,9 @@ import type { EngineInterface, RenderPropsOf } from 'claude-code'
 
 import type { ConsoleBoard, ConsoleQuestion, ConsoleRecord, ConsoleRole, ConsoleRound, ConsoleSection, ConsoleSession, ConsoleSuggestion } from '../types'
 
-import { pressOpenItem, pressOpenOverlaps, pressOpenSettles, pressOpenSuggestion, pressRole, pressRun, pressStart, pressSubmit, pressView, pressWorkers } from './core'
+import { pressContinue, pressOpenItem, pressOpenOverlaps, pressOpenSettles, pressOpenSuggestion, pressRole, pressRun, pressStart, pressSubmit, pressView, pressWorkers } from './core'
 import { isRoundOpen, RELEASE_COMMAND, ROUND_ROLES } from './engine'
-import { getBoard, getExpanded, getLenses, getOpened, getPass, getRole, getRound, getRoundError, toggleExpanded, updateLenses } from './state'
+import { getBoard, getExpanded, getLenses, getOpened, getPass, getRole, getRound, getRoundError, getTurnRunning, toggleExpanded, updateLenses } from './state'
 import { answerText, COUNT_LABELS, GROUND, GROUND_BASE, lensArgs, LENS_SETS, plural, pullsText, recommendationMark, recommendationText, roleText, roundWords, runNoun, staleHolds, staleSessions, startHint, STEP_BACK_BASE, suggestionText, WHAT, WHERE } from './words'
 import type { Lens, LensCommand } from './words'
 
@@ -70,6 +70,7 @@ export async function drawPane($: $, e: { surface: string; props: RenderPropsOf[
   const opened = await getOpened($)
   const roundError = await getRoundError($)
   const passRun = await getPass($)
+  const isTurnRunning = await getTurnRunning($)
   const hint = hints()
   const isRoundRole = role !== null && ROUND_ROLES.includes(role.role)
   const isAutopilot = role?.role === 'autopilot'  // away: nothing is proposed to start, and no release (the engine refuses both)
@@ -493,6 +494,9 @@ export async function drawPane($: $, e: { surface: string; props: RenderPropsOf[
   const pendingPass = round !== null && isRoundOpen(round) ? round.pending?.command ?? null : null
   const isPassRunning = pendingPass !== null && passRun !== null && passRun.id === round?.pending?.id && passRun.phase !== 'queued'
   const passWord = isPassRunning ? 'running' : 'next'
+  // Continue stands out while the session is idle and nothing runs the pending pass: no stored run of it queued or started (r7-q24).
+  const isContinueSuggested = !isTurnRunning && pendingPass !== null
+    && !(passRun !== null && passRun.id === round?.pending?.id && (passRun.phase === 'queued' || passRun.phase === 'started'))
   const nextMark = (command: string) => pendingPass === command ? <Text color="claude"> ◂ {passWord}</Text> : null
   const lensHead = (command: LensCommand, title: string, base: string, hasFocus: boolean) => {
     const picked = lenses[command]
@@ -605,6 +609,8 @@ export async function drawPane($: $, e: { surface: string; props: RenderPropsOf[
       labelled('decide', <Text bold>Decide</Text>, divided('decide-row', [
         { key: 'question-me', scope: 'decide-question-me', label: 'Question Me', onPress: run('question-me') },
         { key: 'intake', scope: 'decide-intake', label: 'Intake', onPress: run('round-intake') },
+        ...(round !== null && isRoundOpen(round) ? [{ key: 'continue', scope: 'decide-continue', onPress: () => pressContinue($),
+          label: isContinueSuggested ? <Text color="suggestion">Continue</Text> : 'Continue' }] : []),
         { key: 'challenge-rulings', scope: 'decide-challenge-rulings', onPress: run('challenge-rulings'),
           label: pendingPass === 'challenge-rulings' ? <Text color="claude">Challenge Rulings ◂ {passWord}</Text> : 'Challenge Rulings' },
         { key: 'explain', scope: 'decide-explain', label: 'Explain', onPress: run('explain') },
@@ -612,6 +618,7 @@ export async function drawPane($: $, e: { surface: string; props: RenderPropsOf[
     )
     hint.add('decide-question-me', 'Runs /question-me: starts or resumes the round')
     hint.add('decide-intake', 'Runs /round-intake: asks for your list, then takes it into a round')
+    hint.add('decide-continue', 'Does what /console-continue does (at this turn\'s end while one runs): runs the pending pass, reopens the batch\'s dialog or wakes the model at its step')
     hint.add('decide-challenge-rulings', 'Runs /challenge-rulings')
     hint.add('decide-explain', 'Runs /explain')
     return rows

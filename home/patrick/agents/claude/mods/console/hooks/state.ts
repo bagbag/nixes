@@ -24,6 +24,8 @@ const gateState = atom({ plugin: 'console', key: 'gate' } as const, [], { shape:
 const lensState = atom({ plugin: 'console', key: 'lenses' } as const, { 'step-back': [], ground: [], focus: '' } as ConsoleLenses, { shape: 'lenses-1' })
 const refreshState = atom({ plugin: 'console', key: 'refresh' } as const, { since: null, again: false } as ConsoleRefresh, { shape: 'refresh-1' })
 const dismissedState = atom({ plugin: 'console', key: 'isPaneDismissed' } as const, false)
+const turnRunningState = atom({ plugin: 'console', key: 'isTurnRunning' } as const, false)
+const continueAskedState = atom({ plugin: 'console', key: 'isContinueAsked' } as const, false)
 const expandedState = atom({ plugin: 'console', key: 'expanded' } as const, [] as ConsoleSection[], { shape: 'expanded-1' })
 
 const openedState = atom({ plugin: 'console', key: 'opened' } as const, null, { shape: 'opened-4' })
@@ -114,3 +116,15 @@ export async function releaseRefresh($: $): Promise<void> { await update($, refr
 /** The person closed the pane: no unasked reopen until they open it again with /console. */
 export async function getPaneDismissed($: $): Promise<boolean> { return read($, dismissedState) }
 export async function setPaneDismissed($: $, value: boolean): Promise<void> { await update($, dismissedState, () => value) }
+
+/** A main-agent turn runs: set at its start, cleared at its end (aborted included); the Continue press reads it. */
+export async function getTurnRunning($: $): Promise<boolean> { return read($, turnRunningState) }
+export async function setTurnRunning($: $, value: boolean): Promise<void> { await update($, turnRunningState, () => value) }
+
+/** A /console-continue asked for during a turn, by a press or typed: the turn's end runs it; taking it clears it. */
+export async function setContinueAsked($: $, value: boolean): Promise<void> { await update($, continueAskedState, () => value) }
+export async function takeContinueAsked($: $): Promise<boolean> {
+  const isAsked = await read($, continueAskedState)
+  if (isAsked) await update($, continueAskedState, () => false)
+  return isAsked
+}

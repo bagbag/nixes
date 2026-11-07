@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """round-report: counts over every session's round history, to judge a change to the rounds before and after it.
 
-Prints passes by kind, how questions were answered and how often a recommendation changed after its question went out;
+Prints passes by kind, how questions were answered, how often a recommendation changed after its question went out, and the
+console's dropped actions and continues;
 with --transcripts, also how much each kind of pass did, read from Claude's transcripts (the host's format, so best effort).
 """
 import argparse
@@ -67,6 +68,12 @@ def report(since: datetime.datetime | None) -> tuple[str, set[str]]:
             counts['think more'] += len(event.get('thinkMore') or [])
         elif kind in ('edited', 'restart', 'late-change', 'asked', 'dropped'):
             counts[kind] += 1
+        elif kind == 'nudged':  # the person's /console-continue or Continue press, by what it did (r7-q24)
+            counts['nudged'] += 1
+            counts['nudged pass'] += 'pass' in event
+            counts['nudged batch'] += 'batch' in event
+            counts['nudged step'] += 'step' in event
+            counts['nudged nothing'] += not any(key in event for key in ('pass', 'batch', 'step'))
     rows = []
     for key, done in sorted(passes.items(), key=lambda pair: -len(pair[1])):
         seconds = [one[1] for one in done]
@@ -79,7 +86,9 @@ def report(since: datetime.datetime | None) -> tuple[str, set[str]]:
              f"answers: {answers}; picked {counts['picked']}, typed {counts['typed']} ({100 * counts['typed'] // max(answers, 1)}%), think more {counts['think more']}",
              f"edits: {counts['edited']}; restarts: {counts['restart']}",
              f"late changes (a recommendation changed after the person saw it): {counts['late-change']}",
-             f"stale console actions dropped: {counts['dropped']}"]
+             f"stale console actions dropped: {counts['dropped']}",
+             f"console continues (/console-continue, Continue): {counts['nudged']}; queued a pass {counts['nudged pass']}, "
+             f"reopened a batch {counts['nudged batch']}, woke the model {counts['nudged step']}, none of these {counts['nudged nothing']}"]
     return '\n'.join(lines), sessions
 
 

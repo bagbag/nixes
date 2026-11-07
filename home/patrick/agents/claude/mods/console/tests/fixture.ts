@@ -52,6 +52,8 @@ export type World = {
   prompts: string[]
   opened: string[]
   tools: { name: string; isDeferred: unknown }[]
+  /** Command names the console registered. */
+  registered: string[]
   toasts: string[]
   notified: string[]
   views: unknown[]
@@ -86,7 +88,7 @@ export function world(on: On, init: Partial<Pick<World, 'round' | 'role' | 'surf
     role: init.role === undefined ? { session: SESSION, role: 'lead', actor: '617adf08', tool: 'claude' } : init.role,
     surfaces: init.surfaces ?? ['terminal'],
     activateError: init.activateError,
-    calls: [], commands: [], prompts: [], asUser: [], opened: [], tools: [], toasts: [], notified: [], views: [],
+    calls: [], commands: [], prompts: [], asUser: [], opened: [], tools: [], registered: [], toasts: [], notified: [], views: [],
     files: new Map(),
     sessions: init.sessions ?? [
       { session: SESSION, role: 'lead', actor: '617adf08', pulls: [], holds: 2, workers: null, state: 'active', idleSince: null, claimable: 0 },
@@ -119,7 +121,7 @@ export function world(on: On, init: Partial<Pick<World, 'round' | 'role' | 'surf
   on('fs.read', (_, e) => ({ value: w.files.get(e.path) ?? '' }))
   on('fs.write', (_, e) => { w.files.set(e.path, e.text); return { value: undefined } })
   on('agent.list', () => ({ value: w.agents as never }))
-  on('command.register', (_, e) => ({ value: { command: e.name } }))
+  on('command.register', (_, e) => { w.registered.push(e.name); return { value: { command: e.name } } })
   on('command.list', () => ({ value: [{ name: 'compact', description: '', source: 'builtin' }, { name: 'step-back', description: '', source: 'user' }] as never }))
   on('tool.register', (_, e) => { w.tools.push({ name: e.name, isDeferred: e.isDeferred }); return { value: { tool: `mcp__console__${e.name}` } } })
   on('ui.open', (_, e) => { w.opened.push(e.id); return { value: { isPlaced: true } } })
@@ -160,7 +162,7 @@ export function world(on: On, init: Partial<Pick<World, 'round' | 'role' | 'surf
         if (verb === 'pending') return ok(w.round.pending ?? null)
         if (verb === 'status') return ok('round r4 · check 2/3 · next ground')
         if (verb === 'show' && argv[4] !== '--json') return ok('# round r4')
-        if (verb === 'say' || verb === 'dropped') return ok('')
+        if (verb === 'say' || verb === 'dropped' || verb === 'nudged') return ok('')
         if (verb === 'answer') return ok({ ...w.round, echo: engineLine(Object.values(JSON.parse(e.init?.stdin ?? '{}').answers ?? {}) as string[]) })
         return ok(w.round)
       })()

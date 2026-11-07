@@ -81,7 +81,7 @@ describe('tool', () => {
   test('refuses a caller origin, session, and the verbs the console relays', async ($, on) => {
     const { w } = world(on)
     await start($)
-    for (const args of [['answer', '--origin', 'dialog'], ['answer', '--orig', 'dialog'], ['show', '--o=dialog'], ['step', '--session=x'], ['step', '--sess', 'x'], ['decline'], ['say'], ['pass'], ['dropped']]) {
+    for (const args of [['answer', '--origin', 'dialog'], ['answer', '--orig', 'dialog'], ['show', '--o=dialog'], ['step', '--session=x'], ['step', '--sess', 'x'], ['decline'], ['say'], ['pass'], ['dropped'], ['nudged']]) {
       const ran = await $.tool.call({ tool: 'mcp__console__protocol', args } as never)
       expect(String(ran.result)).toMatch(/^Refused/)
     }
@@ -314,6 +314,30 @@ describe('dialog gate and capture', () => {
         await $.tool.call({ tool: 'AskUserQuestion', questions: [{ question: `Open the questions for batch ${BATCH.marker}?`, header: 'Round', multiSelect: false, options: [{ label: 'Open the questions', description: '' }, { label: 'Not now', description: '' }] }] } as never)
         await clock.settle()
         expect(w.verbs()).toContain('answer --origin dialog')
+        expect(w.prompts).toEqual([engineLine(['my own words'])])
+      })
+
+      // r7-q25: the answer came through the dialog hook while the opener's `$.ui.ask` never settled (a reload mid-dialog): the hook
+      // wakes the model itself. The opener's call is held open; the answer arrives through a second placeholder call meanwhile.
+      test('answered while the opener\'s ask never settles, the hook wakes the model once', async ($, on) => {
+        const { w, clock } = world(on, { round: asking('') })
+        const placeholder = { tool: 'AskUserQuestion', questions: [{ question: `Open the questions for batch ${BATCH.marker}?`, header: 'Round', multiSelect: false, options: [{ label: 'Open the questions', description: '' }, { label: 'Not now', description: '' }] }] } as never
+        let release: (ran: unknown) => void = () => undefined
+        let calls = 0
+        on('tool.call', { tool: 'AskUserQuestion' }, () => {
+          calls += 1
+          if (calls > 1) return answered({ [QUESTION]: 'my own words' }) as never
+          void Promise.resolve().then(() => $.tool.call(placeholder))  // unawaited: the opener's call stays held
+          return new Promise(resolve => { release = resolve }) as never
+        })
+        await start($)
+        await $.turn.complete(complete())
+        await clock.settle()
+        expect(calls).toBe(2)
+        expect(w.verbs()).toContain('answer --origin dialog')
+        expect(w.prompts).toEqual([engineLine(['my own words'])])
+        release({ deny: 'closed' })  // the opener's ask settles at last, with nothing to record: it adds no prompt of its own
+        await clock.settle()
         expect(w.prompts).toEqual([engineLine(['my own words'])])
       })
 

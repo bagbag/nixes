@@ -5,7 +5,7 @@ import json
 import shutil
 from datetime import datetime, timedelta, timezone
 
-from .base import CAP_CHOICES, CHECK_CAP, DROP_KINDS, PRUNE_DAYS, THINK_MORE, VERB_ORIGINS, recommended_suffix, utcnow
+from .base import CAP_CHOICES, CHECK_CAP, DROP_KINDS, NUDGE_KEYS, PRUNE_DAYS, THINK_MORE, VERB_ORIGINS, recommended_suffix, utcnow
 from . import words
 from .session import state_root
 from .store import Store
@@ -42,6 +42,22 @@ def drop_report(ctx: Context, report: dict) -> None:
         for command in [c for c, run in observed.items() if run.get('pending') == ref]:
             del observed[command]
     ctx.log('dropped', kind=kind, **{key: ref})
+
+
+def nudge_report(ctx: Context, report: dict) -> None:
+    """The person's /console-continue or Continue press (r7-q24): logged with what the console did, the round untouched: the
+    pending pass it queued (`pass`, its id), the batch it reopened (`batch`, its marker), both, the step it woke the model at
+    (`step`, alone), or none of these (`{}`: no round open, the pass already queued, a started pass asked for its report, or a step
+    with nothing to continue)."""
+    unknown = sorted(set(report) - set(NUDGE_KEYS))
+    if unknown:
+        fail(f"nudged: unknown key {', '.join(unknown)} (accepted: {', '.join(NUDGE_KEYS)})")
+    for key, value in report.items():
+        if not isinstance(value, str) or not value:
+            fail(f'nudged: `{key}` must be a non-empty string')
+    if 'step' in report and len(report) > 1:
+        fail('nudged: `step` stands alone (a continue that queued a pass or reopened a batch woke no step)')
+    ctx.log('nudged', **report)
 
 
 def normalized(text: str) -> str:

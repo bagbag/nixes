@@ -43,7 +43,9 @@ VERB_ORIGINS = {
     'pass': PASS_ORIGINS,
     'say': ('composer', 'bridge'),  # the person's own messages, stored for the chat quote check
     'dropped': ('plugin',),  # a stale console action the console did not deliver (r3-q10)
+    'nudged': ('plugin',),  # the person's /console-continue or Continue press, with what the console did (r7-q24)
 }
+NUDGE_KEYS = ('pass', 'batch', 'step')  # what a continue did: queued the pending pass, reopened the batch, woke the model at the step
 COLLECT_VIEWS = 'decided,questions,ratification,review,user'
 LIST_COMMAND = f'board health --items {COLLECT_VIEWS}'  # lists the open items Collect offers, but for the ready milestones and finished epics `board position` lists
 # Question fields a pass can change; a change to any of them counts (asking.md Check: premise, ruling, option or

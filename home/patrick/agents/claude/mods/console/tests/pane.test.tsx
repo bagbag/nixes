@@ -335,6 +335,101 @@ describe('pane', () => {
     expect(w.views).toEqual([{ agentId: 'a1' }])
     await ui.unmount()
   })
+
+  // r7-q24: the decide row's Continue runs /console-continue; it stands out while the round waits on a pass nobody runs.
+  describe('the Continue press', () => {
+    const nudged = (w: { calls: { argv: string[] }[] }) => w.calls.filter(one => one.argv[3] === 'nudged').length
+    const color = async ($: any) => {
+      const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+      const drawn = await ui.find({ key: 'decide-row-continue' })
+      const colors = (await ui.findAll({ type: 'Text', text: 'Continue' })).filter((one: { text: string }) => one.text === 'Continue').map((one: { props: { color?: string } }) => one.props.color)
+      await ui.unmount()
+      return drawn === undefined ? 'absent' : colors[0] ?? 'plain'
+    }
+
+    test('sits after Question Me and Intake while a round is open, names its command, and runs at once on every press while idle', async ($, on) => {
+      const { w, clock } = world(on, { round: roundJson({ step: 'record', batch: null }) })
+      await ready($, clock)
+      const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+      const keys = (await ui.findAll({ type: 'Button' })).map((one: { key?: string }) => one.key).filter((key: string | undefined) => key?.startsWith('decide-row-'))
+      expect(keys.slice(0, 3)).toEqual(['decide-row-question-me', 'decide-row-intake', 'decide-row-continue'])
+      expect(await texts(ui)).toContain('/console-continue')
+      await ui.press({ key: 'decide-row-continue' })
+      await clock.settle()
+      await $.turn.start({ text: w.prompts[0], turnId: 't1' } as never)  // the wake-up started its turn
+      await $.turn.complete({ answer: '', durationMs: 1, isAborted: false, turnId: 't1', reason: 'answer' } as never)
+      await clock.settle()
+      await ui.press({ key: 'decide-row-continue' })
+      await clock.settle()
+      expect(nudged(w)).toBe(2)
+      expect(w.prompts).toHaveLength(2)
+      expect(w.toasts).toEqual([])
+      await ui.unmount()
+    })
+
+    test('pressed during a turn, it runs when the turn ends', async ($, on) => {
+      const { w, clock, session } = world(on, { round: roundJson({ step: 'record', batch: null }) })
+      await ready($, clock)
+      await $.turn.start({ text: 'record', turnId: 't1' } as never)
+      const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+      await ui.press({ key: 'decide-row-continue' })
+      await ui.unmount()
+      await clock.settle()
+      expect(nudged(w)).toBe(0)
+      expect(notices(session).filter(text => text.includes('/console-continue runs when this turn ends'))).toHaveLength(1)
+      await $.turn.complete({ answer: '', durationMs: 1, isAborted: false, turnId: 't1', reason: 'answer' } as never)
+      await clock.settle()
+      expect(nudged(w)).toBe(1)
+      expect(w.prompts).toHaveLength(1)
+    })
+
+    // A press's `$` skips the console's own hooks (kit, 2.1.319): the console cannot swap its dialog from there, so the model opens it.
+    test('pressed while idle with a batch out, it hands the batch to the model and never draws the stand-in', async ($, on) => {
+      const { w, clock } = world(on, { round: roundJson({ step: 'ask', batch: { ...BATCH, notice: '' } }) })
+      const drawn: unknown[] = []
+      on('tool.call', { tool: 'AskUserQuestion' }, (_, e) => { drawn.push(e); return { deny: 'closed' } as never })
+      await ready($, clock)
+      await $.turn.complete({ answer: '', durationMs: 1, isAborted: false, turnId: 't0', reason: 'answer' } as never)
+      await clock.settle()
+      drawn.length = 0
+      await $.turn.start({ text: w.prompts[0] ?? '', turnId: 't1' } as never)
+      await $.turn.complete({ answer: '', durationMs: 1, isAborted: false, turnId: 't1', reason: 'answer' } as never)
+      await clock.settle()
+      const before = w.prompts.length
+      const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+      await ui.press({ key: 'decide-row-continue' })
+      await clock.settle()
+      await ui.unmount()
+      expect(drawn).toEqual([])
+      expect(w.prompts.slice(before)).toEqual([openDialogText(BATCH.marker)])
+      expect(w.calls.filter(one => one.argv[3] === 'nudged').map(one => JSON.parse(one.stdin ?? '{}'))).toEqual([{ batch: BATCH.marker }])
+    })
+
+    test('is absent with no round open', async ($, on) => {
+      const { clock } = world(on, { round: NO_ROUND })
+      await ready($, clock)
+      expect(await color($)).toBe('absent')
+    })
+
+    test('takes the suggestion color only while idle with a pending pass that has no queued or started run', async ($, on) => {
+      const { w, clock } = world(on, { round: roundJson({ pending: { id: 'p7', command: 'ground', args: '' } }) })
+      await ready($, clock)
+      expect(await color($)).toBe('suggestion')  // idle, and nothing runs the pending pass
+      await $.turn.start({ text: 'go on', turnId: 't1' } as never)
+      expect(await color($)).toBe('plain')  // a turn runs
+      await $.turn.complete({ answer: '', durationMs: 1, isAborted: false, turnId: 't1', reason: 'answer' } as never)
+      await clock.settle()
+      expect(await color($)).toBe('plain')  // idle, the pass queued
+      await $.skill.prompt({ skill: 'ground', text: 'Ground…' } as never)
+      expect(await color($)).toBe('plain')  // started
+      await $.turn.complete({ answer: '', durationMs: 1, isAborted: true, turnId: 't2', reason: 'aborted' } as never)
+      await clock.settle()
+      expect(await color($)).toBe('suggestion')  // Esc stopped it
+      w.round = roundJson()
+      await $.tool.call({ tool: 'mcp__console__protocol', args: ['show', '--json'] } as never)
+      expect(await color($)).toBe('plain')  // no pending pass
+    })
+  })
 })
 
 describe('band', () => {

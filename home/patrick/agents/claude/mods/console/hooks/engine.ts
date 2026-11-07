@@ -88,6 +88,15 @@ export async function dropped($: $, session: string, action: ConsoleAction): Pro
   if (ran.exitCode !== 0) throw new EngineError(`protocol dropped: exit ${ran.exitCode}: ${ran.stderr.trim()}`)
 }
 
+/** What a /console-continue did (r7-q24): the pending pass it queued, the batch it reopened, or the step it woke the model at; none of them when it started nothing. */
+export type ConsoleNudge = { pass?: string; batch?: string; step?: string }
+
+/** Logs a /console-continue or Continue press in the round's history, with what it did. */
+export async function nudged($: $, session: string, report: ConsoleNudge): Promise<void> {
+  const ran = await protocol($, session, ['nudged', '--origin', 'plugin'], JSON.stringify(report))
+  if (ran.exitCode !== 0) throw new EngineError(`protocol nudged: exit ${ran.exitCode}: ${ran.stderr.trim()}`)
+}
+
 /** The skill a typed or pressed command runs as the person's conditional approval of the release (r4-q16). */
 export const RELEASE_COMMAND = 'release-round'
 
@@ -114,7 +123,7 @@ function isStampedFlag(arg: string): boolean {
 const STAMPED_FLAGS: readonly string[] = ['--origin', '--session']
 
 /** Verbs only the mod relays from person-origin events or its own observation. */
-const MOD_ONLY_VERBS: readonly string[] = ['decline', 'say', 'pass', 'dropped']
+const MOD_ONLY_VERBS: readonly string[] = ['decline', 'say', 'pass', 'dropped', 'nudged']
 
 /**
  * The argv the model's tool may run, or why not. The tool stamps origins itself: `answer` is

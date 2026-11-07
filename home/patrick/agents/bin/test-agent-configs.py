@@ -4138,6 +4138,19 @@ def validate_protocol(root: Path, part: str) -> None:
             if waiting["command"] in observed_runs() or [(d["kind"], d.get("id"), d.get("marker")) for d in drops] != [
                     ("pass", "an-older-pass", None), ("pass", waiting["id"], None), ("batch", None, "round:r2:9")]:
                 raise ValueError(f"dropped: its own pass's run goes, the log carries each report: {observed_runs()} {drops}")
+            # r7-q24: each /console-continue or Continue press is logged under its own event, with what it did; plugin only.
+            for origin in ("dialog", "model", "composer", "press"):
+                refused("nudged", "--origin", origin, stdin={"pass": waiting["id"]}, needle="not accepted")
+            refused("nudged", "--origin", "plugin", stdin={"kind": "pass"}, needle="unknown key")
+            refused("nudged", "--origin", "plugin", stdin={"pass": ""}, needle="`pass`")
+            refused("nudged", "--origin", "plugin", stdin={"step": "record", "pass": waiting["id"]}, needle="`step` stands alone")
+            before = observed_runs()
+            for nudge in ({"pass": waiting["id"]}, {"batch": "round:r2:9"}, {"pass": waiting["id"], "batch": "round:r2:9"}, {"step": "record"}, {}):
+                proto("nudged", "--origin", "plugin", stdin=nudge)
+            nudges = [{k: v for k, v in e.items() if k in ("pass", "batch", "step")}
+                      for e in map(json.loads, (held / "history.jsonl").read_text(encoding="utf-8").splitlines()) if e["event"] == "nudged"]
+            if observed_runs() != before or nudges != [{"pass": waiting["id"]}, {"batch": "round:r2:9"}, {"pass": waiting["id"], "batch": "round:r2:9"}, {"step": "record"}, {}]:
+                raise ValueError(f"nudged: logged with what it did, the round untouched: {nudges} {observed_runs()}")
             changing_cycles(range(cap_cycles + 1, 2 * cap_cycles + 1))
             proto("decline", "--origin", "dialog", stdin={"marker": "round:r2:2", "partial": None})
             refused("step", stdin={"pass": "step-back", "updates": [], "checked": ["every question"]}, needle="paused")
@@ -6246,10 +6259,13 @@ def validate_protocol(root: Path, part: str) -> None:
             if '"event": "late-change"' not in late_log or '"was": "Keep", "now": "Drop"' not in late_log:
                 raise ValueError("a late recommendation change is logged")
             proto("dropped", "--origin", "plugin", stdin={"kind": "batch", "marker": "round:x:1"}, **texts)
+            for nudge in ({"pass": "p1"}, {"batch": "round:x:1"}, {"step": "record"}, {}):
+                proto("nudged", "--origin", "plugin", stdin=nudge, **texts)
             printed = subprocess.run([str(root / "bin" / "round-report")], env={**os.environ, "AGENT_SESSION_STATE_DIR": str(state)}, capture_output=True, text=True)
             if printed.returncode != 0 or "late changes (a recommendation changed after the person saw it): 1" not in printed.stdout or "think more 1" not in printed.stdout \
-                    or "stale console actions dropped: 1" not in printed.stdout:
-                raise ValueError(f"round-report counts late changes, Think more and drops:\n{printed.stdout}\n{printed.stderr}")
+                    or "stale console actions dropped: 1" not in printed.stdout \
+                    or "console continues (/console-continue, Continue): 4; queued a pass 1, reopened a batch 1, woke the model 1, none of these 1" not in printed.stdout:
+                raise ValueError(f"round-report counts late changes, Think more, drops and continues:\n{printed.stdout}\n{printed.stderr}")
             # Removing the only open question ends the check: no pass runs on nothing (r34).
             proto("say", "--origin", "composer", stdin={"text": "drop it"}, **texts)
             proto("edit", stdin={"updates": [{"id": one, "remove": True, "reason": "no need"}], "quote": "drop it"}, **texts)
