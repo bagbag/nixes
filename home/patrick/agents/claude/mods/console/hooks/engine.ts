@@ -38,11 +38,14 @@ const binary = (homeDir: string, name: string): string => `${homeDir}/.agents/bi
 
 export type Ran = { exitCode: number; stdout: string; stderr: string }
 
+/** $.process.run's maximum: a Record of a large round runs for minutes (r4-q12). */
+const PROTOCOL_TIMEOUT_MS = 600_000
+
 /** Runs `protocol --session <id> <args>`; the tool relays this raw result. */
 export async function protocol($: $, session: string, args: readonly string[], stdin?: string): Promise<Ran> {
   const homeDir = await home($)
   const ran = await $.process.run([binary(homeDir, 'protocol'), '--session', session, ...args],
-    { timeoutMs: 120_000, ...(stdin === undefined ? {} : { stdin }) })
+    { timeoutMs: PROTOCOL_TIMEOUT_MS, ...(stdin === undefined ? {} : { stdin }) })
   return { exitCode: ran.exitCode, stdout: ran.stdout, stderr: ran.stderr }
 }
 

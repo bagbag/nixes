@@ -196,7 +196,7 @@ def headline(ctx: Context) -> str:
     """The output's first line, which the console shows as the call's chat row: this call's events in the Log's
     words (words.log_text), then where the round goes next."""
     said, recorded = [], []
-    for event in ctx.store.pending:
+    for event in [*ctx.store.written, *ctx.store.pending]:
         if event['event'] == 'recorded':
             if not recorded:
                 said.append(None)  # keeps the place of the merged "recorded q1, q2"

@@ -4,7 +4,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from .base import AWAY, SETTLES, utcnow
-from .engine import Context, by_id, fail, premise_status, questions
+from .engine import Context, by_id, fail, premise_status, questions, touch
 from .questions import refuse_all
 from .render import question_parts
 from . import words
@@ -103,6 +103,7 @@ def away_settle(ctx: Context, report: dict) -> str:
             park(ctx, q)
     if acted:
         ctx.round['check']['challenged'] = False  # the answers are news to the last challenge-rulings run
+        touch(ctx, [q['id'] for q in acted])
     for q in questions(ctx, 'draft', 'held', 'ready'):
         q['status'] = premise_status(ctx, q)
     park_waiting(ctx)

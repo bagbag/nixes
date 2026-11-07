@@ -4,12 +4,12 @@ from __future__ import annotations
 import contextlib
 
 from .base import (
-    ALL_LENSES, CAP_CHOICES, CHECK_CAP, EXPLORED_VERDICTS, LEAN_LENSES, NO_RUN, OPTIONS_LENSES, PASSES, PATH_LENSES,
-    REFINE_LENSES
+    ALL_LENSES, CAP_CHOICES, CHECK_CAP, EXPLORED_VERDICTS, LEAN_LENSES, OPTIONS_LENSES, PASSES, PATH_LENSES,
+    REFINE_LENSES, ProtocolError
 )
 from . import words
-from .engine import Context, Step, by_id, fail, questions, unresolved
-from .questions import apply_updates, describe, refuse_all
+from .engine import Context, Step, by_id, fail, questions, touch, unresolved
+from .questions import apply_updates, describe, disclosure_error, refuse_all, strong_errors
 from .told import report_format
 from .away import away_cap
 
@@ -68,6 +68,7 @@ def rescope_check(ctx: Context, ids: list[str]) -> None:
     r = ctx.round
     scope = r.get('rescope') or {'ids': []}
     r['rescope'] = {'ids': list(dict.fromkeys([*scope['ids'], *ids])), 'path': True, 'options': True, 'refine': list(REFINE_LENSES)}
+    touch(ctx, ids)  # a restart, a release from held and an edit's re-check enter every pass kind's next scope
     fresh_check(ctx)
 
 
@@ -207,6 +208,10 @@ def options_report_format(ctx: Context) -> str:
     return report_format(ctx, 'options', words.options_format())
 
 
+def challenge_report_format(ctx: Context) -> str:
+    return report_format(ctx, 'challenge', words.challenge_format())
+
+
 def refused_formats(ctx: Context, step: Step, report: dict, before: dict) -> str:
     """The report formats a refused report repeats: the step's text rebuilt on the state before the refused call, which
     keeps every format it offers whether or not it printed them, and a pass report's own."""
@@ -215,6 +220,8 @@ def refused_formats(ctx: Context, step: Step, report: dict, before: dict) -> str
         step.text(ctx)
     if report.get('pass') in PASSES:
         ctx.formats.setdefault('pass', words.pass_format(report['pass']))
+    if report.get('pass') == 'challenge-rulings':
+        ctx.formats.setdefault('challenge', words.challenge_format())
     return '\n'.join(ctx.formats.values())
 
 
@@ -258,26 +265,122 @@ def explored_of(raw, ids: list[str]) -> dict[str, list[dict] | str]:
     return found
 
 
+# Scoped coverage (r4-q15, q16): each pass report keys `checked` by question for its scope; a change stamps the question
+# (engine.touch: round['coverage']['at'][id] = the round's change sequence), and a pass marks what it covered under its
+# coverage key (round['coverage']['seen'][key][id]) after applying its own updates, so they stay out of its next scope.
+
+SCOPE_STATUSES = ('draft', 'ready')
+
+
+def pass_scope(ctx: Context, command: str, kind: str | None, scoped: list[str]) -> tuple[str | None, list[str]]:
+    """The question ids a pass report must cover, and the coverage key whose marks it advances (None: a fixed scope). Path,
+    options and refine: their scoped ids, else every question they work on; the challenges after the answers and on a
+    raise: their ids; the Base step-back and ground, the lean pass, the loop's challenge-rulings and an extra pass (per
+    command): the questions changed since that kind last covered them, every question on its first run."""
+    if kind in ('path', 'refine'):
+        return None, scoped or [q['id'] for q in questions(ctx, *SCOPE_STATUSES)]
+    if kind == 'options':
+        return None, scoped or options_ids(ctx)
+    if kind in ('after answers', 'raised'):
+        live = {q['id'] for q in ctx.round['questions']}
+        return 'challenge-rulings', [qid for qid in ctx.round['check']['challenge']['ids'] if qid in live]
+    key = f'extra {command}' if kind == 'extra' else kind or command
+    coverage = ctx.round.get('coverage') or {}
+    seen, at = (coverage.get('seen') or {}).get(key, {}), coverage.get('at') or {}
+    return key, [q['id'] for q in questions(ctx, *SCOPE_STATUSES) if q['id'] not in seen or at.get(q['id'], 0) > seen[q['id']]]
+
+
+def mark_covered(ctx: Context, key: str, ids: list[str]) -> None:
+    coverage = ctx.round.setdefault('coverage', {'seq': 0, 'at': {}, 'seen': {}})
+    seen = coverage['seen'].setdefault(key, {})
+    for qid in ids:
+        seen[qid] = coverage['seq']
+
+
+def strong_ids(ctx: Context, ids: list[str]) -> list[str]:
+    return [q['id'] for q in ctx.round['questions'] if q['id'] in ids and q.get('strength') == 'strong']
+
+
+def scope_text(ctx: Context, command: str) -> str:
+    """The pending pass's scope as the step names it: the ids to cover and, for challenge-rulings, the strong ones."""
+    kind, scoped = pass_kind(ctx, command, settled=True)
+    _, ids = pass_scope(ctx, command, kind, scoped)
+    return words.pass_scope(ids, strong_ids(ctx, ids) if command == 'challenge-rulings' else None)
+
+
+def checked_of(raw, known: set[str]) -> tuple[dict[str, str], list[str]]:
+    if not isinstance(raw, dict):
+        return {}, ['`checked` is an object: per question id in this pass\'s scope what you examined in it this run, plus an '
+                    'optional `round` note, e.g. {"q2": "the retry premise in task-queue.ts", "round": "<round-wide note>"}']
+    errors = [f'checked.{key}: no question of this round (keys: question ids, and `round` for a round-wide note)'
+              for key in raw if key != 'round' and key not in known]
+    errors += [f'checked.{key}: what you examined, a non-empty string' for key, value in raw.items() if not (isinstance(value, str) and value.strip())]
+    return {key: value.strip() for key, value in raw.items() if isinstance(value, str) and value.strip()}, errors
+
+
+def challenge_errors(ctx: Context, report: dict, scope: list[str], updates: list) -> list[str]:
+    """challenge-rulings re-derives each strong question in its scope (`verdicts`: its strongBecause, or an update lowering it
+    to lean or re-sending it) and lists its own rulings in the disclosure shape, keyed by question (`rulings`)."""
+    current = {q['id']: q for q in ctx.round['questions']}
+    resent = {u['id'] for u in updates if isinstance(u, dict) and 'strongBecause' in u and isinstance(u.get('id'), str)}
+    errors, verdicts = [], report.get('verdicts', {})
+    if not isinstance(verdicts, dict):
+        errors.append('`verdicts` maps each strong question in scope to {"strongBecause": {…}}')
+        verdicts = {}
+    for qid, verdict in verdicts.items():
+        if (current.get(qid) or {}).get('strength') != 'strong':
+            errors.append(f'verdicts.{qid}: not a strong question of this round')
+        elif not isinstance(verdict, dict):
+            errors.append(f'verdicts.{qid}: {{"strongBecause": {{…}}}}')
+        else:
+            errors += strong_errors(verdict.get('strongBecause'), f'verdicts.{qid}')
+    errors += [f'verdicts.{qid}: re-send the strongBecause of {qid} as re-derived this run, or lower it to lean by an update'
+               for qid in strong_ids(ctx, scope) if qid not in verdicts and qid not in resent]
+    rulings = report.get('rulings')
+    if not isinstance(rulings, list):
+        errors.append('`rulings` lists your own rulings in this round, each {"question", "ruling", "why", "alternative", "fails", '
+                      '"evidence", "sure": true or false} (an empty list when there is none)')
+        return errors
+    for index, ruling in enumerate(rulings):
+        if not isinstance(ruling, dict) or ruling.get('question') not in current:
+            errors.append(f'rulings[{index}]: `question` names a question of this round')
+        elif error := disclosure_error(ruling, f'rulings[{index}]'):
+            errors.append(error)
+    return errors
+
+
 def record_pass(ctx: Context, report: dict) -> tuple[str, int, str]:
     command = report.get('pass')
     if command not in PASSES:
         fail(f"`pass` must be one of {', '.join(PASSES)}")
     observed = ctx.round['observed']
     if not ctx.codex and command not in observed:  # Codex has no console to observe its runs
-        fail(NO_RUN.format(command=command))
+        fail(words.no_run(command, ctx.round['pending']))
     origin = (observed.get(command) or {}).get('origin', 'model')
     kind, scoped = pass_kind(ctx, command)
+    key, scope = pass_scope(ctx, command, kind, scoped)
     describe(ctx, report.get('round'), 'pass report', required=False)
-    checked = report.get('checked')
-    if checked is not None and not (isinstance(checked, list) and all(isinstance(c, str) and c.strip() for c in checked)):
-        fail('`checked` lists what the pass examined, as strings')
+    checked, errors = checked_of(report.get('checked'), {q['id'] for q in ctx.round['questions']})
     due = options_due(ctx, command)
     raw = report.get('explored')
     explored = explored_of(raw, due if due is not None else [qid for qid in raw if any(q['id'] == qid for q in ctx.round['questions'])] if isinstance(raw, dict) else []) if due is not None or raw is not None else {}
-    changes = apply_updates(ctx, report.get('updates') or [])
-    if not changes and not checked:
-        fail(f'a {command} pass that changes nothing names what it checked: `"checked": ["q2: the retry premise in '
-             'task-queue.ts", …]`')
+    updates = report.get('updates') or []
+    try:
+        changes = apply_updates(ctx, updates)
+    except ProtocolError as error:
+        refuse_all([*errors, str(error)])
+    covered = {*checked, *explored, *(u['id'] for u in updates if isinstance(u, dict) and isinstance(u.get('id'), str))}
+    missing = [qid for qid in scope if qid not in covered]
+    if missing:
+        errors.append(f"a {command} pass covers {' '.join(scope)}: no `checked` entry or update for {' '.join(missing)}; add "
+                      f'`"checked": {{"{missing[0]}": "<what you examined in it this run>"}}`')
+    elif not (changes or checked or explored or ctx.applied or ctx.added):
+        errors.append(f'a {command} pass that changes nothing names what it checked: `"checked": {{"round": "<what you examined>"}}`')
+    if command == 'challenge-rulings':
+        errors += challenge_errors(ctx, report, scope, updates)
+    refuse_all(errors)
+    if key:
+        mark_covered(ctx, key, [*scope, *ctx.applied, *ctx.added])
     for qid, found in explored.items():
         if any(q['id'] == qid for q in ctx.round['questions']):
             by_id(ctx, qid)['explored'] = found
@@ -286,7 +389,8 @@ def record_pass(ctx: Context, report: dict) -> tuple[str, int, str]:
     ctx.round['lastPass'] = {'pass': command, 'questions': list(dict.fromkeys([*ctx.applied, *ctx.added]))}  # in or out of sequence
     ctx.log('pass', command=command, changes=changes, questions=list(dict.fromkeys(ctx.applied)), added=ctx.added,
             origin=origin, cycle=ctx.round['check']['cycle'], summary=report.get('summary'),
-            checked=checked, kind=kind, scoped=scoped)
+            checked=checked, kind=kind, scoped=scoped, covers=scope,
+            **({'verdicts': report.get('verdicts') or {}, 'rulings': report['rulings']} if command == 'challenge-rulings' else {}))
     return command, changes, origin
 
 
@@ -396,11 +500,12 @@ def pending_view(ctx: Context) -> dict | None:
     return dict(r['pending'])
 
 
-def pass_kind(ctx: Context, command: str) -> tuple[str | None, list[str]]:
+def pass_kind(ctx: Context, command: str, settled: bool | None = None) -> tuple[str | None, list[str]]:
     """The kind of the pass about to be reported (path, options, refine, lean, challenge) and the ids it is scoped to; None for a
-    Base-loop pass, 'extra' for one that does not settle the pending pass."""
+    Base-loop pass, 'extra' for one that does not settle the pending pass (`settled`: assume it does or not, as the step
+    text does before the run)."""
     check = ctx.round['check']
-    if check.get('expect') != command or not settles(ctx, command):
+    if check.get('expect') != command or not (settles(ctx, command) if settled is None else settled):
         return 'extra', []
     if command == 'step-back' and check.get('pathNow'):
         return 'path', rescope_ids(ctx) if check.get('pathScoped') else []

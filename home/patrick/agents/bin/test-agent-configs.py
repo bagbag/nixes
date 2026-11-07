@@ -2698,6 +2698,11 @@ def validate_board(root: Path) -> None:
             if fake.writes()[0][8:] != ["1", "--deps", f"tracks:{ids['Released ruling']}", "--labels",
                                         "topic:a,topic:b", "--deps", f"parent-child:{goal}", "--json"]:
                 raise ValueError(f"board revise ignored -p/--parent/-l or set metadata without --partial: {fake.writes()}")
+            fake = Fake(topical)
+            invoke(["revise", ids["Released ruling"], "--title", "t", "--body-file", "p.md", "--external-ref", "protocol:s1:r2:q3"], fake, "lead0001")
+            written = fake.writes()[0] if fake.writes() else []
+            if "--external-ref" not in written or written[written.index("--external-ref") + 1] != "protocol:s1:r2:q3":
+                raise ValueError(f"board revise must pass --external-ref to bd create: {fake.writes()}")
             for refused in (question, ready):
                 fake = Fake(fixture)
                 if invoke(["revise", refused, "--title", "t", "--body-file", "p.md"], fake, "lead0001")[0] != 1 or fake.writes():
@@ -3342,9 +3347,24 @@ elif args[:1] in (["release"], ["supersede"]):
 elif args[:1] == ["check"]:
     print(json.dumps(config.get("check", {})))
 elif args[:2] == ["bd", "create"]:
-    print(json.dumps({"id": new_id("fx-new1")}))
+    item = new_id("fx-new1")
+    tag = args[args.index("--external-ref") + 1] if "--external-ref" in args else None
+    if tag:  # bd keeps the ref without enforcing it unique; config "tags": {ref: [ids]}
+        config.setdefault("tags", {}).setdefault(tag, []).append(item)
+    config["creates"] = config.get("creates", 0) + 1
+    json.dump(config, open(os.environ["FAKE_BOARD_CONFIG"], "w"))
+    if config["creates"] > config.get("dieAfterCreates", config["creates"]):
+        print("killed after the write")  # the id never reaches the caller: its parse fails like a killed call
+    else:
+        print(json.dumps({"id": item}))
+elif args[:2] == ["bd", "list"] and "--external-ref" in args:
+    print(json.dumps([{"id": item, "created_at": "2026-11-07T00:00:00Z"} for item in config.get("tags", {}).get(args[args.index("--external-ref") + 1], [])]))
 elif args[:1] == ["revise"]:
-    print(new_id("fx-rev1"))
+    item = new_id("fx-rev1")
+    if "--external-ref" in args:
+        config.setdefault("tags", {}).setdefault(args[args.index("--external-ref") + 1], []).append(item)
+        json.dump(config, open(os.environ["FAKE_BOARD_CONFIG"], "w"))
+    print(item)
 elif args[:1] == ["record"]:
     with open(config["log"] + ".records", "a") as out:
         out.write(open(args[2]).read())
@@ -3374,6 +3394,10 @@ def console_contract_states(root: Path) -> dict:
         env = {**os.environ, "AGENT_SESSION_STATE_DIR": tmp, "CODEX_THREAD_ID": "", "CODEX_SESSION_ID": "", "HOME": tmp}
 
         def run(*args, stdin=None, cwd=tmp):
+            if args[:1] == ("step",) and isinstance(stdin, dict) and isinstance(stdin.get("checked"), list):  # keyed by question (r4-q15, q16)
+                note = "; ".join(stdin["checked"])
+                stdin = {**stdin, "checked": {"round": note, **{q["id"]: note for q in json.loads(run("show", "--json", cwd=cwd))["questions"]}},
+                         **({"rulings": []} if stdin.get("pass") == "challenge-rulings" else {})}
             if args[:1] == ("step",) and isinstance(stdin, dict) and stdin.get("pass"):  # the model's Skill call, recorded by the console
                 waiting = json.loads(run("show", "--json", cwd=cwd)).get("pending") or {}  # the run carries the pending pass's arguments
                 run("pass", "--origin", "model", stdin={"command": stdin["pass"], "args": waiting.get("args", "") if waiting.get("command") == stdin["pass"] else "",
@@ -3583,6 +3607,8 @@ def validate_strength_rules(root: Path) -> None:
         raise ValueError(f"question-format.md owns the merge test the engine repeats: {merge}")
     if "listed or not" not in flat or "strongest unlisted" not in flat or "listed or not" not in engine or "strongest unlisted" not in engine:
         raise ValueError("alternativesFail covers every realistic option, listed or not, and names the strongest unlisted one (engine and decision-protocol.md)")
+    if "shown by a fact" not in flat or "shown by a fact" not in engine:
+        raise ValueError("alternativesFail lets a simpler option fail only on a failure shown by a fact (r4-q13, engine and decision-protocol.md)")
     # r38-q213: the lean pass aims for strong (from scratch, a consumer walk, a probe); a lean still resting on values asks the
     # value question as its text. decision-protocol.md owns the rule; the engine's LEAN_JOB points to it.
     for needle in ("from scratch", "consumer", "probe", "value question", "options unchanged", "`flipsIf`"):
@@ -3670,7 +3696,7 @@ def validate_console_lenses(root: Path) -> None:
             raise ValueError(f"console lenses {pane(*lists)} differ from the {name} skill's {skill(name)}")
 
 
-PROTOCOL_PARTS = ("rounds", "release", "answers", "texts", "rules", "context", "away")
+PROTOCOL_PARTS = ("rounds", "release", "answers", "texts", "rules", "context", "away", "coverage")
 
 
 def validate_start_round(root: Path) -> None:
@@ -3727,12 +3753,28 @@ def validate_protocol(root: Path, part: str) -> None:
         if cap_cycles != 10:
             raise ValueError(f"the check-loop cap is 10 cycles (r2-q8): {cap_cycles}")
 
-        def proto(*args, stdin=None, cwd=plain, session="0000-lead0001", ok=True, env=None, process=False, observe=True, explore=True):
+        def proto(*args, stdin=None, cwd=plain, session="0000-lead0001", ok=True, env=None, process=False, observe=True, explore=True, cover=True):
             """The engine's `run_cli` in this process; `process=True` runs the real executable (the end-to-end path).
             A Claude session's pass report needs an observed run of its pass (the model's Skill call, which the console
             records as `pass --origin model`): unless `observe=False`, a report without one is preceded by it. The options
             pass (r30-q142) also reports `explored`: unless `explore=False`, a report of the pending options pass without it gets
-            the reason no other way exists, for each question the pass covers."""
+            the reason no other way exists, for each question the pass covers. A pass report keys `checked` by question for its
+            scope (r4-q15, q16): unless `cover=False`, a `checked` list, or none beside updates, becomes a `round` note plus that note
+            for every question of the round (covering any scope), and a challenge-rulings report without `rulings` gets an empty
+            list and, without `verdicts`, the stored strongBecause of each strong question it does not lower or remove."""
+            if cover and args[:1] == ("step",) and isinstance(stdin, dict) and "checked" not in stdin and stdin.get("updates"):
+                stdin = {**stdin, "checked": ["the updated questions"]}
+            if cover and args[:1] == ("step",) and isinstance(stdin, dict) and stdin.get("pass") and (isinstance(stdin.get("checked"), list) or stdin.get("pass") == "challenge-rulings"):
+                saved = state / f"{session or (env or {}).get('CODEX_THREAD_ID')}.protocol" / "state.json"
+                current = (json.loads(saved.read_text(encoding="utf-8")).get("round") or {}) if saved.is_file() else {}
+                listed = current.get("questions") or []
+                if isinstance(stdin.get("checked"), list):
+                    note = "; ".join(stdin["checked"]) or "every question"
+                    stdin = {**stdin, "checked": {"round": note, **{q["id"]: note for q in listed}}}
+                if stdin["pass"] == "challenge-rulings":
+                    lowered = {u.get("id") for u in stdin.get("updates") or [] if isinstance(u, dict) and (u.get("strength") == "lean" or u.get("remove"))}
+                    stdin = {"rulings": [], "verdicts": {q["id"]: {"strongBecause": q["strongBecause"]} for q in listed
+                                                         if q.get("strength") == "strong" and q["id"] not in lowered}, **stdin}
             if explore and args[:1] == ("step",) and isinstance(stdin, dict) and stdin.get("pass") == "step-back" and "explored" not in stdin:
                 saved = state / f"{session or (env or {}).get('CODEX_THREAD_ID')}.protocol" / "state.json"
                 current = (json.loads(saved.read_text(encoding="utf-8")).get("round") or {}) if saved.is_file() else {}
@@ -3940,9 +3982,9 @@ def validate_protocol(root: Path, part: str) -> None:
             after = json.loads(proto("pass", "--origin", "plugin", stdin={"command": "step-back", "args": "goal foundations", "pending": pending}).stdout)
             if after["pending"] != first["pending"] or after["note"] is not None:
                 raise ValueError(f"protocol pass must keep the pending pass until its report: {after}")
-            # A pass that changes nothing names what it checked; the refusal lands in the history and the pane's log.
-            refused("step", stdin={"pass": "step-back", "updates": []}, needle="names what it checked")
-            if not any(line["text"].startswith("refused step: a step-back pass that changes nothing") for line in shown()["log"]):
+            # A pass covers its scope (r4-q15, q16: every question on its first run); the refusal lands in the history and the pane's log.
+            refused("step", stdin={"pass": "step-back", "updates": []}, needle="no `checked` entry or update for q1")
+            if not any(line["text"].startswith("refused step: `checked` is an object") for line in shown()["log"]):
                 raise ValueError(f"protocol log must show the refused call: {shown()['log']}")
             # An extra pass (asked for in chat) without changes leaves the sequence alone.
             proto("step", stdin={"pass": "ground", "updates": [], "checked": ["every question"]})
@@ -4300,11 +4342,11 @@ def validate_protocol(root: Path, part: str) -> None:
             board_calls = calls()
             records = Path(str(log) + ".records").read_text(encoding="utf-8")
             expected = [["claim", "fx-a"], ["record", "fx-a"], ["claim", "fx-b"], ["record", "fx-b"],
-                        ["revise", "fx-old", "--title", "Pasted point", "--body-file"],
+                        ["bd", "list", "--external-ref"], ["revise", "fx-old", "--title", "Pasted point", "--body-file"],
                         ["bd", "batch", "-m", "protocol: link fx-rev1", "--json"], ["claim", "fx-rev1"], ["record", "fx-rev1"],
                         ["health", "--json", "--items", "decided"]]  # one Record writes all three
             if [c["args"][:len(want)] for c, want in zip(board_calls, expected)] != expected or len(board_calls) != len(expected) \
-                    or board_calls[5]["stdin"] != "dep add fx-rev1 fx-rel relates-to\n" \
+                    or board_calls[6]["stdin"] != "dep add fx-rev1 fx-rel relates-to\n" \
                     or 'User (chat), ' not in records or '"keep   it,\nfinal"' not in records or "## Decision\nKeep the point." not in records \
                     or "Board: 3 open questions, 1 decided awaiting release, 2 released to plan, 0 in review, 1 waiting on the user." not in out \
                     or "Held for a later round" in out:
@@ -4388,6 +4430,41 @@ def validate_protocol(root: Path, part: str) -> None:
                 raise ValueError(f"protocol Record rerun: {made}\n{out}")
             configure()
 
+            # F2 (r4-q11): Record is safe to run again. A call dies after the create of the second record was written (its id
+            # never arrived): the first record's progress is saved, the rerun with the same report skips it, finds the second by
+            # its tag instead of creating it again and creates only the third.
+            points = ["Tag one", "Tag two", "Tag three"]
+            configure(tags={}, dieAfterCreates=1, newIds=["fx-m1", "fx-m2", "fx-m3"])
+            out = proto("start", "round", stdin={"points": points}, cwd=repo).stdout
+            pasted = re.findall(r"(pt\d+) \[pasted\]", out)
+            proto("step", stdin={"classes": {pt: "user" for pt in pasted}}, cwd=repo)
+            proto("step", stdin={"select": pasted}, cwd=repo)
+            proto("step", stdin={**ROUND_INFO, "questions": [question(f"{text}?", **{"for": pt}) for text, pt in zip(points, pasted)]}, cwd=repo)
+            converge(cwd=repo)
+            batch = shown(cwd=repo)["batch"]
+            proto("answer", "--origin", "dialog", cwd=repo, stdin={"marker": batch["marker"], "answers": {q["question"]: "Keep" for q in batch["questions"]}})
+            view = shown(cwd=repo)
+            round_id, ids = view["round"], [q["id"] for q in view["questions"]]
+            report = {"records": {qid: {"rationale": "R.", "ruleOwner": "o"} for qid in ids}}
+            calls()
+            out = proto("step", stdin=report, cwd=repo, ok=False).stderr
+            first = calls()
+            if "nothing was saved" not in out or [q.get("recorded") for q in json.loads((session_dir / "state.json").read_text())["round"]["questions"]] != ["fx-m1", None, None]:
+                raise ValueError(f"protocol Record must save each question's progress when the call dies: {out}")
+            if not any(row["event"] == "recorded" and row["question"] == ids[0] for row in (json.loads(l) for l in (session_dir / "history.jsonl").read_text().splitlines())):
+                raise ValueError("protocol Record must flush the history of the questions it saved")
+            config.write_text(json.dumps({k: v for k, v in json.loads(config.read_text(encoding="utf-8")).items() if k != "dieAfterCreates"}), encoding="utf-8")
+            out = proto("step", stdin=report, cwd=repo).stdout
+            second = calls()
+            tags = json.loads(config.read_text(encoding="utf-8"))["tags"]
+            if tags != {f"protocol:0000-lead0001:{round_id}:{qid}": [f"fx-m{n}"] for n, qid in enumerate(ids, 1)} \
+                    or [c["args"][:2] for c in first + second].count(["bd", "create"]) != 3 \
+                    or any(c["args"][:2] in (["claim", "fx-m1"], ["record", "fx-m1"]) for c in second) \
+                    or ["record", "fx-m2"] not in [c["args"][:2] for c in second] or ["record", "fx-m3"] not in [c["args"][:2] for c in second] \
+                    or f"Round {round_id} closed." not in out or shown(cwd=repo)["round"] is not None:
+                raise ValueError(f"protocol Record rerun must reuse the tagged record and skip the recorded one: {tags}\n{[c['args'] for c in first + second]}\n{out}")
+            configure()
+
             # G: a question that replaces records (r12-q44): a decided record closes at Record, a released one is revised.
             # Alpha: the dialog names the record, a record not naming it is refused, Record closes it and reports it.
             qid = replacing("Alpha point", ["fx-u1"], {"fx-u1": "supersedes"}, items={"fx-u1": {**decided, "title": "Alpha store"}}, newIds=["fx-n1"])
@@ -4399,7 +4476,11 @@ def validate_protocol(root: Path, part: str) -> None:
                 raise ValueError("a record that does not name the closed record must be refused before any board write")
             out = proto("step", stdin={"records": {qid: {"rationale": "Replaces fx-u1: the same store, now with a TTL.", "ruleOwner": "o"}}},
                         cwd=repo).stdout
-            made = [c["args"][:2] for c in calls() if c["args"][0] in ("revise", "claim", "record", "supersede")]
+            rows = calls()
+            made = [c["args"][:2] for c in rows if c["args"][0] in ("revise", "claim", "record", "supersede")]
+            revise_args = next(c["args"] for c in rows if c["args"][0] == "revise")
+            if not re.fullmatch(rf"protocol:0000-lead0001:r\d+:{qid}", revise_args[revise_args.index("--external-ref") + 1] if "--external-ref" in revise_args else ""):
+                raise ValueError(f"Record must tag a revision with its session, round and question: {revise_args}")
             history = [json.loads(row) for row in (session_dir / "history.jsonl").read_text().splitlines()]
             if made != [["revise", "fx-u1"], ["claim", "fx-n1"], ["record", "fx-n1"], ["supersede", "fx-u1"]] \
                     or item_status("fx-u1") != "closed" or "- " + qid + " → fx-n1, closed fx-u1" not in out \
@@ -5775,6 +5856,9 @@ def validate_protocol(root: Path, part: str) -> None:
             qid = texts_round("Guard?")
             unobserved = {"pass": "step-back", "updates": [], "checked": ["q"]}
             refused("step", **texts, observe=False, stdin=unobserved, needle="no /step-back ran since its last report")
+            # r5-q17: the refusal names the pending pass with its arguments; a report of another command ends the turn.
+            refused("step", **texts, observe=False, stdin=unobserved, needle="run `/step-back goal foundations` with the Skill tool")
+            refused("step", **texts, observe=False, stdin={**unobserved, "pass": "ground"}, needle="no /ground ran since its last report: end your turn")
             refused("step", **texts, observe=False, stdin=unobserved, needle="Report with `protocol step`")
             proto("pass", "--origin", "plugin", stdin={"command": "step-back", "args": "", "pending": None}, **texts)
             # A refused report changes nothing and lists every error (r23-q95); the run stays open for the resend.
@@ -6969,6 +7053,185 @@ def validate_protocol(root: Path, part: str) -> None:
                 raise ValueError(f"a missing project-memory.md gives one line naming it:\n{missing}")
             proto("abandon", **own)
             configure()
+
+        if part == "coverage":
+            # r4-q15, q16: every pass report keys `checked` by question for its scope; challenge-rulings also re-sends the
+            # strongBecause of each strong question in scope (`verdicts`) and lists its own rulings (`rulings`). Each check
+            # records its failure and goes on, so one run names every failing case.
+            cover = {"session": "0000-cover001", "cover": False}
+            failures = []
+
+            def label_fail(label, detail):
+                failures.append(f"{label}: {detail}")
+
+            def report(command, checked, updates=None, **extra):
+                return {"pass": command, "updates": updates or [], "checked": checked, **extra}
+
+            def expect_refused(label, stdin, *needles, **kwargs):
+                result = proto("step", stdin=stdin, ok=None, **{**cover, **kwargs})
+                if result.returncode == 0:
+                    label_fail(label, f"accepted, expected a refusal naming {needles}")
+                    return
+                for needle in needles:
+                    if needle not in result.stderr:
+                        label_fail(label, f"refusal lacks {needle!r}: {result.stderr.strip()[:400]}")
+
+            def expect_ok(label, stdin, **kwargs):
+                result = proto("step", stdin=stdin, ok=None, **{**cover, **kwargs})
+                if result.returncode != 0:
+                    label_fail(label, f"refused: {result.stderr.strip()[:400]}")
+                return result.stdout
+
+            def expect_scope(label, out, ids):
+                line = "This pass covers " + " ".join(ids) + ":" if ids else "Nothing changed since this pass last ran"
+                if line not in out:
+                    label_fail(label, f"step text lacks {line!r}: {out[-600:]}")
+
+            def pending(**kwargs):
+                return (shown(**{"session": cover["session"], **kwargs})["pending"] or {})
+
+            strong = {"strength": "strong", "strongBecause": STRONG_CLAIMS, "leanBecause": None}
+            lean = {"strength": "lean", "leanBecause": {"cause": "evidence", "detail": "bd order, probe it"}}
+            proto("start", "round", "--no-board", str(notes), stdin={"points": ["Cover?"]}, **cover)
+            proto("step", stdin={"classes": {"pt1": "user"}}, **cover)
+            proto("step", stdin={"select": ["pt1"]}, **cover)
+            out = proto("step", stdin={**ROUND_INFO, "questions": [question("One?", **{"for": "pt1"}), question("Two?", **{"for": "pt1"}, **strong),
+                                                                  question("Three?", **{"for": "pt1"}), question("Four?", **{"for": "pt1"}, **strong)]}, **cover).stdout
+            every = ["q1", "q2", "q3", "q4"]
+            # The path pass's first run covers every question; the step names them and the keyed shape.
+            expect_scope("first-run scope named in the step text", out, every)
+            if '"checked": {"q2"' not in out:
+                label_fail("pass format shows keyed checked", out[-800:])
+            expect_refused("checked as a list is refused", report("step-back", ["every question"]), "`checked` is an object")
+            expect_refused("unknown checked key is refused", report("step-back", {q: "read" for q in [*every, "q9"]}), "checked.q9")
+            expect_refused("refusal names the missing ids", report("step-back", {"q1": "read", "q2": "read"}),
+                           "no `checked` entry or update for q3 q4")
+            # Coverage by update: q4's update covers it.
+            out = expect_ok("coverage by an update", report("step-back", {"q1": "goal read", "q2": "goal read", "q3": "goal read"},
+                                                            [{"id": "q4", "premises": "Read again in the fixture."}]))
+            # The options pass: `explored` covers its questions.
+            out = expect_ok("options pass covered by explored", report("step-back", {}, explored={q: "no other mechanism" for q in every}))
+            # Base step-back, first run: every question; q1's change is its own.
+            expect_scope("base step-back first run = all", out, every)
+            out = expect_ok("base step-back first run", report("step-back", {q: "read" for q in every[1:]}, [{"id": "q1", "premises": "Changed by step-back."}]))
+            expect_scope("ground first run = all", out, every)
+            out = expect_ok("ground first run", report("ground", {q: "read" for q in every[:2] + every[3:]}, [{"id": "q3", "premises": "Changed by ground."}]))
+            # Cycle 2: step-back covers what others changed (q3, ground's), not its own q1.
+            expect_scope("rerun scope = changed by others", out, ["q3"])
+            expect_refused("own changes excluded, others' required", report("step-back", {"q1": "read"}), "no `checked` entry or update for q3")
+            out = expect_ok("rerun covering the others' change", report("step-back", {"q3": "the ground premise"}))
+            # Ground's own q3 change leaves its rerun empty: one round note passes, nothing at all is refused.
+            expect_scope("empty scope named", out, [])
+            expect_refused("an empty report on an empty scope is refused", report("ground", {}), "names what it checked")
+            out = expect_ok("empty scope passes with a round note", report("ground", {"round": "nothing changed since the last ground"}))
+            # The refine pair runs round-wide: every question.
+            expect_scope("refine round-wide scope", out, every)
+            expect_refused("refine pass names every missing id", report("step-back", {"round": "x"}), "no `checked` entry or update for q1 q2 q3 q4")
+            out = expect_ok("refine step-back", report("step-back", {q: "read" for q in every}))
+            out = expect_ok("refine ground", report("ground", {q: "read" for q in every}))
+            # The lean pass's first run covers every question too.
+            expect_scope("lean pass first run = all", out, every)
+            out = expect_ok("lean pass", report("ground", {q: "read" for q in every}))
+            # challenge-rulings: every question on its first run; each strong one needs its verdict, and `rulings` its shape.
+            expect_scope("challenge first run = all", out, every)
+            if "verdicts" not in out or "q2 q4" not in out:
+                label_fail("challenge step names the strong ids and verdicts", out[-800:])
+            allc = {q: "read" for q in every}
+            expect_refused("verdict required for a strong question", report("challenge-rulings", allc, rulings=[]),
+                           "verdicts.q2", "verdicts.q4")
+            expect_refused("verdict strongBecause validated", report("challenge-rulings", allc, rulings=[],
+                           verdicts={"q2": {"strongBecause": {}}, "q4": {"strongBecause": STRONG_CLAIMS}}), "verdicts.q2: strong is a claim")
+            verdicts = {"q2": {"strongBecause": STRONG_CLAIMS}, "q4": {"strongBecause": STRONG_CLAIMS}}
+            expect_refused("verdict on a lean question refused", report("challenge-rulings", allc, rulings=[], verdicts={**verdicts, "q1": {"strongBecause": STRONG_CLAIMS}}),
+                           "verdicts.q1")
+            expect_refused("rulings required", report("challenge-rulings", allc, verdicts=verdicts), "`rulings` lists")
+            ruling = {"question": "q1", "ruling": "one cache", "why": "meets the goal", "alternative": "two caches", "fails": "clear ownership",
+                      "evidence": "task-queue.ts:12", "sure": True}
+            expect_refused("ruling fields validated", report("challenge-rulings", allc, verdicts=verdicts, rulings=[{**ruling, "why": ""}]),
+                           "rulings[0]: needs why")
+            expect_refused("ruling sure validated", report("challenge-rulings", allc, verdicts=verdicts, rulings=[{**ruling, "sure": "yes"}]),
+                           "rulings[0]: needs")
+            expect_refused("ruling question validated", report("challenge-rulings", allc, verdicts=verdicts, rulings=[{**ruling, "question": "q9"}]),
+                           "rulings[0]: `question`")
+            # A valid challenge that changes q1: the loop reruns; ground then changes q2 (still strong).
+            out = expect_ok("valid verdicts and rulings", report("challenge-rulings", {q: "read" for q in every[1:]}, [{"id": "q1", "premises": "Changed by the challenge."}],
+                                                                 verdicts=verdicts, rulings=[ruling]))
+            expect_scope("step-back after the challenge covers its change", out, ["q1"])
+            out = expect_ok("step-back cycle 3", report("step-back", {"q1": "read"}))
+            out = expect_ok("ground cycle 3", report("ground", {"q1": "read"}, [{"id": "q2", "premises": "Changed by ground again."}]))
+            out = expect_ok("step-back cycle 4", report("step-back", {"q2": "read"}))
+            out = expect_ok("ground cycle 4", report("ground", {"round": "nothing new"}))
+            # The challenge rerun covers what changed since it ran (q2), not its own q1; q2 is strong: lowering it covers it.
+            expect_scope("challenge rerun = changed since the last challenge", out, ["q2"])
+            expect_refused("challenge rerun needs q2's verdict", report("challenge-rulings", {"q2": "read"}, rulings=[]), "verdicts.q2")
+            out = expect_ok("a lowering update satisfies the verdict", report("challenge-rulings", {}, [
+                {"id": "q2", **lean}, {"id": "q3", "premises": "Changed by the second challenge."}], rulings=[]))
+            expect_scope("step-back covers the challenge's changes", out, ["q2", "q3"])
+            out = expect_ok("step-back cycle 5", report("step-back", {"q2": "read", "q3": "read"}))
+            out = expect_ok("ground cycle 5", report("ground", {"q2": "read", "q3": "read"}))
+            expect_scope("challenge scope empty after its own change", out, [])
+            expect_ok("empty challenge with a round note", report("challenge-rulings", {"round": "nothing changed since the last challenge"}, rulings=[]))
+            view = shown(session=cover["session"])
+            if view["step"] != "ask" or not view["batch"]:
+                label_fail("the round reaches Ask", f"{view['step']} {view['pending']}")
+            else:
+                # After the last answer: the challenge covers the answered set; q4 stays strong and needs its verdict.
+                proto("answer", "--origin", "dialog", session=cover["session"], stdin={"marker": view["batch"]["marker"], "answers": {
+                    q["question"]: "Keep" for q in view["batch"]["questions"]}})
+                if pending().get("command") != "challenge-rulings":
+                    label_fail("the after-answers challenge is pending", pending())
+                expect_refused("after-answers scope = the answered set", report("challenge-rulings", {"round": "x"}, rulings=[]),
+                               "no `checked` entry or update for q1 q2 q3 q4", "verdicts.q4")
+                expect_ok("after-answers challenge", report("challenge-rulings", {q: "the answer" for q in every}, rulings=[],
+                                                            verdicts={"q4": {"strongBecause": STRONG_CLAIMS}}))
+                # A restart: the scoped path pass covers the restarted id only.
+                proto("restart", "q1", "--reason", "fixture", session=cover["session"])
+                if pending().get("args", "").split()[:3] != ["goal", "foundations", "on"]:
+                    label_fail("a restart queues the scoped path pass", pending())
+                expect_refused("scoped path pass covers the restarted id", report("step-back", {"round": "x"}), "no `checked` entry or update for q1")
+                expect_ok("scoped path pass", report("step-back", {"q1": "goal read"}))
+            # Codex shares the shape: a Codex pass report with a list is refused the same way.
+            codex_cover = {"session": "0000-cdx00001", "cover": False}
+            proto("start", "round", "--no-board", str(notes), stdin={"points": ["Codex cover?"]}, **codex_cover)
+            proto("step", stdin={"classes": {"pt1": "user"}}, **codex_cover)
+            proto("step", stdin={"select": ["pt1"]}, **codex_cover)
+            proto("step", stdin={**ROUND_INFO, "questions": [question("Codex one?", **{"for": "pt1"})]}, **codex_cover)
+            expect_refused("Codex: a list is refused", report("step-back", ["every question"]), "`checked` is an object", **{"session": "0000-cdx00001"})
+            expect_ok("Codex: keyed checked accepted", report("step-back", {"q1": "goal read"}), **{"session": "0000-cdx00001"})
+            proto("abandon", **codex_cover)
+            proto("abandon", **cover)
+            # Scoped passes after a restart while the other questions are still open: path, options and refine cover the
+            # restarted id only; the Base loop covers it as a change.
+            session = {"session": cover["session"]}
+            try:
+                point = re.search(r"(pt\d+) \[pasted\]", proto("start", "round", "--no-board", str(notes), stdin={"points": ["Scoped?"]}, **session).stdout).group(1)
+                proto("step", stdin={"classes": {point: "user"}}, **session)
+                proto("step", stdin={"select": [point]}, **session)
+                proto("step", stdin={**ROUND_INFO, "questions": [question(f"Scoped {n}?", **{"for": point}) for n in ("A", "B", "C")]}, **session)
+                converge(**session)
+                a, b, c = [q["id"] for q in shown(**session)["questions"]]
+                proto("restart", b, "--reason", "fixture", **session)
+                out = proto("show", **session).stdout
+                expect_scope("scoped path pass named", out, [b])
+                expect_refused("scoped path pass covers the restarted id only", report("step-back", {"round": "x"}), f"covers {b}: no `checked` entry or update for {b}")
+                expect_ok("scoped path pass with the restarted id alone", report("step-back", {b: "goal read"}))
+                expect_refused("scoped options pass refuses another id", report("step-back", {}, explored={b: "no other way", a: "x"}), f"explored: {a} is not covered by this pass")
+                out = expect_ok("scoped options pass", report("step-back", {}, explored={b: "no other way"}))
+                expect_scope("base step-back covers the restart", out, [b])
+                out = expect_ok("base step-back after the restart", report("step-back", {b: "read"}))
+                out = expect_ok("base ground after the restart", report("ground", {b: "read"}))
+                expect_scope("scoped refine step-back named", out, [b])
+                expect_refused("scoped refine step-back covers the restarted id only", report("step-back", {"round": "x"}), f"covers {b}: no `checked` entry or update for {b}")
+                out = expect_ok("scoped refine step-back", report("step-back", {b: "read"}))
+                expect_refused("scoped refine ground covers the restarted id only", report("ground", {"round": "x"}), f"covers {b}: no `checked` entry or update for {b}")
+                expect_ok("scoped refine ground", report("ground", {b: "read"}))
+                if c == b:
+                    label_fail("three questions staged", [a, b, c])
+            except ValueError as error:  # a setup step refused: the scoped cases cannot run
+                label_fail("scoped round setup", str(error).strip()[:300])
+            proto("abandon", **session)
+            if failures:
+                raise ValueError("scoped coverage (r4-q15, q16):\n" + "\n".join(failures))
 
         if part == "away":
             # r28-q126..q128, r29: the registered role autopilot means away. Ask opens no batch, dialog or print: the model reports

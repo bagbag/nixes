@@ -88,6 +88,26 @@ describe('tool', () => {
     expect(w.verbs().filter(verb => !verb.startsWith('show'))).toEqual([])
   })
 
+  test('every protocol call gets the ten-minute limit (r4-q12)', async ($, on) => {
+    const { w } = world(on)
+    await start($)
+    await $.tool.call({ tool: 'mcp__console__protocol', args: ['step'], stdin: '{}' } as never)
+    expect(w.calls.filter(one => one.argv[0] === PROTOCOL).map(one => one.timeoutMs)).toEqual([600_000, 600_000])  // the call and the refresh after it
+  })
+
+  test('a call the console cuts answers with the error and that it may have run in part (r4-q11)', async ($, on) => {
+    const { w } = world(on)
+    await start($)
+    w.protocolThrows = 'timed out after 600000 ms'
+    const ran = await $.tool.call({ tool: 'mcp__console__protocol', args: ['step'], stdin: '{}' } as never)
+    const text = String(ran.result)
+    expect(text).toContain('timed out after 600000 ms')
+    expect(text).toContain('may have run in part')
+    expect(text).toContain('protocol show')
+    expect(text).toContain('Record step runs again safely')
+    expect(text).not.toContain('debug log')
+  })
+
   test('relays a non-zero exit with stderr', async ($, on) => {
     const { w } = world(on)
     await start($)
@@ -706,6 +726,95 @@ describe('machine-run passes', () => {
     expect(w.commands).toEqual([])
   })
 
+  describe('Esc, then a compaction (r4-q14)', () => {
+    const PENDING = { pending: { id: 'p7', command: 'ground', args: '' } }
+    const messages = [{ role: 'user' as const, text: 'hi', toolUses: [] }]
+    const compactWith = (on: any, skip?: string) => on('session.compact', () => skip === undefined ? { messages: [{ role: 'user', text: 'summary', toolUses: [] }] } : { skip })
+    const grounds = (w: { commands: { command: string }[] }) => w.commands.filter(one => one.command === 'ground').length
+    const passRecords = (w: { calls: { argv: string[]; stdin: string | undefined }[] }) => w.calls.filter(one => one.argv[3] === 'pass')
+    /** The pass ran, started, and Esc stopped its turn. */
+    const stopped = async ($: any, w: any, clock: any) => {
+      await $.turn.complete(complete())
+      await $.skill.prompt({ skill: 'ground', text: 'Ground…' } as never)
+      await $.turn.complete(complete(true))
+      await clock.settle()
+      expect(grounds(w)).toBe(1)
+    }
+
+    test('a successful compaction reruns the stopped pass once, and its skill expansion is accepted as fresh', async ($, on) => {
+      const { w, clock } = world(on, { round: roundJson(PENDING) })
+      compactWith(on)
+      await start($)
+      await stopped($, w, clock)
+      await $.session.compact({ trigger: 'manual', messages })
+      await clock.settle()
+      expect(grounds(w)).toBe(2)
+      expect(passRecords(w).map(one => JSON.parse(one.stdin ?? '{}'))).toEqual([{ command: 'ground', args: '', pending: 'p7' }, { command: 'ground', args: '', pending: 'p7' }])
+      expect(passRecords(w).map(one => one.argv[5])).toEqual(['plugin', 'plugin'])
+      expect(String(((await $.skill.prompt({ skill: 'ground', text: 'Ground…' } as never)) as { text: string }).text)).toBe('Ground…')
+      await $.session.compact({ trigger: 'auto', messages })
+      await clock.settle()
+      expect(grounds(w)).toBe(2)  // never twice
+    })
+
+    test('a plain Esc stays stopped', async ($, on) => {
+      const { w, clock } = world(on, { round: roundJson(PENDING) })
+      await start($)
+      await stopped($, w, clock)
+      await $.turn.complete(complete())
+      await clock.settle()
+      expect(grounds(w)).toBe(1)
+    })
+
+    test('a skipped compaction and a precompute reinstall nothing and rerun nothing', async ($, on) => {
+      const { w, clock } = world(on, { round: roundJson(PENDING) })
+      compactWith(on, 'nothing to compact')
+      await start($)
+      await stopped($, w, clock)
+      await $.session.compact({ trigger: 'manual', messages })
+      await clock.settle()
+      expect(grounds(w)).toBe(1)
+      await $.session.compact({ trigger: 'precompute', messages })
+      await clock.settle()
+      expect(grounds(w)).toBe(1)
+    })
+
+    test('a precompute that is not skipped reruns nothing either', async ($, on) => {
+      const { w, clock } = world(on, { round: roundJson(PENDING) })
+      compactWith(on)
+      await start($)
+      await stopped($, w, clock)
+      await $.session.compact({ trigger: 'precompute', messages })
+      await clock.settle()
+      expect(grounds(w)).toBe(1)
+    })
+
+    test('a stuck pass (asked twice) is not rerun by a compaction', async ($, on) => {
+      const { w, clock } = world(on, { round: roundJson(PENDING) })
+      compactWith(on)
+      await start($)
+      await $.turn.complete(complete())
+      await $.skill.prompt({ skill: 'ground', text: 'Ground…' } as never)
+      await $.turn.complete(complete())  // asked for the report
+      await $.turn.complete(complete())  // still none: noted
+      await clock.settle()
+      await $.session.compact({ trigger: 'manual', messages })
+      await clock.settle()
+      expect(grounds(w)).toBe(1)
+    })
+
+    test('a stopped pass the engine has moved past is not rerun', async ($, on) => {
+      const { w, clock } = world(on, { round: roundJson(PENDING) })
+      compactWith(on)
+      await start($)
+      await stopped($, w, clock)
+      w.round = roundJson({ pending: { id: 'p8', command: 'ground', args: '' } })
+      await $.session.compact({ trigger: 'manual', messages })
+      await clock.settle()
+      expect(grounds(w)).toBe(1)
+    })
+  })
+
   test("a subagent's turn end runs nothing", async ($, on) => {
     const { w, clock } = world(on, { round: roundJson({ pending: { id: 'p7', command: 'ground', args: '' } }) })
     await start($)
@@ -740,6 +849,51 @@ describe('pass observation', () => {
     const pass = w.calls.find(one => one.argv[3] === 'pass')
     expect(pass?.argv.slice(3)).toEqual(['pass', '--origin', 'model'])
     expect(JSON.parse(pass?.stdin ?? '{}')).toEqual({ command: 'step-back', args: 'bloat', pending: null })
+  })
+
+  describe("a subagent's Skill call is not the round's pass", () => {
+    const PENDING = { pending: { id: 'p556', command: 'step-back', args: 'goal foundations' } }
+    const complete = () => ({ answer: '', durationMs: 1, isAborted: false, turnId: 't', reason: 'answer' }) as never
+    const passes = (w: { calls: { argv: string[]; stdin: string | undefined }[] }) => w.calls.filter(one => one.argv[3] === 'pass').map(one => [one.argv[5], JSON.parse(one.stdin ?? '{}')])
+
+    test('it records no pass and does not start the queued pending pass', async ($, on) => {
+      const { w, clock } = world(on, { round: roundJson(PENDING) })
+      let expanded = ''
+      on('tool.call', { tool: 'Skill' }, async () => { expanded = ((await $.skill.prompt({ skill: 'step-back', text: 'Step back, in full.' } as never)) as { text: string }).text; return { result: { success: true } } as never })
+      await start($)
+      await $.turn.complete(complete())  // queues p556
+      await clock.settle()
+      const before = passes(w)
+      await $.tool.call({ tool: 'Skill', skill: 'step-back', args: 'gaps consumer', agentId: 'a1' } as never)
+      expect(expanded).toBe('Step back, in full.')
+      expect(passes(w)).toEqual(before)
+      expect(before).toEqual([['plugin', { command: 'step-back', args: 'goal foundations', pending: 'p556' }]])
+      // the pass is still queued: a later turn end asks for no report, and the lead's own expansion still starts it
+      await $.turn.complete(complete())
+      await clock.settle()
+      expect(w.prompts.filter(text => text.includes('ended without its report'))).toHaveLength(0)
+      await $.skill.prompt({ skill: 'step-back', text: 'Step back…' } as never)
+      await $.turn.complete(complete())
+      await clock.settle()
+      expect(w.prompts.filter(text => text.includes('ended without its report'))).toHaveLength(1)
+    })
+
+    test("the main agent's Skill call still records", async ($, on) => {
+      const { w } = world(on, { round: roundJson(PENDING) })
+      on('tool.call', { tool: 'Skill' }, () => ({ result: { success: true } }) as never)
+      await start($)
+      await $.tool.call({ tool: 'Skill', skill: 'step-back', args: 'goal foundations' } as never)
+      expect(passes(w)).toEqual([['model', { command: 'step-back', args: 'goal foundations', pending: 'p556' }]])
+    })
+
+    test("the lead's own run after a subagent's run is the one the pending pass settles on", async ($, on) => {
+      const { w } = world(on, { round: roundJson(PENDING) })
+      on('tool.call', { tool: 'Skill' }, () => ({ result: { success: true } }) as never)
+      await start($)
+      await $.tool.call({ tool: 'Skill', skill: 'step-back', args: 'gaps consumer', agentId: 'a1' } as never)
+      await $.tool.call({ tool: 'Skill', skill: 'step-back', args: 'goal foundations' } as never)
+      expect(passes(w)).toEqual([['model', { command: 'step-back', args: 'goal foundations', pending: 'p556' }]])
+    })
   })
 
   test('a run whose arguments differ only in whitespace carries the pending id', async ($, on) => {

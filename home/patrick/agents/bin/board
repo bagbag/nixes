@@ -2552,6 +2552,7 @@ def revise(board: Board, args) -> None:
     command += ['--parent', parent] if parent else []
     command += ['--labels', ','.join(labels)] if labels else []
     command += ['--metadata', json.dumps({REVISES_RULE: args.partial})] if args.partial is not None else []
+    command += ['--external-ref', args.external_ref] if args.external_ref else []
     created = json.loads(bd_checked(*rewritten_create(command[0], command[1:], board), '--json') or '{}')
     new = created.get('id') if isinstance(created, dict) else None
     if not new:
@@ -3421,6 +3422,7 @@ def run_command(argv: list[str]) -> int:
     sub.add_argument('-p', '--priority', type=int, choices=range(5), help="default: the old record's")
     sub.add_argument('--parent', help="default: the old record's parent")
     sub.add_argument('-l', '--labels', action='append', default=[], help="default: the old record's topic: labels")
+    sub.add_argument('--external-ref', metavar='REF', help='tag the new question with an external reference')
     sub = add('release', 'release decided rulings in one bd batch; supersedes the records they revise, then closes '
               'the questions they answer', release)
     sub.add_argument('ids', nargs='+')

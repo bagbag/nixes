@@ -6,7 +6,9 @@ from . import words
 from .engine import Context, PROTOCOLS, Protocol, Step, questions
 from .told import cycle_key, first_time
 from .record import closed_enter, closed_text, record_accept, record_text
-from .check import check_accept, check_enter, options_ids, options_report_format, pass_report_format, rescope_ids
+from .check import (
+    challenge_report_format, check_accept, check_enter, options_ids, options_report_format, pass_report_format, rescope_ids, scope_text
+)
 from .ask import ask_accept, ask_enter, ask_text
 from .collect import collect_accept, collect_enter, collect_text, select_accept, select_text
 from .stage import related_accept, related_enter, related_text, stage_accept, stage_text
@@ -77,8 +79,10 @@ def check_text(ctx: Context) -> str:
         *rows,
         *same_options_lines(ctx),
         pass_text(ctx, command),
+        scope_text(ctx, command),
         pass_report_format(ctx, command),
         options_report_format(ctx) if check.get('optionsNow') else '',
+        challenge_report_format(ctx) if command == 'challenge-rulings' else '',
     )
 
 

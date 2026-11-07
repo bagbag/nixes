@@ -45,7 +45,7 @@ export type World = {
   round: Record<string, unknown>
   role: Record<string, unknown> | null
   surfaces: string[]
-  calls: { argv: string[]; stdin: string | undefined; env: Record<string, string> | undefined }[]
+  calls: { argv: string[]; stdin: string | undefined; env: Record<string, string> | undefined; timeoutMs: number | undefined }[]
   commands: { command: string; args: string }[]
   /** Per prompt: submitted as the person's own words, without the host's plugin frame. */
   asUser: boolean[]
@@ -64,6 +64,8 @@ export type World = {
   sync?: string | null
   queueLine?: string | null
   protocolExit: number
+  /** A `protocol` run that rejects with this message (the host's time limit); null: it runs. */
+  protocolThrows: string | null
   /** `protocol` verbs whose next run fails, one failure per entry (Esc aborting the dialog hook's save). */
   failVerbs: string[]
   /** The reason `$.prompt.submit` drops a prompt with (the console's sends fail); null: it goes through. */
@@ -95,6 +97,7 @@ export function world(on: On, init: Partial<Pick<World, 'round' | 'role' | 'surf
     queueLine: init.queueLine,
     agents: init.agents ?? [],
     protocolExit: 0,
+    protocolThrows: null,
     failVerbs: [],
     promptError: null,
     tokens: 500_000,
@@ -138,7 +141,7 @@ export function world(on: On, init: Partial<Pick<World, 'round' | 'role' | 'surf
 
   on('process.run', (_, e) => {
     const argv = [...e.argv]
-    w.calls.push({ argv, stdin: e.init?.stdin, env: e.init?.env })
+    w.calls.push({ argv, stdin: e.init?.stdin, env: e.init?.env, timeoutMs: e.init?.timeoutMs })
     const ok = (out: unknown) => ({ value: { exitCode: 0, stdout: typeof out === 'string' ? out : JSON.stringify(out), stderr: '', isStdoutTruncated: false, isStderrTruncated: false } })
     // The registry script has no execute bit: only `bash <script>` runs it, as on the machine.
     if (argv[0] === REGISTRY) return { value: { exitCode: 126, stdout: '', stderr: 'Permission denied', isStdoutTruncated: false, isStderrTruncated: false } }
@@ -146,6 +149,7 @@ export function world(on: On, init: Partial<Pick<World, 'round' | 'role' | 'surf
     if (argv[0] === 'bash' && argv[1] === REGISTRY && argv[2] === 'state-dir') return ok(`${HOME}/.local/state/agent-sessions\n`)
     if (argv[0] === 'bash' && argv[1] === REGISTRY) return ok({ role: null, ...(w.role ?? {}), session: argv[3] })
     if (argv[0] === PROTOCOL) {
+      if (w.protocolThrows !== null) return { deny: w.protocolThrows } as never
       const served = (() => {
         if (w.protocolExit !== 0) return { value: { exitCode: w.protocolExit, stdout: '', stderr: 'engine down', isStdoutTruncated: false, isStderrTruncated: false } }
         const verb = argv[3]

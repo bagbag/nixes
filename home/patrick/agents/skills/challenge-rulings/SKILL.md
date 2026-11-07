@@ -24,7 +24,8 @@ argument-hint: "[focus and follow-ups]"
 3. **Strong recommendations.** Check each against the same protocol's
    Recommendation strength and its evidence; make it a lean where a criterion
    fails. For each decisive reason, say why it decides the choice.
-   Output: per recommendation, kept strong or made a lean.
+   Output: per recommendation, kept strong with its evidence re-derived this
+   run, or made a lean.
 4. **Released rulings.** Say why each holds on its merits, or why it fails.
    Where the evidence points away from a user's ruling or a project rule the
    set rests on, bring it as a question with that evidence.

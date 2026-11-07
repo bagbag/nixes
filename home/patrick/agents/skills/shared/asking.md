@@ -27,8 +27,8 @@ approval. Give each step's output compactly.
    Derive process questions from the root fix; step up an abstraction level
    when all options feel wrong. Classify sequencing and process choices as the
    planning session's call.
-   End a pass's turn with one short line: what changed, or "No change."; put its
-   `checked` list only in its pass report.
+   End a pass's turn with one short line: what changed, or "No change."; put what it
+   `checked` only in its pass report.
    Output: each invocation and what it changed; what stays unsure, as
    questions.
 3. **Walk through.** Outside a round (retro, role, Accept): in chat, readable

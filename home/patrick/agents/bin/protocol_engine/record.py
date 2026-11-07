@@ -52,6 +52,17 @@ def record_file(q: dict, fields: dict) -> str:
                if q['origin'] == AWAY and board_keys(q.get('settles')) else ''))
 
 
+def record_tag(ctx: Context, q: dict) -> str:
+    return f"protocol:{ctx.store.session}:{ctx.round['id']}:{q['id']}"
+
+
+def tagged_item(ctx: Context, tag: str) -> str | None:
+    """The oldest item carrying `tag`: bd does not keep an external ref unique, and a Record cut after a create
+    wrote its item lost the id, so the rerun looks it up before it creates."""
+    rows = ctx.board.json('bd', 'list', '--external-ref', tag, '--all', '--brief', '--json')
+    return min(rows, key=lambda row: (row.get('created_at') or '', row['id']))['id'] if rows else None
+
+
 def board_item(ctx: Context, q: dict, path: Path, body: str | None = None) -> str:
     """The board id the record goes to: the question's item, else the draft created (or opened as a revision); `body`: the
     new item's text (a parked question's parts), else the question and its options."""
@@ -61,6 +72,10 @@ def board_item(ctx: Context, q: dict, path: Path, body: str | None = None) -> st
     if takeover:
         q['board'] = takeover
         return takeover
+    tag = record_tag(ctx, q)
+    if found := tagged_item(ctx, tag):
+        q['board'] = found
+        return found
     packet = path.with_suffix('.packet.md')
     packet.write_text(body or f"## Question\n{q['text']}\n\nOptions: " + '; '.join(o['label'] for o in q['options'])
                       + f"\n\nStaged in round {ctx.round['id']}.\n", encoding='utf-8')
@@ -68,10 +83,10 @@ def board_item(ctx: Context, q: dict, path: Path, body: str | None = None) -> st
     # labels come from it) until Record closes it; link_record links the other records it closes the same way.
     revised = q.get('revises') or next(iter(q.get('replaces') or []), None)
     if revised:
-        new = ctx.board.checked('revise', revised, '--title', q['title'], '--body-file', str(packet)).strip()
+        new = ctx.board.checked('revise', revised, '--title', q['title'], '--body-file', str(packet), '--external-ref', tag).strip()
     else:
         created = json.loads(ctx.board.checked('bd', 'create', '--type', 'decision', '--title', q['title'],
-                                               '--body-file', str(packet), '--json') or '{}')
+                                               '--body-file', str(packet), '--external-ref', tag, '--json') or '{}')
         new = created.get('id') if isinstance(created, dict) else None
     if not new:
         fail(f"{q['id']}: the board returned no id for the new question")
@@ -173,6 +188,13 @@ def close_replaced(ctx: Context, q: dict, item: str) -> None:
         q['closed'].append(old)
 
 
+def checkpoint(ctx: Context) -> None:
+    """Saves the round and flushes the history after each question: a Record cut mid-way (the console's time limit) keeps
+    the ids it created, and the rerun with the same report continues from there."""
+    ctx.store.save(ctx.state)
+    ctx.store.flush()
+
+
 def record_accept(ctx: Context, report: dict) -> str:
     records, deferred = report.get('records') or {}, report.get('defer') or {}
     if not isinstance(records, dict) or not isinstance(deferred, dict):
@@ -181,8 +203,9 @@ def record_accept(ctx: Context, report: dict) -> str:
     if waiting:  # waitsOn refuses a circle and an unknown id, and an answer releases its dependents: nothing should reach this
         fail(f"questions still wait at Record: {'; '.join(waiting)}. A question waits only within its round: `protocol abandon`")
     todo = [q for q in questions(ctx, 'answered') if not q.get('recorded')]
+    done = {q['id'] for q in questions(ctx, 'answered') if q.get('recorded')}  # a rerun of the same report skips them
     for qid in [*records, *deferred]:
-        if qid not in {q['id'] for q in todo}:
+        if qid not in {q['id'] for q in todo} | done:
             fail(f'{qid}: not an answered question awaiting its record')
     missing = [q['id'] for q in todo if q['id'] not in records and q['id'] not in deferred]
     if missing:
@@ -220,6 +243,7 @@ def record_accept(ctx: Context, report: dict) -> str:
         if q['id'] in deferred:
             q['recorded'] = 'deferred'
             ctx.log('deferred', question=q['id'], reason=deferred[q['id']])
+            checkpoint(ctx)
             continue
         path = folder / f"{ctx.round['id']}-{q['id']}.md"
         path.write_text(record_file(q, records[q['id']]), encoding='utf-8')
@@ -227,6 +251,7 @@ def record_accept(ctx: Context, report: dict) -> str:
         if not ctx.board:
             q['recorded'] = 'file'
             ctx.log('recorded', question=q['id'], board=None, file=str(path), ok=True)
+            checkpoint(ctx)
             continue
         try:
             item = board_item(ctx, q, path)
@@ -246,6 +271,7 @@ def record_accept(ctx: Context, report: dict) -> str:
         for old in [one for one in q.get('closed') or [] if one not in q.setdefault('reported', [])]:  # after the record's own line
             q['reported'].append(old)
             ctx.log('superseded', question=q['id'], old=old, new=q['board'], partial=None)
+        checkpoint(ctx)
     if errors:
         ctx.messages.append(words.not_recorded(errors))
         return 'record'

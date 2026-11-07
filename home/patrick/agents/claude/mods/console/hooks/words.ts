@@ -229,7 +229,8 @@ export function roundWords(round: ConsoleRound): string {
 export const openDialogText = (marker: string): string => `Open the dialog for batch ${marker}: call AskUserQuestion with the input \`protocol show\` prints.`
 
 /** The console asks the model once for a report it did not give. */
-export const missingReportText = (command: string, id: string): string => `The /${command} pass (${id}) ended without its report. Report its per-question updates through the protocol tool.`
+export const missingReportText = (command: string, id: string, args: string): string =>
+  `The /${command} pass (${id}) ended without its report. Report its per-question updates through the protocol tool; if it did not run, run /${[command, args].filter(part => part !== '').join(' ')} with the Skill tool first.`
 
 /** Why the console drops a stale queued prompt: the host hands this back to the console's own send, which expects it. */
 export const STALE_DROP = 'stale console action'
@@ -253,7 +254,8 @@ export const PROTOCOL_STDIN_DESCRIPTION = 'JSON text for the verb (per-question 
 
 /** The tool's results when the console does not run the engine. */
 export const TOOL_IDLE_TEXT = 'The console is idle in this session (no lead, solo or autopilot role, or the console is not drawn); run `protocol` through Bash.'
-export const TOOL_FAILED_TEXT = 'The console failed to run protocol (see the debug log); run `protocol` through Bash.'
+export const toolFailedText = (reason: string | undefined): string =>
+  `The console's protocol call failed${reason === undefined || reason === '' ? '' : `: ${reason}`}. It may have run in part: read the round with \`protocol show\` (through Bash if this tool fails again) before you run it again. A Record step runs again safely.`
 
 /** The dialog gate's refusals and notes. */
 export const unprintedBatchText = (marker: string): string =>

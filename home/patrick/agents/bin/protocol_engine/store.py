@@ -21,6 +21,7 @@ class Store:
         self.dir = state_root() / f'{session}.protocol'
         self.session = session
         self.pending: list[dict] = []
+        self.written: list[dict] = []  # this call's events flushed already: the headline still names them
 
     @contextlib.contextmanager
     def locked(self, write: bool):
@@ -62,6 +63,7 @@ class Store:
         if self.pending:
             with open(self.dir / 'history.jsonl', 'a', encoding='utf-8') as out:
                 out.writelines(json.dumps(event, ensure_ascii=False) + '\n' for event in self.pending)
+            self.written += self.pending
             self.pending = []
 
 

@@ -77,7 +77,7 @@ describe('a plain-text prompt the console queued', () => {
     w.onVerb = verb => { if (verb === 'show' && shows >= 0) shows += 1; if (verb === 'pending') shows = 0; if (shows >= 0 && flip(verb, shows)) w.round = roundJson() }  // the report lands while the request waits
     await $.turn.complete(complete())
     await clock.settle()
-    expect(w.prompts.filter(text => text === missingReportText('ground', 'p7'))).toEqual([])
+    expect(w.prompts.filter(text => text === missingReportText('ground', 'p7', ''))).toEqual([])
     expect(drops(w)).toEqual([{ origin: ['--origin', 'plugin'], report: { kind: 'pass', id: 'p7' } }])
     expect(notices(session)).toEqual([])
     expect(w.toasts).toEqual([])

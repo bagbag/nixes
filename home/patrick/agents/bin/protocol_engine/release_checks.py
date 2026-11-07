@@ -3,11 +3,11 @@ from __future__ import annotations
 
 import copy
 
-from .base import NO_RUN, ProtocolError, lines
+from .base import ProtocolError, lines
 from . import words
 from .boards import statuses
 from .engine import Context, fail
-from .questions import DISCLOSURE
+from .questions import disclosure_error
 from .told import report_hint
 from .release_set import HIT_CLASSES, SCOPED_PASSES, apply_changes, drop, in_set, scoped_records, set_rows, stop
 
@@ -196,9 +196,9 @@ def own_rulings_accept(ctx: Context, report: dict) -> str:
     for index, ruling in enumerate(rulings):
         if not isinstance(ruling, dict) or ruling.get('record') not in current:
             fail(f'rulings[{index}]: `record` names a record of the set')
-        missing = [k for k in DISCLOSURE if not str(ruling.get(k) or '').strip()]
-        if missing or not isinstance(ruling.get('sure'), bool):
-            fail(f"rulings[{index}]: needs {', '.join(missing) or 'the fields'} and `sure` true or false")
+        error = disclosure_error(ruling, f'rulings[{index}]')
+        if error:
+            fail(error)
     ctx.round['rulings'] = rulings
     ctx.log('own-rulings', rulings=len(rulings), unsure=sum(1 for x in rulings if not x['sure']))
     return 'scoped'
@@ -239,7 +239,7 @@ def scoped_accept(ctx: Context, report: dict) -> str:
         fail(f"`pass` is {pending.get('command')}, the scoped pass waiting; the other follows its report")
     if not ctx.codex:  # Codex has no console to observe its runs
         if command not in r['observed']:
-            fail(NO_RUN.format(command=command))
+            fail(words.no_run(command, pending))
         if r['observed'][command].get('pending') != pending.get('id'):
             fail(f"/{command} ran without the revised records as its argument (`{pending.get('args')}`)")
     origin = (r['observed'].get(command) or {}).get('origin', 'model')

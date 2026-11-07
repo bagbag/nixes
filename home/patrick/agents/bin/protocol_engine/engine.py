@@ -70,6 +70,15 @@ def answered(ctx: Context, qid: str) -> bool:
     return qid in ctx.state['answers']
 
 
+def touch(ctx: Context, ids) -> None:
+    """Stamps `ids` as changed (an update, an edit, an answer, a restart, a release from held): each pass kind's next scope
+    takes a question changed after it last covered it (check.py pass_scope)."""
+    coverage = ctx.round.setdefault('coverage', {'seq': 0, 'at': {}, 'seen': {}})
+    coverage['seq'] += 1
+    for qid in ids:
+        coverage['at'][qid] = coverage['seq']
+
+
 def premise_status(ctx: Context, q: dict) -> str:
     return 'held' if any(not answered(ctx, other) for other in q.get('waitsOn') or []) else 'draft'
 

@@ -2,7 +2,7 @@
 // declarations throughout: past an import, the engine follows $ only into those.
 import type { EngineInterface, ToolCallResult } from 'claude-code'
 
-import type { ConsoleAction, ConsoleBoard, ConsolePassOrigin, ConsolePassRun, ConsoleRound, ConsoleSuggestion } from '../types'
+import type { ConsoleAction, ConsoleBoard, ConsolePassOrigin, ConsolePassRun, ConsolePending, ConsoleRound, ConsoleSuggestion } from '../types'
 
 import { boardItem, boardViews, decline, dropped, isRoundOpen, pass, PASS_COMMANDS, pending as readPending, readRole, RELEASE_COMMAND, ROUND_ROLES, setWorkers, show, stampRelease, START_COMMAND, stateDir } from './engine'
 import {
@@ -183,27 +183,40 @@ export async function betweenTurns($: $, session: string, isAborted: boolean): P
   const pending = await readPending($, session)
   const run = await getPass($)
   if (pending !== null && run !== null && run.id === pending.id) {
-    if (run.phase !== 'noted' && isAborted) {
-      // Esc stops the loop: the pass stays pending and is not run again.
-      await setPass($, { ...run, phase: 'noted' })
+    if (run.phase !== 'noted' && run.phase !== 'stopped' && isAborted) {
+      // Esc stops the loop: the pass stays pending and is not run again, except by a compaction right after (rerunStoppedPass).
+      await setPass($, { ...run, phase: 'stopped' })
     } else if (run.phase === 'started') {
       await setPass($, { ...run, phase: 'asked' })
-      await pressSubmit($, missingReportText(pending.command, pending.id), undefined, true, { kind: 'pass', id: pending.id, command: pending.command, args: pending.args })
+      await pressSubmit($, missingReportText(pending.command, pending.id, pending.args), undefined, true, { kind: 'pass', id: pending.id, command: pending.command, args: pending.args })
     } else if (run.phase === 'asked') {
       await setPass($, { ...run, phase: 'noted' })
       await notice($, stuckPassText(pending.command, pending.args))
     }
   } else if (pending !== null && !isAborted) {
-    await setPass($, { id: pending.id, command: pending.command, args: pending.args, phase: 'queued' })
-    await pass($, session, 'plugin', { command: pending.command, args: pending.args, pending: pending.id })
-      .catch(failOpen($, `recording /${pending.command}`))
-    void $.command.run({ command: pending.command, args: pending.args }).catch(failOpen($, `running /${pending.command}`))
+    await queuePending($, session, pending)
   }
   // The issued batch's text prints between turns, then the console opens its dialog (an aborted turn does neither, as it runs no
   // pass; an away session has no batch to open).
   if (!isAborted && (await getRole($))?.role !== 'autopilot') {
     await openBatchDialog($, await refreshRound($, session))
   }
+}
+
+/** Queues the engine's pending pass: stores it, records it with origin plugin, and runs it. The run goes last: later `$` calls in the chain skip the console's hooks. */
+async function queuePending($: $, session: string, pending: ConsolePending): Promise<void> {
+  await setPass($, { id: pending.id, command: pending.command, args: pending.args, phase: 'queued' })
+  await pass($, session, 'plugin', { command: pending.command, args: pending.args, pending: pending.id })
+    .catch(failOpen($, `recording /${pending.command}`))
+  void $.command.run({ command: pending.command, args: pending.args }).catch(failOpen($, `running /${pending.command}`))
+}
+
+/** After a successful compaction: runs the pass an Esc stopped once more, if it is still the engine's pending pass. Queued again, so it never runs twice. */
+export async function rerunStoppedPass($: $, session: string): Promise<void> {
+  const run = await getPass($)
+  if (run === null || run.phase !== 'stopped') return
+  const pending = await readPending($, session)
+  if (pending !== null && pending.id === run.id) await queuePending($, session, pending)
 }
 
 /** A role button's press: the person's own `/role <role>`. A prompt text beginning with `/` is refused by the host, so it runs as a command (the press route of Commit and Retro). */

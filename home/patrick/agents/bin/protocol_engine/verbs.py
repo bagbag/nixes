@@ -9,7 +9,7 @@ from .base import CAP_CHOICES, CHECK_CAP, DROP_KINDS, PRUNE_DAYS, THINK_MORE, VE
 from . import words
 from .session import state_root
 from .store import Store
-from .engine import Context, by_id, fail, premise_status, questions
+from .engine import Context, by_id, fail, premise_status, questions, touch
 from .questions import apply_updates
 from .render import batch_seen
 from .check import gate_ask, leave_check, next_cycle, nothing_to_check, rescope_check
@@ -71,6 +71,7 @@ def chat_answer(ctx: Context, report: dict) -> str:
     ctx.round.pop('reading', None)  # a chat answer is the model's reading
     q.update(status='answered', answer=text, origin='chat', quote=quote, answeredAt=utcnow())
     ctx.state['answers'][qid] = text
+    touch(ctx, [qid])
     if ctx.round['protocol'] == 'round':
         ctx.round['check']['challenged'] = False  # the answer is news to the last challenge-rulings run
     ctx.log('answered', origin='chat', questions=[qid], quote=quote)
@@ -282,6 +283,8 @@ def answer(ctx: Context, report: dict, origin: str) -> str:
     ctx.round['batch'] = None
     if done and ctx.round['protocol'] == 'round':
         ctx.round['check']['challenged'] = False  # the answers are news to the last challenge-rulings run
+    if done:
+        touch(ctx, done)
     response = report.get('response')
     ctx.log('answered', marker=batch['marker'], origin=origin, questions=done, typed=typed, response=response, **({'thinkMore': rethink} if rethink else {}))
     notes = [words.answers_recorded(done, origin)] if done else []

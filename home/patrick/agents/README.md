@@ -413,9 +413,24 @@ A round:
   `extra`, and the pending pass still runs (a variant with other arguments, a lens press with
   focus text and a plain `/step-back` while the path pass waits are extra). The engine's lens lists
   (`ALL_LENSES`, `PATH_LENSES`, `OPTIONS_LENSES`, `REFINE_LENSES`) are checked against the
-  skills and the console's words.ts. A
-  pass that changes nothing lists what it `checked`; any pass report, also out
-  of sequence or with a batch out, updates questions. Edits to title, header,
+  skills and the console's words.ts. Every pass report keys `checked` by question
+  for its scope (r4-q15, q16): what it examined in each this run; an update to a
+  question covers it too, as do the options pass's `explored` entries, and a
+  `round` note is the only entry an empty scope needs. The step names the scope;
+  the engine refuses a gap, naming the missing ids. A pass kind's first run covers
+  every draft and ready question; a rerun of the Base step-back or ground, the lean
+  pass, the loop's challenge-rulings and an extra pass (per command) cover the
+  questions changed since that kind last ran (another pass's update, an edit, an
+  answer, a restart, a release from held, a new question; its own changes do not
+  count); the path, options and refine passes cover their scoped ids, else every
+  question they work on; the challenge after the answers covers the answered set,
+  the raised one its ids. An unchanged question resting on a changed one is
+  outside a rerun's scope; every rerun still runs. challenge-rulings also re-sends,
+  in `verdicts`, the `strongBecause` of each strong question in its scope (or an
+  update lowers it to lean or re-sends it) and lists its own rulings in `rulings`,
+  each `{question, ruling, why, alternative, fails, evidence, sure}`, validated as
+  the release's. Any pass report, also out of sequence or with a batch out,
+  updates questions. Edits to title, header,
   strength or its backing alone re-issue the batch; other changes rerun the
   loop. The Claude hand-off names no pass (the console runs it); Codex's names
   the skill to run (its full text, every pass). A step's report format goes
@@ -491,6 +506,12 @@ A round:
 - Stage and any update refuse a `board` id that is no decision: the question goes
   in as a draft and records its own item. Abandon names the records that stay
   decided.
+- Record is safe to run again: each record it creates carries the external ref
+  `protocol:<session>:<round>:<question>` (also through `board revise --external-ref`),
+  looked up and reused before a create, and the round is saved after each question. A
+  cut Record (the console's time limit) reports again with the same report: the
+  questions already recorded are skipped, the rest continue. Unknown or unanswered
+  ids still fail.
 - Record writes the records; closing or abandoning releases the claims the
   round made and did not record (a hold the session had before, such as a
   decided record, stays). A question waits only within its round: `waitsOn` refuses
@@ -664,7 +685,10 @@ runs a built-in command sent during a turn (`/compact`, which Claude Code delive
 relays the person's chat messages, presses and a typed or pressed
 `/release-round` (conditional approval), and keeps the round through
 compaction. Its round features act for lead, solo and autopilot. A `protocol` call reads as two rows in the chat: its arguments and
-the engine's headline. The Console pane (`/console` shows it as text;
+the engine's headline. Every call may run up to ten minutes (`$.process.run`'s maximum); one that fails or is cut answers the model
+with the error and that it may have run in part (read `protocol show` before running it again; a Record step runs again safely).
+Esc at a turn end stops the pass loop; a successful compaction right after reruns the stopped pass once (not a skipped or precompute
+one; a pass given up as stuck is never rerun). A model Skill call of a pass skill counts as the round's pass; a subagent's does not. The Console pane (`/console` shows it as text;
 `/console-item <id>` prints an item's summary in the chat; `/console-questions` prints the issued batch's text) shows Board
 (counts, this session's items, sessions with runtime and pull initials, `auto` for autopilot, stale
 holds, live workers), Suggestions while no run is open and the engine's `next`

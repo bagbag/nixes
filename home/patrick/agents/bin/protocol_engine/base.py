@@ -73,14 +73,12 @@ LEAN_LENSES = ('assumptions', 'sources', 'probe')  # the targeted lean pass: eve
 # A strong recommendation is a claim: each criterion "true: <evidence>", or "does-not-apply: <reason>" where allowed.
 STRONG_CRITERIA = {
     'noAssumptions': 'every premise checked in current source, a run or an item (name where)',
-    'alternativesFail': 'each other realistic option, listed or not, fails a named criterion (cleanliness test, goal, correctness, consumer need); name the strongest unlisted one and why it fails or was added',
+    'alternativesFail': 'each other realistic option, listed or not, fails a named criterion (cleanliness test, goal, correctness, consumer need); name the strongest unlisted one and why it fails or was added; a simpler option fails only on a failure shown by a fact or a consumer case the person or the goal names (r4-q13)',
     'notPreference': 'the choice does not depend on what the user values',
     'consumerWalk': 'a realistic consumer walk supports it (does-not-apply for internal choices)',
     'rulingsChallenged': 'judged as if no released ruling existed; each related ruling challenged in `priorRulings`, and each that fails raised as a revision',
 }
 MAY_NOT_APPLY = ('consumerWalk', 'rulingsChallenged')
-NO_RUN = ('no /{command} ran since its last report: end your turn (the console runs a pass it has not run yet, and tells the person what to '
-          'type for one it has), or call the skill yourself; a model Skill call counts once it ran')
 THINK_MORE = 'Think more'  # a lean question's extra dialog choice: no answer, its checks rerun (r34-q171)
 
 

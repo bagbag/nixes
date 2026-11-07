@@ -9,7 +9,7 @@ from .base import (
 )
 from .store import next_id
 from .boards import claim_items, split_holds
-from .engine import Context, by_id, fail, premise_status, questions
+from .engine import Context, by_id, fail, premise_status, questions, touch
 
 
 # Validation of question content (AskUserQuestion's limits).
@@ -81,13 +81,7 @@ def question_errors(q: dict, where: str, marks: bool = True, parts: tuple[str, .
     if (valid and q.get('recommendation') not in labels) or q.get('strength') not in STRENGTHS:
         errors.append(f"{where}: `recommendation` names one option's label and `strength` is lean or strong (the dialog marks both)")
     if q.get('strength') == 'strong':
-        claims = q.get('strongBecause') if isinstance(q.get('strongBecause'), dict) else {}
-        for name, meaning in STRONG_CRITERIA.items():
-            value = claims.get(name)
-            allowed = ('true', 'does-not-apply') if name in MAY_NOT_APPLY else ('true',)
-            if not (isinstance(value, str) and re.match(rf"({'|'.join(allowed)}): \S", value)):
-                errors.append(f"{where}: strong is a claim: `strongBecause.{name}` is \"{' or '.join(f'{a}: …' for a in allowed)}\" "
-                              f"({meaning}); if it does not hold, the recommendation is a lean")
+        errors += strong_errors(q.get('strongBecause'), where)
     because = q.get('leanBecause')
     if q.get('strength') == 'lean' and not (isinstance(because, dict) and because.get('cause') in LEAN_CAUSES
                                             and isinstance(because.get('detail'), str) and because['detail'].strip()):
@@ -98,6 +92,19 @@ def question_errors(q: dict, where: str, marks: bool = True, parts: tuple[str, .
     prior = q.get('priorRulings')
     if prior is not None and not (isinstance(prior, list) and all(isinstance(x, dict) and x.get('verdict') in ('holds', 'fails') and all(isinstance(x.get(k), str) and x[k].strip() for k in ('ruling', 'why')) for x in prior)):
         errors.append(f'{where}: `priorRulings` lists {{"ruling", "verdict": "holds" or "fails", "why"}}')
+    return errors
+
+
+def strong_errors(claims, where: str) -> list[str]:
+    """A strong mark's `strongBecause`: each criterion a claim with its evidence (STRONG_CRITERIA)."""
+    claims = claims if isinstance(claims, dict) else {}
+    errors = []
+    for name, meaning in STRONG_CRITERIA.items():
+        value = claims.get(name)
+        allowed = ('true', 'does-not-apply') if name in MAY_NOT_APPLY else ('true',)
+        if not (isinstance(value, str) and re.match(rf"({'|'.join(allowed)}): \S", value)):
+            errors.append(f"{where}: strong is a claim: `strongBecause.{name}` is \"{' or '.join(f'{a}: …' for a in allowed)}\" "
+                          f"({meaning}); if it does not hold, the recommendation is a lean")
     return errors
 
 
@@ -267,7 +274,7 @@ def apply_updates(ctx: Context, updates) -> int:
     not count); `ctx.applied` lists the question of each update that applied."""
     if not isinstance(updates, list):
         fail('`updates` must be a list')
-    changes, keys, errors, placed = 0, {}, [], []
+    changes, keys, errors, placed, touched = 0, {}, [], [], []
     for index, update in enumerate(updates):
         try:
             changed, qid = apply_update(ctx, update, f'updates[{index}]', keys)
@@ -276,6 +283,7 @@ def apply_updates(ctx: Context, updates) -> int:
             continue
         if qid:
             (ctx.applied if 'id' in update else ctx.added).append(qid)
+            touched.append(qid)
             if 'id' not in update and update.get('before') is not None:
                 placed.append((qid, update['before'], f'updates[{index}]'))
         changes += changed
@@ -288,6 +296,8 @@ def apply_updates(ctx: Context, updates) -> int:
     refuse_all(coverage_errors(ctx) + non_decision_errors(ctx, [u['board'] for u in updates if isinstance(u, dict) and u.get('board')]))  # a merge or split is several updates: the set is checked once, after all of them
     for q in questions(ctx, 'draft', 'held', 'ready'):
         q['status'] = premise_status(ctx, q)
+    if touched:
+        touch(ctx, touched)
     return changes
 
 
@@ -367,3 +377,11 @@ def describe(ctx: Context, raw, where: str, required: bool) -> None:
 
 
 DISCLOSURE = ('ruling', 'why', 'alternative', 'fails', 'evidence')  # asking.md Walk through: own rulings; `why`: the ruling meets the goals without a material trade-off
+
+
+def disclosure_error(ruling: dict, where: str) -> str | None:
+    """An own ruling as disclosed for a check (the release's own rulings, a challenge-rulings report): DISCLOSURE and `sure`."""
+    missing = [k for k in DISCLOSURE if not str(ruling.get(k) or '').strip()]
+    if missing or not isinstance(ruling.get('sure'), bool):
+        return f"{where}: needs {', '.join(missing) or 'the fields'} and `sure` true or false"
+    return None

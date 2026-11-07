@@ -142,8 +142,8 @@ export type ConsoleBoard = {
 /** The registry entry (`session-lead-mode show`). */
 export type ConsoleRole = { session: string; role: string; actor: string; tool: string }
 
-/** The machine-run pass this console started, by pending id (R-B4). */
-export type ConsolePassRun = { id: string; command: string; args: string; phase: 'queued' | 'started' | 'asked' | 'noted' }
+/** The machine-run pass this console started, by pending id (R-B4). `noted`: given up (stuck or stale); `stopped`: an Esc ended its turn, which a compaction may rerun. */
+export type ConsolePassRun = { id: string; command: string; args: string; phase: 'queued' | 'started' | 'asked' | 'noted' | 'stopped' }
 
 /** What a queued console action was queued for: the engine's pending pass, or an issued batch (isStale decides whether the round still holds it). */
 export type ConsoleAction = { kind: 'pass'; id: string; command: string; args: string } | { kind: 'batch'; marker: string }

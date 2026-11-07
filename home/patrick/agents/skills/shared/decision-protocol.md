@@ -121,7 +121,10 @@ for each when asked or recorded:
 - **Alternatives fail** (`alternativesFail`): each other realistic option,
   listed or not, fails a named criterion (a cleanliness test, the goal,
   correctness, a consumer need); name the strongest unlisted one and why it
-  fails or was added.
+  fails or was added. A simpler option fails realistic integrity or a consumer
+  need only on a failure shown by a fact (source, run, count, incident) or a
+  consumer case the person or the goal names; on a supposed failure, recommend
+  the simpler option or lean on preference.
 - **Not a preference** (`notPreference`): the choice does not depend on what
   the user values.
 - **Consumer walk** (`consumerWalk`): a realistic consumer walk supports it;

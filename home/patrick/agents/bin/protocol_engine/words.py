@@ -111,22 +111,49 @@ def pass_format(command: str) -> str:
         "user's ruling raises it as a new question. "
         f'{MERGE_TEST} A merge is one rule question (`settles`: the keys it settles); split an item out when the rule\'s application to it is open. '
         f'A question that widens the round\'s scope: list the open items with `{LIST_COMMAND}`.',
+        'Key `checked` by question: for each id the step names as this pass\'s scope, what you examined in it this run (an update '
+        'to it covers it too); `round` holds a round-wide note, the only entry an empty scope needs.',
         'Report with `protocol step` (stdin JSON), e.g. ' + json_block({
             'pass': command, 'updates': [{'id': 'q1', 'premises': '<revised premise>'}],
-            'checked': ['<what you examined, when nothing changed>'],
+            'checked': {'q2': '<what you examined in it this run>', 'round': '<optional round-wide note>'},
             'summary': '<one line: what the pass found>'}))
+
+
+def pass_scope(ids: list[str], strong: list[str] | None) -> str:
+    """The pending pass's scope (r4-q15, q16); `strong`: the strong ids a challenge-rulings pass re-derives, None for other passes."""
+    head = (f"This pass covers {' '.join(ids)}: a `checked` entry (what you examined in it this run) or an update for each."
+            if ids else 'Nothing changed since this pass last ran: `checked` needs only a `round` note.')
+    if strong is None:
+        return head
+    verdicts = (f" In `verdicts`, re-send the `strongBecause` of each of {' '.join(strong)}, re-derived this run, or lower it to lean."
+                if strong else '')
+    return head + verdicts + ' List your own rulings in `rulings` (an empty list when there is none).'
+
+
+def challenge_format() -> str:
+    """challenge-rulings adds `verdicts` and `rulings` to its report: told apart from the pass format, like the options pass's."""
+    return ('Add to a challenge-rulings report `verdicts`: for each strong question in its scope, its `strongBecause` re-derived '
+            'this run (an update lowering it to lean or re-sending it covers it too); and `rulings`: each own ruling in this round as '
+            '{"question", "ruling", "why", "alternative", "fails", "evidence", "sure": true or false}, an empty list when there is '
+            'none. e.g. ' + json_block({
+                'pass': 'challenge-rulings', 'updates': [], 'checked': {'q2': '<what you examined in it this run>'},
+                'verdicts': {'q2': {'strongBecause': {name: 'true: <evidence>' for name in STRONG_CRITERIA}}},
+                'rulings': [{'question': 'q2', 'ruling': '<your ruling>', 'why': '<what it meets without a material trade-off>',
+                             'alternative': '<its strongest alternative>', 'fails': '<the test the alternative fails>',
+                             'evidence': '<source, run or item>', 'sure': True}],
+                'summary': '<one line>'}))
 
 
 def options_format() -> str:
     """The options pass adds `explored` to its report: told apart from the pass format, which a session is told once."""
     return lines(
-        'The options pass also reports `explored`: for each question the argument covers, the radically different ways you found '
+        'The options pass also reports `explored` (its entries cover its questions): for each question the argument covers, the radically different ways you found '
         '(other mechanisms, other owners, removing the need; not variants) as {"idea", "verdict": "kept" or "dropped", "why"}, or '
         'one sentence saying why no other way exists. A dropped idea names the stated constraint or sourced fact that rules it out '
         'and prints under the question\'s options; a kept one shows in the options or the recommendation. e.g. ' + json_block({
             'pass': 'step-back', 'updates': [], 'explored': {'q1': [{'idea': '<another mechanism>', 'verdict': 'dropped',
                                                                       'why': '<the constraint or fact>'}], 'q2': '<why no other way exists>'},
-            'checked': ['<what you examined>'], 'summary': '<one line>'}))
+            'checked': {}, 'summary': '<one line>'}))
 
 
 # Collect and Select (collect.py).
@@ -1213,3 +1240,12 @@ def changed_mark(names: list[str]) -> str:
 
 def batch_title(index: int, count: int, title: str, mark: str) -> str:
     return (f'{index + 1}. ' if count > 1 else '') + title + mark
+
+
+def no_run(command: str, pending: dict | None) -> str:
+    """A report with no observed run of its pass (r5-q17): run the pending pass when it is that command, else end the turn."""
+    if pending and pending.get('command') == command:
+        run = ' '.join(part for part in (f'/{command}', pending.get('args') or '') if part)
+        return f'no /{command} ran since its last report: run `{run}` with the Skill tool, then report it'
+    return (f'no /{command} ran since its last report: end your turn (the console runs a pass it has not run yet, and tells '
+            'the person what to type for one it has)')
