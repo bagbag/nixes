@@ -321,7 +321,9 @@ A round:
   AskUserQuestion hook swaps it for the issued batch (never drawing the placeholder).
   Every outcome then wakes the model with the answers, one line each, as the person's own words (no plugin frame), and the engine's
   text as a note; its turn end runs a pending pass or prints a next batch. A `$` call from a command hook skips every console hook
-  (Claude Code 2.1.318), so that hook can neither print the answers through a command nor the next batch. If the swap never ran, a one-line message asks the lead to open the dialog
+  (Claude Code 2.1.318), so that hook can neither print the answers through a command nor the next batch. If the swap never ran, the host draws the stand-in
+  question (`Open the questions for batch <marker>?`): Not now holds the batch until the person's next message, and a
+  close, a timeout or Open the questions sends the lead a one-line message to open the dialog
   with the input `protocol show` gives; so does a run of the command its hook never
   answered, after printing any new text as a notice. There is no Ask button. At most one dialog per
   batch marker opens until the person sends a new message (a composer or bridge message
@@ -431,7 +433,9 @@ A round:
   the scoped check ran on it (at the hand-over below, at once when nothing else
   waits), and a recommendation raised to strong until one challenge-rulings pass
   ran on it (`challenge-rulings (raised <ids>)`); the other questions go out.
-  Wording, options, premises, previews and a mark lowered to lean stay free. A
+  Wording, options, premises, previews and a mark lowered to lean stay free. At
+  Record an edit is accepted too: its new questions take the scoped check and are
+  asked, and the challenge after the answers runs again. A
   pass report with a refused update holds the round: no batch goes out until the
   failed updates are resent in a pass report. An option's `preview` alone is
   presentation for a pass: its change re-issues the batch without rerunning the

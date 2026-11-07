@@ -3,6 +3,7 @@
 import { describe, expect, test } from 'claude-code/testing'
 
 import { BATCH, engineLine, NO_ROUND, notes, notices, PROTOCOL, roundJson, SESSION, world } from './fixture'
+import { holdsQuestions } from '../hooks/core'
 import { openDialogText } from '../hooks/words'
 
 const start = async ($: any) => $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
@@ -290,7 +291,7 @@ describe('dialog gate and capture', () => {
         await start($)
         await clock.settle()
         // The placeholder dialog arrives as if an earlier instance of the console had opened it: nothing here waits on it.
-        await $.tool.call({ tool: 'AskUserQuestion', questions: [{ question: `Console round dialog ${BATCH.marker}?`, header: 'Round', multiSelect: false, options: [{ label: 'Open the questions', description: '' }, { label: 'Not now', description: '' }] }] } as never)
+        await $.tool.call({ tool: 'AskUserQuestion', questions: [{ question: `Open the questions for batch ${BATCH.marker}?`, header: 'Round', multiSelect: false, options: [{ label: 'Open the questions', description: '' }, { label: 'Not now', description: '' }] }] } as never)
         await clock.settle()
         expect(w.verbs()).toContain('answer --origin dialog')
         expect(w.prompts).toEqual([engineLine(['my own words'])])
@@ -301,7 +302,7 @@ describe('dialog gate and capture', () => {
         let reached = false
         on('tool.call', { tool: 'AskUserQuestion' }, () => { reached = true; return answered({}) as never })
         await start($)
-        const ran = await $.tool.call({ tool: 'AskUserQuestion', questions: [{ question: `Console round dialog ${BATCH.marker}?`, header: 'Round', multiSelect: false, options: [{ label: 'a', description: '' }, { label: 'b', description: '' }] }] } as never)
+        const ran = await $.tool.call({ tool: 'AskUserQuestion', questions: [{ question: `Open the questions for batch ${BATCH.marker}?`, header: 'Round', multiSelect: false, options: [{ label: 'a', description: '' }, { label: 'b', description: '' }] }] } as never)
         expect(String(ran.deny)).toContain('no batch')
         expect(reached).toBe(false)
       })
@@ -347,6 +348,34 @@ describe('dialog gate and capture', () => {
         await $.turn.complete(complete())
         await clock.settle()
         expect(message(w)).toHaveLength(3)
+      })
+
+      // The stand-in is drawn only when the host skips the console's swap, which the kit cannot stage (its hook always swaps or
+      // denies): the answer's reading is tested as the pure function openDialog applies, the hold through the repeat guard (r1-q4).
+      describe('the stand-in question drawn by the host', () => {
+        test('only Not now holds the questions; Open the questions, a rejection and free text hand them to the model', () => {
+          expect(holdsQuestions('Not now')).toBe(true)
+          expect(holdsQuestions('Open the questions')).toBe(false)
+          expect(holdsQuestions(undefined)).toBe(false)  // ui.ask rejected: dismissed, closed or timed out
+          expect(holdsQuestions('not now, later')).toBe(false)  // free text under "Other"
+        })
+
+        // A held batch (Not now) leaves askSent set, so the repeat guard is what keeps the console from asking again.
+        test('a batch whose dialog was left unhandled is not opened again at later turn ends, only after the person writes', async ($, on) => {
+          const { w, clock } = world(on, { round: asking() })
+          await start($)
+          await $.turn.complete(complete())
+          await clock.settle()
+          expect(message(w)).toHaveLength(1)
+          await $.turn.start({ text: openDialogText(BATCH.marker), turnId: 't1' } as never)
+          await $.turn.complete(complete())
+          await clock.settle()
+          expect(message(w)).toHaveLength(1)
+          await $.prompt.submit(composer('later'))
+          await $.turn.complete(complete())
+          await clock.settle()
+          expect(message(w)).toHaveLength(2)
+        })
       })
 
       test('another batch gets its own message', async ($, on) => {

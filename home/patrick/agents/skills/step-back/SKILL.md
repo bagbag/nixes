@@ -18,12 +18,13 @@ pass: the stance on the current focus, judged by the default criteria.
 ## Stance
 
 Judge greenfield: previous rulings, contracts and current usages are no
-authority. Find the cleanest end state, keeping DX in mind; then judge the
-whole picture: is the combined result clean and coherent? Name each known bad
-practice in the design, a recommendation or a requested behavior, with its
-source; push back and recommend the established practice instead. Ground and
-think yourself until you have strong recommendations; where none is strong,
-list the decisive trade-offs.
+authority; priorities and deferral rules decide when, not what. Find the
+cleanest end state, keeping DX in mind; then judge the whole picture: is the
+combined result clean and coherent? Name each known bad practice in the
+design, a recommendation or a requested behavior, with its source; push back
+and recommend the established practice instead. Ground and think yourself
+until you have strong recommendations; where none is strong, list the
+decisive trade-offs.
 
 ## Where
 
@@ -42,9 +43,10 @@ Default: the current focus. Each selected lens widens it.
 Default: consumer, root-fix, bloat and gaps. Selected lenses become the deep
 focus; keep the other default criteria to a line each.
 
-- **consumer:** walk a realistic consumer through the whole flow end to end
-  (for an API: set up, configure, use, handle failure, test), noting what each
-  step needs; judge the options against that walk.
+- **consumer:** walk each realistic consumer, current callers included,
+  through the whole flow end to end (for an API: set up, configure, use,
+  handle failure, test), noting what each step needs; judge the options
+  against those walks.
 - **root-fix:** does it fix the root cause, not a symptom? Trace the cause;
   the root may lie outside this module or repo, and changes there are allowed.
 - **bloat:** over-engineered? Too much magic?

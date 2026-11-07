@@ -534,22 +534,20 @@ def answer_noted(qid: str, pick: str, note: str) -> str:
     return f'{qid}: picked "{pick}" with the note "{note}".'
 
 
-NOTE_CRITERION = ('A note that states a criterion restarts its question (`protocol restart <id>`); otherwise the '
-                  'record carries it.')
+ANSWER_ROUTES = ('Act on each part of the user\'s words above: an option it picks → the ["answer"] call with the option\'s '
+                 'label and that text as quote; a criterion → `protocol restart <ids>`; a change to the questions → '
+                 '`protocol edit` (updates + the quote); another request (explain, step back, ground, …) → run it; a reply that '
+                 'changes a question (its recommendation included) → call a pass\'s skill on it, then report that pass. Restate '
+                 'a part in one line when it could be read more than one way.')
+NOTE_RECORD = 'A note no route takes stays in the record.'
 
 
 def answer_typed_note(qid: str, typed: str) -> str:
-    return (f'{qid}: the user typed "{typed}" instead of picking an option. Read it before '
-            f'{qid} goes out again and act on each part: an option it picks → the ["answer"] call with the option\'s label '
-            f'and that text as quote; a criterion → `protocol restart {qid}`; a change to the questions → `protocol edit` '
-            f'(updates + the quote); another request (explain, step back, ground, …) → run it on {qid}; a reply that changes '
-            f'{qid} (its recommendation included) → call a pass\'s skill on it, then report that pass. Restate the reply in one '
-            'line when it could be read more than one way.')
+    return f'{qid}: the user typed "{typed}" instead of picking an option; read it before {qid} goes out again.'
 
 
 def answer_response(response: str) -> str:
-    return (f'The user also wrote: "{response}" — not assigned to any question: it may state a criterion '
-            '(restart the affected questions) or ask for clarification.')
+    return f'The user also wrote: "{response}", tied to no question.'
 
 
 def answers_unanswered(ids: list[str]) -> str:

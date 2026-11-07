@@ -52,7 +52,13 @@ export async function midTurnBuiltin($: $, text: string): Promise<{ command: str
 /** The command that prints a batch's question text as its output (register.tsx registers and answers it by this literal name). */
 const QUESTIONS_COMMAND = 'console-questions'
 
-const DIALOG_PREFIX = 'Console round dialog '
+const OPEN_LABEL = 'Open the questions'
+const NOT_NOW_LABEL = 'Not now'
+
+/** Whether the drawn stand-in was answered Not now (`undefined`: `$.ui.ask` rejected); free text under "Other" is not. */
+export const holdsQuestions = (chosen: string | undefined): boolean => chosen === NOT_NOW_LABEL
+
+const DIALOG_PREFIX = 'Open the questions for batch '
 
 /** The question `$.ui.ask` carries: the host takes labels only, so the console's AskUserQuestion hook swaps it for the issued batch. */
 const dialogPlaceholder = (marker: string): string => `${DIALOG_PREFIX}${marker}?`
@@ -92,18 +98,20 @@ async function wakeModel($: $, outcome: DialogOutcome): Promise<void> {
  * batch, then records through its usual capture. `$.ui.ask` itself then has no answer to return, so it rejects; the hook's outcome
  * counts. Every outcome wakes the model with the answers line as its prompt, and its turn end runs a pending pass or opens the
  * next batch: a `$` call from this command hook skips every console hook (Claude Code 2.1.318, against its docs), so it can
- * neither print the line through a console command nor run `/console-questions` again. Without an outcome the swap never ran,
- * and the model opens the dialog instead.
+ * neither print the line through a console command nor run `/console-questions` again. Without an outcome the swap never ran
+ * and the stand-in was drawn: Not now holds the batch until the person's next message, anything else (a pick of Open, a close, a
+ * timeout) has the model open the dialog.
  */
 export async function openDialog($: $, marker: string, session: string): Promise<void> {
   dialogOutcome = null
   dialogAwaited = marker
-  await $.ui.ask(dialogPlaceholder(marker), { options: ['Open the questions', 'Not now'], header: 'Round' }).catch(() => undefined)
+  const chosen = await $.ui.ask(dialogPlaceholder(marker), { options: [OPEN_LABEL, NOT_NOW_LABEL], header: 'Round' }).catch(() => undefined)
   const outcome = dialogOutcome as DialogOutcome | null
   dialogOutcome = null
   dialogAwaited = null
   if (outcome === null) {
-    await askModelToOpen($, marker)
+    // Not now leaves the batch out: askSent stays set, so the console reopens it after the person's next message (prompt.submit clears it).
+    if (!holdsQuestions(chosen)) await askModelToOpen($, marker)
     return
   }
   await finishDialog($, marker, session, outcome)

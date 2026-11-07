@@ -13,7 +13,7 @@ from .engine import Context, by_id, fail, premise_status, questions
 from .questions import apply_updates
 from .render import batch_seen
 from .check import gate_ask, leave_check, next_cycle, nothing_to_check, rescope_check
-from .ask import batch_back, take_unchecked, unchecked
+from .ask import batch_back, hand_over, take_unchecked, unchecked
 
 
 def require_origin(ctx: Context, verb: str, origin: str | None) -> None:
@@ -92,10 +92,12 @@ def edit_round(ctx: Context, report: dict) -> str:
     dialog text) in this round, also one sent before the questions went out (Codex has no relay: its quote is not checked).
     Changes apply without a pass and a batch that is out comes back and goes out again, except an edit that only adds
     questions, which leaves it out. A new question or a changed recommendation then gets the scoped check, a raise to strong one
-    challenge-rulings pass, before it is asked (`mark_unchecked`): at the hand-over, or at once when nothing else waits."""
+    challenge-rulings pass, before it is asked (`mark_unchecked`): at the hand-over, or at once when nothing else waits.
+    While recording, an edit that leaves a question unchecked hands the round back through the hand-over, and the challenge
+    after the answers runs again once it is answered."""
     r = ctx.round
-    if r['protocol'] != 'round' or r['step'] not in ('related', 'check', 'ask'):
-        fail('edit applies to a round between Related and Ask')
+    if r['protocol'] != 'round' or r['step'] not in ('related', 'check', 'ask', 'record'):
+        fail('edit applies to a round between Related and Record')
     if r['batch'] and r['batch']['cap']:
         fail('answer the cap question first')
     updates, quote = report.get('updates'), report.get('quote')
@@ -115,7 +117,7 @@ def edit_round(ctx: Context, report: dict) -> str:
     touched = list(dict.fromkeys([*ctx.applied, *ctx.added]))
     r['lastPass'] = {'pass': 'edit', 'questions': touched}  # rows read "↻ edit"
     ctx.log('edited', questions=touched, quote=quote)
-    if r['step'] != 'ask':
+    if r['step'] not in ('ask', 'record'):
         # Before Ask the check takes them: not started yet, it covers them; under way, a scoped check restarts it and a raise
         # re-arms the round's challenge-rulings.
         scoped, waiting = bool(unchecked(ctx, 'scoped')), take_unchecked(ctx)
@@ -124,6 +126,9 @@ def edit_round(ctx: Context, report: dict) -> str:
                 rescope_check(ctx, waiting)
             else:
                 r['check']['challenged'] = False
+    if r['step'] == 'record' and unchecked(ctx):
+        r['check']['challenged'] = False
+        return hand_over(ctx)
     if r['step'] == 'check' and nothing_to_check(ctx):
         return leave_check(ctx)
     return r['step']
@@ -263,13 +268,17 @@ def answer(ctx: Context, report: dict, origin: str) -> str:
     response = report.get('response')
     ctx.log('answered', marker=batch['marker'], origin=origin, questions=done, typed=typed, response=response, **({'thinkMore': rethink} if rethink else {}))
     notes = [words.answers_recorded(done, origin)] if done else []
-    notes += [*noted, words.NOTE_CRITERION] if noted else []
+    notes += noted
     for qid in typed:
         notes.append(words.answer_typed_note(qid, by_id(ctx, qid)["typed"]))
-    if typed or noted:
-        notes.append(words.PICK_DETAIL)
     if response:
         notes.append(words.answer_response(response))
+    if typed or noted or response:
+        notes.append(words.ANSWER_ROUTES)
+    if noted:
+        notes.append(words.NOTE_RECORD)
+    if typed or noted:
+        notes.append(words.PICK_DETAIL)
     unanswered = [qid for qid in batch['ids'] if qid not in done and qid not in typed and qid not in rethink]
     if unanswered:
         notes.append(words.answers_unanswered(unanswered))

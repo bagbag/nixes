@@ -4217,7 +4217,7 @@ def validate_protocol(root: Path, part: str) -> None:
             result = json.loads(proto("answer", "--origin", "dialog", cwd=repo, stdin={
                 "marker": "round:r3:2", "answers": {"1. A?": "Keep"}, "annotations": {}, "response": "And mind the tenancy."}).stdout)
             # A free reply holds the next batch for the model's reading (lead 6aa2ec33, 2026-11-06); the step issues it.
-            if "And mind the tenancy." not in result["note"] or "not assigned" not in result["note"] or result["batch"] is not None \
+            if "And mind the tenancy." not in result["note"] or "tied to no question" not in result["note"] or result["batch"] is not None \
                     or "The next batch waits for your reading" not in result["note"]:
                 raise ValueError(f"protocol answer with a response: {result}")
             proto("step", stdin={}, cwd=repo)
@@ -5375,13 +5375,16 @@ def validate_protocol(root: Path, part: str) -> None:
             converge(cwd=repo)
             result = json.loads(proto("answer", "--origin", "dialog", cwd=repo, stdin={
                 "marker": shown(cwd=repo)["batch"]["marker"], "answers": {"1. Typed?": "explain this", "2. Picked?": "Keep (recommended, lean)"},
-                "annotations": {"2. Picked?": {"notes": "but log it"}}}).stdout)
+                "annotations": {"2. Picked?": {"notes": "but log it"}}, "response": "and ground it first"}).stdout)
             typed = next(q for q in result["questions"] if q["text"] == "Typed?")
             if typed["status"] != "ready" or typed["answer"] is not None or result["batch"] is not None \
                     or '"explain this" instead of picking' not in result["note"] or 'with the note "but log it"' not in result["note"] \
                     or not result["note"].startswith(f"{result['round']} · answered q") or "; typed " + typed["id"] not in result["note"] \
-                    or "Restate the reply in one line when it could be read more than one way." not in result["note"] \
-                    or f"a reply that changes {typed['id']} (its recommendation included) → call a pass's skill on it, then report that pass" not in result["note"] \
+                    or "Restate a part in one line when it could be read more than one way." not in result["note"] \
+                    or "a reply that changes a question (its recommendation included) → call a pass's skill on it, then report that pass" not in result["note"] \
+                    or 'The user also wrote: "and ground it first", tied to no question.' not in result["note"] \
+                    or result["note"].count("a change to the questions → `protocol edit` (updates + the quote)") != 1 \
+                    or result["note"].count("→ call a pass's skill on it, then report that pass") != 1 \
                     or result["note"].count("Count a pick as the answer when the rest of the reply or note questions only a detail") != 1:
                 raise ValueError(f"protocol must hold a typed dialog answer for the model and pass on a pick's note, with the restate "
                                  f"line and the pick-and-detail rule once: {result}")
@@ -5409,6 +5412,20 @@ def validate_protocol(root: Path, part: str) -> None:
                            cwd=repo).stdout.splitlines()[0]
             if not re.fullmatch(r"r\d+ · recorded q\d+, q\d+ · round closed", closed):
                 raise ValueError(f"protocol's closing headline must name the file records: {closed!r}")
+            # One shared route list for the person's own words: a note on a pick and words tied to no question carry it too (r1-q2).
+            for extra in ({"annotations": {"Solo?": {"notes": "log it"}}}, {"response": "rethink the lead"}):
+                solo = proto("start", "round", "--no-board", str(notes), stdin={"points": ["Solo?"]}, cwd=repo).stdout
+                solo_point = re.search(r"(pt\d+) \[pasted\]", solo).group(1)
+                proto("step", stdin={"classes": {solo_point: "user"}}, cwd=repo)
+                proto("step", stdin={"select": [solo_point]}, cwd=repo)
+                proto("step", stdin={**ROUND_INFO, "questions": [question("Solo?", **{"for": solo_point})]}, cwd=repo)
+                converge(cwd=repo)
+                solo_note = json.loads(proto("answer", "--origin", "dialog", cwd=repo, stdin={
+                    "marker": shown(cwd=repo)["batch"]["marker"], "answers": {"Solo?": "Keep (recommended, lean)"}, **extra}).stdout)["note"]
+                if "a change to the questions → `protocol edit` (updates + the quote)" not in solo_note \
+                        or "call a pass's skill on it, then report that pass" not in solo_note:
+                    raise ValueError(f"a note or a response carries the shared routes of the person's own words: {solo_note}")
+                proto("abandon", cwd=repo)
 
             # I1: a typed pick that questions a detail is recorded, then the detail is added as its own question (lead be3935d4,
             # 2026-11-06: "Lifetime, but more then 1 hour max wait?" was folded into q161 and asked again). Answer first: an
@@ -6262,6 +6279,31 @@ def validate_protocol(root: Path, part: str) -> None:
             if shown(**texts)["pending"]["args"] != f"{q1} {q2} {third['id']}":
                 raise ValueError("the challenge after the last answer covers the whole answered set")
             after_answers(**texts)
+            proto("abandon", **texts)
+            # r1-q1: an edit while recording joins the round: the added question gets the scoped check, is asked, and the challenge
+            # over the answered set runs again.
+            point, (q1, q2) = multi_round("Late one?", "Late two?")
+            first = shown(**texts)["batch"]
+            proto("answer", "--origin", "dialog", **texts, stdin={"marker": first["marker"], "answers": {"1. Late one?": "Keep", "2. Late two?": "Keep"}})
+            after_answers(**texts)
+            if shown(**texts)["step"] != "record":
+                raise ValueError(f"the round stands at Record: {shown(**texts)['step']}")
+            proto("edit", **texts, stdin={"updates": [question("Helper?", **{"for": point})], "quote": said("also ask Helper?")})
+            view = shown(**texts)
+            helper = view["questions"][2]["id"]
+            if view["step"] != "check" or (view["pending"]["command"], view["pending"]["args"]) != ("step-back", f"goal foundations on {helper}"):
+                raise ValueError(f"an edit while recording hands the round back to the scoped check: {view['step']} {view['pending']}")
+            converge(**texts)
+            view = shown(**texts)
+            if [q["question"] for q in view["batch"]["questions"]] != ["Helper?"]:
+                raise ValueError(f"only the added question is asked: {view['batch']}")
+            proto("answer", "--origin", "dialog", **texts, stdin={"marker": view["batch"]["marker"], "answers": {"Helper?": "Keep"}})
+            view = shown(**texts)
+            if (view["pending"]["command"], view["pending"]["args"]) != ("challenge-rulings", f"{q1} {q2} {helper}"):
+                raise ValueError(f"the challenge over the whole answered set runs again: {view['pending']}")
+            after_answers(**texts)
+            if shown(**texts)["step"] != "record":
+                raise ValueError("the round records after the second challenge")
             proto("abandon", **texts)
             # A changed recommendation takes the question out of the batch and the others go out; wording, options and a mark
             # lowered to lean stay free.
