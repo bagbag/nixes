@@ -55,7 +55,7 @@ CONTENT = ('text', 'title', 'header', 'options', 'multiSelect', 'kind', 'board',
            'premises', 'problem', 'cases', 'rulings', 'note', 'recommendation', 'strength', 'leanBecause', 'strongBecause', 'priorRulings')
 # How a question is shown and backed, not what it asks (asking.md Check counts premise, ruling, option and question
 # set): an edit to these alone re-issues the batch without rerunning the check loop.
-PRESENTATION = ('title', 'header', 'note', 'strength', 'leanBecause', 'strongBecause')  # plus an option's `preview` (see substantive)
+PRESENTATION = ('title', 'header', 'note', 'strength', 'leanBecause', 'strongBecause')  # plus an option's `example` (see substantive)
 # When a question goes out, not what it asks (r9-q33): setting a hold alone reruns no check; freeing one re-checks the question.
 SCHEDULING = ('waitsFor',)
 CAP_CHOICES = ('Continue', 'Ask now', 'Pause')

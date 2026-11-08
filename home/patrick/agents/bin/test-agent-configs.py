@@ -5399,7 +5399,7 @@ def validate_protocol(root: Path, part: str) -> None:
             if list(json.loads((session_dir / "state.json").read_text())["dropReasons"]) != ["fx-d3"]:
                 raise ValueError("a named stop must give its record a reason")
             edit_state(lambda document: document.update(dropReasons={}))
-            # An unsure ruling leads the dialog, in full in the preview; a question during the release is told to abandon; a
+            # An unsure ruling leads the dialog, in full in the notice, the dialog without previews (r10-q37); a question during the release is told to abandon; a
             # person's Hold drops nothing, so a bare release takes the records again (r14 q52, q56).
             proto("start", "release", "fx-d3", cwd=repo)
             proto("step", stdin={"records": {"fx-d3": "unchanged"}}, cwd=repo)
@@ -5414,8 +5414,8 @@ def validate_protocol(root: Path, part: str) -> None:
                     or "Evidence" in approval_notice:
                 raise ValueError(f"the approval prints the own rulings in full:\n{approval_notice}")
             if not dialog["question"].startswith("Release 1 record? Unsure: fx-d3 (reveal") or len(dialog["question"]) > 160 \
-                    or long_ruling not in release_option.get("preview", "") or "reveal refuses" not in release_option["preview"]:
-                raise ValueError(f"the dialog must lead with the unsure ruling and show it in full in the preview: {dialog}")
+                    or any("preview" in option for option in dialog["options"]):
+                raise ValueError(f"the dialog must lead with the unsure ruling and carry no preview: {dialog}")
             # The approval text is built from the release's reports: corrections, the board check (supersedes, closes, other hit rows).
             approval_ctx = type("Ctx", (), {})()
             approval_ctx.round = {"set": [{"id": "fx-a", "state": "revised", "change": "size"}, {"id": "fx-b", "state": "dropped", "reason": "premise"}],
@@ -5822,11 +5822,15 @@ def validate_protocol(root: Path, part: str) -> None:
                 raise ValueError(f"protocol Related through board related --json: {overlaps}")
 
         if part == "texts":
-            # F: round texts: every error at once, the limits, previews, the report format once, hand-offs, the release dialog.
+            # F: round texts: every error at once, the limits, examples, the report format once, hand-offs, the release dialog.
             texts = {"session": "0000-texts001"}
             proto("start", "round", "--no-board", str(notes), stdin={"points": ["Limits?"]}, **texts)
             proto("step", stdin={"classes": {"pt1": "user"}}, **texts)
-            proto("step", stdin={"select": ["pt1"]}, **texts)
+            stage_text = proto("step", stdin={"select": ["pt1"]}, **texts).stdout
+            # r10-q38: the Stage text asks for an example on every option of a code choice, and its sample shows one on each option.
+            if "on every option of a code, API, naming or shape choice, an `example`" not in stage_text \
+                    or "'<code under A>'" not in stage_text.replace('"', "'") or "'<code under B>'" not in stage_text.replace('"', "'") or "preview" in stage_text:
+                raise ValueError(f"the Stage text asks for an example on every option of a code choice: {stage_text}")
             long_round = {"round": {"title": "t" * 76, "summary": "s" * 241}}
             result = proto("step", ok=False, **texts, stdin={**long_round, "questions": [
                 question("Limits?", title="x" * 76, header="Much too long", **{"for": "pt1"}),
@@ -5838,9 +5842,10 @@ def validate_protocol(root: Path, part: str) -> None:
                     raise ValueError(f"a staging refusal lists every error at once ({needle!r} missing): {result.stderr}")
             refused("step", **texts, stdin={**ROUND_INFO, "questions": [question("2. Numbered?", **{"for": "pt1"})]}, needle="carries no number")
             proto("step", **texts, stdin={**ROUND_INFO, "questions": [question("y" * 160, title="Long", options=[
-                {"label": "Keep", "description": "d" * 150, "for": "for it", "against": "against it", "preview": "x = 1"}, {"label": "B", "description": "", "for": "for it", "against": "against it"}], **{"for": "pt1"})]})
+                {"label": "Keep", "description": "d" * 150, "for": "for it", "against": "against it", "example": "x = 1  # ```"}, {"label": "B", "description": "", "for": "for it", "against": "against it", "example": "y = 2"}], **{"for": "pt1"})]})
+            # r10-q37: a preview is refused with a pointer to example, multi-select or not.
             refused("step", **texts, stdin={"pass": "step-back", "updates": [question("Multi?", multiSelect=True, options=[
-                {"label": "Keep", "description": "", "for": "for it", "against": "against it", "preview": "x"}, {"label": "B", "description": "", "for": "for it", "against": "against it"}])]}, needle="`preview` is for single-select")
+                {"label": "Keep", "description": "", "for": "for it", "against": "against it", "preview": "x"}, {"label": "B", "description": "", "for": "for it", "against": "against it"}])]}, needle="rename `preview` to `example`")
             # A refused pass report repeats the report format; the first pass of a round carries it, later passes do not.
             refused("step", **texts, stdin={"pass": "nope"}, needle="After the pass, report each change")
             refused("step", **texts, stdin={}, needle="Report with `protocol step`")
@@ -5848,17 +5853,18 @@ def validate_protocol(root: Path, part: str) -> None:
             out = proto("step", **texts, stdin={"pass": "step-back", "updates": [], "checked": ["q1"]}).stdout
             if "After the pass" in out or "Report with `protocol step`" in out:
                 raise ValueError(f"the report format goes out with the first pass only: {out}")
-            # A two-question dialog is numbered; one question is not. Previews pass through; the lean mark is not counted.
+            # A two-question dialog is numbered; one question is not. Examples print in the notice, never in the dialog (r10-q37); the lean mark is not counted.
             proto("step", **texts, stdin={"pass": "ground", "updates": [question("Second?", **{"for": "pt1"})], "checked": ["q1"]})
             for command in ("step-back", "ground"):
                 proto("step", **texts, stdin={"pass": command, "updates": [], "checked": ["q1"]})
             converge(**texts)
             batch = shown(**texts)["batch"]
             if [q["question"] for q in batch["questions"]] != ["1. " + "y" * 160, "2. Second?"] \
-                    or batch["questions"][0]["options"][0]["preview"] != "x = 1" \
+                    or any(key in option for q in batch["questions"] for option in q["options"] for key in ("example", "preview")) \
+                    or "- Against: against it\n````\nx = 1  # ```\n````" not in batch["notice"] or "```\ny = 2\n```" not in batch["notice"] \
                     or len(batch["questions"][0]["options"][0]["description"]) <= 150 \
                     or "in this order, numbered like the dialog" not in proto("show", **texts).stdout:
-                raise ValueError(f"the dialog numbers a batch of two and passes previews through: {batch}")
+                raise ValueError(f"the dialog numbers a batch of two; examples print fenced in the notice, not in the dialog: {batch}")
             claude_ask = proto("show", **texts).stdout
             if "write one short line that questions are coming, nothing about their content, and end your turn; a message tells you when you have something to do" not in claude_ask \
                     or "call AskUserQuestion with the input `protocol show` gives" not in claude_ask \
@@ -6006,7 +6012,7 @@ def validate_protocol(root: Path, part: str) -> None:
             proto("step", stdin={"classes": {found: "user"}}, **texts)
             proto("step", stdin={"select": [found]}, **texts)
             proto("step", **texts, stdin={**ROUND_INFO, "questions": [question("Read?", premises="the grounded premise", rulings=[{"ruling": "One.", "why": "no trade-off", "alternative": "Two.", "fails": "order", "evidence": "probe"}], options=[
-                {"label": "Keep", "description": "keep it", "for": "for it", "against": "against it", "preview": "x = 1"}, {"label": "Drop", "description": "", "for": "for it", "against": "against it"}], **{"for": found})]})
+                {"label": "Keep", "description": "keep it", "for": "for it", "against": "against it", "example": "x = 1"}, {"label": "Drop", "description": "", "for": "for it", "against": "against it"}], **{"for": found})]})
             qid = shown(**texts)["questions"][0]["id"]
             whole = proto("show", qid, **texts).stdout
             if "the grounded premise" not in whole or "x = 1" not in whole or "the grounded premise" in proto("show", **texts).stdout \
@@ -6423,21 +6429,22 @@ def validate_protocol(root: Path, part: str) -> None:
                     needle="header")
             refused("edit", **texts, stdin={"updates": [{"id": qid, "rulings": [{"ruling": "r", "alternative": "a", "fails": "f", "evidence": "e"}]}], "quote": "please retitle it"},
                     needle="each with ruling, why, alternative, fails, evidence")  # an edit: a ruling without its why
-            # With a batch out, edit withdraws and re-issues it; a previews-only change is presentation (no loop rerun).
+            # With a batch out, edit withdraws and re-issues it; an examples-only change is presentation: no loop rerun; it prints in the options part, so a seen question shows it as changed (r10-q37).
             while shown(**texts)["step"] == "check":
                 proto("step", **texts, stdin={"pass": shown(**texts)["pending"]["command"], "updates": [], "checked": ["q"]})
             first = shown(**texts)["batch"]["marker"]
-            proto("say", "--origin", "composer", stdin={"text": "add a preview to Keep"}, **texts)
-            proto("edit", **texts, stdin={"updates": [{"id": qid, "options": [{"label": "Keep", "description": "keep it", "for": "for it", "against": "against it", "preview": "x = 1"},
-                                                                              {"label": "Drop", "description": "drop it", "for": "for it", "against": "against it"}]}], "quote": "add a preview to Keep"})
+            proto("say", "--origin", "composer", stdin={"text": "change the example of Keep"}, **texts)
+            proto("edit", **texts, stdin={"updates": [{"id": qid, "options": [{"label": "Keep", "description": "keep it", "for": "for it", "against": "against it", "example": "x = 2"},
+                                                                              {"label": "Drop", "description": "drop it", "for": "for it", "against": "against it"}]}], "quote": "change the example of Keep"})
             again = shown(**texts)
-            if again["batch"]["marker"] == first or again["batch"]["questions"][0]["options"][0].get("preview") != "x = 1" or again["step"] != "ask":
+            if again["batch"]["marker"] == first or "```\nx = 2\n```" not in again["batch"]["notice"] or again["step"] != "ask" \
+                    or "example" in again["batch"]["questions"][0]["options"][0]:
                 raise ValueError(f"edit re-issues a batch that is out: {again}")
-            proto("step", **texts, stdin={"pass": "ground", "updates": [{"id": qid, "options": [{"label": "Keep", "description": "keep it", "for": "for it", "against": "against it", "preview": "x = 2"},
+            proto("step", **texts, stdin={"pass": "ground", "updates": [{"id": qid, "options": [{"label": "Keep", "description": "keep it", "for": "for it", "against": "against it", "example": "x = 3"},
                                                                                                   {"label": "Drop", "description": "drop it", "for": "for it", "against": "against it"}]}], "checked": ["q"]})
             presented = shown(**texts)
-            if presented["step"] != "ask" or presented["batch"]["questions"][0]["options"][0].get("preview") != "x = 2":
-                raise ValueError(f"a previews-only pass update re-issues the batch without rerunning the loop: {presented}")
+            if presented["step"] != "ask" or "```\nx = 3\n```" not in presented["batch"]["notice"]:
+                raise ValueError(f"an examples-only pass update re-issues the batch without rerunning the loop: {presented}")
             proto("step", **texts, stdin={"pass": "ground", "updates": [{"id": qid, "options": [{"label": "Keep", "description": "keep it, changed", "for": "for it", "against": "against it"},
                                                                                                   {"label": "Drop", "description": "drop it", "for": "for it", "against": "against it"}]}]})
             if shown(**texts)["step"] != "check":

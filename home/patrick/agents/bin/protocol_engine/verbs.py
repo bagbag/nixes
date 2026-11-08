@@ -104,7 +104,7 @@ def recommended_index(q: dict) -> int | None:
 def mark_unchecked(ctx: Context, before: dict[str, tuple]) -> None:
     """What an edit made unchecked (r13 q47, q48), kept out of the batches until hand_over checks it: a new question and a
     changed recommendation (the scoped check), a recommendation raised to strong (one challenge-rulings pass). Wording,
-    options, premises, previews and a mark lowered to lean stay free: decide.md says edit applies the user's own words."""
+    options, premises, examples and a mark lowered to lean stay free: decide.md says edit applies the user's own words."""
     for qid in ctx.added:
         if by_id(ctx, qid)['status'] == 'draft':
             by_id(ctx, qid)['unchecked'] = 'scoped'

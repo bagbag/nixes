@@ -271,7 +271,8 @@ def stage_instructions(round_id: str, selected: list[str], has_board: bool, prop
         'decision rests on; kind confirm-own-rulings asks the user to confirm your rulings. Each question carries the parts the '
         'engine prints before its dialog, in your own words. Printed parts say what is decided and what each option means for the person '
         '(what they would see, what it costs), each thing once, in plain words; how it was found (sources, measurements beyond the deciding '
-        'number, who said what) and how it gets built go to the record. Required: `problem` (what is decided and why now) and per option `for` and `against`. '
+        'number, who said what) and how it gets built go to the record. Required: `problem` (what is decided and why now) and per option `for` and `against`; '
+        'on every option of a code, API, naming or shape choice, an `example`: a few lines of the code as written under that option, printed below it (question-format.md). '
         'Optional, printed only when present: `cases` (the concrete cases that must and must not work), `premises` (what it rests on), '
         '`rulings` (each ruling of yours with why it meets the goals without a material trade-off, its strongest alternative, what that fails and the evidence, which only the record keeps) and `note` (a term to define, anything else); '
         'a round may carry one `overview` line across '
@@ -285,8 +286,7 @@ def stage_instructions(round_id: str, selected: list[str], has_board: bool, prop
         f'reads each field: round `summary` {SUMMARY_MAX} (pane header); `title` {TITLE_MAX} (pane row; a question\'s '
         f"is also the board item's title); `text` {TEXT_MAX}, without a number (the engine numbers the dialog; it is the dialog "
         f"question and the board item's Question); `header` "
-        f'{HEADER_MAX} (dialog chip); option `label`, `description` {DESCRIPTION_MAX} and optional `preview` (dialog; '
-        'single-select questions only).')
+        f'{HEADER_MAX} (dialog chip); option `label`, `description` {DESCRIPTION_MAX}.')
 
 
 def stage_dropped(dropped: dict[str, str]) -> list[str]:
@@ -303,8 +303,9 @@ def stage_example(first_selected: str | None) -> dict:
                            'kind': 'decision',
                            'problem': '<what is decided and why now>', 'cases': '<optional: the cases that must and must not work>',
                            'options': [{'label': 'A', 'description': '…', 'for': '<for>', 'against': '<against>',
-                                        'preview': '<code example>'},
-                                       {'label': 'B', 'description': '…', 'for': '<for>', 'against': '<against>'}],
+                                        'example': '<code under A>'},
+                                       {'label': 'B', 'description': '…', 'for': '<for>', 'against': '<against>',
+                                        'example': '<code under B>'}],
                            'premises': '<optional: grounded premises>', 'rulings': [{'ruling': '<your ruling>', 'why': '<what it meets, why no material trade-off remains>', 'alternative': '<strongest alternative>',
                                                                                     'fails': '<what it fails>', 'evidence': '<source>'}],
                            'note': '<optional>', 'recommendation': 'A', 'strength': 'lean',
@@ -890,7 +891,7 @@ def recheck_example(first: list[str]) -> dict:
 
 def release_question_text(count: int, source: bool, unsure: list[dict], revised: list[dict]) -> str:
     """`Release 3 records? Unsure: tstdl-a (…) Revised: tstdl-b (…)`: an unsure ruling first (r14 q56), within the dialog
-    limits whatever the set holds; `unsure_rulings` gives it in full."""
+    limits whatever the set holds; the notice before the dialog prints each ruling in full."""
     counted = plural(count, 'record')
     text = f"Release the session's {counted}?" if source else f"Release {counted}?"
     unsure_text = '; '.join(f"{x['record']} ({x['ruling']})" for x in unsure)
@@ -898,9 +899,6 @@ def release_question_text(count: int, source: bool, unsure: list[dict], revised:
     return cut(' '.join(filter(None, [text, f'Unsure: {unsure_text}' if unsure_text else '', f'Revised: {changes}' if changes else ''])), TEXT_MAX)
 
 
-def unsure_rulings(unsure: list[dict]) -> str:
-    """The unsure rulings in full, for the Release option's preview: the question text cuts them."""
-    return '\n\n'.join(f"{x['record']}: {x['ruling']}\nAlternative: {x['alternative']}" for x in unsure)
 
 
 def approval_title(label: str) -> str:
@@ -1189,15 +1187,23 @@ def lean_line(q: dict) -> list[str]:
 
 
 def options_text(q: dict) -> str:
-    """The recommended option first (`Recommended (<strength>): <label>`), each option a bold heading with For and Against bullets, a
-    blank line between options (r30-q141, r32-q150; a leading `+` renders as a bullet, so the words tell them apart)."""
+    """The recommended option first (`Recommended (<strength>): <label>`), each option a bold heading with For and Against bullets and
+    its example as a code block (r10-q37), a blank line between options (r30-q141, r32-q150; a leading `+` renders as a bullet, so the words tell them apart)."""
     shown = [o for o in q['options'] if 'for' in o or 'against' in o]
     best = next((o for o in shown if o['label'] == q.get('recommendation')), None) if q.get('strength') else None
     blocks = []
     for o in [*([best] if best else []), *(o for o in shown if o is not best)]:
         head = [f"**Recommended ({q['strength']}): {o['label']}**", *lean_line(q)] if o is best else [f"**{o['label']}**"]
-        blocks.append('\n'.join([*head, f"- For: {o.get('for', '')}", f"- Against: {o.get('against', '')}"]))
+        blocks.append('\n'.join([*head, f"- For: {o.get('for', '')}", f"- Against: {o.get('against', '')}",
+                                 *([code_block(o['example'])] if (o.get('example') or '').strip() else [])]))
     return '\n\n'.join(blocks)
+
+
+def code_block(text: str) -> str:
+    """An option's example as a fenced block, the fence longer than any backtick run inside it."""
+    longest = max((len(run) for run in re.findall(r'`+', text)), default=0)
+    fence = '`' * max(3, longest + 1)
+    return f"{fence}\n{text.strip(chr(10))}\n{fence}"
 
 
 def dropped_text(q: dict) -> str:

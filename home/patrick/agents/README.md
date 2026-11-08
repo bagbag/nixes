@@ -277,8 +277,11 @@ A round:
   `text` 160, `header` 12, option `description` 150; a report is refused only
   above text 240, title 75, description 200, or summary 240 and header 12, naming the
   measured length; all built from the
-  engine's constants) and who reads each field; an option may carry a
-  `preview` (single-select only). `cases` (the cases that must and must not work), `premises`
+  engine's constants) and who reads each field; every option of a code, API, naming or
+  shape choice carries an `example`, printed as a code block under its For/Against before the
+  dialog, never in it; a `preview` is
+  refused with a pointer to `example`, so a question staged with one waits until a pass renames
+  it (r10-q37, q38; no engine check that examples are present, r10-q39). `cases` (the cases that must and must not work), `premises`
   (what it rests on), `rulings` (the lead's own rulings, each with a release's four fields) and `note`
   are optional and print only when present (r27-q123); an engine-built approval or cap question
   carries no parts. The round
@@ -464,13 +467,13 @@ A round:
   the scoped check ran on it (at the hand-over below, at once when nothing else
   waits), and a recommendation raised to strong until one challenge-rulings pass
   ran on it (`challenge-rulings (raised <ids>)`); the other questions go out.
-  Wording, options, premises, previews and a mark lowered to lean stay free. At
+  Wording, options, premises, examples and a mark lowered to lean stay free. At
   Record an edit is accepted too: its new questions take the scoped check and are
   asked, and the challenge after the answers runs again. A
   pass report with a refused update holds the round: no batch goes out until the
-  failed updates are resent in a pass report. An option's `preview` alone is
+  failed updates are resent in a pass report. An option's `example` alone is
   presentation for a pass: its change re-issues the batch without rerunning the
-  loop.
+  loop, and a question the person already saw shows it as changed.
 - Ask issues batches marked `metadata.source = round:<id>:<n>`: the
   recommended option first, labelled "(recommended, strong)" or
   "(recommended, lean)" (a release approval has no mark), a lean's description
@@ -689,8 +692,8 @@ shown while no run is open), and `next` (no run open: `{"release": {"count"}}` w
 board records a bare release would take, counted at a round's or release's close
 and by `protocol next` (`show` never reads the board), and the stored proposal's
 `rounds` (each `title`, `summary`, `estimate`, `why`, `fresh`, `ids` and `idTitles`), present once a proposal is stored and empty when it proposes only a compaction; null when none). The engine-issued release approval question is `Release the
-session's 3 records?`, an unsure ruling first and cut to fit, in full in the
-Release option's preview (all reasons for asking go to the model's ask text and
+session's 3 records?`, an unsure ruling first and cut to fit; the text before the
+dialog prints every ruling in full (all reasons for asking go to the model's ask text and
 the Log). `start` with a release open refuses and says that for a question to the
 user, `protocol abandon` releases nothing and `start release` takes the same
 records again.

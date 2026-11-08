@@ -20,7 +20,7 @@ def dialog_question(q: dict, number: int | None = None) -> dict:
     description = best['description']
     if q['strength'] == 'lean':
         description = words.lean_description(q.get('leanBecause') or {}, description)
-    dialog = lambda o: {k: v for k, v in o.items() if k not in ('for', 'against')}  # the engine prints them before the dialog
+    dialog = lambda o: {k: v for k, v in o.items() if k not in ('for', 'against', 'example')}  # the engine prints them before the dialog (r10-q37)
     options = [{**dialog(best), 'label': best['label'] + recommended_suffix(q), 'description': description},
                *(dialog(o) for o in q['options'] if o is not best)]
     if q['strength'] == 'lean' and len(options) < 4 and not q['multiSelect']:  # the dialog allows four

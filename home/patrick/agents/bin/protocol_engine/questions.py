@@ -55,16 +55,16 @@ def question_errors(q: dict, where: str, marks: bool = True, parts: tuple[str, .
     options = q.get('options')
     valid = isinstance(options, list) and 2 <= len(options) <= 4 \
         and all(isinstance(o, dict) and isinstance(o.get('label'), str) and o['label'].strip()
-                and isinstance(o.get('description', ''), str) and isinstance(o.get('preview', ''), str) for o in options)
+                and isinstance(o.get('description', ''), str) and isinstance(o.get('example', ''), str) for o in options)
     if not valid:
-        errors.append(f'{where}: `options` must be 2-4 objects with a label, a description and optionally a preview (text)')
+        errors.append(f'{where}: `options` must be 2-4 objects with a label, a description and optionally an example (text)')
     else:
         if len({o['label'] for o in options}) != len(options):
             errors.append(f'{where}: option labels must be unique')
         errors += [f'{where}: the description of option {o["label"]!r} is {len(o["description"])} characters, over the limit of {DESCRIPTION_LIMIT}'
                    for o in options if len(o.get('description', '')) > DESCRIPTION_LIMIT]
-        if q.get('multiSelect') is True and any('preview' in o for o in options):
-            errors.append(f'{where}: `preview` is for single-select questions: remove it or make the question single-select')
+        if any('preview' in o for o in options):  # r10-q37
+            errors.append(f'{where}: rename `preview` to `example`')
     if not isinstance(q.get('multiSelect', False), bool):
         errors.append(f'{where}: `multiSelect` must be a boolean')
     if q.get('kind', 'decision') not in KINDS:
@@ -145,7 +145,7 @@ def new_question(ctx: Context, raw: dict, where: str) -> dict:
          'status': 'draft', 'overlaps': [], 'searched': False, 'answer': None, 'round': ctx.round['id']}
     refuse_all(errors + question_errors(q, where, parts=PARTS))
     q['options'] = [{'label': o['label'], 'description': o.get('description', ''), 'for': o['for'].strip(), 'against': o['against'].strip(),
-                     **({'preview': o['preview']} if 'preview' in o else {})} for o in q['options']]
+                     **({'example': o['example']} if 'example' in o else {})} for o in q['options']]
     for field in ('problem', 'cases', 'note', 'waitsFor'):
         if isinstance(q.get(field), str):
             q[field] = q[field].strip()
@@ -350,7 +350,7 @@ def apply_update(ctx: Context, update, where: str, keys: dict) -> tuple[int, str
     if merged['board'] is None and (merged['text'] != q['text'] or merged['title'] != q['title']):
         merged['searched'] = False  # search again; known outcomes stay
     plain = lambda options: [{'label': o['label'], 'description': o.get('description', ''), 'for': o.get('for'), 'against': o.get('against')}
-                             for o in options]  # previews are presentation
+                             for o in options]  # examples are presentation (r10-q37)
     substantive = any((plain(merged[k]) != plain(q[k]) if k == 'options' else merged.get(k) != q.get(k))
                       for k in CONTENT if k not in (*PRESENTATION, *SCHEDULING))
     if q.get('printed') is not None and merged.get('recommendation') != q.get('recommendation'):

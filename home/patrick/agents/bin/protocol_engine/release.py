@@ -25,15 +25,10 @@ from .release_checks import (
 
 def release_question_text(ctx: Context) -> str:
     """`Release 3 records? Unsure: tstdl-a (…) Revised: tstdl-b (…)`: an unsure ruling first (r14 q56), within the dialog
-    limits whatever the set holds; `unsure_rulings` gives it in full."""
+    limits whatever the set holds; the notice before the dialog prints each ruling in full."""
     return words.release_question_text(len(in_set(ctx)), bool(ctx.round.get('source')),
                                        [x for x in ctx.round['rulings'] or [] if not x['sure']],
                                        [rec for rec in ctx.round['set'] if rec['state'] == 'revised'])
-
-
-def unsure_rulings(ctx: Context) -> str:
-    """The unsure rulings in full, for the Release option's preview: the question text cuts them."""
-    return words.unsure_rulings([x for x in ctx.round['rulings'] or [] if not x['sure']])
 
 
 def approve(ctx: Context, origin: str, how: str, quote: str | None = None) -> str:
@@ -70,8 +65,7 @@ def approval_enter(ctx: Context) -> str | None:
              'searched': True, 'answer': None,
              'text': release_question_text(ctx),
              'title': words.approval_title(release_label(ctx))[:TITLE_MAX], 'header': words.APPROVE_HEADER,
-             'options': [{'label': APPROVE, 'description': words.APPROVE_DESCRIPTION,
-                          **({'preview': unsure_rulings(ctx)} if unsure else {})},
+             'options': [{'label': APPROVE, 'description': words.APPROVE_DESCRIPTION},  # the notice prints every ruling in full (r10-q37)
                          {'label': HOLD, 'description': words.HOLD_DESCRIPTION}],
              'recommendation': APPROVE, 'strength': None, 'strongBecause': None, 'leanBecause': None}
         r['questions'].append(q)

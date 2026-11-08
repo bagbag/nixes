@@ -23,17 +23,17 @@
   turn's last text and ask in the next turn: the
   problem in one plain sentence; realistic consumer scenarios (the simple case
   and each case where the options' outcomes differ); every option's for,
-  against and footguns, with a short consumer example for code, API or shape
-  choices; the recommendation first, marked under the decision protocol's
-  Recommendation strength, with any reviewer disagreement. Name items in plain
-  words; put ids in brackets.
+  against and footguns, with a short consumer example on every option of a
+  code, API, naming or shape choice; the recommendation first, marked under
+  the decision protocol's Recommendation strength, with any reviewer
+  disagreement. Name items in plain words; put ids in brackets.
 - The asked question is one plain self-contained sentence (no ids, file names
   or option letters), numbered like its chat entry. Option labels are 1-4
-  words without letters, each with a one-line description of what changes;
-  each option's code example is its preview. Title = the decision it settles
-  as a short question, in words a reader without the discussion follows;
-  header = a topic noun; a round's summary = its topic in plain words, without
-  ids or workflow words.
+  words without letters, each with a one-line description of what changes.
+  Code examples go in the chat entry; dialogs carry no previews. Title = the
+  decision it settles as a short question, in words a reader without the
+  discussion follows; header = a topic noun; a round's summary = its topic in
+  plain words, without ids or workflow words.
 - In printed question text, say what is decided and what each option means for
   the person (what they would see, what it costs), each thing once, in plain
   words. Keep how it was found (sources, measurements beyond the deciding

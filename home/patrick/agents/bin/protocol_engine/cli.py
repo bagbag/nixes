@@ -194,7 +194,7 @@ def cli(argv: list[str]) -> int:
     verb('resume', 'continue a paused check loop')
     verb('abandon', 'close the open round without records')
     sub = verb('show', 'the round as markdown, --json (the console contract), or <ids>: those questions whole')
-    sub.add_argument('ids', nargs='*', help='question ids: their options, previews, premises and marks')
+    sub.add_argument('ids', nargs='*', help='question ids: their options, examples, premises and marks')
     sub.add_argument('--json', action='store_true')
     verb('pending', 'the pending pass as JSON, or null')
     sub = verb('status', 'one recovery line')
