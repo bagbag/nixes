@@ -3235,22 +3235,28 @@ def validate_board(root: Path) -> None:
         result, seen = run_board("bd", "list", "--json")
         if result.returncode != 7 or seen != "9999aaaa list --json\n":
             raise ValueError(f"board bd passthrough: {result.returncode} {seen!r}")
-        # Raw show and comment listings are refused for board show; their other modes and comment adds pass.
-        for args in (("show", "x"), ("show", "x", "--json"), ("view", "x", "y"), ("comments", "x"), ("comments", "x", "--json"),
-                     ("-C", repo, "show", "x"), ("--actor", "9999aaaa", "comments", "x")):
+        # A plain raw read by ids runs board show (r9-q35); JSON and the other raw modes pass; global or unknown flags keep
+        # the refusal.
+        for args, meant in ((("show", "x"), "show x"), (("view", "x", "y"), "show x y"), (("comments", "x"), "show x --comments")):
+            result, seen = run_board("bd", *args)
+            if f"board: ran board {meant}" not in result.stderr or f"{args[0]} x" in seen:
+                raise ValueError(f"board bd {args} must run board {meant}: {result.returncode} {seen!r} {result.stderr!r}")
+        for args in (("-C", repo, "show", "x"), ("--actor", "9999aaaa", "comments", "x"), ("show", "x", "--brief-deps")):
             result, seen = run_board("bd", *args)
             if result.returncode != 2 or seen or "use board show <ids>" not in result.stderr:
                 raise ValueError(f"board bd {args} must be refused for board show: {result.returncode} {seen!r}")
-        for args in (("show", "x", "--refs"), ("show", "x", "--as-of=abc"), ("show", "--current"), ("comments", "add", "x", "y"),
-                     ("show", "--help")):
+        for args in (("show", "x", "--json"), ("comments", "x", "--json"), ("show", "x", "--refs"), ("show", "x", "--as-of=abc"),
+                     ("show", "--current"), ("comments", "add", "x", "y"), ("show", "--help")):
             result, seen = run_board("bd", *args)
             if result.returncode != 7 or not seen.endswith(" ".join(args) + "\n"):
                 raise ValueError(f"board bd {args} must pass through: {result.returncode} {seen!r}")
-        for args in (("list", "--type", "question"), ("create", "-t", "question", "--title", "x"), ("list", "--type=question"),
-                     ("query", "type=question AND status=open")):
+        for args, meant in ((("list", "--type", "question"), "list --type decision"),
+                            (("create", "-t", "question", "--title", "x"), "-t decision --title x"),
+                            (("list", "--type=question"), "list --type=decision"),
+                            (("query", "type=question AND status=open"), "query type=decision AND status=open")):
             result, seen = run_board("bd", *args)
-            if result.returncode != 2 or seen or "questions are type decision" not in result.stderr:
-                raise ValueError(f"board bd {args} must hint that questions are decisions: {result.stderr!r}")
+            if "questions are type decision; ran it with type decision" not in result.stderr or meant not in seen or "question" in seen:
+                raise ValueError(f"board bd {args} must run with type decision: {result.returncode} {seen!r} {result.stderr!r}")
         # bd edit blocks on an editor and --readonly is not for agents: the board refuses both and names the way on.
         for args, needle in ((("edit", "x"), "board bd update --title/--description/--design/--acceptance"), (("-C", repo, "edit", "x", "--title"), "bd update"),
                              (("--readonly", "list"), "without it"), (("list", "--readonly"), "without it"), (("list", "--readonly=true"), "without it")):
@@ -4786,6 +4792,8 @@ def validate_protocol(root: Path, part: str) -> None:
                     or "`summary`" not in out or "`estimate`" not in out or "asking.md's Question format" not in out \
                     or "start round --topic" in out:
                 raise ValueError(f"protocol next must count the open questions by topic and priority and tell the lead to weigh them:\n{out}")
+            if "`title` about 60, `summary` 240, `why` 240" not in out:  # r9-q34: the target lengths, not the refusal threshold
+                raise ValueError(f"protocol next names the proposal rows' target lengths:\n{out}")
             if "Open questions by topic" not in proto("next", cwd=repo).stdout:
                 raise ValueError("the topic counts print every time, not once between compactions")
             # The printed example passes the check it describes (r28, r30, r34: quoted "<n>" estimates were copied and refused).
@@ -5612,6 +5620,27 @@ def validate_protocol(root: Path, part: str) -> None:
             reasons = {e["question"]: e["reason"] for e in events if e["event"] == "deferred"}
             if "round closed" not in out.splitlines()[0] or reasons != {wait[1]: spike, wait[2]: f"waits on {wait[1]}, which waits for {spike}"}:
                 raise ValueError(f"protocol hold: Record defers the held question and its dependent with the reason: {reasons}\n{out}")
+            # A hold is scheduling, not content (r9-q33): a pass that only sets one changes nothing the loop reruns for; a hold
+            # with another change counts through that change.
+            out = proto("start", "round", "--no-board", str(notes), stdin={"points": ["Sched A?", "Sched B?"]}, cwd=repo).stdout
+            points = re.findall(r"(pt\d+) \[pasted\]", out)
+            proto("step", stdin={"classes": {point: "user" for point in points}}, cwd=repo)
+            proto("step", stdin={"select": points}, cwd=repo)
+            proto("step", cwd=repo, stdin={**ROUND_INFO, "questions": [question("Sched A?", **{"for": points[0]}),
+                                                                       question("Sched B?", **{"for": points[1]})]})
+            sched = [q["id"] for q in shown(cwd=repo)["questions"]]
+            pass_name = shown(cwd=repo)["pending"]["command"]
+            proto("step", cwd=repo, stdin={"pass": pass_name, "updates": [{"id": sched[0], "waitsFor": spike}],
+                                           "checked": {sched[1]: "read it"}})
+            view = shown(cwd=repo)
+            if view["check"]["last"][pass_name]["changes"] != 0 or [q["status"] for q in view["questions"]] != ["held", "draft"]:
+                raise ValueError(f"protocol hold: a pass that only sets a hold holds the question and counts no change: {view}")
+            pass_name = view["pending"]["command"]
+            proto("step", cwd=repo, stdin={"pass": pass_name, "updates": [{"id": sched[1], "waitsFor": spike, "problem": "Reworded."}],
+                                           "checked": {sched[0]: "read it"}})
+            if shown(cwd=repo)["check"]["last"][pass_name]["changes"] != 1:
+                raise ValueError(f"protocol hold: a hold set with another change counts that change: {shown(cwd=repo)['check']}")
+            proto("abandon", cwd=repo)
 
             # I1: a typed pick that questions a detail is recorded, then the detail is added as its own question (lead be3935d4,
             # 2026-11-06: "Lifetime, but more then 1 hour max wait?" was folded into q161 and asked again). Answer first: an
@@ -7175,6 +7204,23 @@ def validate_protocol(root: Path, part: str) -> None:
             def pending(**kwargs):
                 return (shown(**{"session": cover["session"], **kwargs})["pending"] or {})
 
+            def start_scope(command, stamp=..., **kwargs):
+                """`protocol scope` (r9-q36) for a run of `command` starting now; `stamp` left out: the observed run's."""
+                stdin = {"command": command, **({} if stamp is ... else {"pending": stamp})}
+                return json.loads(proto("scope", "--origin", "plugin", stdin=stdin, **{**cover, **kwargs}).stdout)
+
+            def expect_start_scope(label, command, ids, explored=None, stamp=..., **kwargs):
+                """The scope a pass starting now must cover, as the console names it in the expanded skill text; then its report
+                without entries is refused naming exactly those ids (the same pass_kind/pass_scope path)."""
+                got = start_scope(command, pending(**kwargs).get("id") if stamp is ... else stamp, **kwargs)
+                if got["covers"] != ids or got["explored"] != explored:
+                    label_fail(label, f"scope verb: {got}, expected covers {ids} explored {explored}")
+                if ids and f"This pass covers {' '.join(ids)}:" not in got["text"] or explored and f"Give `explored` an entry for each of {' '.join(explored)} and no other." not in got["text"]:
+                    label_fail(label, f"scope verb text: {got['text']!r}")
+                if stamp is ... and ids and explored is None:  # the pending pass's run (stamped as the console does): its report is checked against the same ids
+                    expect_refused(f"{label}: the report check", report(command, {"round": "x"}), f"covers {' '.join(ids)}: no `checked` entry or update for {' '.join(ids)}", **kwargs)
+                return got
+
             strong = {"strength": "strong", "strongBecause": STRONG_CLAIMS, "leanBecause": None}
             lean = {"strength": "lean", "leanBecause": {"cause": "evidence", "detail": "bd order, probe it"}}
             proto("start", "round", "--no-board", str(notes), stdin={"points": ["Cover?"]}, **cover)
@@ -7185,6 +7231,18 @@ def validate_protocol(root: Path, part: str) -> None:
             every = ["q1", "q2", "q3", "q4"]
             # The path pass's first run covers every question; the step names them and the keyed shape.
             expect_scope("first-run scope named in the step text", out, every)
+            saved = state / f"{cover['session']}.protocol"
+            before = [(saved / name).read_bytes() for name in ("state.json", "history.jsonl")]
+            if not start_scope("step-back", pending().get("id"))["text"].startswith("Use this scope, not one printed earlier. This pass covers"):
+                label_fail("scope verb: the path pass", "the line names that it is the scope as the run starts")
+            if [(saved / name).read_bytes() for name in ("state.json", "history.jsonl")] != before:
+                label_fail("scope verb changes nothing", "state.json or history.jsonl changed")
+            expect_start_scope("scope verb: the path pass", "step-back", every)
+            for origin in ("model", "press", "dialog"):
+                if proto("scope", "--origin", origin, stdin={"command": "step-back"}, ok=None, **cover).returncode == 0:
+                    label_fail("scope verb is the console's", f"origin {origin} accepted")
+            if "`command` must be one of" not in proto("scope", "--origin", "plugin", stdin={"command": "commit"}, ok=None, **cover).stderr:
+                label_fail("scope verb refuses another command", "accepted")
             if '"checked": {"q2"' not in out:
                 label_fail("pass format shows keyed checked", out[-800:])
             expect_refused("checked as a list is refused", report("step-back", ["every question"]), "`checked` is an object")
@@ -7195,6 +7253,9 @@ def validate_protocol(root: Path, part: str) -> None:
             out = expect_ok("coverage by an update", report("step-back", {"q1": "goal read", "q2": "goal read", "q3": "goal read"},
                                                             [{"id": "q4", "premises": "Read again in the fixture."}]))
             # The options pass: `explored` covers its questions.
+            expect_start_scope("scope verb: the options pass names explored", "step-back", every, every)
+            if start_scope("step-back", "an-older-pass")["explored"] is not None:
+                label_fail("scope verb: a run that does not settle the options pass", "names explored ids")
             out = expect_ok("options pass covered by explored", report("step-back", {}, explored={q: "no other mechanism" for q in every}))
             # Base step-back, first run: every question; q1's change is its own.
             expect_scope("base step-back first run = all", out, every)
@@ -7203,6 +7264,14 @@ def validate_protocol(root: Path, part: str) -> None:
             out = expect_ok("ground first run", report("ground", {q: "read" for q in every[:2] + every[3:]}, [{"id": "q3", "premises": "Changed by ground."}]))
             # Cycle 2: step-back covers what others changed (q3, ground's), not its own q1.
             expect_scope("rerun scope = changed by others", out, ["q3"])
+            # Without a stamp the observed run counts, as at report time: none yet reads as an extra pass (its own scope).
+            if start_scope("step-back")["covers"] != every:
+                label_fail("scope verb: no observed run reads as an extra pass", start_scope("step-back"))
+            # A run that is not the pending pass (another stamp) reports as an extra pass too.
+            expect_start_scope("scope verb: an extra run", "step-back", every, stamp="an-older-pass")
+            expect_start_scope("scope verb: the pending run", "step-back", ["q3"])  # its report check observes the run, stamped
+            if start_scope("step-back")["covers"] != ["q3"]:
+                label_fail("scope verb: the observed run's stamp", start_scope("step-back"))
             expect_refused("own changes excluded, others' required", report("step-back", {"q1": "read"}), "no `checked` entry or update for q3")
             out = expect_ok("rerun covering the others' change", report("step-back", {"q3": "the ground premise"}))
             # Ground's own q3 change leaves its rerun empty: one round note passes, nothing at all is refused.
@@ -7219,6 +7288,8 @@ def validate_protocol(root: Path, part: str) -> None:
             out = expect_ok("lean pass", report("ground", {q: "read" for q in every}))
             # challenge-rulings: every question on its first run; each strong one needs its verdict, and `rulings` its shape.
             expect_scope("challenge first run = all", out, every)
+            if "re-send the `strongBecause` of each of q2 q4" not in expect_start_scope("scope verb: challenge-rulings", "challenge-rulings", every)["text"]:
+                label_fail("scope verb: challenge-rulings names the strong ids", start_scope("challenge-rulings", pending().get("id")))
             if "verdicts" not in out or "q2 q4" not in out:
                 label_fail("challenge step names the strong ids and verdicts", out[-800:])
             allc = {q: "read" for q in every}
@@ -7255,6 +7326,8 @@ def validate_protocol(root: Path, part: str) -> None:
             out = expect_ok("step-back cycle 5", report("step-back", {"q2": "read", "q3": "read"}))
             out = expect_ok("ground cycle 5", report("ground", {"q2": "read", "q3": "read"}))
             expect_scope("challenge scope empty after its own change", out, [])
+            if start_scope("challenge-rulings", pending().get("id")) != {"covers": [], "explored": None, "text": ""}:
+                label_fail("scope verb: an empty scope names nothing", start_scope("challenge-rulings", pending().get("id")))
             expect_ok("empty challenge with a round note", report("challenge-rulings", {"round": "nothing changed since the last challenge"}, rulings=[]))
             view = shown(session=cover["session"])
             if view["step"] != "ask" or not view["batch"]:
@@ -7298,8 +7371,10 @@ def validate_protocol(root: Path, part: str) -> None:
                 proto("restart", b, "--reason", "fixture", **session)
                 out = proto("show", **session).stdout
                 expect_scope("scoped path pass named", out, [b])
+                expect_start_scope("scope verb: the scoped path pass", "step-back", [b])
                 expect_refused("scoped path pass covers the restarted id only", report("step-back", {"round": "x"}), f"covers {b}: no `checked` entry or update for {b}")
                 expect_ok("scoped path pass with the restarted id alone", report("step-back", {b: "goal read"}))
+                expect_start_scope("scope verb: the scoped options pass", "step-back", [b], [b])
                 expect_refused("scoped options pass refuses another id", report("step-back", {}, explored={b: "no other way", a: "x"}), f"explored: {a} is not covered by this pass")
                 out = expect_ok("scoped options pass", report("step-back", {}, explored={b: "no other way"}))
                 expect_scope("base step-back covers the restart", out, [b])
@@ -7315,8 +7390,10 @@ def validate_protocol(root: Path, part: str) -> None:
             except ValueError as error:  # a setup step refused: the scoped cases cannot run
                 label_fail("scoped round setup", str(error).strip()[:300])
             proto("abandon", **session)
+            if start_scope("ground") != {"covers": [], "explored": None, "text": ""}:
+                label_fail("scope verb: no round open names nothing", start_scope("ground"))
             if failures:
-                raise ValueError("scoped coverage (r4-q15, q16):\n" + "\n".join(failures))
+                raise ValueError("scoped coverage (r4-q15, q16, r9-q36):\n" + "\n".join(failures))
 
         if part == "away":
             # r28-q126..q128, r29: the registered role autopilot means away. Ask opens no batch, dialog or print: the model reports

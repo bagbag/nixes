@@ -4,7 +4,7 @@ import { describe, expect, test } from 'claude-code/testing'
 
 import { BATCH, engineLine, NO_ROUND, notes, notices, PROTOCOL, roundJson, SESSION, world } from './fixture'
 import { holdsQuestions, openDialog } from '../hooks/core'
-import { PENDING_REFUSAL } from '../hooks/engine'
+import { PENDING_REFUSAL, SCOPE_REFUSAL } from '../hooks/engine'
 import { openDialogText, PROTOCOL_ARGS_DESCRIPTION, PROTOCOL_TOOL_DESCRIPTION } from '../hooks/words'
 
 const start = async ($: any) => $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
@@ -97,6 +97,14 @@ describe('tool', () => {
     expect(w.verbs().filter(verb => verb.startsWith('pending'))).toEqual([])
     expect(PROTOCOL_TOOL_DESCRIPTION).not.toContain('pending')
     expect(PROTOCOL_ARGS_DESCRIPTION).not.toContain('pending')
+  })
+
+  test('refuses `scope` with its own reason: the console names the scope as a pass starts (r9-q36)', async ($, on) => {
+    const { w } = world(on, { round: roundJson({ pending: { id: 'p7', command: 'ground', args: '' } }) })
+    await start($)
+    const ran = await $.tool.call({ tool: 'mcp__console__protocol', args: ['scope'], stdin: '{"command": "ground"}' } as never)
+    expect(String(ran.result)).toBe(`Refused: ${SCOPE_REFUSAL}.`)
+    expect(w.verbs().filter(verb => verb.startsWith('scope'))).toEqual([])
   })
 
   test('every protocol call gets the ten-minute limit (r4-q12)', async ($, on) => {

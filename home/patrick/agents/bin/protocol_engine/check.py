@@ -229,17 +229,23 @@ def settles(ctx: Context, command: str) -> bool:
     """Whether a report of `command` settles the pending pass: the run it reports carried the pending pass's id (the console
     stamps a run whose command and arguments match it, `protocol pass`); Codex has no console to observe its runs, so its
     report of the pending command counts. Any other report is an extra pass."""
+    return stamp_settles(ctx, command, (ctx.round['observed'].get(command) or {}).get('pending'))
+
+
+def stamp_settles(ctx: Context, command: str, stamp: str | None) -> bool:
+    """`settles` for a run stamped `stamp`: one not observed yet, as a model Skill call is while it expands (start_scope)."""
     pending = ctx.round['pending']
     if not pending or pending['command'] != command:
         return False
-    return ctx.codex or (ctx.round['observed'].get(command) or {}).get('pending') == pending['id']
+    return ctx.codex or stamp == pending['id']
 
 
-def options_due(ctx: Context, command: str) -> list[str] | None:
+def options_due(ctx: Context, command: str, settled: bool | None = None) -> list[str] | None:
     """The question ids a step-back report must account for in `explored` when it is the options pass (the pending one, settled
-    by its run), else None."""
+    by its run; `settled` as in pass_kind), else None."""
     check = ctx.round['check']
-    if command != 'step-back' or check.get('expect') != command or not check.get('optionsNow') or not settles(ctx, command):
+    if (command != 'step-back' or check.get('expect') != command or not check.get('optionsNow')
+            or not (settles(ctx, command) if settled is None else settled)):
         return None
     return options_ids(ctx, rescope_ids(ctx)) if check.get('optionsScoped') else options_ids(ctx)
 
@@ -301,11 +307,40 @@ def strong_ids(ctx: Context, ids: list[str]) -> list[str]:
     return [q['id'] for q in ctx.round['questions'] if q['id'] in ids and q.get('strength') == 'strong']
 
 
+def scope_ids(ctx: Context, command: str, settled: bool | None) -> tuple[list[str], list[str] | None]:
+    """The ids a report of `command` covers (`settled` as in pass_kind) and, for challenge-rulings, the strong ones among them."""
+    kind, scoped = pass_kind(ctx, command, settled)
+    _, ids = pass_scope(ctx, command, kind, scoped)
+    return ids, strong_ids(ctx, ids) if command == 'challenge-rulings' else None
+
+
 def scope_text(ctx: Context, command: str) -> str:
     """The pending pass's scope as the step names it: the ids to cover and, for challenge-rulings, the strong ones."""
-    kind, scoped = pass_kind(ctx, command, settled=True)
-    _, ids = pass_scope(ctx, command, kind, scoped)
-    return words.pass_scope(ids, strong_ids(ctx, ids) if command == 'challenge-rulings' else None)
+    return words.pass_scope(*scope_ids(ctx, command, settled=True))
+
+
+SCOPE_STEPS = ('check', 'ask')  # the steps that take a pass report (check_accept, ask_accept)
+
+
+def start_scope(ctx: Context, report: dict) -> dict:
+    """`protocol scope` (r9-q36): what a report of the pass starting now must cover, worked out as record_pass will check it,
+    without a change. The step names the scope a turn earlier and it may change meanwhile, so the console names it again in the
+    pass's expanded text. stdin `pending`: the stamp of a run not observed yet (a model Skill call, recorded once it ran); left
+    out, the observed run's. `text` is empty when there is nothing to name."""
+    command = report.get('command')
+    if command not in PASSES:
+        fail(f"scope: `command` must be one of {', '.join(PASSES)}")
+    stamp = report.get('pending')
+    if stamp is not None and not isinstance(stamp, str):
+        fail('scope: `pending` is the run\'s stamp, a pending id or null')
+    r = ctx.round
+    if not r or r['step'] not in SCOPE_STEPS or r['protocol'] != 'round':
+        return {'covers': [], 'explored': None, 'text': ''}
+    settled = stamp_settles(ctx, command, stamp) if 'pending' in report else None
+    ids, strong = scope_ids(ctx, command, settled)
+    due = options_due(ctx, command, settled)
+    text = words.start_scope(ids, strong, due or []) if ids or due else ''
+    return {'covers': ids, 'explored': due, 'text': text}
 
 
 def checked_of(raw, known: set[str]) -> tuple[dict[str, str], list[str]]:

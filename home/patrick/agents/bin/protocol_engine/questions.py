@@ -4,7 +4,7 @@ from __future__ import annotations
 import re
 
 from .base import (
-    CONTENT, DESCRIPTION_LIMIT, HEADER_MAX, KINDS, LEAN_CAUSES, MAY_NOT_APPLY, PRESENTATION, ProtocolError, STRENGTHS,
+    CONTENT, DESCRIPTION_LIMIT, HEADER_MAX, KINDS, LEAN_CAUSES, MAY_NOT_APPLY, PRESENTATION, ProtocolError, SCHEDULING, STRENGTHS,
     STRONG_CRITERIA, SUMMARY_MAX, TEXT_LIMIT, TITLE_LIMIT
 )
 from .store import next_id
@@ -273,7 +273,7 @@ MARK_FIELDS = ('recommendation', 'strength', 'leanBecause', 'strongBecause', 'op
 
 def apply_updates(ctx: Context, updates) -> int:
     """Applies a report's per-question updates, all or none (r23-q95): one refusal lists every error, and a refused call
-    saves nothing. Returns the number of questions added, removed or changed in substance (PRESENTATION edits apply but do
+    saves nothing. Returns the number of questions added, removed or changed in substance (PRESENTATION and SCHEDULING edits apply but do
     not count); `ctx.applied` lists the question of each update that applied."""
     if not isinstance(updates, list):
         fail('`updates` must be a list')
@@ -352,7 +352,7 @@ def apply_update(ctx: Context, update, where: str, keys: dict) -> tuple[int, str
     plain = lambda options: [{'label': o['label'], 'description': o.get('description', ''), 'for': o.get('for'), 'against': o.get('against')}
                              for o in options]  # previews are presentation
     substantive = any((plain(merged[k]) != plain(q[k]) if k == 'options' else merged.get(k) != q.get(k))
-                      for k in CONTENT if k not in PRESENTATION)
+                      for k in CONTENT if k not in (*PRESENTATION, *SCHEDULING))
     if q.get('printed') is not None and merged.get('recommendation') != q.get('recommendation'):
         ctx.log('late-change', question=q['id'], was=q.get('recommendation'), now=merged.get('recommendation'))  # the person had seen it: bin/round-report counts these
     if q.get('waitsFor') and not merged.get('waitsFor'):

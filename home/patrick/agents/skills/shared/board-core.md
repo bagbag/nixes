@@ -4,10 +4,9 @@
 (not on `PATH`): type `$HOME/.agents/bin/board show <id>`, never bare `board`
 or bare `bd`. Run every other bd command as `board bd <args>`
 (`board bd <command> --help`); `board help` lists every board command with an
-example. Read items with `board show`; raw `board bd show` and comment
-listings are refused except with `--refs`, `--children`, `--as-of` or
-`--long`. When board output stops early, run the command it prints before
-relying on the missing part.
+example. Read items with `board show`; raw `board bd show` serves `--json`,
+`--refs`, `--children`, `--as-of` and `--long`. When board output stops early,
+run the command it prints before relying on the missing part.
 
 **Content:** make each item complete without its linked files.
 

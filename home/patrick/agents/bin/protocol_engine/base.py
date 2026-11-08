@@ -44,6 +44,7 @@ VERB_ORIGINS = {
     'say': ('composer', 'bridge'),  # the person's own messages, stored for the chat quote check
     'dropped': ('plugin',),  # a stale console action the console did not deliver (r3-q10)
     'nudged': ('plugin',),  # the person's /console-continue or Continue press, with what the console did (r7-q24)
+    'scope': ('plugin',),  # what the pass the console sees start must cover, named in its expanded text (r9-q36)
 }
 NUDGE_KEYS = ('pass', 'batch', 'step')  # what a continue did: queued the pending pass, reopened the batch, woke the model at the step
 COLLECT_VIEWS = 'decided,questions,ratification,review,user'
@@ -55,6 +56,8 @@ CONTENT = ('text', 'title', 'header', 'options', 'multiSelect', 'kind', 'board',
 # How a question is shown and backed, not what it asks (asking.md Check counts premise, ruling, option and question
 # set): an edit to these alone re-issues the batch without rerunning the check loop.
 PRESENTATION = ('title', 'header', 'note', 'strength', 'leanBecause', 'strongBecause')  # plus an option's `preview` (see substantive)
+# When a question goes out, not what it asks (r9-q33): setting a hold alone reruns no check; freeing one re-checks the question.
+SCHEDULING = ('waitsFor',)
 CAP_CHOICES = ('Continue', 'Ask now', 'Pause')
 STRENGTHS = ('lean', 'strong')
 LEAN_CAUSES = ('preference', 'evidence')  # the user's values decide, or an unchecked fact (the lean pass)

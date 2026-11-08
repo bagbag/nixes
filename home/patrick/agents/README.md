@@ -168,7 +168,9 @@ the command (`Board.load`: a `bd list` of the non-closed items plus one
 `related`, `check` and the writes that read closed items, a `bd show` of only
 the named items for `board show`), and `board bd <args>` for every other bd
 command (`bd edit`, which blocks on an editor, and `--readonly` are refused with
-the way on named in one line). It starts a stopped
+the way on named in one line; a plain `bd show`, `view` or comment listing by
+ids runs `board show`, and type `question` runs as `decision`, each with a
+stderr note, r9-q35). It starts a stopped
 server on server-mode boards (bd's auto-start is off) and takes the actor from
 `session-lead-mode actor`, the owner of the session identity
 (`CODEX_SESSION_ID`/`CODEX_THREAD_ID`, else `CLAUDE_CODE_SESSION_ID`). Hooks
@@ -421,7 +423,13 @@ A round:
   for its scope (r4-q15, q16): what it examined in each this run; an update to a
   question covers it too, as do the options pass's `explored` entries, and a
   `round` note is the only entry an empty scope needs. The step names the scope;
-  the engine refuses a gap, naming the missing ids. A pass kind's first run covers
+  the engine refuses a gap, naming the missing ids. The scope can change between the
+  step and the pass, so the console names it again as a pass starts (r9-q36): `scope`
+  (origin `plugin`, changes nothing; stdin `{"command", "pending"?}`, `pending` the stamp
+  of a run not recorded yet, else the recorded run's) prints `{"covers", "explored",
+  "text"}` as the report check will work it out, `explored` the ids an options pass's
+  `explored` covers (else null), and `text` the line, empty when there is nothing to name
+  or no pass report is taken (no round open, or a step other than check and ask). A pass kind's first run covers
   every draft and ready question; a rerun of the Base step-back or ground, the lean
   pass, the loop's challenge-rulings and an extra pass (per command) cover the
   questions changed since that kind last ran (another pass's update, an edit, an
@@ -697,8 +705,8 @@ changes.
 `~/.claude/mods/console` and loaded through `CLAUDE_CODE_PLUGIN_DIRS` in
 `~/.claude/settings.json`, so its edits hot-reload (Claude lays the API types
 into its `.claude-plugin/types/`, ignored by Git). It registers the `protocol`
-tool (`mcp__console__protocol`, stamping session and origin; it refuses the model the verbs the console relays and
-`pending`, since the console runs the next pass, r8-q28), runs the
+tool (`mcp__console__protocol`, stamping session and origin; it refuses the model the verbs the console relays,
+`pending` since the console runs the next pass (r8-q28), and `scope` since the console appends its line to a starting pass's text (r9-q36)), runs the
 engine's pending pass and the issued batch's question text (`/console-questions`) at each turn's end, gates and captures round dialogs,
 runs a built-in command sent during a turn (`/compact`, which Claude Code delivers to the model as text) when the turn ends,
 relays the person's chat messages, presses and a typed or pressed
@@ -709,7 +717,7 @@ with the error and that it may have run in part (read `protocol show` before run
 Esc at a turn end stops the pass loop; a successful compaction right after reruns the stopped pass once (not a skipped or precompute
 one; a pass given up as stuck is never rerun). `/console-continue` (r7-q24) runs the turn-end decision on demand: it queues the pending pass (a stopped, asked-for or noted
 run of it included) unless a run of it is queued already (a run the host refused counts as none), reopens the issued batch past the
-repeat guard, else wakes the model at the open step with `protocol status --line`; during a turn it runs at the turn's end (Esc drops it); logged as `nudged`. A model Skill call of a pass skill counts as the round's pass; a subagent's does not. The Console pane (`/console` shows it as text;
+repeat guard, else wakes the model at the open step with `protocol status --line`; during a turn it runs at the turn's end (Esc drops it); logged as `nudged`. A model Skill call of a pass skill counts as the round's pass; a subagent's does not. A pass skill that starts (console-run, typed or the model's own Skill call; not a stale queued run, nor a subagent's) gets the engine's `scope` line appended to its expanded text, stamped for a model call as its run will be recorded; an engine failure leaves the text as it is (r9-q36). The Console pane (`/console` shows it as text;
 `/console-item <id>` prints an item's summary in the chat; `/console-questions` prints the issued batch's text) shows Board
 (counts, this session's items, sessions with runtime and pull initials, `auto` for autopilot, stale
 holds, live workers), Suggestions while no run is open and the engine's `next`

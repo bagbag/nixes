@@ -78,6 +78,8 @@ export type World = {
   show: { record: Record<string, unknown>; exit: number; bad: boolean }
   /** Called after the stand-in engine answered each verb: a test moves the round on from here, as a queued action's delay does. */
   onVerb: ((verb: string) => void) | null
+  /** The line `protocol scope` answers (r9-q36): what a report of the pass starting now must cover; '' names nothing. */
+  scope: string
   verbs: () => string[]
 }
 
@@ -105,6 +107,7 @@ export function world(on: On, init: Partial<Pick<World, 'round' | 'role' | 'surf
     tokens: 500_000,
     show: { record: { description: '## Decision\nKeep it.', dependencies: [], issue_type: 'decision', priority: 1, assignee: null, labels: [], comment_count: 0 }, exit: 0, bad: false },
     onVerb: null,
+    scope: '',
     verbs: () => w.calls.filter(one => one.argv[0] === PROTOCOL).map(one => one.argv.slice(3).join(' ')),
   }
   const clock = mock.clock(on, { now: 1_000_000 })
@@ -163,6 +166,7 @@ export function world(on: On, init: Partial<Pick<World, 'round' | 'role' | 'surf
         if (verb === 'status') return ok('round r4 · check 2/3 · next ground')
         if (verb === 'show' && argv[4] !== '--json') return ok('# round r4')
         if (verb === 'say' || verb === 'dropped' || verb === 'nudged') return ok('')
+        if (verb === 'scope') return ok({ covers: [], explored: null, text: w.scope })
         if (verb === 'answer') return ok({ ...w.round, echo: engineLine(Object.values(JSON.parse(e.init?.stdin ?? '{}').answers ?? {}) as string[]) })
         return ok(w.round)
       })()

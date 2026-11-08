@@ -5,7 +5,7 @@ per step. Protocols: `round`, the decide protocol's Round from Collect to Record
 (skills/role/protocols/decide.md#round, skills/shared/asking.md), and `release`, its Release
 (decide.md#release), in the same run slot. `next` lists the seed questions of the next round and the model's stored
 proposal (`next --set`), and what waits on the user. What a session was told (report formats, the question list per check cycle, the open-item list, Durable owners)
-is `state['told']`, cleared by `compacted` (README). The console mod reads `show --json` and `pending`; the state file stays internal. Contract: console-spec 1a plus the lead's contract rulings (version 1).
+is `state['told']`, cleared by `compacted` (README). The console mod reads `show --json`, `pending` and `scope`; the state file stays internal. Contract: console-spec 1a plus the lead's contract rulings (version 1).
 
 Approvals (answers, the check cap's "ask now") count only from the person: `answer` takes origin `dialog` (the
 console relays the dialog result of the batch out), `chat` (the model maps an answer the user typed, accepted only
@@ -34,7 +34,7 @@ from .engine import Context, PROTOCOLS, fail
 from .told import forget_runs
 from .record import abandon_note, refresh_board, release_claims
 from .away import SWITCH_TO_SOLO
-from .check import next_cycle, pending_view, refused_formats
+from .check import next_cycle, pending_view, refused_formats, start_scope
 from .ask import batch_back, withdraw_away
 from . import words
 from .release_set import start_release
@@ -156,7 +156,7 @@ def cli(argv: list[str]) -> int:
     origin = Parser(add_help=False, allow_abbrev=False)
     origin.add_argument('--origin', help='who caused the call: answer dialog|chat|model-reported, decline '
                                          'dialog|model-reported, pass composer|bridge|press|plugin|model, say '
-                                         'composer|bridge, dropped and nudged plugin; other verbs model')
+                                         'composer|bridge, dropped, nudged and scope plugin; other verbs model')
     commands = parser.add_subparsers(dest='command', required=True)
 
     def verb(name: str, text: str):
@@ -182,6 +182,8 @@ def cli(argv: list[str]) -> int:
     verb('say', "store the person's message for the chat quote check (stdin {\"text\"})")
     verb('dropped', 'the console dropped a stale action (stdin {"kind": "pass", "id"} or {"kind": "batch", "marker"})')
     verb('nudged', 'the person asked the console to continue (stdin: what it did, {"pass"?, "batch"?} or {"step"}; {} for none of these)')
+    verb('scope', 'what a report of the pass starting now must cover, as JSON {"covers", "explored", "text"} (stdin {"command", '
+                  '"pending"?: the stamp of a run not observed yet}); changes nothing')
     sub = verb('restart', 'questions back to draft after a criterion answer; the check loop reruns')
     sub.add_argument('ids', nargs='+')
     sub.add_argument('--reason')
@@ -208,7 +210,7 @@ def cli(argv: list[str]) -> int:
     try:
         session, entry = resolve_session(args.session)
         store = Store(session)
-        write = args.command not in ('show', 'pending', 'status', 'history')  # `next` saves the board's release count
+        write = args.command not in ('show', 'pending', 'status', 'history', 'scope')  # `next` saves the board's release count
         with store.locked(write):
             state = store.load()
             open_round = state.get('round') if (state.get('round') or {}).get('step') not in (None, 'closed') else None
@@ -291,6 +293,8 @@ def run(ctx: Context, args) -> str:
     if command == 'nudged':  # also with no round open: the press said so, and that use counts too
         nudge_report(ctx, report)
         return ''
+    if command == 'scope':  # no round open: nothing to name
+        return json.dumps(start_scope(ctx, report), ensure_ascii=False)
     r = ctx.round
     if not r or r['step'] == 'closed':
         fail('no open round: protocol start round')

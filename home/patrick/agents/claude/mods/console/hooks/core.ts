@@ -4,7 +4,7 @@ import type { EngineInterface, ToolCallResult } from 'claude-code'
 
 import type { ConsoleAction, ConsoleBatch, ConsoleBoard, ConsolePassOrigin, ConsolePassRun, ConsolePending, ConsoleQueued, ConsoleRound, ConsoleSuggestion } from '../types'
 
-import { boardItem, boardViews, decline, dropped, isRoundOpen, nudged, pass, PASS_COMMANDS, pending as readPending, readRole, RELEASE_COMMAND, ROUND_ROLES, setWorkers, show, stampRelease, START_COMMAND, stateDir, statusLine } from './engine'
+import { boardItem, boardViews, decline, dropped, isRoundOpen, nudged, pass, PASS_COMMANDS, pending as readPending, readRole, RELEASE_COMMAND, ROUND_ROLES, setWorkers, show, stampRelease, START_COMMAND, startScope, stateDir, statusLine } from './engine'
 import type { ConsoleNudge } from './engine'
 import {
   claimRefresh, getAskSent, getDrawn, getPaneDismissed, getPass, getQueued, getRole, getRound, getTurnRunning, releaseRefresh, setAskSent, setBoard, setContinueAsked, setDrawn, setPass, setPrinted, setRole,
@@ -683,12 +683,39 @@ export async function modelStartedPass($: $, skill: string): Promise<void> {
   if (!isStale(await refreshRound($, await $.session.id()), { kind: 'pass', ...run })) await setPass($, { ...run, phase: 'started' })
 }
 
+/** The stamp a run of `command args` carries: the pending pass's id when it is that pass, else null. */
+const pendingStamp = (round: ConsoleRound, command: string, args: string): string | null =>
+  round.pending !== null && round.pending.command === command && collapsed(round.pending.args) === collapsed(args) ? round.pending.id : null
+
+/**
+ * A pass skill's expanded text with the line naming what its report must cover, worked out by the engine as the pass starts
+ * (r9-q36): the step named the scope a turn earlier, and it may have changed since. `modelArgs`: a model Skill call's arguments,
+ * whose run is recorded only once it ran; left out, the run is recorded already. The text stays as it is when there is nothing to
+ * name or the engine fails (fail open).
+ */
+export async function withStartScope($: $, text: string, skill: string, modelArgs?: string): Promise<string> {
+  try {
+    const ctx = await context($)
+    if (!ctx.isRoundRole || !PASS_COMMANDS.includes(skill)) return text
+    let pending: { pending?: string | null } = {}
+    if (modelArgs !== undefined) {
+      const round = await refreshRound($, ctx.session)
+      if (round === null || !isRoundOpen(round)) return text
+      pending = { pending: pendingStamp(round, skill, modelArgs) }
+    }
+    const line = await startScope($, ctx.session, { command: skill, ...pending })
+    return line === '' ? text : `${text}\n\n${line}`
+  } catch {
+    return text
+  }
+}
+
 /** Records a pass with its origin while a round is open; the pending id when it is the pending pass. */
 export async function recordPass($: $, ctx: Context, origin: ConsolePassOrigin, command: string, args: string): Promise<void> {
   if (!ctx.isRoundRole || !PASS_COMMANDS.includes(command)) return
   const round = await refreshRound($, ctx.session)
   if (round === null || !isRoundOpen(round)) return
-  const pendingId = round.pending !== null && round.pending.command === command && collapsed(round.pending.args) === collapsed(args) ? round.pending.id : null
+  const pendingId = pendingStamp(round, command, args)
   if (pendingId !== null && (await getPass($))?.id !== pendingId) {
     // This run is the pending pass: turn.complete must not queue it again, and notes it if it ends unreported.
     // A model Skill call has already run; a typed or pressed command starts when its skill expands.

@@ -8,7 +8,7 @@ import re
 
 from .base import (
     AWAY, BATCH, CHECK_CAP, DESCRIPTION_MAX, HEADER_MAX, LIST_COMMAND, PROPOSAL_ROUNDS, SEEDS, STRONG_CRITERIA, SUMMARY_MAX,
-    TEXT_MAX, THINK_MORE, TITLE_MAX, cut, json_block, lines, plural
+    TEXT_LIMIT, TEXT_MAX, THINK_MORE, TITLE_MAX, cut, json_block, lines, plural
 )
 
 
@@ -139,6 +139,13 @@ def pass_scope(ids: list[str], strong: list[str] | None) -> str:
     verdicts = (f" In `verdicts`, re-send the `strongBecause` of each of {' '.join(strong)}, re-derived this run, or lower it to lean."
                 if strong else '')
     return head + verdicts + ' List your own rulings in `rulings` (an empty list when there is none).'
+
+
+def start_scope(ids: list[str], strong: list[str] | None, explored: list[str]) -> str:
+    """The scope as the pass starts (r9-q36), appended to its expanded skill text: pass_scope's line, which it supersedes, and
+    for an options pass the ids `explored` covers."""
+    return (f"Use this scope, not one printed earlier. {pass_scope(ids, strong)}"
+            + (f" Give `explored` an entry for each of {' '.join(explored)} and no other." if explored else ''))
 
 
 def challenge_format() -> str:
@@ -1148,6 +1155,7 @@ def next_recommend() -> str:
             'reuses what was just read goes first, and milestone members stay ahead of the rest. '
             'Write `title` and `summary` for a reader who was not in the discussion: plain words, no code names, no board or question '
             'ids; `summary` is one sentence on what the round decides and what its questions share. '
+            f'Lengths to keep to in characters: `title` about {TITLE_MAX}, `summary` {SUMMARY_MAX}, `why` {TEXT_LIMIT}. '  # r9-q34
             '`estimate`: the questions the round settles and the board items that wait on its answers, downstream included. '
             'Record the proposal with `protocol next --set` (stdin '
             + json_block({'rounds': [{'title': '<the topic in plain words>', 'summary': '<what the round decides and what its questions share>',

@@ -2205,6 +2205,22 @@ GLOBAL_VALUES = ('-C', '--directory', '--db', '--database', '--actor', '--dolt-a
 SHOW_USAGE = 'use board show <ids> [--section …] [--field …] [--comments] [--full]'
 
 
+def board_read(argv: list[str]) -> list[str] | None:
+    """The board command a plain raw item read means (r9-q35): `show`/`view <ids>` and `comments <ids>`, global flags and
+    other flags excluded (those keep the raw route or its refusal)."""
+    if len(argv) < 2 or argv[0] not in ('show', 'view', 'comments') or argv[1] in ('add', 'list') \
+            or any(arg.startswith('-') for arg in argv[1:]):
+        return None
+    return ['show', *argv[1:], *(['--comments'] if argv[0] == 'comments' else [])]
+
+
+def question_type(rest: list[str]) -> list[str]:
+    """`rest` with type question read as decision, the store's type for questions (r9-q35)."""
+    out = ['decision' if before in ('--type', '-t') and arg == 'question' else arg for before, arg in zip(['', *rest], rest)]
+    return [{'--type=question': '--type=decision', '-t=question': '-t=decision'}.get(arg)
+            or re.sub(r'(\btype\s*=\s*"?)question\b', r'\1decision', arg) for arg in out]
+
+
 def passthrough(argv: list[str]) -> int:
     if argv[:1] == ['dolt'] and argv[1:2] in (['start'], ['restart']):
         raise BoardError('board starts the server before every bd call; rerun the failing command with elevated sandbox permissions')
@@ -2221,17 +2237,17 @@ def passthrough(argv: list[str]) -> int:
         print('board: bd --readonly is refused; run the command without it (a server-mode board needs elevated sandbox '
               'permissions, and board starts the server)', file=sys.stderr)
         return 2
-    # Raw show output is padded and wraps; it cut most agent reads mid-item. board show renders and budgets it.
-    if (command in ('show', 'view') and not flags & set(SHOW_PASSTHROUGH)) \
-            or (command == 'comments' and rest[:1] != ['add'] and not flags & {'-h', '--help'}):
+    # Raw show output is padded and wraps; it cut most agent reads mid-item. board show renders and budgets it; a plain
+    # read by ids runs it (board_read), and JSON, which does not wrap, passes through (r9-q35).
+    if (command in ('show', 'view') and not flags & {*SHOW_PASSTHROUGH, '--json'}) \
+            or (command == 'comments' and rest[:1] not in (['add'], ['list']) and not flags & {'-h', '--help', '--json'}):
         print(f'board: {SHOW_USAGE}', file=sys.stderr)
         return 2
-    if command in ('list', 'create', 'query') and any(
-            pair in (('--type', 'question'), ('-t', 'question')) for pair in zip(rest, rest[1:])) \
-            or any(arg in ('--type=question', '-t=question') or re.search(r'\btype\s*=\s*"?question\b', arg)
-                   for arg in rest if command in ('list', 'create', 'query')):
-        print('board: questions are type decision (--type decision; open ones have status open)', file=sys.stderr)
-        return 2
+    if command in ('list', 'create', 'query'):
+        meant = question_type(rest)
+        if meant != rest:
+            print('board: questions are type decision; ran it with type decision', file=sys.stderr)
+            rest = meant
     if command == 'dolt' and rest[:2] == ['remote', 'add']:
         print('board: a Dolt remote alone shares nothing; board share shares the board (queues, sync, config)', file=sys.stderr)
     directory = next((argv[i + 1] for i, arg in enumerate(argv[:-1]) if arg in ('-C', '--directory')),
@@ -3327,6 +3343,10 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def run_command(argv: list[str]) -> int:
+    read = board_read(argv[1:]) if argv[:1] == ['bd'] else None
+    if read is not None:
+        print(f"board: ran board {' '.join(read)}", file=sys.stderr)
+        argv = read
     if argv[:1] == ['bd'] or (argv[:1] == ['create'] and not {'-h', '--help'} & set(argv)):
         try:
             return passthrough(argv[1:]) if argv[0] == 'bd' else create_for(argv[1:])

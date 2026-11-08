@@ -97,6 +97,14 @@ export async function nudged($: $, session: string, report: ConsoleNudge): Promi
   if (ran.exitCode !== 0) throw new EngineError(`protocol nudged: exit ${ran.exitCode}: ${ran.stderr.trim()}`)
 }
 
+/**
+ * The line naming what a report of the pass starting now must cover (r9-q36), '' when there is nothing to name. The engine works it
+ * out as its report check will: `pending` is the stamp of a run not recorded yet (a model Skill call); left out, the recorded run's.
+ */
+export async function startScope($: $, session: string, input: { command: string; pending?: string | null }): Promise<string> {
+  return text(record(await protocolJson($, session, ['scope', '--origin', 'plugin'], input)).text)
+}
+
 /** The skill a typed or pressed command runs as the person's conditional approval of the release (r4-q16). */
 export const RELEASE_COMMAND = 'release-round'
 
@@ -128,6 +136,9 @@ const MOD_ONLY_VERBS: readonly string[] = ['decline', 'say', 'pass', 'dropped', 
 /** Why the model's tool refuses `pending` (r8-q28): the console reads it itself and runs the pass (engine `pending()` above). */
 export const PENDING_REFUSAL = 'the console runs the next pass; end your turn'
 
+/** Why the model's tool refuses `scope` (r9-q36): the console appends it to the pass's text as the pass starts (startScope above). */
+export const SCOPE_REFUSAL = "read the scope at the end of the pass's skill text"
+
 /**
  * The argv the model's tool may run, or why not. The tool stamps origins itself: `answer` is
  * the chat route (`--origin chat`, checked by the engine's quote check); every other verb runs
@@ -141,6 +152,7 @@ export function toolArgv(args: readonly string[]): { argv: string[] } | { refusa
   }
   if (MOD_ONLY_VERBS.includes(verb)) return { refusal: `\`${verb}\` is relayed by the console from the person's own actions, never called by the model` }
   if (verb === 'pending') return { refusal: PENDING_REFUSAL }
+  if (verb === 'scope') return { refusal: SCOPE_REFUSAL }
   return { argv: [verb, '--origin', verb === 'answer' ? 'chat' : 'model', ...args.slice(1)] }
 }
 

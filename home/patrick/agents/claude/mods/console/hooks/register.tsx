@@ -8,7 +8,7 @@ import type { ConsoleStart } from '../types'
 import {
   afterTurn, context, continueLater, continueTyped, CONTINUE_COMMAND, dropIfStale, failOpen, message, notice, PANE, placeholderMarker, pressRun, pressSubmit, recordPass, refreshAll, refreshBoard, refreshLater,
   refreshRole, refreshRound, releaseRun, rerunStoppedPass, resetSession, deliverDialogOutcome, stampReleaseRun, withContext,
-  midTurnBuiltin, modelStartedPass, notePersonRun, showQuestions, staleDelivery, startedPass,
+  midTurnBuiltin, modelStartedPass, notePersonRun, showQuestions, staleDelivery, startedPass, withStartScope,
 } from './core'
 import { answer, boardShow, decline, isRoundOpen, pass, pending as readPending, protocol, RELEASE_COMMAND, say, statusLine, toolArgv } from './engine'
 import { capture, judgeDialog } from './gate'
@@ -29,6 +29,8 @@ const REFRESH_MS = 60_000
  */
 const subagentSkills = new Map<string, number>()
 const modelSkills = new Map<string, number>()
+/** The arguments of the main agent's Skill call in flight, by skill name: its expansion names the pass's scope by them (r9-q36). */
+const modelArgs = new Map<string, string>()
 const bareSkill = (skill: string): string => skill.slice(skill.lastIndexOf(':') + 1)
 
 async function counted<T>(calls: Map<string, number>, name: string, run: () => Promise<T>): Promise<T> {
@@ -157,7 +159,8 @@ export const register: Register = on => {
     const skill = e as unknown as { skill?: unknown; args?: unknown }
     const name = typeof skill.skill === 'string' ? bareSkill(skill.skill) : ''
     if (e.agentId !== undefined) return counted(subagentSkills, name, () => next(e))
-    const ran = await counted(modelSkills, name, () => next(e))
+    modelArgs.set(name, typeof skill.args === 'string' ? skill.args : '')
+    const ran = await counted(modelSkills, name, () => next(e)).finally(() => { if (!modelSkills.has(name)) modelArgs.delete(name) })
     if (ran.deny === undefined && ran.isError !== true && typeof skill.skill === 'string') {
       await recordPass($, await context($), 'model', skill.skill, typeof skill.args === 'string' ? skill.args : '')
     }
@@ -182,13 +185,14 @@ export const register: Register = on => {
   on('skill.prompt', async ($, e, next) => {
     const skill = bareSkill(e.skill)
     if (subagentSkills.has(skill)) return next(e)  // a subagent's call expands here: not the round's pass
+    // A pass that starts names what its report must cover, as the engine works it out now (r9-q36); a stale run gets none.
     if (modelSkills.has(skill)) {
       await modelStartedPass($, skill)
-      return next(e)
+      return next({ ...e, text: await withStartScope($, e.text, skill, modelArgs.get(skill) ?? '') })
     }
     await releaseRun($, key => key === skill || key.startsWith(`${skill} `))
     if (await startedPass($, skill)) return next({ ...e, text: STALE_PASS_TEXT })
-    return next(e)
+    return next({ ...e, text: await withStartScope($, e.text, skill) })
   }).catch(($, e, next) => next(e))
 
   on('turn.start', async ($, e, next) => {
