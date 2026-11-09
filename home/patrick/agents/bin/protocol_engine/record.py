@@ -35,9 +35,36 @@ def waiting_outside(ctx: Context) -> dict[str, str]:
     return reasons
 
 
+def record_target(q: dict) -> str | None:
+    """The existing item a question records onto: its own, else the hit Record takes over (board_item)."""
+    return q['board'] or next((h['id'] for h in q.get('overlaps') or [] if h['outcome'] in ('duplicate', 'extend')), None)
+
+
+def section(text: str, name: str) -> str:
+    match = re.search(rf'^## {re.escape(name)}\n(.*?)(?=^## |\Z)', text, re.M | re.S)
+    return match.group(1).strip() if match else ''
+
+
+def prior_record(ctx: Context, q: dict) -> str | None:
+    """The decision record already on the question's item, read once and kept on the question so a rerun after a partial
+    write still sees the record from before (agents r11-q42: Record revises it in place, it does not replace it)."""
+    if 'priorRecord' not in q:
+        item = record_target(q)
+        text = None
+        if ctx.board and item:
+            try:
+                row = ctx.board.json('show', item, '--json', '--field', 'description').get(item) or {}
+            except ProtocolError:
+                row = {}
+            text = str(row.get('description') or '')
+            text = text if section(text, 'Decision') and section(text, 'Question') else None
+        q['priorRecord'] = text
+    return q['priorRecord']
+
+
 def record_text(ctx: Context) -> str:
     todo = [q for q in questions(ctx, 'answered') if not q.get('recorded')]
-    rows = [words.record_row(q, q['annotations']['notes'].strip() if note_of(q) else None) for q in todo]
+    rows = [words.record_row(q, q['annotations']['notes'].strip() if note_of(q) else None, prior_record(ctx, q)) for q in todo]
     return lines(
         words.record_intro(ctx.round['id']),
         *rows,
@@ -51,14 +78,16 @@ def record_file(q: dict, fields: dict) -> str:
     chosen = q['answer'] or ''
     # AskUserQuestion answers carry the chosen labels (comma-joined for multiSelect) or the user's own words.
     picked = {part.strip() for part in chosen.split(',')}
-    alternatives = fields.get('alternatives') or '\n'.join(
+    prior = q.get('priorRecord')  # revised in place: the record keeps the question it decided and its alternatives
+    alternatives = fields.get('alternatives') or (section(prior, 'Alternatives Considered') if prior else '') or '\n'.join(
         f"- {o['label']}: {o['description']}".rstrip(': ') for o in q['options'] if o['label'] not in picked)
+    question = section(prior, 'Question') if prior else q['text']
     source = {'dialog': 'User (dialog)', 'chat': 'User (chat)', 'model-reported': 'User (model-reported)',
               AWAY: 'Away round (autopilot took the recommendation; no person answered)'}[q['origin']]
     quoted = f"{source}, {q.get('answeredAt', utcnow())[:10]}: \"{q.get('quote') or chosen}\""
     if q.get('strength') == 'strong' and isinstance(q.get('strongBecause'), dict):
         quoted = 'Recommended (strong): ' + '; '.join(f'{k} {v}' for k, v in q['strongBecause'].items()) + '\n\n' + quoted
-    return (f"## Question\n{q['text']}\n\n## Alternatives Considered\n{alternatives or '- none offered'}\n\n"
+    return (f"## Question\n{question}\n\n## Alternatives Considered\n{alternatives or '- none offered'}\n\n"
             f"## Decision\n{fields.get('decision') or chosen}\n\n## Rationale\n{fields['rationale'].strip()}\n\n{quoted}\n\n"
             + (f"## Premises\n{q['premises'].strip()}\n\n" if (q.get('premises') or '').strip() else '')
             + ('## Own rulings\n' + '\n'.join(f'- {words.ruling_line(x)}' for x in q['rulings']) + '\n\n' if q.get('rulings') else '')
@@ -234,6 +263,8 @@ def record_accept(ctx: Context, report: dict) -> str:
             fail(f'records.{qid}: needs rationale and ruleOwner')
         if by_id(ctx, qid)['origin'] == AWAY and not str(fields.get('reversal') or '').strip():
             fail(f'records.{qid}: an away answer needs a `reversal` (the steps that undo it, executable without remembered context)')
+        if prior_record(ctx, by_id(ctx, qid)) and not str(fields.get('decision') or '').strip():
+            fail(words.revise_needs_decision(qid, record_target(by_id(ctx, qid))))
     # A question asked once its premise was answered rests on that answer: when the premise is deferred instead (the
     # engine learns of a deferral only here), the dependent's answer has no settled premise: it is deferred or restarted too (r11-q42).
     put_off = set(deferred) | set(outside) | {q['id'] for q in ctx.round['questions'] if q.get('recorded') == 'deferred'}

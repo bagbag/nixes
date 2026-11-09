@@ -2,8 +2,7 @@
 
 - Ask top-down: direction first (goal, outcome, principle), then the criteria
   and behavior it leaves open, then the remaining specific decisions. Each level
-  is its own batch, whose answers set the next level's premises; skip levels the
-  context already settles.
+  is its own batch; skip levels the context already settles.
 - Show each option's observable result with concrete cases; where the user cannot
   state a rule, ask a few cases and derive it.
 - Name the decisions each answer settles and derive them. Present them for one
@@ -14,7 +13,8 @@
   option that splits them means separate questions, and a shared premise puts
   them in one round, not one question.
 - Ask each derived decision you are unsure is the only realistic clean option as
-  its own question.
+  its own question; bundle into one question only rulings with no realistic
+  alternative.
 - Ask a mechanism question only where the answers leave several clean mechanisms.
 - In the walkthrough a rule question gives each settled item one line: how
   the rule applies and its own evidence. An item failing a Recommendation
@@ -28,8 +28,9 @@
   the decision protocol's Recommendation strength, with any reviewer
   disagreement. Name items in plain words; put ids in brackets.
 - The asked question is one plain self-contained sentence (no ids, file names
-  or option letters), numbered like its chat entry. Option labels are 1-4
-  words without letters, each with a one-line description of what changes.
+  or option letters), numbered like its chat entry. Every option is an
+  answer, not a request. Option labels are 1-4 words without letters, each
+  with a one-line description of what changes.
   Code examples go in the chat entry; dialogs carry no previews. Title = the
   decision it settles as a short question, in words a reader without the
   discussion follows; header = a topic noun; a round's summary = its topic in

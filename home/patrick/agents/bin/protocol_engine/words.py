@@ -450,9 +450,12 @@ def approval_reasons(rulings: list[dict] | None, records: list[dict]) -> list[st
 
 # Record, Closed and the notes around them (record.py).
 
-def record_row(q: dict, note: str | None) -> str:
+def record_row(q: dict, note: str | None, prior: str | None = None) -> str:
     return (f"- {q['id']}{' ' + q['board'] if q['board'] else ' (draft)'}: {q['text']}\n  answer ({q['origin']}): "
             f"{q['answer']}" + (f"\n  note: {note}" if note else '')
+            + (f"\n  revises the record on its item in place: it keeps that record's Question and Alternatives; give `decision` "
+               "and `rationale` for the revised record. The record now:\n"
+               + '\n'.join(f'    {line}' if line else '' for line in prior.strip().splitlines()) if prior else '')
             + (f"\n  rule question, settles {', '.join(q['settles'])}: name each in the rationale or decision with how the "
                'rule applies' if q.get('settles') else '')
             + (f"\n  recording closes {', '.join(q['replaces'])}: name each in the rationale or decision with what the new "
@@ -469,6 +472,11 @@ def waits_on_deferred(premise: str, reason: str, outside: bool) -> str:
 def record_deferred(qid: str, reason: str, outside: bool) -> str:
     """A question Record defers because it still waits on an outside result (`outside`), or on a question that does."""
     return f"- {qid}: deferred at Record, it " + (f'waits for {reason}' if outside else reason)
+
+
+def revise_needs_decision(qid: str, item: str) -> str:
+    return (f"records.{qid}: {item} already holds a decision record, which this one revises in place: give `decision`, "
+            'the revised Decision (the record step prints the current one)')
 
 
 def record_intro(round_id: str) -> str:

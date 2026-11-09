@@ -161,6 +161,17 @@ describe('dialog gate and capture', () => {
     expect(JSON.parse(call?.stdin ?? '{}')).toEqual({ marker: BATCH.marker, answers: { 'Which engine name?': 'protocol' }, annotations: { 'Which engine name?': { notes: 'n' } }, response: null })
   })
 
+  test('the issued batch rebuilt without its marker is still that batch and its answers are recorded (agents r11-q43)', async ($, on) => {
+    const { w } = world(on)
+    on('tool.call', { tool: 'AskUserQuestion' }, () => answered({ 'Which engine name?': 'protocol' }) as never)
+    await start($)
+    const ran = await $.tool.call({ tool: 'AskUserQuestion', questions: BATCH.questions } as never)
+    expect(ran.deny).toBeUndefined()
+    expect(ran.context ?? []).not.toContain('This dialog was not from round r4; its answers were not recorded in the round.')
+    const call = w.calls.find(one => one.argv[3] === 'answer')
+    expect(JSON.parse(call?.stdin ?? '{}')).toMatchObject({ marker: BATCH.marker, answers: { 'Which engine name?': 'protocol' } })
+  })
+
   describe('the batch text prints between turns', () => {
     const NOTICE = 'Engine name\nProblem: which name.\nCases: a typed command.\nOptions:\n- protocol: for: exact; against: long'
     const asking = (notice = NOTICE) => roundJson({ step: 'ask', batch: { ...BATCH, notice } })
@@ -257,8 +268,8 @@ describe('dialog gate and capture', () => {
         expect(asked).toEqual([BATCH.marker, 'round:r4:3'])
       })
 
-      // A `$` call from the /console-questions hook skips every console hook (Claude Code 2.1.318), so no console command can
-      // print the answers line: the model's prompt carries it, and its turn end runs the pass.
+      // By the time the dialog closes the /console-questions hook has returned, and its `$` calls skip every console hook, so no
+      // console command can print the answers line: the model's prompt carries it, and its turn end runs the pass.
       test('a plain pick wakes the model with the answers line, and its turn end runs the pending pass', async ($, on) => {
         const { w, clock } = world(on, { round: asking() })
         on('tool.call', { tool: 'AskUserQuestion' }, () => {
@@ -358,6 +369,43 @@ describe('dialog gate and capture', () => {
         release({ deny: 'closed' })  // the opener's ask settles at last, with nothing to record: it adds no prompt of its own
         await clock.settle()
         expect(w.prompts).toEqual([engineLine(['my own words'])])
+      })
+
+      // The host credits a `$` call to its hook only while that hook's dispatch is in flight; one it takes after the hook returned
+      // skips every console hook, and the stand-in is drawn (Claude Code 2.1.319: calls and the hook's return cross on separate
+      // channels). So the opener's command hook returns only once the swap took its dialog. The kit keeps them in order, so this
+      // pins the hold rather than staging the late take.
+      describe('the opener holds its command hook until the swap took the dialog', () => {
+        const own = { command: 'console-questions', args: BATCH.marker, origin: { kind: 'plugin', name: 'console' }, presentation: typed.presentation } as never
+
+        test('the dialog hook has read the round to swap in the batch before the command returns', async ($, on) => {
+          const { w, clock } = world(on, { round: asking() })
+          on('tool.call', { tool: 'AskUserQuestion' }, () => ({ deny: 'closed' }) as never)
+          await start($)
+          await clock.settle()
+          let shows = 0
+          w.onVerb = verb => { if (verb === 'show') shows += 1 }
+          await $.command.run(own)
+          expect(shows).toBe(1)
+        })
+
+        test('a swap that never comes holds it two seconds at most, so the text still prints', async ($, on) => {
+          const { w, clock } = world(on, { round: asking() })
+          on('tool.call', { tool: 'AskUserQuestion' }, () => ({ deny: 'closed' }) as never)
+          await start($)
+          await clock.settle()
+          let release: () => void = () => undefined
+          w.hold = { verb: 'show', until: new Promise(resolve => { release = resolve }) }  // the dialog hook's read stalls short of the swap
+          let isReturned = false
+          const ran = $.command.run(own).then(() => { isReturned = true })
+          await clock.advance(1_999)
+          expect(isReturned).toBe(false)
+          await clock.advance(1)
+          await ran
+          expect(isReturned).toBe(true)
+          release()
+          await clock.settle()
+        })
       })
 
       test('without a batch to swap in, the placeholder is never drawn', async ($, on) => {

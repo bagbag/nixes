@@ -4264,6 +4264,9 @@ def validate_protocol(root: Path, part: str) -> None:
             if shown(cwd=repo)["pending"]["command"] != "step-back" or shown(cwd=repo)["check"]["last"]["ground"]["origin"] != "press":
                 raise ValueError("an unchanged pushed pass must keep the expected step-back and count its origin")
             refused("step", cwd=repo, stdin={"pass": "step-back", "updates": [{"id": "q3", "status": "ready"}]}, needle="unknown fields")
+            # agents r11-q48: `explored` inside an update says where it goes.
+            refused("step", cwd=repo, stdin={"pass": "step-back", "updates": [{"id": "q3", "explored": []}]},
+                    needle="unknown fields explored; `explored` goes at the report's top level, keyed by question id")
             proto("step", cwd=repo, stdin={"pass": "step-back", "updates": [], "checked": ["every question"]})  # the path pass
             proto("step", cwd=repo, stdin={"pass": "step-back", "updates": [], "checked": ["every question"]})  # the options pass: not the confirm-own-rulings question
             if shown(cwd=repo)["check"]["last"]["step-back"]["changes"] != 0 or shown(cwd=repo)["pending"]["args"] != "":
@@ -4737,6 +4740,24 @@ def validate_protocol(root: Path, part: str) -> None:
                     needle="fx-bug is a bug, not a decision: stage a draft", cwd=repo)
             proto("step", stdin={**ROUND_INFO, "questions": [question("Place?", board=None, **{"for": pasted})]}, cwd=repo)
             proto("abandon", cwd=repo)
+            # agents r11-q41: Record writes each question onto its board item, so a second live question on one item is refused
+            # at Stage and by an update, naming the draft route.
+            out = proto("start", "round", stdin={"points": ["Split the decision?"]}, cwd=repo).stdout
+            pasted = re.search(r"(pt\d+) \[pasted\]", out).group(1)
+            proto("step", stdin={"classes": {pasted: "user"}}, cwd=repo)
+            proto("step", stdin={"select": [pasted]}, cwd=repo)
+            refused("step", stdin={**ROUND_INFO, "questions": [question("Split A?", board="fx-dec", **{"for": pasted}),
+                                                                 question("Split B?", board="fx-dec", **{"for": pasted})]},
+                    needle='board fx-dec is already q', cwd=repo)
+            refused("step", stdin={**ROUND_INFO, "questions": [question("Split A?", board="fx-dec", **{"for": pasted}),
+                                                                 question("Split B?", board="fx-dec", **{"for": pasted})]},
+                    needle='stage it as a draft (`board`: null, `for`: "fx-dec")', cwd=repo)
+            proto("step", stdin={**ROUND_INFO, "questions": [question("Split A?", board="fx-dec", **{"for": pasted}),
+                                                             question("Split B?", board=None, **{"for": pasted})]}, cwd=repo)
+            split = [q["id"] for q in shown(cwd=repo)["questions"]]
+            refused("step", stdin={"pass": "step-back", "updates": [{"id": split[1], "board": "fx-dec"}], "checked": ["every question"]},
+                    needle=f"{split[1]}: board fx-dec is already {split[0]}'s item", cwd=repo)
+            proto("abandon", cwd=repo)
 
             # G2: a decided record the session already held before the round stays held when the round ends without
             # recording it: its hold is the release's, not the round's to end.
@@ -5003,6 +5024,37 @@ def validate_protocol(root: Path, part: str) -> None:
                     or engine_module.words.recorded_line([{"question": "q39", "board": "fx-1"}, {"question": "q40", "board": "fx-2"}]) != "recorded q39, q40 → fx-1, fx-2" \
                     or engine_module.words.recorded_line([{"question": "q39", "board": None}, {"question": "q40"}]) != "recorded q39, q40 → files":
                 raise ValueError("protocol log lines: strip a leading 'no change', name the pass kind, 'classified 0 points', merge recorded lines")
+            configure()
+
+            # agents r11-q42: a question recording onto an item that already holds a decision record revises it in place: the
+            # Record step prints the old record, a report without `decision` is refused, and the record keeps the old Question
+            # and Alternatives with the reported Decision.
+            prior = ("## Question\nAccept the grid design with six choices?\n\n## Alternatives Considered\n- Hold it\n\n"
+                     "## Decision\nAccept, six choices.\n\n## Rationale\nReviewed.\n\n## Rule owner\ndocs/x.md\n")
+            configure(health={"counts": counts, "items": {"ratification": [
+                {"id": "fx-p", "status": "needs_ratification", "type": "decision", "title": "Grid design", "priority": 1, "blockedBy": []}]}},
+                      items={"fx-p": {"status": "needs_ratification", "issue_type": "decision", "title": "Grid design", "description": prior}})
+            proto("start", "round", cwd=repo)
+            proto("step", stdin={"classes": {"fx-p": "user"}}, cwd=repo)
+            proto("step", stdin={"select": ["fx-p"]}, cwd=repo)
+            proto("step", stdin={**ROUND_INFO, "questions": [question("Ratify the grid design?", board="fx-p")]}, cwd=repo)
+            converge(cwd=repo)
+            asked = shown(cwd=repo)
+            proto("answer", "--origin", "dialog", stdin={"marker": asked["batch"]["marker"], "answers": {"Ratify the grid design?": "Keep"}}, cwd=repo)
+            qid = asked["questions"][0]["id"]
+            if shown(cwd=repo)["step"] != "record":
+                proto("step", stdin={"pass": "challenge-rulings", "updates": [], "checked": {qid: "held"}, "rulings": []}, cwd=repo)
+            step_text = proto("show", cwd=repo).stdout
+            if "revises the record on its item in place" not in step_text or "    Accept, six choices." not in step_text:
+                raise ValueError(f"the Record step must print the record a question revises in place:\n{step_text}")
+            refused("step", stdin={"records": {qid: {"rationale": "Ratified.", "ruleOwner": "docs/x.md"}}},
+                    needle="fx-p already holds a decision record, which this one revises in place: give `decision`", cwd=repo)
+            calls()
+            proto("step", stdin={"records": {qid: {"decision": "Accept, six choices; ratified.", "rationale": "Ratified.", "ruleOwner": "docs/x.md"}}}, cwd=repo)
+            written = next(Path(c["args"][2]).read_text() for c in calls() if c["args"][:2] == ["record", "fx-p"])
+            if not written.startswith("## Question\nAccept the grid design with six choices?\n\n## Alternatives Considered\n- Hold it\n\n"
+                                      "## Decision\nAccept, six choices; ratified.\n"):
+                raise ValueError(f"a record revised in place keeps the old Question and Alternatives:\n{written}")
             configure()
 
             # R: a release run (r3-q7, r4-q12..q19): the default set (the session's held decided records), refusals, a contained

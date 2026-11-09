@@ -226,7 +226,8 @@ export function roundWords(round: ConsoleRound): string {
 }
 
 /** The message the console sends when it could not open a batch's dialog itself: the model opens it. */
-export const openDialogText = (marker: string): string => `Open the dialog for batch ${marker}: call AskUserQuestion with the input \`protocol show\` prints.`
+export const openDialogText = (marker: string): string =>
+  `Open the dialog for batch ${marker}: call protocol with ["show"] (not --json) and pass the AskUserQuestion input it prints unchanged, metadata included.`
 
 /** What /console-continue (r7-q24) sends the model with nothing pending or out: the engine's status line. */
 export const continueText = (line: string): string => `Continue the round: ${line}`

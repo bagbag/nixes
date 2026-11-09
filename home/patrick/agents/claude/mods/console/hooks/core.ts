@@ -116,10 +116,11 @@ async function wakeModel($: $, outcome: DialogOutcome): Promise<void> {
  * Opens the batch's whole dialog with no model turn (r32-q149): `$.ui.ask` with a placeholder the AskUserQuestion hook swaps for the
  * batch, then records through its usual capture. `$.ui.ask` itself then has no answer to return, so it rejects; the hook's outcome
  * counts. Every outcome wakes the model with the answers line as its prompt (the hook itself, r7-q25, but for a decline Esc left
- * unsaved, recorded and announced here), and its turn end runs a pending pass or opens the next batch: a `$` call from this command
- * hook skips every console hook (Claude Code 2.1.318, against its docs), so it can neither print the line through a console command
- * nor run `/console-questions` again. Without an outcome the swap never ran and the stand-in was drawn: Not now holds the batch until
- * the person's next message, anything else (a pick of Open, a close, a timeout) has the model open the dialog.
+ * unsaved, recorded and announced here), and its turn end runs a pending pass or opens the next batch: by the time the dialog closes
+ * the opener's command hook has returned, and its later `$` calls skip every console hook (showQuestions), so it can neither print
+ * the line through a console command nor run `/console-questions` again. Without an outcome the swap never ran and the stand-in was
+ * drawn: Not now holds the batch until the person's next message, anything else (a pick of Open, a close, a timeout) has the model
+ * open the dialog.
  */
 export async function openDialog($: $, marker: string, session: string): Promise<void> {
   dialogOutcome = null
@@ -168,23 +169,43 @@ async function claimBatch($: $, round: ConsoleRound | null): Promise<ConsoleBatc
   return batch
 }
 
+/** How long showQuestions holds its command hook for the swap: past it the text prints, and the dialog fares as the host lets it. */
+const SWAP_WAIT_MS = 2_000
+
+/** Ends showQuestions' hold once the AskUserQuestion hook swapped in its batch (dialogSwapped). */
+let swapWaited: { marker: string; resolve: () => void } | null = null
+
+/** Called by the AskUserQuestion hook as it swaps a placeholder for its batch. */
+export function dialogSwapped(marker: string): void {
+  if (swapWaited?.marker !== marker) return
+  swapWaited.resolve()
+  swapWaited = null
+}
+
 /**
  * The batch's dialog from a console hook whose `$` reaches the console's own hooks (`/console-questions` run by the console, a typed
  * `/console-continue`): marks its text printed and opens the dialog, unless this console's dialog for it is open already. The caller
- * prints the text as its command output.
+ * awaits it and then prints the text as its command output. It returns once the AskUserQuestion hook swapped in the batch (or the
+ * dialog settled, or SWAP_WAIT_MS passed): the host credits a `$` call to its hook only while that hook's dispatch is in flight, and
+ * counts one it takes later as the whole console's, skipping every console hook. The calls and the hook's return cross on separate
+ * channels (Claude Code 2.1.319), so a `$.ui.ask` made just before the return could land after it, and the stand-in was drawn.
  */
 export async function showQuestions($: $, marker: string, session: string): Promise<void> {
   await setPrinted($, marker)
   questionsAnswered = marker
-  if (dialogAwaited !== marker) void openDialog($, marker, session).catch(failOpen($, 'opening the dialog'))
+  if (dialogAwaited === marker) return
+  const swapped = new Promise<void>(resolve => { swapWaited = { marker, resolve } })
+  const opened = openDialog($, marker, session).catch(failOpen($, 'opening the dialog'))
+  await Promise.race([swapped, opened, $.clock.sleep(SWAP_WAIT_MS)])
 }
 
 /**
  * At a main-agent turn's end that was not aborted, or a continue the person asked for, with a batch out (r29-q138, r30-q140,
  * r32-q149): runs `/console-questions`, whose hook prints the text and opens the dialog. A command's output draws whole between turns
- * where a transcript row would not, and the hook's fresh `$` matters too: after an awaited call in a chain, `$.ui.ask` skips the swap
- * in the console's hook. A run that settles unanswered by the hook (one from a press or a console command hook, whose `$` skips the
- * console's own hooks) takes the model's route instead of leaving the round waiting. Returns the marker it took, else null.
+ * where a transcript row would not, and the hook's own dispatch matters too: it is in flight while the dialog opens (showQuestions).
+ * The caller's hook stays in flight until the host has the run: one more round trip on the console's channel, which the host takes
+ * in order, follows it. A run that settles unanswered by the hook (one from a press or a timer, whose `$` skips the console's own
+ * hooks) takes the model's route instead of leaving the round waiting. Returns the marker it took, else null.
  */
 export async function openBatchDialog($: $, round: ConsoleRound | null): Promise<string | null> {
   const batch = await claimBatch($, round)
@@ -197,6 +218,7 @@ export async function openBatchDialog($: $, round: ConsoleRound | null): Promise
       await setAskSent($, null).catch(() => undefined)
       await notice($, `printing the question text failed: ${message(error)}; nothing opens the dialog`).catch(() => undefined)
     })
+  await $.session.id()  // the round trip that holds the caller's hook until the host has the run
   return batch.marker
 }
 

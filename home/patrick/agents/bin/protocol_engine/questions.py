@@ -131,13 +131,20 @@ def non_decision_errors(ctx: Context, items: list[str]) -> list[str]:
             for item in dict.fromkeys(items) if (kind := (rows.get(item) or {}).get('issue_type')) not in (None, 'decision')]
 
 
+def unknown_fields(where: str, unknown: set) -> str:
+    """`explored` belongs to the report, not to an update (agents r11-q48)."""
+    hint = ('; `explored` goes at the report\'s top level, keyed by question id (an options pass only), not inside an update'
+            if 'explored' in unknown else '')
+    return f"{where}: unknown fields {', '.join(sorted(unknown))}{hint}"
+
+
 def check_question(q: dict, where: str, marks: bool = True, parts: tuple[str, ...] = ()) -> None:
     refuse_all(question_errors(q, where, marks, parts))
 
 
 def new_question(ctx: Context, raw: dict, where: str) -> dict:
     unknown = set(raw) - set(CONTENT) - {'key'}
-    errors = [f"{where}: unknown fields {', '.join(sorted(unknown))}"] if unknown else []
+    errors = [unknown_fields(where, unknown)] if unknown else []
     q = {'id': next_id(ctx.state, 'question', 'q'), 'board': None, 'kind': 'decision', 'multiSelect': False,
          'waitsOn': [], 'waitsFor': None, 'for': None, 'settles': [], 'premises': None, 'priorRulings': None, 'recommendation': None, 'strength': None,
          'leanBecause': None, 'strongBecause': None,
@@ -231,6 +238,18 @@ def join_outside(ctx: Context) -> None:
     ctx.log('joined', items=outside)
 
 
+def shared_board_errors(ctx: Context) -> list[str]:
+    """A board item takes one question's record: Record writes each question onto its `board`, so a second one would
+    replace the first's record (agents r11-q41)."""
+    owner, errors = {}, []
+    for q in ctx.round['questions']:
+        item = q.get('board')
+        if item and owner.setdefault(item, q['id']) != q['id']:
+            errors.append(f"{q['id']}: board {item} is already {owner[item]}'s item; stage it as a draft (`board`: null, "
+                          f'`for`: "{item}")')
+    return errors
+
+
 def coverage_errors(ctx: Context) -> list[str]:
     """The rule-question invariants of the round's question set: `settles` names selected keys other than the
     question's own `board`/`for`, no key twice; and every selected key is covered by a
@@ -296,7 +315,7 @@ def apply_updates(ctx: Context, updates) -> int:
     resolve_waits(ctx, keys)
     unique_texts(ctx)
     join_outside(ctx)
-    refuse_all(coverage_errors(ctx) + non_decision_errors(ctx, [u['board'] for u in updates if isinstance(u, dict) and u.get('board')]))  # a merge or split is several updates: the set is checked once, after all of them
+    refuse_all(coverage_errors(ctx) + shared_board_errors(ctx) + non_decision_errors(ctx, [u['board'] for u in updates if isinstance(u, dict) and u.get('board')]))  # a merge or split is several updates: the set is checked once, after all of them
     for q in questions(ctx, 'draft', 'held', 'ready'):
         q['status'] = premise_status(ctx, q)
     if touched:
@@ -339,7 +358,7 @@ def apply_update(ctx: Context, update, where: str, keys: dict) -> tuple[int, str
         return 1, q['id']
     unknown = set(update) - set(CONTENT) - {'id', 'reason'}
     if unknown:
-        fail(f"{where}: unknown fields {', '.join(sorted(unknown))}")
+        fail(unknown_fields(where, unknown))
     merged = {**q, **{k: v for k, v in update.items() if k in CONTENT}}
     check_question(merged, f"{where} ({q['id']})", marks=any(k in update for k in MARK_FIELDS),
                    parts=tuple(k for k in PARTS if k in update))

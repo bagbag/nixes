@@ -62,6 +62,11 @@ export function judgeDialog(round: ConsoleRound & { round: string }, input: Dial
         : differingBatchText(marker, round.round, issued.questions)
     return { action: 'block', key, reason }
   }
+  const issued = round.batch
+  if (issued !== null && shape(issued.questions) === shape(input.questions)) {
+    // The issued batch rebuilt without its marker (the model opening it by hand) is that batch (agents r11-q43).
+    return judgeDialog(round, { ...input, metadata: { source: issued.marker } }, blocked, printed)
+  }
   const staged = new Map(round.questions.filter(one => one.status !== 'answered').map(one => [squash(one.text), one.id]))
   const repeated = input.questions.map(one => staged.get(squash(one.question))).filter((id): id is string => id !== undefined)
   if (repeated.length > 0) {

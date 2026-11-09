@@ -6,7 +6,7 @@ from . import words
 from .boards import related_hits, split_holds
 from .engine import Context, by_id, fail, premise_status, unresolved
 from .questions import (
-    coverage_errors, describe, describe_errors, join_outside, new_question, non_decision_errors, refuse_all,
+    coverage_errors, describe, describe_errors, join_outside, new_question, non_decision_errors, refuse_all, shared_board_errors,
     resolve_waits, unique_texts
 )
 from .told import report_hint
@@ -49,7 +49,7 @@ def stage_accept(ctx: Context, report: dict) -> str:
     resolve_waits(ctx, keys)
     unique_texts(ctx)
     join_outside(ctx)
-    refuse_all(coverage_errors(ctx) + non_decision_errors(ctx, [q['board'] for q in ctx.round['questions'] if q.get('board')]))
+    refuse_all(coverage_errors(ctx) + shared_board_errors(ctx) + non_decision_errors(ctx, [q['board'] for q in ctx.round['questions'] if q.get('board')]))
     if not ctx.round['questions']:
         fail('stage at least one question')
     for q in ctx.round['questions']:

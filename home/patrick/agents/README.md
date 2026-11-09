@@ -326,13 +326,18 @@ A round:
   empty or repeated notice prints a short line) and opens the dialog. The host's
   `$.ui.ask` takes labels only, so it asks a placeholder and the console's
   AskUserQuestion hook swaps it for the issued batch (never drawing the placeholder).
+  The host credits a `$` call to its hook only while that hook runs and counts one it takes later as the whole
+  console's, skipping every console hook (Claude Code 2.1.319); calls and the hook's return cross unordered. So the
+  `/console-questions` hook returns only once the swap took the dialog (2 s at most), and the hook that queues
+  `/console-questions` makes one more call before it returns.
   Every outcome then wakes the model with the answers, one line each, as the person's own words (no plugin frame), and the engine's
-  text as a note; its turn end runs a pending pass or prints a next batch. A `$` call from a command hook skips every console hook
-  (Claude Code 2.1.318), so that hook can neither print the answers through a command nor the next batch. If the swap never ran, the host draws the stand-in
+  text as a note; its turn end runs a pending pass or prints a next batch: the command hook has returned by then, so it
+  can neither print the answers through a command nor the next batch. If the swap never ran, the host draws the stand-in
   question (`Open the questions for batch <marker>?`): Not now holds the batch until the person's next message, and a
   close, a timeout or Open the questions sends the lead a one-line message to open the dialog
-  with the input `protocol show` gives; so does a run of the command its hook never
-  answered, after printing any new text as a notice. There is no Ask button. At most one dialog per
+  with the input `protocol ["show"]` prints, unchanged; so does a run of the command its hook never
+  answered, after printing any new text as a notice. A dialog equal to the issued batch but
+  without its marker (the input rebuilt by hand) counts as that batch (agents r11-q43). There is no Ask button. At most one dialog per
   batch marker opens until the person sends a new message (a composer or bridge message
   clears it) and none is open. The host queues what the console sends and cannot recall
   it, so a console action is checked where it is delivered: a queued pass run the round has left
@@ -521,8 +526,15 @@ A round:
   when the role changed. Settled items of an away record are unclaimed, not held for a
   release.
 - Stage and any update refuse a `board` id that is no decision: the question goes
-  in as a draft and records its own item. Abandon names the records that stay
-  decided.
+  in as a draft and records its own item. They also refuse a second question on a
+  `board` id another question of the round holds, since Record would write both
+  onto it and keep only the last (agents r11-q41); the second goes in as a draft
+  with `for` naming the item. Abandon names the records that stay decided.
+- A question recording onto an item that already holds a decision record (a
+  ratification, a revision before release, a duplicate or extend hit) revises it in
+  place: the Record step prints the record, the report must give `decision`, and the
+  new record keeps the old Question and Alternatives (agents r11-q42). The text read
+  first is kept on the question, so a rerun after a partial write sees the same.
 - Record is safe to run again: each record it creates carries the external ref
   `protocol:<session>:<round>:<question>` (also through `board revise --external-ref`),
   looked up and reused before a create, and the round is saved after each question. A

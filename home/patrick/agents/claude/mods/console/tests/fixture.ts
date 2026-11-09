@@ -78,6 +78,8 @@ export type World = {
   show: { record: Record<string, unknown>; exit: number; bad: boolean }
   /** Called after the stand-in engine answered each verb: a test moves the round on from here, as a queued action's delay does. */
   onVerb: ((verb: string) => void) | null
+  /** A `protocol` verb whose runs answer only once `until` settles: a slow engine call. */
+  hold: { verb: string; until: Promise<void> } | null
   /** The line `protocol scope` answers (r9-q36): what a report of the pass starting now must cover; '' names nothing. */
   scope: string
   verbs: () => string[]
@@ -107,6 +109,7 @@ export function world(on: On, init: Partial<Pick<World, 'round' | 'role' | 'surf
     tokens: 500_000,
     show: { record: { description: '## Decision\nKeep it.', dependencies: [], issue_type: 'decision', priority: 1, assignee: null, labels: [], comment_count: 0 }, exit: 0, bad: false },
     onVerb: null,
+    hold: null,
     scope: '',
     verbs: () => w.calls.filter(one => one.argv[0] === PROTOCOL).map(one => one.argv.slice(3).join(' ')),
   }
@@ -171,7 +174,8 @@ export function world(on: On, init: Partial<Pick<World, 'round' | 'role' | 'surf
         return ok(w.round)
       })()
       w.onVerb?.(argv[3] as string)
-      return served
+      const hold = w.hold
+      return hold !== null && hold.verb === argv[3] ? hold.until.then(() => served) : served
     }
     if (argv[0] === BOARD) {
       if (argv[1] === 'console') return ok({ counts: { questions: 188, decided: 0, toPlan: 82, inReview: 14, forUser: 3 }, items: w.items, sessions: w.sessions, held: w.held, sync: w.sync, queueLine: w.queueLine })

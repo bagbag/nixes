@@ -7,7 +7,7 @@ import type { ConsoleStart } from '../types'
 
 import {
   afterTurn, context, continueLater, continueTyped, CONTINUE_COMMAND, dropIfStale, failOpen, message, notice, PANE, placeholderMarker, pressRun, pressSubmit, recordPass, refreshAll, refreshBoard, refreshLater,
-  refreshRole, refreshRound, releaseRun, rerunStoppedPass, resetSession, deliverDialogOutcome, stampReleaseRun, withContext,
+  refreshRole, refreshRound, releaseRun, rerunStoppedPass, resetSession, deliverDialogOutcome, dialogSwapped, stampReleaseRun, withContext,
   midTurnBuiltin, modelStartedPass, notePersonRun, showQuestions, staleDelivery, startedPass, withStartScope,
 } from './core'
 import { answer, boardShow, decline, isRoundOpen, pass, pending as readPending, protocol, RELEASE_COMMAND, say, statusLine, toolArgv } from './engine'
@@ -110,6 +110,7 @@ export const register: Register = on => {
     if (round === null || !isRoundOpen(round)) return next(e)
     // The console's own dialog: the placeholder becomes the issued batch, and the rest of this hook treats it as that batch's dialog.
     const asked = placeholder !== null && round.batch !== null ? { ...e, questions: round.batch.questions, metadata: { source: placeholder } } as typeof e : e
+    if (placeholder !== null) dialogSwapped(placeholder)
     const verdict = judgeDialog(round, asked as unknown as DialogInput, await getGate($), await getPrinted($))
     if (verdict.action === 'block') {
       await addGate($, verdict.key)
