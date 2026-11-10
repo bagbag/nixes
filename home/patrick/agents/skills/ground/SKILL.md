@@ -9,8 +9,6 @@ argument-hint: "[lenses] [focus and follow-ups]"
 
 # Ground
 
-<!-- @include shared/rerun.md -->
-
 Lens names at the start of the argument select lenses (`/ground assumptions
 sources`); the rest of the argument is the focus.
 

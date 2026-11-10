@@ -23,8 +23,7 @@ run the command it prints before relying on the missing part.
 Without `.beads/`: a project with existing trackers or backlog files moves onto
 the board through `/board-migrate`; otherwise run `$HOME/.agents/bin/board
 setup` with the user's confirmation
-(`$HOME/.agents/skills/shared/beads-setup.md`). A board in older
-conventions also moves through `/board-migrate`. Leave `bd setup` unrun; session
+(`$HOME/.agents/skills/shared/beads-setup.md`). Leave `bd setup` unrun; session
 hooks supply agent guidance. Share or join a board only on the user's request
 ([Shared boards](../shared/beads-setup.md#shared-boards)); `board` syncs a
 shared board, the user an unshared one (`bd dolt push`/`pull`).
@@ -41,9 +40,7 @@ shared board, the user an unshared one (`bd dolt push`/`pull`).
   session under [Routing](#routing)) or `board claim <ids>`
   (named items). Claiming a named item held within your own session (your
   actor or one of your workers) takes it over.
-- `board claim` lists the items you still hold; run
-  `board mine` after compaction or resume. Finish, hand over
-  or unclaim each.
+- Finish, hand over or unclaim each item you still hold.
 - Nothing frees a hold automatically. Free another doer's hold only with
   `board take <id>` (reassign to you with a comment) or
   `board unclaim <id>`. Free another session's hold only as
@@ -51,6 +48,8 @@ shared board, the user an unshared one (`bd dolt push`/`pull`).
   `board position` marks the holder gone, or you judge an idle-marked holder
   gone. For your own workers' holds marked stopped in `board mine`: continue
   the worker, hand the item over or free it.
+- At your worker cap, hand over or unclaim partial work before
+  `board claim --force "<reason>"`.
 - On a shared board, `held elsewhere` (with its last update) marks a holder
   outside this machine's registry: ask its person instead of freeing the hold.
 
@@ -79,11 +78,9 @@ follow these rules yourself:
 
 - Pull `plan` also claims the board restructuring tasks it creates itself.
 - Pull `review` takes a review first while a review-pulling session is active.
-- Lead claims by id its round's open decisions, `needs_ratification` records,
-  `in_review` design items and ready milestones, and closes finished epics
-  whose acceptance names the user.
-- Solo claims ready milestones by id; solo and autopilot run every other kind
-  through one worker per item.
+- A session with the decide set (lead, solo) claims by id its round's open
+  decisions, `needs_ratification` records, `in_review` design items and ready
+  milestones, and closes finished epics whose acceptance names the user.
 
 Questions, autopilot's parked ones included, stay unassigned until a session
 claims them.
@@ -102,10 +99,10 @@ item sits in a person's queue (the person's sessions work it):
 - **Moves:** only lead and solo sessions and a person's terminal change an item's
   queue: `board route <person> <ids…>`, `board send <person> <ids…>` (into the
   inbox), or a parent change for an item inheriting its queue. Other sessions ask
-  a lead.
+  a deciding session.
 - **Finds for another person:** `board create --for <person> <title> …`
-  (top-level), held for your check until a lead sends it; their lead routes it
-  from the inbox (decide.md Inbox step).
+  (top-level), held for your check until a deciding session sends it; their
+  deciding session routes it from the inbox (decide.md Inbox step).
 - **Questions:** the person of a question's queue decides and releases it
   ([Authority](../role/protocols/decide.md#authority)).
 
@@ -116,8 +113,7 @@ item sits in a person's queue (the person's sessions work it):
   land together in one item (atomic rename, contract plus its only caller).
   Split parts with a different blocker or dependent. Turn umbrellas into epics.
   Cut a check others wait on (whole typecheck, fresh build) as a task; its
-  acceptance is the recorded passing run. Give related small items to one
-  worker together.
+  acceptance is the recorded passing run.
 - Fields: description (outcome and reason), `--design` (contract, file zones,
   checks, ruling ids with owner anchors), `--acceptance` (done criteria),
   `--spec-id` (specification reference), `blocks` edges.
@@ -167,7 +163,7 @@ Use these `##` sections:
 | Question | Exact choice. |
 | Consumer scenarios | The simple case and each realistic case where the options' outcomes differ, with who hits it. |
 | Root cause and end state | Decision protocol's Root fix and End state, designed fresh, with its consumer code. |
-| Prior rulings (evidence) | Rulings, rules, docs and pending approvals touching the question: owner, and whether the end state keeps or revises each. They narrow no option; options a missing approval blocks stay in the set. |
+| Prior rulings (evidence) | Rulings, rules, docs and pending approvals touching the question: owner, and whether the end state keeps or revises each ([Others' input](../shared/decision-protocol.md#others-input)); options a missing approval blocks stay in the set. |
 | Premises and evidence | Each premise with `path:line` or executed results, or the question that asks it; limits. |
 | Options | Decisive trade-offs, always including the end-state option and the prior rulings it revises; use `architect` or `option-explorer` for consequential choices or open option spaces. |
 | Recommendation | Recommended option and conditions changing it. |
@@ -203,17 +199,19 @@ context coincide, keep `blocks`.
 | Shared context, alternatives, a ruling's context-only item | `relates-to`: `board bd dep relate A B` |
 | B revises ruling A | `board revise A` links B at creation; release supersedes A ([Rulings](../shared/board-coordination.md#rulings)) |
 | B waits on the user's go (no open decision) | On the user's instruction only; raise your own caution as a question. `board bd gate create --type=human --blocks B --title "user <date>: '<words>'"`; more items: `board bd dep add <item> <gate>`; lift on the user's word or a covering released ruling: `board bd gate resolve <gate>`. |
-| External wait | gate ([Upstream waits](../shared/board-coordination.md#upstream-waits)) |
+| External wait on another project's delivery | gate; read `$HOME/.agents/skills/shared/upstream-waits.md` first |
 
 ### Hand-over and acceptance
 
 1. Scope an item's acceptance under Acceptance [Evidence and gates](../shared/acceptance.md#evidence-and-gates)
    (`$HOME/.agents/skills/shared/acceptance.md#evidence-and-gates`).
-2. Keep active work `in_progress` with its current resume point in `notes`
-   (`board bd update <id> --notes "<point>"`), replaced as the work moves;
-   record history as comments, in plain sentences. Hand over only with
+2. Keep active work `in_progress` with its current state in `notes` (areas,
+   resume point, what it waits on: `board bd update <id> --notes "<state>"`).
+   Rewrite every field (description, `--design`, `--acceptance`, `notes`) to
+   the current state instead of appending to it; comments hold only one-line
+   events, and history lives in `board bd history`. Hand over only with
    complete evidence for the item's acceptance; keep partial work open with
-   the remainder in `--acceptance`, and block waiting work on what it needs.
+   the remainder as its `notes`, and block waiting work on what it needs.
 3. Hand over with the evidence: `board handover <id> "<evidence>"`.
 4. The acceptor claims the item (`board claim <id>` prints its author), then
    closes it with the verdict as reason (`board bd close <id> --reason …`) or
@@ -267,5 +265,7 @@ dispatch, `board bd dep cycles`.
 - Give `board bd create` a description and `board bd close` a reason of 20+
   characters.
 - Inspect board-wide changes with `board bd events tail --since <seq>`.
-- On a shared board, run the fix a `board: sync …` line names; other work
-  continues.
+- On a shared board, run the fix a `board: sync …` line names (a conflict where
+  one side deleted the row: `--all --table issues`; `--all` alone fails when a
+  dependency row conflicts); other work continues unless beads refuses the
+  write.

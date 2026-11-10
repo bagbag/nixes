@@ -4,7 +4,7 @@ Owns each session's protocol state in <state dir>/<session>.protocol/ and tells 
 per step. Protocols: `round`, the decide protocol's Round from Collect to Record
 (skills/role/protocols/decide.md#round, skills/shared/asking.md), and `release`, its Release
 (decide.md#release), in the same run slot. `next` lists the seed questions of the next round and the model's stored
-proposal (`next --set`), and what waits on the user. What a session was told (report formats, the question list per check cycle, the open-item list, Durable owners)
+proposal (`next --set`), and what waits on the user. What a session was told (report formats, the question rows last printed, the open-item list, Durable owners)
 is `state['told']`, cleared by `compacted` (README). The console mod reads `show --json`, `pending` and `scope`; the state file stays internal. Contract: console-spec 1a plus the lead's contract rulings (version 1).
 
 Approvals (answers, the check cap's "ask now") count only from the person: `answer` takes origin `dialog` (the
@@ -31,7 +31,6 @@ from .session import resolve_session
 from .store import Store, next_id
 from .boards import Board, board_root
 from .engine import Context, PROTOCOLS, fail
-from .told import forget_runs
 from .record import abandon_note, refresh_board, release_claims
 from .away import SWITCH_TO_SOLO
 from .check import next_cycle, pending_view, refused_formats, start_scope
@@ -84,7 +83,6 @@ def start(ctx: Context, name: str, report: dict, scope: str = 'board', records: 
     if ctx.board is None and records is None:
         fail('no board here: name the records folder with `start round --no-board <dir>`')
     ctx.state.pop('proposal', None)  # a round starts from its proposal or without one: the next proposal is made after it
-    forget_runs(ctx)
     ctx.state['round'] = {'id': next_id(ctx.state, 'round', 'r'), 'protocol': name, 'step': 'collect',
                           'repo': ctx.board.repo if ctx.board else None, 'scope': scope,
                           'records': str(records.resolve()) if records else None, 'items': [],
@@ -264,6 +262,7 @@ def run(ctx: Context, args) -> str:
         return json.dumps(pending_view(ctx))
     if command == 'compacted':
         ctx.state['told'] = []
+        ctx.state.pop('rows', None)
         ctx.store.log({'round': (ctx.round or {}).get('id'), 'event': 'compacted'})
         return words.COMPACTED
     if command == 'status':

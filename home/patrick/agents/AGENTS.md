@@ -4,16 +4,15 @@
 
 When guidance seems to conflict, these decide:
 
-- **Decisions belong to the user.** Surface real choices with a recommendation; decide alone only trivial, reversible defaults and entailed choices (no other realistic, clean alternative); the decision protocol's Decision authority owns the details.
+- **Decisions belong to the user.** Surface real choices with a recommendation; decide alone only trivial, reversible defaults and entailed choices (no other realistic, clean alternative); Decision authority in `$HOME/.agents/skills/shared/decision-protocol.md` owns the details.
 - **Decisions stay revisable.** Treat prior decisions and ratifications as
-  current authorized commitments. Actively reassess them when new information,
-  changed constraints, overlooked consequences, or better-supported alternatives
-  materially change their case. Explain what changed and recommend retaining,
-  refining, or reversing the decision on its current merits, including future
-  costs of retaining or changing course. Retain decisions whose supporting case
-  remains sound.
-  Return consequential revisions to the user or decision owner; apply revisions
-  within existing delegated authority and update affected work and records.
+  current authorized commitments; retain one while its case holds. Actively
+  reassess it when new information, changed constraints, overlooked
+  consequences or a better-supported alternative materially change its case:
+  say what changed and recommend retaining, refining or reversing it on its
+  current merits, with each option's future cost. Return consequential
+  revisions to the user or decision owner; apply others within delegated
+  authority and update affected work and records.
 - **Challenge on receipt.** Evaluate proposals and rulings before implementing
   them; bring a better evidence-backed alternative to their owner and follow
   the current ruling until the owner rules.
@@ -51,7 +50,7 @@ Apply all six as pass/fail tests to committed behavior:
 
 ## Align before you act: clarify open questions and ambiguities
 
-For anything non-trivial or hard to reverse, resolve open points, ambiguities and gaps before starting, until we share the **same idea, plan, and definition of "done"**; fill no gap with a guess, and start substantive work only on a settled premise. For trivial, reversible steps, act on the obvious interpretation and note the assumption.
+For anything non-trivial or hard to reverse, resolve open points, ambiguities and gaps before starting, until we share the **same idea, plan, and definition of "done"**; fill no gap with a guess, and start substantive work only on a settled premise.
 
 - Answer the user's question in your next reply, grounded; hold your own
   questions and unrelated work until then.
@@ -66,7 +65,7 @@ For anything non-trivial or hard to reverse, resolve open points, ambiguities an
   into one question per part; ask the settled parts now and hold the
   rest, naming the rule that applies meanwhile. After the last round, start substantive
   work once the user confirms the resulting premise.
-- Surface ambiguities instead of silently picking an interpretation: flag small ones in one line; block and ask only when getting it wrong would be costly.
+- Surface ambiguities instead of silently picking an interpretation: for a small one or a trivial, reversible step, act on the obvious interpretation and flag it in one line; block and ask only when getting it wrong would be costly.
 - Before consequential or ambiguous work, sketch the approach. Ask for
   confirmation when it contains a user-owned choice; otherwise state the
   assumptions and proceed.
@@ -84,9 +83,9 @@ authorized work and pause the work that depends on that decision.
 
 Get explicit confirmation before running git commands that modify the working tree, index, stashes, refs, or commit history — `reset`, `checkout`/`switch`/`restore` that discard changes, `stash`, `rebase`/`merge`/`cherry-pick`, `commit --amend` and other history rewrites, `clean`, `push --force`, branch/tag deletion. Read-only commands are always fine. Explain why when asking.
 
-**Renames and moves** of git-tracked files and folders use `git mv` by default, not filesystem moves (or `mv` + `git add`).
+**Renames and moves** of git-tracked files and folders use `git mv` by default, not filesystem moves (or `mv` + `git add`). Workers run `git mv` and `git add -N` themselves on their own zone's paths, retrying once on a busy index lock.
 
-**Committing and staging.** Commit and push only when the user explicitly asks ("commit this", "commit and push", `/commit`); plans, todo lists, and workflow steps do **not** count as that instruction. When the tree reaches a coherent, verified state (bug fixed with tests passing, a feature step complete, a refactor done with lint/tests green), end the turn with the headline only: `✅ Good commit point: <subject>`. Follow the project's commit convention when defined. Otherwise use a **Conventional Commit** subject in the form `<type>(scope): <description>` (≤ 72 characters), then a blank line and a concise `- ` bullet list summarizing the material changes.
+**Committing and staging.** Exception: the session or reviewer that closes a board item commits that item's paths, and only those, on the checked-out work branch, never on `main`; every push stays the user's. Otherwise commit and push only when the user explicitly asks ("commit this", "commit and push", `/commit`); plans, todo lists, and workflow steps do **not** count as that instruction. When the tree reaches a coherent, verified state (bug fixed with tests passing, a feature step complete, a refactor done with lint/tests green), end the turn with the headline only: `✅ Good commit point: <subject>`. Follow the project's commit convention when defined. Otherwise use a **Conventional Commit** subject in the form `<type>(scope): <description>` (≤ 72 characters), then a blank line and a concise `- ` bullet list summarizing the material changes.
 
 ## Sandbox and permissions
 
@@ -106,7 +105,7 @@ Before deleting or overwriting anything you did not create in this session — `
 When reviewing code (reviews, roasts, audits), verify each finding against the **current source** before reporting it as a defect. Drop it if it is either:
 
 - **false-positive** — does not hold,
-- **intentional** — a deliberate design choice (e.g. bidirectional cross-service access).
+- **intentional** — a deliberate design choice whose trade-off still serves the goal (e.g. bidirectional cross-service access); raise one whose trade-off no longer does as a revision.
 
 Surface and recommend changes only for **confirmed** findings. When unsure whether something is intentional, ask before treating it as a smell.
 
@@ -132,6 +131,7 @@ Write brief progress notes and findings as you work. Everything the user needs t
 
 - **Bugs**: write a failing test that reproduces the bug *before* the fix.
 - **Features**: write tests alongside the implementation, not after.
+- **Each new test**: break the behavior it covers once, see the test fail, restore it, and list the breaks in your report.
 
 ## Keep docs in sync with the change that touches reality
 
@@ -184,7 +184,7 @@ Make a change yourself instead of delegating when it is decided, bounded,
 reversible, outside active worker zones and settled by a cheap check, and you
 could already write its exact result.
 Configure named agents where the tool supports them; otherwise put the role,
-constraints, and expected report directly in the brief. Model bindings belong
+constraints, and expected report and its length directly in the brief. Model bindings belong
 in native agent configuration, never in plans or worker briefs.
 
 For artifact-producing assignments, assign output paths under
@@ -199,12 +199,11 @@ specialist when a file is required.
 **Acceptance gates:** choose each result's gate by its stakes under the
 review policy in `$HOME/.agents/skills/shared/acceptance.md`.
 
-**Routing rule:** choose by **spec completeness, not task size**: `transform`
-when you can describe the exact result; `build` when the brief determines the
-approach, typically through an existing pattern or established wiring; `craft`
-when the task needs design judgment beyond the pattern. Default to the cheapest
-role whose brief you can complete, with STOP conditions; escalate the decisions
-workers return as beyond them.
+**Routing rule:** `transform` when you can describe the exact result; `build`
+by default for implementation, including work with a pattern to follow or
+established wiring; `craft` only after the retry limit, or for design the plan
+cannot settle. Use the cheapest role whose brief you can complete, with STOP
+conditions; escalate the decisions workers return as beyond them.
 
 **Retry limit:** two failed attempts on one underlying problem, counted across
 workers, review rounds and escalation; new failing examples, reassignment and
@@ -227,19 +226,18 @@ what it would assess. Weigh context rebuild cost against tier; a narrow follow-u
 often favors a warm stronger agent. Continue only while the agent's last turn ended at most 30 minutes
 ago (`$HOME/.agents/bin/worker-last-use`, a recency hint: if continuation
 fails, start fresh). Start fresh for independent
-judgments, changed premises, or at the retry limit. Brief
+judgments, a changed premise the verdict rested on, or at the retry limit; an addition is an amendment to the same agent. Brief
 warm agents with the delta: new task, changes since, and superseded context.
 
 Skills that coordinate multi-worker arcs use
 `$HOME/.agents/skills/role/protocols/plan.md` for planning, briefing and
 dispatch, and `$HOME/.agents/skills/role/protocols/review.md` with
-`$HOME/.agents/skills/shared/acceptance.md` for review and acceptance. The lead remains accountable for results.
+`$HOME/.agents/skills/shared/acceptance.md` for review and acceptance. The invoking session remains accountable for results.
 
 ## Project memory
 
 When an active skill or project workflow calls for a board or durable design
-docs, follow `$HOME/.agents/skills/shared/project-memory.md`. Workers whose brief points to a
-board must flag board/spec contradictions.
+docs, follow `$HOME/.agents/skills/shared/project-memory.md`.
 
 ## Closure
 

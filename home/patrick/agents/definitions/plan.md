@@ -58,3 +58,5 @@ Write the plan exactly to the supplied path with file-editing tools and return
 it with a summary; without a path, respond with the plan. Keep shell commands
 read-only. Never modify implementation or other files, or authorize the next
 phase.
+
+<!-- @include shared/report.md -->

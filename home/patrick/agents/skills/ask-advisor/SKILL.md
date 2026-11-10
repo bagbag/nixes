@@ -8,8 +8,6 @@ disable-model-invocation: true
 
 # Ask advisor
 
-<!-- @include shared/rerun.md -->
-
 1. Make the result durable (files written).
    Output: the written paths.
 2. Re-read the changed files yourself.

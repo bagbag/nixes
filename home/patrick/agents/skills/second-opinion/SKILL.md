@@ -1,11 +1,12 @@
 ---
 name: second-opinion
 description: >-
-  Get an independent verdict from a fresh reviewer on a consequential
-  decision, architecture, plan, blocker or proposed solution. Use when the
-  user asks for a second or 2nd opinion, a fresh reviewer, fresh eyes,
-  independent reassessment or sign-off; the verdict returns to the user. Not
-  for widening the options (explore-options).
+  Get an independent verdict or sign-off from a fresh reviewer on a
+  consequential decision (an architecture choice included), plan, blocker or
+  proposed solution. Use when the user asks for a second or 2nd opinion, a
+  fresh reviewer, fresh eyes, independent reassessment or sign-off on a
+  decision; the verdict returns to the user. Not for widening the options
+  (explore-options).
 ---
 
 # Second Opinion
@@ -20,16 +21,16 @@ context, not independent review. Apply [Reviewers](#reviewers) throughout.
   decision, proposal or claim; committed goal, product boundary, constraints
   and non-goals; authoritative sources and current empirical facts; opinion or
   strict sign-off.
-- Write long briefs to a file. For a substantive assessment, assign a path,
-  expected content and exclusive write ownership; keep short opinions in the
-  response.
+- Write long briefs to a file. For a substantive assessment, assign its output
+  path (AGENTS.md Orchestration and delegation) and expected content; keep
+  short opinions in the response.
 
 Output: the neutral brief or its path.
 
 ## 2. Dispatch
 
 - Start each requested opinion with a new `second-opinion` agent and only the
-  neutral brief; native configuration owns model, sandbox and output contract.
+  neutral brief.
 - Give repository access and source pointers; require verification of the
   brief's factual claims. On the user's request, permit broader exploration
   while keeping the decision and product boundary explicit.
@@ -54,8 +55,8 @@ Output: agent dispatched, depth.
   disagreements with what changed or stayed persuasive, and remaining decisions
   for the user. The opinion authorizes nothing.
 
+Output: options, recommendation, disagreements, remaining decisions.
+
 <!-- @include shared/decision-protocol.md -->
 
 <!-- @include shared/reviewers.md -->
-
-Output: options, recommendation, disagreements, remaining decisions.

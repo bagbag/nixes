@@ -15,14 +15,16 @@ The goal belongs to the user. Align it before architecture and planning:
 explicit, testable, sized for the next coherent milestone. A goal authorizes no
 execution.
 
-## Mode
+## 1. Mode
 
 - **Establish:** a new project or substantial arc.
 - **Advance:** the next milestone or wave from a ratified direction.
 - **Refocus:** recover from drift by implementation, reviews or accumulated
   scope.
 
-## Build the contract
+Output: the mode.
+
+## 2. Build the contract
 
 - Orient from the user's framing and current owners. Read
   `$HOME/.agents/skills/shared/project-memory.md`; follow its
@@ -45,10 +47,11 @@ execution.
   which capabilities wait and when the user assesses expansion.
 - Interview in rounds: user and outcome first, then value path, milestone,
   walking skeleton, non-goals and acceptance. Keep the contract open while a
-  field is unresolved. Bring consequential alternatives with trade-offs and a
-  marked recommendation. Ratify the complete contract before architecture.
+  field is unresolved. Ratify the complete contract before architecture.
 
-## Challenge acceptance
+Output: the contract fields, unresolved ones marked open.
+
+## 3. Challenge acceptance
 
 - Check what success delivers or teaches about why the work exists.
 - Count a safe fallback, no-op, placeholder or universally fail-closed path
@@ -58,14 +61,18 @@ execution.
 - When structure or process grows without executable value, Refocus: derive a
   smaller coherent milestone and revise the contract.
 
-## Ratify and record
+Output: acceptance findings; a Refocus where structure outgrew value.
+
+## 4. Ratify and record
 
 - Reuse a ratified contract while premise and scope hold; present new or
   materially changed commitments for user ratification.
 - Record ratified commitments in their durable owner before dependent planning
   or dispatch. Boards link goal owners under
-  `$HOME/.agents/skills/shared/board-core.md`. A lead releases a contract
+  `$HOME/.agents/skills/shared/board-core.md`. A deciding session releases a contract
   revision like any ruling, under Release in
   `$HOME/.agents/skills/role/protocols/decide.md`.
 - In a proposal-only or read-only task, return the contract and proposed owner
   instead of writing files.
+
+Output: the ratified contract and its owner path, or the proposed contract and owner.

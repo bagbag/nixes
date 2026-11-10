@@ -51,6 +51,10 @@ export type World = {
   asUser: boolean[]
   prompts: string[]
   opened: string[]
+  /** Ids of the rows `$.ui.place` was given. */
+  placed: string[]
+  /** Whether a surface draws a placed row; false answers `isPlaced: false`. */
+  isPlacing: boolean
   tools: { name: string; isDeferred: unknown }[]
   /** Command names the console registered. */
   registered: string[]
@@ -92,7 +96,7 @@ export function world(on: On, init: Partial<Pick<World, 'round' | 'role' | 'surf
     role: init.role === undefined ? { session: SESSION, role: 'lead', actor: '617adf08', tool: 'claude' } : init.role,
     surfaces: init.surfaces ?? ['terminal'],
     activateError: init.activateError,
-    calls: [], commands: [], prompts: [], asUser: [], opened: [], tools: [], registered: [], toasts: [], notified: [], views: [],
+    calls: [], commands: [], prompts: [], asUser: [], opened: [], placed: [], isPlacing: true, tools: [], registered: [], toasts: [], notified: [], views: [],
     files: new Map(),
     sessions: init.sessions ?? [
       { session: SESSION, role: 'lead', actor: '617adf08', pulls: [], holds: 2, workers: null, state: 'active', idleSince: null, claimable: 0 },
@@ -131,6 +135,7 @@ export function world(on: On, init: Partial<Pick<World, 'round' | 'role' | 'surf
   on('command.list', () => ({ value: [{ name: 'compact', description: '', source: 'builtin' }, { name: 'step-back', description: '', source: 'user' }] as never }))
   on('tool.register', (_, e) => { w.tools.push({ name: e.name, isDeferred: e.isDeferred }); return { value: { tool: `mcp__console__${e.name}` } } })
   on('ui.open', (_, e) => { w.opened.push(e.id); return { value: { isPlaced: true } } })
+  on('ui.place', (_, e) => { w.placed.push(e.id); return { value: { isPlaced: w.isPlacing, requestId: 'row' } as never } })
   on('ui.toast', (_, e) => { w.toasts.push(e.text); return { value: undefined } })
   on('ui.notify', (_, e) => { w.notified.push(e.text); return { value: { isSent: true, channel: 'iterm2' } } })
   on('ui.view', (_, e) => { w.views.push(e); return { value: {} } })

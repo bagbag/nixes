@@ -6,8 +6,8 @@ from . import words
 
 
 # What a session was told, in one place: `state['told']`, a list of keys, cleared by `protocol compacted` (r17-q62, q63, q67,
-# r18-q68..q70). Keys: `format:<step>` (a step's report format), `ask`, `owners`, `items`, `same-options:<round>:<ids>` (advice on
-# questions offering identical options), and per check cycle `cycle:<what>:<round>:<check run>.<cycle>` (the question list).
+# r18-q68..q70). Keys: `format:<step>` (a step's report format), `ask`, `owners`, `items`, `routes` (the answer-routes note) and `same-options:<round>:<ids>` (advice on
+# questions offering identical options). Beside it `state['rows']` holds the question rows last printed (r13-q66).
 
 def first_time(ctx: Context, key: str) -> bool:
     """True when this session was not told `key` since its last compaction, and records it. A read the model asked for says
@@ -21,14 +21,15 @@ def first_time(ctx: Context, key: str) -> bool:
     return True
 
 
-def cycle_key(ctx: Context, what: str) -> str:
-    r = ctx.round
-    return f"cycle:{what}:{r['id']}:{r.get('checkRun', 0)}.{r['check'].get('cycle', 0)}"
-
-
-def forget_runs(ctx: Context) -> None:
-    """A new run starts: the old runs' cycles go from the record."""
-    ctx.state['told'] = [key for key in ctx.state.get('told') or [] if not key.startswith('cycle:')]
+def changed_rows(ctx: Context, round_id: str, rows: dict[str, str]) -> list[str]:
+    """The question rows that differ from what this session last saw printed (`state['rows']`, cleared by a compaction), and
+    records the new rows. A read the model asked for lists every row and records nothing."""
+    if ctx.complete:
+        return list(rows.values())
+    seen = ctx.state.get('rows') or {}
+    before = seen.get('rows', {}) if seen.get('round') == round_id else {}
+    ctx.state['rows'] = {'round': round_id, 'rows': rows}
+    return [row for qid, row in rows.items() if before.get(qid) != row]
 
 
 def report_format(ctx: Context, kind: str, text: str) -> str:

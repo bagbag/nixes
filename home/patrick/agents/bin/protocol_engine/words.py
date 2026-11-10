@@ -7,7 +7,7 @@ from __future__ import annotations
 import re
 
 from .base import (
-    AWAY, BATCH, CHECK_CAP, DESCRIPTION_MAX, HEADER_MAX, LIST_COMMAND, PROPOSAL_ROUNDS, SEEDS, STRONG_CRITERIA, SUMMARY_MAX,
+    ALL_LENSES, AWAY, BATCH, CHECK_CAP, DESCRIPTION_MAX, HEADER_MAX, LIST_COMMAND, PROPOSAL_ROUNDS, SEEDS, STRONG_CRITERIA, SUMMARY_MAX,
     TEXT_LIMIT, TEXT_MAX, THINK_MORE, TITLE_MAX, cut, json_block, lines, plural
 )
 
@@ -51,8 +51,8 @@ def check_row(q: dict) -> str:
             + (f" — {held_detail(q)}" if q['status'] == 'held' else ''))
 
 
-def questions_counted(n: int) -> str:
-    return f'{plural(n, "question")} (protocol show lists them)'
+def questions_counted(n: int, changed: int) -> str:
+    return f'{plural(n, "question")}, {changed} listed above as new or changed (protocol show lists them)' if changed else f'{plural(n, "question")}, none changed (protocol show lists them)'
 
 
 def check_title(round_id: str, cycle: str | None) -> str:
@@ -118,11 +118,11 @@ def pass_format(command: str) -> str:
     return lines(
         'After the pass, report each change as a per-question update: changed fields, a new question (no id; it goes last, '
         'or ahead of the question its `before` names), or '
-        '{"id", "remove": true, "reason"}; report an empty list when nothing changed. A pass that would revise a '
-        "user's ruling raises it as a new question. "
+        '{"id", "remove": true, "reason"}; report an empty list when nothing changed. Raise a change that would revise a '
+        "user's ruling as a new question. "
         f'{WAITS_FOR} Name a hold you set for your own spike or review in `summary`. {MERGE_TEST} A merge is one rule question (`settles`: the keys it settles); split an item out when the rule\'s application to it is open. '
         f'A question that widens the round\'s scope: list the open items with `{LIST_COMMAND}`.',
-        'Key `checked` by question: for each id the step names as this pass\'s scope, what you examined in it this run (an update '
+        'Key `checked` by question: for each id the step names as this pass\'s scope, what you examined in it this run, one line of about 120 characters (an update '
         'to it covers it too); `round` holds a round-wide note, the only entry an empty scope needs.',
         'Report with `protocol step` (stdin JSON), e.g. ' + json_block({
             'pass': command, 'updates': [{'id': 'q1', 'premises': '<revised premise>'}],
@@ -209,8 +209,8 @@ def items_counted(named_rows: list[dict] | None, counts: str, bare: bool) -> str
         'and `board position` for the ready milestones and finished epics.' + (' List them before you select.' if bare else ''))
 
 
-GROUP_STEER = ('Group by default: the round takes every ready question sharing a premise, root cause, flow or sources '
-               '(`board related` finds them); a round of a single question names why no other shares one.')
+GROUP_BY = 'every ready question sharing a premise, root cause, consumer concept, flow, or the module and sources the grounding reads'
+GROUP_STEER = f'Group by default: the round takes {GROUP_BY} (`board related` finds them); a round of a single question names why no other shares one.'
 
 
 def collect_intro(round_id: str) -> str:
@@ -248,8 +248,7 @@ def select_row(key: str, priority, klass, blocked_by: list[str], title: str) -> 
 def select_intro(round_id: str, topic: str | None, single: bool) -> str:
     return (f"Round {round_id} · Select one round (asking.md Scope)"
             + (f" on the topic: {topic}" if topic else '')
-            + ': every ready question sharing a premise, root cause, consumer concept, flow, or the module and sources the '
-            'grounding reads, a named question leading; ' + ('a round of a single question names why no other shares one. ' if single else
+            + f': {GROUP_BY}, a named question leading; ' + ('a round of a single question names why no other shares one. ' if single else
                                                              'start from the highest-priority unblocked question. ')
             + 'Candidates in order:')
 
@@ -261,29 +260,35 @@ SELECT_NONE = '- none: report {"select": []} to close the round'
 
 def stage_instructions(round_id: str, selected: list[str], has_board: bool, proposed: bool) -> str:
     """`proposed`: the round took its title and summary from a stored proposal."""
-    return (
+    return lines(
         f"Round {round_id} · Stage the questions for {', '.join(selected)} under asking.md Question format"
         + (". The round keeps the proposal's `title` and `summary`; report a `round` with both to replace them "
-           "where the selected questions differ from the proposal." if proposed else ', with a round `title` and `summary`.')
-        + ' A board item keeps its id in `board`; a pasted point or new '
-        'question is a draft (`board`: null, `for`: the point id)' + (', created on the board at Record' if has_board else '') + '. `settles` lists the items '
-        f'one answer settles the same way (a rule question); an open decision outside the selection named there or in `board` joins the round. {MERGE_TEST} `waitsOn` names the questions a '
-        'decision rests on; kind confirm-own-rulings asks the user to confirm your rulings. Each question carries the parts the '
+           "where the selected questions differ from the proposal." if proposed else ', with a round `title` and `summary`.'),
+        '- Ids: a board item keeps its id in `board`; a pasted point or new '
+        'question is a draft (`board`: null, `for`: the point id)' + (', created on the board at Record' if has_board else '') + '.',
+        '- `settles` lists the items '
+        f'one answer settles the same way (a rule question); an open decision outside the selection named there or in `board` joins the round. {MERGE_TEST}',
+        f'- `waitsOn` names the questions a decision rests on; it holds a dependent back until its premise is answered; {WAITS_FOR}',
+        '- Kind confirm-own-rulings asks the user to confirm your rulings.',
+        '- Each question carries the parts the '
         'engine prints before its dialog, in your own words. Printed parts say what is decided and what each option means for the person '
         '(what they would see, what it costs), each thing once, in plain words; how it was found (sources, measurements beyond the deciding '
-        'number, who said what) and how it gets built go to the record. Required: `problem` (what is decided and why now) and per option `for` and `against`; '
-        'on every option of a code, API, naming or shape choice, an `example`: a few lines of the code as written under that option, printed below it (question-format.md). '
-        'Optional, printed only when present: `cases` (the concrete cases that must and must not work), `premises` (what it rests on), '
+        'number, who said what) and how it gets built go to the record.',
+        '- Required: `problem` (what is decided and why now) and per option `for` and `against`; '
+        'on every option of a code, API, naming or shape choice, an `example`: a few lines of the code as written under that option, printed below it (question-format.md).',
+        '- Optional, printed only when present: `cases` (the concrete cases that must and must not work), `premises` (what it rests on), '
         '`rulings` (each ruling of yours with why it meets the goals without a material trade-off, its strongest alternative, what that fails and the evidence, which only the record keeps) and `note` (a term to define, anything else); '
         'a round may carry one `overview` line across '
-        'its questions. A rule question\'s `premises` says how the rule applies to each settled item; the engine prints each item\'s id and title. Mark each recommendation '
+        'its questions. A rule question\'s `premises` says how the rule applies to each settled item; the engine prints each item\'s id and title.',
+        '- Mark each recommendation '
         'under decision-protocol.md Recommendation strength: strong sets `strongBecause` '
         f"{', '.join(STRONG_CRITERIA)} each to \"true: <evidence>\" (\"does-not-apply: <reason>\" for consumerWalk "
         'and rulingsChallenged); lean sets `leanBecause` with cause preference (`detail`: what it depends on; `flipsIf`: what you would have to value '
-        'to pick another option) or evidence. `priorRulings` holds one entry per released ruling a recommendation rests on or Related linked: '
-        '{"ruling", "verdict": "holds" or "fails", "why"}; judge the options as if no ruling existed first; an answer from this round stays a premise. Questions go out in the listed '
-        f'order, {BATCH} at a time; `waitsOn` holds a dependent back until its premise is answered; {WAITS_FOR} Lengths to keep to in characters and who '
-        f'reads each field: round `summary` {SUMMARY_MAX} (pane header); `title` {TITLE_MAX} (pane row; a question\'s '
+        'to pick another option) or evidence.',
+        '- `priorRulings` holds one entry per released ruling a recommendation rests on or Related linked: '
+        '{"ruling", "verdict": "holds" or "fails", "why"}; judge the options as if no ruling existed first; an answer from this round stays a premise.',
+        f'- Order: questions go out in the listed order, {BATCH} at a time.',
+        f'- Lengths in characters and who reads each field: round `summary` {SUMMARY_MAX} (pane header); `title` {TITLE_MAX} (pane row; a question\'s '
         f"is also the board item's title); `text` {TEXT_MAX}, without a number (the engine numbers the dialog; it is the dialog "
         f"question and the board item's Question); `header` "
         f'{HEADER_MAX} (dialog chip); option `label`, `description` {DESCRIPTION_MAX}.')
@@ -314,12 +319,15 @@ def stage_example(first_selected: str | None) -> dict:
 
 
 def related_instructions(round_id: str) -> str:
-    return (
-        f"Round {round_id} · Related: each new draft's board hits need an outcome before asking: duplicate or "
-        'extend (the question takes that item over, in place: the same question answered again), relate (link at Record), '
-        'supersedes (a different question, or one replacing several records: Record closes each decided record it '
+    return lines(
+        f"Round {round_id} · Related: each new draft's board hits need an outcome before asking:",
+        '- duplicate or extend: the question takes that item over, in place (the same question answered again);',
+        '- relate: link at Record;',
+        '- supersedes: a different question, or one replacing several records; Record closes each decided record it '
         'replaces once the answer is recorded, and opens a released one as a revision, replaced at release; a change to '
-        'one clause is no replacement), unrelated. Mark `supersedes` on any decided record the question replaces, a hit or '
+        'one clause is no replacement;',
+        '- unrelated.',
+        'Mark `supersedes` on any decided record the question replaces, a hit or '
         'not (name the id under outcomes). Inspect with `board show <id>`; comment on or hand off overlaps '
         'other sessions hold. Also search the exact names of the modules, APIs and sibling cases the options build on '
         f'(`board related <terms>`). A hit that widens the round: list the open items with `{LIST_COMMAND}`.')
@@ -603,6 +611,7 @@ ANSWER_ROUTES = ('Act on each part of the user\'s words above: an option it pick
                  '`protocol edit` (updates + the quote); another request (explain, step back, ground, …) → run it; a reply that '
                  'changes a question (its recommendation included) → call a pass\'s skill on it, then report that pass. Restate '
                  'a part in one line when it could be read more than one way.')
+ANSWER_ROUTES_AGAIN = "Act on each part of the user's words above by the routes you were given."  # r13-q79; the full note again after a compaction
 NOTE_RECORD = 'A note no route takes stays in the record.'
 
 
@@ -873,8 +882,9 @@ def blocker_waits(blockers: list[str], found: dict) -> str:
     return 'waits on ' + ', '.join(f"{b} ({found[b] or 'not found'})" for b in blockers)
 
 
-TOUCHES_HINT = ('touches: "own" (only your own rationale, evidence or a clause the chosen option did not state: the record '
-                'stays, revised; give `file`, the corrected record text, which the engine writes with `board record`, and '
+TOUCHES_HINT = ('touches: "own" (only your own rationale, evidence, a clause the chosen option did not state, or a correction '
+                "that follows a later decision of the user's in the set, which you name: the record stays, revised and shown as revised at "
+                'approval; give `file`, the path of the corrected record text, which the engine writes with `board record`, and '
                 'a scoped step-back and ground pass check it before the approval) or "decision" (what the user decided: '
                 'the record leaves the set for a round); unsure is decision.')
 
@@ -894,7 +904,7 @@ BARE_RELEASE = ("A bare release takes the decided records this session holds, mi
 def recheck_example(first: list[str]) -> dict:
     return {'records': {rid: 'unchanged' for rid in first}
             | {'<id>': {'change': '<what changed>', 'reach': 'contained', 'why': '<why nothing else moves>',
-                        'touches': 'own', 'file': '<corrected record text, for own>'}}}
+                        'touches': 'own', 'file': '<path of the corrected record text, for own>'}}}
 
 
 def release_question_text(count: int, source: bool, unsure: list[dict], revised: list[dict]) -> str:
@@ -954,11 +964,13 @@ def release_waiting(round_id: str) -> str:
 
 
 def owners_intro(round_id: str) -> str:
-    return (f"Release {round_id} · Owner writes (decide.md Release 5): write each rule into its one owner, replacing "
-            "the text it supersedes, and name each path (with its anchor) in the record's `## Rule owner` (rewrite the "
-            'record with `board record <id> <file>`). A rule a topic\'s design-target doc states is written now, not pending. Report per record its owners: written {path, anchor} (a repo path '
-            'from the board root, or absolute/~; installed files by their installed path), none {reason}, or '
-            'pending {item} (an open board item).')
+    return lines(
+        f"Release {round_id} · Owner writes (decide.md Release 5): write each rule into its one owner, replacing the text it supersedes. "
+        "A rule a topic's design-target doc, `coding-style.md` or `module-authoring.md` states is written now, not pending; "
+        'only READMEs, other skills and source may be pending.',
+        "Name each path, with its anchor, in the record's `## Rule owner` (rewrite the record with `board record <id> <file>`).",
+        'Report per record its owners: written {path, anchor} (path: a repo path from the board root, or absolute/~; an installed file '
+        'by its installed path), none {reason}, or pending {item} (an open board item).')
 
 
 def owners_example(first: str) -> dict:
@@ -1068,7 +1080,7 @@ def unlinked_unavailable(error) -> str:
 
 def own_rulings_intro(round_id: str) -> str:
     return (f"Release {round_id} · Own rulings (decide.md Release 3): list every ruling you made in the set with "
-            "asking.md's disclosure fields: the ruling, what it meets without a material trade-off, its strongest realistic alternative, the test or principle that "
+            "the disclosure fields of `$HOME/.agents/skills/shared/asking.md`: the ruling, what it meets without a material trade-off, its strongest realistic alternative, the test or principle that "
             'alternative fails, and the evidence. Mark each `sure` only when it is entailed (decision-protocol.md Decision '
             'authority).')
 
@@ -1080,7 +1092,7 @@ def own_rulings_example(first: str) -> dict:
 
 
 def scoped_text(round_id: str, command: str, args: str, codex: bool) -> str:
-    lead = (f"Release {round_id} · Scoped {command} pass (decide.md Release 4) on the revised records {args}: the "
+    lead = (f"Release {round_id} · Scoped {command} pass (decide.md Release 1) on the revised records {args}: the "
             'corrected record text, each against its sources and the rest of the set. ')
     how = (f'Run the {command} skill now with the argument `{args}` (read its SKILL.md), then report the pass. '
            if codex else
@@ -1092,7 +1104,7 @@ def scoped_text(round_id: str, command: str, args: str, codex: bool) -> str:
 def scoped_example(command, first: list[str]) -> dict:
     return {'pass': command, 'records': {rid: 'unchanged' for rid in first}
             | {'<id>': {'change': '<what changed>', 'reach': 'contained', 'why': '<why nothing else moves>',
-                        'touches': 'own', 'file': '<corrected record text, for own>'}},
+                        'touches': 'own', 'file': '<path of the corrected record text, for own>'}},
             'summary': '<one line: what the pass found>'}
 
 
@@ -1169,7 +1181,7 @@ def next_recommend() -> str:
                                       'why': '<why this topic, and the priority/size trade>', 'fresh': False,
                                       'ids': ['<a question that must lead (optional)>']}]})
             + f'): at most {PROPOSAL_ROUNDS} rounds, the one that reuses the read context first with fresh false, other topics with '
-            'fresh true; `rounds` may be empty to offer only a compaction. Do not tell the user a round will compact. '
+            'fresh true; `rounds` may be empty to offer only a compaction. Leave compaction out of what you tell the user. '
             "Present the rows in chat under asking.md's Question format. "
             'Start row n with `protocol start round --proposal <n>`.')
 

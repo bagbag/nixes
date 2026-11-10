@@ -57,7 +57,7 @@ def park(ctx: Context, q: dict) -> None:
     if existing:  # the item exists already; the parts go in as a comment
         packet = path.with_suffix('.packet.md')
         packet.write_text(text, encoding='utf-8')
-        ctx.board.checked('bd', 'comments', 'add', item, '-f', str(packet))
+        ctx.board.checked('bd', 'comments', 'add', item, '-f', str(packet), '--board-packet')  # the board's own packet: exempt from the comment limit
     claimed = ctx.round.get('claimed', [])
     if item in claimed:
         ctx.board.checked('unclaim', item)

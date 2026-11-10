@@ -8,13 +8,13 @@ import type { ConsoleStart } from '../types'
 import {
   afterTurn, context, continueLater, continueTyped, CONTINUE_COMMAND, dropIfStale, failOpen, message, notice, PANE, placeholderMarker, pressRun, pressSubmit, recordPass, refreshAll, refreshBoard, refreshLater,
   refreshRole, refreshRound, releaseRun, rerunStoppedPass, resetSession, deliverDialogOutcome, dialogSwapped, stampReleaseRun, withContext,
-  midTurnBuiltin, modelStartedPass, notePersonRun, showQuestions, staleDelivery, startedPass, withStartScope,
+  midTurnBuiltin, modelStartedPass, notePersonRun, placeQuestions, questionList, showQuestions, staleDelivery, startedPass, withStartScope,
 } from './core'
 import { answer, boardShow, decline, isRoundOpen, pass, pending as readPending, protocol, RELEASE_COMMAND, say, statusLine, toolArgv } from './engine'
 import { capture, judgeDialog } from './gate'
 import type { DialogInput } from './gate'
-import { drawBand, drawPane, PANE_MIN_COLUMNS, suggestions } from './pane'
-import { addGate, deferCommand, getBoard, getGate, getPass, getPrinted, getRole, getRound, getStart, releaseRefresh, setAskSent, setPaneDismissed, setPrinted, setRound, setStart, setTurnRunning, takeDeferred } from './state'
+import { drawBand, drawPane, drawPlaced, PANE_MIN_COLUMNS, suggestions } from './pane'
+import { addGate, deferCommand, getBoard, getGate, getPass, getPrinted, getPersonOrigin, getRole, getRound, getStart, releaseRefresh, setAskSent, setPaneDismissed, setPersonOrigin, setPrinted, setRound, setStart, setTurnRunning, takeDeferred } from './state'
 import {
   compactedNote, consoleText, DECLINED_TEXT, declinedNote, keepRoundText, NO_QUESTION_TEXT, keepStartText, protocolCallText, protocolResultText, STALE_PASS_TEXT, startAbandonedText, toolFailedText, TOOL_IDLE_TEXT, unsavedNote,
 } from './words'
@@ -225,6 +225,7 @@ export const register: Register = on => {
       }
     }
     if (isPerson) {
+      await setPersonOrigin($, origin)
       await setStart($, null)  // the person's own prompt: a stored start is moot
       await setAskSent($, null)  // and the dialog message may go again for the batch still out
     }
@@ -331,6 +332,13 @@ export const register: Register = on => {
     if (batch === null || (wanted !== '' && wanted !== batch.marker)) return { text: NO_QUESTION_TEXT }
     if (isOurs) await showQuestions($, batch.marker, await $.session.id())
     if (batch.notice.trim() === '') return { text: NO_QUESTION_TEXT }
+    // Where the person is (the origin of their latest message): at the terminal the full questions are a placed row the model never reads
+    // and it gets the short list; on the phone, with no origin known yet or on any other surface, the full print (r14-q81).
+    const latest = e.origin.kind === 'composer' || e.origin.kind === 'bridge' ? e.origin.kind : await getPersonOrigin($)
+    if (latest === 'composer' && round !== null) {
+      await placeQuestions($, batch)
+      return { text: questionList(round, batch) }
+    }
     return { text: `\n${batch.notice}` }  // the host prefixes the output with the plugin's name: the first question starts its own line
   })
 
@@ -344,6 +352,9 @@ export const register: Register = on => {
     if (e.id === PANE && e.origin.kind === 'person') await setPaneDismissed($, true)
     return next(e)
   }).catch(($, e, next) => next(e))
+
+  // The full questions of a batch, placed by /console-questions; another plugin's row, or one this console has no text for, draws nothing.
+  on('ui.render', { component: 'Placed' }, async ($, e, next) => (await drawPlaced($, e)) ?? next(e))
 
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => (await drawBand($, e)) ?? next(e))
 

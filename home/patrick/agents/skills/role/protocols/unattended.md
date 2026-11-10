@@ -76,7 +76,9 @@ findings or stops.
 2. **Execute and reassess:**
    - Work only in the authorized workspace. Isolated-worktree work leaves the
      user's tree and branches untouched. Make authorized checkpoint commits as
-     coherent Conventional Commits after the preflight-selected gates.
+     coherent commits in the convention of the global Git rule, once the
+     baseline gate shows no regression and the result's review and
+     verification gates pass.
    - Beyond the recheck triggers in
      [Evidence and gates](../../shared/acceptance.md#evidence-and-gates), have a non-author
      rerun the decisive check of every result later work builds on. Satisfy

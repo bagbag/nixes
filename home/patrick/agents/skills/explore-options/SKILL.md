@@ -25,13 +25,11 @@ to develop or assess architecture.
   another owner.
 - Resolve consequential framing ambiguity; leave factual uncertainty to the
   investigation.
-- Dispatch a fresh `option-explorer` with native configuration. For substantial
-  exploration, assign one path in the arc with exclusive ownership;
-  keep short bounded results in the response. Authorize investigation and
-  that file only. Resume the same agent for clarifications and changed facts on
-  the same decision.
-- When the agent is unavailable, report the limitation instead of an
-  undisclosed self-review.
+- Dispatch a fresh `option-explorer`. For substantial exploration, assign its
+  output path (AGENTS.md Orchestration and delegation); keep short bounded
+  results in the response. Authorize investigation and that file only. Resume
+  the same agent for clarifications and additions on the same decision; a
+  changed premise gets a fresh one.
 
 Output: the brief and the assigned path.
 
@@ -41,10 +39,9 @@ Output: the brief and the assigned path.
   conditional recommendation and remaining decisions; account briefly for
   distinct discarded options and link the report.
 - Keep alternatives open when new evidence changes their case. The user or
-  invoking lead owns choices.
+  invoking session owns choices.
 - Reuse the exploration in later roles. Continue to an architect, planner,
   experiment or implementation only when needed and authorized. Exploration
-  adds no review round and replaces no independent-review gate; its author
-  never reviews its own proposal.
+  adds no review round and replaces no independent-review gate.
 
 Output: options, trade-offs, recommendation, report link.

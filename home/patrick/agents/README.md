@@ -15,11 +15,15 @@ line:
 ```
 
 The build expands includes recursively into complete standalone skill files.
+Agent definitions take the same markers, resolved against `skills/`
+(`review` and `deep-review` share `shared/review-method.md`; `verify` takes
+`shared/reuse-check.md`; every file-writing agent takes the report cap in
+`shared/report.md`).
 Missing targets, escaping paths, cycles, frontmatter markers, and malformed or
 unresolved markers fail validation.
 
-Keep role and authority limits and the `shared/rerun.md` include before each
-skill's workflow; place other whole-file shared references after it and link
+Keep role and authority limits before each skill's workflow; place whole-file
+shared references after them and link
 them from the relevant phases. Includes
 retain their heading levels; use one H1 and flat reference sections.
 
@@ -205,7 +209,26 @@ owner knows whether it continues the worker). `claim`, `handover`, `return`,
 below the worker cap with ready work. The cap is 3 unless
 `session-lead-mode activate --workers <n>` sets the session's own, which a
 later role switch keeps; a non-lead session row's select in the console pane
-sets it with no model turn (`set-workers`); Codex's thread limits lower it. `board check` encodes the board-core
+sets it with no model turn (`set-workers`); Codex's thread limits lower it.
+The cap also limits holds (r13-q71): `board claim` refuses a task, bug, design or spike that would take
+the claiming actor past it (counted per actor: in-progress work items only, not decisions or in-review
+items) unless `--force "<reason>"`; a takeover of a work item held in progress (the session's own worker, or
+`board take`) counts the same way and takes `--force` past the cap (r16-q93); position, mine, claim and check flag a forced hold `FORCED: <reason>`
+(item metadata `forced_hold_by`/`forced_hold`, shown while that actor holds it). A held work item
+with no update (fields, notes, comments) for an hour is `STALE` in position, mine, check and the
+holder's claim output (r13-q76); nothing is refused. Registration takes `--pulls` for every role;
+lead, solo and agent are presets, and a session's pulls add to its preset for bare claims, handles
+and capacity (r13-q61). `board create` and `board bd create|update` refuse a task, bug, design or
+spike whose description, design, acceptance or notes is over 2000 characters (naming field and size;
+`--append-notes` counts the old notes plus the appended text); an update that shrinks an over-limit field
+passes, and decision records are not limited (r13-q74, r16-q96). Comments a session writes are held to
+the same 2000 (`board bd comments add` by text, `-f` or stdin, `board handover` evidence, `board return`
+findings, `board block` reasons); the board's own packets are exempt: the protocol engine's autopilot
+park adds its packet with `--board-packet`, which `board bd` strips before bd (r16-q87). Plain
+`board show` prints the item's newest 5 comments, each cut at 2000 characters with a pointer to
+`board show <id> --comments`, which prints them whole (r16-q88, q89); it prints item metadata
+`deep_review=<harm>` as `deep-review: <harm>` (r16-q94).
+`board check` encodes the board-core
 conventions mechanically; change both in the same change, so drifted boards
 surface in `board health` and move through `/board-migrate`.
 `health`, `mine`, `position` and `related` take `--json` (every row; `related`
@@ -245,8 +268,8 @@ A question whose Related outcome supersedes a decided record closes it at Record
 the new record; the dialog names it by id and title); a released record is
 revised and replaced at release. Related may mark any decided record this way,
 a hit or not, by naming its id under `outcomes` (only a recorded ruling; a
-record another live session holds is refused). `board record` on a decided
-record keeps its old `## Decision` in a comment when that section changes.
+record another live session holds is refused). `board record` writes the record and no comment copies of
+the replaced text; the board's history (`board bd history`) keeps earlier versions (r16-q95).
 A round:
 
 - Collect classifies every pasted point and the board items in the round's
@@ -323,7 +346,17 @@ A round:
   nothing about the questions and ends its turn, and at the turn's end (not aborted,
   not a subagent's) the console runs `/console-questions`, whose hook prints the
   notice (its output draws whole between turns; the model reads that one copy, and an
-  empty or repeated notice prints a short line) and opens the dialog. The host's
+  empty or repeated notice prints a short line) and opens the dialog. The notice goes out by
+  where the person is, the origin of their latest message (r14-q81): at the terminal the full
+  questions are a row placed in the chat (`$.ui.place`, one id per batch, drawn as Markdown
+  by the `Placed` render hook from text the console stores) that the model never reads, and
+  the command prints the model a short list (number, title, recommendation, what changed);
+  from the phone (the Remote Control bridge), before any message of the person, or on any
+  other surface the full text prints. The row is placed one tick (1 ms) after the command
+  answers, since at 0 ms it lands above the command line; where nothing draws the row a
+  notice carries the text. Placed rows do not come back on `--resume`;
+  `/console-questions` draws them again. The one-tick wait retires when the host offers a
+  hook after a command's output row. The host's
   `$.ui.ask` takes labels only, so it asks a placeholder and the console's
   AskUserQuestion hook swaps it for the issued batch (never drawing the placeholder).
   The host credits a `$` call to its hook only while that hook runs and counts one it takes later as the whole
@@ -381,7 +414,8 @@ A round:
   follows the partial-failure path. A `--no-board` round only names the settled
   points in the record file. `show --json` questions carry `settles`.
 - Related searches each new draft and needs an outcome per hit.
-- Check runs, per round: the path pass once (`step-back goal foundations`,
+- Check runs the full set on every question (r18-q120 reverted r13-q64's
+  light start), per round: the path pass once (`step-back goal foundations`,
   which also digs into the real problem behind the ask and whether the design
   fixes its root; its changes flow on, and new or reworded drafts are searched
   through Related first), then the options pass once (`step-back options`, r30-q142:
@@ -442,7 +476,7 @@ A round:
   pass, the loop's challenge-rulings and an extra pass (per command) cover the
   questions changed since that kind last ran (another pass's update, an edit, an
   answer, a restart, a release from held, a new question; its own changes do not
-  count); the path, options and refine passes cover their scoped ids, else every
+  count); a Base ground right after a Base step-back that updated no question, with nothing changed since that ground last ran, is skipped (r18-q121); the path, options and refine passes cover their scoped ids, else every
   question they work on; the challenge after the answers covers the answered set,
   the raised one its ids. An unchanged question resting on a changed one is
   outside a rerun's scope; every rerun still runs. challenge-rulings also re-sends,
@@ -658,10 +692,13 @@ deciding session of either tool and says so in the recovery message when it fail
 kind's report format, the ask instructions around the dialog (the Codex form keeps
 the marker and the verb in a clause), the open-item list, the Durable owners
 and Closure sections of project-memory.md (printed at Owner writes from the
-installed file; one line naming each that is missing), per check cycle the question
-list of a check pass (later passes print `N questions (protocol show lists them)`). A
-pass always gets the skill's full text; the engine cuts nothing. A new check run (`restart`, a rerun at Ask) and a
-compaction print the question list again.
+installed file; one line naming each that is missing), the answer-routes note ("Act on
+each part of the user's words", then a one-line pointer, r13-q79) and, beside the record, the
+question rows last printed (`state['rows']`, r13-q66): a check pass prints only the rows that
+differ from the last output, then `N questions, K listed above as new or changed (protocol
+show lists them)`. A pass always gets the skill's full text; the engine cuts nothing. A
+compaction prints everything again. A `checked` line is one line of about 120 characters; the
+engine refuses one over 150 (strong reasons are still re-sent each challenge run).
 
 Every step's output opens with a headline: the call's events in the Log's
 words, then the next step (`r1 · related resolved · next: the next batch`); the
@@ -685,7 +722,7 @@ recommendation`); `protocol show` keeps the lean the person saw (`thinkMore`), a
 the goal ends when the question is asked again. Only the leading lens names and
 ids count (`on` and the `;` optional). A question with four options has no room, and the person
 types their request. A preference lean carries `leanBecause.flipsIf`, and `priorRulings`
-lists each released ruling a recommendation rests on or Related linked, with
+lists each released ruling a recommendation rests on or the Related step linked, with
 `holds` or `fails` and why: the record keeps them all, and the print shows how many
 held and each that fails. An open decision named in an unanswered question's `board` or `settles`
 joins the round and is claimed (a gone session's hold taken over, a live one's
@@ -840,7 +877,6 @@ walk the user through a round) and
 [upstream waits](skills/shared/upstream-waits.md) (read on demand from
 board-coordination).
 [Question format](skills/shared/question-format.md) is tool-neutral; asking, role, question-me and retro include it.
-The skills a user re-runs by mention include [rerun](skills/shared/rerun.md).
 
 Tool-specific names are optional and default to the canonical `name`. Shared
 `explore` overrides that default as Claude Code's `Explore` and Codex's

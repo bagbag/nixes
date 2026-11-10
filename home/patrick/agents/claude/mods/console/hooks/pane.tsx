@@ -7,7 +7,7 @@ import type { ConsoleBoard, ConsoleQuestion, ConsoleRecord, ConsoleRole, Console
 
 import { pressContinue, pressOpenItem, pressOpenOverlaps, pressOpenSettles, pressOpenSuggestion, pressRole, pressRun, pressStart, pressSubmit, pressView, pressWorkers } from './core'
 import { isRoundOpen, RELEASE_COMMAND, ROUND_ROLES } from './engine'
-import { getBoard, getExpanded, getLenses, getOpened, getPass, getRole, getRound, getRoundError, getTurnRunning, toggleExpanded, updateLenses } from './state'
+import { getBoard, getExpanded, getLenses, getOpened, getPass, getPlaced, getRole, getRound, getRoundError, getTurnRunning, toggleExpanded, updateLenses } from './state'
 import { answerText, COUNT_LABELS, GROUND, GROUND_BASE, lensArgs, LENS_SETS, plural, pullsText, recommendationMark, recommendationText, roleText, roundWords, runNoun, staleHolds, staleSessions, startHint, STEP_BACK_BASE, suggestionText, WHAT, WHERE } from './words'
 import type { Lens, LensCommand } from './words'
 
@@ -714,4 +714,13 @@ export async function drawBand($: $, e: { props: RenderPropsOf['AbovePrompt'] } 
       ))}
     </Box>
   )
+}
+
+/** A row `/console-questions` placed: the batch's full question text as Markdown. Undefined for another plugin's row or an id with no stored text. */
+export async function drawPlaced($: $, e: { props: RenderPropsOf['Placed'] } & Parameters<$['ui']['resolve']>[0]) {
+  if (e.props.plugin !== 'console') return undefined
+  const row = (await getPlaced($)).find(one => one.id === e.props.id)
+  if (row === undefined) return undefined
+  const { Markdown } = $.ui.resolve(e) as any
+  return <Markdown text={row.text} />
 }

@@ -120,11 +120,16 @@ Establish the outcome's contribution to its milestone:
 
 - Cut items under [Work items](../../shared/board-core.md#work-items).
   Split, merge or reorder them for a cleaner end state or independent work.
+- Write each item's expected behavior as short examples (input → result) in
+  its `--design`.
+- Mark an item for `deep-review` when a bug in it would be hidden and costly
+  ([definition](../../shared/acceptance.md#review-policy)):
+  `board bd update <id> --set-metadata deep_review="<named harm>"`. Leave it
+  unmarked when unsure.
 - Place each new item in or out of the open milestone under
   [Milestones](../../shared/board-coordination.md#milestones).
 - Use a separate plan for cross-item reasoning, blast-radius integration
-  checkpoints and cheap assumption tests that items cannot hold. Assign `plan`
-  for material decomposition or integration uncertainty.
+  checkpoints and cheap assumption tests that items cannot hold.
 - Distinguish approved checkpoints from later product acceptance using
   `define-goal`'s Challenge acceptance. Name executable results and evidence;
   label infrastructure-only evidence as such.
@@ -146,10 +151,10 @@ Establish the outcome's contribution to its milestone:
   consumer use.
 - Probe novel load-bearing assumptions before dependent work. Plan golden
   examples and hand-verified fixtures for domain-heavy work.
-- For material decomposition or integration uncertainty, obtain an
-  independent plan assessment before dispatch: coverage, grounding,
-  dependencies, integration, verification, silent failures. Self-check
-  pattern-determined plans. Select gates under Acceptance
+- For material decomposition or integration uncertainty, assign `plan`.
+  Obtain an independent plan assessment of every plan before dispatch:
+  coverage, grounding, dependencies, integration, verification, silent
+  failures. Select gates under Acceptance
   [Review policy](../../shared/acceptance.md#review-policy).
 
 ## Queue
@@ -175,30 +180,30 @@ Establish the outcome's contribution to its milestone:
   cap (`board position`: `workers <active>/<cap>`).
   When a worker ends, finish the bookkeeping the next dispatch depends on (its
   hand-over and closure, the board state and file zones a new worker relies
-  on), then refill before other bookkeeping.
+  on), integrate its result under [Integrate](#integrate), then refill before
+  other bookkeeping.
 - Give each worker one item, or related small items (same files, decision or
   invariant) together. Brief: the item ids, the protocol path for its kind
   (`$HOME/.agents/skills/role/SKILL.md`, claimed-item table) and only the
   deltas under [Brief](#brief). The worker claims, hands over and closes as
   itself.
-- Dispatch item work only to agent types that can write files; scout and
-  explore return results to you.
+- Dispatch item work only to artifact-writing agent types (global
+  Orchestration).
 - Send review to a session pulling `review` when one is active; otherwise
-  dispatch a fresh-context worker that did not author the item.
+  dispatch a fresh-context worker that did not author the item: `review`, or
+  `deep-review` where the Review policy names it.
 - Work inline under the global instructions' Orchestration.
-- Dispatch dependency-ready waves on one shared tree; sequence shared
-  contracts; use separate worktrees only for inseparable zones with justified
-  merge cost. Use native liveness, wait and resume. Run [Reassess](#reassess)
+- Dispatch dependency-ready waves on one shared tree with a file zone per
+  worker; items with overlapping zones wait, and shared contracts are
+  sequenced. Only a throwaway spike gets its own worktree. Use native liveness, wait and resume. Run [Reassess](#reassess)
   before large fan-out.
 - Interpret control messages by their target: you, one change or workers.
   "Keep workers running" leaves them running until revoked.
-- Continue a warm worker for a follow-up to its own work or a closely related
-  item. To re-dispatch an item an ended worker holds, brief a new worker with
-  its id; its claim takes it over.
-- Run `git mv` for the rename maps your workers supply; they edit after the
-  move. Verify the exact targets of destructive actions and obtain
-  confirmation before running them; relay that authority to a worker only
-  when orchestration preserves it as trusted. Inspect the tree after waves;
+- Continue warm workers under the global Warm reuse. To re-dispatch an item an
+  ended worker holds, brief a new worker with its id; its claim takes it over.
+- Run destructive actions under the global Filesystem rule and its
+  Confirm-before-the-irreversible principle; relay that confirmation to a
+  worker only when orchestration preserves it as trusted. Inspect the tree after waves;
   attribute unexplained out-of-zone changes, possibly the user's, and leave
   them in place.
 - Treat workers' returned choices and disclosed judgment calls as decisions
@@ -218,8 +223,7 @@ Establish the outcome's contribution to its milestone:
   that would anchor an independent assessor, pass only the granted paths and
   fields, preparing a filtered view when needed; never the mixed source with
   instructions to filter it.
-- Give the goal epic id and require board/spec contradiction reports. Link a
-  `.scratch/` file for a substantial brief.
+- Give the goal epic id. Link a `.scratch/` file for a substantial brief.
 - Relay project-specific rules, excluding generic role discipline. Add
   anti-regression STOPs for reversed decisions still encoded in old sources.
 - References grant reading, not writing; the item ids grant board writes on
@@ -227,6 +231,9 @@ Establish the outcome's contribution to its milestone:
 
 ## Integrate
 
+- Merge each finished worker result into the tree (accept it, run its
+  integration gate) before dispatching new work. A gate that cannot run
+  becomes the next item.
 - Follow implementation with tests, review, focused repair closure and an
   integration check. Add planning or opinions only for distinct questions.
 - Run cross-item checks through intended interfaces. At each integration
@@ -242,8 +249,8 @@ cumulative changes affect the frame, scope or boundaries: assess the combined
 end state for missing general mechanisms, asymmetric cases, duplicate owners,
 silent failures, dead weight and doc drift; name the next executable outcome
 and blockers. Close each finished epic `board position`
-lists under board-coordination [Epics](../../shared/board-coordination.md#epics); leave
-open one whose acceptance names the user and list it in the report. Bring
+lists under board-coordination [Epics](../../shared/board-coordination.md#epics);
+list in the report the ones left open for the user's acceptance. Bring
 material changes to the decider before dependent dispatch. End rethinking
 when remaining unknowns are empirical or further
 yield is cosmetic.

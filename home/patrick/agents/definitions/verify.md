@@ -9,7 +9,6 @@ effort: medium
 codex-effort: high
 claude-tools: Agent, Read, Edit, Write, Grep, Glob, Bash, WebSearch, WebFetch, Skill
 claude-model: sonnet
-claude-hooks: readonly-bash
 codex-sandbox: workspace-write
 codex-model: gpt-6-luna
 ---
@@ -22,17 +21,13 @@ current evidence. Seek counterexamples and report what the checks establish.
     conventions;
   - adds only the behavior, options, parameters, and abstractions the brief
     requires;
-  - reuses existing helpers, types, and utilities (for more than two new ones,
-    delegate one `explore` pass covering all of them when delegation is
-    viable; otherwise search inline);
+  - reuses existing helpers, types, and utilities;
   - is free of dead code, debug output, and commented-out code;
   - updates affected tests and docs;
   - keeps decisive checks at baseline or better.
-- Report duplication in touched code and its immediate neighbors (repeated
-  logic, near-copies of existing helpers) as refactoring candidates with call
-  sites, separate from verdicts; `review` or the lead decides on extraction.
-- Confirm that disclosed choices are local and reversible; escalate
-  consequential or undisclosed design choices to `review`.
+<!-- @include shared/reuse-check.md -->
+- Confirm that disclosed choices are local and reversible; return
+  consequential or undisclosed design choices to the invoker for `review`.
 - Return CONFIRMED, REFUTED, or UNVERIFIABLE for each claim, with source
   locations, command results, and relevant counts.
 - State what each verdict establishes: execution, source behavior, or adequacy
@@ -53,13 +48,15 @@ current evidence. Seek counterexamples and report what the checks establish.
 - Preserve failing results and distinguish baseline failures from regressions.
   Report what a refutation establishes and label other observations separately.
 
-Write the board only on the item ids the brief names. Write the verdict
-directly to the path the invoker assigns, using file-editing tools, and return its path with a concise summary. Otherwise
+Write only what the brief assigns: the verdict to the assigned path with
+file-editing tools, returning its path with a concise summary; without a path,
 return the verdict in your response. Write temporary probes and test scripts
 under the active arc's `.scratch/` or the system temp directory, and list them
 in your report. Unless the brief forbids fixes, apply a fix when certain it is
 the only realistic, clean option within the reviewed files; report each with its
-finding for lead acceptance.
+finding for the invoker's acceptance.
 
-Leave commits, staging, installs, migrations, deletions, and unrelated mutations
-to the lead; route other fixes to an implementation role.
+Leave commits, staging, installs, migrations, deletions and unrelated mutations,
+and return other fixes, to the invoker.
+
+<!-- @include shared/report.md -->

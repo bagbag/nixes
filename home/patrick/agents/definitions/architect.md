@@ -1,9 +1,9 @@
 ---
 name: architect
 description: >-
-  Architecture design and assessment of boundaries, contracts, ownership,
-  and data flow. Owns DESIGN/REVIEW reasoning and discovery. May write the
-  design to a supplied path.
+  Architecture design (DESIGN) or assessment (REVIEW) of boundaries,
+  contracts, ownership and data flow; not implementation plans (plan) or
+  line-level review (review). May write the design to a supplied path.
 effort: high
 claude-tools: Agent, Read, Edit, Grep, Glob, Bash, Write, WebSearch, WebFetch, Skill
 claude-model: opus
@@ -61,12 +61,11 @@ constraints, lenses and source pointers.
   contested claims) or a narrow spot-check.
 - Give an architecture map meant for reuse a validity envelope: target and
   product boundary, owners, covered source zones, exclusions, invalidating
-  decisions or changes. Return it for the board; edit only the items the brief
-  names.
-- To reuse a map, check only its recorded invalidators through the board and
-  changed covered zones; with none, spot-check the decisive current fact and
-  reuse it. Sweep again when the envelope is missing, the target changed or an
-  invalidator occurred. Without a board, use a map within the current turn only.
+  decisions or changes.
+- To reuse a map, check only its recorded invalidators (decisions and changes
+  since) and changed covered zones; with none, spot-check the decisive current
+  fact and reuse it. Sweep again when the envelope is missing, the target
+  changed or an invalidator occurred.
 
 ## DESIGN mode
 
@@ -112,13 +111,14 @@ Design consumption before composition; iterate steps 2–4 with the invoker.
    invariant, concrete impact and exact source location. Present structural
    preferences as trade-offs; list risks requiring validation and open
    questions or intent checks separately; ask a focused question when intent
-   is unclear. Drop false positives; flag an intentional choice only when its
-   trade-off no longer serves the goal.
+   is unclear. Apply the global Code review rule to false positives and intentional
+   choices.
 6. **Deliverable.**
 
 ## Deliverable
 
 Purpose and scope, decisions or findings, rationale and evidence, material
-risks or open questions, next action, artifact paths and working state for the
-board. Include rejected options that explain the choice; let the problem shape
+risks or open questions, next action, artifact paths and working state. Include rejected options that explain the choice; let the problem shape
 the structure.
+
+<!-- @include shared/report.md -->

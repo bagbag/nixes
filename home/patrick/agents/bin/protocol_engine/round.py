@@ -4,7 +4,7 @@ from __future__ import annotations
 from .base import lines
 from . import words
 from .engine import Context, PROTOCOLS, Protocol, Step, questions
-from .told import cycle_key, first_time
+from .told import changed_rows, first_time
 from .record import closed_enter, closed_text, record_accept, record_text
 from .check import (
     challenge_report_format, check_accept, check_enter, options_ids, options_report_format, pass_report_format, rescope_ids, scope_text
@@ -71,9 +71,9 @@ def check_text(ctx: Context) -> str:
     if check['paused']:
         return words.check_paused(r['id'], check['cycle'])
     command = check['expect']
-    rows = [words.check_row(q) for q in r['questions']]
-    if not first_time(ctx, cycle_key(ctx, 'questions')):  # the cycle's first pass lists them, the others count them
-        rows = [words.questions_counted(len(rows))]
+    every = {q['id']: words.check_row(q) for q in r['questions']}
+    changed = changed_rows(ctx, r['id'], every)
+    rows = [*changed, words.questions_counted(len(every), len(changed))]  # only what differs from the last output, then the count
     return lines(
         words.check_title(r['id'], f"{check['cycle']}/{check['cap']}" if ctx.codex else None) + check_why(ctx),
         *rows,

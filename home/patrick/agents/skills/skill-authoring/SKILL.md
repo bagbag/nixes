@@ -4,14 +4,13 @@ description: >-
   Write and review skills, agent definitions and instruction files:
   invocation policy, trigger descriptions, frontmatter, layout and style. Use
   when creating, editing or reviewing a SKILL.md, agent definition, AGENTS.md
-  or CLAUDE.md; invoked by the user, it reviews this session's changed text.
-  Not for trigger evals (skill-creator).
+  or CLAUDE.md; not for trigger evals (skill-creator).
 ---
 
 # Skill authoring
 
-On user mention, re-read this file and review the skill and instruction text
-changed in this session, otherwise the focus the argument names; show the
+On user mention, re-read this file and review the focus the argument names,
+otherwise the skill and instruction text changed in this session; show the
 changed lines; then carry out the argument's other instructions. Project rules
 for skills (inventory, layout, validators) add to these.
 
@@ -31,9 +30,10 @@ for skills (inventory, layout, validators) add to these.
 
 - The routing model sees only `name` and `description`. Model-invocable: one
   clause of purpose, then the moments and the user's words (symbols, verbs,
-  phrases) that trigger it, then "not for" a close sibling or skip condition
-  where one exists; the procedure stays in the body, since the
-  description loads into every session.
+  phrases) that trigger it; keep the triggers from overlapping a close
+  sibling's, and add "not for" only where they cannot be kept apart or a skip
+  condition exists. The procedure stays in the body, since the description
+  loads into every session.
 - Manual-only: one sentence of menu help from the user's view; put argument
   hints in `argument-hint` (Claude; Codex ignores it).
 - Reword a description only to sharpen its trigger or purpose without losing
@@ -59,8 +59,8 @@ Guidelines; apply only where they don't weaken a rule:
 - Address the acting model: imperative, present tense.
 - Information dense: rules, lists and tables over prose; keep definitions of
   terms.
-- Keep text small where viable, since it uses context: leave what a tool prints
-  when it applies to that tool.
+- Keep text small where viable: leave what a tool prints when it applies to
+  that tool.
 - Write an ordered process as numbered steps, each with its output; keep
   standing constraints as lists.
 - Positive wording ("do X") where it says the same as the prohibition; keep

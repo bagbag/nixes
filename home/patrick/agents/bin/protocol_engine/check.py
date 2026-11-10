@@ -4,7 +4,7 @@ from __future__ import annotations
 import contextlib
 
 from .base import (
-    ALL_LENSES, CAP_CHOICES, CHECK_CAP, EXPLORED_VERDICTS, LEAN_LENSES, OPTIONS_LENSES, PASSES, PATH_LENSES,
+    ALL_LENSES, CHECKED_LIMIT, CHECKED_MAX, CAP_CHOICES, CHECK_CAP, EXPLORED_VERDICTS, LEAN_LENSES, OPTIONS_LENSES, PASSES, PATH_LENSES,
     REFINE_LENSES, ProtocolError
 )
 from . import words
@@ -17,13 +17,20 @@ from .away import away_cap
 # Check loop: step-back then ground per cycle until a cycle changes nothing; the cap hands over to the user.
 
 def fresh_check(ctx: Context) -> None:
-    ctx.round['checkRun'] = ctx.round.get('checkRun', 0) + 1  # a new check run lists its questions again
     ctx.round['check'] = {'cycle': 1, 'cap': CHECK_CAP, 'expect': 'step-back', 'changes': 0, 'last': {},
                           'converged': False, 'challenged': False, 'focused': False, 'focusing': False, 'pathNow': False,
                           'pathScoped': False, 'optionsNow': False, 'optionsScoped': False, 'refineNow': None, 'refineScoped': False, 'refineChanges': 0, 'askNow': False, 'paused': False}
     for q in questions(ctx, 'ready'):
         q['status'] = 'draft'
     start_base(ctx)
+
+
+def queue_rescope(ctx: Context, ids: list[str]) -> None:
+    """The ids get their own scoped path pass, options pass and refine pair, accumulating before the loop settles. A restart
+    (Think more included), an edit and a freed hold land here."""
+    if ids:
+        scope = ctx.round.get('rescope') or {'ids': []}
+        ctx.round['rescope'] = {'ids': list(dict.fromkeys([*scope['ids'], *ids])), 'path': True, 'options': True, 'refine': list(REFINE_LENSES)}
 
 
 def rescope_ids(ctx: Context) -> list[str]:
@@ -65,9 +72,7 @@ def with_goal(ctx: Context, lenses: tuple[str, ...], ids: list[str]) -> str:
 def rescope_check(ctx: Context, ids: list[str]) -> None:
     """The restarted (or released held, or edited) ids get their own path pass, options pass and refine pair, accumulating over
     restarts before the loop settles, then a fresh check; the round's once-per-round flags stay."""
-    r = ctx.round
-    scope = r.get('rescope') or {'ids': []}
-    r['rescope'] = {'ids': list(dict.fromkeys([*scope['ids'], *ids])), 'path': True, 'options': True, 'refine': list(REFINE_LENSES)}
+    queue_rescope(ctx, ids)
     touch(ctx, ids)  # a restart, a release from held and an edit's re-check enter every pass kind's next scope
     fresh_check(ctx)
 
@@ -163,7 +168,8 @@ def gate_ask(ctx: Context) -> str:
         if check.get('refineChanges'):  # the pair's changes rerun the Base loop (under the cap); the pair does not run again
             check['refineChanges'] = 0
             return next_cycle(ctx)
-    leans = [q['id'] for q in questions(ctx, 'draft', 'ready') if q.get('strength') == 'lean']
+    leans = [q['id'] for q in questions(ctx, 'draft', 'ready')
+             if q.get('strength') == 'lean']
     if leans and not check.get('focused') and not check['askNow']:
         # One targeted pass on every lean, evidence or preference, aiming it at strong (LEAN_JOB); a value lean asks its value question.
         check.update(expect='ground', focusing=True)
@@ -350,6 +356,8 @@ def checked_of(raw, known: set[str]) -> tuple[dict[str, str], list[str]]:
     errors = [f'checked.{key}: no question of this round (keys: question ids, and `round` for a round-wide note)'
               for key in raw if key != 'round' and key not in known]
     errors += [f'checked.{key}: what you examined, a non-empty string' for key, value in raw.items() if not (isinstance(value, str) and value.strip())]
+    errors += [f'checked.{key}: {len(value.strip())} characters; one line of about {CHECKED_MAX} (the finding itself goes in an update or `summary`)'
+               for key, value in raw.items() if isinstance(value, str) and len(value.strip()) > CHECKED_LIMIT]
     return {key: value.strip() for key, value in raw.items() if isinstance(value, str) and value.strip()}, errors
 
 
@@ -512,6 +520,8 @@ def check_accept(ctx: Context, report: dict) -> str:
         start_base(ctx)
         return 'related' if changes and needs_related(ctx) else 'check'
     if command == 'step-back':
+        if ground_repeats(ctx):
+            return gate_ask(ctx)  # r18-q121: a quiet step-back skips the ground that would repeat the last one
         check.update(changes=changes, expect='ground')
         ctx.set_pending('ground')
         return 'check'
@@ -526,6 +536,14 @@ def check_accept(ctx: Context, report: dict) -> str:
     if changes and not check['askNow']:
         return next_cycle(ctx)
     return gate_ask(ctx)
+
+
+def ground_repeats(ctx: Context) -> bool:
+    """Whether the Base ground would repeat its last run (r18-q121): it has run before (same lenses: the Base ground names none) and
+    no question changed since it covered them. Any update of the step-back right before it, a presentation one included, stamps
+    its question (`touch`) and so puts it back in the scope."""
+    key, scope = pass_scope(ctx, 'ground', None, [])
+    return key in ((ctx.round.get('coverage') or {}).get('seen') or {}) and not scope
 
 
 def pending_view(ctx: Context) -> dict | None:

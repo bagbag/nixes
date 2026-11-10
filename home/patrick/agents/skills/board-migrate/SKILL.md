@@ -61,24 +61,27 @@ between what exists and the target.
 
 Give each step's output compactly; detail only findings and stops.
 
-1. **Discover.** Where a board exists, run `board check --all`
-   for its mechanical deviations and flags. Then inventory what it can't see:
-   backlog and review files, Markdown boards, lead notes, checkpoint files,
-   project instructions and docs that name trackers as owners (file roles,
-   backlog pointers), epic texts holding rules, status or history, rules
-   without an owner (including rules in force that live only in closed
-   records), acceptance repeated across items (one task others wait on, or
-   the epic acceptance), entries without a deliberate priority (rank under
-   [Priority](#priority)), user stops stated in comments or deferral reasons
-   (convert those in force under [Dependencies](#dependencies) or
-   [Deferrals and environment facts](#deferrals-and-environment-facts), drop
-   lifted ones) and `board bd memories` past their removal condition (to the
-   user). Classify every doc under `docs/` as current owner, proposal (to
-   the board) or history (to `history/`). Include untracked files and
-   record each source's hash. Where a board exists, save one
-   `board bd export` as `board-baseline.jsonl` in the plan's directory (step
-   2) and derive every board mapping from it. Delegate sweeps of large
-   sources by range.
+1. **Discover.**
+   - Where a board exists, run `board check --all` for its mechanical
+     deviations and flags, and save one `board bd export` as
+     `board-baseline.jsonl` in the plan's directory (step 2); derive every
+     board mapping from it.
+   - Inventory what it can't see: backlog and review files, Markdown boards,
+     lead notes, checkpoint files; project instructions and docs that name
+     trackers as owners (file roles, backlog pointers); epic texts holding
+     rules, status or history; rules without an owner (including rules in
+     force that live only in closed records); acceptance repeated across
+     items (one task others wait on, or the epic acceptance); entries without
+     a deliberate priority (rank under [Priority](#priority)); user stops
+     stated in comments or deferral reasons (convert those in force under
+     [Dependencies](#dependencies) or
+     [Deferrals and environment facts](#deferrals-and-environment-facts),
+     drop lifted ones); `board bd memories` past their removal condition (to
+     the user).
+   - Classify every doc under `docs/` as current owner, proposal (to the
+     board) or history (to `history/`).
+   - Include untracked files and record each source's hash. Delegate sweeps
+     of large sources by range.
    Output: sources with counts of live entries by kind and hashes; the
    baseline path; deviations by class.
 2. **Gap plan.** Triage live items first: list moot ones for closing with

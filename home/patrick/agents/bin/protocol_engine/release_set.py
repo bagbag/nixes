@@ -9,7 +9,7 @@ from . import words
 from .store import next_id
 from .boards import held_decided
 from .engine import Context, fail
-from .told import forget_runs, report_hint
+from .told import report_hint
 from .away import SWITCH_TO_SOLO
 
 
@@ -116,7 +116,6 @@ def start_release(ctx: Context, ids: list[str]) -> None:
         ctx.board.checked('take', *gone)
     if claim:
         ctx.board.checked('claim', *claim)
-    forget_runs(ctx)
     ctx.state['round'] = {
         'id': next_id(ctx.state, 'round', 'r'), 'protocol': 'release', 'step': 'recheck',
         'repo': ctx.board.repo, 'scope': 'release', 'source': source, 'title': None, 'summary': None,
@@ -198,9 +197,7 @@ def apply_changes(ctx: Context, raw, where: str, every: bool, scope: list[str] |
                 fail(f'{where}.{rid}: a contained change names `why` no other ruling of the set or the board moves; '
                      'otherwise it spreads')
             if value.get('touches') not in TOUCHES:
-                fail(f'{where}.{rid}: a contained change says what it touches: touches is "own" (only your own rationale, '
-                     'evidence or a clause the chosen option did not state; the record stays, corrected) or "decision" '
-                     '(what the user decided; the record leaves the set); unsure is decision')
+                fail(f'{where}.{rid}: a contained change says what it ' + words.TOUCHES_HINT)
             if value['touches'] == 'own' and not (isinstance(value.get('file'), str) and value['file'].strip()):
                 fail(f'{where}.{rid}: an own change gives `file`, the path of the corrected record text')
         (spreads if value['reach'] == 'spreads' else contained).append((rid, value))

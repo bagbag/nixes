@@ -1401,3 +1401,25 @@ describe('suggestions', () => {
     })
   })
 })
+
+describe('placed question rows', () => {
+  const NOTICE = 'Engine name\nProblem: which name.'
+  const typed = { origin: { kind: 'composer' }, presentation: { isFullscreen: true, columns: 160 } } as const
+  const row = (props: Record<string, unknown>, requestId: string) => ({ plugin: 'console', component: 'Placed', requestId, props, surface: 'terminal' }) as never
+  const markdown = async (ui: { findAll: (query: { type: string }) => Promise<unknown[]> }) =>
+    (await ui.findAll({ type: 'Markdown' })).map(one => (one as { props: { text: string } }).props.text)
+
+  test('draw the stored text, and nothing for another plugin or an id with no text', async ($, on) => {
+    const { clock } = world(on, { round: roundJson({ step: 'ask', batch: { ...BATCH, notice: NOTICE } }) })
+    on('ui.render', ($, e) => {
+      const { Text } = $.ui.resolve(e) as any
+      return <Text>another plugin</Text>
+    })
+    await ready($, clock)
+    await $.command.run({ command: 'console-questions', args: '', ...typed })
+    expect(await markdown(await $.ui.mount(row({ id: 'questions-round-r4-2', plugin: 'console' }, 'own')))).toEqual([NOTICE])
+    for (const [i, props] of [{ id: 'questions-round-r4-2', plugin: 'other' }, { id: 'questions-round-r4-9', plugin: 'console' }].entries()) {
+      expect(await markdown(await $.ui.mount(row(props, `other-${i}`)))).toEqual([])
+    }
+  })
+})

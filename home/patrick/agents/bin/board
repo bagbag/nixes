@@ -44,22 +44,28 @@ IDLE_HOURS = 1  # holds without activity (holder's tool call, else item update) 
 WORKER_CAP = 3  # workers a session targets unless registered with its own (activate --workers); Codex thread limits lower it
 WORKER_ACTIVE_MINUTES = 15  # a running worker with a tool call this recently counts as active
 CODEX_SYSTEM_CONFIG = Path('/etc/codex/config.toml')  # Codex's system layer, under $CODEX_HOME/config.toml
-CAPACITY_ROLES = ('agent', 'solo', 'autopilot')  # roles that dispatch workers
+CAPACITY_ROLES = ('agent', 'solo', 'autopilot')  # roles that dispatch workers (any role with pulls does)
+WORK_HOLD_TYPES = ('task', 'bug', 'spike', 'design')  # items a worker cap counts and a stale hold flags
+STALE_HOURS = 1  # a held work item without an update (fields, notes, comments) for longer is flagged stale
+DEEP_REVIEW = 'deep_review'  # item metadata the planner sets to the named harm that earns a deep review; board show prints it
+FORCED_BY, FORCED_REASON = 'forced_hold_by', 'forced_hold'  # item metadata: who held it past the cap with --force, and why
+FIELD_LIMIT = 2000  # characters a work item's description, design, acceptance or notes, and a comment a session writes, may hold (refused above)
+PACKET_FLAG = '--board-packet'  # on `board bd comments add`: the board's own packet (protocol autopilot park), exempt from FIELD_LIMIT
 WORKER_KINDS = ('design', 'implement', 'review')  # kinds workers take; an agent's pulls narrow them
 ROWS = 50  # rows per view section unless --limit (0: all)
 READ_BUDGET = 35_000  # characters per command output; Codex cuts a call's output above ~40,000 from the middle
 PREVIEW = 600  # characters a cut section still prints
-SHOWN_COMMENTS = 3
+SHOWN_COMMENTS = 5  # newest comments a plain board show prints, each cut at FIELD_LIMIT
 SESSION_HOURS = 24  # position lists sessions of this project active or registered this recently (plus any holding items)
 PULLS = ('plan', 'design', 'implement', 'review')
 KINDS = (*PULLS, 'question', 'accept', 'ratify', 'milestone')
 WORK_TYPES = ('task', 'bug', 'spike')
-# Kinds a bare `board claim` takes per role (agent: its pulls).
-ROLE_KINDS = {'lead': ('question',), 'agent': None, 'solo': ('question', 'plan', 'ratify', 'accept'),
+# Kinds a bare `board claim` takes per role preset; the session's registered pulls come on top (agent: only its pulls).
+ROLE_KINDS = {'lead': ('question',), 'agent': (), 'solo': ('question', 'plan', 'ratify', 'accept'),
               'autopilot': ('question', 'plan', 'accept')}
 # Kinds each role handles, by bare claim or by id; `board position` counts sessions from these.
 # A ready milestone is accepted with the user: claimed by id only, never by autopilot.
-ROLE_HANDLES = {'lead': ('question', 'accept', 'ratify', 'milestone'), 'agent': None,
+ROLE_HANDLES = {'lead': ('question', 'accept', 'ratify', 'milestone'), 'agent': (),
                 'solo': ('question', 'plan', 'ratify', 'accept', 'milestone'), 'autopilot': ('question', 'plan', 'accept')}
 TEXT_FIELDS = ('title', 'description', 'design', 'acceptance_criteria', 'notes', 'close_reason')
 SHOW_FIELDS = TEXT_FIELDS[1:]
@@ -83,7 +89,8 @@ SYNC_ATTEMPTS = 5  # tries per window, SYNC_RETRY_SECONDS apart; then the next b
 SYNC_RETRY_SECONDS = 5
 SYNC_REPORT_AFTER = 3  # consecutive failures before every command reports them; single ones recover by themselves
 WRITE_RETRIES = 4
-# bd raises this on a write that meets a sync's merge. Retire the retry when a bd release stops raising it: rerun the soak.
+# bd raises this on a write that meets a sync's merge. Retire the retry when a bd release stops raising it: rerun the soak (bin/test-shared-board.py).
+# On a bd upgrade recheck beads issues 4796 and 7839 and PR 7849.
 # `Merge conflict detected` is a different error, a stopped merge, and never retried.
 WRITE_RETRY_ERROR = 'foreign key conflicts'
 STORE_WARN_BYTES = 1 << 30
@@ -1310,7 +1317,8 @@ def position_json(board: Board, args) -> dict:
         **queues_json(board, args.root),
         'ready': data['kinds'],
         'sessions': [session_json(board, args, entry, count, data['now']) for entry, count in data['sessions']],
-        'held': [item_json(board, issue, updatedAt=iso(updated), activeAt=iso(recorded), mark=mark)
+        'held': [item_json(board, issue, updatedAt=iso(updated), activeAt=iso(recorded), mark=mark,
+                           stale=stale_since(board, issue) is not None, forced=forced_reason(issue))
                  for issue, _, updated, recorded, mark in data['held']],
         'questionsHoldingWork': [item_json(board, issue, holds=waiting[0], holdsAll=waiting[1]) for waiting, issue in data['questions']],
         'readyMilestones': [item_json(board, issue) for issue in data['milestones']],
@@ -1337,13 +1345,15 @@ def position(board: Board, args) -> None:
     rows = []
     for issue, _, updated, recorded, mark in data['held']:
         marker = {'gone': ' GONE', 'idle': ' IDLE', 'elsewhere': ' held elsewhere'}.get(mark or '', '')
-        rows.append(line(issue, holder_label(issue['assignee'], known), f'updated {age(updated)} ago'
+        rows.append(line(issue, holder_label(issue['assignee'], known), *hold_marks(board, issue), f'updated {age(updated)} ago'
                          + (f', active {age(recorded)} ago' if recorded else '') + marker))
         if mark == 'idle':
             idle.append(issue['id'])
         elif mark == 'gone':
             gone.append(issue['id'])
     section('held items', rows, limit)
+    if any(stale_since(board, issue) for issue, *_ in data['held']):
+        print(STALE_OTHERS_LEGEND)
     if gone:
         print(f"  GONE = the holding session's process ended. Free {', '.join(gone)}: board take <id> | board unclaim <id> (the user or a deciding session)")
     if idle:
@@ -1361,8 +1371,7 @@ def position(board: Board, args) -> None:
 
 
 def session_kinds(entry: dict, table: dict = ROLE_KINDS) -> tuple[str, ...]:
-    kinds = table.get(entry.get('role'), ())
-    return tuple(entry.get('pulls') or ()) if kinds is None else kinds
+    return tuple(dict.fromkeys((*table.get(entry.get('role'), ()), *(entry.get('pulls') or ()))))
 
 
 def holders(board: Board, args) -> None:
@@ -1552,12 +1561,22 @@ def squash_flags(board: Board, root: str | None, words: set[str]) -> list[tuple[
     return flagged
 
 
+def hold_flags(board: Board, root: str | None) -> tuple[list[tuple[str, str]], list[tuple[str, str]]]:
+    """(stale holds, forced holds) as (id, detail) among the held work items in scope."""
+    held = [issue for issue in board.scoped(root) if issue['status'] != 'closed' and issue.get('assignee') and is_work_hold(issue)]
+    stale = [(issue['id'], f"{issue['assignee']}: no update for {age(since)}") for issue in held if (since := stale_since(board, issue))]
+    forced = [(issue['id'], f"{issue['assignee']}: {reason}") for issue in held if (reason := forced_reason(issue)) is not None]
+    return stale, forced
+
+
 def check_json(board: Board, args) -> dict:
     """Every finding of `board check`, unbudgeted: deviations by class, then the flags."""
     return {'deviations': [{'id': item_id, 'class': kind, 'detail': detail} for item_id, kind, detail in deviations(board, args.root)],
             'squashed': [{'id': item_id, 'detail': detail} for item_id, detail in squash_flags(board, args.root, word_list())],
             'unnamedBlockers': [{'id': item_id, 'detail': detail} for item_id, detail in unnamed_waits(board, args.root)],
-            'unlinkedRevisions': unlinked_revision_rows(board, args.root)}
+            'unlinkedRevisions': unlinked_revision_rows(board, args.root),
+            'staleHolds': [{'id': item_id, 'detail': detail} for item_id, detail in hold_flags(board, args.root)[0]],
+            'forcedHolds': [{'id': item_id, 'detail': detail} for item_id, detail in hold_flags(board, args.root)[1]]}
 
 
 def check(board: Board, args) -> int:
@@ -1578,6 +1597,11 @@ def check(board: Board, args) -> int:
             [f'  {item_id}  unnamed-blocker  {detail}' for item_id, detail in unnamed_waits(board, args.root)], limit)
     section('flag, not a deviation: revisions without a supersedes or revise link (board-coordination.md#rulings)',
             [f'  {item_id}  unlinked-revision  {detail}' for item_id, detail in unlinked_revisions(board, args.root)], limit)
+    stale, forced = hold_flags(board, args.root)
+    section(f'flag, not a deviation: stale holds, no update for {STALE_HOURS} h (board-core.md#hand-over-and-acceptance)',
+            [f'  {item_id}  stale-hold  {detail}' for item_id, detail in stale], limit)
+    section('flag, not a deviation: holds past the worker cap (board claim --force)',
+            [f'  {item_id}  forced-hold  {detail}' for item_id, detail in forced], limit)
     return 1 if found else 0
 
 
@@ -1838,7 +1862,8 @@ def show(board: Board, args) -> int:
             header.append('labels ' + ','.join(issue['labels']))
         if shared is not None:
             header.append(f"queue {board.queue(item_id) or 'unrouted'}")
-        budget.out('  '.join(header) + '\n' + issue.get('title', ''))
+        harm = (issue.get('metadata') or {}).get(DEEP_REVIEW) if isinstance(issue.get('metadata'), dict) else None
+        budget.out('  '.join(header) + '\n' + issue.get('title', '') + (f'\ndeep-review: {harm}' if harm else ''))
         selected = bool(args.sections or args.fields or args.comments)
         for query in args.sections:
             for name, text in show_sections(board, issue, query):
@@ -1862,7 +1887,10 @@ def show(board: Board, args) -> int:
             if comments:
                 budget.out(f'comments: {len(comments)}' + (f', newest {len(shown)}' if len(shown) < len(comments) else ''))
             for note in reversed(shown):
-                budget.emit(f"--- {note['author']} {note['created_at']}\n{note['text']}",
+                text = note['text'] or ''
+                if not (args.comments or args.full) and len(text) > FIELD_LIMIT:
+                    text = f'{text[:FIELD_LIMIT]}\n… cut at {FIELD_LIMIT} of {len(text)} characters: board show {item_id} --comments'
+                budget.emit(f"--- {note['author']} {note['created_at']}\n{text}",
                             f'board show {item_id} --comments --full', f"comment {note['created_at']}", item_id)
             if len(shown) < len(comments):
                 budget.out(f'… {len(comments) - len(shown)} older: board show {item_id} --comments')
@@ -1953,6 +1981,52 @@ def author_label(board: Board, issue: dict) -> str:
     return f'author {actor}' if actor else f'author unknown ({legacy})' if legacy else 'standalone'
 
 
+def is_work_hold(issue: dict) -> bool:
+    return issue.get('issue_type') in WORK_HOLD_TYPES
+
+
+def counted_holds(board: Board, actor: str) -> list[dict]:
+    """The work items a worker cap counts for this actor: in progress, held by exactly this actor (a worker's holds
+    are not its session's). Decisions and in-review items an acceptor or reviewer holds are not work in hand."""
+    return [issue for issue in board.issues if issue['status'] == 'in_progress' and issue.get('assignee') == actor and is_work_hold(issue)]
+
+
+def cap_refusal(board: Board, entry: dict | None, actor: str, claimed: list[dict]) -> str | None:
+    """Why this actor may not claim one more work item, None when it may (an unregistered session has no cap)."""
+    if entry is None:
+        return None
+    held = len(counted_holds(board, actor)) + sum(1 for issue in claimed if is_work_hold(issue)
+                                                  and (issue['status'] == 'open' or (issue['status'] == 'in_progress' and issue.get('assignee') != actor)))  # claims and takeovers this call
+    cap = worker_cap(entry)
+    return f'{actor} holds {held} of {cap} work items (its worker cap)' if held >= cap else None
+
+
+def forced_reason(issue: dict) -> str | None:
+    """The reason the current holder held the item past its cap, None when the hold is within it."""
+    metadata = issue.get('metadata') if isinstance(issue.get('metadata'), dict) else {}
+    return str(metadata.get(FORCED_REASON) or '') if metadata.get(FORCED_BY) == issue.get('assignee') and issue.get('assignee') else None
+
+
+def stale_since(board: Board, issue: dict) -> datetime | None:
+    """The last update of a held work item without one for STALE_HOURS, else None (needs its comments hydrated)."""
+    holder = issue.get('assignee')
+    updated = board.last_activity(issue)
+    if not holder or holder == USER_HOLD or not is_work_hold(issue) or updated is None:
+        return None
+    return updated if (utcnow() - updated).total_seconds() > STALE_HOURS * 3600 else None
+
+
+def hold_marks(board: Board, issue: dict) -> list[str]:
+    forced = forced_reason(issue)
+    return [*(['STALE'] if stale_since(board, issue) else []), *([f'FORCED: {forced}'] if forced is not None else [])]
+
+
+STALE_OTHERS_LEGEND = (f'  STALE = no update to the item for {STALE_HOURS} h: ask its holder what it waits on; the holder moves it on or renews it by '
+                       'updating its notes. Only the holder, the user or a deciding session frees it (board take | board unclaim)')
+STALE_LEGEND = (f'  STALE = no update to the item for {STALE_HOURS} h: find out what it waits on, then move it on, board unclaim it, '
+                'or renew it by updating its notes with what it waits on')
+
+
 def held_by_session(board: Board, actor: str) -> list[dict]:
     session = session_actor(actor)
     return sorted((issue for issue in board.issues if issue['status'] != 'closed' and issue.get('assignee')
@@ -1998,11 +2072,13 @@ def mine(board: Board, args) -> None:
     you = f' (you: {actor})' if actor != session_actor(actor) else ''
     rows, stopped = [], []
     for issue, mark in held_rows:
-        rows.append(line(issue, issue['assignee'], f'updated {age(board.last_activity(issue))} ago'
+        rows.append(line(issue, issue['assignee'], *hold_marks(board, issue), f'updated {age(board.last_activity(issue))} ago'
                          + (' WORKER STOPPED' if mark else '')))
         if mark:
             stopped.append(issue['id'])
     section(f'held by session {session_actor(actor)}{you}', rows, args.limit)
+    if any(stale_since(board, issue) for issue, _ in held_rows):
+        print(STALE_LEGEND)
     if stopped:
         print(f"  WORKER STOPPED = the holding worker finished its last turn ({', '.join(stopped)}): "
               'continue the worker, hand the item over, or free it (board unclaim <id>)')
@@ -2010,7 +2086,7 @@ def mine(board: Board, args) -> None:
 
 def capacity(board: Board, args) -> None:
     """The session's refill hint: printed for the session itself (no worker caller) in a dispatching role while
-    fewer than its cap of workers were active and worker work (WORKER_KINDS, an agent's within its pulls) is
+    fewer than its cap of workers were active and worker work (WORKER_KINDS, within the pulls of a role without a preset) is
     claimable. A session's own hand-overs count: another of its workers may review them. The snapshot predates a write, so the
     items the command named or claimed are left out (one read per command). Never fails the command it follows."""
     actor = derived_actor()
@@ -2018,13 +2094,13 @@ def capacity(board: Board, args) -> None:
         return
     try:
         entry = registry_by_actor(registrations()).get(actor)
-        if entry is None or entry.get('role') not in CAPACITY_ROLES:
+        pulls = entry.get('pulls') or () if entry else ()
+        if entry is None or not (entry.get('role') in CAPACITY_ROLES or pulls):
             return
         active, cap = len(active_workers(entry)), worker_cap(entry)
         if active >= cap:
             return
-        pulls = entry.get('pulls') or ()
-        kinds = tuple(kind for kind in WORKER_KINDS if entry.get('role') != 'agent' or kind in pulls)
+        kinds = tuple(kind for kind in WORKER_KINDS if entry.get('role') in ('solo', 'autopilot') or kind in pulls)
         changed = {*(getattr(args, 'ids', None) or ()), getattr(args, 'id', None), *getattr(args, 'claimed', ())}
         counts = {kind: sum(1 for issue in board.listed(args.root)
                             if board.claimable(issue) == kind and issue['id'] not in changed) for kind in kinds}
@@ -2061,9 +2137,19 @@ def foreign_claim(board: Board, item_id: str) -> str | None:
     return f"{item_id}: in {queue}'s queue; a lead or solo session moves it first: board route {mine or '<you>'} {item_id}"
 
 
+def mark_forced(issue: dict, actor: str, reason: str | None) -> None:
+    """Record a hold past the cap with its reason; a hold within it drops a mark the item's earlier holder left."""
+    metadata = issue.get('metadata') if isinstance(issue.get('metadata'), dict) else {}
+    if reason is not None:
+        bd_checked('update', issue['id'], '--set-metadata', f'{FORCED_BY}={actor}', '--set-metadata', f'{FORCED_REASON}={reason}', '--json')
+    elif FORCED_BY in metadata:
+        bd_checked('update', issue['id'], '--unset-metadata', FORCED_BY, '--unset-metadata', FORCED_REASON, '--json')
+
+
 def claim(board: Board, args) -> int:
     actor = caller()
-    claimed, failed = [], []
+    claimed, failed, forced = [], [], {}
+    entry = registry_by_actor(registrations()).get(session_actor(actor))
     if args.ids:
         for item_id in args.ids:
             issue = board.by_id.get(item_id)
@@ -2074,10 +2160,16 @@ def claim(board: Board, args) -> int:
                 print(f'{item_id}: already held by {actor}')  # bin/protocol reads this line (claim_items)
                 continue
             if holder and session_actor(holder) == session_actor(actor):
-                # The session owns its workers' holds (design item 16): hand the item down.
+                # The session owns its workers' holds (design item 16): hand the item down. A work item counts against the cap.
+                over = cap_refusal(board, entry, actor, claimed) if issue['status'] == 'in_progress' and is_work_hold(issue) else None
+                if over and args.force is None:
+                    failed.append(item_id)
+                    print(f'{item_id}: not taken over: {over}; hand over or unclaim one, or board claim {item_id} --force "<reason>"', file=sys.stderr)
+                    continue
                 bd_checked('update', item_id, '--assignee', actor, '--force', '--json')
                 comment(item_id, f'board claim: {actor} took this item over from {holder} in the same session.')
                 claimed.append(issue)
+                forced[item_id] = args.force if over else None
                 continue
             refusal = foreign_claim(board, item_id)
             if refusal:
@@ -2098,14 +2190,19 @@ def claim(board: Board, args) -> int:
                 failed.append(item_id)
                 print(f"{item_id}: milestone not ready, waits on {', '.join(board.open_blockers(item_id))}", file=sys.stderr)
                 continue
+            over = cap_refusal(board, entry, actor, claimed) if board.kind(issue) in ('design', 'implement') else None
+            if over and args.force is None:
+                failed.append(item_id)
+                print(f'{item_id}: not claimed: {over}; hand over or unclaim one, or board claim {item_id} --force "<reason>"', file=sys.stderr)
+                continue
             ok, message = claim_one(issue, actor)
             if ok:
                 claimed.append(issue)
+                forced[item_id] = args.force if over else None
             else:
                 failed.append(item_id)
                 print(f'{item_id}: not claimed: {message}', file=sys.stderr)
     else:
-        entry = registry_by_actor(registrations()).get(session_actor(actor))
         if entry is None:
             raise BoardError(f'no registered role for session {session_actor(actor)}; run /role first')
         if shared is not None and person() is None:
@@ -2114,23 +2211,44 @@ def claim(board: Board, args) -> int:
         scoped = board.listed(args.root)
         candidates = sorted((issue for issue in scoped if board.claimable(issue) in kinds),
                             key=lambda issue: claim_order(board, issue))
+        over = cap_refusal(board, entry, actor, claimed)
+        capped = 0
         for issue in candidates:
             if issue['status'] == 'in_review' and authorship(board, issue)[0] == actor:
                 continue  # your own hand-over needs another reviewer
+            past = bool(over) and board.kind(issue) in ('design', 'implement')
+            if past and args.force is None:
+                capped += 1
+                continue
             ok, _ = claim_one(issue, actor)
             if ok:
                 claimed.append(issue)
+                forced[issue['id']] = args.force if past else None
                 break
         if not claimed:
-            print(f"nothing claimable for {entry.get('role')} ({','.join(kinds)})")
+            print(f"nothing claimable for {entry.get('role')} ({','.join(kinds)})"
+                  + (f'; {capped} work items wait behind the cap: {over}; hand over or unclaim one, or board claim --force "<reason>"'
+                     if capped else ''))
     args.claimed = [issue['id'] for issue in claimed]
     for issue in claimed:
         by = f'; {author_label(board, issue)}' if issue['status'] == 'in_review' else ''
         print(f"claimed {issue['id']} ({board.kind(issue) or issue.get('issue_type')}{by}): {issue.get('title', '')}")
+        if issue['id'] in forced:
+            mark_forced(issue, actor, forced[issue['id']])
     still = [issue for issue in held_by_session(board, actor) if issue not in claimed]
     if still:
-        section('this session still holds', [line(issue, issue['assignee']) for issue in still])
+        board.hydrate([issue['id'] for issue in still])  # staleness reads the comments
+        section('this session still holds', [line(issue, issue['assignee'], *hold_marks(board, issue), f'updated {age(board.last_activity(issue))} ago')
+                                                  for issue in still])
+        if any(stale_since(board, issue) for issue in still):
+            print(STALE_LEGEND)
     return 1 if failed or not (claimed or args.ids) else 0
+
+
+def refuse_long_comment(text: str) -> None:
+    refusal = comment_refusal(len(text))
+    if refusal:
+        raise BoardError(refusal)
 
 
 def comment(item_id: str, text: str) -> None:
@@ -2144,8 +2262,10 @@ def require_open(board: Board, ids: list[str]) -> list[dict]:
     return [board.by_id[item_id] for item_id in ids]
 
 
-def take(board: Board, args) -> None:
+def take(board: Board, args) -> int:
     actor = caller()
+    entry = registry_by_actor(registrations()).get(session_actor(actor))
+    taken, failed = [], False
     for issue in require_open(board, args.ids):
         refusal = foreign_claim(board, issue['id'])
         if refusal:
@@ -2154,9 +2274,18 @@ def take(board: Board, args) -> None:
         if previous == actor:
             print(f"{issue['id']}: already held by {actor}")
             continue
+        # A work item held in progress counts against the worker cap however the hold arrives.
+        over = cap_refusal(board, entry, actor, taken) if issue['status'] == 'in_progress' and is_work_hold(issue) else None
+        if over and args.force is None:
+            failed = True
+            print(f"{issue['id']}: not taken: {over}; hand over or unclaim one, or board take {issue['id']} --force \"<reason>\"", file=sys.stderr)
+            continue
         bd_checked('update', issue['id'], '--assignee', actor, '--force', '--json')
         comment(issue['id'], f'board take: {actor} took this item over from {previous}.')
+        taken.append(issue)
         print(f"took {issue['id']} from {previous}")
+        mark_forced(issue, actor, args.force if over else None)
+    return 1 if failed else 0
 
 
 def unclaim(board: Board, args) -> None:
@@ -2187,6 +2316,7 @@ def held(board: Board, item_id: str, actor: str, status: str | None = None) -> d
 def handover(board: Board, args) -> None:
     actor = caller()
     held(board, args.id, actor)
+    refuse_long_comment(HANDOVER + args.evidence)
     bd_checked('update', args.id, '--status', 'in_review', '--assignee', '', '--if-assignee', actor, '--json')
     comment(args.id, HANDOVER + args.evidence)
     print(f'handed over {args.id} for review')
@@ -2195,6 +2325,7 @@ def handover(board: Board, args) -> None:
 def return_item(board: Board, args) -> None:
     actor = caller()
     held(board, args.id, actor, 'in_review')
+    refuse_long_comment(f'board return: {args.findings}')
     bd_checked('update', args.id, '--status', 'open', '--assignee', '', '--if-assignee', actor, '--json')
     comment(args.id, f'board return: {args.findings}')
     print(f'returned {args.id} to the queue')
@@ -2219,6 +2350,116 @@ def question_type(rest: list[str]) -> list[str]:
     out = ['decision' if before in ('--type', '-t') and arg == 'question' else arg for before, arg in zip(['', *rest], rest)]
     return [{'--type=question': '--type=decision', '-t=question': '-t=decision'}.get(arg)
             or re.sub(r'(\btype\s*=\s*"?)question\b', r'\1decision', arg) for arg in out]
+
+
+FIELD_FLAGS = {'description': ('-d', '--description'), 'design': ('--design',), 'acceptance_criteria': ('--acceptance',), 'notes': ('--notes',)}
+FIELD_FILES = {'description': '--body-file', 'design': '--design-file'}  # `-` reads stdin
+APPEND_NOTES = '--append-notes'  # appends to notes: the guard counts the old notes plus the appended text
+
+
+def last_flag_value(rest: list[str], *names: str) -> str | None:
+    """The last value of a flag, `--flag value` and `--flag=value`."""
+    found = None
+    for at, arg in enumerate(rest):
+        name, equals, value = arg.partition('=')
+        if name in names:
+            found = value if equals else (rest[at + 1] if at + 1 < len(rest) else None)
+    return found
+
+
+def field_texts(rest: list[str]) -> tuple[dict[str, str], str | None]:
+    """(field -> the text a create or update sets, stdin when read to get it)."""
+    texts, stdin = {}, None
+    for field, names in FIELD_FLAGS.items():
+        value = last_flag_value(rest, *names)
+        if value is not None:
+            texts[field] = value
+    for field, flag in FIELD_FILES.items():
+        path = last_flag_value(rest, flag)
+        if field == 'description' and ('--stdin' in rest or path == '-') or path == '-':
+            stdin = sys.stdin.read() if stdin is None else stdin
+            texts[field] = stdin
+        elif path:
+            try:
+                texts[field] = Path(path).read_text(encoding='utf-8')
+            except (OSError, UnicodeDecodeError):
+                pass  # bd reports an unreadable file
+    return texts, stdin
+
+
+def size_guard(command: str, rest: list[str]) -> tuple[str | None, str | None]:
+    """(refusal, stdin read to judge it): a work item's description, design, acceptance or notes stays within FIELD_LIMIT
+    characters, so items hold current state and not history. An edit that shrinks an over-limit field passes; an append
+    to notes counts the old notes plus the new text. Decisions and other types are not work items: records are long by design."""
+    if command not in ('create', 'new', 'update'):
+        return None, None
+    texts, stdin = field_texts(rest)
+    appended = last_flag_value(rest, APPEND_NOTES) if command == 'update' else None
+    if not any(len(text) > FIELD_LIMIT for text in texts.values()) and appended is None:
+        return None, stdin
+    if command == 'update':
+        targets = bd_show(positionals(rest), comments=False)
+        new_type = last_flag_value(rest, '-t', '--type')
+        targets = [issue for issue in targets if (new_type or issue.get('issue_type')) in WORK_HOLD_TYPES]
+    else:
+        targets = [{'id': 'the new item', 'issue_type': last_flag_value(rest, '-t', '--type') or 'task'}]
+        targets = [issue for issue in targets if issue['issue_type'] in WORK_HOLD_TYPES]
+    for issue in targets:
+        sizes = {field: len(text) for field, text in texts.items()}
+        if appended is not None and 'notes' not in texts:
+            old = issue.get('notes') or ''
+            sizes['notes'] = len(old) + (1 if old else 0) + len(appended)
+        for field, size in sizes.items():
+            if size > FIELD_LIMIT and size >= len(issue.get(field) or ''):
+                return (f"{issue['id']}: {field} is {size} characters, over the {FIELD_LIMIT} limit. Keep only the current state "
+                        '(replace, do not append); history is a one-line comment; long material belongs in a doc the item links.'), stdin
+    return None, stdin
+
+
+COMMENT_VALUE_FLAGS = ('-a', '--author', '-f', '--file')
+
+
+def comment_refusal(size: int) -> str | None:
+    """Why a comment a session writes is refused: a comment is a one-line event, so it stays within FIELD_LIMIT characters."""
+    if size <= FIELD_LIMIT:
+        return None
+    return (f'comment is {size} characters, over the {FIELD_LIMIT} limit. A comment is a one-line event; '
+            'long material belongs in a doc the item links.')
+
+
+def comment_guard(command: str, rest: list[str]) -> tuple[str | None, str | None]:
+    """(refusal, stdin read to judge it) for `bd comments add <id> <text…>` and `-f <file>` (`-` reads stdin): a session's
+    comment stays within FIELD_LIMIT characters. The board's own packet passes with PACKET_FLAG."""
+    if PACKET_FLAG in rest:
+        return None, None
+    if command == 'comments' and rest[:1] == ['add']:
+        args = rest[1:]
+    elif command == 'comment':  # bd's shorthand for `comments add`
+        args = rest
+    else:
+        return None, None
+    words, stdin, path, at = [], None, None, 0
+    while at < len(args):
+        arg = args[at]
+        name, equals, value = arg.partition('=')
+        if name in COMMENT_VALUE_FLAGS:
+            if name in ('-f', '--file'):
+                path = value if equals else (args[at + 1] if at + 1 < len(args) else None)
+            at += 1 if equals else 2
+            continue
+        if not arg.startswith('-'):
+            words.append(arg)
+        at += 1
+    text = ' '.join(words[1:])  # the first positional is the item id
+    if path == '-' or '--stdin' in args:
+        stdin = sys.stdin.read()
+        text = stdin
+    elif path:
+        try:
+            text = Path(path).read_text(encoding='utf-8')
+        except (OSError, UnicodeDecodeError):
+            pass  # bd reports an unreadable file
+    return comment_refusal(len(text)), stdin
 
 
 def passthrough(argv: list[str]) -> int:
@@ -2258,8 +2499,18 @@ def passthrough(argv: list[str]) -> int:
         if refusal:
             print(f'board: {refusal}', file=sys.stderr)
             return 2
+    refusal, stdin = size_guard(command, rest)
+    if not refusal and stdin is None:
+        refusal, stdin = comment_guard(command, rest)
+    if refusal:
+        print(f'board: {refusal}', file=sys.stderr)
+        return 2
+    if PACKET_FLAG in rest:
+        rest = [arg for arg in rest if arg != PACKET_FLAG]
+    if stdin is not None:
+        sys.stdin = io.StringIO(stdin)  # judged: bd still reads it
     argv = [*argv[:at], *rewritten_create(command, rest)]
-    if shared is None:
+    if shared is None and stdin is None:
         os.execvpe('bd', ['bd', *argv], bd_env())
     return run_shared(argv, flags)
 
@@ -2427,20 +2678,6 @@ def graph_with_queue(args: list[str], path: str) -> list[str]:
     return [handle.name if arg == path else (f'--graph={handle.name}' if arg == f'--graph={path}' else arg) for arg in args]
 
 
-def with_file(text: str, run):
-    """Long text goes to bd through a file, never argv."""
-    with tempfile.NamedTemporaryFile('w', suffix='.md', encoding='utf-8', delete=False) as handle:
-        handle.write(text)
-    try:
-        return run(handle.name)
-    finally:
-        os.unlink(handle.name)
-
-
-def comment_long(item_id: str, text: str) -> None:
-    with_file(text, lambda path: bd_checked('comments', 'add', item_id, '-f', path))
-
-
 def missing_sections(text: str, sections=RECORD_SECTIONS) -> list[str]:
     headings = [normalized(match.group(1)) for match in re.finditer(r'^##\s+(.+?)\s*$', text, re.MULTILINE)]
     return [name for name in sections if not any(heading.startswith(normalized(name)) for heading in headings)]
@@ -2455,7 +2692,6 @@ def section_body(text: str, name: str) -> str | None:
 def record(board: Board, args) -> None:
     actor = caller()
     issue = held(board, args.id, actor)
-    board.hydrate([args.id])  # the packet move below reads the item's comments
     if issue.get('issue_type') != 'decision':
         raise BoardError(f'{args.id}: {issue.get("issue_type")}, not a decision')
     if issue['status'] not in ('open', 'in_progress', 'decided', 'needs_ratification'):
@@ -2469,30 +2705,14 @@ def record(board: Board, args) -> None:
     missing = missing_sections(text, required)
     if missing:
         raise BoardError(f"{args.file} lacks the record section(s) {', '.join('## ' + name for name in missing)}")
-    old = str(issue.get('description') or '').strip()
-    moved = ''
-    if old and missing_sections(old):
-        packet = f'Decision packet (moved from the description at decision time, {utcnow().date().isoformat()}):\n\n{old}'
-        # A rerun after a failed update finds the packet already moved.
-        if not any((c.get('text') or '').endswith(f'\n\n{old}') and (c.get('text') or '').startswith('Decision packet (moved')
-                   for c in issue.get('comments') or []):
-            comment_long(args.id, packet)
-        moved = '; packet moved to a comment'
-    # A rewrite keeps the Decision it replaces in a comment (the description holds one). A rerun after a failed update finds it.
-    before = section_body(old, 'Decision') if issue['status'] == 'decided' and not missing_sections(old, ('Decision',)) else None
-    if before and before != section_body(text, 'Decision') \
-            and not any((c.get('text') or '').endswith(f'\n\n{before}') and (c.get('text') or '').startswith('Previous Decision')
-                        for c in issue.get('comments') or []):
-        comment_long(args.id, f'Previous Decision (replaced {utcnow().date().isoformat()}):\n\n{before}')
-        moved += '; previous Decision kept in a comment'
     # An unratified autopilot record waits unheld for the user's ratification; a decided one stays held to release.
     unheld = ['--assignee', ''] if args.status == 'needs_ratification' else []
     bd_checked('update', args.id, '--body-file', args.file, '--status', args.status, *unheld, '--json')
     lint = json.loads(bd_checked('lint', args.id, '--json') or '{}')
     unlinted = [', '.join(result.get('missing') or []) for result in lint.get('results') or [] if result.get('missing')]
     if unlinted:
-        raise BoardError(f"{args.id}: recorded ({args.status}{moved}), but bd lint reports missing {'; '.join(unlinted)}")
-    print(f"recorded {args.id} ({args.status}{moved}): {issue.get('title', '')}")
+        raise BoardError(f"{args.id}: recorded ({args.status}), but bd lint reports missing {'; '.join(unlinted)}")
+    print(f"recorded {args.id} ({args.status}): {issue.get('title', '')}")
 
 
 def block_one(board: Board, item_id: str, blocker: str, reason: str, actor: str) -> tuple[str, bool]:
@@ -2548,6 +2768,7 @@ def block(board: Board, args) -> int:
     actor = caller()
     if args.blocker not in board.by_id:
         raise BoardError(f'unknown blocker {args.blocker}')
+    refuse_long_comment(f'Blocked by {args.blocker}: {args.reason}')
     _, failed = block_items(board, args.ids, args.blocker, args.reason, actor)
     return 1 if failed else 0
 
@@ -3246,7 +3467,10 @@ def create_for(argv: list[str]) -> int:
     me = person()
     if not me:
         raise BoardError(PERSON_HELP)
-    result = bd('create', *rest, '--labels', f'{FOR_PREFIX}{targets[0]},{QUEUE_PREFIX}{me}', '--assignee', USER_HOLD)
+    refusal, stdin = size_guard('create', rest)
+    if refusal:
+        raise BoardError(refusal)
+    result = bd('create', *rest, '--labels', f'{FOR_PREFIX}{targets[0]},{QUEUE_PREFIX}{me}', '--assignee', USER_HOLD, stdin=stdin)
     sys.stdout.write(result.stdout)
     sys.stderr.write(result.stderr)
     return result.returncode
@@ -3269,7 +3493,7 @@ EXAMPLES = {
     'mine': 'board mine',
     'console': 'board console',
     'show': 'board show <id> --section Decision',
-    'claim': 'board claim',
+    'claim': 'board claim [<id>] [--force "waits on the cache ruling"]',
     'record': 'board record <id> .scratch/<topic>/<arc>/record.md',
     'block': 'board block <item> <item> --on <blocker> --reason "waits for the cache ruling"',
     'revise': 'board revise <old> --title "May X replace Y?" --body-file packet.md --partial "Rule 2"',
@@ -3423,8 +3647,10 @@ def run_command(argv: list[str]) -> int:
     sub.add_argument('--comments', action='store_true', help='select the comments, every one, newest first (not the rest of the item)')
     sub.add_argument('--full', action='store_true', help=f'no {READ_BUDGET}-character budget')
     sub.add_argument('--json', action='store_true', help='with --field: {id: {field: value}}, unbudgeted')
-    sub = add('claim', 'claim the next item routed to your role, or the given ids', claim, [scope])
+    sub = add('claim', 'claim the next item routed to your role, or the given ids; a work item past your worker cap needs --force', claim, [scope])
     sub.add_argument('ids', nargs='*')
+    sub.add_argument('--force', metavar='REASON', type=nonempty,
+                     help="hold a work item past your worker cap, flagged with this reason in position and check")
     sub = add('record', 'write the decision record you hold from a file and set it decided', record)
     sub.add_argument('id')
     sub.add_argument('file')
@@ -3470,7 +3696,11 @@ def run_command(argv: list[str]) -> int:
     sub.add_argument('findings', type=nonempty)
     for name, run, text in (('take', take, 'reassign held items to yourself (with a comment)'),
                             ('unclaim', unclaim, "free a hold, yours or another's (with a comment)")):
-        add(name, text, run).add_argument('ids', nargs='+')
+        sub = add(name, text, run)
+        sub.add_argument('ids', nargs='+')
+        if name == 'take':
+            sub.add_argument('--force', metavar='REASON', type=nonempty,
+                             help="take a work item past your worker cap, flagged with this reason in position and check")
     sub = add('route', "move items into a person's queue (lead, solo or a person's terminal); an inbox item leaves the inbox", route)
     sub.add_argument('person')
     sub.add_argument('ids', nargs='+')

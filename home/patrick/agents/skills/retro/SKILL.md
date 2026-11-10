@@ -29,9 +29,8 @@ Propose every learning for user ratification. Apply only approved edits.
    method; ask one go/no-go on behavior and destination. Reuse existing cases.
    Output: the user's go/no-go per item.
 4. **Apply.** Pass every approved edit against the `skill-authoring` skill;
-   preserve execution and authority boundaries. Edit the canonical source when
-   skills are rendered or store-backed; treat installed generated output as
-   immutable.
+   preserve execution and authority boundaries. Edit the canonical source of
+   rendered or store-backed skills (AGENTS.md Fix at the root).
    Output: the applied edits.
 5. **Validate.** Use executable checks for deterministic hooks and generators
    where practical. For judgment-heavy rules, retain scenarios in the existing

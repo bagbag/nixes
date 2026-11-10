@@ -26,14 +26,17 @@ Never decide these alone.
   [Decision authority](../../shared/decision-protocol.md#decision-authority);
   bring every other choice to the user. State each ruling's scope and what you
   checked; make an unsure choice a question.
-- The user decides and releases rulings and owns staging and commits. On a
+- The user decides and releases rulings. On a
   shared board, that is the person of the question's queue
   ([Routing](../../shared/board-core.md#routing)): ask only your person's
   questions; another person challenges a ruling with a new question. Write
   decision records, rule owners, your own artifacts, `/tmp` probes and inline
   changes under the global instructions' Orchestration; leave other
-  implementation to work items. Run a spike a round question waits on
-  yourself when one probe run likely settles it; leave experiments needing
+  implementation to work items. Run a spike a
+  round question waits on yourself when one probe run likely settles it, as a
+  script that prints the deciding facts and keeps its full output in a scratch
+  file you read only on surprise; a script failing twice goes to a `build`
+  worker. Leave experiments needing
   several passes or variants to a spike item.
 - Decide board bookkeeping yourself (comments, relations, blocks, follow-up
   items for decided work) and report it in one line; ask only when it changes
@@ -42,8 +45,9 @@ Never decide these alone.
 - Decide in the round every contract consumers see: API shape, names,
   defaults, error and failure behavior, limits. Leave only internals and
   sequencing to work items.
-- Brief subagents with one question's scope and a stop condition. Re-derive
-  every choice yourself and treat their results as evidence, not conclusions.
+- Brief subagents with one question's scope and a stop condition; weigh their
+  results under the decision protocol's
+  [Others' input](../../shared/decision-protocol.md#others-input).
 - When the user keeps a choice you challenged, follow it and record the
   concern beside it. Reconsider pushback on its merits. Own an error and
   correct your framing with the user.
@@ -88,8 +92,7 @@ alone and `--no-board <dir>` for a topic outside this repository's board, or a
 repository without one; `--proposal <n>` starts row n of the stored proposal.
 Follow the engine's output; the steps below add the judgment it leaves to you.
 
-1. **Collect.** Check each point against the current tree before classifying
-   it.
+1. **Collect.** The engine lists the points and classes.
 2. **Select.** Prerequisites before their dependents.
 3. **Related.** Extend an open item or decided record on the same decision, in
    place, instead of adding one. Relate a record the answer changes by one
@@ -111,18 +114,12 @@ Follow the engine's output; the steps below add the judgment it leaves to you.
    for the overall picture first, record the round after the walkthrough.
    Record user-stated constraints and principles as rulings, and in the
    Decision any review the user wants of the planning result before it is
-   applied. Check each record against the wording of the chosen option; a rule
-   the option did not state is your ruling (disclose it) or a new question.
-   Revise a record in place until release; record later changes as new
-   records. Close ratified `needs_ratification` records under the same
-   reference.
+   applied. A rule the chosen option did not state is your ruling (disclose it) or
+   a new question. Revise a record in place until release; record later changes
+   as new records.
 
 Apply a change the user asks for to the round's questions through
 `protocol edit` with their words as the quote, not through a pass.
-
-Hold a question on an outside result it waits on (a spike, a review, the
-user's own try) with `waitsFor` instead of asking it; free it when the
-result lands.
 
 **Stop:** an answer states a criterion, or a later step changes the premise:
 restart the affected questions under the decision protocol's
@@ -146,33 +143,21 @@ you.
 2. **Board check.** Act on every hit class the engine lists.
 3. **Own rulings.** Report them in the fields the engine asks for.
 4. **Approval.** The engine asks it.
-5. **Owner writes.** Write each rule into its one owner, replacing the text it
-   supersedes (old text to `history/` under project-memory). Write a rule a
-   topic's design-target doc, `coding-style.md` or `module-authoring.md` states
-   now; only READMEs, other skills and source wait for their work. Name
-   repository paths from the board root and installed files by their installed
-   path, as rendered. For a convention, add an enforcing check where realistic.
-   Withdraw a wrong premise explicitly.
-6. **Release.** Fix what a board refusal names (a record failing
-   `board bd lint`: its text), then rerun the step with `step {}`.
-7. **Next.** Run `protocol next` and follow its output; wait for the user.
-   Output: the recommendation.
+5. **Owner writes.** Move superseded text to `history/` under project-memory.
+   Write a rule a project's convention owners (coding style, module authoring)
+   state now; only READMEs, other skills and source wait for their work. For a
+   convention, add an enforcing check where realistic. Withdraw a wrong premise
+   explicitly.
+6. **Release.** The engine runs it.
+7. **Next.** Output: the recommendation.
 
 **Stop:**
 
-- A spreading change, or every record leaving the set: nothing releases and the
-  records stay decided and held; run the round the engine names on them (its
-  check loop opens with step-back).
-- A hold at approval: nothing releases; ask what it was held for and run a round
-  on those records, on the set when the reason spreads. The rest stay decided
-  and a later `start release` takes them.
-- A question for the user during an open release: `protocol abandon`; nothing
-  releases and `start release` takes the same records again.
 - A contained change to the user's decision (or an unsure one) or an open
   premise: only that record goes to a round, its reason shown at that round's
   Stage.
-- A contained change of your own parts: the record stays, revised; a scoped
-  pass that finds the decision touched drops it.
+- A question for the user during an open release: `protocol abandon`; nothing
+  releases and `start release` takes the same records again.
 
 **Exit:** the set is released, each rule sits in its owner, and the counts are
 reported.

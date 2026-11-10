@@ -42,7 +42,7 @@ per step for a local, reversible choice.
    probe output, or the contract or ruling re-derived on its merits with its
    current status (superseded, closed, revised by a later ruling). Verify an
    absence by searching its owner docs and, where a board exists,
-   `board related <terms> --docs <paths>`. Verify each unverified premise now
+   `$HOME/.agents/bin/board related <terms> --docs <paths>`. Verify each unverified premise now
    or ask it first as its own question; base no ruling or recommendation on an
    assumption. When an earlier ruling, an existing owner or the platform
    already answers a question, present that answer with its re-derivation
@@ -130,7 +130,7 @@ for each when asked or recorded:
 - **Consumer walk** (`consumerWalk`): a realistic consumer walk supports it;
   does not apply to internal choices.
 - **Rulings challenged** (`rulingsChallenged`): judged as if no released ruling
-  existed; each released ruling it rests on or Related linked is challenged in
+  existed; each released ruling it rests on or the round's Related step links to it is challenged in
   `priorRulings` (holds or fails, and why), and each that fails is raised as a
   revision; does not apply when none touches it. An answer from the open round
   stays a premise.
@@ -156,7 +156,7 @@ stays an evidence lean naming the check, marked unverified. Write the marks as
   and the derived end state; form your own option set, treating their
   constraints and framing as evidence, not premises.
 - Assess each hybrid independently for retained benefits and combined costs.
-- Treat agreement after shared framing or a lead-authored amendment as correlated
+- Treat agreement after shared framing or an amendment you authored as correlated
   evidence. Distinguish facts from preferences; preserve material disagreement
   and return trade-offs with a recommendation.
 

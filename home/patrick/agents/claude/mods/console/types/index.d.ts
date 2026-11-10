@@ -42,6 +42,12 @@ export type ConsoleDialogQuestion = {
 }
 
 /** The issued batch; `notice` is the engine-rendered text of its questions' parts, printed as `/console-questions` output at the lead's turn end; the console then sends the message that makes the model open the dialog (empty: nothing new to print, it sends at once). */
+/** The origin of the person's latest message: the terminal's composer or the Remote Control bridge (the phone). */
+export type ConsolePersonOrigin = 'composer' | 'bridge'
+
+/** A row `/console-questions` placed in the chat: the batch's full question text, drawn as Markdown by the `Placed` render hook. */
+export type ConsolePlaced = { id: string; text: string }
+
 export type ConsoleBatch = { marker: string; questions: ConsoleDialogQuestion[]; notice: string }
 
 export type ConsoleCounts = { questions: number; decided: number; toPlan: number; inReview: number; forUser: number }
@@ -209,6 +215,10 @@ declare module 'claude-code' {
       isTurnRunning: boolean
       /** A /console-continue asked for during the running turn (a press, or typed): its end runs it, unless Esc ended it. */
       isContinueAsked: boolean
+      /** Where the person's latest message came from; null before any this session. */
+      personOrigin: ConsolePersonOrigin | null
+      /** The placed question rows' text, newest last. */
+      placed: Shaped<ConsolePlaced[]>
     }
   }
 }

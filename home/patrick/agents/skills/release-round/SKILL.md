@@ -9,11 +9,9 @@ disable-model-invocation: true
 
 # Release round
 
-<!-- @include shared/rerun.md -->
-
 Release is approved when all your own rulings are sure (the only realistic
-clean option), everything else is clean too, and no record leaves the set or
-changes; otherwise the release asks me.
+clean option), every other record passes the Re-check, and no record leaves the
+set or changes; otherwise the release asks me.
 
 Run the release through `protocol` under Release in
 `$HOME/.agents/skills/role/protocols/decide.md`, giving the outputs of its

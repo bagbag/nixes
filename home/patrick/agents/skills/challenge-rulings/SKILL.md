@@ -9,9 +9,7 @@ argument-hint: "[focus and follow-ups]"
 
 # Challenge rulings
 
-<!-- @include shared/rerun.md -->
-
-1. **Inventory.** List your own rulings (asking.md's disclosure kinds), each
+1. **Inventory.** List your own rulings (the kinds Walk through discloses in `$HOME/.agents/skills/shared/asking.md`), each
    choice you left to another role, each strong recommendation, and each
    released ruling a recommendation rests on or Related linked
    (`priorRulings`).

@@ -7,11 +7,11 @@ import type { ConsoleAction, ConsoleBatch, ConsoleBoard, ConsolePassOrigin, Cons
 import { boardItem, boardViews, decline, dropped, isRoundOpen, nudged, pass, PASS_COMMANDS, pending as readPending, readRole, RELEASE_COMMAND, ROUND_ROLES, setWorkers, show, stampRelease, START_COMMAND, startScope, stateDir, statusLine } from './engine'
 import type { ConsoleNudge } from './engine'
 import {
-  claimRefresh, getAskSent, getDrawn, getPaneDismissed, getPass, getQueued, getRole, getRound, getTurnRunning, releaseRefresh, setAskSent, setBoard, setContinueAsked, setDrawn, setPass, setPrinted, setRole,
+  addPlaced, claimRefresh, getAskSent, getDrawn, getPaneDismissed, getPass, getQueued, getRole, getRound, getTurnRunning, releaseRefresh, setAskSent, setBoard, setContinueAsked, setDrawn, setPass, setPrinted, setRole,
   setRound, setRoundError, setStart, takeContinueAsked, takeRefreshAgain, updateOpened, updateQueued,
 } from './state'
 import {
-  CONTINUE_NO_ROUND, continueInHandText, continueText, declineFailedNote, itemSlot, missingReportText, openDialogText, PROTOCOL_ARGS_DESCRIPTION, PROTOCOL_STDIN_DESCRIPTION, PROTOCOL_TOOL_DESCRIPTION, STALE_DROP, stuckPassText,
+  CONTINUE_NO_ROUND, continueInHandText, continueText, declineFailedNote, itemSlot, missingReportText, openDialogText, questionListLine, questionListText, PROTOCOL_ARGS_DESCRIPTION, PROTOCOL_STDIN_DESCRIPTION, PROTOCOL_TOOL_DESCRIPTION, STALE_DROP, stuckPassText,
 } from './words'
 
 type $ = EngineInterface
@@ -56,6 +56,39 @@ export async function midTurnBuiltin($: $, text: string): Promise<{ command: str
 
 /** The command that prints a batch's question text as its output (register.tsx registers and answers it by this literal name). */
 const QUESTIONS_COMMAND = 'console-questions'
+
+/**
+ * A placed row lands after the command line when it is placed a tick after the command answers; at 0 ms it lands above it. Retire
+ * the wait once the host offers a hook after a command's output row.
+ */
+const PLACE_AFTER_MS = 1
+
+/** A placed row's id: one per batch (ids take letters, digits, `_` and `-` only). */
+export const placedId = (marker: string): string => `questions-${marker.replace(/[^\w-]/g, '-')}`
+
+/**
+ * The batch's full questions as a row in the chat, hidden from the model (r13-q79, r14-q81). The text is stored first: the render
+ * hook draws from it, and it outlives the round. Placed after the command answered; where nothing draws the row, a notice carries
+ * the text instead (the person sees it, the model does not).
+ */
+export async function placeQuestions($: $, batch: ConsoleBatch): Promise<void> {
+  const id = placedId(batch.marker)
+  await addPlaced($, { id, text: batch.notice })
+  void $.clock.sleep(PLACE_AFTER_MS)
+    .then(() => $.ui.place({ id }))
+    .then(placed => placed.isPlaced ? undefined : notice($, batch.notice))
+    .catch(error => notice($, `the questions could not be placed in the chat (${message(error)}):\n${batch.notice}`).catch(() => undefined))
+}
+
+/** The model's copy of a batch placed in the chat: one line per dialog question, matched to the round's question by its text. */
+export function questionList(round: ConsoleRound, batch: ConsoleBatch): string {
+  const numbered = batch.questions.length > 1
+  const lines = batch.questions.map((asked, i) => {
+    const question = round.questions.find(one => asked.question === one.text || asked.question === `${i + 1}. ${one.text}`)
+    return questionListLine(numbered ? i + 1 : null, question, asked.header)
+  })
+  return questionListText(batch.marker, lines)
+}
 
 const OPEN_LABEL = 'Open the questions'
 const NOT_NOW_LABEL = 'Not now'

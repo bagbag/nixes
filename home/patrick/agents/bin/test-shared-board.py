@@ -194,6 +194,17 @@ def t_unshared() -> None:
     rc, out, err, _ = run('a', 'health')
     check(rc == 0 and 'other queues' not in out and not (ROOT / 'a/.beads/board-sync').exists(), 'only board\'s mark shares: a remote alone does not', err)
     bd('a', 'dolt', 'remote', 'remove', 'origin', role=None)
+    # Field size guard (r13-q74) through real bd: stdin is judged and still reaches bd.
+    long = 'x' * 2001
+    rc, _, err, _ = bd('a', 'create', 'long', '-t', 'task', '--description', long, '--silent')
+    check(rc == 2 and 'description is 2001 characters' in err, 'a work item over 2000 characters is refused', err)
+    rc, out, err, _ = bd('a', 'create', 'long stdin', '-t', 'task', '--stdin', '--silent', stdin=long)
+    check(rc == 2 and 'description is 2001 characters' in err and not out.strip(), 'the same through stdin', err)
+    rc, out, err, _ = bd('a', 'create', 'short stdin', '-t', 'task', '--stdin', '--parent', parent, '--silent', stdin='short text')
+    made = out.strip().splitlines()[-1] if rc == 0 and out.strip() else ''
+    check(made != '' and items('a').get(made, {}).get('description') == 'short text', 'a short description through stdin reaches bd', err or out)
+    rc, out, err, _ = bd('a', 'create', 'record', '-t', 'decision', '--description', long, '--parent', parent, '--silent')
+    check(rc == 0, 'a decision is not limited', err)
     bd('a', 'dolt', 'commit', '-m', 'unshared items')
 
 

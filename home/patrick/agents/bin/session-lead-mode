@@ -34,7 +34,7 @@ usage: session-lead-mode activate <lead|agent|solo|autopilot> [--pulls plan,desi
        session-lead-mode worker-started <agent-id>
        session-lead-mode worker-active <agent-id>
        session-lead-mode worker-ended <agent-id>
-`--pulls` applies only to agent, which needs at least one pull.
+`--pulls` adds pulls to any role's preset; agent has no preset and needs at least one.
 `--workers` sets the session's worker cap; without it, activate keeps the one set.
 EOF
   exit 2
@@ -182,8 +182,10 @@ case "$command" in
     from_environment
 
     selected=()
-    if [[ "$role" == agent ]]; then
-      [[ -n "$pulls" ]] || fail "agent needs --pulls with at least one of: ${pull_order[*]}"
+    if [[ "$role" == agent && -z "$pulls" ]]; then
+      fail "agent needs --pulls with at least one of: ${pull_order[*]}"
+    fi
+    if [[ -n "$pulls" ]]; then
       IFS=',' read -r -a requested <<<"$pulls"
       for pull in "${requested[@]}"; do
         [[ " ${pull_order[*]} " == *" $pull "* ]] || fail "unknown pull '$pull'; choose from: ${pull_order[*]}"
@@ -191,8 +193,6 @@ case "$command" in
       for pull in "${pull_order[@]}"; do
         [[ ",$pulls," == *",$pull,"* ]] && selected+=("$pull")
       done
-    elif [[ -n "$pulls" ]]; then
-      fail "--pulls applies only to agent"
     fi
     [[ -z "$workers" || "$workers" =~ ^(0|[1-9][0-9]*)$ ]] || fail "--workers takes a whole number, not '$workers'"
 

@@ -65,11 +65,12 @@
 - `$HOME/.agents/bin/board position` computes the position; epics hold no status
   (board-coordination [Epics](../shared/board-coordination.md#epics)).
 - The planning session keeps a plain-prose checkpoint file,
-  `.scratch/<topic-slug>/<arc-slug>/checkpoint.md`, replaced in place:
-  verified position, next authorized work and return boundary, blockers by
-  board id, pending choices, parallel tracks, and links to plans and reports.
-  Distinguish executed evidence from author reports and intent. It holds no
-  operating rules.
+  `.scratch/<topic-slug>/<arc-slug>/checkpoint.md`, replaced in place. It holds
+  only what changes the next session's action: verified position, next
+  authorized work and return boundary, blockers by board id, pending choices,
+  parallel tracks, and pointers to records. Drop each line once its work is
+  recorded elsewhere; finished work and history stay out. Distinguish executed
+  evidence from author reports and intent. It holds no operating rules.
 - Arcs may run in parallel. Each arc has its own outcome epic and
   `.scratch/<topic-slug>/<arc-slug>/` for plans, drafts, reviews, `evidence/`
   and `history/`.

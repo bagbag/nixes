@@ -1,7 +1,7 @@
 ## Board coordination (beads)
 
-Deciding and planning sessions: epics, milestones, recorded rulings, deferrals
-and upstream waits. The board model is [Board core](../shared/board-core.md)
+Deciding and planning sessions: epics, milestones, recorded rulings and
+deferrals. The board model is [Board core](../shared/board-core.md)
 (`$HOME/.agents/skills/shared/board-core.md`).
 
 ### Epics
@@ -47,7 +47,7 @@ and upstream waits. The board model is [Board core](../shared/board-core.md)
 ### Rulings
 
 - At decision time, write the record with `board record <id> <file>`, which
-  moves the packet into the first comment and sets status `decided`
+  replaces the packet and sets status `decided`
   (autopilot: `--status needs_ratification`). The file holds these `##`
   sections, which `board record` checks: `Question`,
   `Alternatives Considered`, `Decision`, `Rationale` (with provenance: user or
@@ -78,7 +78,3 @@ and upstream waits. The board model is [Board core](../shared/board-core.md)
 |---|---|
 | Deferral | `board bd defer <id> --reason "<revisit condition>"`, plus `--until <date>` for a date condition (bd undefers it then); undefer other conditions on named new evidence. Deferred items are the project backlog. |
 | Environment fact | `board bd remember --key <key>` for temporary repository-wide facts needed by every current session, a user's broad stop (area, paths, kind of action) included with its words and date; state a removal condition; remove with `board bd forget`. |
-
-### Upstream waits
-
-Before creating a wait on another project's delivery, read `$HOME/.agents/skills/shared/upstream-waits.md`.

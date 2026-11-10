@@ -5,7 +5,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface } from 'claude-code'
 
-import type { ConsoleBoard, ConsoleLenses, ConsoleOpened, ConsolePassRun, ConsoleQueued, ConsoleRefresh, ConsoleRole, ConsoleRound, ConsoleSection, ConsoleStart, ConsoleDeferred } from '../types'
+import type { ConsoleBoard, ConsoleLenses, ConsoleOpened, ConsolePassRun, ConsolePersonOrigin, ConsolePlaced, ConsoleQueued, ConsoleRefresh, ConsoleRole, ConsoleRound, ConsoleSection, ConsoleStart, ConsoleDeferred } from '../types'
 
 import { isRoundOpen } from './engine'
 
@@ -32,10 +32,24 @@ const openedState = atom({ plugin: 'console', key: 'opened' } as const, null, { 
 const startState = atom({ plugin: 'console', key: 'start' } as const, null, { shape: 'start-2' })
 const deferredState = atom({ plugin: 'console', key: 'deferred' } as const, [] as ConsoleDeferred[], { shape: 'deferred-1' })
 
+const personOriginState = atom({ plugin: 'console', key: 'personOrigin' } as const, null as ConsolePersonOrigin | null)
+const placedState = atom({ plugin: 'console', key: 'placed' } as const, [] as ConsolePlaced[], { shape: 'placed-1' })
+
 const GATE_KEYS_KEPT = 200
+const PLACED_KEPT = 20
 
 export async function getRole($: $): Promise<ConsoleRole | null> { return read($, roleState) }
 export async function setRole($: $, value: ConsoleRole | null): Promise<void> { await update($, roleState, () => value) }
+
+/** Where the person's latest message came from; null before any this session. */
+export async function getPersonOrigin($: $): Promise<ConsolePersonOrigin | null> { return read($, personOriginState) }
+export async function setPersonOrigin($: $, value: ConsolePersonOrigin): Promise<void> { await update($, personOriginState, () => value) }
+
+/** The placed question rows' text, newest last: the `Placed` render hook draws a row from here, not from the round, which moves on. */
+export async function getPlaced($: $): Promise<ConsolePlaced[]> { return read($, placedState) }
+export async function addPlaced($: $, row: ConsolePlaced): Promise<void> {
+  await update($, placedState, rows => [...rows.filter(one => one.id !== row.id), row].slice(-PLACED_KEPT))
+}
 
 export async function getDrawn($: $): Promise<boolean> { return read($, drawnState) }
 export async function setDrawn($: $, value: boolean): Promise<void> { await update($, drawnState, () => value) }

@@ -44,14 +44,17 @@ steps 3-7.
    triage the author's disclosed judgment calls; classify scope growth under
    [Expansion findings](#expansion-findings).
    Output: verdict; then each confirmed defect, risk and open question.
-6. **Fix.** Apply a small, contained fix that is the only realistic clean
-   option, unless the brief forbids assessor fixes; return larger fixes to the
-   author.
-   Output: each fix with its diff location, or `no fixes`.
+6. **Fix.** Unless the brief forbids assessor fixes, fix wording, doc and
+   comment findings yourself, and fix a code finding when the fix is the only
+   clean option and stays within a few lines; rerun the gates after a code
+   fix. Return larger fixes to the author.
+   Output: each fix with its diff location, or `no fixes`; gate reruns.
 7. **Close or return.** Close only when certain everything is clean and every
-   required gate passed: `board bd close <id> --reason "<verdict>"`. Otherwise
-   return it with verdict, confirmed defects, open questions, executed checks
-   and next action: `board return <id> "<findings>"`.
+   required gate passed (your fixes included, listed in the verdict):
+   `board bd close <id> --reason "<verdict>"`, then commit the item's paths
+   (not a standalone review's) under the global Git rule. Otherwise return it with verdict, confirmed
+   defects, open questions, executed checks and next action:
+   `board return <id> "<findings>"`.
    Raise a choice that needs a decision as a question blocking the item. For a
    standalone review, record each finding as a new item discovered from it
    (`--deps discovered-from:<id>`), then close it with the verdict.
@@ -64,8 +67,7 @@ steps 3-7.
 - A required gate cannot run: return the item naming the unestablished claim
   and its acceptance consequence.
 - Repairs on the same problem reach the retry limit (global Retry limit):
-  follow it; comment attempts, remaining failure and root-cause hypothesis on
-  the item.
+  follow it, recording in the item's `notes`.
 
 ## Exit
 

@@ -5,7 +5,7 @@ description: >-
   previous snapshot and brief, with one authoritative verdict and brief per
   round. Use when the user asks to review, re-review or run "round N" of
   staged changes, or to review an implementation against a previous round's
-  brief; not for a one-off diff or PR.
+  brief; not for a one-off diff or PR, or a question round.
 ---
 
 # Staged review
@@ -21,9 +21,8 @@ agent implements; the user stages and commits.
 - Treat every snapshot as read-only evidence.
 - Label reused check results *implementer-reported*, with command, outcome and
   revision. Label checks you run *reviewer-verified*.
-- Ground findings in current source; drop false positives and intentional
-  choices. Verify claims in comments, TSDoc, README and CHANGELOG against the
-  code, including line references and signatures.
+- Verify claims in comments, TSDoc, README and CHANGELOG against the code,
+  including line references and signatures.
 
 ## 1. Scope and snapshot
 
@@ -88,8 +87,8 @@ Output: each check with its source label and outcome.
 
 - Check each proposed edit in the final brief against the skills, style guides
   and project instructions governing the target. Withdraw a brief item explicitly
-  when it contradicts a governing source; do not charge the implementer for
-  skipping it.
+  when it contradicts a governing source; count the implementer's skipping it
+  as conformant.
 - Classify each open question in the final brief as ruled when the user's
   criteria leave one clean option, or as a user decision with lettered options,
   a recommendation, and the case for and against each.
@@ -98,7 +97,7 @@ Output: withdrawn items; each open question as ruled or a user decision.
 
 ## 5. Write and close the round
 
-- Write the round under `.scratch/<topic>/<arc>/round<N>/` and follow the
+- Write the round under `.scratch/<topic-slug>/<arc-slug>/round<N>/` and follow the
   artifact schema in [Round artifacts](#round-artifacts).
 - Carry every earlier finding ID and its status (open, fixed, withdrawn or
   ruled no-change) in the finding ledger. Record withdrawals and supersessions

@@ -9,8 +9,6 @@ argument-hint: "[lenses] [focus and follow-ups]"
 
 # Step back
 
-<!-- @include shared/rerun.md -->
-
 Lens names at the start of the argument select lenses (`/step-back root-fix
 bloat`); the rest of the argument is the focus. Without lenses, run the base
 pass: the stance on the current focus, judged by the default criteria.
@@ -22,9 +20,9 @@ authority; priorities and deferral rules decide when, not what. Find the
 cleanest end state, keeping DX in mind; then judge the whole picture: is the
 combined result clean and coherent? Name each known bad practice in the
 design, a recommendation or a requested behavior, with its source; push back
-and recommend the established practice instead. Ground and think yourself
-until you have strong recommendations; where none is strong, list the
-decisive trade-offs.
+and recommend the established practice instead. Think through each changed
+recommendation and verify the facts it rests on, as the `ground` skill does;
+where none is strong, list the decisive trade-offs.
 
 ## Where
 
@@ -48,7 +46,7 @@ focus; keep the other default criteria to a line each.
   handle failure, test), noting what each step needs; judge the options
   against those walks.
 - **root-fix:** does it fix the root cause, not a symptom? Trace the cause;
-  the root may lie outside this module or repo, and changes there are allowed.
+  the root may lie outside this module or repo; recommend the fix there.
 - **bloat:** over-engineered? Too much magic?
 - **gaps:** under-built: does anything the goal or realistic consumers need
   fall short?

@@ -14,6 +14,7 @@ from .questions import apply_updates
 from .render import batch_seen
 from .check import gate_ask, leave_check, next_cycle, nothing_to_check, rescope_check
 from .ask import batch_back, hand_over, take_unchecked, unchecked
+from .told import first_time
 
 
 def require_origin(ctx: Context, verb: str, origin: str | None) -> None:
@@ -310,7 +311,7 @@ def answer(ctx: Context, report: dict, origin: str) -> str:
     if response:
         notes.append(words.answer_response(response))
     if typed or noted or response:
-        notes.append(words.ANSWER_ROUTES)
+        notes.append(words.ANSWER_ROUTES if first_time(ctx, 'routes') else words.ANSWER_ROUTES_AGAIN)
     if noted:
         notes.append(words.NOTE_RECORD)
     if typed or noted:

@@ -10,7 +10,8 @@ approval. Give each step's output compactly.
    round of a single question names why none shares one. Without a proposal,
    start from the highest-[priority](../shared/board-core.md#priority)
    unblocked question. When the user flagged one instance, find all of its
-   kind, including earlier rulings.
+   kind, including earlier rulings. Classify sequencing and process choices as
+   the planning session's call.
    Output: the round's decisions; the instance list where one was flagged.
 2. **Check.** In a round run through `protocol` (decide protocol Round), the
    engine sequences the passes and caps the loop: follow its output and report
@@ -18,17 +19,16 @@ approval. Give each step's output compactly.
    step-back and ground skills on the whole set, in that order; invoke
    challenge-rulings last, before the questions or the approval request.
    Invoke each through the runtime's skill mechanism (Claude's Skill tool; in
-   Codex, read its `SKILL.md`). Scale each pass to stakes: one line for a local,
-   reversible round. Repeat step-back and ground over the whole set until a
-   pass changes nothing, also after challenge-rulings changes something; a
-   changed premise, ruling, option or question set counts as a change. A pass
-   that would revise a user's ruling raises it as a question under
-   decision-protocol Changed premises.
+   Codex, read its `SKILL.md`). Run step-back and ground with their full
+   lens sets on every question. Repeat step-back
+   and ground over the whole set until a pass changes nothing, also after
+   challenge-rulings changes something; a changed premise, ruling, option or
+   question set counts as a change. A pass that would revise a user's ruling
+   raises it as a question under decision-protocol Changed premises.
    Derive process questions from the root fix; step up an abstraction level
-   when all options feel wrong. Classify sequencing and process choices as the
-   planning session's call.
-   End a pass's turn with one short line: what changed, or "No change."; put what it
-   `checked` only in its pass report.
+   when all options feel wrong.
+   End a pass's turn with one short line: what changed, or "No change."; list
+   nothing it checked.
    Output: each invocation and what it changed; what stays unsure, as
    questions.
 3. **Walk through.** Outside a round (retro, role, Accept): in chat, readable
@@ -46,10 +46,10 @@ approval. Give each step's output compactly.
    list with later rulings.
    In a round, put a term to define in the question's `note` and your own
    rulings in its `rulings`.
-   Output: the walkthrough, ending with an offer to ask; in a round, none.
+   Output: the walkthrough.
 4. **Ask.** Once the user accepts, ask under
    [Question format](#question-format): adopt the end state, then one question
-   per contested choice and every ruling you cannot ground, no cap per round.
+   per contested choice and every ruling you cannot ground.
    Output: the questions.
 
 ## Standing rules
@@ -58,6 +58,6 @@ approval. Give each step's output compactly.
   and claim rests on: the user's words, quoted; the evidence that grounds it
   (source, doc, run or ruling); or your call. Verify or ask anything else
   before stating it; quote only what the user wrote.
-- End every explanation with an offer to ask.
+- End every explanation with an offer to ask; in a round, none.
 
 <!-- @include shared/question-format.md -->

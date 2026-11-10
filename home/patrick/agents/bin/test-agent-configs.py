@@ -199,6 +199,7 @@ def validate_generated_agents(root: Path, generator) -> None:
         "architect.toml",
         "build.toml",
         "craft.toml",
+        "deep-review.toml",
         "explorer.toml",
         "option-explorer.toml",
         "plan.toml",
@@ -212,6 +213,7 @@ def validate_generated_agents(root: Path, generator) -> None:
         "architect.md",
         "build.md",
         "craft.md",
+        "deep-review.md",
         "Explore.md",
         "option-explorer.md",
         "Plan.md",
@@ -231,8 +233,9 @@ def validate_generated_agents(root: Path, generator) -> None:
         raise ValueError("duplicate effective Codex agent names")
 
     # Source comparison catches omissions shared by both adapters.
+    expander = load_skill_expander(root)
     for path in sorted(source.glob("*.md")):
-        _, frontmatter, body = path.read_text(encoding="utf-8").split("---", 2)
+        _, frontmatter, body = expander.expand_markdown(path, root / "skills").split("---", 2)
         metadata = yaml.safe_load(frontmatter)
         codex_name = metadata.get("codex-name", metadata["name"])
         claude_name = metadata.get("claude-name", metadata["name"])
@@ -253,8 +256,34 @@ def validate_generated_agents(root: Path, generator) -> None:
             if effort != metadata.get(f"{target}-effort", metadata["effort"]):
                 raise ValueError(f"{path}: {target} changed resolved effort")
 
+    # r17-q103: one review method and one reuse check, expanded into both runtimes' outputs.
+    method = (root / "skills" / "shared" / "review-method.md").read_text(encoding="utf-8")
+    reuse = (root / "skills" / "shared" / "reuse-check.md").read_text(encoding="utf-8")
+    reuse_lines = [line for line in reuse.splitlines() if line.strip()]
+    method_lines = [line for line in method.splitlines() if line.strip() and "@include" not in line]
+    if "<!-- @include shared/reuse-check.md -->" not in method:
+        raise ValueError("review-method.md must take the reuse check by include")
+    for name in ("review", "deep-review", "verify"):
+        source_text = (source / f"{name}.md").read_text(encoding="utf-8")
+        if "shared/" not in source_text.split("---", 2)[2]:
+            raise ValueError(f"{name}: body must take shared text by include")
+        for target, text in (("codex", parsed[f"{name}.toml"]["developer_instructions"]),
+                             ("claude", claude[f"{name}.md"])):
+            if "@include" in text:
+                raise ValueError(f"{name}: {target} output keeps an include marker")
+            expected = reuse_lines if name == "verify" else [*method_lines, *reuse_lines]
+            missing = [line for line in expected if line not in text]
+            if missing:
+                raise ValueError(f"{name}: {target} output lacks shared text {missing[:1]}")
+    for target, outputs, suffix in (("codex", parsed, ".toml"), ("claude", claude, ".md")):
+        def instructions(name: str) -> str:
+            return outputs[name + suffix]["developer_instructions"] if target == "codex" else claude[name + suffix].split("---", 2)[2]
+        if instructions("review") != instructions("deep-review"):
+            raise ValueError(f"{target}: review and deep-review bodies differ")
+
     specialists = {
         "architect": "architect",
+        "deep-review": "deep-review",
         "option-explorer": "option-explorer",
         "plan": "Plan",
         "review": "review",
@@ -268,8 +297,10 @@ def validate_generated_agents(root: Path, generator) -> None:
         metadata = yaml.safe_load(document.split("---", 2)[1])
         if not {"Write", "Edit"}.issubset(metadata["tools"].split(", ")):
             raise ValueError(f"Claude {claude_name} must permit artifact writes and edits")
-        if "readonly-guard.sh" not in document:
-            raise ValueError(f"Claude {claude_name} lost its readonly Bash hook")
+        # Reviewers run gates and fix findings (r13-q57); the other specialists stay read-only in Bash.
+        guarded = codex_name not in {"review", "deep-review", "verify"}
+        if guarded != ("readonly-guard.sh" in document):
+            raise ValueError(f"Claude {claude_name} readonly Bash hook must be {'on' if guarded else 'off'}")
 
     for codex_name, claude_name in {"scout": "scout", "explorer": "Explore"}.items():
         if parsed[f"{codex_name}.toml"]["sandbox_mode"] != "read-only":
@@ -547,6 +578,32 @@ Second instruction.
             raise ValueError("multiline instructions were not preserved")
 
 
+def validate_agent_includes(generator) -> None:
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        (root / "definitions").mkdir()
+        (root / "skills" / "shared").mkdir(parents=True)
+        (root / "skills" / "shared" / "rule.md").write_text("Shared rule.\n", encoding="utf-8")
+        source = root / "definitions" / "sample.md"
+        head = "---\nname: sample\ndescription: Sample.\neffort: medium\ncodex-model: m\ncodex-sandbox: read-only\n---\n\n"
+        source.write_text(head + "Before.\n<!-- @include shared/rule.md -->\nAfter.\n", encoding="utf-8")
+        _, codex_text = generator.render_codex_agent(source)
+        _, claude_text = generator.render_claude_agent(source)
+        if tomllib.loads(codex_text)["developer_instructions"] != "Before.\nShared rule.\nAfter.\n" or "Shared rule." not in claude_text:
+            raise ValueError("agent include was not expanded for both runtimes")
+        for text in (
+            head + "<!-- @include shared/missing.md -->\n",
+            head + "<!-- @include ../outside.md -->\n",
+            head.replace("effort: medium", "effort: medium\n<!-- @include shared/rule.md -->") + "x\n",
+        ):
+            source.write_text(text, encoding="utf-8")
+            try:
+                generator.render_claude_agent(source)
+            except ValueError:
+                continue
+            raise ValueError(f"invalid agent include accepted: {text!r}")
+
+
 def validate_effort_overrides(generator) -> None:
     def write(directory: str, extra: str) -> Path:
         source = Path(directory) / "sample.md"
@@ -673,6 +730,11 @@ def validate_session_registry(root: Path) -> None:
                 != (["plan", "review"], "codex"):
             raise ValueError("session-lead-mode did not store the Codex agent's pulls in canonical order")
 
+        # Every role takes pulls (presets add to them); a preset role registers none unless given.
+        for role, given, stored in (("lead", "implement,plan", ["plan", "implement"]), ("solo", "review", ["review"]), ("autopilot", "design", ["design"])):
+            run("activate", role, "--pulls", given, env={**env, **as_session(other)}).check_returncode()
+            if json.loads(run("show", other, env=env).stdout)["pulls"] != stored:
+                raise ValueError(f"session-lead-mode did not store {role}'s pulls {given}")
         run("activate", "solo", env={**env, **as_session(SESSION)}).check_returncode()
         changed = json.loads(run("show", SESSION, env=env).stdout)
         if changed["role"] != "solo" or changed["actor"] != SESSION_ACTOR:
@@ -680,7 +742,7 @@ def validate_session_registry(root: Path) -> None:
 
         rejected = (
             (("activate", "agent"), as_session("abcdefgh-1")),
-            (("activate", "lead", "--pulls", "plan"), as_session("abcdefgh-1")),
+            (("activate", "lead", "--pulls", "plan,deploy"), as_session("abcdefgh-1")),
             (("activate", "agent", "--pulls", "plan,deploy"), as_session("abcdefgh-1")),
             (("activate", "goal-lead"), as_session("abcdefgh-1")),
             (("activate", "lead", "--session", "abcdefgh-1"), as_session("abcdefgh-1")),
@@ -1879,9 +1941,12 @@ def validate_board(root: Path) -> None:
             expected = fake.reads() if fake.reads() in (["show"], ["show", "show"]) else ["show"]
         elif argv[0] in ("related", "check", "block", "revise", "release", "supersede"):
             expected = ["export"]
-        elif argv[0] == "record" or argv[0] == "claim" and any(issue["status"] == "in_review" for issue in live) \
-                and fake.reads() == ["list", "show"]:  # claim reads hand-over comments of in_review items
-            expected = ["list", "show"]
+        elif argv[0] == "record":
+            expected = ["list"]
+        elif argv[0] == "claim" and (held or any(issue["status"] == "in_review" for issue in live)) \
+                and fake.reads() in (["list", "show"], ["list", "show", "show"]):
+            # claim reads hand-over comments of in_review items, and the comments of the session's other holds (staleness)
+            expected = fake.reads()
         elif argv[0] in ("position", "console") and (held or childless) or argv[0] == "mine" and held:
             expected = ["list", "show"]
         else:
@@ -2332,6 +2397,243 @@ def validate_board(root: Path) -> None:
             if invoke(["claim", ids["Held task"]], fake, "lead0001")[0] == 0 or fake.writes():
                 raise ValueError("board claim forced another session's hold")
 
+            def row(text, key):
+                return next(text_line for text_line in text.splitlines() if key in text_line)
+
+            # Worker cap (r13-q71): a work item past the claiming actor's cap is refused unless forced with a reason.
+            def set_workers(session, count):
+                subprocess.run(["bash", str(registry), "set-workers", session, "--workers", str(count)], check=True,
+                               env={**os.environ, **session_env(state_dir), **project_env})
+
+            subprocess.run(["bash", str(registry), "activate", "agent", "--pulls", "implement,review"], check=True,
+                           env={**os.environ, **session_env(state_dir), **as_session("0000-agnt0001"), **project_env})
+            set_workers("0000-solo0001", 1)
+            set_workers("0000-agnt0001", 1)
+            holding = variant(**{"Held task": {"assignee": "solo0001"}})
+            ready = ids["Ready task"]
+            fake = Fake(holding)
+            code, _, errors = invoke(["claim", ready], fake, "solo0001")
+            if code != 1 or fake.writes() or "solo0001 holds 1 of 1 work items" not in errors or '--force "<reason>"' not in errors:
+                raise ValueError(f"board claim did not refuse a work item past the worker cap: {code} {fake.writes()} {errors}")
+            fake = Fake(holding)
+            code, _, _ = invoke(["claim", ready, "--force", "gate down"], fake, "solo0001")
+            if code or fake.writes() != [["update", ready, "--claim", "--json"],
+                                         ["update", ready, "--set-metadata", "forced_hold_by=solo0001",
+                                          "--set-metadata", "forced_hold=gate down", "--json"]]:
+                raise ValueError(f"board claim --force did not hold and flag the item: {fake.writes()}")
+            try:
+                invoke(["claim", ready, "--force", " "], Fake(holding), "solo0001")
+            except SystemExit as error:
+                if error.code != 2:
+                    raise ValueError("board claim --force with an empty reason must be a usage error") from None
+            else:
+                raise ValueError("board claim --force took an empty reason")
+            fake = Fake(holding)
+            invoke(["claim", ready, ids["Spike perf"]], fake, "lead0001")  # a lead's cap is 3, nothing held
+            if len(fake.writes()) != 2:
+                raise ValueError(f"board claim refused a work item within the cap: {fake.writes()}")
+            # Counted per actor: a worker's holds are not its session's, and a forced claim within the cap leaves no flag.
+            fake = Fake(variant(**{"Held task": {"assignee": "solo0001/build-12345678"}}))
+            invoke(["claim", ready, "--force", "unneeded"], fake, "solo0001")
+            if fake.writes() != [["update", ready, "--claim", "--json"]]:
+                raise ValueError(f"board counted a worker's hold against its session, or flagged a hold within the cap: {fake.writes()}")
+            # Not counted: decisions, in-review items (a reviewer's or acceptor's), and planning (a released ruling).
+            kept = variant(**{"Held task": {"assignee": None, "status": "open"}, "Handed task": {"assignee": "solo0001"},
+                              "Open cache question": {"assignee": "solo0001"}})
+            fake = Fake(kept)
+            invoke(["claim", ready], fake, "solo0001")
+            if fake.writes() != [["update", ready, "--claim", "--json"]]:
+                raise ValueError(f"board claim counted a decision or in-review hold against the cap: {fake.writes()}")
+            fake = Fake(holding)
+            invoke(["claim", ids["Released ruling"]], fake, "solo0001")
+            if fake.writes() != [["update", ids["Released ruling"], "--assignee", "solo0001", "--if-assignee", "", "--json"]]:
+                raise ValueError(f"board claim refused a planning hold past the cap: {fake.writes()}")
+            # A bare claim takes no work item past the cap; --force takes the first.
+            held_by_agent = variant(**{"Held task": {"assignee": "agnt0001"}, "Handed task": {"status": "closed"}})
+            fake = Fake(held_by_agent)
+            code, out, _ = invoke(["claim"], fake, "agnt0001")
+            if code != 1 or fake.writes() or "wait behind the cap" not in out:
+                raise ValueError(f"a bare claim took a work item past the cap: {fake.writes()} {out}")
+            fake = Fake(held_by_agent)
+            invoke(["claim", "--force", "backlog"], fake, "agnt0001")
+            writes = fake.writes()
+            if len(writes) != 2 or writes[0][2:] != ["--claim", "--json"] or writes[1] != [
+                    "update", writes[0][1], "--set-metadata", "forced_hold_by=agnt0001", "--set-metadata", "forced_hold=backlog", "--json"]:
+                raise ValueError(f"a forced bare claim did not flag its hold: {writes}")
+            # The flag shows while the forcing actor holds the item, in position, check and the holder's claim output.
+            flagged = variant(**{"Ready task": {"assignee": "solo0001", "status": "in_progress",
+                                                "metadata": {"forced_hold_by": "solo0001", "forced_hold": "gate down"}},
+                                 "Spike perf": {"assignee": "lead0001", "status": "in_progress",
+                                                "metadata": {"forced_hold_by": "solo0001", "forced_hold": "old hold"}}})
+            _, shown, _ = invoke(["position"], Fake(flagged))
+            if "FORCED: gate down" not in row(shown, ready) or "FORCED" in row(shown, ids["Spike perf"]):
+                raise ValueError(f"board position did not flag exactly the forced hold:\n{shown}")
+            _, shown, _ = invoke(["check"], Fake(flagged))
+            if f"{ready}  forced-hold  solo0001: gate down" not in shown or ids["Spike perf"] + "  forced-hold" in shown:
+                raise ValueError(f"board check did not list the forced hold:\n{shown}")
+            _, shown, _ = invoke(["claim"], Fake(flagged), "solo0001")
+            if "FORCED: gate down" not in row(shown, ready):
+                raise ValueError(f"board claim did not show the forced hold in the holder's list:\n{shown}")
+            fake = Fake(variant(**{"Ready task": {"assignee": None, "status": "open",
+                                                  "metadata": {"forced_hold_by": "solo0001", "forced_hold": "gate down"}}}))
+            invoke(["claim", ready], fake, "solo0001")
+            if fake.writes()[1:] != [["update", ready, "--unset-metadata", "forced_hold_by", "--unset-metadata", "forced_hold", "--json"]]:
+                raise ValueError(f"board claim kept an earlier holder's forced mark: {fake.writes()}")
+            # A takeover counts against the cap like a claim (r16-q93): a same-session claim and board take of a work item
+            # held in progress are refused past it unless --force "<reason>", which flags the hold.
+            stopped_worker = variant(**{"Held task": {"assignee": "solo0001/build-12345678"},
+                                        "Ready task": {"assignee": "solo0001", "status": "in_progress"}})
+            for verb in ("claim", "take"):
+                fake = Fake(stopped_worker)
+                code, _, errors = invoke([verb, ids["Held task"]], fake, "solo0001")
+                if code != 1 or fake.writes() or "solo0001 holds 1 of 1 work items" not in errors or f"{verb} {ids['Held task']} --force" not in errors:
+                    raise ValueError(f"board {verb} took over a work hold past the worker cap: {code} {fake.writes()} {errors}")
+                fake = Fake(stopped_worker)
+                code, _, _ = invoke([verb, ids["Held task"], "--force", "gate down"], fake, "solo0001")
+                writes = fake.writes()
+                if code or writes[0] != ["update", ids["Held task"], "--assignee", "solo0001", "--force", "--json"] \
+                        or writes[-1] != ["update", ids["Held task"], "--set-metadata", "forced_hold_by=solo0001",
+                                          "--set-metadata", "forced_hold=gate down", "--json"]:
+                    raise ValueError(f"board {verb} --force did not take over and flag the hold: {writes}")
+                fake = Fake(variant(**{"Held task": {"assignee": "solo0001/build-12345678"}}))
+                code, _, _ = invoke([verb, ids["Held task"]], fake, "solo0001")
+                if code or [w[0] for w in fake.writes()] != ["update", "comments"]:
+                    raise ValueError(f"board {verb} refused or flagged a takeover within the cap: {fake.writes()}")
+            # Two takeovers in one call: the first counts against the second.
+            fake = Fake(variant(**{"Held task": {"assignee": "solo0001/build-12345678"},
+                                   "Ready task": {"assignee": "solo0001/build-12345678", "status": "in_progress"}}))
+            code, _, errors = invoke(["take", ids["Held task"], ready], fake, "solo0001")
+            if code != 1 or len(fake.writes()) != 2 or "not taken" not in errors:
+                raise ValueError(f"board take did not count its own takeovers: {code} {fake.writes()} {errors}")
+            set_workers("0000-solo0001", 3)
+            # Pulls (r13-q61): a lead's registered pulls come on top of its preset, for claiming and for handles.
+            subprocess.run(["bash", str(registry), "activate", "lead", "--pulls", "implement"], check=True,
+                           env={**os.environ, **session_env(state_dir), **as_session("0000-lead0002"), **project_env})
+            fake = Fake(fixture)
+            invoke(["claim"], fake, "lead0002")
+            if len(fake.writes()) != 1 or fake.writes()[0][2:] != ["--claim", "--json"]:
+                raise ValueError(f"a lead with the implement pull did not claim implement work: {fake.writes()}")
+            fake = Fake(fixture)
+            invoke(["claim"], fake, "lead0001")
+            if fake.writes():
+                raise ValueError(f"a lead without pulls claimed work: {fake.writes()}")
+            Path(state_dir, "0000-lead0002.json").unlink()
+            Path(state_dir, "0000-agnt0001.json").unlink()  # the later position checks count the fixture's sessions
+
+            # Stale holds (r13-q76): a held work item without an update (fields, notes, comments) for an hour.
+            later = "2026-10-22T17:00:00+00:00"
+            _, shown, _ = invoke(["position"], Fake(fixture), now=later)
+            if "STALE" not in row(shown, ids["Held task"]) or "STALE = no update" not in shown \
+                    or "STALE" in row(shown, ids["Open cache question"]):
+                raise ValueError(f"board position did not flag the stale work hold only:\n{shown}")
+            # The position legend speaks to the holder of another session's hold: only the holder, the user or a deciding session frees it.
+            if "board unclaim it" in shown or "Only the holder, the user or a deciding session frees it" not in shown:
+                raise ValueError(f"board position's STALE legend must not tell the reader to unclaim another session's hold:\n{shown}")
+            commented = variant(**{"Held task": {"comments": [{"author": "aaaa1111", "text": "waits on CI",
+                                                              "created_at": "2026-10-22T16:30:00Z"}]}})
+            _, shown, _ = invoke(["position"], Fake(commented), now=later)
+            if "STALE" in shown:
+                raise ValueError(f"a comment within the hour did not renew the hold:\n{shown}")
+            _, shown, _ = invoke(["check"], Fake(fixture), now=later)
+            if f"{ids['Held task']}  stale-hold  aaaa1111/build-12345678: no update for" not in shown:
+                raise ValueError(f"board check did not list the stale hold:\n{shown}")
+            _, shown, _ = invoke(["claim"], Fake(fixture), "aaaa1111/build-87654321", now=later)
+            if "STALE" not in row(shown, ids["Held task"]):
+                raise ValueError(f"board claim did not show the stale hold in the holder's list:\n{shown}")
+            _, shown, _ = invoke(["mine"], Fake(fixture), "aaaa1111", now=later)
+            if "STALE" not in row(shown, ids["Held task"]):
+                raise ValueError(f"board mine did not show the stale hold:\n{shown}")
+            _, shown, _ = invoke(["position", "--json"], Fake(fixture), now=later)
+            if not next(h for h in json.loads(shown)["held"] if h["id"] == ids["Held task"])["stale"]:
+                raise ValueError("board position --json lacks the stale mark")
+
+            # Field size guard (r13-q74): a work item's description, design or acceptance stays within 2000 characters.
+            def guarded(argv, issues=fixture):
+                fake, errors = Fake(issues), io.StringIO()
+                with patch.object(board.subprocess, "run", fake), contextlib.redirect_stderr(errors):
+                    return board.size_guard(argv[0], argv[1:])[0], fake
+
+            long = "x" * 2001
+            refusal, _ = guarded(["create", "T", "-t", "bug", "--description", long])
+            if not refusal or "description is 2001 characters" not in refusal or "2000" not in refusal:
+                raise ValueError(f"board create took a 2001-character description: {refusal}")
+            for argv in (["create", "T", f"--design={long}"], ["create", "T", "--acceptance", long]):
+                if not guarded(argv)[0]:
+                    raise ValueError(f"board create took an over-limit field: {argv[:3]}")
+            if guarded(["create", "T", "--description", "x" * 2000])[0] or guarded(["create", "T", "-t", "decision", "--description", long])[0]:
+                raise ValueError("board create refused a field within the limit, or a decision's record")
+            with tempfile.TemporaryDirectory() as folder:
+                body = Path(folder, "body.md")
+                body.write_text(long, encoding="utf-8")
+                if not guarded(["create", "T", "--body-file", str(body)])[0]:
+                    raise ValueError("board create took an over-limit --body-file")
+            over = variant(**{"Ready task": {"description": "y" * 2500}})
+            if not guarded(["update", ready, "--description", "z" * 2600], over)[0] \
+                    or guarded(["update", ready, "--description", "z" * 2400], over)[0] \
+                    or guarded(["update", ready, "--description", "z" * 2400], fixture)[0] is None:
+                raise ValueError("board update must refuse a field that grows or stays over the limit, and pass one that shrinks")
+            refused = io.StringIO()
+            with patch.object(board.subprocess, "run", Fake(fixture)), contextlib.redirect_stderr(refused):
+                code = board.main(["bd", "create", "T", "--description", long])
+            if code != 2 or "description is 2001 characters" not in refused.getvalue():
+                raise ValueError(f"board bd create did not refuse the over-limit field: {code} {refused.getvalue()}")
+
+            # Notes (r16-q96): --notes replaces, --append-notes counts the old notes plus the appended text; shrinking passes.
+            noted = variant(**{"Ready task": {"notes": "n" * 1500}, "Spike perf": {"notes": "n" * 2500}})
+            spike = ids["Spike perf"]
+            if not guarded(["update", ready, "--notes", long], noted)[0] or guarded(["update", ready, "--notes", "n" * 2000], noted)[0] \
+                    or not guarded(["create", "T", "--notes", long])[0]:
+                raise ValueError("board update must refuse notes over the limit and pass notes within it")
+            refusal = guarded(["update", ready, "--append-notes", "a" * 600], noted)[0]
+            if not refusal or "notes is 2101 characters" not in refusal or guarded(["update", ready, "--append-notes", "a" * 400], noted)[0]:
+                raise ValueError(f"--append-notes must count the old notes plus the appended text: {refusal}")
+            if guarded(["update", spike, "--notes", "m" * 2200], noted)[0] or not guarded(["update", spike, "--notes", "m" * 2600], noted)[0]:
+                raise ValueError("a shrinking notes edit must pass, a growing one over the limit must not")
+
+            # Comments a session writes (r16-q87): text argument, --file, stdin; the board's own packet passes.
+            PACKET = "--board-packet"
+
+            def comment_guarded(argv):
+                return board.comment_guard(argv[0], argv[1:])[0]
+
+            if not comment_guarded(["comments", "add", ready, long]) or "comment is 2001 characters" not in comment_guarded(["comments", "add", ready, long]) \
+                    or comment_guarded(["comments", "add", ready, "x" * 2000]) or comment_guarded(["comments", "list", ready]) \
+                    or comment_guarded(["comments", "add", ready, long, PACKET]) or comment_guarded(["create", "T", long]):
+                raise ValueError("board bd comments add must refuse a comment over the limit, pass one within it, and pass the board's own packet")
+            if not comment_guarded(["comment", ready, long]) or comment_guarded(["comment", ready, "x" * 2000]):
+                raise ValueError("bd's `comment` shorthand must be guarded like `comments add`")
+            if not comment_guarded(["comments", "add", ready, "-a", "me", long]) or comment_guarded(["comments", "add", ready, "-a", "x" * 2100, "ok"]):
+                raise ValueError("board bd comments add must judge the text, not the author")
+            with tempfile.TemporaryDirectory() as folder:
+                packet = Path(folder, "packet.md")
+                packet.write_text(long, encoding="utf-8")
+                if not comment_guarded(["comments", "add", ready, "-f", str(packet)]) or not comment_guarded(["comments", "add", ready, f"--file={packet}"]) \
+                        or comment_guarded(["comments", "add", ready, "-f", str(packet), PACKET]):
+                    raise ValueError("board bd comments add -f must judge the file")
+                with patch.object(board.sys, "stdin", io.StringIO(long)):
+                    refusal, stdin = board.comment_guard("comments", ["add", ready, "-f", "-"])
+                if not refusal or stdin != long:
+                    raise ValueError("board bd comments add -f - must judge stdin and hand it on")
+                seen = []
+                with patch.object(board.os, "execvpe", lambda *call: seen.append(call[1])), patch.object(board, "ensure_server"), \
+                        patch.object(board.subprocess, "run", Fake(fixture)), contextlib.redirect_stdout(io.StringIO()):
+                    code = board.main(["bd", "comments", "add", ready, "-f", str(packet), PACKET])
+                if seen != [["bd", "comments", "add", ready, "-f", str(packet)]]:
+                    raise ValueError(f"the board's own packet must reach bd without the marker: {code} {seen}")
+            refused = io.StringIO()
+            with patch.object(board.subprocess, "run", Fake(fixture)), contextlib.redirect_stderr(refused):
+                code = board.main(["bd", "comments", "add", ready, long])
+            if code != 2 or "comment is 2001 characters" not in refused.getvalue():
+                raise ValueError(f"board bd comments add did not refuse the over-limit comment: {code} {refused.getvalue()}")
+            # handover evidence, return findings and block reasons are refused before any write.
+            for argv, actor in ((["handover", ids["Held task"], long], "aaaa1111/build-12345678"),
+                                (["return", ids["Handed task"], long], "lead0001"),
+                                (["block", ready, "--on", ids["Open cache question"], "--reason", long], "lead0001")):
+                fake = Fake(variant(**{"Handed task": {"assignee": "lead0001"}}))
+                code, _, errors = invoke(argv, fake, actor)
+                if code != 1 or fake.writes() or "comment is" not in errors:
+                    raise ValueError(f"board {argv[0]} took a comment over the limit: {code} {fake.writes()} {errors}")
+
             crowded = fixture + [{**next(i for i in fixture if i["title"] == "Held task"), "id": f"fx-extra{n}"}
                                  for n in range(60)]
             _, capped, _ = invoke(["position"], Fake(crowded))
@@ -2536,24 +2838,30 @@ def validate_board(root: Path) -> None:
             # board show: rendered from the snapshot within READ_BUDGET; cut sections name the command for the rest.
             big = "## Question\nWhich cache?\n\n## Alternatives Considered\n" + "word " * 9000 + "\n### Detail\nfine print\n" \
                   "## Decision\nUse A.\n## Decision log\nlog\n"
-            notes = [{"author": f"a{n}", "created_at": f"2026-10-2{n}T00:00:00Z", "text": f"note {n}"} for n in range(5)]
-            shown = variant(**{"Store choice": {"description": big, "comments": notes},
+            notes = [{"author": f"a{n}", "created_at": f"2026-10-2{n}T00:00:00Z", "text": f"note {n}"} for n in range(7)]
+            notes[6]["text"] = "y" * 2500  # the newest comment is long
+            shown = variant(**{"Store choice": {"description": big, "comments": notes, "metadata": {"deep_review": "a wrong cache hides"}},
                                "Ready task": {"dependencies": [{"issue_id": ready, "depends_on_id": new, "type": "blocks"}]}},
                             **{"Old store ruling": {"description": "x" * 34000}})
             shown.append({"id": "fx-rev", "title": "Revise the store", "status": "open", "issue_type": "decision",
                           "priority": 2, "metadata": {"board.revises_rule": "Rule 2"},
                           "dependencies": [{"issue_id": "fx-rev", "depends_on_id": new, "type": "tracks"}]})
             code, text, _ = invoke(["show", new], Fake(shown))
-            for expected in (f"{new}  decided  decision  p", "\nStore choice\nlinks:\n", f"  blocks: {ready}  open  Ready task",
+            for expected in (f"{new}  decided  decision  p", "\nStore choice\ndeep-review: a wrong cache hides\nlinks:\n", f"  blocks: {ready}  open  Ready task",
                              f"  relates to: {old}  released  Old store ruling",
                              "  revision pending: fx-rev  open  Revise the store  (partial: Rule 2)",
                              "description:\n## Question\nWhich cache?", f'more chars: board show {new} --section \'Alternatives Considered\'',
-                             "### Detail\nfine print", "## Decision\nUse A.", "comments: 5, newest 3\n--- a4 ",
+                             "### Detail\nfine print", "## Decision\nUse A.", "comments: 7, newest 5\n--- a6 ",
                              f"… 2 older: board show {new} --comments"):
                 if expected not in text:
                     raise ValueError(f"board show lacks {expected!r}:\n{text[:3000]}")
-            if code or len(text) > board.READ_BUDGET or "--- a1 " in text or text.index("--- a4") > text.index("--- a2"):
+            if code or len(text) > board.READ_BUDGET or "--- a1 " in text or text.index("--- a6") > text.index("--- a2"):
                 raise ValueError(f"board show broke the budget or the comment order ({len(text)} chars)")
+            # A plain read cuts each comment at the comment limit with the --comments pointer (r16-q88, q89); --comments prints whole.
+            if "y" * 2001 in text or "y" * 2000 + f"\n… cut at 2000 of 2500 characters: board show {new} --comments" not in text:
+                raise ValueError(f"board show must cut a long comment at 2000 with the --comments pointer:\n{text[-1500:]}")
+            if "y" * 2500 not in invoke(["show", new, "--comments"], Fake(shown))[1]:
+                raise ValueError("board show --comments must print a long comment whole")
             if "  revises: " + new not in invoke(["show", "fx-rev"], Fake(shown))[1]:
                 raise ValueError("board show of a revision must name the record it revises")
             _, text, _ = invoke(["show", new, "--section", "alternatives"], Fake(shown))
@@ -2569,7 +2877,7 @@ def validate_board(root: Path) -> None:
             if code != 1 or "ambiguous" not in errors or "--section 'Decision log'" not in errors or "--section description" not in errors:
                 raise ValueError(f"board show --section must list ambiguous matches:\n{errors}")
             _, text, _ = invoke(["show", new, "--comments"], Fake(shown))
-            if text.count("--- a") != 5 or "older" in text or f"comments only: board show {new} --full prints the whole item" not in text:
+            if text.count("--- a") != 7 or "older" in text or f"comments only: board show {new} --full prints the whole item" not in text:
                 raise ValueError(f"board show --comments must print every comment and say the rest is left out:\n{text}")
             _, text, _ = invoke(["show", new], Fake(shown))
             if "comments only" in text:
@@ -2589,7 +2897,7 @@ def validate_board(root: Path) -> None:
             if "more chars" in invoke(["show", new, old, "--full"], Fake(shown))[1]:
                 raise ValueError("board show --full must not cut")
 
-            # board record: refuses a file missing a record section; moves a packet description into a comment.
+            # board record: refuses a file missing a record section; writes the record without comments.
             question = ids["Open cache question"]
             with tempfile.TemporaryDirectory() as directory:
                 draft = Path(directory, "record.md")
@@ -2602,34 +2910,24 @@ def validate_board(root: Path) -> None:
                                  "## Rationale\nr (user, 2026-10-31)\n## Rule owner\ndocs/x.md\n", encoding="utf-8")
                 fake = Fake(fixture)
                 code, output, _ = invoke(["record", question, str(draft)], fake, "lead0001", now="2026-10-31T10:00:00+00:00")
-                if code or [w[:2] for w in fake.writes()] != [["comments", "add"], ["update", question]] \
-                        or fake.files[("comments", question, "-f")] != \
-                        "Decision packet (moved from the description at decision time, 2026-10-31):\n\nPacket only." \
-                        or fake.writes()[1][4:] != ["--status", "decided", "--json"] \
+                if code or [w[:2] for w in fake.writes()] != [["update", question]] \
+                        or fake.writes()[0][4:] != ["--status", "decided", "--json"] \
                         or not any(args[:2] == ["lint", question] for args, _ in fake.calls) \
-                        or output != f"recorded {question} (decided; packet moved to a comment): Open cache question\n":
+                        or output != f"recorded {question} (decided): Open cache question\n":
                     raise ValueError(f"board record: {fake.calls}\n{output}")
-                # A record already in place is replaced without another packet comment; lint failures are loud.
+                # The board's history keeps earlier versions (r16-q95): a record writes no packet or previous-Decision comment,
+                # whether it replaces a packet description or rewrites a Decision; lint failures are loud.
                 recorded = variant(**{"Open cache question": {"status": "decided", "description": draft.read_text(encoding="utf-8")}})
                 fake = Fake(recorded, lint={"results": [{"id": question, "missing": ["## Extra"]}]})
                 code, _, errors = invoke(["record", question, str(draft)], fake, "lead0001")
                 if code != 1 or "## Extra" not in errors or [w[0] for w in fake.writes()] != ["update"]:
                     raise ValueError(f"board record revised in place wrongly: {fake.writes()} {errors}")
-                # A rewrite keeps the Decision it replaces in a comment when the Decision section changes, not when only other
-                # sections do (r13 q51); a rerun after a failed update finds the comment already there.
-                text = draft.read_text(encoding="utf-8")
                 rewrite = Path(directory, "rewrite.md")
-                for changed, comments in ((text.replace("## Decision\nd\n", "## Decision\nnew decision\n"), 1),
-                                          (text.replace("## Rationale\nr (user", "## Rationale\nrevised (user"), 0)):
-                    rewrite.write_text(changed, encoding="utf-8")
-                    fake = Fake(recorded)
-                    code, output, _ = invoke(["record", question, str(rewrite)], fake, "lead0001", now="2026-10-31T10:00:00+00:00")
-                    kept = fake.files.get(("comments", question, "-f"))
-                    if code or [w[0] for w in fake.writes()] != ["comments", "update"][1 - comments:] \
-                            or (kept or "") != ("Previous Decision (replaced 2026-10-31):\n\nd" if comments else "") \
-                            or ("previous Decision kept in a comment" in output) != bool(comments):
-                        raise ValueError(f"board record must comment the old Decision exactly when the section changes ({comments}): "
-                                         f"{fake.writes()} {kept!r} {output}")
+                rewrite.write_text(draft.read_text(encoding="utf-8").replace("## Decision\nd\n", "## Decision\nnew decision\n"), encoding="utf-8")
+                fake = Fake(recorded)
+                code, output, _ = invoke(["record", question, str(rewrite)], fake, "lead0001", now="2026-10-31T10:00:00+00:00")
+                if code or [w[0] for w in fake.writes()] != ["update"] or "Decision kept" in output:
+                    raise ValueError(f"board record must not copy a replaced Decision into a comment: {fake.writes()} {output}")
                 for refused, actor in ((ids["Ready task"], "lead0001"), (question, "aaaa1111")):
                     fake = Fake(fixture)
                     if invoke(["record", refused, str(draft)], fake, actor)[0] != 1 or fake.writes():
@@ -2773,7 +3071,7 @@ def validate_board(root: Path) -> None:
             code, text, _ = invoke(["check", "--json"], Fake(unlinked))
             found = json.loads(text)
             if code or found["unlinkedRevisions"] != [{"id": "fx-b", "other": "fx-a", "word": "revises", "old": "fx-a", "new": "fx-b"}] \
-                    or set(found) != {"deviations", "squashed", "unnamedBlockers", "unlinkedRevisions"}:
+                    or set(found) != {"deviations", "squashed", "unnamedBlockers", "unlinkedRevisions", "staleHolds", "forcedHolds"}:
                 raise ValueError(f"board check --json: {text}")
 
             # board check: an in_review item waiting on an open blocker deviates; an unlinked revision is a flag.
@@ -3066,7 +3364,7 @@ def validate_board(root: Path) -> None:
         capacity_project, capacity_env = fake_board(Path(codex_home).resolve())
         Fake.project = str(capacity_project)
         for args, session, tool in ((("solo",), "0000-solo0001", "claude"), (("lead",), "0000-lead0001", "claude"),
-                                    (("autopilot",), "0000-auto0001", "claude"),
+                                    (("autopilot",), "0000-auto0001", "claude"), (("lead", "--pulls", "implement"), "0000-lead0002", "claude"),
                                     (("agent", "--pulls", "implement,review"), "0000-cdx00001", "codex"),
                                     (("agent", "--pulls", "plan,design,review"), "0000-cdx00002", "codex")):
             subprocess.run(["bash", str(registry), "activate", *args, "--workers", "6"], check=True,
@@ -3103,6 +3401,9 @@ def validate_board(root: Path) -> None:
         if not (capacity_of(["queue"], "cdx00002") or "").endswith(
                 f"ready for your pulls: {ready_for(('design', 'review'))} → refill (plan Dispatch)"):
             raise ValueError(f"an agent's capacity line counted work outside its pulls: {capacity_of(['queue'], 'cdx00002')!r}")
+        if capacity_of(["queue"], "lead0002") != f"capacity: 0 of 6 workers active in the last 15 min; ready for your pulls: " \
+                                                 f"{ready_for(('implement',))} → refill (plan Dispatch)":
+            raise ValueError(f"a lead with pulls got no capacity line for them: {capacity_of(['queue'], 'lead0002')!r}")
         for actor in ("lead0001", "solo0001/build-1234abcd", "unregistered1"):
             if capacity_of(["queue"], actor) is not None:
                 raise ValueError(f"board printed a capacity line for {actor}")
@@ -3828,6 +4129,7 @@ def validate_protocol(root: Path, part: str) -> None:
                 raise ValueError(f"protocol {' '.join(args)}: stderr lacks {needle!r}: {result.stderr}")
 
         def question(text, **extra):
+            """A staged question."""
             return {"text": text, "title": text.rstrip("?"), "header": "Q", "problem": "Which one, and why now.", "cases": "A caller who keeps it; one who drops it.", "premises": "Read in the fixture.", "rulings": [], "options": [
                 {"label": "Keep", "description": "keep it", "for": "for it", "against": "against it"}, {"label": "Drop", "description": "drop it", "for": "for it", "against": "against it"}],
                 "recommendation": "Keep", "strength": "lean", "leanBecause": {"cause": "preference", "detail": "taste", "flipsIf": "a different taste"}, **extra}
@@ -5148,7 +5450,7 @@ def validate_protocol(root: Path, part: str) -> None:
                     needle="names `why`", cwd=repo)
             # Contained: fx-r2 leaves the set, the rest continue; the stamp lapses with the changed set.
             refused("step", stdin={"records": {"fx-r1": "unchanged", "fx-r2": {"change": "c", "reach": "contained", "why": "w"}}},
-                    needle='touches is "own"', cwd=repo)
+                    needle='touches: "own"', cwd=repo)
             refused("step", stdin={"records": {"fx-r1": "unchanged", "fx-r2": {"change": "c", "reach": "contained", "why": "w", "touches": "unsure"}}},
                     needle="unsure is decision", cwd=repo)
             proto("step", stdin={"records": {"fx-r1": "unchanged", "fx-r2": {"change": "the store moved", "reach": "contained",
@@ -5590,7 +5892,10 @@ def validate_protocol(root: Path, part: str) -> None:
             if not re.fullmatch(r"r\d+ · recorded q\d+, q\d+ · round closed", closed):
                 raise ValueError(f"protocol's closing headline must name the file records: {closed!r}")
             # One shared route list for the person's own words: a note on a pick and words tied to no question carry it too (r1-q2).
-            for extra in ({"annotations": {"Solo?": {"notes": "log it"}}}, {"response": "rethink the lead"}):
+            # r13-q79: the full note goes out once per compaction window, then a one-line pointer.
+            for extra, full in (({"annotations": {"Solo?": {"notes": "log it"}}}, False), ({"response": "rethink the lead"}, True)):
+                if full:
+                    proto("compacted", cwd=repo)
                 solo = proto("start", "round", "--no-board", str(notes), stdin={"points": ["Solo?"]}, cwd=repo).stdout
                 solo_point = re.search(r"(pt\d+) \[pasted\]", solo).group(1)
                 proto("step", stdin={"classes": {solo_point: "user"}}, cwd=repo)
@@ -5599,9 +5904,10 @@ def validate_protocol(root: Path, part: str) -> None:
                 converge(cwd=repo)
                 solo_note = json.loads(proto("answer", "--origin", "dialog", cwd=repo, stdin={
                     "marker": shown(cwd=repo)["batch"]["marker"], "answers": {"Solo?": "Keep (recommended, lean)"}, **extra}).stdout)["note"]
-                if "a change to the questions → `protocol edit` (updates + the quote)" not in solo_note \
-                        or "call a pass's skill on it, then report that pass" not in solo_note:
-                    raise ValueError(f"a note or a response carries the shared routes of the person's own words: {solo_note}")
+                routes = "a change to the questions → `protocol edit` (updates + the quote)" in solo_note and "call a pass's skill on it, then report that pass" in solo_note
+                pointer = "by the routes you were given" in solo_note
+                if routes != full or pointer == full:
+                    raise ValueError(f"the routes of the person's own words go out in full once per compaction window, then as a pointer (full={full}): {solo_note}")
                 proto("abandon", cwd=repo)
 
             # H2: a question can wait on a named outside result (r8-q31, `waitsFor`): held out of the batches like a `waitsOn` one,
@@ -7001,7 +7307,7 @@ def validate_protocol(root: Path, part: str) -> None:
                 staged["q"] = shown(**kwargs)["questions"][0]["id"]
                 return out
 
-            # A: the question list prints in a cycle's first check pass and is counted after; every pass is the skill's own full text
+            # A: the question list prints in full on the first check pass; later passes print only rows changed since the last output (r13-q66); every pass is the skill's own full text
             # (nothing in the engine cuts it), so a pass log has no `told` and the pending pass has no `reminder`.
             first = to_check("Cadence?", **home)
             qid = staged["q"]
@@ -7022,35 +7328,34 @@ def validate_protocol(root: Path, part: str) -> None:
                 raise ValueError(f"the check sequence changed under the cadence test: {seen}")
             if any("told" in e for e in history(**home) if e["event"] in ("pass", "pass-start")):
                 raise ValueError(f"a pass log carries no told: {history(**home)}")
-            # B: the cycle's first check pass lists the questions, the others count them.
-            if "(protocol show lists them)" not in outputs[0] or f"- {qid} draft" in outputs[0] or f"- {qid} draft" in outputs[1]:
-                raise ValueError(f"later check passes of a cycle count the questions:\n{outputs[0]}")
+            # B: later check passes list no unchanged row, only the count.
+            if "1 question, none changed (protocol show lists them)" not in outputs[0] or f"- {qid} draft" in outputs[0] or f"- {qid} draft" in outputs[1]:
+                raise ValueError(f"later check passes count the unchanged questions:\n{outputs[0]}")
             proto("abandon", **home)
 
-            # A2: a change opens the next cycle: its first check pass lists the questions again.
+            # A2: a changed question's row prints again in the next output; the unchanged ones stay out.
             to_check("Cycles?", **home)
             qid = staged["q"]
             run_pass(**home)                                                                       # path pass
             run_pass(**home)                                                                       # options pass
             run_pass(**home)                                                                       # Base step-back
-            _, out = run_pass(updates=[{"id": qid, "premises": "a changed premise"}], **home)     # the cycle's ground, with a change
+            _, out = run_pass(updates=[{"id": qid, "text": "Cycles now?"}], **home)               # the cycle's ground, with a change
             nxt = shown(**home)
             if (nxt["check"]["cycle"], nxt["pending"]["command"]) != (2, "step-back") \
-                    or f"- {qid} draft: Cycles?" not in out:
-                raise ValueError(f"the next cycle's first check pass lists the questions:\n{nxt}\n{out}")
+                    or f"- {qid} draft: Cycles now?" not in out or "1 listed above as new or changed" not in out:
+                raise ValueError(f"the output after a changed row lists that row:\n{nxt}\n{out}")
             _, out = run_pass(**home)
-            if "(protocol show lists them)" not in out:
-                raise ValueError(f"cycle 2: the question list was told:\n{out}")
-            if f"- {qid} draft: Cycles?" not in proto("show", **home).stdout:
+            if "none changed (protocol show lists them)" not in out or f"- {qid} draft" in out:
+                raise ValueError(f"cycle 2: the unchanged row was listed again:\n{out}")
+            if f"- {qid} draft: Cycles now?" not in proto("show", **home).stdout:
                 raise ValueError("protocol show lists the questions whatever the record says")
-            # A restart is a new check run: its first check pass lists them again.
             proto("restart", qid, **home)
             run_pass(**home)                                                                       # the scoped path pass
             run_pass(**home)                                                                       # the scoped options pass
             # C: a compaction lists the questions again.
             proto("compacted", **home)
             _, out = run_pass(origin="composer", **home)
-            if f"- {qid} draft: Cycles?" not in out or shown(**home)["pending"]["command"] != "ground":
+            if f"- {qid} draft: Cycles now?" not in out or shown(**home)["pending"]["command"] != "ground":
                 raise ValueError(f"the questions list again after a compaction:\n{out}")
             proto("abandon", **home)
             if "Compaction recorded" not in proto("compacted", **home).stdout or history(**home)[-1]["event"] != "compacted":
@@ -7061,6 +7366,60 @@ def validate_protocol(root: Path, part: str) -> None:
                                                {"id": "q3", "board": "fx-c", "recorded": None}, {"id": "q4", "board": "fx-d", "recorded": "deferred"}])
             if kept != "recorded fx-a, q2 stay decided" or engine_module.record.abandon_note([{"id": "q3", "board": "fx-c", "recorded": None}]) != "nothing recorded":
                 raise ValueError(f"abandon must name what stays decided: {kept}")
+
+            def sequence(limit=14, **kwargs):
+                """The passes a check runs without changes, as (command, args), until the batch."""
+                found = []
+                for _ in range(limit):
+                    view = shown(**kwargs)
+                    if view["step"] != "check" or view["pending"] is None:
+                        break
+                    found.append((view["pending"]["command"], view["pending"]["args"]))
+                    run_pass(**kwargs)
+                return found
+
+            # r13-q66: a `checked` line is one line of about 120 characters; the engine refuses one over 150 (the limit) and takes 150.
+            to_check("Wordy?", **home)
+            qid = staged["q"]
+            wordy = {"pass": "step-back", "updates": [], "checked": {qid: "x" * 151, "round": "short"}}
+            refused("step", stdin=wordy, needle="checked." + qid + ": 151 characters", **home)
+            proto("step", stdin={**wordy, "checked": {qid: "x" * 150, "round": "short"}}, **home)
+            proto("abandon", **home)
+
+            # r18-q120: every question gets the full set; the `stakes` field is gone.
+            to_check("Full?", **home)
+            qid = staged["q"]
+            refused("step", stdin={"pass": "ground", "updates": [{"id": qid, "stakes": "x"}], "checked": {qid: "ok"}}, needle="stakes", **home)
+            proto("abandon", **home)
+
+            # r18-q121: a ground that would repeat the last one (same scope, nothing changed since) is skipped after a step-back that updated nothing; any update, a presentation one included, keeps it.
+            def cycle_two(second_updates, **kwargs):
+                """A check whose cycle-1 ground changed the question, then cycle 2's step-back with `second_updates`: the pass pending after it."""
+                to_check("Repeats?", **kwargs)
+                qid = staged["q"]
+                for _ in range(3):                                                                 # path, options, Base step-back
+                    run_pass(**kwargs)
+                run_pass(updates=[{"id": qid, "text": "Repeats now?"}], **kwargs)                 # the cycle's ground, with a change
+                run_pass(updates=[{"id": qid, **update} for update in second_updates], **kwargs)  # cycle 2's step-back
+                return shown(**kwargs)["pending"], qid
+
+            nxt, qid = cycle_two([], **home)
+            if (nxt["command"], nxt["args"]) != ("step-back", "decisions clean overfit mechanics") or shown(**home)["check"]["cycle"] != 2:
+                raise ValueError(f"a quiet step-back skips the repeated ground and goes on to the refine pair: {nxt}")
+            proto("abandon", **home)
+            nxt, qid = cycle_two([{"note": "a presentation edit"}], **home)
+            if nxt["command"] != "ground":
+                raise ValueError(f"a step-back whose update changed only the presentation still runs its ground: {nxt}")
+            proto("abandon", **home)
+
+            # A restart on the question: the scoped passes run again (Think more).
+            to_check("Rethinks?", **home)
+            qid = staged["q"]
+            run_pass(**home)                                                                       # the round-wide path pass
+            proto("restart", qid, **home)
+            if shown(**home)["pending"]["args"] != f"goal foundations on {qid}":
+                raise ValueError(f"a restarted question gets the scoped path pass: {shown(**home)['pending']}")
+            proto("abandon", **home)
 
             # A4: Codex has no console: its pass text names the skill to read, in full every time (r24-q103).
             codex = {"session": None, "env": {"CODEX_THREAD_ID": "0000-cdx00001", "CODEX_SESSION_ID": "0000-cdx00001", "HOME": str(installed)}}
@@ -7333,10 +7692,9 @@ def validate_protocol(root: Path, part: str) -> None:
                 label_fail("scope verb: the observed run's stamp", start_scope("step-back"))
             expect_refused("own changes excluded, others' required", report("step-back", {"q1": "read"}), "no `checked` entry or update for q3")
             out = expect_ok("rerun covering the others' change", report("step-back", {"q3": "the ground premise"}))
-            # Ground's own q3 change leaves its rerun empty: one round note passes, nothing at all is refused.
-            expect_scope("empty scope named", out, [])
-            expect_refused("an empty report on an empty scope is refused", report("ground", {}), "names what it checked")
-            out = expect_ok("empty scope passes with a round note", report("ground", {"round": "nothing changed since the last ground"}))
+            # r18-q121: the quiet step-back leaves ground's rerun empty (its own q3 change is covered), so the ground is skipped and the refine pair follows.
+            if pending().get("command") != "step-back" or pending().get("args") != "decisions clean overfit mechanics":
+                label_fail("a quiet step-back skips the repeated ground", pending())
             # The refine pair runs round-wide: every question.
             expect_scope("refine round-wide scope", out, every)
             expect_refused("refine pass names every missing id", report("step-back", {"round": "x"}), "no `checked` entry or update for q1 q2 q3 q4")
@@ -7375,7 +7733,7 @@ def validate_protocol(root: Path, part: str) -> None:
             out = expect_ok("step-back cycle 3", report("step-back", {"q1": "read"}))
             out = expect_ok("ground cycle 3", report("ground", {"q1": "read"}, [{"id": "q2", "premises": "Changed by ground again."}]))
             out = expect_ok("step-back cycle 4", report("step-back", {"q2": "read"}))
-            out = expect_ok("ground cycle 4", report("ground", {"round": "nothing new"}))
+            # The quiet cycle-4 step-back skips the ground (q2 is ground's own change); the challenge follows.
             # The challenge rerun covers what changed since it ran (q2), not its own q1; q2 is strong: lowering it covers it.
             expect_scope("challenge rerun = changed since the last challenge", out, ["q2"])
             expect_refused("challenge rerun needs q2's verdict", report("challenge-rulings", {"q2": "read"}, rulings=[]), "verdicts.q2")
@@ -7383,7 +7741,7 @@ def validate_protocol(root: Path, part: str) -> None:
                 {"id": "q2", **lean}, {"id": "q3", "premises": "Changed by the second challenge."}], rulings=[]))
             expect_scope("step-back covers the challenge's changes", out, ["q2", "q3"])
             out = expect_ok("step-back cycle 5", report("step-back", {"q2": "read", "q3": "read"}))
-            out = expect_ok("ground cycle 5", report("ground", {"q2": "read", "q3": "read"}))
+            out = expect_ok("ground cycle 5", report("ground", {"q2": "read", "q3": "read"}))  # the challenge's changes are new to ground: no skip
             expect_scope("challenge scope empty after its own change", out, [])
             if start_scope("challenge-rulings", pending().get("id")) != {"covers": [], "explored": None, "text": ""}:
                 label_fail("scope verb: an empty scope names nothing", start_scope("challenge-rulings", pending().get("id")))
@@ -7498,7 +7856,7 @@ def validate_protocol(root: Path, part: str) -> None:
             made = [c["args"] for c in calls()]
             parked_rows = {q["id"]: q for q in shown(**away)["questions"]}
             if parked_rows[q1]["status"] != "answered" or parked_rows[q1]["answer"] != "Keep" or parked_rows[q2]["status"] != "parked" \
-                    or not any(args[:4] == ["bd", "comments", "add", "fx-b"] for args in made) or ["unclaim", "fx-b"] not in made \
+                    or not any(args[:4] == ["bd", "comments", "add", "fx-b"] and "--board-packet" in args for args in made) or ["unclaim", "fx-b"] not in made \
                     or "away: acted q1, parked q2" not in "\n".join(line["text"] for line in shown(**away)["log"]):
                 raise ValueError(f"act answers with the recommendation, park comments the parts on the item and unclaims it:\n{out}\n{made}")
             comment = next(Path(args[args.index("-f") + 1]) for args in made if args[:4] == ["bd", "comments", "add", "fx-b"])
@@ -7815,6 +8173,7 @@ def run_group(name: str, root: Path) -> None:
         validate_read_sizes(root, expander)
         validate_generated_agents(root, generator)
         validate_multiline_and_optional_names(generator)
+        validate_agent_includes(generator)
         validate_effort_overrides(generator)
         validate_worker_last_use(root)
         validate_copied_install(root)

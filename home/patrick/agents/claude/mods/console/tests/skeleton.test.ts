@@ -179,16 +179,69 @@ describe('dialog gate and capture', () => {
     const typed = { origin: { kind: 'composer' }, presentation: { isFullscreen: true, columns: 160 } } as const
     const dialog = { tool: 'AskUserQuestion', questions: BATCH.questions, metadata: { source: BATCH.marker } } as never
 
-    test('/console-questions answers with the engine text of the issued batch, and says so when there is none', async ($, on) => {
+    const phone = { origin: { kind: 'bridge' }, presentation: typed.presentation } as const
+
+    test('/console-questions answers a phone with the engine text of the issued batch, and says so when there is none', async ($, on) => {
       const { w, clock } = world(on, { round: asking() })
       await start($)
       await clock.settle()
-      expect((await $.command.run({ command: 'console-questions', args: '', ...typed })).text).toBe(`\n${NOTICE}`)
-      expect((await $.command.run({ command: 'console-questions', args: BATCH.marker, ...typed })).text).toBe(`\n${NOTICE}`)
-      expect((await $.command.run({ command: 'console-questions', args: 'round:r4:9', ...typed })).text).toBe('No question text to print.')
+      expect((await $.command.run({ command: 'console-questions', args: '', ...phone })).text).toBe(`\n${NOTICE}`)
+      expect((await $.command.run({ command: 'console-questions', args: BATCH.marker, ...phone })).text).toBe(`\n${NOTICE}`)
+      expect((await $.command.run({ command: 'console-questions', args: 'round:r4:9', ...phone })).text).toBe('No question text to print.')
       w.round = asking('')
       await $.tool.call({ tool: 'mcp__console__protocol', args: ['show', '--json'] } as never)
-      expect((await $.command.run({ command: 'console-questions', args: '', ...typed })).text).toBe('No question text to print.')
+      expect((await $.command.run({ command: 'console-questions', args: '', ...phone })).text).toBe('No question text to print.')
+      expect(w.placed).toEqual([])
+    })
+
+    // r14-q81: at the terminal the full questions are a placed row the model never reads; the model gets the short list.
+    describe('at the terminal the questions are a placed row', () => {
+      const placedProps = { id: 'questions-round-r4-2', plugin: 'console' }
+      const row = (props: Record<string, unknown>) => ({ plugin: 'console', component: 'Placed', requestId: 'row', props, surface: 'terminal' }) as never
+      const listed = ['', 'Batch round:r4:2: the user has the full questions in the chat. Their dialog opens next.',
+        '- Engine name (q2): recommended none', '(`protocol show <id>` shows one question whole.)'].join('\n')
+
+      test('the short list goes to the model; the row is placed a tick after the command answered and draws the full text', async ($, on) => {
+        const { w, clock } = world(on, { round: asking() })
+        await start($)
+        await clock.settle()
+        const ran = await $.command.run({ command: 'console-questions', args: '', ...typed })
+        expect(ran.text).toBe(listed)
+        expect(ran.text).not.toContain('Problem:')
+        await clock.advance(0)
+        expect(w.placed).toEqual([])  // 0 ms would land above the command line
+        await clock.advance(1)
+        expect(w.placed).toEqual([placedProps.id])
+        const ui = await $.ui.mount(row(placedProps))
+        expect((await ui.findAll({ type: 'Markdown' })).map(one => (one as unknown as { props: { text: string } }).props.text)).toEqual([NOTICE])
+      })
+
+      test('where no surface draws the row the text comes as a notice', async ($, on) => {
+        const { w, clock, session } = world(on, { round: asking() })
+        w.isPlacing = false
+        await start($)
+        await clock.settle()
+        await $.command.run({ command: 'console-questions', args: '', ...typed })
+        await clock.advance(1)
+        expect(notices(session).join('\n')).toContain('Cases: a typed command.')
+      })
+
+      // The console's own run at a turn's end has no person origin: the person's latest message decides.
+      test("the origin of the person's latest message decides a run of the console's own", async ($, on) => {
+        const { w, clock } = world(on, { round: asking() })
+        on('tool.call', { tool: 'AskUserQuestion' }, () => ({ deny: 'closed' }) as never)
+        const own = { command: 'console-questions', args: BATCH.marker, origin: { kind: 'plugin', name: 'console' }, presentation: typed.presentation } as never
+        await start($)
+        await clock.settle()
+        expect((await $.command.run(own)).text).toBe(`\n${NOTICE}`)  // no message of the person yet
+        await $.prompt.submit({ text: 'from the phone', origin: { kind: 'bridge' }, wait: false } as never)
+        expect((await $.command.run(own)).text).toBe(`\n${NOTICE}`)
+        expect(w.placed).toEqual([])
+        await $.prompt.submit({ text: 'from the terminal', origin: { kind: 'composer' }, wait: false } as never)
+        expect((await $.command.run(own)).text).toBe(listed)
+        await clock.advance(1)
+        expect(w.placed).toEqual([placedProps.id])
+      })
     })
 
     test('the dialog of a batch with text waits for the print: blocked once with the reason to end the turn, then it passes', async ($, on) => {

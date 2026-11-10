@@ -36,17 +36,6 @@ git origin itself.
   detached process (ending the session needs no sync), and pulls before
   commands; `board bd sync` syncs at once.
 
-### When sync stops
-
-A stopped sync prints one `board: sync …` line with its fix; work continues
-unless beads refuses the write.
-
-| Problem | Fix |
-|---|---|
-| Merge conflict | `board bd conflicts show`, `board bd conflicts resolve <id> --ours\|--theirs`, `board bd sync`. One side deleted the row: `--all --table issues`. `--all` alone fails when a dependency row conflicts. |
-| Both sides created one id | `board bd sql "CALL DOLT_MERGE('--abort')"`, `board bd rename <id> <new id>`, `board bd sync`. |
-| Repeated failures, stuck | `board bd sync` shows the error: remote access, network, or uncommitted changes (`board bd dolt commit`). |
-
 Never create items with `--id` or dotted children on a shared board: `board`'s
 plain ids prevent collisions, and parent.N ids stop sync.
 
@@ -71,8 +60,4 @@ Never run `bd dolt remote reset-data` (it deletes the remote's data and hung in
 
 Upgrade bd and Dolt together, agreed between everyone; one person migrates and
 pushes. At a person's terminal `board bd` keeps bd's prompts and doesn't
-retry: rerun a write failing with `foreign key conflicts` by hand. On an
-upgrade, recheck beads issues 4796 and 7839 and PR 7849, and rerun
-`bin/test-shared-board.py`: its soak shows whether bd still raises the
-`foreign key conflicts` error `board` retries (`WRITE_RETRY_ERROR`); retire the
-retry when it no longer does.
+retry: rerun a write failing with `foreign key conflicts` by hand.

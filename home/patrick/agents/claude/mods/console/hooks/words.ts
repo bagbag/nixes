@@ -285,6 +285,18 @@ export const declinedNote = (marker: string): string => `The dialog was declined
 export const declineFailedNote = (marker: string, error: string): string => `Recording the decline of ${marker} failed: ${error}. The batch stays out.`
 export const NO_QUESTION_TEXT = 'No question text to print.'
 
+/** What the model reads of a batch the person has in the chat as a placed row: the dialog's numbering, titles, recommendations and what changed. */
+export function questionListText(marker: string, lines: readonly string[]): string {
+  return `\nBatch ${marker}: the user has the full questions in the chat. Their dialog opens next.\n${lines.join('\n')}\n(\`protocol show <id>\` shows one question whole.)`
+}
+
+/** One question of that list; `number` is null for a one-question dialog, which the dialog does not number. */
+export function questionListLine(number: number | null, question: ConsoleQuestion | undefined, header: string): string {
+  const mark = question === undefined || question.recommendation === null ? 'none' : `${question.recommendation}${question.strength === null ? '' : ` (${question.strength})`}`
+  const changed = question === undefined || question.changedBy === null ? '' : `; changed by the ${question.changedBy} pass`
+  return `${number === null ? '-' : `${number}.`} ${question === undefined ? header : `${question.title} (${question.id})`}: recommended ${mark}${changed}`
+}
+
 type RoundSuggestion = Extract<ConsoleSuggestion, { kind: 'round' }>
 
 const approx = (n: number, word: string): string => `~${n} ${n === 1 ? word : `${word}s`}`
