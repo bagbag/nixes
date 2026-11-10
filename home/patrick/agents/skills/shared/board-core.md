@@ -103,8 +103,8 @@ item sits in a person's queue (the person's sessions work it):
 - **Finds for another person:** `board create --for <person> <title> …`
   (top-level), held for your check until a deciding session sends it; their
   deciding session routes it from the inbox (decide.md Inbox step).
-- **Questions:** the person of a question's queue decides and releases it
-  ([Authority](../role/protocols/decide.md#authority)).
+- **Questions:** who decides and releases one: decide.md
+  [Authority](../role/protocols/decide.md#authority).
 
 ### Work items
 

@@ -137,9 +137,7 @@ Run the release through `protocol` like a round: `start release [<ids>]`. Follow
 the engine's output; only the person approves. The steps below add the judgment it leaves to
 you.
 
-1. **Re-check.** Use `verify` for large sets. A correction that follows a later
-   decision of the user's in the set counts as own; name that decision, and the
-   approval shows the record as revised.
+1. **Re-check.** Use `verify` for large sets.
 2. **Board check.** Act on every hit class the engine lists.
 3. **Own rulings.** Report them in the fields the engine asks for.
 4. **Approval.** The engine asks it.

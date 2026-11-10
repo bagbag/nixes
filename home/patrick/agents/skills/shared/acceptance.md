@@ -2,8 +2,8 @@
 
 ### Review policy
 
-Use one acceptance gate per coherent target, sized to stakes; a role protocol
-may tighten it.
+Use one acceptance gate per coherent target (plus `verify` for claims it leaves
+open), sized to stakes; a role protocol may tighten it.
 
 | Claim | Gate |
 |---|---|

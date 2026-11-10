@@ -966,7 +966,7 @@ def release_waiting(round_id: str) -> str:
 def owners_intro(round_id: str) -> str:
     return lines(
         f"Release {round_id} · Owner writes (decide.md Release 5): write each rule into its one owner, replacing the text it supersedes. "
-        "A rule a topic's design-target doc, `coding-style.md` or `module-authoring.md` states is written now, not pending; "
+        "A rule a topic's design-target doc or a project's convention owner (coding style, module authoring) states is written now, not pending; "
         'only READMEs, other skills and source may be pending.',
         "Name each path, with its anchor, in the record's `## Rule owner` (rewrite the record with `board record <id> <file>`).",
         'Report per record its owners: written {path, anchor} (path: a repo path from the board root, or absolute/~; an installed file '
