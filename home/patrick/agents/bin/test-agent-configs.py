@@ -3487,7 +3487,7 @@ def validate_board(root: Path) -> None:
             # handover (change request): the holding session only; refuses open items, uncommitted changes and failing checks; then a
             # compare-and-set to in_review at its stage, the stage metadata and the evidence comment.
             cwd = Path(os.getcwd())
-            wt = cwd.parent / f"{cwd.name}-worktrees" / "fx-ovo.c2"
+            wt = cwd / ".worktrees" / "fx-ovo.c2"
             if not wt.exists():
                 subprocess.run(["git", "worktree", "add", "-q", "-b", "cr/fx-ovo.c2", str(wt), "main"], check=True, capture_output=True)
             main_tip = subprocess.run(["git", "rev-parse", "main"], capture_output=True, text=True, check=True).stdout.strip()
@@ -3634,7 +3634,7 @@ def validate_board(root: Path) -> None:
                 def make_cr(name, filename="c.txt", text="c\n", base="main"):
                     """A CR branch with a worktree and one commit past its base, and the issues of a CR waiting for its Accept."""
                     base_tip = git("rev-parse", f"refs/heads/{base}" if base == "main" else f"refs/heads/cr/{base}")
-                    wt = Path(repo_root + "-worktrees", name)
+                    wt = Path(repo_root, ".worktrees", name)
                     git("worktree", "add", "-q", "-b", f"cr/{name}", str(wt), base_tip)
                     tip = commit(wt, filename, text, f"{name}: pass")
                     metadata = {"look": "before", "base": base, "base_sha": base_tip, "setup_sha": base_tip,
@@ -3925,7 +3925,7 @@ def validate_board(root: Path) -> None:
                     raise ValueError(f"accept queue order: {[i['id'] for i in board.accept_queue(bare_deck(aq, complete=False))]}")
                 # A failed setup is rerun by claiming the CR again (q222).
                 held = [{**cr_issue("rerun", "in_progress", assignee="lead0001", base="main", base_sha=at_main()), }]
-                subprocess.run(["git", "worktree", "add", "-q", "-b", "cr/rerun", str(Path(repo_root + "-worktrees", "rerun")), "main"], check=True, capture_output=True)
+                subprocess.run(["git", "worktree", "add", "-q", "-b", "cr/rerun", str(Path(repo_root, ".worktrees", "rerun")), "main"], check=True, capture_output=True)
                 fake = Fake(held)
                 fake.settings["custom.board.setup"] = "echo not yet >&2; false"
                 _, output, errors = invoke(["claim", "rerun"], fake, "lead0001")
@@ -4242,7 +4242,7 @@ def validate_board(root: Path) -> None:
                     victim = next(f for f in cache_dir.iterdir() if not f.name.endswith((".lock", ".tmp")) and f.read_text().startswith("z.ts"))
                     victim.write_text("not a result row\n", encoding="utf-8")
                     healed = board.base_failures(probe, dummy, Path(repo_root), tip_now)  # C1
-                    leftover = Path(repo_root + "-worktrees") / f".base-{victim.name[:12]}"
+                    leftover = Path(repo_root, ".worktrees") / f".base-{victim.name[:12]}"
                     victim.unlink()
                     leftover.mkdir(parents=True)
                     (leftover / "junk").write_text("x", encoding="utf-8")
@@ -4251,10 +4251,10 @@ def validate_board(root: Path) -> None:
                     raise ValueError(f"C1/C2: the cache must heal from a corrupt file and a leftover worktree: {first} {healed} {rebuilt}")
                 # C3: a symlink at the base path is dropped, never followed (its target keeps its uncommitted file); a registered
                 # base worktree whose folder is gone is taken over without a repo-wide prune (another gone worktree keeps its record).
-                other = Path(repo_root + "-worktrees") / "c3-other"
+                other = Path(repo_root, ".worktrees") / "c3-other"
                 git("worktree", "add", "--detach", str(other), tip_now)
                 (other / "uncommitted.txt").write_text("keep\n", encoding="utf-8")
-                gone = Path(repo_root + "-worktrees") / "c3-gone"
+                gone = Path(repo_root, ".worktrees") / "c3-gone"
                 git("worktree", "add", "--detach", str(gone), tip_now)
                 shutil.rmtree(gone)
                 with patch.object(board, "current_setting", lambda key: probe.settings[key.rsplit(".", 1)[1]]):
@@ -4287,7 +4287,7 @@ def validate_board(root: Path) -> None:
                 issues.append(cr_item("cas.open", "cas"))
 
                 def lose_after_work(issue, actor):
-                    made = Path(repo_root + "-worktrees", "cas")
+                    made = Path(repo_root, ".worktrees", "cas")
                     commit(made, "cas-work.txt", "work\n", "cas: work made while the claim was in flight")
                     return False, "lost the race"
 
@@ -4304,7 +4304,7 @@ def validate_board(root: Path) -> None:
                 if not any(w[:2] == ["close", "derived"] for w in fake.writes()) or landed_wt.exists():
                     raise ValueError(f"a CR whose tip main holds must be closed by the next read: {fake.writes()} {errors}")
                 fresh_tip = git("rev-parse", "HEAD")
-                git("worktree", "add", "-q", "-b", "cr/freshcr", str(Path(repo_root + "-worktrees", "freshcr")), fresh_tip)
+                git("worktree", "add", "-q", "-b", "cr/freshcr", str(Path(repo_root, ".worktrees", "freshcr")), fresh_tip)
                 fresh = [cr_issue("freshcr", "in_progress", assignee="aaaa1111", base="main", base_sha=fresh_tip, setup_sha=fresh_tip), cr_item("freshcr.i", "freshcr")]
                 fake = Fake(fresh)
                 invoke(["queue"], fake, "lead0001")
@@ -4323,7 +4323,7 @@ def validate_board(root: Path) -> None:
                 if by_id["upr"]["after"] != "low" or by_id["upr"]["parent"] != "low" or by_id["low"]["children"] != ["upr"] or by_id["low"]["after"] is not None \
                         or by_id["sf"]["setupFailed"] is not True or by_id["freshcr"]["setupFailed"] is not False \
                         or by_id["freshcr"]["baseSha"] != fresh_tip or by_id["freshcr"]["branch"] != "cr/freshcr" \
-                        or by_id["freshcr"]["worktree"] != str(Path(repo_root + "-worktrees", "freshcr")) \
+                        or by_id["freshcr"]["worktree"] != str(Path(repo_root, ".worktrees", "freshcr")) \
                         or by_id["freshcr"]["items"] != {"open": 1, "closed": 0} or by_id["freshcr"]["check"]["state"] != "unchecked":
                     raise ValueError(f"board console crs: {json.dumps(rows, indent=1)}")
                 loose = {**entry("loose-task", "task", "open", 2), "description": "d"}

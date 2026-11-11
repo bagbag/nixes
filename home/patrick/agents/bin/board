@@ -2639,7 +2639,9 @@ def git_text(root: Path, *args: str, env: dict[str, str] | None = None) -> str:
 # skills/shared/change-requests.md.
 SETTINGS = {name: f'custom.board.{name}' for name in ('target', 'setup', 'checks', 'look', 'view')}  # bd's namespace for custom keys
 LOOKS, VIEWS, CHECKPOINTS = ('before', 'after'), ('code', 'result'), ('agent', 'user')
-WORKTREES_SUFFIX = '-worktrees'  # worktrees live beside the project: <main>-worktrees/<cr id> (q239)
+# Worktrees live inside the main checkout, <main>/.worktrees/<cr id>, so every runtime's workspace sandbox covers them without
+# a grant (q239 reversed 2026-11-11); the repository's local exclude file hides them from git status.
+WORKTREES = '.worktrees'
 OUTPUT_TAIL = 800  # characters of setup or check output kept in a refusal or the stored check
 
 
@@ -2719,7 +2721,17 @@ def main_root() -> Path:
 
 
 def cr_worktree(main: Path, cr_id: str) -> Path:
-    return main.parent / f'{main.name}{WORKTREES_SUFFIX}' / cr_id
+    return main / WORKTREES / cr_id
+
+
+def exclude_worktrees(main: Path) -> None:
+    """Adds `/.worktrees/` to the repository's local exclude file (never a committed ignore line) before a worktree is added."""
+    exclude, line = git_exclude(main), f'/{WORKTREES}/'
+    text = exclude.read_text(encoding='utf-8') if exclude.is_file() else ''
+    if line not in text.splitlines():
+        exclude.parent.mkdir(parents=True, exist_ok=True)
+        with exclude.open('a', encoding='utf-8') as out:  # append: keeps lines another writer added meanwhile
+            out.write(('\n' if text and not text.endswith('\n') else '') + line + '\n')
 
 
 def rev(root: Path, ref: str) -> str | None:
@@ -2802,7 +2814,8 @@ def base_failures(board: Board, cr: dict, main: Path, base_tip: str) -> dict[tup
                 return {(f, c): int(n) for f, c, n in (row.split() for row in result.read_text(encoding='utf-8').splitlines() if row.strip())}
             except ValueError:  # an unreadable result is a miss: recompute it
                 result.unlink(missing_ok=True)
-        path = main.parent / f'{main.name}{WORKTREES_SUFFIX}' / f'.base-{key[:12]}'
+        path = main / WORKTREES / f'.base-{key[:12]}'
+        exclude_worktrees(main)
         path.parent.mkdir(parents=True, exist_ok=True)
         # A run killed before its cleanup left this board-owned path. A symlink there is not ours: drop the link only, since
         # `worktree remove --force` would follow it. `add --force` takes over a registration whose folder is gone, so no
@@ -3090,6 +3103,7 @@ def open_worktree(board: Board, cr: dict, main: Path) -> tuple[bool, str | None]
     (a new one, recording the fork point, A3). (worktree created here, the tip a branch created here started at)."""
     cid = cr['id']
     path, branch = cr_worktree(main, cid), cr_branch(cid)
+    exclude_worktrees(main)
     if path.exists():
         head = git(path, 'rev-parse', '--abbrev-ref', 'HEAD', check=False).stdout.decode().strip()
         if head != branch:
@@ -4503,8 +4517,8 @@ def share(args) -> int:
     return 0
 
 
-def git_exclude() -> Path:
-    path = subprocess.run(['git', 'rev-parse', '--path-format=absolute', '--git-path', 'info/exclude'], capture_output=True, text=True)
+def git_exclude(root: Path | None = None) -> Path:
+    path = subprocess.run(['git', 'rev-parse', '--path-format=absolute', '--git-path', 'info/exclude'], capture_output=True, text=True, cwd=root)
     return Path(path.stdout.strip())
 
 

@@ -176,8 +176,9 @@ step goes in a change set and runs on the user's confirmation.
    [Change requests](../shared/change-requests.md#change-requests) Settings
    (vitrass keeps full commands), then
    `board setup --target … --setup … --checks … --look … --view …` (tstdl:
-   before, code; marchin: after, result; others ask). Grant the runtimes the worktree folder `<main>-worktrees`: Codex
-   `sandbox_workspace_write.writable_roots`, Claude `additionalDirectories`.
+   before, code; marchin: after, result; others ask). Make each tool that
+   scans from the repository root skip `.worktrees/` (oxlint and oxfmt
+   honor `.git/info/exclude`).
    Output: the settings as stored.
 5. **Reconcile.** Wrap each design still waiting for the user's accept in a
    CR under its topic: the design its child, `checkpoint` `user`, status

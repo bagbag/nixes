@@ -3,7 +3,7 @@
 // probed separately (the mod's tests spawn no processes).
 export const MAIN_TREE = '/main'
 export const REVIEW_TREE = '/main-review'
-export const CR_TREE = '/main-worktrees/p-cr1'
+export const CR_TREE = '/main/.worktrees/p-cr1'
 export const REVIEW_END_REF = 'refs/worktree/console-review-end'
 
 export type Repo = {

@@ -736,7 +736,7 @@ def t_cr() -> None:
     target = git('symbolic-ref', '--short', 'HEAD', cwd=side).strip()
 
     def wt(cr: str) -> Path:
-        return Path(str(side) + '-worktrees') / cr
+        return side / '.worktrees' / cr
 
     def meta_of(cr: str) -> dict:
         return items('a')[cr].get('metadata') or {}
@@ -771,7 +771,10 @@ def t_cr() -> None:
     check(rc == 0 and wt(a).is_dir() and git('branch', '--list', f'cr/{a}', cwd=side).strip(), 'cr: a claim creates the worktree and branch', err + out)
     check(meta_of(a).get('base') == target and meta_of(a).get('base_sha') == main_tip and meta_of(a).get('setup_sha') == main_tip,
           'cr: the claim records the base, the fork point and the setup run', meta_of(a))
-    check(wt(a).parent == Path(str(side) + '-worktrees') and not (side / '.claude').exists(), 'cr: the worktree lives beside the project, nothing is added inside it')
+    exclude = Path(git('rev-parse', '--path-format=absolute', '--git-path', 'info/exclude', cwd=side).strip())
+    check(wt(a).parent == side / '.worktrees' and '/.worktrees/' in exclude.read_text().splitlines()
+          and '.worktrees' not in git('status', '--porcelain', '--untracked-files=all', cwd=side),
+          'cr: the worktree lives in <main>/.worktrees, hidden from git status by the local exclude file', exclude.read_text())
     loose = bd('a', 'create', 'loose task', '-t', 'task', '--description', 'x', '--silent')[1].strip().splitlines()[-1]
     rc, _, err, _ = run('a', 'claim', loose, role='agent')
     check(rc == 1 and '--parent' in err, 'cr: a work item outside any change request is refused with the fix', err)

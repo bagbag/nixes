@@ -29,10 +29,13 @@ queue order and refresh work: [Board coordination](board-coordination.md).
   status is a contract: 0 = ran, the printed `file code` lines are the
   failures; 1 = ran with failures, at least one line printed; any other
   status, or 1 with no line, is a broken check and fails closed.
-- **Worktree** `<main>-worktrees/<cr-id>` on `cr/<cr-id>`, beside the project
-  (`<main>`: first entry of `git worktree list`; add no ignore line). All
-  board work for the CR, sessions and workers, runs in it. Edit `<main>` only
-  on the user's direct ask; never `ExitWorktree` with remove.
+- **Worktree** `<main>/.worktrees/<cr-id>` on `cr/<cr-id>` (`<main>`: first
+  entry of `git worktree list`; `board` excludes `.worktrees/` in
+  `.git/info/exclude`: commit no ignore line). All board work for the CR,
+  sessions and workers, runs in it. Edit `<main>` outside `.worktrees/` only
+  on the user's direct ask; never `ExitWorktree` with remove. A worktree
+  resolves packages missing from its install from `<main>/node_modules`:
+  when a CR drops a dependency, check that nothing still imports it.
 - **Git authorization:** the user's explicit authorization, for a session
   holding a CR (and its workers) under the work, review or decide protocol,
   and only for these commands:

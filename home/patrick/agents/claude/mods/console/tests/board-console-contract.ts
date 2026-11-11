@@ -9,7 +9,7 @@ type CrInit = Partial<Record<string, unknown>> & { id: string }
 export function cr(over: CrInit): Record<string, unknown> {
   return {
     title: `Title of ${over.id}`, status: 'needs_acceptance', holder: null, look: 'before', view: 'code', checkpoint: null,
-    base: 'main', branch: `cr/${over.id}`, worktree: `/main-worktrees/${over.id}`, tip: sha(2), baseTip: sha(1),
+    base: 'main', branch: `cr/${over.id}`, worktree: `/main/.worktrees/${over.id}`, tip: sha(2), baseTip: sha(1),
     check: { state: 'current', tip: sha(2), baseTip: sha(1), at: '2026-11-11T09:00:00Z', result: 'pass', newFailures: [], baseCount: 3012, tipCount: 2972 },
     parent: null, children: [], items: { open: 0, closed: 3 },
     reviewState: 'current', refreshWork: false, landBlocked: null, after: null, returned: false, setupFailed: false,
