@@ -222,7 +222,7 @@ export type ConsoleStart = { command: string; args: string; title: string; at: n
 export type ConsoleDeferred = { command: string; args: string }
 
 /** Pane lists the person expanded past their cap. */
-export type ConsoleSection = 'questions' | 'held' | 'items' | 'sessions' | 'log'
+export type ConsoleSection = 'questions' | 'held' | 'items' | 'sessions' | 'log' | 'crs' | 'ratify'
 
 declare module 'claude-code' {
   /** The console's tool, by hand: the generated snapshot (`.claude-plugin/types/claude-code-mcp`) can miss it at a save, while the mod reloads. Keep in step with the inputSchema in hooks/core.ts. */

@@ -28,8 +28,8 @@ setup, run `/role autopilot` again.
     question for the user with a recommendation (`board unclaim <id>` when you
     hold it outside a round). Parked questions form the user's next round;
     their dependents wait. Continue independent tracks.
-- Accept in the user's place a CR at a `user` checkpoint (`board land <cr>
-  --checkpoint`) and finished epics whose acceptance names the user: the
+- Accept in the user's place a CR at a `user` checkpoint and finished epics
+  whose acceptance names the user: the
   decide protocol's Accept with the walkthrough as a written assessment,
   recorded as a `needs_ratification` decision with its `## Reversal`. A finished CR
   (`look` `before`) in `needs_acceptance` stays parked for the user: landing is a merge into the

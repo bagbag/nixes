@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import importlib.machinery
 import itertools
 import importlib.util
@@ -3809,6 +3810,12 @@ def validate_board(root: Path) -> None:
                             or not any(w[:2] == ["update", f"cp{look}"] and "checkpoint" in w for w in written) \
                             or any(w[0] == "create" and f"Ratify design: CR cp{look}" in w for w in written) != ratified or "passed the checkpoint" not in output:
                         raise ValueError(f"the agent's checkpoint pass in a look-{look} project: {code} {errors}\n{written}\n{output}")
+                def design_hash(rows):
+                    """The pin of the design items in rows, worked out from the spec: sha256[:12] of their id, description, design, acceptance and notes."""
+                    designs = sorted((r for r in rows if r.get("issue_type") == "design"), key=lambda r: r["id"])
+                    text = json.dumps([[r["id"], *(r.get(f) or "" for f in ("description", "design", "acceptance_criteria", "notes"))] for r in designs])
+                    return hashlib.sha256(text.encode()).hexdigest()[:12]
+
                 issues, tip, wt = make_cr("cpuser", "cpuser.txt", "d\n")
                 issues[0]["metadata"].update(checkpoint="user")
                 before = at_main()
@@ -3816,18 +3823,44 @@ def validate_board(root: Path) -> None:
                 if code != 1 or "--checkpoint" not in errors or at_main() != before:
                     raise ValueError(f"board land without --checkpoint must refuse a pending design checkpoint: {errors}")
                 fake = Fake(issues)
-                code, output, errors = invoke(["land", "cpuser", "--checkpoint"], fake, "lead0001")
+                code, _, errors = invoke(["land", "cpuser", "--checkpoint"], fake, "lead0001")
+                if code != 1 or "--design" not in errors or "board claim cpuser" not in errors or fake.writes():
+                    raise ValueError(f"board land --checkpoint without --design must refuse and name board claim: {code} {errors} {fake.writes()}")
+                fake = Fake(issues)
+                code, output, errors = invoke(["land", "cpuser", "--checkpoint", "--design", design_hash(issues)], fake, "lead0001")
                 if code or at_main() != before or not any(w[:2] == ["update", "cpuser"] and "checkpoint" in w for w in fake.writes()) \
                         or ["update", "cpuser", "--status", "open", "--assignee", "", "--json"] not in fake.writes() or not wt.exists():
                     raise ValueError(f"board land --checkpoint must open the CR for planning and land nothing: {code} {errors} {fake.writes()}")
+                # The design pin: the claim prints a hash of the design item's text; `--design <hash>` accepts only that text.
+                design = {**cr_item("cpuser.d", "cpuser", "closed", kind="design"), "design": "the design", "acceptance_criteria": "ac", "notes": "n"}
+                pinned = [*issues, design]
+                code, output, errors = invoke(["claim", "cpuser"], Fake(pinned), "lead0001")
+                found = re.search(r"design hash (\w+) \(cpuser\.d\)", output)
+                if code or found is None:
+                    raise ValueError(f"board claim of a user design checkpoint must print the design hash: {code} {errors}\n{output}")
+                pin = found.group(1)
+                if pin != design_hash(pinned):
+                    raise ValueError(f"the claim's design hash differs from the spec's: {pin} vs {design_hash(pinned)}")
+                for edit in ({"design": "the design, changed"}, {"notes": "n2"}, {"description": "d2"}, {"acceptance_criteria": "ac2"}):
+                    fake = Fake([*issues, {**design, **edit}])
+                    code, _, errors = invoke(["land", "cpuser", "--checkpoint", "--design", pin], fake, "lead0001")
+                    if code != 1 or "design changed" not in errors or fake.writes():
+                        raise ValueError(f"board land --checkpoint --design must refuse a changed design ({edit}): {code} {errors} {fake.writes()}")
+                fake = Fake(pinned)
+                code, output, errors = invoke(["land", "cpuser", "--checkpoint", "--design", pin], fake, "lead0001")
+                if code or ["update", "cpuser", "--status", "open", "--assignee", "", "--json"] not in fake.writes():
+                    raise ValueError(f"board land --checkpoint --design with the claimed hash must accept: {code} {errors} {fake.writes()}")
+                code, _, errors = invoke(["land", "cpuser", "--design", pin], Fake(pinned), "lead0001")
+                if code != 1 or "--checkpoint" not in errors:
+                    raise ValueError(f"--design without --checkpoint must refuse: {code} {errors}")
                 # A CR made around an existing design item (waiting in review under the old model) is accepted like a native one.
                 legacy = cr_issue("legacycp", "needs_acceptance", checkpoint="user", since="2026-10-22T15:00:00Z")
                 legacy_design = cr_item("legacycp.d", "legacycp", "in_review", kind="design")
                 fake = Fake([legacy, legacy_design])
-                code, output, errors = invoke(["land", "legacycp", "--checkpoint"], fake, "lead0001")
+                code, output, errors = invoke(["land", "legacycp", "--checkpoint", "--design", design_hash([legacy, legacy_design])], fake, "lead0001")
                 if code or ["update", "legacycp", "--status", "open", "--assignee", "", "--json"] not in fake.writes() or "accepted the design checkpoint" not in output:
                     raise ValueError(f"land --checkpoint of a CR around a legacy design item: {code} {errors} {fake.writes()}")
-                if invoke(["land", "lx2", "--checkpoint"], Fake([*x_issues]), "lead0001")[0] != 1:
+                if invoke(["land", "lx2", "--checkpoint", "--design", "0" * 12], Fake([*x_issues]), "lead0001")[0] != 1:
                     raise ValueError("board land --checkpoint without a pending user checkpoint must refuse")
 
                 # r26: checks pass when no (file, code) failure count rises from the base to the tip (q241); the base is run once per base commit.

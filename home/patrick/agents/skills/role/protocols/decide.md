@@ -184,11 +184,13 @@ is in order, bases first
 2. **Evidence.** Read `$HOME/.agents/skills/shared/acceptance.md`; check the
    named evidence under its
    [Evidence and gates](../../shared/acceptance.md#evidence-and-gates). For a
-   CR the stored check and review must be `current` for the tip you review:
+   code CR the stored check and review must be `current` for the tip you review:
    wait for the refresh a review session took, or run it yourself under the
    review protocol's [Refresh](review.md#refresh) steps 2-3 when none did.
-   Note the tip the walkthrough starts on.
-   Output: one line per gate: command, result; check state and tip.
+   Note the tip the walkthrough starts on; for a user design checkpoint, the
+   `design hash` the claim printed.
+   Output: one line per gate: command, result; check state and tip, or the
+   design hash.
 3. **Walk through** with the user under
    [Asking the user](../../shared/asking.md#asking-the-user), by the CR's
    `view`: `code`, the diff `<base>..<tip>` (in the console's review tree, or
@@ -199,7 +201,8 @@ is in order, bases first
    Output: the walkthrough.
 4. **Land or return.**
    - **Accept:** `board land <cr> --tip <tip>` (the tip the user reviewed).
-   - **Design checkpoint accepted:** `board land <cr> --checkpoint`.
+   - **Design checkpoint accepted:** `board land <cr> --checkpoint --design
+     <hash>` (the hash from step 2).
    - **Changes wanted:** talk the root fix through with the user, then
      `board return <cr> "<findings>"`; add follow-up items to the CR.
    - **Rejected:** `board reject <cr> "<reason>"`; delete branch `cr/<id>` and its worktree only on the user's

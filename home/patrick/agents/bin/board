@@ -2493,6 +2493,9 @@ def claim(board: Board, args) -> int:
         print(f"claimed {issue['id']} ({kind}{by}{counts_as}): {issue.get('title', '')}")
         if kind == 'refresh':
             print(f"  refresh work: board refresh {issue['id']}, then board unclaim {issue['id']}")
+        if kind == 'accept' and meta(issue).get('checkpoint') == 'user':
+            pin, designs = design_pin(board, issue)
+            print(f"  design hash {pin} ({', '.join(designs) or 'no design item'}); accept it with board land {issue['id']} --checkpoint --design {pin}")
         for blocker in board.foreign_waits(issue):  # a released ruling waits for planning only (r21-q139): the plan session removes it
             print(f"  fix: {issue['id']} waits on {blocker}, which is work and not planning; check what the ruling changes there, "
                   f"then {dep_fix(issue['id'], blocker)}")
@@ -3475,6 +3478,17 @@ def return_item(board: Board, args) -> None:
     print(f'returned {args.id} to the queue (worktree and branch kept)')
 
 
+DESIGN_FIELDS = ('description', 'design', 'acceptance_criteria', 'notes')
+
+
+def design_pin(board: Board, cr: dict) -> tuple[str, list[str]]:
+    """(hash, ids) of a design checkpoint's design items (its children of type design, closed ones included): the text the user
+    is walked through. `land --checkpoint --design <hash>` accepts only that text."""
+    designs = sorted((i for i in cr_closed_items(board, cr['id']) if i.get('issue_type') == 'design'), key=lambda i: i['id'])
+    text = json.dumps([[i['id'], *(i.get(field) or '' for field in DESIGN_FIELDS)] for i in designs])
+    return hashlib.sha256(text.encode()).hexdigest()[:12], [i['id'] for i in designs]
+
+
 def land(board: Board, args) -> int:
     caller_actor = derived_actor() or 'user'
     cr = cr_arg(board, args.id, 'land')
@@ -3486,9 +3500,15 @@ def land(board: Board, args) -> int:
     if cr.get('assignee') and not holds_cr(cr, derived_actor() or ''):
         raise BoardError(f"{args.id}: held by {cr['assignee']}: land it once that session releases it")
     main = main_root()
+    if args.design is not None and not args.checkpoint:
+        raise BoardError('--design pins a design checkpoint: use it with --checkpoint')
+    if args.checkpoint and args.design is None:
+        raise BoardError(f'{args.id}: --checkpoint needs --design <hash>, the design hash board claim {args.id} printed')
     if args.checkpoint:
         if m.get('checkpoint') != 'user':
             raise BoardError(f'{args.id}: no user checkpoint is pending')
+        if (pin := design_pin(board, cr)[0]) != args.design:
+            raise BoardError(f'{args.id}: the design changed since the claim (hash {pin}, not {args.design}); walk through it again, then land with --design {pin}')
         put_meta(cr, checkpoint=None, since=None)
         bd_checked('update', args.id, '--status', 'open', '--assignee', '', '--json')
         comment(args.id, f'board land --checkpoint: {caller_actor} accepted the design; nothing landed, the planner adds the items.')
@@ -4964,6 +4984,7 @@ def run_command(argv: list[str]) -> int:
     sub.add_argument('id')
     sub.add_argument('--tip', metavar='SHA', help='the tip you reviewed: refused when the branch moved since')
     sub.add_argument('--checkpoint', action='store_true', help="accept a user design checkpoint: the change request returns to planning, nothing lands")
+    sub.add_argument('--design', metavar='HASH', help='required with --checkpoint: the design hash `board claim` printed; refused when the design text changed since')
     sub = add('refresh', "rebase a change request onto its base in its worktree, set up, check, and print the range-diff and the incoming files", refresh)
     sub.add_argument('id')
     sub.add_argument('--review-holds', action='store_true', help='the triage found the incoming change does not touch it: keep its review for the new (tip, base tip); refused unless the check passes and its commits are the reviewed changes')

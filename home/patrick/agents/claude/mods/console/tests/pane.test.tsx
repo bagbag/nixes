@@ -1,6 +1,7 @@
 // The pane, the band, presses, /console and the idle-agent notification.
 import { describe, expect, test } from 'claude-code/testing'
 
+import { cr } from './board-console-contract'
 import { BATCH, HOME, NO_ROUND, notices, PANE_PROPS, roundJson, SESSION, world } from './fixture'
 import { parseRound } from '../hooks/engine'
 import { suggestions } from '../hooks/pane'
@@ -753,6 +754,110 @@ describe('notification', () => {
     w.files.set(`${HOME}/.local/state/agent-sessions/console-notified/s-2`, '2026-10-31T12:00:00Z s-other\n')
     await clock.advance(2_000)
     expect(w.notified).toHaveLength(2)
+  })
+})
+
+describe('accept notification', () => {
+  const MARKERS = `${HOME}/.local/state/agent-sessions/console-accept-notified`
+  const start = async ($: any, on: any, crs: unknown[], init: Parameters<typeof world>[1] = {}) => {
+    const made = world(on, { round: NO_ROUND, crs, ...init })
+    await ready($, made.clock)
+    return made
+  }
+
+  test('a request that reaches to-accept after the console started notifies once; those waiting at start do not', async ($, on) => {
+    const { w, clock } = await start($, on, [cr({ id: 'p-old', title: 'Old one' })])
+    await clock.advance(62_000)
+    expect(w.notified).toEqual([])
+    w.crs = [cr({ id: 'p-old', title: 'Old one' }), cr({ id: 'p-new', title: 'New one' })]
+    await clock.advance(62_000)
+    expect(w.notified).toEqual(['p-new is ready to accept: New one'])
+    await clock.advance(62_000)
+    expect(w.notified).toHaveLength(1)
+  })
+
+  test('a design checkpoint says so; one in agent review is not yours yet', async ($, on) => {
+    const { w, clock } = await start($, on, [])
+    w.crs = [cr({ id: 'p-d', title: 'Design Y', checkpoint: 'user', tip: null }), cr({ id: 'p-r', status: 'in_review' })]
+    await clock.advance(62_000)
+    expect(w.notified).toEqual(['p-d is ready to accept (design): Design Y'])
+  })
+
+  test('returned and then waiting again, it notifies again', async ($, on) => {
+    const { w, clock } = await start($, on, [])
+    w.crs = [cr({ id: 'p-cr1', title: 'X' })]
+    await clock.advance(62_000)
+    w.crs = [cr({ id: 'p-cr1', title: 'X', status: 'open' })]
+    await clock.advance(62_000)
+    w.crs = [cr({ id: 'p-cr1', title: 'X' })]
+    await clock.advance(62_000)
+    expect(w.notified).toHaveLength(2)
+  })
+
+  test('another console\'s later claim on the same marker wins: this one stays quiet', async ($, on) => {
+    const { w, clock } = await start($, on, [])
+    w.crs = [cr({ id: 'p-cr1', title: 'X' })]
+    await clock.advance(58_500)  // the tick at 60 s has written this console's claim and waits
+    await clock.advance(1_000)
+    w.files.set(`${MARKERS}/p-cr1`, 'accept s-other\n')
+    await clock.advance(3_000)
+    expect(w.notified).toEqual([])
+  })
+
+  test('markers of other projects\' requests survive; a request still listed but no longer waiting loses its marker', async ($, on) => {
+    const { w, clock } = await start($, on, [cr({ id: 'p-cr1' })])
+    w.files.set(`${MARKERS}/other-cr9`, 'accept s-other\n')
+    w.files.set(`${MARKERS}/p-cr1`, 'accept s-1\n')
+    await clock.advance(62_000)
+    expect(w.files.has(`${MARKERS}/other-cr9`)).toBe(true)
+    expect(w.files.has(`${MARKERS}/p-cr1`)).toBe(true)
+    w.crs = [cr({ id: 'p-cr1', status: 'open' })]
+    await clock.advance(62_000)
+    expect(w.files.has(`${MARKERS}/p-cr1`)).toBe(false)
+    expect(w.files.has(`${MARKERS}/other-cr9`)).toBe(true)
+  })
+
+  test('an agent session cannot accept: no notification', async ($, on) => {
+    const { w, clock } = await start($, on, [], { role: { session: SESSION, role: 'agent', actor: 'eef8ae5c', tool: 'claude' } })
+    w.crs = [cr({ id: 'p-cr1' })]
+    await clock.advance(62_000)
+    expect(w.notified).toEqual([])
+  })
+})
+
+describe('header counts', () => {
+  test('split by who acts: you, then the agents; a zero count is dim', async ($, on) => {
+    const { clock } = world(on)
+    await ready($, clock)
+    const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+    type Part = { props?: { dimColor?: boolean }; children: unknown[] }
+    // Texts carry no key in the tree: a group is its label, then one Text per count.
+    const group = async (key: string) => ((await ui.find({ key }))?.children ?? []) as Part[]
+    const labels = (parts: Part[]) => parts.slice(1).map(one => one.children[0])
+    const you = await group('board-counts-you')
+    const agents = await group('board-counts-agents')
+    expect(you[0]?.children).toEqual(['you'])
+    expect(labels(you)).toEqual(['for you', 'to accept', 'to ratify', 'decided', 'questions'])
+    expect(agents[0]?.children).toEqual(['agents'])
+    expect(labels(agents)).toEqual(['to plan', 'to review'])
+    expect(you.slice(1).map(one => one.props?.dimColor === true)).toEqual([false, false, false, true, false])  // only decided is zero
+    expect(agents.slice(1).map(one => one.props?.dimColor === true)).toEqual([true, true])  // the agents' group is dim whatever it holds
+    await ui.unmount()
+  })
+})
+
+describe('question row', () => {
+  test('explain and step back sit in a group that keeps its width, with a margin and a fixed-width bullet; the title is what shrinks', async ($, on) => {
+    const { clock } = world(on)
+    await ready($, clock)
+    const ui = await $.ui.mount({ ...PANE, surface: 'terminal', props: { ...PANE_PROPS, bodyColumns: 40 } })
+    expect((await ui.find({ key: 'q-q2-actions' }))?.props).toMatchObject({ flexShrink: 0, marginLeft: 1 })
+    expect((await ui.find({ key: 'q-q2-bullet' }))?.props).toMatchObject({ width: 3, flexShrink: 0 })
+    expect(JSON.stringify((await ui.find({ key: 'q-q2-actions' }))?.children)).toMatch(/q-q2-explain.*q-q2-bullet.*q-q2-sb/)
+    expect((await ui.find({ key: 'q-q2-body' }))?.props).toMatchObject({ flexShrink: 1, minWidth: 0 })
+    expect((await ui.find({ key: 'q-q2-text-box' }))?.props).toMatchObject({ flexShrink: 1 })
+    expect((await ui.find({ key: 'q-q2-marks' }))?.props).toMatchObject({ flexShrink: 0 })
+    await ui.unmount()
   })
 })
 

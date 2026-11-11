@@ -772,7 +772,13 @@ run of it included) unless a run of it is queued already (a run the host refused
 repeat guard, else wakes the model at the open step with `protocol status --line`; during a turn it runs at the turn's end (Esc drops it); logged as `nudged`. A model Skill call of a pass skill counts as the round's pass; a subagent's does not. A pass skill that starts (console-run, typed or the model's own Skill call; not a stale queued run, nor a subagent's) gets the engine's `scope` line appended to its expanded text, stamped for a model call as its run will be recorded; an engine failure leaves the text as it is (r9-q36). The Console pane (`/console` shows it as text;
 `/console-item <id>` prints an item's summary in the chat; `/console-questions` prints the issued batch's text) shows Board
 (counts, this session's items, sessions with runtime and pull initials, `auto` for autopilot, stale
-holds, live workers), Suggestions while no run is open and the engine's `next`
+holds, live workers; the counts split by who acts, `you` (for you, to accept, to ratify,
+decided, questions) then `agents` (to plan, to review), zeros dim), Change requests
+(one line per request: id, title, a stage badge, check state, new-failure count, problem marks (setup failed, review stale, land blocked), then
+Walk through (a design or a result view) or Open (code, in VS Code's review tree), Accept, Return in a right-aligned
+slot that wraps to a second line on a narrow pane; 3 show, the rest and the
+to-ratify list fold behind `+N more`; the opened summary adds look, view, the
+failure counts, the quiet marks (returned, lands with, in review tree) and each new failure as a `vscode://file` link), Suggestions while no run is open and the engine's `next`
 offers something (one row per proposed round: `[ Start ] <title> · ~N questions ·
 unblocks ~M items`, plus `· compacts first` for a
 `fresh` round while the context is at 150k tokens or more
@@ -823,7 +829,10 @@ with a notice naming the command; so do your next typed prompt and a round
 start).
 `/console` prints a line per proposal below the board (`<n>. <first line> ·
 <summary> · type /start-round <n>`); the idle-agent notification goes out
-once per idle episode across consoles. It idles without a registered role or a
+once per idle episode across consoles, and so does the accept notification for
+a request that newly reaches to-accept (not those waiting when the console
+starts; an agent session gets none; its marker goes when the request leaves
+to-accept). It idles without a registered role or a
 drawing surface and fails open except for recovery. Test it with `claude
 plugin test home/patrick/agents/claude/mods/console`.
 

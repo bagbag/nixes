@@ -9,11 +9,11 @@ import type { ConsoleNudge } from './engine'
 import { pickRange } from './review'
 import type { Ran } from './review'
 import {
-  addPlaced, claimRefresh, getAskSent, getDrawn, getPaneDismissed, getPass, getQueued, getReviewing, getRole, getRound, getTurnRunning, releaseRefresh, setAskSent, setBoard, setContinueAsked, setDrawn, setPass, setPrinted, setReviewing, setRole,
+  addPlaced, claimRefresh, getAskSent, getBoard, getDrawn, getPaneDismissed, getPass, getQueued, getReviewing, getRole, getRound, getTurnRunning, releaseRefresh, setAskSent, setBoard, setContinueAsked, setDrawn, setPass, setPrinted, setReviewing, setRole,
   setRound, setRoundError, setStart, takeContinueAsked, takeRefreshAgain, updateOpened, updateQueued,
 } from './state'
 import {
-  CONTINUE_NO_ROUND, continueInHandText, continueText, declineFailedNote, acceptText, crTipFor, itemSlot, missingReportText, openDialogText, questionListLine, questionListText, PROTOCOL_ARGS_DESCRIPTION, PROTOCOL_STDIN_DESCRIPTION, PROTOCOL_TOOL_DESCRIPTION, refreshText, returnText, STALE_DROP, stuckPassText, walkText,
+  CONTINUE_NO_ROUND, continueInHandText, continueText, declineFailedNote, acceptText, crTipFor, isCrAccepting, isWalkCr, itemSlot, missingReportText, openDialogText, questionListLine, questionListText, PROTOCOL_ARGS_DESCRIPTION, PROTOCOL_STDIN_DESCRIPTION, PROTOCOL_TOOL_DESCRIPTION, refreshText, returnText, STALE_DROP, stuckPassText, walkText,
 } from './words'
 
 type $ = EngineInterface
@@ -531,12 +531,14 @@ export async function refreshRound($: $, session: string): Promise<ConsoleRound 
 
 export async function refreshBoard($: $, ctx: Context): Promise<ConsoleBoard> {
   const board = await boardViews($, ctx.session)
+  const before = await getBoard($)
   await setBoard($, board)
   // The review tree's change request left the queue (landed, rejected): nothing is open any more.
   const reviewing = await getReviewing($)
   if (reviewing !== null && board.error === null && !board.crs.some(one => one.id === reviewing.cr)) await setReviewing($, null)
   // Off the caller's path: the claim waits CLAIM_SETTLE_MS.
   $.clock.after(0, () => notifyIdleAgents($, ctx.session, board).catch(failOpen($, 'the idle-agent notification')))
+  $.clock.after(0, () => notifyAcceptances($, ctx.session, before, board).catch(failOpen($, 'the accept notification')))
   return board
 }
 
@@ -587,13 +589,43 @@ async function notifyIdleAgents($: $, session: string, board: ConsoleBoard): Pro
   for (const one of board.sessions) {
     // Agents only (console-spec 3): an idle lead or solo waits on the user, and its claimable questions are no news.
     if (one.session === session || one.role !== 'agent' || one.state !== 'idle' || one.idleSince === null || one.claimable <= 0) continue
-    const marker = `${dir}/${one.session}`
-    if ((await $.fs.exists(marker)) && String(await $.fs.read(marker)).startsWith(`${one.idleSince} `)) continue
-    const claim = `${one.idleSince} ${session}\n`
-    await $.fs.write(marker, claim)
-    await $.clock.sleep(CLAIM_SETTLE_MS)
-    if (String(await $.fs.read(marker)) !== claim) continue
+    if (!(await claimEpisode($, `${dir}/${one.session}`, one.idleSince, session))) continue
     await $.ui.notify(`${one.role} ${one.actor} is idle with ${one.claimable} claimable item${one.claimable === 1 ? '' : 's'}`, { title: 'Console' })
+  }
+}
+
+/** True when this console owns the notice of `episode` at `marker`: the first writer, or the last of several that wrote within the settle time. */
+async function claimEpisode($: $, marker: string, episode: string, session: string): Promise<boolean> {
+  if ((await $.fs.exists(marker)) && String(await $.fs.read(marker)).startsWith(`${episode} `)) return false
+  const claim = `${episode} ${session}\n`
+  await $.fs.write(marker, claim)
+  await $.clock.sleep(CLAIM_SETTLE_MS)
+  return String(await $.fs.read(marker)) === claim
+}
+
+const acceptingIds = (board: ConsoleBoard | null): Set<string> => new Set((board?.crs ?? []).filter(isCrAccepting).map(one => one.id))
+
+/**
+ * Notifies once across consoles per request newly waiting to accept: absent from this console's previous read, so none at its
+ * start. A marker lives while its request waits, so a returned request that waits again notifies again. Agent sessions get none.
+ */
+async function notifyAcceptances($: $, session: string, before: ConsoleBoard | null, board: ConsoleBoard): Promise<void> {
+  const role = await getRole($)
+  if (board.error !== null || role === null || role.role === 'agent') return
+  const dir = `${await stateDir($)}/console-accept-notified`
+  const waiting = acceptingIds(board)
+  // The dir is the registry's, shared by every project's consoles: only this board's requests lose a marker.
+  const known = new Set([...(before?.crs ?? []), ...board.crs].map(one => one.id))
+  if (await $.fs.exists(dir)) {
+    for (const entry of await $.fs.list(dir)) {
+      if (known.has(entry.name) && !waiting.has(entry.name)) await $.process.run(['rm', '-f', `${dir}/${entry.name}`], { timeoutMs: 5_000 })
+    }
+  }
+  if (before === null || before.error !== null) return
+  const earlier = acceptingIds(before)
+  for (const cr of board.crs.filter(one => waiting.has(one.id) && !earlier.has(one.id))) {
+    if (!(await claimEpisode($, `${dir}/${cr.id}`, 'accept', session))) continue
+    await $.ui.notify(`${cr.id} is ready to accept${cr.checkpoint === 'user' ? ' (design)' : ''}: ${cr.title}`, { title: 'Console' })
   }
 }
 
@@ -935,15 +967,15 @@ async function waitingCr($: $, id: string): Promise<{ cr: ConsoleCr } | { said: 
 }
 
 /**
- * Open: view=code sets the review tree to the request's (base tip, tip) and opens it in VS Code; view=result sets no tree and puts
- * the walk-through request in the prompt.
+ * Open: view=code sets the review tree to the request's (base tip, tip) and opens it in VS Code; a result view or a design (it has
+ * no branch) sets no tree and puts the walk-through request in the prompt.
  */
 export async function pressOpenCr($: $, id: string): Promise<void> {
   await crPress($, async () => {
     const found = await waitingCr($, id)
     if ('said' in found) return found.said
     const { cr } = found
-    if (cr.view === 'result') return fillPrompt($, walkText(cr))
+    if (isWalkCr(cr)) return fillPrompt($, walkText(cr))
     if (cr.tip === null || cr.baseTip === null) return `Change request: ${cr.id} has no branch tip to open`
     const picked = await pickRange(argv => gitRun($, argv), await $.session.cwd(), { tip: cr.tip, baseTip: cr.baseTip })
     if (!picked.ok || picked.open === undefined) return `Change request: ${picked.ok ? 'nothing opened' : picked.why}`
@@ -953,13 +985,13 @@ export async function pressOpenCr($: $, id: string): Promise<void> {
   })
 }
 
-/** Accept: the lead's request, naming the tip you looked at (the review tree's when this request is open there). */
+/** Accept: the lead's request, naming the tip you looked at (the review tree's when this request is open there). A design without a branch names none. */
 export async function pressAcceptCr($: $, id: string): Promise<void> {
   await crPress($, async () => {
     const found = await waitingCr($, id)
     if ('said' in found) return found.said
     const tip = crTipFor(found.cr, await getReviewing($))
-    return tip === null ? `Change request: ${id} has no branch tip` : fillPrompt($, acceptText(found.cr, tip))
+    return tip === null && found.cr.checkpoint !== 'user' ? `Change request: ${id} has no branch tip` : fillPrompt($, acceptText(found.cr, tip))
   })
 }
 

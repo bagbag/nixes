@@ -1,6 +1,7 @@
 // Change requests (r25): the queue section, the review tree set to a request's (base tip, tip), and the Open / Accept / Return /
 // Refresh presses, which put requests in the prompt (the console never lands); the counts display (r21-q141, q146).
 import { describe, expect, test } from 'claude-code/testing'
+import type { Mounted } from 'claude-code/testing'
 
 import { BOARD_CONSOLE_CONTRACT, cr } from './board-console-contract'
 import { COUNTS, NO_ROUND, PANE_PROPS, SESSION, world } from './fixture'
@@ -46,9 +47,11 @@ describe('change request queue', () => {
   test('a stack: the child stands under its parent with stage, check state and look', async ($, on) => {
     const { ui } = await queued($, on, [...BOARD_CONSOLE_CONTRACT.crs] as unknown as Crs, repo(), { ratifications: [...BOARD_CONSOLE_CONTRACT.ratifications] })
     const drawn = await texts(ui)
-    for (const part of ['Change requests', 'Remove the legacy cache', 'Drop the cache config', 'to accept', 'checks current', '0 new (base 3012, tip 2972)', '2 new: src/a.ts TS2322, src/b.ts TS2345 (base 3012, tip 3014)', 'look before', 'checkpoint review', 'stale', 'look after · result', 'to ratify', 'Ratify: Move the clock']) {
+    for (const part of ['Change requests', 'Remove the legacy cache', 'Drop the cache config', 'to accept', 'checks current', '0 new', '2 new', 'checkpoint review', 'stale', 'to ratify', 'Ratify: Move the clock']) {
       expect(drawn, part).toContain(part)
     }
+    // The row holds the short status; counts, names, look and view wait in the opened summary.
+    for (const part of ['base 3012', 'src/a.ts', 'look before', 'look after']) expect(drawn, part).not.toContain(part)
     expect(drawn.indexOf('Remove the legacy cache')).toBeLessThan(drawn.indexOf('Drop the cache config'))
     await ui.unmount()
   })
@@ -115,15 +118,28 @@ describe('no new failures', () => {
     expect(crFailuresText(checked({ newFailures: null, baseCount: null, tipCount: null }))).toBeNull()
   })
 
-  test('the pane draws the new failures beside the check state', async ($, on) => {
-    const { ui } = await queued($, on, [checked({ newFailures: ['src/a.ts TS2322'], baseCount: 3, tipCount: 4 }) as unknown as Record<string, unknown>])
-    expect(await texts(ui)).toContain('1 new: src/a.ts TS2322 (base 3, tip 4)')
+  test('the row draws the new-failure count beside the check state; the opened summary names the files', async ($, on) => {
+    const { ui, clock } = await queued($, on, [checked({ newFailures: ['src/a.ts TS2322'], baseCount: 3, tipCount: 4 }) as unknown as Record<string, unknown>])
+    const row = await texts(ui)
+    expect(row).toContain('1 new')
+    expect(row).not.toContain('src/a.ts')
+    await ui.press({ key: 'cr-p-cr1-show' })
+    await clock.settle()
+    expect(await texts(ui)).toContain('base 3, tip 4')
     await ui.unmount()
   })
 
   test('a design for you reads to accept (design)', async ($, on) => {
     const { ui } = await queued($, on, [cr({ id: 'p-cr1', checkpoint: 'user' })])
     expect(await texts(ui)).toContain('to accept (design)')
+    await ui.unmount()
+  })
+
+  test('unchecked is hidden on a design checkpoint (landing it ignores checks) and shown on a code request', async ($, on) => {
+    const unchecked = { state: 'unchecked', tip: null, baseTip: null, at: null, result: null, newFailures: null, baseCount: null, tipCount: null }
+    const { ui } = await queued($, on, [cr({ id: 'p-d', checkpoint: 'user', check: unchecked }), cr({ id: 'p-c', check: unchecked })])
+    expect(await texts(ui)).toContain('unchecked')
+    expect((await texts(ui)).match(/unchecked/g)).toHaveLength(1)
     await ui.unmount()
   })
 
@@ -148,6 +164,9 @@ describe('Open', () => {
     ])
     expect(r.all).toContain(`${MAIN_TREE} merge-base ${sha(5)} ${sha(2)}`)
     expect(r.opened).toEqual([`${REVIEW_TREE}/t.code-workspace`])
+    expect(await texts(ui)).not.toContain('in review tree')  // the summary's, not the row's
+    await ui.press({ key: 'cr-p-cr1-show' })
+    await clock.settle()
     expect(await texts(ui)).toContain('in review tree')
     await ui.unmount()
   })
@@ -228,6 +247,26 @@ describe('Open', () => {
     await ui.unmount()
   })
 
+  test('a design has no branch: its button is Walk through, and it puts the walk-through request in the prompt', async ($, on) => {
+    const r = repo()
+    const design = cr({ id: 'p-cr1', title: 'Design Y', checkpoint: 'user', tip: null, baseTip: null, worktree: null })
+    const { ui, clock, w } = await queued($, on, [design], r)
+    expect((await ui.find({ key: 'cr-open-p-cr1' }))?.text).toBe('Walk through')
+    await ui.press({ key: 'cr-open-p-cr1' })
+    await clock.settle()
+    expect(w.box).toBe("Walk me through p-cr1's design (Design Y).")
+    expect(w.toasts).toEqual([])
+    expect(r.all).toEqual([])
+    await ui.unmount()
+  })
+
+  test('the button reads Walk through for a result view and Open for code', async ($, on) => {
+    const { ui } = await queued($, on, [cr({ id: 'p-code' }), cr({ id: 'p-res', view: 'result' })])
+    expect((await ui.find({ key: 'cr-open-p-code' }))?.text).toBe('Open')
+    expect((await ui.find({ key: 'cr-open-p-res' }))?.text).toBe('Walk through')
+    await ui.unmount()
+  })
+
   test('a request that left the accept stage since the last draw is refused', async ($, on) => {
     const r = repo()
     const { ui, clock, w } = await queued($, on, WAITING(), r)
@@ -243,6 +282,8 @@ describe('Open', () => {
     const { ui, clock, w } = await queued($, on, WAITING())
     await ui.press({ key: 'cr-open-p-cr1' })
     await clock.settle()
+    await ui.press({ key: 'cr-p-cr1-show' })
+    await clock.settle()
     expect(await texts(ui)).toContain('in review tree')
     w.crs = []
     await clock.advance(60_000)
@@ -257,6 +298,8 @@ describe('Open', () => {
   test('a tip that moved past the open tree reads "review tree behind"', async ($, on) => {
     const { ui, clock, w } = await queued($, on, WAITING())
     await ui.press({ key: 'cr-open-p-cr1' })
+    await clock.settle()
+    await ui.press({ key: 'cr-p-cr1-show' })
     await clock.settle()
     w.crs = [cr({ id: 'p-cr1', tip: sha(9) })]
     await clock.advance(60_000)
@@ -293,6 +336,24 @@ describe('Accept, Return', () => {
     await ui.press({ key: 'cr-accept-p-cr1' })
     await clock.settle()
     expect(w.box).toBe(`Accept the design of p-cr1 (Design Y) at ${short(2)}: planning continues in the same request, nothing lands.`)
+    await ui.unmount()
+  })
+
+  test('accepting a design with no branch sends no sha', async ($, on) => {
+    const { ui, clock, w } = await queued($, on, [cr({ id: 'p-cr1', checkpoint: 'user', title: 'Design Y', tip: null, baseTip: null })])
+    await ui.press({ key: 'cr-accept-p-cr1' })
+    await clock.settle()
+    expect(w.box).toBe('Accept the design of p-cr1 (Design Y): planning continues in the same request, nothing lands.')
+    expect(w.toasts).toEqual([])
+    await ui.unmount()
+  })
+
+  test('a code request with no branch tip still refuses its Accept', async ($, on) => {
+    const { ui, clock, w } = await queued($, on, [cr({ id: 'p-cr1', tip: null })])
+    await ui.press({ key: 'cr-accept-p-cr1' })
+    await clock.settle()
+    expect(w.box).toBe('')
+    expect(w.toasts.at(-1)).toContain('has no branch tip')
     await ui.unmount()
   })
 
@@ -391,7 +452,8 @@ describe('counts', () => {
 
   test('the /console text prints the same labels', () => {
     const text = consoleText({ session: 's', role: 'lead', actor: 'a', tool: 'claude' }, { counts: COUNTS, items: [], sessions: [], held: [], crs: [], ratifications: [], agents: [], sync: null, queues: null, error: null }, null, false, [])
-    expect(text).toContain('questions 186 (2 held) · decided 0 · to plan 0 (57 wait) · to review 0 · to accept 13 (1 wait) · to ratify 1 · for you 3')
+    expect(text).toContain('you: for you 3 · to accept 13 (1 wait) · to ratify 1 · decided 0 · questions 186 (2 held)')
+    expect(text).toContain('agents: to plan 0 (57 wait) · to review 0')
   })
 
   test('the engine counts parse as ready/waiting; a bare number reads as all ready', () => {
@@ -413,11 +475,16 @@ describe('what holds a request up', () => {
     ])
   })
 
-  test('the pane draws them on the request row', async ($, on) => {
-    const { ui } = await queued($, on, [cr({ id: 'p-cr1', landBlocked: ['src/x.ts'] }), cr({ id: 'p-cr2', status: 'in_review', base: 'p-cr1', parent: 'p-cr1', after: 'p-cr1' })])
+  test('problems stay on the request row; returned and lands-with wait in the opened summary', async ($, on) => {
+    const { ui, clock } = await queued($, on, [cr({ id: 'p-cr1', landBlocked: ['src/x.ts'], setupFailed: true, reviewState: 'stale' }), cr({ id: 'p-cr2', status: 'in_review', base: 'p-cr1', parent: 'p-cr1', after: 'p-cr1', returned: true })])
     const all = await texts(ui)
-    expect(all).toContain('land blocked: src/x.ts')
-    expect(all).toContain('lands with p-cr1')
+    for (const part of ['land blocked: src/x.ts', 'setup failed', 'review stale']) expect(all, part).toContain(part)
+    for (const part of ['lands with p-cr1', 'returned']) expect(all, part).not.toContain(part)
+    await ui.press({ key: 'cr-p-cr2-show' })
+    await clock.settle()
+    const opened = await texts(ui)
+    expect(opened).toContain('returned')
+    expect(opened).toContain('lands with p-cr1')
     await ui.unmount()
   })
 })
@@ -435,5 +502,141 @@ describe('a stale review', () => {
 
   test('in review it is no mark: the reviewer passes it again', () => {
     expect(crMarks(cr({ id: 'p-cr1', status: 'in_review', reviewState: 'stale' }) as unknown as ConsoleCr)).toEqual([])
+  })
+})
+
+describe('request rows', () => {
+  const WIDE = { ...PANE_PROPS, bodyColumns: 200 }
+  const NARROW = { ...PANE_PROPS, bodyColumns: 50 }
+  const mounted = async ($: any, on: any, crs: Crs, props: typeof PANE_PROPS, init: Parameters<typeof world>[1] = {}) => {
+    const made = world(on, { round: NO_ROUND, crs, ...init })
+    made.w.git = git(repo())
+    await ready($, made.clock)
+    const ui: Mounted = await $.ui.mount({ ...PANE, surface: 'terminal', props })
+    return { ...made, ui }
+  }
+  const children = (found: { children: unknown[] } | undefined) => JSON.stringify(found?.children)
+
+  test('one line: id, title, status and the buttons; the buttons sit in a fixed right-aligned slot so Accept and Return line up', async ($, on) => {
+    const { ui } = await mounted($, on, [cr({ id: 'p-cr1' }), cr({ id: 'p-cr2', view: 'result' })], WIDE)
+    for (const id of ['p-cr1', 'p-cr2']) {
+      expect(await ui.find({ key: `cr-${id}-line2` }), id).toBeUndefined()
+      const line = (await ui.find({ key: `cr-${id}-line1` }))?.text ?? ''
+      const at = (part: string) => line.indexOf(part)
+      const places = [id, `Title of ${id}`, 'to accept', 'checks current', '0 new', 'Accept'].map(at)
+      expect(places.every(place => place >= 0), id).toBe(true)
+      expect(places, id).toEqual([...places].sort((a, b) => a - b))
+      expect((await ui.find({ key: `cr-${id}-buttons` }))?.props, id).toMatchObject({ width: 38, justifyContent: 'flex-end', flexShrink: 0 })
+    }
+    await ui.unmount()
+  })
+
+  test('the buttons slot is as wide as the widest row needs: code-only rows reserve no Walk through', async ($, on) => {
+    const code = await mounted($, on, [cr({ id: 'p-cr1' })], WIDE)
+    expect((await code.ui.find({ key: 'cr-p-cr1-buttons' }))?.props.width).toBe(30)
+    await code.ui.unmount()
+  })
+
+  test('on one line the status group is set off from the title by a margin', async ($, on) => {
+    const { ui } = await mounted($, on, [cr({ id: 'p-cr1' })], WIDE)
+    expect((await ui.find({ key: 'cr-p-cr1-right' }))?.props).toMatchObject({ marginLeft: 1 })
+    await ui.unmount()
+  })
+
+  test('wrapped on its own line, the status group needs no margin', async ($, on) => {
+    const { ui } = await mounted($, on, [cr({ id: 'p-cr1' })], NARROW)
+    expect((await ui.find({ key: 'cr-p-cr1-right' }))?.props.marginLeft).toBeUndefined()
+    await ui.unmount()
+  })
+
+  test('the wrap budget counts only what stays on the row: moved marks do not force a wrap', async ($, on) => {
+    const props = { ...PANE_PROPS, bodyColumns: 100 }  // a plain row needs 92 cells
+    const quiet = await mounted($, on, [cr({ id: 'p-cr1', returned: true, after: 'p-cr0' })], props)
+    expect(await quiet.ui.find({ key: 'cr-p-cr1-line2' })).toBeUndefined()
+    await quiet.ui.unmount()
+  })
+
+  test('a problem mark counts toward the budget', async ($, on) => {
+    const loud = await mounted($, on, [cr({ id: 'p-cr1', landBlocked: ['src/a.ts', 'src/b.ts'] })], { ...PANE_PROPS, bodyColumns: 100 })
+    expect(await loud.ui.find({ key: 'cr-p-cr1-line2' })).toBeDefined()
+    await loud.ui.unmount()
+  })
+
+  test('the title is the part that shrinks', async ($, on) => {
+    const { ui } = await mounted($, on, [cr({ id: 'p-cr1' })], WIDE)
+    expect((await ui.find({ key: 'cr-p-cr1-title' }))?.props).toMatchObject({ flexShrink: 1, flexGrow: 1 })
+    expect((await ui.find({ key: 'cr-p-cr1-right' }))?.props).toMatchObject({ flexShrink: 0 })
+    await ui.unmount()
+  })
+
+  test('a pane too narrow for status and buttons wraps the right group to a second line, right-aligned', async ($, on) => {
+    const { ui } = await mounted($, on, [cr({ id: 'p-cr1' })], NARROW)
+    const second = await ui.find({ key: 'cr-p-cr1-line2' })
+    expect(second?.props).toMatchObject({ justifyContent: 'flex-end' })
+    expect(children(second)).toContain('cr-accept-p-cr1')
+    expect(children(await ui.find({ key: 'cr-p-cr1-line1' }))).not.toContain('cr-accept-p-cr1')
+    await ui.unmount()
+  })
+
+  test('the stage is a colored badge: inverse, warning while it waits for you', async ($, on) => {
+    const { ui } = await mounted($, on, [cr({ id: 'p-cr1' }), cr({ id: 'p-cr2', status: 'in_review' })], WIDE)
+    const badge = async (stage: string) => (await ui.findAll({ type: 'Text' })).find(one => one.text === ` ${stage} `)?.props
+    expect(await badge('to accept')).toMatchObject({ inverse: true, color: 'warning' })
+    expect(await badge('in review')).toMatchObject({ inverse: true, color: 'inactive' })
+    await ui.unmount()
+  })
+
+  test('three requests show, the rest fold behind +N more, and the toggle shows them all', async ($, on) => {
+    const five = [1, 2, 3, 4, 5].map(n => cr({ id: `p-cr${n}` }))
+    const { ui } = await mounted($, on, five, WIDE)
+    expect(await ui.find({ key: 'cr-p-cr3-show' })).toBeDefined()
+    expect(await ui.find({ key: 'cr-p-cr4-show' })).toBeUndefined()
+    expect((await ui.find({ key: 'crs-toggle' }))?.text).toBe('+2 more ▸')
+    await ui.press({ key: 'crs-toggle' })
+    expect(await ui.find({ key: 'cr-p-cr5-show' })).toBeDefined()
+    expect((await ui.find({ key: 'crs-toggle' }))?.text).toBe('show fewer ▾')
+    await ui.unmount()
+  })
+
+  test('the to-ratify list folds the same way, and holds its own toggle', async ($, on) => {
+    const ratifications = [1, 2, 3, 4].map(n => ({ id: `p-rat${n}`, cr: 'p-cr0', title: `Ratify: ${n}` }))
+    const { ui } = await mounted($, on, [cr({ id: 'p-cr1' })], WIDE, { ratifications })
+    expect(await ui.find({ key: 'ratify-p-rat3-show' })).toBeDefined()
+    expect(await ui.find({ key: 'ratify-p-rat4-show' })).toBeUndefined()
+    expect((await ui.find({ key: 'ratify-toggle' }))?.text).toBe('+1 more ▸')
+    expect(await ui.find({ key: 'crs-toggle' })).toBeUndefined()
+    await ui.unmount()
+  })
+
+  test('the board\'s own lists keep their cap of ten', async ($, on) => {
+    const items = Array.from({ length: 11 }, (_, n) => ({ id: `tstdl-i${n}`, type: 'task', status: 'open', title: `Item ${n}`, holder: null }))
+    const { ui } = await mounted($, on, [], WIDE, { items })
+    expect(await ui.find({ key: 'item-tstdl-i9-show' })).toBeDefined()
+    expect(await ui.find({ key: 'item-tstdl-i10-show' })).toBeUndefined()
+    await ui.unmount()
+  })
+
+  test('the opened summary gains a details line: look, view, counts, and the failing files as editor links', async ($, on) => {
+    const failing = cr({ id: 'p-cr1', look: 'after', view: 'result', worktree: '/main/.worktrees/p-cr1', check: { state: 'failed', tip: sha(2), baseTip: sha(1), at: null, result: 'fail', newFailures: ['src/a.ts TS2322', 'src/b.ts TS2345'], baseCount: 3012, tipCount: 3014 } })
+    const { ui, clock } = await mounted($, on, [failing], WIDE)
+    await ui.press({ key: 'cr-p-cr1-show' })
+    await clock.settle()
+    const drawn = await texts(ui)
+    expect(drawn).toContain('look after · result')
+    expect(drawn).toContain('base 3012, tip 3014')
+    const links = await ui.findAll({ type: 'Link' })
+    expect(links.map(one => one.props.href)).toEqual(['vscode://file/main/.worktrees/p-cr1/src/a.ts', 'vscode://file/main/.worktrees/p-cr1/src/b.ts'])
+    expect(links.map(one => one.props.label)).toEqual(['src/a.ts TS2322', 'src/b.ts TS2345'])
+    await ui.unmount()
+  })
+
+  test('no worktree, no links: the failing names show as text', async ($, on) => {
+    const failing = cr({ id: 'p-cr1', worktree: null, check: { state: 'failed', tip: sha(2), baseTip: sha(1), at: null, result: 'fail', newFailures: ['src/a.ts TS2322'], baseCount: 1, tipCount: 2 } })
+    const { ui, clock } = await mounted($, on, [failing], WIDE)
+    await ui.press({ key: 'cr-p-cr1-show' })
+    await clock.settle()
+    expect(await ui.findAll({ type: 'Link' })).toEqual([])
+    expect(await texts(ui)).toContain('src/a.ts TS2322')
+    await ui.unmount()
   })
 })

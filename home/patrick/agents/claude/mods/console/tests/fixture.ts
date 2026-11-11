@@ -153,7 +153,8 @@ export function world(on: On, init: Partial<Pick<World, 'round' | 'role' | 'surf
     return { value: { startedAt: 0, context: { ...(w.tokens === undefined ? {} : { tokens: w.tokens }), window: 1_000_000 }, rateLimits: {}, cost: { usd: 0 } } as never }
   })
   on('session.surfaces', () => ({ value: w.surfaces as never }))
-  on('fs.exists', (_, e) => ({ value: w.files.has(e.path) }))
+  on('fs.exists', (_, e) => ({ value: w.files.has(e.path) || [...w.files.keys()].some(path => path.startsWith(`${e.path}/`)) }))
+  on('fs.list', (_, e) => ({ value: [...w.files.keys()].filter(path => path.startsWith(`${e.path}/`) && !path.slice(e.path.length + 1).includes('/')).map(path => ({ name: path.slice(e.path.length + 1), kind: 'file', size: 0, mtimeMs: 0, isLink: false })) as never }))
   on('fs.read', (_, e) => ({ value: w.files.get(e.path) ?? '' }))
   on('fs.write', (_, e) => { w.files.set(e.path, e.text); return { value: undefined } })
   on('agent.list', () => ({ value: w.agents as never }))
@@ -185,6 +186,7 @@ export function world(on: On, init: Partial<Pick<World, 'round' | 'role' | 'surf
     // The registry script has no execute bit: only `bash <script>` runs it, as on the machine.
     if (argv[0] === REGISTRY) return { value: { exitCode: 126, stdout: '', stderr: 'Permission denied', isStdoutTruncated: false, isStderrTruncated: false } }
     if (argv[0] === 'bash' && argv[1] === REGISTRY && argv[2] === 'set-workers' && w.activateError !== undefined) return { value: { exitCode: 2, stdout: '', stderr: w.activateError, isStdoutTruncated: false, isStderrTruncated: false } }
+    if (argv[0] === 'rm' && argv[1] === '-f') { for (const path of argv.slice(2)) w.files.delete(path); return ok('') }
     if (argv[0] === 'bash' && argv[1] === REGISTRY && argv[2] === 'state-dir') return ok(`${HOME}/.local/state/agent-sessions\n`)
     if (argv[0] === 'bash' && argv[1] === REGISTRY) return ok({ role: null, ...(w.role ?? {}), session: argv[3] })
     if (argv[0] === PROTOCOL) {

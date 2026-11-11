@@ -326,8 +326,12 @@ export const compactedNote = (line: string): string => `<console-note>Protocol s
 /** `Round`, or `Release` for a release run (the same slot, r4-q17). */
 export const runNoun = (round: ConsoleRound): string => round.protocol === 'release' ? 'Release' : 'Round'
 
-export const COUNT_LABELS: readonly [keyof NonNullable<ConsoleBoard['counts']>, string][] = [
-  ['questions', 'questions'], ['decided', 'decided'], ['toPlan', 'to plan'], ['toReview', 'to review'], ['toAccept', 'to accept'], ['toRatify', 'to ratify'], ['forUser', 'for you'],
+type CountKey = keyof NonNullable<ConsoleBoard['counts']>
+
+/** The header counts split by who acts: what waits on the person (a release needs them too, so `decided` counts), then the agents' queues. */
+export const COUNT_GROUPS: readonly { key: 'you' | 'agents'; counts: readonly (readonly [CountKey, string])[] }[] = [
+  { key: 'you', counts: [['forUser', 'for you'], ['toAccept', 'to accept'], ['toRatify', 'to ratify'], ['decided', 'decided'], ['questions', 'questions']] },
+  { key: 'agents', counts: [['toPlan', 'to plan'], ['toReview', 'to review']] },
 ]
 
 /** `<ready>` plus ` (k wait)` when items of that step wait (r21-q141). */
@@ -348,10 +352,38 @@ export function crStageText(cr: ConsoleCr): string {
 
 const CHECK_WORDS: Record<ConsoleCr['check']['state'], string> = { current: 'checks current', stale: 'stale', conflict: 'conflict', failed: 'checks failed', unchecked: 'unchecked' }
 
-/** The check state as a word; null while the change request has not reached review and nothing ran (nothing to say yet). */
+/** The check state as a word; null while the change request has not reached review and nothing ran, and for a design checkpoint with no check (`board land --checkpoint` ignores checks). */
 export function crCheckText(cr: ConsoleCr): string | null {
-  return cr.status !== 'in_review' && cr.status !== 'needs_acceptance' && cr.check.state === 'unchecked' ? null : CHECK_WORDS[cr.check.state]
+  if (cr.check.state === 'unchecked' && (cr.checkpoint === 'user' || (cr.status !== 'in_review' && cr.status !== 'needs_acceptance'))) return null
+  return CHECK_WORDS[cr.check.state]
 }
+
+/** The row's failure word: how many failures are new; null while no comparison ran. */
+export const crNewCountText = (cr: ConsoleCr): string | null => cr.check.newFailures === null ? null : `${cr.check.newFailures.length} new`
+
+/** What the row leaves out: marks that are no problem (returned, lands with <id>). */
+export const crQuietMarks = (cr: ConsoleCr): string[] => crMarks(cr).filter(mark => !mark.isProblem).map(mark => mark.text)
+
+/** The review tree's state for this request: null while it is not the one open there. */
+export const crTreeText = (cr: ConsoleCr, reviewing: ConsoleReviewing | null): string | null =>
+  reviewing?.cr !== cr.id ? null : reviewing.tip === cr.tip ? 'in review tree' : 'review tree behind'
+
+/** The opened summary's details line for a change request: look, view, failure counts, then the quiet marks and the review tree's state; null when none is known. */
+export function crDetailsText(cr: ConsoleCr, reviewing: ConsoleReviewing | null): string | null {
+  const { baseCount, tipCount } = cr.check
+  const parts = [crLookText(cr), baseCount === null || tipCount === null ? null : `base ${baseCount}, tip ${tipCount}`, ...crQuietMarks(cr), crTreeText(cr, reviewing)].filter(part => part !== null)
+  return parts.length === 0 ? null : parts.join(' · ')
+}
+
+/** A new-failure entry (`file code`) as the file and the rest; the board gives no line. */
+export function crFailureParts(entry: string): { file: string; rest: string } {
+  const at = entry.search(/\s/)
+  return at < 0 ? { file: entry, rest: '' } : { file: entry.slice(0, at), rest: entry.slice(at) }
+}
+
+/** Where an editor opens a failing file of the request's worktree; null while the board names no worktree. */
+export const crFileHref = (cr: ConsoleCr, file: string): string | null =>
+  cr.worktree === null ? null : `vscode://file${cr.worktree.startsWith('/') ? '' : '/'}${cr.worktree}/${file}`
 
 /** The no-new-failures comparison: `0 new (base 3012, tip 2972)`, or the new ones named (first three); null while none ran. */
 export function crFailuresText(cr: ConsoleCr): string | null {
@@ -403,14 +435,16 @@ export const canRefreshCr = (cr: ConsoleCr, pulls: readonly string[]): boolean =
 /** The tip a request names: the one in the review tree for this request when it is open, else the board's current tip. */
 export const crTipFor = (cr: ConsoleCr, reviewing: ConsoleReviewing | null): string | null => reviewing?.cr === cr.id ? reviewing.tip : cr.tip
 
-/** The Accept request for the lead (decide.md Accept), naming the tip it was looked at in so a moved branch is refused. */
-export function acceptText(cr: ConsoleCr, tip: string): string {
-  return cr.checkpoint === 'user'
-    ? `Accept the design of ${cr.id} (${cr.title}) at ${short(tip)}: planning continues in the same request, nothing lands.`
-    : `Accept ${cr.id} (${cr.title}) at ${short(tip)}: land it.`
+/** The Accept request for the lead (decide.md Accept), naming the tip it was looked at in so a moved branch is refused. A design without a branch has no tip to name. */
+export function acceptText(cr: ConsoleCr, tip: string | null): string {
+  if (cr.checkpoint === 'user') return `Accept the design of ${cr.id} (${cr.title})${tip === null ? '' : ` at ${short(tip)}`}: planning continues in the same request, nothing lands.`
+  return `Accept ${cr.id} (${cr.title}) at ${short(tip ?? '')}: land it.`
 }
 export const returnText = (cr: ConsoleCr): string => `Return ${cr.id} (${cr.title}): `
-export const walkText = (cr: ConsoleCr): string => `Walk me through ${cr.id}'s result (${cr.title}).`
+
+/** Whether the walk-through is the way in: a design (no branch to open) or a result view. Code opens in the review tree. */
+export const isWalkCr = (cr: ConsoleCr): boolean => cr.checkpoint === 'user' || cr.view === 'result'
+export const walkText = (cr: ConsoleCr): string => cr.checkpoint === 'user' ? `Walk me through ${cr.id}'s design (${cr.title}).` : `Walk me through ${cr.id}'s result (${cr.title}).`
 export const refreshText = (cr: ConsoleCr): string => `Refresh ${cr.id} under the review protocol's Refresh.`
 
 /** One change request as a text line: state only, since a text reader presses nothing. */
@@ -426,7 +460,9 @@ export function consoleText(role: ConsoleRole, board: ConsoleBoard | null, round
   if (board === null) {
     lines.push('  board views not read yet')
   } else {
-    if (board.counts !== null) lines.push('  ' + COUNT_LABELS.map(([key, label]) => `${label} ${countText(board.counts?.[key])}`).join(' · '))
+    if (board.counts !== null) {
+      for (const { key: who, counts } of COUNT_GROUPS) lines.push(`  ${who}: ${counts.map(([key, label]) => `${label} ${countText(board.counts?.[key])}`).join(' · ')}`)
+    }
     if (board.sync !== null) lines.push(`  ${board.sync}`)
     if (board.queues !== null) lines.push(`  ${board.queues}`)
     for (const item of board.items) lines.push(`  ${item.id}  ${item.status}  ${item.title}`)
