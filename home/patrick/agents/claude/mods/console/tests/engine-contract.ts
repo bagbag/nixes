@@ -382,11 +382,36 @@ export const ENGINE_CONTRACT = {
     "questions": [],
     "batch": null,
     "counts": {
-      "questions": 0,
-      "decided": 0,
-      "toPlan": 0,
-      "inReview": 0,
-      "forUser": 0
+      "questions": {
+        "ready": 0,
+        "held": 0,
+        "waiting": 0
+      },
+      "decided": {
+        "ready": 0,
+        "held": 0,
+        "waiting": 0
+      },
+      "toPlan": {
+        "ready": 0,
+        "held": 0,
+        "waiting": 0
+      },
+      "toReview": {
+        "ready": 0,
+        "held": 0,
+        "waiting": 0
+      },
+      "toAccept": {
+        "ready": 0,
+        "held": 0,
+        "waiting": 0
+      },
+      "forUser": {
+        "ready": 0,
+        "held": 0,
+        "waiting": 0
+      }
     },
     "progress": null,
     "log": [],
@@ -411,11 +436,36 @@ export const ENGINE_CONTRACT = {
     "questions": [],
     "batch": null,
     "counts": {
-      "questions": 0,
-      "decided": 0,
-      "toPlan": 0,
-      "inReview": 0,
-      "forUser": 0
+      "questions": {
+        "ready": 0,
+        "held": 0,
+        "waiting": 0
+      },
+      "decided": {
+        "ready": 0,
+        "held": 0,
+        "waiting": 0
+      },
+      "toPlan": {
+        "ready": 0,
+        "held": 0,
+        "waiting": 0
+      },
+      "toReview": {
+        "ready": 0,
+        "held": 0,
+        "waiting": 0
+      },
+      "toAccept": {
+        "ready": 0,
+        "held": 0,
+        "waiting": 0
+      },
+      "forUser": {
+        "ready": 0,
+        "held": 0,
+        "waiting": 0
+      }
     },
     "progress": null,
     "log": [
@@ -462,11 +512,36 @@ export const ENGINE_CONTRACT = {
     "questions": [],
     "batch": null,
     "counts": {
-      "questions": 0,
-      "decided": 0,
-      "toPlan": 0,
-      "inReview": 0,
-      "forUser": 0
+      "questions": {
+        "ready": 0,
+        "held": 0,
+        "waiting": 0
+      },
+      "decided": {
+        "ready": 0,
+        "held": 0,
+        "waiting": 0
+      },
+      "toPlan": {
+        "ready": 0,
+        "held": 0,
+        "waiting": 0
+      },
+      "toReview": {
+        "ready": 0,
+        "held": 0,
+        "waiting": 0
+      },
+      "toAccept": {
+        "ready": 0,
+        "held": 0,
+        "waiting": 0
+      },
+      "forUser": {
+        "ready": 0,
+        "held": 0,
+        "waiting": 0
+      }
     },
     "progress": null,
     "log": [],
@@ -493,11 +568,36 @@ export const ENGINE_CONTRACT = {
     "questions": [],
     "batch": null,
     "counts": {
-      "questions": 0,
-      "decided": 0,
-      "toPlan": 0,
-      "inReview": 0,
-      "forUser": 0
+      "questions": {
+        "ready": 0,
+        "held": 0,
+        "waiting": 0
+      },
+      "decided": {
+        "ready": 0,
+        "held": 0,
+        "waiting": 0
+      },
+      "toPlan": {
+        "ready": 0,
+        "held": 0,
+        "waiting": 0
+      },
+      "toReview": {
+        "ready": 0,
+        "held": 0,
+        "waiting": 0
+      },
+      "toAccept": {
+        "ready": 0,
+        "held": 0,
+        "waiting": 0
+      },
+      "forUser": {
+        "ready": 0,
+        "held": 0,
+        "waiting": 0
+      }
     },
     "progress": null,
     "log": [
@@ -544,11 +644,36 @@ export const ENGINE_CONTRACT = {
     "questions": [],
     "batch": null,
     "counts": {
-      "questions": 0,
-      "decided": 0,
-      "toPlan": 0,
-      "inReview": 0,
-      "forUser": 0
+      "questions": {
+        "ready": 0,
+        "held": 0,
+        "waiting": 0
+      },
+      "decided": {
+        "ready": 0,
+        "held": 0,
+        "waiting": 0
+      },
+      "toPlan": {
+        "ready": 0,
+        "held": 0,
+        "waiting": 0
+      },
+      "toReview": {
+        "ready": 0,
+        "held": 0,
+        "waiting": 0
+      },
+      "toAccept": {
+        "ready": 0,
+        "held": 0,
+        "waiting": 0
+      },
+      "forUser": {
+        "ready": 0,
+        "held": 0,
+        "waiting": 0
+      }
     },
     "progress": null,
     "log": [],
@@ -598,11 +723,36 @@ export const ENGINE_CONTRACT = {
     "questions": [],
     "batch": null,
     "counts": {
-      "questions": 0,
-      "decided": 0,
-      "toPlan": 0,
-      "inReview": 0,
-      "forUser": 0
+      "questions": {
+        "ready": 0,
+        "held": 0,
+        "waiting": 0
+      },
+      "decided": {
+        "ready": 0,
+        "held": 0,
+        "waiting": 0
+      },
+      "toPlan": {
+        "ready": 0,
+        "held": 0,
+        "waiting": 0
+      },
+      "toReview": {
+        "ready": 0,
+        "held": 0,
+        "waiting": 0
+      },
+      "toAccept": {
+        "ready": 0,
+        "held": 0,
+        "waiting": 0
+      },
+      "forUser": {
+        "ready": 0,
+        "held": 0,
+        "waiting": 0
+      }
     },
     "progress": null,
     "log": [],
@@ -666,11 +816,36 @@ export const ENGINE_CONTRACT = {
     ],
     "batch": null,
     "counts": {
-      "questions": 0,
-      "decided": 0,
-      "toPlan": 0,
-      "inReview": 0,
-      "forUser": 0
+      "questions": {
+        "ready": 0,
+        "held": 0,
+        "waiting": 0
+      },
+      "decided": {
+        "ready": 0,
+        "held": 0,
+        "waiting": 0
+      },
+      "toPlan": {
+        "ready": 0,
+        "held": 0,
+        "waiting": 0
+      },
+      "toReview": {
+        "ready": 0,
+        "held": 0,
+        "waiting": 0
+      },
+      "toAccept": {
+        "ready": 0,
+        "held": 0,
+        "waiting": 0
+      },
+      "forUser": {
+        "ready": 0,
+        "held": 0,
+        "waiting": 0
+      }
     },
     "progress": {
       "items": 1,

@@ -27,7 +27,8 @@ SEEDS = 5  # `protocol next` lists this many seed questions
 PROPOSAL_ROUNDS = 3  # rounds in a stored proposal
 PRUNE_DAYS = 30  # a session's protocol folder without an open round goes after this much inactivity
 CLASSES = ('ruled', 'planning', 'own', 'user')  # decide.md Collect
-KINDS = ('decision', 'confirm-own-rulings')
+KINDS = ('decision', 'confirm-own-rulings')  # every kind a round question can have; only release approval is `confirm-own-rulings`
+STAGED_KINDS = ('decision',)  # what a model stages: a lead's own rulings are ordinary questions (r22-q168), the approval is the engine's
 OUTCOMES = ('duplicate', 'extend', 'relate', 'supersedes', 'unrelated')
 REVISES, REVISES_RULE = 'tracks', 'board.revises_rule'  # bin/board: the pending-revision link and its partial rule (the validator compares them)
 PASSES = ('step-back', 'ground', 'challenge-rulings')
@@ -48,7 +49,7 @@ VERB_ORIGINS = {
     'scope': ('plugin',),  # what the pass the console sees start must cover, named in its expanded text (r9-q36)
 }
 NUDGE_KEYS = ('pass', 'batch', 'step')  # what a continue did: queued the pending pass, reopened the batch, woke the model at the step
-COLLECT_VIEWS = 'decided,questions,ratification,review,user'
+COLLECT_VIEWS = 'decided,questions,ratification,accept,review,user'
 LIST_COMMAND = f'board health --items {COLLECT_VIEWS}'  # lists the open items Collect offers, but for the ready milestones and finished epics `board position` lists
 # Question fields a pass can change; a change to any of them counts (asking.md Check: premise, ruling, option or
 # question set).

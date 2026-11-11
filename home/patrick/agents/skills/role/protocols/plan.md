@@ -2,6 +2,7 @@
 
 Read
 `$HOME/.agents/skills/shared/board-core.md`,
+`$HOME/.agents/skills/shared/change-requests.md`,
 `$HOME/.agents/skills/shared/board-coordination.md`,
 `$HOME/.agents/skills/shared/decision-protocol.md`,
 `$HOME/.agents/skills/shared/project-memory.md` and
@@ -20,7 +21,7 @@ findings or stops.
 1. **Position.** Run `board queue` and
    `board position`; read the checkpoint file
    ([Arc state](../../shared/project-memory.md#arc-state)).
-   Output: ready items, rulings to plan, idle holds, questions holding work.
+   Output: ready CRs and items, rulings to plan, idle holds, questions holding work.
 2. **Released rulings.** Plan each under [Released rulings](#released-rulings).
    Output per ruling: `<id> → related <ids>, created <ids>, closed`.
 3. **Frame.** Frame new or reframed outcome work under [Frame](#frame).
@@ -28,9 +29,9 @@ findings or stops.
 4. **Cut.** Cut and order items under [Cut work](#cut-work) and
    [Queue](#queue); run `board bd dep cycles`.
    Output: created ids, edge changes, `no cycles`.
-5. **Dispatch.** When your session runs items through workers (solo and
+5. **Dispatch.** When your session runs CRs through workers (solo and
    autopilot always do), dispatch under [Dispatch](#dispatch).
-   Output: one line per worker: item id, agent type, protocol.
+   Output: one line per worker: CR id, agent type, protocol.
 6. **Integrate.** After each wave, run [Integrate](#integrate).
    Output: one line per integration gate: command, result.
 7. **Reassess.** Run [Reassess](#reassess) at its triggers.
@@ -59,7 +60,8 @@ findings or stops.
 
 ## Exit
 
-No released ruling waits unplanned unless blocked by a question; ready work is
+No released ruling waits unplanned except on what its planning needs
+([board-core.md](../../shared/board-core.md) released row); ready work is
 dispatched or claimable; the checkpoint file is current; the report is given.
 
 ## Released rulings
@@ -73,7 +75,10 @@ dispatched or claimable; the checkpoint file is current; the report is given.
    (`board block <item>… --on <ruling> --reason "<what changes>"`); relate
    items it only informs (`board bd dep relate <ruling> <item>`). Add the
    ruling id and owner anchor to each item's `--design`.
-   Create missing work items. Add changelog and upgrade duties to affected
+   Create missing work items; when cutting them needs a design or spike first,
+   create it, block the ruling on it and stop: the ruling returns to planning
+   when it closes, and the design never waits on the ruling.
+   Add changelog and upgrade duties to affected
    items' acceptance.
 3. For a revision, update every consumer of the changed decision: related
    items, briefs, dependencies and active workers whose premise changed. Refresh questions written against
@@ -118,15 +123,32 @@ Establish the outcome's contribution to its milestone:
 
 ## Cut work
 
-- Cut items under [Work items](../../shared/board-core.md#work-items).
-  Split, merge or reorder them for a cleaner end state or independent work.
+- Cut items under [Work items](../../shared/board-core.md#work-items) and
+  group them into [change requests](../../shared/change-requests.md#change-requests)
+  (CRs): one CR per topic of a request, split only where the user would
+  plausibly accept one part and reject another; five small cleanups are one
+  CR. Every item gets `--parent <cr>`; a CR sits under its topic epic. Split,
+  merge or reorder items for a cleaner end state.
+- Designed work is one CR that starts with only its design items and a
+  `checkpoint`: `user` in a `look` `before` project, else `agent`. When the
+  checkpoint passes, the CR returns to you: add the implementation items to
+  it. Dependent CRs wait under
+  [Waiting and stacks](../../shared/change-requests.md#change-requests);
+  design-only dependents read the accepted design on its branch.
+- Group items that sit in no CR into CRs per topic when they become due
+  (items waiting on an open decision or design stay ungrouped until it is
+  answered).
+- Set each CR's `look` and `view` only to override the project defaults;
+  name the reason on the CR. Order CRs by
+  dependencies: independent CRs run in parallel, overlapping work gets a
+  dependency edge (the later CR stacks on, or waits for, the earlier).
 - Write each item's expected behavior as short examples (input → result) in
   its `--design`.
-- Mark an item for `deep-review` when a bug in it would be hidden and costly
+- Mark a CR for `deep-review` when a bug in it would be hidden and costly
   ([definition](../../shared/acceptance.md#review-policy)):
-  `board bd update <id> --set-metadata deep_review="<named harm>"`. Leave it
-  unmarked when unsure.
-- Place each new item in or out of the open milestone under
+  `board bd update <cr> --set-metadata deep_review="<named harm>"`. Leave it
+  unmarked when unsure. State each agent checkpoint the CR needs in the CR.
+- Place each new CR in or out of the open milestone under
   [Milestones](../../shared/board-coordination.md#milestones).
 - Use a separate plan for cross-item reasoning, blast-radius integration
   checkpoints and cheap assumption tests that items cannot hold.
@@ -172,40 +194,37 @@ Establish the outcome's contribution to its milestone:
 
 ## Dispatch
 
-- Dispatch items that advance the approved checkpoint, remove demonstrated
+- Dispatch CRs that advance the approved checkpoint, remove demonstrated
   blockers or serve authorized parallel tracks, within authority and
-  priority. Among equally ready items, prefer needed patterns, then smaller
-  items. Repairs name the work they unblock; return there at closure.
-- Keep a worker on every independent ready item up to the session's worker
-  cap (`board position`: `workers <active>/<cap>`).
+  priority. Among equally ready CRs, prefer needed patterns, then smaller
+  ones. Repairs name the work they unblock; return there at closure.
+- Keep a worker on every independent ready CR up to the session's worker cap
+  (`board position`: `workers <active>/<cap>`).
   When a worker ends, finish the bookkeeping the next dispatch depends on (its
-  hand-over and closure, the board state and file zones a new worker relies
-  on), integrate its result under [Integrate](#integrate), then refill before
-  other bookkeeping.
-- Give each worker one item, or related small items (same files, decision or
-  invariant) together. Brief: the item ids, the protocol path for its kind
+  hand-over, the board state a new worker relies on), integrate its result
+  under [Integrate](#integrate), then refill before other bookkeeping.
+- Give each worker one CR. Brief: the CR id, the protocol path for its kind
   (`$HOME/.agents/skills/role/SKILL.md`, claimed-item table) and only the
-  deltas under [Brief](#brief). The worker claims, hands over and closes as
-  itself.
-- Dispatch item work only to artifact-writing agent types (global
+  deltas under [Brief](#brief).
+- Dispatch CR work only to artifact-writing agent types (global
   Orchestration).
 - Send review to a session pulling `review` when one is active; otherwise
-  dispatch a fresh-context worker that did not author the item: `review`, or
+  dispatch a fresh-context worker that did not author the CR: `review`, or
   `deep-review` where the Review policy names it.
 - Work inline under the global instructions' Orchestration.
-- Dispatch dependency-ready waves on one shared tree with a file zone per
-  worker; items with overlapping zones wait, and shared contracts are
-  sequenced. Only a throwaway spike gets its own worktree. Use native liveness, wait and resume. Run [Reassess](#reassess)
-  before large fan-out.
+- Dispatch dependency-ready waves of CRs; shared contracts are sequenced by
+  dependency edges. Use native liveness, wait
+  and resume. Run [Reassess](#reassess) before large fan-out.
 - Interpret control messages by their target: you, one change or workers.
   "Keep workers running" leaves them running until revoked.
-- Continue warm workers under the global Warm reuse. To re-dispatch an item an
-  ended worker holds, brief a new worker with its id; its claim takes it over.
+- Continue warm workers under the global Warm reuse. To re-dispatch a CR an
+  ended worker holds, brief a new worker with its id; its claim takes it
+  over.
 - Run destructive actions under the global Filesystem rule and its
   Confirm-before-the-irreversible principle; relay that confirmation to a
-  worker only when orchestration preserves it as trusted. Inspect the tree after waves;
-  attribute unexplained out-of-zone changes, possibly the user's, and leave
-  them in place.
+  worker only when orchestration preserves it as trusted. Inspect each CR's
+  worktree status after waves; attribute unexplained changes, possibly the
+  user's, and leave them in place.
 - Treat workers' returned choices and disclosed judgment calls as decisions
   under [Decision authority](../../shared/decision-protocol.md#decision-authority);
   repair mistakes with the warm worker. Inspect a contradictory STOP before
@@ -214,9 +233,10 @@ Establish the outcome's contribution to its milestone:
 ## Brief
 
 - Reference authoritative sources, skills and ruling owner sections by id and
-  anchor; never copy rule text. Keep briefs as deltas to the item.
-- Add no-touch zones, assumptions, STOP conditions and checks. Grant writing
-  and running tests separately; a running hold does not forbid writing.
+  anchor instead of copying rule text. Keep briefs as deltas to the item.
+- Add no-touch paths, assumptions, STOP conditions and checks. Grant writing
+  and running tests separately; a stop on running them does not forbid
+  writing them.
   Forbid assessor fixes in a review brief while the author is still active in
   the reviewed files.
 - When evidence mixes material the brief doesn't grant, including conclusions
@@ -231,8 +251,8 @@ Establish the outcome's contribution to its milestone:
 
 ## Integrate
 
-- Merge each finished worker result into the tree (accept it, run its
-  integration gate) before dispatching new work. A gate that cannot run
+- Accept each finished worker result (its CR handed over, checks stored, run
+  its integration gate) before dispatching new work. A gate that cannot run
   becomes the next item.
 - Follow implementation with tests, review, focused repair closure and an
   integration check. Add planning or opinions only for distinct questions.

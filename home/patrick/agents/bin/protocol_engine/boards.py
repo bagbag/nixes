@@ -49,7 +49,25 @@ def related_hits(board: Board, text: str) -> list[tuple[str, str]]:
             for item in found.get('items') or []]
 
 
-COUNT_KEYS = ('questions', 'decided', 'toPlan', 'inReview', 'forUser')
+COUNT_KEYS = ('questions', 'decided', 'toPlan', 'toReview', 'toAccept', 'forUser')  # each {'ready': n, 'held': h, 'waiting': k} (r21-q141, q146)
+
+
+def view_rows(found: dict, view: str) -> list[dict]:
+    """The rows of one `board health --json --items` view. The board returns every requested view, empty ones as [], so a
+    missing key is a rename the engine must name and not read as no items (r22-q158)."""
+    items = found.get('items')
+    if not isinstance(items, dict) or view not in items:
+        raise ProtocolError(f"`board health --json` has no items view `{view}`: the board and the engine disagree on its name")
+    return items[view] or []
+
+
+def read_counts(found: dict) -> dict[str, dict]:
+    """`board health --json` counts for COUNT_KEYS; a missing key is named, not counted as zero (r22-q158)."""
+    counts = found.get('counts')
+    missing = [key for key in COUNT_KEYS if not isinstance(counts, dict) or key not in counts]
+    if missing:
+        raise ProtocolError(f"`board health --json` has no count `{missing[0]}`: the board and the engine disagree on its name")
+    return {key: counts[key] for key in COUNT_KEYS}
 
 
 def held_decided(board: Board, found: dict | None = None) -> list[str]:
@@ -57,7 +75,7 @@ def held_decided(board: Board, found: dict | None = None) -> list[str]:
     rows carry their `holder`."""
     found = found if found is not None else board.json('health', '--json', '--items', 'decided')
     me = board.actor.split('/', 1)[0]
-    return [row['id'] for row in (found.get('items') or {}).get('decided') or []
+    return [row['id'] for row in view_rows(found, 'decided')
             if row.get('holder') and str(row['holder']).split('/', 1)[0] == me]
 
 

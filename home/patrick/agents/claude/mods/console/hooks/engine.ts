@@ -4,8 +4,8 @@
 import type { EngineInterface } from 'claude-code'
 
 import type {
-  ConsoleAction, ConsoleAgent, ConsoleBoard, ConsoleCounts, ConsoleDialogQuestion, ConsoleHeld, ConsoleItem, ConsolePassOrigin, ConsolePending, ConsoleProgress, ConsoleProposal, ConsoleQuestion,
-  ConsoleRecord, ConsoleRole, ConsoleRound, ConsoleSession,
+  ConsoleAction, ConsoleAgent, ConsoleBoard, ConsoleCheckState, ConsoleCount, ConsoleCounts, ConsoleCr, ConsoleDialogQuestion, ConsoleHeld, ConsoleItem, ConsolePassOrigin, ConsolePending, ConsoleProgress, ConsoleProposal, ConsoleQuestion,
+  ConsoleRatification, ConsoleRecord, ConsoleRole, ConsoleRound, ConsoleSession,
 } from '../types'
 
 type $ = EngineInterface
@@ -213,15 +213,21 @@ export async function boardViews($: $, session: string): Promise<ConsoleBoard> {
     attempt(async () => record(await boardJson($, session, ['console'])), null),
     attempt(async () => (await $.agent.list()).filter(agent => agent.parentId === undefined).map(parseAgent), [] as ConsoleAgent[]),
   ])
+  return { ...parseBoardConsole(view), agents, error: errors.length === 0 ? null : errors.join('; ') }
+}
+
+/** `board console`'s JSON as the console reads it; null (a failed read) reads as an empty board. */
+export function parseBoardConsole(raw: unknown): Omit<ConsoleBoard, 'agents' | 'error'> {
+  const view = raw === null ? null : record(raw)
   return {
     counts: view === null ? null : parseCounts(view.counts),
     items: view === null ? [] : list(view.items).map(parseItem),
     sessions: view === null ? [] : list(view.sessions).map(parseSession),
     held: view === null ? [] : list(view.held).map(parseHeld),
+    crs: view === null ? [] : list(view.crs).map(parseCr).filter(one => one.id !== ''),
+    ratifications: view === null ? [] : list(view.ratifications).map(parseRatification).filter(one => one.id !== ''),
     sync: view === null ? null : nullableText(view.sync),
     queues: view === null ? null : nullableText(view.queueLine),
-    agents,
-    error: errors.length === 0 ? null : errors.join('; '),
   }
 }
 
@@ -258,10 +264,19 @@ export function parsePending(value: unknown): ConsolePending | null {
   return { id, command, args: text(raw.args) }
 }
 
+/** A count is `{ ready, waiting }`; a bare number (a protocol engine that predates the split) reads as all ready. */
+function parseCount(value: unknown): ConsoleCount {
+  const raw = record(value)
+  return typeof value === 'number' ? { ready: count(value), held: 0, waiting: 0 } : { ready: count(raw.ready), held: count(raw.held), waiting: count(raw.waiting) }
+}
+
 function parseCounts(value: unknown): ConsoleCounts | null {
   if (value === null || value === undefined) return null
   const raw = record(value)
-  return { questions: count(raw.questions), decided: count(raw.decided), toPlan: count(raw.toPlan), inReview: count(raw.inReview), forUser: count(raw.forUser) }
+  return {
+    questions: parseCount(raw.questions), decided: parseCount(raw.decided), toPlan: parseCount(raw.toPlan),
+    toReview: parseCount(raw.toReview), toAccept: parseCount(raw.toAccept), toRatify: parseCount(raw.toRatify), forUser: parseCount(raw.forUser),
+  }
 }
 
 const STATUSES: readonly string[] = ['draft', 'ready', 'asked', 'answered', 'held', 'parked']
@@ -368,6 +383,35 @@ export function parseRound(value: unknown): ConsoleRound {
 function parseItem(value: unknown): ConsoleItem {
   const raw = record(value)
   return { id: text(raw.id), type: text(raw.type), status: text(raw.status), title: text(raw.title), holder: nullableText(raw.holder) }
+}
+
+const CHECK_STATES: readonly string[] = ['current', 'stale', 'conflict', 'failed', 'unchecked']
+const oneOf = <T extends string>(value: unknown, allowed: readonly T[]): T | null => allowed.find(one => one === value) ?? null
+
+function parseCr(value: unknown): ConsoleCr {
+  const raw = record(value)
+  const check = record(raw.check)
+  const items = record(raw.items)
+  return {
+    id: text(raw.id), title: text(raw.title), status: text(raw.status), holder: nullableText(raw.holder),
+    look: oneOf(raw.look, ['before', 'after']), view: oneOf(raw.view, ['code', 'result']), checkpoint: oneOf(raw.checkpoint, ['agent', 'user']),
+    base: text(raw.base), branch: text(raw.branch), worktree: nullableText(raw.worktree), tip: nullableText(raw.tip), baseTip: nullableText(raw.baseTip),
+    check: {
+      state: oneOf(check.state, CHECK_STATES as readonly ConsoleCheckState[]) ?? 'unchecked', tip: nullableText(check.tip), baseTip: nullableText(check.baseTip),
+      at: nullableText(check.at), result: oneOf(check.result, ['pass', 'fail']),
+      newFailures: Array.isArray(check.newFailures) ? list(check.newFailures).map(text).filter(one => one !== '') : null,
+      baseCount: typeof check.baseCount === 'number' ? check.baseCount : null, tipCount: typeof check.tipCount === 'number' ? check.tipCount : null,
+    },
+    parent: nullableText(raw.parent), children: list(raw.children).map(text).filter(id => id !== ''), items: { open: count(items.open), closed: count(items.closed) },
+    landBlocked: Array.isArray(raw.landBlocked) ? list(raw.landBlocked).map(text).filter(one => one !== '') : null,
+    after: nullableText(raw.after), returned: raw.returned === true, setupFailed: raw.setupFailed === true,
+    reviewState: oneOf(raw.reviewState, ['current', 'stale']), refreshWork: raw.refreshWork === true,
+  }
+}
+
+function parseRatification(value: unknown): ConsoleRatification {
+  const raw = record(value)
+  return { id: text(raw.id), cr: text(raw.cr), title: text(raw.title) }
 }
 
 function parseHeld(value: unknown): ConsoleHeld {

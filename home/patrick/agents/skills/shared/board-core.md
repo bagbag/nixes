@@ -33,14 +33,16 @@ shared board, the user an unshared one (`bd dolt push`/`pull`).
 - **Actor:** the last 8 characters of the session id; a worker's actor is
   `<session actor>/<last 8 of its agent id>`. `board` derives it; Claude
   workers get theirs from bd-guard (their scripts act as the session).
-- **Hold:** an item's assignee is the doer holding it. Each doer claims, hands
-  over and closes as itself; a session owns every hold under its actor prefix.
+- **Hold:** an item's assignee is the doer holding it. A session holds a
+  whole [change request](../shared/change-requests.md#change-requests);
+  the CR's items go to its workers. Each doer claims, hands over
+  and closes as itself; a session owns every hold under its actor prefix.
   Only the exact assignee can close an item.
-- Claim with `board claim` (the next item routed to your
+- Claim with `board claim` (the next CR or item routed to your
   session under [Routing](#routing)) or `board claim <ids>`
-  (named items). Claiming a named item held within your own session (your
+  (named). Claiming a named item held within your own session (your
   actor or one of your workers) takes it over.
-- Finish, hand over or unclaim each item you still hold.
+- Finish, hand over or unclaim each hold you still have.
 - Nothing frees a hold automatically. Free another doer's hold only with
   `board take <id>` (reassign to you with a comment) or
   `board unclaim <id>`. Free another session's hold only as
@@ -50,6 +52,9 @@ shared board, the user an unshared one (`bd dolt push`/`pull`).
   the worker, hand the item over or free it.
 - At your worker cap, hand over or unclaim partial work before
   `board claim --force "<reason>"`.
+- A CR that leaves its holder unfinished (unclaimed, returned, freed from a
+  gone holder) keeps its worktree, branch and uncommitted edits; its next
+  claimer reuses the worktree as it stands and resolves any conflict state.
 - On a shared board, `held elsewhere` (with its last update) marks a holder
   outside this machine's registry: ask its person instead of freeing the hold.
 
@@ -57,30 +62,41 @@ shared board, the user an unshared one (`bd dolt push`/`pull`).
 
 | Type | Kind |
 |---|---|
-| `task`, `bug`, `spike` | Work item. |
+| `task`, `bug`, `spike` | Work item; lives in a CR. |
 | `design` | Design item: architecture, package graph and needed decisions for a slice. |
 | `decision` | Question, later the ruling's record ([Questions and rulings](#questions-and-rulings)). |
-| `epic` | Outcome ([Epics](../shared/board-coordination.md#epics)). |
+| `change-request` | The claimed, reviewed and landed unit ([Change requests](../shared/change-requests.md#change-requests)). |
+| `epic` | Topic or outcome, never claimed ([Epics](../shared/board-coordination.md#epics)). |
 | `milestone` | Release checkpoint ([Milestones](../shared/board-coordination.md#milestones)). |
 | `gate` | Upstream wait or the user's go ([Dependencies](#dependencies)). |
 
 Titles carry no prefixes; `feature`, `chore` and `check` stay unused (a check
-others wait on is a task, [Work items](#work-items)). Review
-is a status, not a kind: create a standalone review as an unassigned task
-directly in review,
+others wait on is a task, [Work items](#work-items)). Review is a status, not
+a kind: create a findings-only review (outside any CR) as an
+unassigned task directly in review,
 `board bd create … -t task --status in_review`.
 
 ### Routing
 
-A bare `board claim` takes the unassigned ready items routed to the session's
-role or pulls (`board position` counts them). A claim by id checks no role;
-follow these rules yourself:
+A bare `board claim` takes the unassigned ready CRs and items routed to the
+session's role or pulls (`board position` counts them). A claim by id checks
+no role; follow these rules yourself:
 
-- Pull `plan` also claims the board restructuring tasks it creates itself.
-- Pull `review` takes a review first while a review-pulling session is active.
+- CRs by pull: `open` to `design` when its open items are design items, else
+  `implement`; `in_review` (agent review or agent checkpoint) to `review`;
+  refresh work to `review`, kind `refresh`
+  ([queue](../shared/board-coordination.md#change-request-queue)).
+- A work item is claimed by id only inside a CR your session holds; outside
+  any CR it is refused with the fix (`--parent <cr>`). Decision, plan and
+  milestone kinds and findings-only reviews and challenges (no code change)
+  need no CR.
+- Pull `plan` also claims the board restructuring tasks it creates itself,
+  and an `open` CR with no open items or marked for replanning (returned from
+  an agent checkpoint, or a child of a rejected CR).
 - A session with the decide set (lead, solo) claims by id its round's open
-  decisions, `needs_ratification` records, `in_review` design items and ready
-  milestones, and closes finished epics whose acceptance names the user.
+  decisions, `needs_ratification` records, CRs in `needs_acceptance`, passed
+  `look` `after` children marked `after <base>` and ready milestones, and
+  closes finished epics whose acceptance names the user.
 
 Questions, autopilot's parked ones included, stay unassigned until a session
 claims them.
@@ -108,13 +124,14 @@ item sits in a person's queue (the person's sessions work it):
 
 ### Work items
 
-- Cut one item per independently landable, reviewable outcome a dependent
-  could need, sized for one worker session and one review. Keep parts that must
-  land together in one item (atomic rename, contract plus its only caller).
-  Split parts with a different blocker or dependent. Turn umbrellas into epics.
+- Cut one item per outcome a dependent could need, sized for one worker pass
+  (the CR is the reviewed and landed unit). Keep parts that must land together
+  in one item (atomic rename, contract plus its only caller).
+  Move a part with a different blocker or dependent to its own item in another
+  CR (planning decides); items do not split inside a CR.
   Cut a check others wait on (whole typecheck, fresh build) as a task; its
   acceptance is the recorded passing run.
-- Fields: description (outcome and reason), `--design` (contract, file zones,
+- Fields: description (outcome and reason), `--design` (contract, files,
   checks, ruling ids with owner anchors), `--acceptance` (done criteria),
   `--spec-id` (specification reference), `blocks` edges.
 - Before creating an item or question, search with
@@ -133,7 +150,7 @@ item sits in a person's queue (the person's sessions work it):
 | `open` | Unanswered and unclaimed. Blocks its dependents. |
 | `in_progress` | Unanswered; claimed by the session running its round. Blocks its dependents. |
 | `decided` | Answered, release pending. Still blocks. |
-| `released` | Binding. Blocks the open items it changes until a `plan` session plans it and closes it; claimed before equal-priority work. Holds no decided record resting on it. |
+| `released` | Binding. Blocks the open items it changes until a `plan` session plans it and closes it. Waits only on what its planning needs: a live decision, a `user <date>` gate, a design or a spike. Holds no decided record resting on it. |
 | `needs_ratification` | Autopilot ruling in force, awaiting the user's ratification through a deciding session. Blocks nothing. |
 | closed | Planned, superseded or withdrawn. |
 
@@ -177,7 +194,8 @@ Statuses carry the lifecycle; labels only classify (`topic:<topic-slug>`,
 |---|---|
 | `open` | Available; for a question, unanswered. |
 | `in_progress` | Claimed by its holder. |
-| `in_review` | Handed over for acceptance ([Hand-over and acceptance](#hand-over-and-acceptance)). |
+| `in_review` | A CR in agent review or agent checkpoint ([Hand-over and acceptance](#hand-over-and-acceptance)), or a findings-only review ([Kinds](#kinds)). |
+| `needs_acceptance` | A CR waiting for the user ([Change requests](../shared/change-requests.md#change-requests)). |
 | `deferred` | [Deferral](../shared/board-coordination.md#deferrals-and-environment-facts). |
 
 Question statuses: [Questions and rulings](#questions-and-rulings). Assign
@@ -203,23 +221,23 @@ context coincide, keep `blocks`.
 
 ### Hand-over and acceptance
 
-1. Scope an item's acceptance under Acceptance [Evidence and gates](../shared/acceptance.md#evidence-and-gates)
+1. Scope a CR's acceptance under Acceptance [Evidence and gates](../shared/acceptance.md#evidence-and-gates)
    (`$HOME/.agents/skills/shared/acceptance.md#evidence-and-gates`).
-2. Keep active work `in_progress` with its current state in `notes` (areas,
-   resume point, what it waits on: `board bd update <id> --notes "<state>"`).
+2. Keep active work `in_progress` with its current state in `notes` (resume
+   point, what it waits on: `board bd update <id> --notes "<state>"`).
    Rewrite every field (description, `--design`, `--acceptance`, `notes`) to
    the current state instead of appending to it; comments hold only one-line
    events, and history lives in `board bd history`. Hand over only with
-   complete evidence for the item's acceptance; keep partial work open with
-   the remainder as its `notes`, and block waiting work on what it needs.
-3. Hand over with the evidence: `board handover <id> "<evidence>"`.
-4. The acceptor claims the item (`board claim <id>` prints its author), then
-   closes it with the verdict as reason (`board bd close <id> --reason …`) or
-   returns it to the queue, open and unassigned:
-   `board return <id> "<findings>"`.
-5. `board block` returns an unheld item in review to the queue when it gains
-   an open blocker; amend your returned item to the blocker before handing it
-   over again.
+   complete evidence for the CR's acceptance. When an item starts waiting on a
+   blocker, block the item with notes: `board block` on your own held item
+   unclaims it.
+3. Hand over: `board handover <cr> "<evidence>"` ([Change requests](../shared/change-requests.md#change-requests)).
+4. The acceptor claims the CR, works in its worktree, and passes with
+   `board handover <cr> "<verdict>"` or returns it:
+   `board return <cr> "<findings>"`. The user's accept is a deciding
+   session's [Accept](../role/protocols/decide.md#accept).
+5. `board block` on a CR in review returns it to the queue; amend it to the
+   blocker before handing it over again.
 
 ### Priority
 
@@ -255,7 +273,10 @@ dispatch, `board bd dep cycles`.
   server-mode board; otherwise it is embedded.
 - On a server-mode board, every `board` command needs elevated sandbox
   permissions (global Sandbox and permissions); `board` starts a stopped
-  server.
+  server. On every board, each CR verb that writes `.git` (claim, handover,
+  refresh, land) and every commit in a CR worktree needs
+  elevation under Codex (its sandbox keeps `.git` read-only), embedded boards
+  included.
 - On an embedded board, run `board` commands one at a time and never
   interrupt a running one.
 - `board bd ready` returns 100 rows; use `--limit 0` for inventories. Read

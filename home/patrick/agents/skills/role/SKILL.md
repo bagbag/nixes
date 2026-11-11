@@ -18,9 +18,9 @@ include.
 
 | Role | Pulls | Protocols |
 |---|---|---|
-| lead | Decide only: decides with the user, releases rulings, writes rule owners, accepts designs and user-judged outcomes with the user. May take further pulls; several leads may run, the user coordinates them. | decide |
-| agent | Any of plan, design, implement and review, as chosen. | per claimed item (below) |
-| solo | Decide plus plan, implement and review: decides with the user and plans; workers design and implement each item, and a different worker reviews it. | decide, plan |
+| lead | The decide set: decides with the user, releases rulings, writes rule owners, accepts change requests (CRs) and user-judged outcomes with the user. May add pulls; several leads may run, the user coordinates them. | decide |
+| agent | Any of plan, design, implement and review, as chosen. | per claimed CR or item (below) |
+| solo | Decide plus plan, implement and review: decides with the user and plans; workers design and implement each CR, and a different worker reviews it. | decide, plan |
 | autopilot | Solo while the user is away, with unattended authority. | decide, plan, unattended |
 
 A **deciding session** is one registered as `lead`, `solo` or `autopilot`;
@@ -39,13 +39,14 @@ each pull's item kinds, and board-core [Routing](../shared/board-core.md#routing
 (`$HOME/.agents/skills/shared/board-core.md`) keeps the rules a claim does not
 enforce.
 
-An agent session runs each claimed item under the protocol for its kind:
+An agent session runs each claimed CR or item under the protocol for its kind:
 
-| Claimed item | Protocol |
+| Claimed | Protocol |
 |---|---|
 | `released` decision | plan, its Released rulings section |
-| `design`, `task`, `bug`, `spike` (open) | work |
-| `in_review` task, bug, spike | review |
+| `open` CR | work (design or implement pull) |
+| `in_review` CR (agent review or agent checkpoint); refresh work | review |
+| standalone `in_review` task, bug, spike | review |
 
 ## Entry
 
@@ -84,14 +85,14 @@ Give each step's output as one line.
 5. **Holds.** Where the repository has `.beads/`, run `board mine`.
    Output: held ids, or `none held`.
 6. **Continue** under the loaded protocols within the current task. With
-   pulls beyond the decide set, loop: with the `plan` pull, run the plan protocol through its
-   Exit; then dispatch ready items of your pulls to workers in parallel under
-   the plan protocol's [Dispatch](protocols/plan.md#dispatch), each running
+   pulls beyond the decide set, loop: dispatch ready CRs of your pulls, in
+   `board claim` order, to workers in parallel under the plan protocol's
+   [Dispatch](protocols/plan.md#dispatch), each running
    its protocol from the table above through its Exit, and refill as it says.
-   Without workers in the runtime, `board claim` one item, run its protocol
-   through its Exit, skipping its Claim step, and claim again. When no item is
-   claimable and no worker runs, report the session's results and stop.
-   Output per item: `<id> → <protocol>: <exit result>`.
+   Without workers in the runtime, `board claim` one CR, run its protocol through its Exit,
+   skipping its Claim step, and claim again. When nothing is claimable and no
+   worker runs, report the session's results and stop.
+   Output per CR or item: `<id> → <protocol>: <exit result>`.
 
 ## Stop
 

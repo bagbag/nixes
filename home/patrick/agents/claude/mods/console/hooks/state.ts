@@ -5,7 +5,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface } from 'claude-code'
 
-import type { ConsoleBoard, ConsoleLenses, ConsoleOpened, ConsolePassRun, ConsolePersonOrigin, ConsolePlaced, ConsoleQueued, ConsoleRefresh, ConsoleRole, ConsoleRound, ConsoleSection, ConsoleStart, ConsoleDeferred } from '../types'
+import type { ConsoleBoard, ConsoleLenses, ConsoleReviewing, ConsoleOpened, ConsolePassRun, ConsolePersonOrigin, ConsolePlaced, ConsoleQueued, ConsoleRefresh, ConsoleRole, ConsoleRound, ConsoleSection, ConsoleStart, ConsoleDeferred } from '../types'
 
 import { isRoundOpen } from './engine'
 
@@ -13,11 +13,12 @@ type $ = EngineInterface
 
 const roleState = atom({ plugin: 'console', key: 'role' } as const, null, { shape: 'role-1' })
 const drawnState = atom({ plugin: 'console', key: 'isDrawn' } as const, false)
-const roundState = atom({ plugin: 'console', key: 'round' } as const, null, { shape: 'round-10' })
+const roundState = atom({ plugin: 'console', key: 'round' } as const, null, { shape: 'round-11' })
 const roundErrorState = atom({ plugin: 'console', key: 'roundError' } as const, null)
 const printedState = atom({ plugin: 'console', key: 'printed' } as const, null)
 const askSentState = atom({ plugin: 'console', key: 'askSent' } as const, null)
-const boardState = atom({ plugin: 'console', key: 'board' } as const, null, { shape: 'board-4' })
+const boardState = atom({ plugin: 'console', key: 'board' } as const, null, { shape: 'board-6' })
+const reviewingState = atom({ plugin: 'console', key: 'reviewing' } as const, null, { shape: 'reviewing-2' })
 const passState = atom({ plugin: 'console', key: 'pass' } as const, null, { shape: 'pass-5' })
 const queuedState = atom({ plugin: 'console', key: 'queued' } as const, [], { shape: 'queued-2' })
 const gateState = atom({ plugin: 'console', key: 'gate' } as const, [], { shape: 'gate-1' })
@@ -73,6 +74,10 @@ export async function setAskSent($: $, value: string | null): Promise<void> { aw
 
 export async function getBoard($: $): Promise<ConsoleBoard | null> { return read($, boardState) }
 export async function setBoard($: $, value: ConsoleBoard | null): Promise<void> { await update($, boardState, () => value) }
+
+/** What the review tree holds, as the person last opened it. */
+export async function getReviewing($: $): Promise<ConsoleReviewing | null> { return read($, reviewingState) }
+export async function setReviewing($: $, value: ConsoleReviewing | null): Promise<void> { await update($, reviewingState, () => value) }
 
 export async function getPass($: $): Promise<ConsolePassRun | null> { return read($, passState) }
 export async function setPass($: $, value: ConsolePassRun | null): Promise<void> { await update($, passState, () => value) }

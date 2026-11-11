@@ -310,7 +310,11 @@ def mark_covered(ctx: Context, key: str, ids: list[str]) -> None:
 
 
 def strong_ids(ctx: Context, ids: list[str]) -> list[str]:
-    return [q['id'] for q in ctx.round['questions'] if q['id'] in ids and q.get('strength') == 'strong']
+    """The strong questions among `ids` whose mark the pass re-derives: after the last answer (r21-q143) the answered ones
+    keep their mark, only the rulings and a checked entry per question are due."""
+    after_answers = ((ctx.round['check'].get('challenge') or {}).get('kind')) == 'answers'
+    return [q['id'] for q in ctx.round['questions']
+            if q['id'] in ids and q.get('strength') == 'strong' and not (after_answers and q['status'] == 'answered')]
 
 
 def scope_ids(ctx: Context, command: str, settled: bool | None) -> tuple[list[str], list[str] | None]:
@@ -362,7 +366,7 @@ def checked_of(raw, known: set[str]) -> tuple[dict[str, str], list[str]]:
 
 
 def challenge_errors(ctx: Context, report: dict, scope: list[str], updates: list) -> list[str]:
-    """challenge-rulings re-derives each strong question in its scope (`verdicts`: its strongBecause, or an update lowering it
+    """challenge-rulings re-derives each strong question in its scope, an answered one after the last answer excepted (`verdicts`: its strongBecause, or an update lowering it
     to lean or re-sending it) and lists its own rulings in the disclosure shape, keyed by question (`rulings`)."""
     current = {q['id']: q for q in ctx.round['questions']}
     resent = {u['id'] for u in updates if isinstance(u, dict) and 'strongBecause' in u and isinstance(u.get('id'), str)}

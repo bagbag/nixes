@@ -2,16 +2,18 @@
 // declarations throughout: past an import, the engine follows $ only into those.
 import type { EngineInterface, ToolCallResult } from 'claude-code'
 
-import type { ConsoleAction, ConsoleBatch, ConsoleBoard, ConsolePassOrigin, ConsolePassRun, ConsolePending, ConsoleQueued, ConsoleRound, ConsoleSuggestion } from '../types'
+import type { ConsoleAction, ConsoleBatch, ConsoleBoard, ConsoleCr, ConsolePassOrigin, ConsolePassRun, ConsolePending, ConsoleQueued, ConsoleRound, ConsoleSuggestion } from '../types'
 
 import { boardItem, boardViews, decline, dropped, isRoundOpen, nudged, pass, PASS_COMMANDS, pending as readPending, readRole, RELEASE_COMMAND, ROUND_ROLES, setWorkers, show, stampRelease, START_COMMAND, startScope, stateDir, statusLine } from './engine'
 import type { ConsoleNudge } from './engine'
+import { pickRange } from './review'
+import type { Ran } from './review'
 import {
-  addPlaced, claimRefresh, getAskSent, getDrawn, getPaneDismissed, getPass, getQueued, getRole, getRound, getTurnRunning, releaseRefresh, setAskSent, setBoard, setContinueAsked, setDrawn, setPass, setPrinted, setRole,
+  addPlaced, claimRefresh, getAskSent, getDrawn, getPaneDismissed, getPass, getQueued, getReviewing, getRole, getRound, getTurnRunning, releaseRefresh, setAskSent, setBoard, setContinueAsked, setDrawn, setPass, setPrinted, setReviewing, setRole,
   setRound, setRoundError, setStart, takeContinueAsked, takeRefreshAgain, updateOpened, updateQueued,
 } from './state'
 import {
-  CONTINUE_NO_ROUND, continueInHandText, continueText, declineFailedNote, itemSlot, missingReportText, openDialogText, questionListLine, questionListText, PROTOCOL_ARGS_DESCRIPTION, PROTOCOL_STDIN_DESCRIPTION, PROTOCOL_TOOL_DESCRIPTION, STALE_DROP, stuckPassText,
+  CONTINUE_NO_ROUND, continueInHandText, continueText, declineFailedNote, acceptText, crTipFor, itemSlot, missingReportText, openDialogText, questionListLine, questionListText, PROTOCOL_ARGS_DESCRIPTION, PROTOCOL_STDIN_DESCRIPTION, PROTOCOL_TOOL_DESCRIPTION, refreshText, returnText, STALE_DROP, stuckPassText, walkText,
 } from './words'
 
 type $ = EngineInterface
@@ -530,6 +532,9 @@ export async function refreshRound($: $, session: string): Promise<ConsoleRound 
 export async function refreshBoard($: $, ctx: Context): Promise<ConsoleBoard> {
   const board = await boardViews($, ctx.session)
   await setBoard($, board)
+  // The review tree's change request left the queue (landed, rejected): nothing is open any more.
+  const reviewing = await getReviewing($)
+  if (reviewing !== null && board.error === null && !board.crs.some(one => one.id === reviewing.cr)) await setReviewing($, null)
   // Off the caller's path: the claim waits CLAIM_SETTLE_MS.
   $.clock.after(0, () => notifyIdleAgents($, ctx.session, board).catch(failOpen($, 'the idle-agent notification')))
   return board
@@ -552,6 +557,11 @@ export async function refreshAll($: $): Promise<void> {
   } finally {
     await releaseRefresh($)
   }
+}
+
+async function gitRun($: $, argv: readonly string[]): Promise<Ran> {
+  const ran = await $.process.run(argv, { timeoutMs: 60_000 })
+  return { exitCode: ran.exitCode, stdout: ran.stdout, stderr: ran.stderr }
 }
 
 export function refreshLater($: $): void {
@@ -892,4 +902,79 @@ export async function pressOpenSettles($: $, question: string, ids: readonly str
 export async function pressView($: $, agentId: string | undefined): Promise<void> {
   const viewed = await $.ui.view(agentId === undefined ? {} : { agentId })
   if (viewed.deny !== undefined) $.ui.toast(`console: ${viewed.deny}`)
+}
+
+// The change-request presses (r25). The console never lands: Accept and Return put the lead's request in the prompt. Single flight: git works on one tree at a time.
+let isReviewBusy = false
+
+async function crPress($: $, press: () => Promise<string | null>): Promise<void> {
+  if (isReviewBusy) return
+  isReviewBusy = true
+  try {
+    const said = await press()
+    if (said !== null) $.ui.toast(said)
+  } catch (error) {
+    $.ui.toast(`Change request: ${message(error)}`)
+  } finally {
+    isReviewBusy = false
+  }
+}
+
+async function fillPrompt($: $, text: string): Promise<string | null> {
+  const box = await $.prompt.read()
+  const filled = await $.prompt.fill(box.text.trim() === '' ? { text } : { text: `\n${text}`, mode: 'append' })
+  return filled.isFilled ? null : 'Change request: the prompt box is not available'
+}
+
+/** The change request as the board has it now; a press acts on that, not on the pane's last draw. Null (said) when it is not waiting for you any more. */
+async function waitingCr($: $, id: string): Promise<{ cr: ConsoleCr } | { said: string }> {
+  const board = await boardViews($, await $.session.id())
+  if (board.error !== null) return { said: `Change request: ${board.error}` }
+  const cr = board.crs.find(one => one.id === id)
+  return cr === undefined || cr.status !== 'needs_acceptance' ? { said: `Change request: ${id} is not waiting for you any more` } : { cr }
+}
+
+/**
+ * Open: view=code sets the review tree to the request's (base tip, tip) and opens it in VS Code; view=result sets no tree and puts
+ * the walk-through request in the prompt.
+ */
+export async function pressOpenCr($: $, id: string): Promise<void> {
+  await crPress($, async () => {
+    const found = await waitingCr($, id)
+    if ('said' in found) return found.said
+    const { cr } = found
+    if (cr.view === 'result') return fillPrompt($, walkText(cr))
+    if (cr.tip === null || cr.baseTip === null) return `Change request: ${cr.id} has no branch tip to open`
+    const picked = await pickRange(argv => gitRun($, argv), await $.session.cwd(), { tip: cr.tip, baseTip: cr.baseTip })
+    if (!picked.ok || picked.open === undefined) return `Change request: ${picked.ok ? 'nothing opened' : picked.why}`
+    await setReviewing($, { cr: cr.id, tip: cr.tip, baseTip: cr.baseTip })
+    const opened = await $.process.run(['code', picked.open], { timeoutMs: 30_000 }).catch(error => ({ exitCode: 1, stderr: message(error) }))
+    return opened.exitCode === 0 ? null : `Change request: ${cr.id} is set in ${picked.tree}; VS Code did not open it (${opened.stderr.trim()})`
+  })
+}
+
+/** Accept: the lead's request, naming the tip you looked at (the review tree's when this request is open there). */
+export async function pressAcceptCr($: $, id: string): Promise<void> {
+  await crPress($, async () => {
+    const found = await waitingCr($, id)
+    if ('said' in found) return found.said
+    const tip = crTipFor(found.cr, await getReviewing($))
+    return tip === null ? `Change request: ${id} has no branch tip` : fillPrompt($, acceptText(found.cr, tip))
+  })
+}
+
+/** Return: the request with room for your changes; the lead takes it from there. */
+export async function pressReturnCr($: $, id: string): Promise<void> {
+  await crPress($, async () => {
+    const found = await waitingCr($, id)
+    return 'said' in found ? found.said : fillPrompt($, returnText(found.cr))
+  })
+}
+
+/** Refresh: the request for a review session; the session runs `board refresh`. */
+export async function pressRefreshCr($: $, id: string): Promise<void> {
+  await crPress($, async () => {
+    const found = await waitingCr($, id)
+    return 'said' in found ? found.said : fillPrompt($, refreshText(found.cr))
+  })
 }

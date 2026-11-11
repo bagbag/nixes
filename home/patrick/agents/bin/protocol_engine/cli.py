@@ -37,6 +37,7 @@ from .check import next_cycle, pending_view, refused_formats, start_scope
 from .ask import batch_back, withdraw_away
 from . import words
 from .release_set import start_release
+from .release_files import start_files
 from .release import stamp_release
 from .seeds import next_text, proposal_row, set_proposal
 from .views import (
@@ -71,9 +72,13 @@ def start(ctx: Context, name: str, report: dict, scope: str = 'board', records: 
     if ctx.away and records is not None:
         fail(f'--no-board is refused on autopilot: nothing would track its records for ratification; {SWITCH_TO_SOLO}')
     if name == 'release':
-        if scope != 'board' or records is not None or report or topic or proposal is not None:
-            fail('start release takes record ids only (no --discussion, --no-board, --topic, --proposal or stdin)')
-        start_release(ctx, ids or [])
+        if scope != 'board' or report or topic or proposal is not None:
+            fail('start release takes record ids only (no --discussion, --topic, --proposal or stdin)'
+                 ' and --no-board <dir> for the record files of a round without a board')
+        if records is not None:
+            start_files(ctx, records, ids or [])
+        else:
+            start_release(ctx, ids or [])
         return
     row = proposal_row(ctx, proposal, topic, ids or []) if proposal is not None else None
     if row:
@@ -163,13 +168,14 @@ def cli(argv: list[str]) -> int:
     sub = verb('start', 'open a protocol run; stdin {"points": [...]} adds pasted points')
     sub.add_argument('name', choices=sorted(PROTOCOLS))
     sub.add_argument('ids', nargs='*', help="release: the decided records (default: the decided records this session holds, "
-                                            "minus dropped ones); round: the open items to look at first (default: the whole list)")
+                                            "minus dropped ones; with --no-board: record ids in DIR, default the newest round's "
+                                            "unreleased records); round: the open items to look at first (default: the whole list)")
     sub.add_argument('--topic', metavar='TEXT', help="round: the topic, '<title>: <summary>'")
     sub.add_argument('--proposal', metavar='N', type=int, help="round: start row N of the stored proposal; not with --topic or ids")
     sub.add_argument('--discussion', action='store_true',
                      help="the pasted points alone (question-me): no board list at Collect; board items join through Related")
     sub.add_argument('--no-board', metavar='DIR', type=Path,
-                     help="a topic outside this repository's board: no board reads or writes; records go to DIR")
+                     help="a topic outside this repository's board: no board reads or writes; records go to DIR (a release takes the record files in DIR)")
     verb('step', "submit the current step's report (stdin JSON); prints the next step")
     verb('answer', 'record answers (stdin JSON); prints show --json with a note')
     verb('decline', 'a declined batch returns to ready (stdin JSON); prints show --json')
@@ -360,7 +366,7 @@ def run(ctx: Context, args) -> str:
         ctx.log('abandoned', step=r['step'])
         if r['protocol'] == 'release':  # the records stay decided and held
             r['step'], r['closedAt'] = 'closed', utcnow()
-            return words.release_abandoned(headline(ctx), ctx.messages, r['id'])
+            return words.release_abandoned(headline(ctx), ctx.messages, r['id'], ctx.board is not None)
         release_claims(ctx)
         r['step'] = 'closed'
         r['closedAt'] = utcnow()

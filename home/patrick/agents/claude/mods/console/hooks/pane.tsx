@@ -5,10 +5,10 @@ import type { EngineInterface, RenderPropsOf } from 'claude-code'
 
 import type { ConsoleBoard, ConsoleQuestion, ConsoleRecord, ConsoleRole, ConsoleRound, ConsoleSection, ConsoleSession, ConsoleSuggestion } from '../types'
 
-import { pressContinue, pressOpenItem, pressOpenOverlaps, pressOpenSettles, pressOpenSuggestion, pressRole, pressRun, pressStart, pressSubmit, pressView, pressWorkers } from './core'
+import { pressAcceptCr, pressContinue, pressOpenCr, pressOpenItem, pressOpenOverlaps, pressOpenSettles, pressOpenSuggestion, pressRefreshCr, pressReturnCr, pressRole, pressRun, pressStart, pressView, pressWorkers } from './core'
 import { isRoundOpen, RELEASE_COMMAND, ROUND_ROLES } from './engine'
-import { getBoard, getExpanded, getLenses, getOpened, getPass, getPlaced, getRole, getRound, getRoundError, getTurnRunning, toggleExpanded, updateLenses } from './state'
-import { answerText, COUNT_LABELS, GROUND, GROUND_BASE, lensArgs, LENS_SETS, plural, pullsText, recommendationMark, recommendationText, roleText, roundWords, runNoun, staleHolds, staleSessions, startHint, STEP_BACK_BASE, suggestionText, WHAT, WHERE } from './words'
+import { getBoard, getExpanded, getLenses, getOpened, getPass, getPlaced, getReviewing, getRole, getRound, getRoundError, getTurnRunning, toggleExpanded, updateLenses } from './state'
+import { answerText, canRefreshCr, COUNT_LABELS, countText, crCheckText, crFailuresText, crLookText, crMarks, crRows, crStageText, isCrAccepting, GROUND, GROUND_BASE, lensArgs, LENS_SETS, plural, pullsText, recommendationMark, recommendationText, roleText, roundWords, runNoun, staleHolds, staleSessions, startHint, STEP_BACK_BASE, suggestionText, WHAT, WHERE } from './words'
 import type { Lens, LensCommand } from './words'
 
 type $ = EngineInterface
@@ -70,6 +70,7 @@ export async function drawPane($: $, e: { surface: string; props: RenderPropsOf[
   const opened = await getOpened($)
   const roundError = await getRoundError($)
   const passRun = await getPass($)
+  const reviewing = await getReviewing($)
   const isTurnRunning = await getTurnRunning($)
   const hint = hints()
   const isRoundRole = role !== null && ROUND_ROLES.includes(role.role)
@@ -227,8 +228,8 @@ export async function drawPane($: $, e: { surface: string; props: RenderPropsOf[
       rows.push(
         <Box key="board-counts" flexDirection="row" columnGap={2} flexWrap="wrap" marginTop={1}>
           {COUNT_LABELS.map(([key, label]) => key === 'forUser'
-            ? <Text key={`count-${key}`} color="warning">{label} <Text bold>{counts[key]}</Text></Text>
-            : <Text key={`count-${key}`} color="inactive">{label} <Text bold color="text">{counts[key]}</Text></Text>)}
+            ? <Text key={`count-${key}`} color="warning">{label} <Text bold>{countText(counts[key])}</Text></Text>
+            : <Text key={`count-${key}`} color="inactive">{label} <Text bold color="text">{countText(counts[key])}</Text></Text>)}
         </Box>,
       )
     }
@@ -624,13 +625,94 @@ export async function drawPane($: $, e: { surface: string; props: RenderPropsOf[
     return rows
   }
 
+  // Change requests (r25): the board's queue, children under their parent. The presses put requests in the prompt; the console never lands.
+  const CHECK_COLOR = { current: 'success', stale: 'warning', conflict: 'error', failed: 'error', unchecked: 'inactive' } as const
+  const act = (key: string, label: string, onPress: () => Promise<void>, hintText: string, color?: string) => {
+    hint.add(key, hintText)
+    return (
+      <Box key={`${key}-box`} hover={{ scope: key }}>
+        <Button key={key} onPress={onPress}>{color === undefined ? label : <Text color={color}>{label}</Text>}</Button>
+      </Box>
+    )
+  }
+  const crBlock = (view: ConsoleBoard | null) => {
+    if (view === null || (view.crs.length === 0 && view.ratifications.length === 0)) return []
+    const pulls = view.sessions.find(one => one.session === role?.session)?.pulls ?? []
+    const rows: any[] = [banner('cr-banner', 'Change requests', view.crs.length === 0 ? '' : plural(view.crs.length, 'request'), 1)]
+    if (view.crs.length > 0) {
+      rows.push(
+        <Box key="cr-rows" flexDirection="column" marginTop={1}>
+          {crRows(view.crs).map(({ cr, depth }) => {
+            hint.add(`item-${cr.id}`, `${cr.id}: open its summary here`)
+            const check = crCheckText(cr)
+            const look = crLookText(cr)
+            const failures = crFailuresText(cr)
+            const inTree = reviewing?.cr === cr.id
+            const actions = [
+              ...(isCrAccepting(cr) ? [
+                act(`cr-open-${cr.id}`, 'Open', () => pressOpenCr($, cr.id), cr.view === 'result' ? 'Puts the walk-through request in your prompt' : `Opens ${cr.id} in the review tree (its diff unstaged against where it forked)`),
+                act(`cr-accept-${cr.id}`, 'Accept', () => pressAcceptCr($, cr.id), 'Puts the accept request in your prompt; your session lands it', 'success'),
+                act(`cr-return-${cr.id}`, 'Return', () => pressReturnCr($, cr.id), 'Puts the return request in your prompt, ready for your changes'),
+              ] : []),
+              ...(canRefreshCr(cr, pulls) ? [act(`cr-refresh-${cr.id}`, 'Refresh', () => pressRefreshCr($, cr.id), 'Puts the refresh request in your prompt: rebase, checks and the range-diff', 'suggestion')] : []),
+            ]
+            return (
+              <Box key={`cr-${cr.id}`} flexDirection="column">
+                <Box flexDirection="row">
+                  <Box width={2 * depth} flexShrink={0}><Text> </Text></Box>
+                  <Box key={`cr-${cr.id}-idbox`} width={12} flexShrink={0} hover={{ scope: `item-${cr.id}` }}>
+                    <Button key={`cr-${cr.id}-show`} plain onPress={() => pressOpenItem($, cr.id)}>{cr.id}</Button>
+                  </Box>
+                  <Box flexGrow={1} flexShrink={1}><Text wrap="truncate-end">{cr.title}</Text></Box>
+                </Box>
+                <Box flexDirection="row" columnGap={1} flexWrap="wrap">
+                  <Box width={2 * depth + 12} flexShrink={0}><Text> </Text></Box>
+                  <Text color={isCrAccepting(cr) ? 'warning' : 'inactive'}>{crStageText(cr)}</Text>
+                  {check !== null && <Text color={CHECK_COLOR[cr.check.state]}>· {check}</Text>}
+                  {failures !== null && <Text color={cr.check.newFailures !== null && cr.check.newFailures.length > 0 ? 'error' : 'inactive'}>· {failures}</Text>}
+                  {crMarks(cr).map(mark => <Text key={`cr-${cr.id}-mark-${mark.text}`} color={mark.isProblem ? 'error' : 'inactive'}>· {mark.text}</Text>)}
+                  {look !== null && <Text color="inactive">· {look}</Text>}
+                  {inTree && <Text color="inactive">· {reviewing.tip === cr.tip ? 'in review tree' : 'review tree behind'}</Text>}
+                  {actions.length > 0 && <Text color="inactive">·</Text>}
+                  {actions}
+                </Box>
+                {slot(cr.id)}
+              </Box>
+            )
+          })}
+        </Box>,
+      )
+    }
+    if (view.ratifications.length > 0) {
+      rows.push(
+        <Box key="cr-ratify" flexDirection="column" marginTop={1}>
+          <Text color="warning">to ratify</Text>
+          {view.ratifications.map(one => {
+            hint.add(`item-${one.id}`, `${one.id}: open its summary here`)
+            return (
+              <Box key={`ratify-${one.id}`} flexDirection="column">
+                <Box flexDirection="row">
+                  <Box key={`ratify-${one.id}-idbox`} width={12} flexShrink={0} hover={{ scope: `item-${one.id}` }}>
+                    <Button key={`ratify-${one.id}-show`} plain onPress={() => pressOpenItem($, one.id)}>{one.id}</Button>
+                  </Box>
+                  <Box flexGrow={1} flexShrink={1}><Text wrap="truncate-end">{one.title}</Text></Box>
+                </Box>
+                {slot(one.id)}
+              </Box>
+            )
+          })}
+        </Box>,
+      )
+    }
+    return rows
+  }
+
   const actionsRow = () => {
     // The twins of the Suggestions rows: in the suggestion color exactly when suggestions() offers them.
     const twin = (kind: 'release' | 'compact', label: string) =>
       suggested.some(one => one.kind === kind) ? <Text color="suggestion">{label}</Text> : label
     const entries = [
       { key: 'commit', scope: 'action-commit', label: 'Commit', onPress: run('commit') },
-      { key: 'push', scope: 'action-push', label: 'Commit and Push', onPress: () => pressSubmit($, 'commit and push') },
       ...(isAutopilot ? [{ key: 'role-solo', scope: 'action-role-solo', onPress: () => pressRole($, 'solo'), label: <Text color="suggestion">Solo</Text> }] : []),
       ...(role?.role === 'solo' ? [{ key: 'role-autopilot', scope: 'action-role-autopilot', onPress: () => pressRole($, 'autopilot'), label: 'Autopilot' }] : []),
       ...(isRoundRole && !isAutopilot ? [{ key: 'release', scope: 'action-release', onPress: run(RELEASE_COMMAND), label: twin('release', 'Release Round') }] : []),
@@ -638,7 +720,6 @@ export async function drawPane($: $, e: { surface: string; props: RenderPropsOf[
       { key: 'compact', scope: 'action-compact', label: twin('compact', 'Compact'), onPress: run('compact') },
     ]
     hint.add('action-commit', 'Runs /commit')
-    hint.add('action-push', 'Sends "commit and push" as your message')
     if (isAutopilot) hint.add('action-role-solo', 'Runs /role solo: you are back, rounds ask you again')
     if (role?.role === 'solo') hint.add('action-role-autopilot', 'Runs /role autopilot: setup as solo, then away on your go')
     hint.add('action-release', 'Runs /release-round')
@@ -651,6 +732,7 @@ export async function drawPane($: $, e: { surface: string; props: RenderPropsOf[
   const body = [
     ...(isRoundRole ? suggestionBlock() : []),
     ...boardBlock(role, board),
+    ...crBlock(board),
     ...(isRoundRole ? [...roundBlock(round), ...controlsBlock()] : []),
     ...(isRoundRole ? [] : [banner('controls-banner', 'Controls', '', 1)]),
     actionsRow(),

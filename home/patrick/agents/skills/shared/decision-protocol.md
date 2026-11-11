@@ -60,7 +60,7 @@ uncertain.
 | Choice | Handling |
 |---|---|
 | Trivial: reversible, consumer-invisible, sets no convention | Decide; mention in one line. |
-| Entailed (the only realistic clean option): meets ratified goals, constraints and principles without material residual trade-off; every other realistic option fails a cleanliness test, principle or correctness property (a preference is no failure) | Decide; report with one-line reason. |
+| Entailed (the only realistic clean option): meets ratified goals, constraints and principles without material residual trade-off; every other realistic option fails a cleanliness test, principle or correctness property (a preference is no failure) | Decide; report with one-line reason. In a round, ask it as a question with your pick as its recommendation. |
 | Other reversible: semantics, naming, contracts, conventions, trade-offs | Ask the decider. |
 | Irreversible, outward-facing or scope-changing | Ask the decider; act only on confirmation. |
 
@@ -130,10 +130,10 @@ for each when asked or recorded:
 - **Consumer walk** (`consumerWalk`): a realistic consumer walk supports it;
   does not apply to internal choices.
 - **Rulings challenged** (`rulingsChallenged`): judged as if no released ruling
-  existed; each released ruling it rests on or the round's Related step links to it is challenged in
-  `priorRulings` (holds or fails, and why), and each that fails is raised as a
-  revision; does not apply when none touches it. An answer from the open round
-  stays a premise.
+  existed. Challenge in `priorRulings` each released ruling it rests on or the
+  round's Related step links to it (holds or fails, and why); raise each that
+  fails as a revision. Does not apply when none touches it. An answer from the
+  open round stays a premise.
 
 Otherwise it is a lean that names its cause: `preference` (what the choice
 depends on) or `evidence` (the unchecked fact and how to check it). Before a

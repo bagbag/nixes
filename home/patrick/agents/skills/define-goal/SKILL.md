@@ -69,10 +69,11 @@ Output: acceptance findings; a Refocus where structure outgrew value.
   materially changed commitments for user ratification.
 - Record ratified commitments in their durable owner before dependent planning
   or dispatch. Boards link goal owners under
-  `$HOME/.agents/skills/shared/board-core.md`. A deciding session releases a contract
-  revision like any ruling, under Release in
+  `$HOME/.agents/skills/shared/board-core.md`. A deciding session releases a
+  contract revision like any ruling, under Release in
   `$HOME/.agents/skills/role/protocols/decide.md`.
 - In a proposal-only or read-only task, return the contract and proposed owner
   instead of writing files.
 
-Output: the ratified contract and its owner path, or the proposed contract and owner.
+Output: the ratified contract and its owner path, or the proposed contract
+and owner.

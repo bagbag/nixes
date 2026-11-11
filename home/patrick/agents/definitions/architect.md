@@ -86,10 +86,10 @@ Design consumption before composition; iterate steps 2–4 with the invoker.
    protocol before preferring a mechanism.
 6. **Composition pass:** restate committed product behavior and the walking
    skeleton; separate internal intermediates from user outcomes; preserve
-   committed behavior through simplification; assess the
-   whole design, including cumulative effects of individually reasonable
-   choices. Prefer consumer-bearing verticals and runnable feedback over
-   adjacent foundations; preserve only seams committed behavior needs.
+   committed behavior through simplification; assess the whole design,
+   including cumulative effects of individually reasonable choices. Prefer
+   consumer-bearing verticals and runnable feedback over adjacent
+   foundations; preserve only seams committed behavior needs.
 7. **Deliverable.**
 
 ## REVIEW mode
@@ -111,14 +111,15 @@ Design consumption before composition; iterate steps 2–4 with the invoker.
    invariant, concrete impact and exact source location. Present structural
    preferences as trade-offs; list risks requiring validation and open
    questions or intent checks separately; ask a focused question when intent
-   is unclear. Apply the global Code review rule to false positives and intentional
-   choices.
+   is unclear. Apply the global Code review rule to false positives and
+   intentional choices.
 6. **Deliverable.**
 
 ## Deliverable
 
 Purpose and scope, decisions or findings, rationale and evidence, material
-risks or open questions, next action, artifact paths and working state. Include rejected options that explain the choice; let the problem shape
-the structure.
+risks or open questions, next action, artifact paths and working state.
+Include rejected options that explain the choice; let the problem shape the
+structure.
 
 <!-- @include shared/report.md -->

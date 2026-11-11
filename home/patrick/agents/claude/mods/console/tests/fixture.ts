@@ -19,6 +19,12 @@ export const BATCH = {
 
 export type Question = { id: string; text: string; title: string; status: string; waitsOn?: string[]; overlaps?: { id: string; outcome: string | null }[] }
 
+/** `board console` counts (r21-q141, q146): ready now, and the k waiting. */
+export const COUNTS = {
+  questions: { ready: 186, held: 2, waiting: 0 }, decided: { ready: 0, held: 0, waiting: 0 }, toPlan: { ready: 0, held: 0, waiting: 57 },
+  toReview: { ready: 0, held: 0, waiting: 0 }, toAccept: { ready: 13, held: 0, waiting: 1 }, toRatify: { ready: 1, held: 0, waiting: 0 }, forUser: { ready: 3, held: 0, waiting: 0 },
+}
+
 export function roundJson(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
     version: 1, session: SESSION, protocol: 'round', round: 'r4', step: 'check',
@@ -30,7 +36,7 @@ export function roundJson(overrides: Record<string, unknown> = {}): Record<strin
       { id: 'q3', board: null, text: 'Which pane layout?', title: 'Pane layout', kind: 'decision', status: 'ready', waitsOn: [], overlaps: [], answer: null },
     ],
     batch: BATCH, next: null,
-    counts: { questions: 188, decided: 0, toPlan: 82, inReview: 14, forUser: 3 },
+    counts: COUNTS,
     note: null,
     ...overrides,
   }
@@ -66,6 +72,9 @@ export type World = {
   activateError: string | undefined
   items: unknown[]
   held: unknown[]
+  /** `board console` `crs` and `ratifications` (Front B's shape, tests/board-console-contract.ts). */
+  crs: unknown[]
+  ratifications: unknown[]
   agents: { id: string; description: string; type: string; status: string }[]
   sync?: string | null
   queueLine?: string | null
@@ -87,10 +96,15 @@ export type World = {
   /** The line `protocol scope` answers (r9-q36): what a report of the pass starting now must cover; '' names nothing. */
   scope: string
   verbs: () => string[]
+  /** The prompt box's draft; `$.prompt.fill` writes into it as `fill` says (`isFilled: false` while `hasBox` is false). */
+  box: string
+  hasBox: boolean
+  /** Answers a `git`, `code`, `sh` or `cat` run (argv as given); null/undefined: not git's concern, exit 127. */
+  git: ((argv: string[]) => { exitCode: number; stdout?: string; stderr?: string } | undefined) | null
 }
 
 /** Registers the world's hooks beneath the console; returns it, the clock and the session record. */
-export function world(on: On, init: Partial<Pick<World, 'round' | 'role' | 'surfaces' | 'sessions' | 'items' | 'held' | 'agents' | 'sync' | 'queueLine' | 'activateError'>> = {}) {
+export function world(on: On, init: Partial<Pick<World, 'round' | 'role' | 'surfaces' | 'sessions' | 'items' | 'held' | 'crs' | 'ratifications' | 'agents' | 'sync' | 'queueLine' | 'activateError'>> = {}) {
   const w: World = {
     round: init.round ?? roundJson(),
     role: init.role === undefined ? { session: SESSION, role: 'lead', actor: '617adf08', tool: 'claude' } : init.role,
@@ -103,6 +117,8 @@ export function world(on: On, init: Partial<Pick<World, 'round' | 'role' | 'surf
     ],
     items: init.items ?? [{ id: 'tstdl-x1', type: 'decision', status: 'in_progress', title: 'Which engine name?', holder: '617adf08' }],
     held: init.held ?? [],
+    crs: init.crs ?? [],
+    ratifications: init.ratifications ?? [],
     sync: init.sync,
     queueLine: init.queueLine,
     agents: init.agents ?? [],
@@ -115,12 +131,22 @@ export function world(on: On, init: Partial<Pick<World, 'round' | 'role' | 'surf
     onVerb: null,
     hold: null,
     scope: '',
+    box: '',
+    hasBox: true,
+    git: null,
     verbs: () => w.calls.filter(one => one.argv[0] === PROTOCOL).map(one => one.argv.slice(3).join(' ')),
   }
   const clock = mock.clock(on, { now: 1_000_000 })
   const session = mock.session(on)
   mock.env(on, { HOME })
 
+  on('session.cwd', () => ({ value: '/repo' }))
+  on('prompt.read', () => ({ value: { text: w.box, cursor: w.box.length } }))
+  on('prompt.fill', (_, e) => {
+    if (!w.hasBox) return { isFilled: false, refusal: 'no_composer' as const }
+    w.box = e.mode === 'append' ? w.box + e.text : e.text
+    return { isFilled: true }
+  })
   on('session.id', () => ({ value: SESSION }))
   on('session.usage', () => {
     if (w.tokens === 'fails') throw new Error('no usage')
@@ -182,8 +208,12 @@ export function world(on: On, init: Partial<Pick<World, 'round' | 'role' | 'surf
       const hold = w.hold
       return hold !== null && hold.verb === argv[3] ? hold.until.then(() => served) : served
     }
+    if (w.git !== null && ['git', 'code', 'sh', 'cat'].includes(argv[0] as string)) {
+      const answered = w.git(argv)
+      if (answered !== undefined) return { value: { exitCode: answered.exitCode, stdout: answered.stdout ?? '', stderr: answered.stderr ?? '', isStdoutTruncated: false, isStderrTruncated: false } }
+    }
     if (argv[0] === BOARD) {
-      if (argv[1] === 'console') return ok({ counts: { questions: 188, decided: 0, toPlan: 82, inReview: 14, forUser: 3 }, items: w.items, sessions: w.sessions, held: w.held, sync: w.sync, queueLine: w.queueLine })
+      if (argv[1] === 'console') return ok({ counts: COUNTS, items: w.items, sessions: w.sessions, held: w.held, crs: w.crs, ratifications: w.ratifications, sync: w.sync, queueLine: w.queueLine })
       if (argv[1] === 'show' && w.show.exit !== 0) return { value: { exitCode: w.show.exit, stdout: '', stderr: 'no such item', isStdoutTruncated: false, isStderrTruncated: false } }
       if (argv[1] === 'show' && argv.includes('--json')) return ok(w.show.bad ? 'not json' : { [argv[2] as string]: w.show.record })
       if (argv[1] === 'show') return ok(`${argv[2]}: Which engine name?\nstatus: in_progress`)

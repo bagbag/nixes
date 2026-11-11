@@ -10,8 +10,8 @@ Give each step's output as one line when it passes; add detail only for
 findings or stops. In a round or release, a step's output is the report the
 engine asks for.
 
-**Session start:** a deciding session with no open round runs Release 7's
-[Next](#release) step right after it starts (a solo session may propose
+**Session start:** a deciding session with no open round runs the [Release](#release)
+Next step (7) right after it starts (a solo session may propose
 planning); a recovered session resumes its open round (`protocol show`). A
 proposal starts nothing until the user presses Start or says go.
 
@@ -59,7 +59,9 @@ Never decide these alone.
   contract revision like any ruling.
 - Create a `design` item blocking a slice's items at the user's request;
   propose one for a slice meeting the plan protocol's
-  [Frame](plan.md#frame) design-item triggers.
+  [Frame](plan.md#frame) design-item triggers. Designed work lives in its
+  change request (CR) behind a checkpoint
+  ([Cut work](plan.md#cut-work)).
 - Create a challenge of decided records at the user's request; propose one
   when designs will build on them. It is a standalone review
   ([Kinds](../../shared/board-core.md#kinds)) that blocks the records
@@ -135,12 +137,20 @@ at Record while it waits on an outside result.
 
 Run the release through `protocol` like a round: `start release [<ids>]`. Follow
 the engine's output; only the person approves. The steps below add the judgment it leaves to
-you.
+you. Without a board, `start release --no-board <dir> [<ids>]` takes the round's
+record files, skips the board check and appends the Released line; name their
+owners by absolute or `$HOME` paths, and leave owner writes uncommitted for the
+user.
 
 1. **Re-check.** Use `verify` for large sets.
 2. **Board check.** Act on every hit class the engine lists.
 3. **Own rulings.** Report them in the fields the engine asks for.
-4. **Approval.** The engine asks it.
+4. **Approval.** The engine asks it. Mark each owner write in the approval:
+   `write` (no CR, no look) or `show` (its diff joins the approval; the user
+   can switch a mark). Draft every `show` write uncommitted in the project's
+   main tree before the approval: the engine prints its diff in the approval.
+   After the yes, commit the set's owner writes on the target branch without
+   asking: the approval is your explicit authorization.
 5. **Owner writes.** Move superseded text to `history/` under project-memory.
    Write a rule a project's convention owners (coding style, module authoring)
    state now; only READMEs, other skills and source wait for their work. For a
@@ -162,29 +172,54 @@ reported.
 
 ## Accept
 
-**Entry:** an `in_review` design item, a ready milestone, or a finished epic
-whose acceptance names the user (`board position`).
+**Entry:** a CR in `needs_acceptance` (finished, or at a user design checkpoint), a
+`needs_ratification` item (`Ratify: <CR title>`), a ready milestone, or a
+finished epic whose acceptance names the user (`board position`). The CR queue
+is in order, bases first
+([Change-request queue](../../shared/board-coordination.md#change-request-queue)).
 
-1. **Claim** a design item or milestone: `board claim <id>`.
-   Output: `claimed <id>; author <actor>`, `claimed <id> (milestone)`, or
-   `epic <id>`.
+1. **Claim** a CR, ratification or milestone: `board claim <id>`.
+   Output: `claimed <cr> (look <look>, view <view>, checkpoint <c>); author
+   <actor>`, `claimed <id> (milestone)`, or `epic <id>`.
 2. **Evidence.** Read `$HOME/.agents/skills/shared/acceptance.md`; check the
    named evidence under its
-   [Evidence and gates](../../shared/acceptance.md#evidence-and-gates).
-   Output: one line per gate: command, result.
-3. **Walk through** the design or outcome result with the user under
-   [Asking the user](../../shared/asking.md#asking-the-user).
+   [Evidence and gates](../../shared/acceptance.md#evidence-and-gates). For a
+   CR the stored check and review must be `current` for the tip you review:
+   wait for the refresh a review session took, or run it yourself under the
+   review protocol's [Refresh](review.md#refresh) steps 2-3 when none did.
+   Note the tip the walkthrough starts on.
+   Output: one line per gate: command, result; check state and tip.
+3. **Walk through** with the user under
+   [Asking the user](../../shared/asking.md#asking-the-user), by the CR's
+   `view`: `code`, the diff `<base>..<tip>` (in the console's review tree, or
+   the range-diff of a refresh); `result`, the outcome itself. A user
+   checkpoint: the design. A ratification: the landed result, in the review
+   tree or at the result. If the refresh changed the CR meanwhile, show the
+   range-diff before continuing.
    Output: the walkthrough.
-4. **Close or return.** Close on the user's acceptance
-   (`board bd close <id> --reason "<verdict>"`). Otherwise return a design
-   with the findings (`board return <id> "<findings>"`); for an epic, create
-   the findings as items under it; for a milestone, create them as members
-   and unclaim it (`board unclaim <id>`). When the item received a ruling, check
-   that the rule sits in its owner and every conflict became a question.
-   Output: `closed <id>`, `returned <id>` or `findings <ids>`.
+4. **Land or return.**
+   - **Accept:** `board land <cr> --tip <tip>` (the tip the user reviewed).
+   - **Design checkpoint accepted:** `board land <cr> --checkpoint`.
+   - **Changes wanted:** talk the root fix through with the user, then
+     `board return <cr> "<findings>"`; add follow-up items to the CR.
+   - **Rejected:** `board reject <cr> "<reason>"`; delete branch `cr/<id>` and its worktree only on the user's
+     confirmation (they hold the only copy).
+   - **Ratification:** close the item with the user's answer
+     (`board bd close <id> --reason "<verdict>"`); on "no" ask what the user
+     wants (fix or revert) and file it as a follow-up CR.
+   - **Epic, milestone:** close on the user's acceptance
+     (`board bd close <id> --reason "<verdict>"`). Otherwise for an epic, create
+     the findings as items under it; for a milestone, as members, and unclaim
+     it (`board unclaim <id>`).
+   When the item received a ruling, check that the rule sits in its owner and
+   every conflict became a question.
+   Output: `landed <cr>`, `checkpoint passed <cr>`, `returned <cr>`,
+   `rejected <cr>`, `closed <id>` or `findings <ids>`.
 
-**Stop:** the user rejects the design or result: return the design, file the
+**Stop:** the user rejects the CR or result: return it, reject it, file the
 findings under the epic, or add them to the milestone. A required gate cannot
-run: return it naming the unestablished claim.
+run: return it naming the unestablished claim. `land` refuses: report the
+refusal, then refresh or wait.
 
-**Exit:** the item is closed or returned, or the milestone has new members.
+**Exit:** the item is closed, landed or returned, or the milestone has new
+members.

@@ -11,6 +11,7 @@ from .boards import held_decided
 from .engine import Context, fail
 from .told import report_hint
 from .away import SWITCH_TO_SOLO
+from . import release_files as files
 
 
 # Release: decide.md Release run like a round (r3-q7): the engine sequences the steps, takes approval only from a
@@ -89,7 +90,7 @@ def start_release(ctx: Context, ids: list[str]) -> None:
         fail(f'only the person approves a release: {SWITCH_TO_SOLO}')
     if ctx.board is None:
         fail('a release needs a board: run it in the repository whose board holds the records; '
-             'a --no-board round closes at Record')
+             'records of a --no-board round: `protocol start release --no-board <dir> [<ids>]`')
     source = None
     if not ids:
         source, ids = 'the session', default_set(ctx)
@@ -205,9 +206,16 @@ def apply_changes(ctx: Context, raw, where: str, every: bool, scope: list[str] |
         return stop(ctx, words.spreads_reason(spreads), [rid for rid, _ in spreads])
     # The board writes come first and all-or-nothing for the state: a failure refuses the report, so it is sent again
     # (board record rewrites the same text).
-    decisions = {rid: decision_changed(ctx, rid, value['file'].strip()) for rid, value in contained if value['touches'] == 'own'}
+    if ctx.board is None:  # record files: the corrected text replaces the file
+        decisions = {rid: files.decision_changed_file(ctx, set_record(ctx, rid), value['file'].strip())
+                     for rid, value in contained if value['touches'] == 'own'}
+        for rid, value in contained:
+            if value['touches'] == 'own':
+                files.write_correction(ctx, set_record(ctx, rid), value['file'].strip())
+    else:
+        decisions = {rid: decision_changed(ctx, rid, value['file'].strip()) for rid, value in contained if value['touches'] == 'own'}
     for rid, value in contained:
-        if value['touches'] == 'own':
+        if value['touches'] == 'own' and ctx.board is not None:
             result = ctx.board.run('record', rid, value['file'].strip())
             if result.returncode != 0:
                 fail(f"{where}.{rid}: `board record {rid} {value['file']}` exited {result.returncode}: "
@@ -226,6 +234,7 @@ def recheck_text(ctx: Context) -> str:
     return lines(
         words.recheck_intro(ctx.round['id'], release_label(ctx)),
         *([words.BARE_RELEASE] if ctx.round.get('source') else []),
+        *([words.RECHECK_FILES] if ctx.board is None else []),
         *set_rows(ctx),
         report_hint(ctx, 'recheck', words.recheck_example(in_set(ctx)[:1])),
     )

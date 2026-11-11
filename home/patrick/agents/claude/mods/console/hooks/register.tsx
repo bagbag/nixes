@@ -14,7 +14,7 @@ import { answer, boardShow, decline, isRoundOpen, pass, pending as readPending, 
 import { capture, judgeDialog } from './gate'
 import type { DialogInput } from './gate'
 import { drawBand, drawPane, drawPlaced, PANE_MIN_COLUMNS, suggestions } from './pane'
-import { addGate, deferCommand, getBoard, getGate, getPass, getPrinted, getPersonOrigin, getRole, getRound, getStart, releaseRefresh, setAskSent, setPaneDismissed, setPersonOrigin, setPrinted, setRound, setStart, setTurnRunning, takeDeferred } from './state'
+import { addGate, deferCommand, getBoard, getGate, getPass, getPrinted, getPersonOrigin, getReviewing, getRole, getRound, getStart, releaseRefresh, setAskSent, setPaneDismissed, setPersonOrigin, setPrinted, setRound, setStart, setTurnRunning, takeDeferred } from './state'
 import {
   compactedNote, consoleText, DECLINED_TEXT, declinedNote, keepRoundText, NO_QUESTION_TEXT, keepStartText, protocolCallText, protocolResultText, STALE_PASS_TEXT, startAbandonedText, toolFailedText, TOOL_IDLE_TEXT, unsavedNote,
 } from './words'
@@ -314,7 +314,7 @@ export const register: Register = on => {
     if (ctx.isRoundRole) await refreshRound($, ctx.session)
     const board = ctx.isActive ? await refreshBoard($, ctx) : await getBoard($)
     const round = await getRound($)
-    return { text: consoleText(role, board, round, ctx.isRoundRole, role.role === 'autopilot' ? [] : suggestions(round)) }
+    return { text: consoleText(role, board, round, ctx.isRoundRole, role.role === 'autopilot' ? [] : suggestions(round), await getReviewing($)) }
   })
 
   on('command.run', { command: 'console-item' }, async ($, e) => {

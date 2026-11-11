@@ -44,7 +44,7 @@ approval. Give each step's output compactly.
    correctness property that alternative fails, and evidence; scale from one
    line to a mini decision packet by stakes. In an approval request, repeat the
    list with later rulings.
-   In a round, put a term to define in the question's `note` and your own
+   In a round, put a term to define in the question's `note` and your trivial
    rulings in its `rulings`.
    Output: the walkthrough.
 4. **Ask.** Once the user accepts, ask under

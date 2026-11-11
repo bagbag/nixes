@@ -50,7 +50,46 @@ export type ConsolePlaced = { id: string; text: string }
 
 export type ConsoleBatch = { marker: string; questions: ConsoleDialogQuestion[]; notice: string }
 
-export type ConsoleCounts = { questions: number; decided: number; toPlan: number; inReview: number; forUser: number }
+/** One count of the board's views (r21-q141): `ready` can be taken now, `waiting` is the rest of that step. */
+export type ConsoleCount = { ready: number; held: number; waiting: number }
+
+export type ConsoleCounts = { questions: ConsoleCount; decided: ConsoleCount; toPlan: ConsoleCount; toReview: ConsoleCount; toAccept: ConsoleCount; toRatify: ConsoleCount; forUser: ConsoleCount }
+
+/** A change request's check against the current refs (`board console`): `stale` the base moved, `conflict` it would not rebase cleanly, `failed` the checks failed, `unchecked` none ran yet. */
+export type ConsoleCheckState = 'current' | 'stale' | 'conflict' | 'failed' | 'unchecked'
+
+/**
+ * One live change request from `board console` `crs`, in accept-queue order (parents before children). Waiting for you is status `needs_acceptance`; agent review and an agent checkpoint are `in_review`.
+ * `base`: the target branch or the parent CR's id; `parent`: the CR it stacks on.
+ * `tip`, `baseTip`: the branch and its base as the board read them now; `check` holds the pair the checks ran on.
+ */
+export type ConsoleCr = {
+  id: string; title: string; status: string; holder: string | null
+  look: 'before' | 'after' | null; view: 'code' | 'result' | null; checkpoint: 'agent' | 'user' | null
+  base: string; branch: string; worktree: string | null; tip: string | null; baseTip: string | null
+  check: { state: ConsoleCheckState; tip: string | null; baseTip: string | null; at: string | null; result: 'pass' | 'fail' | null
+    /** No-new-failures: the `file code` lines whose count rose from base to tip; null while no comparison ran. `baseCount`, `tipCount`: failures at the base and at the tip. */
+    newFailures: string[] | null; baseCount: number | null; tipCount: number | null }
+  parent: string | null; children: string[]; items: { open: number; closed: number }
+  /** The agent review's verdict against the current (tip, base tip): `stale` after a base move until a refresh triage keeps or returns it; null before any review. */
+  reviewState: 'current' | 'stale' | null
+  /** The board's refresh work: the first non-waiting request of the accept queue whose check or review is not current (r24-q196). */
+  refreshWork: boolean
+  /** Uncommitted paths in the target's checkout that the landing would touch (`land` refuses); null when none. */
+  landBlocked: string[] | null
+  /** Look-after child that passed review and lands with this base; null otherwise. */
+  after: string | null
+  /** Returned: open again with its worktree kept for the next claimer. */
+  returned: boolean
+  /** The project setup failed in its worktree after the last claim or rebase; the holder keeps the claim. */
+  setupFailed: boolean
+}
+
+/** A look-after landing's ratification item (`board console` `ratifications`): it waits for your look and blocks nothing. */
+export type ConsoleRatification = { id: string; cr: string; title: string }
+
+/** What the review tree holds: the change request and the (base tip, tip) pair it was set to. */
+export type ConsoleReviewing = { cr: string; tip: string; baseTip: string }
 
 /** Where the round stands inside its step: Collect's items, points and classes, Select's candidates, the selection. */
 export type ConsoleProgress = { items: number; points: number; classified: number; candidates: number | null; selected: string[] }
@@ -139,6 +178,8 @@ export type ConsoleBoard = {
   items: ConsoleItem[]
   sessions: ConsoleSession[]
   held: ConsoleHeld[]
+  crs: ConsoleCr[]
+  ratifications: ConsoleRatification[]
   agents: ConsoleAgent[]
   /** A shared board's stopped or failing sync, or its store warning, with the fix; null otherwise. */
   sync: string | null
@@ -200,6 +241,8 @@ declare module 'claude-code' {
       /** The marker of the last batch the console sent the open-the-dialog message for: one message per marker until the person sends a message; null before the first. */
       askSent: string | null
       board: Shaped<ConsoleBoard | null>
+      /** What the review tree was last set to (a change request's base tip and tip); null while none is open. */
+      reviewing: Shaped<ConsoleReviewing | null>
       pass: Shaped<ConsolePassRun | null>
       queued: Shaped<ConsoleQueued>
       gate: Shaped<string[]>

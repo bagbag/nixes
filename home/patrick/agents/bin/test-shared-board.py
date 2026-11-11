@@ -1,11 +1,18 @@
 #!/usr/bin/env python3
 """Two-clone tests of shared boards through the real `board`, real bd and a local bare git remote.
 
-    python3 -B bin/test-shared-board.py [--board <path>] [--only <name>,<name>] [--seconds <s>] [--soak <s>]
+    python3 -B bin/test-shared-board.py [--board <path>] [--only <name>,<name>] [--serial] [--seconds <s>] [--soak <s>]
+
+A full run starts every group as its own `--only` run at once (each with its own folder and servers) and prints their
+results in order; `--serial` runs them one after another in this process.
+
+A run removes its folder and stops its servers on SIGTERM, SIGINT and SIGHUP too, and at start stops the Dolt servers of
+earlier runs whose process is gone (shared-board.* folders in /tmp, marked by their `runner.pid`).
 
 Needs bd and Dolt, which the validator's build sandbox lacks: bin/test-agent-configs.py holds the fake-bd checks, this holds
 the ones only real clones can show. Everything lives in a temp folder, and every server it starts is stopped.
-Rerun after a bd upgrade; the soak is the check that retires the write retry (board WRITE_RETRY_ERROR).
+After a bd upgrade, run the soak too (`--soak 40`, or `--only soak`): it is the check that retires the write retry
+(board WRITE_RETRY_ERROR), so ordinary runs skip it.
 """
 from __future__ import annotations
 
@@ -28,11 +35,15 @@ parser = argparse.ArgumentParser()
 parser.add_argument('--board', default=str(HERE / 'board'))
 parser.add_argument('--only', default='')
 parser.add_argument('--seconds', type=float, default=6, help='the sync window and pull interval to test with')
-parser.add_argument('--soak', type=float, default=40, help='seconds of parallel writing')
+parser.add_argument('--soak', type=float, default=0, help='seconds of parallel writing; 0 skips the soak unless --only names it')
+parser.add_argument('--serial', action='store_true', help='run the groups one after another instead of as parallel --only runs')
+parser.add_argument('--idle', action='store_true', help='internal (the cleanup test): start up, then wait for a signal')
 options = parser.parse_args()
 BOARD = str(Path(options.board).resolve())
 REGISTRY = str(Path(BOARD).parent / 'session-lead-mode')
 ROOT = Path(tempfile.mkdtemp(prefix='shared-board.', dir='/tmp'))
+RUNNER_PID = 'runner.pid'  # in the run's folder: tells a later run whether this one is still alive
+(ROOT / RUNNER_PID).write_text(str(os.getpid()))
 ROLES = {'lead': 1, 'solo': 2, 'agent': 3, 'none': 4, 'autopilot': 5}  # 'none' registers no role
 
 
@@ -85,17 +96,17 @@ def items(side: str) -> dict[str, dict]:
 
 
 def create(side: str, title: str, *flags: str, role: str | None = 'lead') -> str:
-    rc, out, err, _ = bd(side, 'create', title, '-t', 'task', '--description', 'x', '--silent', *flags, role=role)
+    rc, out, err, _ = bd(side, 'create', title, '-t', 'change-request', '--description', 'x', '--silent', *flags, role=role)
     if rc:
         raise RuntimeError(f'create {title}: {err}{out}')
     return out.strip().splitlines()[-1]
 
 
-def settle(*sides: str, seconds: float | None = None) -> None:
-    """Both clones hold each other's writes: manual syncs, the same a person would run."""
-    for _ in range(2):
-        for side in sides:
-            bd(side, 'sync')
+def settle(*sides: str) -> None:
+    """Every clone holds every other's writes: manual syncs, the same a person would run. Each sync pushes what its clone
+    holds by then, so one pass forward and one back over all but the last reach everyone (a, b, a)."""
+    for side in (*sides, *sides[-2::-1]):
+        bd(side, 'sync')
 
 
 def commits(side: str) -> int:
@@ -139,6 +150,7 @@ def setup() -> None:
     for side, name in (('a', 'anna'), ('b', 'ben')):
         git('clone', '-q', 'remote.git', side)
         git('config', 'agents.person', name, cwd=ROOT / side)
+        git('commit', '-q', '--allow-empty', '-m', 'init', cwd=ROOT / side)  # a clone parks edits against HEAD
         for role in ROLES:
             if role == 'none':
                 continue
@@ -148,7 +160,9 @@ def setup() -> None:
     rc, out, err, _ = bd('a', 'init', '--server', '--stealth', '--prefix', 'sb', '--skip-hooks', '--skip-agents', role=None)
     if rc:
         raise RuntimeError(f'init: {err}{out}')
-    for key, value in (('status.custom', 'decided:wip,released:active,in_review:wip,needs_ratification:wip'), ('types.custom', 'design')):
+    for key, value in (('status.custom', 'decided:wip,released:active,in_review:wip,needs_ratification:wip'), ('types.custom', 'design,change-request')):
+        bd('a', 'config', 'set', key, value, role=None)
+    for key, value in (('custom.board.target', git('symbolic-ref', '--short', 'HEAD', cwd=ROOT / 'a').strip()), ('custom.board.setup', 'true'), ('custom.board.checks', 'true'), ('custom.board.look', 'before'), ('custom.board.view', 'code')):
         bd('a', 'config', 'set', key, value, role=None)
     bd('a', 'dolt', 'commit', '-m', 'config', role=None)
 
@@ -490,7 +504,7 @@ def t_soak() -> None:
     expected: dict[str, str] = {}
     errors = collections.Counter()
     lock = threading.Lock()
-    end = time.time() + options.soak
+    end = time.time() + (options.soak or 40)
     count = [0]
 
     def writer(side: str, number: int) -> None:
@@ -643,7 +657,7 @@ def t_inbox() -> None:
     stray = create('a', 'stray, older', role=None)
     bd('a', 'update', stray, '--remove-label', 'queue:anna', role=None)
     time.sleep(1.1)
-    rc, out, err, _ = run('a', 'create', '--for', 'ben', 'found for ben', '-t', 'bug', '--description', 'x', '--silent', role='agent')
+    rc, out, err, _ = run('a', 'create', '--for', 'ben', 'found for ben', '-t', 'change-request', '--description', 'x', '--silent', role='agent')
     found = out.strip().splitlines()[-1] if rc == 0 else ''
     row = items('a').get(found, {})
     check(rc == 0 and {'for:ben', 'queue:anna'} <= set(row.get('labels', [])) and row.get('assignee') == 'user',
@@ -713,6 +727,142 @@ def t_inbox() -> None:
     settle('a', 'b')
 
 
+def t_cr() -> None:
+    """The change-request flow against real bd and real git in clone a: claim (worktree, setup), a worker's item, hand-over
+    (rebase, checks, stored pair), agent review, the Accept (look before), a look-after pass that lands and opens its
+    ratification, a CR stacked on one in review that lands only after its base, and a landing finished by the next read."""
+    settle('a', 'b')
+    side = ROOT / 'a'
+    target = git('symbolic-ref', '--short', 'HEAD', cwd=side).strip()
+
+    def wt(cr: str) -> Path:
+        return Path(str(side) + '-worktrees') / cr
+
+    def meta_of(cr: str) -> dict:
+        return items('a')[cr].get('metadata') or {}
+
+    def task(cr: str, title: str) -> str:
+        return bd('a', 'create', title, '-t', 'task', '--description', 'x', '--silent', '--parent', cr)[1].strip().splitlines()[-1]
+
+    def worker_pass(cr: str, item: str, name: str) -> None:
+        rc, _, err, _ = run('a', 'claim', item, role='agent')
+        check(rc == 0, f'{cr}: the holding session claims its item {item}', err)
+        (wt(cr) / name).write_text(name + '\n')
+        git('add', name, cwd=wt(cr))
+        git('commit', '-q', '-m', f'{item}: {name}', cwd=wt(cr))
+        sha = git('rev-parse', '--short', 'HEAD', cwd=wt(cr)).strip()
+        rc, out, err, _ = bd('a', 'close', item, '--reason', f'{sha}: {name} written in the pass commit', role='agent')
+        check(rc == 0, f'{cr}: the item {item} closes with its pass commit', err + out)
+
+    def to_review(cr: str, role: str = 'agent') -> None:
+        rc, _, err, _ = run('a', 'handover', cr, 'tests: exit 0', role=role)
+        check(rc == 0 and items('a')[cr]['status'] == 'in_review', f'{cr}: handed over', err)
+
+    def review_pass(cr: str) -> tuple[int, str, str]:
+        rc, _, err, _ = run('a', 'claim', cr, role='solo')
+        check(rc == 0, f'{cr}: another session claims the review by id', err)
+        rc, out, err, _ = run('a', 'handover', cr, 'reviewed: fine', role='solo')
+        return rc, out, err
+
+    a = create('a', 'change request A')
+    a1 = task(a, 'A item')
+    main_tip = git('rev-parse', target, cwd=side).strip()
+    rc, out, err, _ = run('a', 'claim', a, role='agent')
+    check(rc == 0 and wt(a).is_dir() and git('branch', '--list', f'cr/{a}', cwd=side).strip(), 'cr: a claim creates the worktree and branch', err + out)
+    check(meta_of(a).get('base') == target and meta_of(a).get('base_sha') == main_tip and meta_of(a).get('setup_sha') == main_tip,
+          'cr: the claim records the base, the fork point and the setup run', meta_of(a))
+    check(wt(a).parent == Path(str(side) + '-worktrees') and not (side / '.claude').exists(), 'cr: the worktree lives beside the project, nothing is added inside it')
+    loose = bd('a', 'create', 'loose task', '-t', 'task', '--description', 'x', '--silent')[1].strip().splitlines()[-1]
+    rc, _, err, _ = run('a', 'claim', loose, role='agent')
+    check(rc == 1 and '--parent' in err, 'cr: a work item outside any change request is refused with the fix', err)
+    rc, _, err, _ = run('a', 'handover', a, 'too early', role='agent')
+    check(rc == 1 and 'items still open' in err, 'cr: hand-over refuses open items', err)
+    worker_pass(a, a1, 'a.txt')
+    (wt(a) / 'dirty.txt').write_text('x\n')
+    rc, _, err, _ = run('a', 'handover', a, 'dirty', role='agent')
+    check(rc == 1 and 'uncommitted changes' in err, 'cr: hand-over refuses a dirty worktree', err)
+    (wt(a) / 'dirty.txt').unlink()
+    to_review(a)
+    check(items('a')[a]['status'] == 'in_review' and meta_of(a).get('check_result') == 'pass' and meta_of(a).get('check_tip') == git('rev-parse', 'HEAD', cwd=wt(a)).strip(),
+          'cr: hand-over stores the (tip, base tip) check and the review stage', meta_of(a))
+    rc, out, err = review_pass(a)
+    check(rc == 0 and items('a')[a]['status'] == 'needs_acceptance', 'cr: look before stays at accept after the agent review', err + out)
+    rc, _, err, _ = run('a', 'land', a, role='agent')
+    check(rc == 1 and 'only a lead or solo' in err, 'cr: an agent session cannot land', err)
+    tip = git('rev-parse', 'HEAD', cwd=wt(a)).strip()
+    rc, _, err, _ = run('a', 'land', a, '--tip', 'deadbee')
+    check(rc == 1 and 'branch moved' in err and git('rev-parse', target, cwd=side).strip() == main_tip, 'cr: land --tip refuses a moved branch', err)
+    rc, out, err, _ = run('a', 'land', a, '--tip', tip[:9])
+    check(rc == 0 and git('rev-parse', target, cwd=side).strip() == tip and items('a')[a]['status'] == 'closed' and not wt(a).exists()
+          and not git('branch', '--list', f'cr/{a}', cwd=side).strip(), 'cr: land fast-forwards the target, closes the CR and removes worktree and branch', err + out)
+
+    b = create('a', 'change request B', '--metadata', '{"look":"after"}')
+    b1 = task(b, 'B item')
+    run('a', 'claim', b, role='agent')
+    worker_pass(b, b1, 'b.txt')
+    to_review(b)
+    before = git('rev-parse', target, cwd=side).strip()
+    rc, out, err = review_pass(b)
+    ratify = [row for row in items('a').values() if row['title'] == 'Ratify: change request B']
+    check(rc == 0 and git('rev-parse', target, cwd=side).strip() != before and items('a')[b]['status'] == 'closed'
+          and len(ratify) == 1 and ratify[0]['status'] == 'needs_ratification' and ratify[0]['issue_type'] == 'task',
+          'cr: a look-after pass lands and opens a ratification under the closed CR', err + out)
+    _, console, _, _ = run('a', 'console')
+    check([r['id'] for r in json.loads(console)['ratifications']] == [ratify[0]['id']] and json.loads(console)['ratifications'][0]['cr'] == b,
+          'cr: board console lists the ratification with its CR', console[-300:])
+
+    base_cr, child_cr = create('a', 'stack base P'), create('a', 'stack child C')
+    p1, c1 = task(base_cr, 'P item'), task(child_cr, 'C item')
+    bd('a', 'dep', 'add', child_cr, base_cr)
+    rc, _, err, _ = run('a', 'claim', child_cr, role='agent')
+    check(rc == 1 and 'waits on' in err, 'cr: a CR waits while the CR it depends on is in work', err)
+    run('a', 'claim', base_cr, role='agent')
+    worker_pass(base_cr, p1, 'p.txt')
+    to_review(base_cr)
+    rc, _, err, _ = run('a', 'claim', child_cr, role='agent')
+    check(rc == 1 and 'waits on' in err, 'cr: a CR does not build on a parent still in agent review', err)
+    review_pass(base_cr)
+    rc, out, err, _ = run('a', 'claim', child_cr, role='agent')
+    check(rc == 0 and meta_of(child_cr).get('base') == base_cr, 'cr: a CR builds on the parent waiting for the user, which becomes its base', err + out)
+    worker_pass(child_cr, c1, 'c.txt')
+    to_review(child_cr)
+    review_pass(child_cr)
+    rc, _, err, _ = run('a', 'land', child_cr)
+    check(rc == 1 and 'has not landed' in err, 'cr: a CR with a CR base never lands before its base', err)
+    base_tip = git('rev-parse', 'HEAD', cwd=wt(base_cr)).strip()
+    rc, out, err, _ = run('a', 'land', base_cr, '--tip', base_tip[:9])
+    check(rc == 0 and meta_of(child_cr).get('base') == target and items('a')[base_cr]['status'] == 'closed',
+          'cr: landing the base resets the CRs stacked on it to the target', err + out)
+    child_tip = git('rev-parse', 'HEAD', cwd=wt(child_cr)).strip()
+    rc, out, err, _ = run('a', 'land', child_cr, '--tip', child_tip[:9])
+    check(rc == 0 and git('rev-parse', target, cwd=side).strip() == child_tip and subprocess.run(['git', 'merge-base', '--is-ancestor', base_tip, target], cwd=side).returncode == 0,
+          'cr: the child lands once its base has', err + out)
+
+    d = create('a', 'derived landing')
+    d1 = task(d, 'D item')
+    run('a', 'claim', d, role='agent')
+    worker_pass(d, d1, 'd.txt')
+    to_review(d)
+    review_pass(d)
+    git('merge', '-q', '--ff-only', f'cr/{d}', cwd=side)  # the fast-forward done, the close not
+    rc, _, err, _ = run('a', 'queue')
+    check(rc == 0 and items('a')[d]['status'] == 'closed' and not wt(d).exists(), 'cr: a tip the target holds closes its CR on the next read', err)
+
+    e = create('a', 'returned CR')
+    e1 = task(e, 'E item')
+    run('a', 'claim', e, role='agent')
+    worker_pass(e, e1, 'e.txt')
+    to_review(e)
+    run('a', 'claim', e, role='solo')
+    rc, _, err, _ = run('a', 'return', e, 'rename the file', role='solo')
+    row = items('a')[e]
+    check(rc == 0 and row['status'] == 'open' and not row.get('assignee') and wt(e).is_dir() and git('branch', '--list', f'cr/{e}', cwd=side).strip(),
+          'cr: return leaves the CR open and unassigned, its worktree and branch kept', err)
+    rc, out, err, _ = run('a', 'reject', e, 'the approach fails')
+    check(rc == 0 and items('a')[e]['status'] == 'closed' and git('branch', '--list', f'cr/{e}', cwd=side).strip() and wt(e).is_dir(),
+          'cr: reject closes it unlanded, the branch and worktree stay until confirmed', err + out)
+
+
 def t_move() -> None:
     """board move (beads-setup.md#history) to a local fresh repository, a stale clone told, its rejoin, a new joiner."""
     settle('a', 'b')
@@ -773,7 +923,7 @@ def t_move() -> None:
 
 SETTINGS = {'create.require-description': 'true', 'validation.on-close': 'error', 'lint.sections.decision': 'Question,Decision,Rule owner',
             'events-journal': 'true', 'events-journal-retain-days': '30', 'no-git-ops': 'true',
-            'status.custom': 'decided:wip,released:active,in_review:wip,needs_ratification:wip', 'types.custom': 'design', 'min_hash_length': '5'}
+            'status.custom': 'decided:wip,released:active,in_review:wip,needs_ratification:wip,needs_acceptance:wip', 'types.custom': 'design,change-request', 'min_hash_length': '5'}
 
 
 def setting(side: str, key: str) -> str:
@@ -802,10 +952,15 @@ def t_setup() -> None:
     rc, out, err, _ = run('setupproj', 'setup', role=None)
     check(rc == 0 and 'validation.on-close: warn -> error' in out and 'types.custom: (unset) -> design' in out,
           'setup on an existing board: sets the missing setting, resets the differing one, printing old and new', err + out)
-    check(setting('setupproj', 'validation.on-close') == 'error' and setting('setupproj', 'types.custom') == 'design', 'setup: the values are applied')
+    check(setting('setupproj', 'validation.on-close') == 'error' and setting('setupproj', 'types.custom') == 'design,change-request', 'setup: the values are applied')
     check('already has a board' in out, 'setup: an existing board is never re-created', out)
     rc, out, err, _ = run('setupproj', 'setup', role=None)
     check(rc == 0 and ' -> ' not in out and 'up to date' in out, 'setup again: nothing to do', err + out)
+    rc, out, err, _ = run('setupproj', 'setup', '--target', 'main', '--setup', 'true', '--checks', 'true', '--look', 'after', '--view', 'result', role=None)
+    got = {key: setting('setupproj', f'custom.board.{key}') for key in ('target', 'setup', 'checks', 'look', 'view')}
+    check(rc == 0 and got == {'target': 'main', 'setup': 'true', 'checks': 'true', 'look': 'after', 'view': 'result'}, 'setup: the project setting flags are applied', (err + out, got))
+    rc, out, err, _ = run('setupproj', 'setup', '--look', 'sometimes', role=None)
+    check(rc == 1 and 'not one of' in err and setting('setupproj', 'custom.board.look') == 'after', 'setup: an invalid setting is refused and changes nothing', err + out)
     rc, out, err, _ = run('setupproj', 'share', role=None)
     check(rc == 1 and 'board setup --server' in err, 'share on an embedded board: refused, naming the conversion', err + out)
     made = [bd('setupproj', 'create', title, '--description', f'{title}, an item the conversion keeps', '--silent', role=None)[1].strip()
@@ -843,12 +998,141 @@ def cleanup() -> None:
     shutil.rmtree(ROOT, ignore_errors=True)
 
 
-ORDER = ('unshared', 'share_join', 'setup', 'child_ids', 'queues', 'moves', 'inbox', 'window', 'pull', 'manual_and_dead_wait', 'soak', 'stopped', 'held_elsewhere', 'store', 'move')
+def alive(pid: int) -> bool:
+    """A process that runs (a zombie, which only its parent has yet to reap, does not)."""
+    state = subprocess.run(['ps', '-o', 'stat=', '-p', str(pid)], capture_output=True, text=True).stdout.strip()
+    return bool(state) and not state.startswith('Z')
+
+
+def stop_dead_servers() -> list[int]:
+    """Stops the Dolt servers under /tmp/shared-board.* (/private/tmp on macOS) whose run is gone: its folder's runner.pid
+    names no live process. A folder without one belongs to a run of an older script, gone only when no test-shared-board.py
+    runs at all. Another live run's servers stay."""
+    ps = subprocess.run(['ps', '-axo', 'pid=,command='], capture_output=True, text=True).stdout
+    runners = any('test-shared-board.py' in row and not row.split(maxsplit=1)[0] == str(os.getpid()) for row in ps.splitlines())
+    stopped = []
+    for row in ps.splitlines():
+        pid, _, command = row.strip().partition(' ')
+        found = re.search(r'/tmp/(shared-board\.[^/\s]+)/', command)
+        if not found or 'dolt' not in command or not pid.isdigit() or int(pid) == os.getpid() or found.group(1) == ROOT.name:
+            continue
+        try:
+            owner = int((Path('/tmp') / found.group(1) / RUNNER_PID).read_text().strip())
+        except (OSError, ValueError):
+            owner = None
+        if (alive(owner) if owner else runners):
+            continue
+        for sig in (signal.SIGTERM, signal.SIGKILL):
+            try:
+                os.kill(int(pid), sig)
+            except ProcessLookupError:
+                break
+            if wait_until(lambda: not alive(int(pid)), 3):
+                break
+        stopped.append(int(pid))
+    return stopped
+
+
+CHILDREN: list[subprocess.Popen] = []  # a parallel run's group runs
+
+
+def on_signal(signum, frame) -> None:
+    for child in CHILDREN:
+        if child.poll() is None:
+            child.send_signal(signal.SIGTERM)  # each child stops its servers and removes its folder
+    for child in CHILDREN:
+        try:
+            child.wait(30)
+        except subprocess.TimeoutExpired:
+            child.kill()
+    cleanup()
+    sys.exit(128 + signum)
+
+
+def run_parallel(groups: list[str]) -> int:
+    """Each group as its own --only run (unshared and share_join run inside each); output in ORDER, then one verdict."""
+    args = ['--board', BOARD, '--seconds', str(options.seconds), '--soak', str(options.soak)]
+    outputs = {}
+    for name in groups:
+        out = tempfile.TemporaryFile('w+', encoding='utf-8')
+        CHILDREN.append(subprocess.Popen([sys.executable, '-B', str(Path(__file__).resolve()), '--only', name, *args],
+                                         stdin=subprocess.DEVNULL, stdout=out, stderr=subprocess.STDOUT, text=True))
+        outputs[name] = out
+    failed = []
+    for name, child in zip(groups, CHILDREN):
+        code = child.wait()
+        out = outputs[name]
+        out.seek(0)
+        text = out.read()
+        out.close()
+        marker = f'## {name}\n'
+        print(text[text.index(marker):] if marker in text and code == 0 else text, end='' if text.endswith('\n') else '\n', flush=True)
+        if code != 0:
+            failed.append(name)
+    print(f"FAILED groups: {', '.join(failed)}" if failed else 'all groups passed', flush=True)
+    return 1 if failed else 0
+
+
+def t_cleanup() -> None:
+    """A signalled run removes its folder; a start stops the servers of dead runs and leaves a live run's."""
+    def fake_server(folder: Path):
+        return subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(300)', 'dolt', 'sql-server', f'{folder}/a/.beads/dolt'])
+
+    for sig in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        child = subprocess.Popen([sys.executable, '-B', str(Path(__file__).resolve()), '--idle', '--board', BOARD], stdout=subprocess.PIPE, text=True)
+        folder = Path((child.stdout.readline().split(maxsplit=1) or ['', ''])[1].strip() or '/nonexistent')
+        check(folder.is_dir() and (folder / RUNNER_PID).read_text() == str(child.pid), f'{sig.name}: the run has its folder', folder)
+        child.send_signal(sig)
+        try:
+            code = child.wait(30)
+        except subprocess.TimeoutExpired:
+            child.kill()
+            code = None
+        check(code == 128 + sig and not folder.exists(), f'{sig.name}: the run exits and removes its folder', (code, folder.exists()))
+    dead, live, bare = (Path('/tmp') / f'shared-board.cleanuptest-{name}' for name in ('dead', 'live', 'bare'))
+    for folder in (dead, live, bare):
+        folder.mkdir(exist_ok=True)
+    (live / RUNNER_PID).write_text(str(os.getpid()))
+    (dead / RUNNER_PID).write_text('999999')  # no such process
+    servers_of = {'dead': fake_server(dead), 'live': fake_server(live), 'bare': fake_server(bare)}
+    try:
+        time.sleep(0.5)  # the interpreters are up with their arguments
+        child = subprocess.Popen([sys.executable, '-B', str(Path(__file__).resolve()), '--idle', '--board', BOARD], stdout=subprocess.PIPE, text=True)
+        child.stdout.readline()
+        child.send_signal(signal.SIGTERM)
+        child.wait(30)
+        check(wait_until(lambda: servers_of['dead'].poll() is not None, 5), 'start: a dead run\'s server is stopped')
+        check(servers_of['live'].poll() is None, 'start: a live run\'s server is left')
+        check(servers_of['bare'].poll() is None, 'start: a folder without runner.pid is left while another run (this one) is going')
+    finally:
+        for server in servers_of.values():
+            server.kill()
+            server.wait()
+        for folder in (dead, live, bare):
+            shutil.rmtree(folder, ignore_errors=True)
+
+
+ORDER = ('unshared', 'share_join', 'setup', 'child_ids', 'queues', 'moves', 'inbox', 'cr', 'window', 'pull', 'manual_and_dead_wait', 'soak', 'stopped', 'held_elsewhere', 'store', 'move', 'cleanup')
 only = {name for name in options.only.split(',') if name}
+stop_dead_servers()
+for signum in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+    signal.signal(signum, on_signal)
+if options.idle:
+    print('idle', ROOT, flush=True)
+    time.sleep(600)
+    sys.exit(0)
+if not options.only and not options.serial:
+    started = time.time()
+    code = run_parallel([name for name in ORDER if name not in ('unshared', 'share_join') and (name != 'soak' or options.soak)])
+    print(f'   (parallel run {time.time() - started:.0f} s)', flush=True)
+    cleanup()
+    sys.exit(code)
 try:
     setup()
     for name in ORDER:
         # share_join and unshared set up every later group.
+        if name == 'soak' and not options.soak and name not in only:
+            continue  # an upgrade check: --soak <s> or --only soak runs it
         if not only or name in only or name in ('unshared', 'share_join'):
             print(f'## {name}', flush=True)
             started = time.time()

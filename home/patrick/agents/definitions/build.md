@@ -36,6 +36,7 @@ pattern.
 - Perform the implementation yourself.
 - Return changes, gate results and open questions.
 
-Never commit or stage, alter another worker's files, or expand the task's scope.
+Commit only where your brief's protocol grants it; never otherwise commit or
+stage, alter another worker's files, or expand the task's scope.
 
 <!-- @include shared/report.md -->

@@ -4,7 +4,7 @@ from __future__ import annotations
 from .base import CLASSES, COLLECT_VIEWS, ProtocolError, lines
 from . import words
 from .store import next_id
-from .boards import COUNT_KEYS, claim_items, foreign_holds
+from .boards import claim_items, foreign_holds, read_counts, view_rows
 from .engine import Context, fail
 from .told import first_time, report_hint
 
@@ -154,7 +154,7 @@ def select_accept(ctx: Context, report: dict) -> str:
     return 'stage'
 
 
-OPEN_VIEWS = ('decided', 'questions', 'ratification', 'inReview', 'forUser')  # `board health --json` item views Collect offers
+OPEN_VIEWS = ('decided', 'questions', 'ratification', 'toAccept', 'toReview', 'forUser')  # `board health --json` item views Collect offers
 
 
 def read_open(ctx: Context) -> tuple[dict, dict]:
@@ -172,12 +172,12 @@ def open_items(ctx: Context, found: dict, position: dict) -> tuple[list[dict], d
                               'title': item.get('title', ''), 'priority': item.get('priority'),
                               'labels': item.get('labels') or [], 'blockedBy': item.get('blockedBy') or []}
     for view in OPEN_VIEWS:
-        for item in (found.get('items') or {}).get(view) or []:
+        for item in view_rows(found, view):
             seen.setdefault(item['id'], row(item, view))
     for view, key in (('readyMilestone', 'readyMilestones'), ('finishedEpic', 'finishedEpics')):
         for item in position.get(key) or []:
             seen.setdefault(item['id'], row(item, view))
-    live, gone = foreign_holds(ctx, [item for view in OPEN_VIEWS for item in (found.get('items') or {}).get(view) or []], position)
+    live, gone = foreign_holds(ctx, [item for view in OPEN_VIEWS for item in view_rows(found, view)], position)
     for rid, holder in gone.items():
         seen[rid]['heldBy'] = f'{holder} (gone)'
     elsewhere, waiting = {}, []
@@ -217,7 +217,7 @@ def collect_enter(ctx: Context) -> None:
     if not ctx.board or ctx.round.get('scope') == 'discussion':
         return  # a discussion round's points come from the model; board items join through Related
     found, position = read_open(ctx)
-    ctx.state['counts'] = {key: (found.get('counts') or {}).get(key, 0) for key in COUNT_KEYS}
+    ctx.state['counts'] = read_counts(found)
     ctx.round['items'], ctx.round['heldElsewhere'], ctx.round['waiting'] = open_items(ctx, found, position)
     errors = named_errors(ctx, ctx.round.get('named') or [], ctx.round['items'], ctx.round['heldElsewhere'], ctx.round['waiting'])
     if errors:

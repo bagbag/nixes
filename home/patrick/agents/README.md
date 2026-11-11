@@ -829,7 +829,11 @@ plugin test home/patrick/agents/claude/mods/console`.
 
 The validator runs its groups (core, hooks, board, contract and the protocol
 engine's parts `engine-<part>`, `PROTOCOL_PARTS`) as parallel child processes
-(`--group <name>` runs one). Each engine part starts on a fresh fixture;
+(`--group <name>` runs one). The switch's build runs only `--group core` (what
+it generates: skills, definitions, rendered sizes) from a source without the
+test-only files; the full validator is `nix flake check` (`checks.agent-configs`),
+the gate to run before staging. The nix sandbox has no `bd`: in-process test
+boards carry empty settings (`bare_deck`) instead of reading them through bd. Each engine part starts on a fresh fixture;
 sections within a part share state in order, so a section that needs an earlier
 one's rounds stays in its part.
 

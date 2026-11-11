@@ -28,19 +28,23 @@ setup, run `/role autopilot` again.
     question for the user with a recommendation (`board unclaim <id>` when you
     hold it outside a round). Parked questions form the user's next round;
     their dependents wait. Continue independent tracks.
-- Accept in the user's place `in_review` design items and finished epics
-  whose acceptance names the user: the decide protocol's Accept with the
-  walkthrough as a written assessment, recorded as a `needs_ratification`
-  decision with its `## Reversal`.
+- Accept in the user's place a CR at a `user` checkpoint (`board land <cr>
+  --checkpoint`) and finished epics whose acceptance names the user: the
+  decide protocol's Accept with the walkthrough as a written assessment,
+  recorded as a `needs_ratification` decision with its `## Reversal`. A finished CR
+  (`look` `before`) in `needs_acceptance` stays parked for the user: landing is a merge into the
+  target.
 - Treat public contracts, durable design and substantial downstream work as
   costly to reverse. Before non-trivial action, resolve facts and obtain
   independent assessment; review findings authorize no expansion. Assess scope
   cumulatively. Park trade-offs outside authority and uncontracted expansion of durable architecture, workflow,
   public contracts or delivery process. Use `explore-options` for open approach
   space within budget; route architecture to an architect.
-- Entering the autopilot role authorizes no Git mutation. Obtain explicit
-  approval before creating or switching branches or worktrees. History rewrites and
-  merges of your own work stay with the user.
+- Entering the autopilot role adds no Git authority: CR work runs under the
+  [Change requests](../../shared/change-requests.md#change-requests) Git
+  authorization. Review a `look` `after` CR only where step 1 ratified its
+  landing. Other branches, worktrees, merges and history rewrites stay with
+  the user.
 - Keep these actions parked while continuing another track: push or publish;
   messages, PRs, deployments or side-effecting external API calls; migrating
   or writing real data; deleting outside the workspace; secrets and
@@ -58,11 +62,9 @@ findings or stops.
      path, milestone, walking skeleton, non-goals and evidence.
    - Agree the budget (time, window or milestone), pre-authorizations,
      forbidden actions, acceptance evidence, return point and report.
-   - Propose a worktree on `autopilot/<topic-slug>/<arc-slug>` with costs and
-     benefits; the user chooses it or another workspace. Record the workspace
-     and exact Git authority, including checkpoint commits.
+   - Record whether `look` `after` landings may run while the user is away.
    - Ratify architecture and plan choices where possible. Begin only after
-     scope, authority, done criteria and workspace are ratified.
+     scope, authority and done criteria are ratified.
    - Frame the outcome epic under the plan protocol's
      [Frame](plan.md#frame). Link goal and contract owners and record the
      whole-repository baseline gate, or the strongest available gate, in the
@@ -71,29 +73,25 @@ findings or stops.
      (`protocol status --line`) for the user to answer or abandon. On the user's
      go run `bash $HOME/.agents/bin/session-lead-mode activate autopilot`. When
      the user returns and leaves again, confirm only the budget and the go.
-   Output: ratified budget, authority, workspace and baseline, one line each;
+   Output: ratified budget, authority and baseline, one line each;
    `registered autopilot`.
 2. **Execute and reassess:**
-   - Work only in the authorized workspace. Isolated-worktree work leaves the
-     user's tree and branches untouched. Make authorized checkpoint commits as
-     coherent commits in the convention of the global Git rule, once the
-     baseline gate shows no regression and the result's review and
-     verification gates pass.
+   - Work only in CR worktrees; the user's tree and branches stay untouched.
    - Beyond the recheck triggers in
      [Evidence and gates](../../shared/acceptance.md#evidence-and-gates), have a non-author
      rerun the decisive check of every result later work builds on. Satisfy
      review and verification gates before dependent work. When retry and
      escalation fail, park with a diagnosis.
-   - Treat baseline regressions as blockers to checkpoints and acceptance;
+   - Treat baseline regressions as blockers to hand-over and acceptance;
      investigate or park them.
    - At each coherent milestone, check
      [Expansion findings](review.md#expansion-findings); park non-converging
      growth with the combined design and its options, and keep the
      consumer-bearing path.
-   - Check the budget before dispatch and at checkpoints; reserve time to
+   - Check the budget before dispatch and at each hand-over; reserve time to
      collect worker state and report. When a track parks, continue independent
      tracks.
-   Output: per checkpoint: gates, commits, parked items, remaining budget.
+   Output: per CR handed over: gates, commits, parked items, remaining budget.
 3. **Recover** after crashes, window boundaries or compaction under
    project-memory
    [Recovery](../../shared/project-memory.md#recovery);
@@ -106,8 +104,8 @@ findings or stops.
    outcomes with actual gate numbers; ratification items and parked decisions
    with recommendations
    (`board health --root <epic> --items ratification,questions`);
-   failure and park diagnoses; and workspace
-   disposition (merge or discard for a branch). Keep incompleteness explicit.
+   failure and park diagnoses; and the CRs waiting for the user's Accept.
+   Keep incompleteness explicit.
    Then run `bash $HOME/.agents/bin/session-lead-mode activate solo`. Stay on
    autopilot through a passing message that does not end the run.
    Output: the return report; `registered solo`.

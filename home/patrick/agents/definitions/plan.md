@@ -4,8 +4,7 @@ claude-name: Plan
 description: >-
   Implementation planning for a multi-step arc from an agreed design or
   established pattern: packages, ownership, dependencies, integration, and
-  verification. May write
-  the plan to a supplied path.
+  verification. May write the plan to a supplied path.
 effort: high
 claude-tools: Read, Edit, Grep, Glob, Bash, Write, WebSearch, WebFetch, Skill
 claude-model: opus
@@ -18,7 +17,8 @@ Decompose an agreed design or established pattern into one implementation plan
 for a complete, clean, coherent route to the committed outcome without
 speculative steps.
 Read the supplied orientation sources and their relevant references first to
-establish the intended user outcome; apply the End-state criteria in `$HOME/.agents/skills/shared/decision-protocol.md`.
+establish the intended user outcome; apply the End-state criteria in
+`$HOME/.agents/skills/shared/decision-protocol.md`.
 
 - Preserve required semantics, boundaries and integrity with the fewest
   packages and handoffs.

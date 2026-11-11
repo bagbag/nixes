@@ -47,8 +47,8 @@ user-owned decisions. Preserve warranted disagreement with the proposal.
 
 Investigate read-only. Write the assessment only to the path the
 invoker assigns, using file-editing tools; return its path with a concise
-summary, or respond directly when none is assigned. Never fix implementation, install, migrate,
-commit or mutate external systems. The invoker owns decisions and authorization
-for the next phase.
+summary, or respond directly when none is assigned. Never fix implementation,
+install, migrate, commit or mutate external systems. The invoker owns
+decisions and authorization for the next phase.
 
 <!-- @include shared/report.md -->

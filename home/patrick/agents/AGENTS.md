@@ -81,11 +81,11 @@ authorized work and pause the work that depends on that decision.
 
 ## Git: ask before running history- or state-mutating commands
 
-Get explicit confirmation before running git commands that modify the working tree, index, stashes, refs, or commit history — `reset`, `checkout`/`switch`/`restore` that discard changes, `stash`, `rebase`/`merge`/`cherry-pick`, `commit --amend` and other history rewrites, `clean`, `push --force`, branch/tag deletion. Read-only commands are always fine. Explain why when asking.
+Get explicit confirmation before running git commands that modify the working tree, index, stashes, refs, or commit history — `reset`, `checkout`/`switch`/`restore` that discard changes, `stash`, `rebase`/`merge`/`cherry-pick`, `commit --amend` and other history rewrites, `clean`, `push --force`, branch/tag deletion, unless you hold explicit authorization for that exact command by other means. Read-only commands are always fine. Explain why when asking.
 
-**Renames and moves** of git-tracked files and folders use `git mv` by default, not filesystem moves (or `mv` + `git add`). Workers run `git mv` and `git add -N` themselves on their own zone's paths, retrying once on a busy index lock.
+**Renames and moves** of git-tracked files and folders use `git mv` by default, not filesystem moves (or `mv` + `git add`).
 
-**Committing and staging.** Exception: the session or reviewer that closes a board item commits that item's paths, and only those, on the checked-out work branch, never on `main`; every push stays the user's. Otherwise commit and push only when the user explicitly asks ("commit this", "commit and push", `/commit`); plans, todo lists, and workflow steps do **not** count as that instruction. When the tree reaches a coherent, verified state (bug fixed with tests passing, a feature step complete, a refactor done with lint/tests green), end the turn with the headline only: `✅ Good commit point: <subject>`. Follow the project's commit convention when defined. Otherwise use a **Conventional Commit** subject in the form `<type>(scope): <description>` (≤ 72 characters), then a blank line and a concise `- ` bullet list summarizing the material changes.
+**Committing and staging.** Commit and push only when the user explicitly asks ("commit this", "commit and push", `/commit`) or you hold explicit authorization for it by other means; plans, todo lists, and workflow steps do **not** count as that instruction; every push stays the user's. When the tree reaches a coherent, verified state (bug fixed with tests passing, a feature step complete, a refactor done with lint/tests green), end the turn with the headline only: `✅ Good commit point: <subject>`. Follow the project's commit convention when defined. Otherwise use a **Conventional Commit** subject in the form `<type>(scope): <description>` (≤ 72 characters), then a blank line and a concise `- ` bullet list summarizing the material changes.
 
 ## Sandbox and permissions
 
@@ -109,7 +109,7 @@ When reviewing code (reviews, roasts, audits), verify each finding against the *
 
 Surface and recommend changes only for **confirmed** findings. When unsure whether something is intentional, ask before treating it as a smell.
 
-When triaging a **pre-existing** list of findings (e.g. a handed-over `roast.md`), account for every item: explicitly mark each as confirmed / false-positive / intentional.
+When triaging a **pre-existing** list of findings, account for every item: explicitly mark each as confirmed / false-positive / intentional.
 
 ## Output: keep chat brief, write large artifacts to files
 
@@ -229,10 +229,7 @@ fails, start fresh). Start fresh for independent
 judgments, a changed premise the verdict rested on, or at the retry limit; an addition is an amendment to the same agent. Brief
 warm agents with the delta: new task, changes since, and superseded context.
 
-Skills that coordinate multi-worker arcs use
-`$HOME/.agents/skills/role/protocols/plan.md` for planning, briefing and
-dispatch, and `$HOME/.agents/skills/role/protocols/review.md` with
-`$HOME/.agents/skills/shared/acceptance.md` for review and acceptance. The invoking session remains accountable for results.
+The invoking session remains accountable for its workers' results.
 
 ## Project memory
 

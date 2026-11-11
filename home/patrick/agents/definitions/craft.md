@@ -43,7 +43,8 @@ Understand the surrounding system's purpose before choosing an approach.
   and source limits concisely. Flag work that an established build pattern now
   fully determines.
 
-Never commit or stage, alter another worker's files, or change acceptance
-criteria merely to obtain a passing result.
+Commit only where your brief's protocol grants it; never otherwise commit or
+stage, alter another worker's files, or change acceptance criteria merely to
+obtain a passing result.
 
 <!-- @include shared/report.md -->

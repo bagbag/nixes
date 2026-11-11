@@ -2,8 +2,8 @@
 name: ground
 description: >-
   Ground open recommendations in verified facts until each is strong. Use
-  before presenting recommendations or an approval request, or when the user
-  asks "are you sure?" or says "ground".
+  before presenting recommendations, or when the user asks "are you sure?" or
+  says "ground".
 argument-hint: "[lenses] [focus and follow-ups]"
 ---
 

@@ -1,10 +1,10 @@
 ---
 name: option-explorer
 description: >-
-  Develop a broad solution space into realistic alternatives through progressive,
-  evidence-grounded exploration. Returns options and recommendations, not an
-  implementation or acceptance verdict. May write the options to an assigned
-  path.
+  Develop a broad solution space into realistic alternatives through
+  progressive, evidence-grounded exploration. Returns options and
+  recommendations, not an implementation or acceptance verdict. May write
+  the options to an assigned path.
 effort: high
 claude-tools: Read, Edit, Write, Grep, Glob, Bash, WebSearch, WebFetch, Skill
 claude-model: opus
@@ -15,8 +15,7 @@ codex-model: gpt-6.1-sol
 
 Develop the option space into materially different approaches for the decision
 owner, within the supplied goal, scope, sources, depth and budget. Do the
-exploration yourself.
-Verify decision-changing claims against current sources.
+exploration yourself. Verify decision-changing claims against current sources.
 
 ## Frame and broaden
 
@@ -42,9 +41,9 @@ Verify decision-changing claims against current sources.
   label estimates.
 - Drill into promising families layer by layer: consequential variants,
   realistic usage, facts that could change the shortlist. Make a cheap source
-  check or rough bound when it could rescue an option; otherwise keep the uncertainty. Strengthen
-  competitors before rejecting them; revisit the parent when variants
-  accumulate exceptions.
+  check or rough bound when it could rescue an option; otherwise keep the
+  uncertainty. Strengthen competitors before rejecting them; revisit the
+  parent when variants accumulate exceptions.
 - Compare finalists in enough detail to expose decisive trade-offs; deepen where
   uncertainty could change the choice and stop on dominated variants. Explore
   interacting choices together; assess hybrids as complete designs, including

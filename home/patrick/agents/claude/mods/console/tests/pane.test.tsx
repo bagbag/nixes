@@ -9,7 +9,7 @@ import { consoleText, openDialogText, protocolCallText, protocolResultText, pull
 const PANE = { plugin: 'console', component: 'Pane', requestId: 'console', props: PANE_PROPS } as const
 const BAND = {
   plugin: 'console', component: 'AbovePrompt',
-  props: { hasSurvey: false, isWorking: false, maxRows: 10, bodyColumns: 120, scroll: { offset: 0, bodyRows: 10 }, view: {} },
+  props: { hasSurvey: false, isCollapsed: false, isWorking: false, maxRows: 10, bodyColumns: 120, scroll: { offset: 0, bodyRows: 10 }, view: {} },
 } as const
 
 /** Starts the session and lets the first refresh (a timer) read the engine and the board. */
@@ -262,13 +262,13 @@ describe('pane', () => {
     await ui.press({ key: 'decide-row-question-me' })
     await ui.press({ key: 'decide-row-intake' })
     await ui.press({ key: 'actions-row-compact' })
-    await ui.press({ key: 'actions-row-push' })
     await clock.settle()
     expect(w.commands).toEqual([
       { command: 'explain', args: 'q3 Pane layout' }, { command: 'step-back', args: 'q3 Pane layout' },
       { command: 'question-me', args: '' }, { command: 'round-intake', args: '' }, { command: 'compact', args: '' },
     ])
-    expect(w.prompts).toEqual(['commit and push'])
+    expect(w.prompts).toEqual([])
+    expect(await ui.find({ key: 'actions-row-push' })).toBeUndefined()
     await ui.unmount()
   })
 

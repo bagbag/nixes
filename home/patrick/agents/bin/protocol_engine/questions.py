@@ -4,7 +4,7 @@ from __future__ import annotations
 import re
 
 from .base import (
-    CONTENT, DESCRIPTION_LIMIT, HEADER_MAX, KINDS, LEAN_CAUSES, MAY_NOT_APPLY, PRESENTATION, ProtocolError, SCHEDULING, STRENGTHS,
+    CONTENT, DESCRIPTION_LIMIT, HEADER_MAX, KINDS, LEAN_CAUSES, MAY_NOT_APPLY, PRESENTATION, ProtocolError, SCHEDULING, STAGED_KINDS, STRENGTHS,
     STRONG_CRITERIA, SUMMARY_MAX, TEXT_LIMIT, TITLE_LIMIT
 )
 from .store import next_id
@@ -150,6 +150,9 @@ def new_question(ctx: Context, raw: dict, where: str) -> dict:
          'leanBecause': None, 'strongBecause': None,
          **{k: v for k, v in raw.items() if k != 'key'},
          'status': 'draft', 'overlaps': [], 'searched': False, 'answer': None, 'round': ctx.round['id']}
+    if raw.get('kind', 'decision') in KINDS and raw.get('kind', 'decision') not in STAGED_KINDS:  # the engine asks the release approval; a ruling of the lead's is an ordinary question (r22-q168)
+        errors.append(f"{where}: `kind` must be one of {', '.join(STAGED_KINDS)}: a ruling of yours is an ordinary question with a recommendation "
+                      'and a mark, and only the release approval is confirm-own-rulings, which the engine asks')
     refuse_all(errors + question_errors(q, where, parts=PARTS))
     q['options'] = [{'label': o['label'], 'description': o.get('description', ''), 'for': o['for'].strip(), 'against': o['against'].strip(),
                      **({'example': o['example']} if 'example' in o else {})} for o in q['options']]

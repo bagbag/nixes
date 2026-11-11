@@ -13,6 +13,7 @@ from .boards import statuses
 from .engine import Context, PROTOCOLS, Protocol, Step, fail, questions
 from .told import first_time, report_hint
 from .record import refresh_board
+from .release_files import release_files_enter
 from .ask import approval_question, approval_reasons, ask_enter, ask_text
 from .release_set import (
     APPROVE, HOLD, in_set, recheck_accept, recheck_text, release_label, set_record, set_rows, start_release, stop
@@ -65,7 +66,7 @@ def approval_enter(ctx: Context) -> str | None:
              'searched': True, 'answer': None,
              'text': release_question_text(ctx),
              'title': words.approval_title(release_label(ctx))[:TITLE_MAX], 'header': words.APPROVE_HEADER,
-             'options': [{'label': APPROVE, 'description': words.APPROVE_DESCRIPTION},  # the notice prints every ruling in full (r10-q37)
+             'options': [{'label': APPROVE, 'description': words.APPROVE_DESCRIPTION if ctx.board else words.APPROVE_FILES_DESCRIPTION},  # the notice prints every ruling in full (r10-q37)
                          {'label': HOLD, 'description': words.HOLD_DESCRIPTION}],
              'recommendation': APPROVE, 'strength': None, 'strongBecause': None, 'leanBecause': None}
         r['questions'].append(q)
@@ -108,15 +109,21 @@ def anchors_of(text: str) -> set[str]:
     return found
 
 
+def owner_root(ctx: Context) -> str:
+    """Where a repo-relative owner path starts: the board's repository root, else (record files) the directory the release
+    started in."""
+    return ctx.board.repo if ctx.board else ctx.round['cwd']
+
+
 def owner_path(ctx: Context, written: str) -> Path:
-    """Repo-relative paths resolve from the board's repository root; absolute and ~ or $HOME paths as written."""
+    """Repo-relative paths resolve from the owner root; absolute and ~ or $HOME paths as written."""
     home = env().get('HOME') or str(Path.home())
     if written.startswith('$HOME/') or written == '$HOME':
         written = home + written[5:]
     elif written.startswith('~/') or written == '~':
         written = home + written[1:]
     path = Path(written)
-    return path if path.is_absolute() else Path(ctx.board.repo) / path
+    return path if path.is_absolute() else Path(owner_root(ctx)) / path
 
 
 def git_ignored(ctx: Context, shown: str) -> bool:
@@ -125,9 +132,16 @@ def git_ignored(ctx: Context, shown: str) -> bool:
     if shown.startswith(('~', '$HOME', '/')):
         return False
     try:
-        return subprocess.run(['git', 'check-ignore', '-q', '--', shown], cwd=ctx.board.repo, capture_output=True).returncode == 0
+        return subprocess.run(['git', 'check-ignore', '-q', '--', shown], cwd=owner_root(ctx), capture_output=True).returncode == 0
     except OSError:
         return False
+
+
+def record_text(ctx: Context, rid: str) -> str:
+    """The record's text: the board's description, or the record file."""
+    if ctx.board is None:
+        return Path(set_record(ctx, rid)['file']).read_text(encoding='utf-8', errors='replace')
+    return (ctx.board.json('show', rid, '--json', '--field', 'description').get(rid) or {}).get('description') or ''
 
 
 def rule_owner_text(description: str) -> str:
@@ -150,7 +164,7 @@ def memory_section(name: str) -> str:
 
 def owners_text(ctx: Context) -> str:
     return lines(
-        words.owners_intro(ctx.round['id']),
+        words.owners_intro(ctx.round['id'], ctx.board is None),
         lines(memory_section('Durable owners'), memory_section('Closure')) if first_time(ctx, 'owners') else '',
         *set_rows(ctx),
         report_hint(ctx, 'owners', words.owners_example((in_set(ctx) or ['<id>'])[0])),
@@ -194,7 +208,10 @@ def owners_accept(ctx: Context, report: dict) -> str:
                 problems.append(f'{rid}: {shown}#{anchor}: anchors name Markdown headings; name the section in words')
             elif anchor and anchor not in anchors_of(resolved.read_text(encoding='utf-8', errors='replace')):
                 problems.append(f'{rid}: {shown} has no heading or anchor #{anchor}')
-    if pending:
+    if pending and ctx.board is None:
+        problems.append('pending items need a board: ' + ', '.join(f'{item} ({", ".join(rids)})' for item, rids in pending.items())
+                        + '; write the owner now, or give none {reason}')
+    elif pending:
         try:
             found = ctx.board.json('show', *pending, '--json', '--field', 'status')
         except ProtocolError as error:
@@ -203,11 +220,12 @@ def owners_accept(ctx: Context, report: dict) -> str:
         problems += [f"{', '.join(rids)}: pending item {item} is {(found.get(item) or {}).get('status')}, not open"
                      for item, rids in pending.items() if item in found and found[item].get('status') == 'closed']
     if written:
-        texts = ctx.board.json('show', *written, '--json', '--field', 'description')
+        texts = {rid: record_text(ctx, rid) for rid in written}
         for rid, paths in written.items():
-            section = rule_owner_text((texts.get(rid) or {}).get('description') or '')
+            section = rule_owner_text(texts[rid])
             problems += [f'{rid}: its ## Rule owner does not name {shown}; fix the record text and run '
-                         f'`board record {rid} <file>`' for shown, _ in paths if shown not in section]
+                         + (f'`board record {rid} <file>`' if ctx.board else f'edit {set_record(ctx, rid)["file"]}')
+                         for shown, _ in paths if shown not in section]
     if problems:
         fail('owner writes: ' + '; '.join(problems))
     ctx.round['owners'] = owners
@@ -217,8 +235,11 @@ def owners_accept(ctx: Context, report: dict) -> str:
 
 def release_enter(ctx: Context) -> str | None:
     """Runs board release (with the answered closes), then the other supersedes. Resumable (r4-q19): statuses come
-    first, and released records, closed questions and done supersedes are not run again."""
+    first, and released records, closed questions and done supersedes are not run again. Record files: their Released block
+    is appended instead."""
     r = ctx.round
+    if ctx.board is None:
+        return release_files_enter(ctx)
     ids = [rec['id'] for rec in r['set'] if rec['state'] in ('set', 'revised', 'released')]  # a rerun keeps the released ones
     fulls = [sup['old'] for sup in r['supersedes'] if sup['partial'] is None]
     now = statuses(ctx, [*ids, *fulls, *r['closes']])
@@ -284,7 +305,7 @@ def release_closed_enter(ctx: Context) -> None:
     r = ctx.round
     r['pending'], r['batch'] = None, None
     r['closedAt'] = utcnow()
-    reasons = ctx.state.setdefault('dropReasons', {})
+    reasons = ctx.state.setdefault('dropReasons', {}) if ctx.board else {}  # the default set of record files is read from the files
     stopped = r.get('stopped') or {'reason': None, 'ids': []}
     held_back = [] if stopped.get('hold') else stopped['ids']
     for rec in r['set']:
@@ -292,7 +313,7 @@ def release_closed_enter(ctx: Context) -> None:
             reasons.pop(rec['id'], None)
         elif rec['state'] == 'dropped' or rec['id'] in held_back:
             reasons[rec['id']] = rec['reason'] if rec['state'] == 'dropped' else stopped['reason']
-    if refresh_board(ctx):
+    if ctx.board and refresh_board(ctx):
         r['countsAt'] = r['closedAt']
     ctx.log('closed', protocol='release', released=[rec['id'] for rec in r['set'] if rec['state'] == 'released'])
 
@@ -300,12 +321,12 @@ def release_closed_enter(ctx: Context) -> None:
 def release_closed_text(ctx: Context) -> str:
     r = ctx.round
     counts = ctx.state.get('counts')
-    board = words.board_line(counts if counts and r.get('countsAt') else None, True)
+    board = words.board_line(counts if counts and r.get('countsAt') else None, ctx.board is not None)
     if r['stopped'] and r['stopped'].get('hold'):
-        return words.release_closed_held(r['id'], board)
+        return words.release_closed_held(r['id'], board, ctx.board is not None)
     if r['stopped']:
-        return words.release_closed_stopped(r['id'], r['stopped']['reason'], r['stopped']['ids'], board)
-    return words.release_closed(r, board)
+        return words.release_closed_stopped(r['id'], r['stopped']['reason'], r['stopped']['ids'], board, ctx.board is not None)
+    return words.release_closed(r, board) if ctx.board else words.release_files_closed(r)
 
 
 ID_WORD = re.compile(r'^[A-Za-z][\w]*-[\w.]+$')

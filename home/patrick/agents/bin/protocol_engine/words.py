@@ -60,7 +60,7 @@ def check_title(round_id: str, cycle: str | None) -> str:
     return f"Round {round_id} · Check" + ('' if cycle is None else f' cycle {cycle}')
 
 
-CHECK_AFTER_ANSWERS = (' (after the last answer: challenge the answers and your own rulings in this round; a finding is a new question, '
+CHECK_AFTER_ANSWERS = (' (after the last answer: challenge your own rulings in this round and what the open questions take from the answers, not the strong marks of answered questions; a finding is a new question, '
                        'checked before it is asked).')
 CHECK_PLAIN = '.'
 CHECK_LAST = ' (last before the batch).'
@@ -150,7 +150,7 @@ def start_scope(ids: list[str], strong: list[str] | None, explored: list[str]) -
 
 def challenge_format() -> str:
     """challenge-rulings adds `verdicts` and `rulings` to its report: told apart from the pass format, like the options pass's."""
-    return ('Add to a challenge-rulings report `verdicts`: for each strong question in its scope, its `strongBecause` re-derived '
+    return ('Add to a challenge-rulings report `verdicts`: for each strong question the step names (answered ones after the last answer are not), its `strongBecause` re-derived '
             'this run (an update lowering it to lean or re-sending it covers it too); and `rulings`: each own ruling in this round as '
             '{"question", "ruling", "why", "alternative", "fails", "evidence", "sure": true or false}, an empty list when there is '
             'none. e.g. ' + json_block({
@@ -178,7 +178,8 @@ def options_format() -> str:
 
 VIEW_LABELS = {  # the views Collect offers, in listing order (`collect_enter`): heading, name in the counts
     'decided': ('decided, awaiting release', 'decided'), 'questions': ('open questions', 'open questions'),
-    'ratification': ('awaiting ratification', 'awaiting ratification'), 'inReview': ('in review', 'in review'),
+    'ratification': ('awaiting ratification', 'awaiting ratification'), 'toAccept': ('to accept (designs in review)', 'to accept'),
+    'toReview': ('to review (work in review)', 'to review'),
     'forUser': ('waiting on the user', 'waiting on the user'), 'readyMilestone': ('ready milestones', 'ready milestones'),
     'finishedEpic': ('finished epics (close one whose acceptance names the user)', 'finished epics'),
 }
@@ -269,7 +270,6 @@ def stage_instructions(round_id: str, selected: list[str], has_board: bool, prop
         '- `settles` lists the items '
         f'one answer settles the same way (a rule question); an open decision outside the selection named there or in `board` joins the round. {MERGE_TEST}',
         f'- `waitsOn` names the questions a decision rests on; it holds a dependent back until its premise is answered; {WAITS_FOR}',
-        '- Kind confirm-own-rulings asks the user to confirm your rulings.',
         '- Each question carries the parts the '
         'engine prints before its dialog, in your own words. Printed parts say what is decided and what each option means for the person '
         '(what they would see, what it costs), each thing once, in plain words; how it was found (sources, measurements beyond the deciding '
@@ -525,9 +525,19 @@ def abandoned_records(kept: list[str]) -> str:
 
 def board_line(counts: dict | None, has_board: bool) -> str:
     """The board's counts as last read (`counts` None: not read this run)."""
-    return (f"Board: {counts['questions']} open questions, {counts['decided']} decided awaiting release, "
-            f"{counts['toPlan']} released to plan, {counts['inReview']} in review, {counts['forUser']} waiting on the user."
-            if counts else 'No board counts.' if has_board else '')
+    if not counts:
+        return 'No board counts.' if has_board else ''
+
+    def part(key: str, label: str) -> str:
+        """One count as the board prints it (r21-q141): what can be taken now, then `(h held, k wait)` without zero parts."""
+        found = counts[key]
+        rest = [f'{n} {word}' for n, word in ((found.get('held', 0), 'held'), (found['waiting'], 'wait')) if n]
+        return f"{found['ready']} {label}" + (f" ({', '.join(rest)})" if rest else '')
+    return 'Board: ' + ', '.join(part(key, label) for key, label in BOARD_LINE_LABELS) + '.'
+
+
+BOARD_LINE_LABELS = (('questions', 'open questions'), ('decided', 'decided awaiting release'), ('toPlan', 'released to plan'),
+                     ('toReview', 'to review'), ('toAccept', 'to accept'), ('forUser', 'waiting on the user'))
 
 
 def closed_done(q: dict) -> str:
@@ -925,6 +935,7 @@ def approval_title(label: str) -> str:
 
 APPROVE_HEADER = 'Release'
 APPROVE_DESCRIPTION = 'Owner writes, then board release'
+APPROVE_FILES_DESCRIPTION = 'Owner writes stay uncommitted for you, then the Released line goes into each record file'
 HOLD_DESCRIPTION = 'Nothing releases; the records stay decided. Say why: a round takes what you held'
 
 
@@ -963,12 +974,15 @@ def release_waiting(round_id: str) -> str:
     return f"Release {round_id} · Release: waiting for a rerun (`protocol step` with {{}})."
 
 
-def owners_intro(round_id: str) -> str:
+def owners_intro(round_id: str, files: bool = False) -> str:
     return lines(
         f"Release {round_id} · Owner writes (decide.md Release 5): write each rule into its one owner, replacing the text it supersedes. "
         "A rule a topic's design-target doc or a project's convention owner (coding style, module authoring) states is written now, not pending; "
         'only READMEs, other skills and source may be pending.',
-        "Name each path, with its anchor, in the record's `## Rule owner` (rewrite the record with `board record <id> <file>`).",
+        "Name each path, with its anchor, in the record's `## Rule owner` (rewrite the record with `board record <id> <file>`)."
+        if not files else
+        "Name each path, with its anchor, in the record file's `## Rule owner`. Relative paths start at the directory the release "
+        'started in. Owner writes stay uncommitted for the user: no commit by the engine or the session. A `pending` item needs a board.',
         'Report per record its owners: written {path, anchor} (path: a repo path from the board root, or absolute/~; an installed file '
         'by its installed path), none {reason}, or pending {item} (an open board item).')
 
@@ -986,17 +1000,22 @@ def memory_heading(name: str, body: str) -> str:
     return f'## {name} (project-memory.md)' + body.rstrip()
 
 
-def release_closed_held(round_id: str, board: str) -> str:
+def kept_words(held: bool) -> str:
+    """What a release that ends unreleased leaves: a board's records stay held by the session; record files only unreleased."""
+    return 'decided and held' if held else 'decided, without a Released line'
+
+
+def release_closed_held(round_id: str, board: str, held: bool = True) -> str:
     return '\n'.join([
-        f"Release {round_id} held: nothing released; the records stay decided and held.",
+        f"Release {round_id} held: nothing released; the records stay {kept_words(held)}.",
         'Next: ask what it was held for, then a round on those records, or on the set when the reason spreads to the others '
         '(`protocol start round`; its check loop opens with step-back). A later `protocol start release` takes the rest.', board])
 
 
-def release_closed_stopped(round_id: str, reason: str, ids: list[str], board: str) -> str:
+def release_closed_stopped(round_id: str, reason: str, ids: list[str], board: str, held: bool = True) -> str:
     joined = ', '.join(ids)
     return '\n'.join([
-        f"Release {round_id} stopped: {reason}. Nothing released; {joined} stay decided and held.",
+        f"Release {round_id} stopped: {reason}. Nothing released; {joined} stay {kept_words(held)}.",
         f'Next: a round on {joined} (`protocol start round`, then classify and select them; its check loop opens '
         'with step-back).', board])
 
@@ -1018,6 +1037,27 @@ def release_closed(r: dict, board: str) -> str:
     ])
 
 
+BOARD_CHECK_SKIPPED = 'Board check skipped: record files of a --no-board round have no board.'
+RECHECK_FILES = 'Without a board the engine copies the `file` of an own change over the record file.'
+
+
+def files_not_released(failed: list[str]) -> str:
+    return ('Released block not written: ' + '; '.join(failed)
+            + '; fix that, then `protocol step` with {} writes what remains (a file that has the block stays as it is).')
+
+
+def release_files_closed(r: dict) -> str:
+    dropped = [rec for rec in r['set'] if rec['state'] == 'dropped']
+    return '\n'.join([
+        f"Release {r['id']} closed.",
+        *(f"- released {rec['id']}: {rec['title']} ({rec['file']})" + (f" (revised: {rec['change']})" if rec.get('change') else '')
+          for rec in r['set'] if rec['state'] == 'released'),
+        *(f"- dropped {rec['id']} ({rec['reason']}): it stays unreleased for a round" for rec in dropped),
+        'Owner writes stay uncommitted for the user. Next (decide.md Release 7): run `protocol next`.'
+        + (f" Dropped records go to a round: {', '.join(rec['id'] for rec in dropped)}." if dropped else '') + ' Wait for the user.',
+    ])
+
+
 def release_approved(round_id: str) -> str:
     return f"Release {round_id} is approved already."
 
@@ -1027,9 +1067,9 @@ def release_stamped(round_id: str) -> str:
             'leaves the set or is revised; otherwise a dialog asks.')
 
 
-def release_abandoned(headline_line: str, messages: list[str], round_id: str) -> str:
+def release_abandoned(headline_line: str, messages: list[str], round_id: str, held: bool = True) -> str:
     return '\n'.join([headline_line, *messages, f"Release {round_id} abandoned at its step; nothing released, "
-                      'the records stay decided and held; `protocol start release` takes them again.'])
+                      f'the records stay {kept_words(held)}; `protocol start release` takes them again.'])
 
 
 def round_abandoned(headline_line: str, messages: list[str], round_id: str, note: str) -> str:

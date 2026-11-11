@@ -2,7 +2,8 @@
 // (the agents validator regenerates and compares it), so a shape change on either side fails here.
 import { describe, expect, test } from 'claude-code/testing'
 
-import { parseRound } from '../hooks/engine'
+import { parseBoardConsole, parseRound } from '../hooks/engine'
+import { BOARD_CONSOLE_CONTRACT } from './board-console-contract'
 import { ENGINE_CONTRACT } from './engine-contract'
 
 describe('engine contract', () => {
@@ -41,4 +42,29 @@ describe('engine contract', () => {
     expect(parseRound(ENGINE_CONTRACT.parked).batch).toBeNull()
     expect(parseRound(ENGINE_CONTRACT.revised).records[1]?.reason).toBe('changed (contained, own): the rationale cited a wrong size')
   })
+})
+
+// `board console` change requests, to the spec in build-r24-r25-plan.md Front B (a stub fixture until the board's own output replaces it).
+describe('board console contract', () => {
+  test('every crs and ratifications field is read, and the counts carry toRatify', () => {
+    const board = parseBoardConsole(BOARD_CONSOLE_CONTRACT)
+    BOARD_CONSOLE_CONTRACT.crs.forEach((raw, i) => {
+      const parsed = board.crs[i] as unknown as Record<string, unknown>
+      for (const key of Object.keys(raw)) expect(Object.keys(parsed), `cr field ${key}`).toContain(key)
+      expect(parsed).toMatchObject(raw)
+    })
+    expect(board.ratifications).toEqual(BOARD_CONSOLE_CONTRACT.ratifications)
+    expect(board.counts?.toRatify).toEqual({ ready: 1, held: 0, waiting: 0 })
+  })
+
+  test('an unknown check state reads as unchecked, a missing check as nothing run', () => {
+    const board = parseBoardConsole({ crs: [{ id: 'x', check: { state: 'weird' } }, { id: 'y' }] })
+    expect(board.crs.map(one => one.check.state)).toEqual(['unchecked', 'unchecked'])
+    expect(board.crs[1]).toMatchObject({ holder: null, parent: null, children: [], items: { open: 0, closed: 0 }, reviewState: null, landBlocked: null, after: null, returned: false, setupFailed: false })
+  })
+})
+
+test('a check without a comparison reads as none ran', () => {
+  const check = parseBoardConsole({ crs: [{ id: 'x', check: { state: 'current' } }] }).crs[0]?.check
+  expect(check).toMatchObject({ newFailures: null, baseCount: null, tipCount: null })
 })

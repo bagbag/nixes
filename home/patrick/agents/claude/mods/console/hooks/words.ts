@@ -2,7 +2,7 @@
 // description, notes on tool results, compaction instructions). Lens names and focus follow
 // skills/step-back/SKILL.md and skills/ground/SKILL.md, which own them: typed name = label in
 // lowercase with hyphens.
-import type { ConsoleBoard, ConsoleItemSlot, ConsoleQuestion, ConsoleRole, ConsoleRound, ConsoleSuggestion } from '../types'
+import type { ConsoleBoard, ConsoleCount, ConsoleCr, ConsoleItemSlot, ConsoleQuestion, ConsoleReviewing, ConsoleRole, ConsoleRound, ConsoleSuggestion } from '../types'
 
 import { isRoundOpen, START_COMMAND } from './engine'
 
@@ -179,7 +179,6 @@ const someIds = (ids: readonly string[]): string => ids.slice(0, 3).join(', ') +
 
 const inSet = (round: ConsoleRound): number => round.records.filter(one => one.state === 'set' || one.state === 'revised' || one.state === 'released').length
 
-/** The step in words, with what it works on. */
 function stepWords(round: ConsoleRound): string {
   const p = round.progress
   const count = (status: string) => round.questions.filter(one => one.status === status).length
@@ -248,7 +247,6 @@ export const STALE_PASS_TEXT = "This pass is no longer pending; reply 'stale' an
 /** A pass that still has no report: the round stopped, and what the person can type. */
 export const stuckPassText = (command: string, args: string): string => `The round stopped: the /${command} pass has no report. Type /${[command, args].filter(part => part !== '').join(' ')} to run it again.`
 
-/** The console's `protocol` tool, as the model sees it. */
 export const PROTOCOL_TOOL_DESCRIPTION = [
   "Runs the protocol engine for this session's round (`protocol <args>`): one call per step, per-question updates as JSON on stdin; the output is the next step.",
   'Read: ["show","--json"], ["show"], ["show","q3"] (that question whole), ["status","--line"], ["history"], ["next"].',
@@ -329,16 +327,106 @@ export const compactedNote = (line: string): string => `<console-note>Protocol s
 export const runNoun = (round: ConsoleRound): string => round.protocol === 'release' ? 'Release' : 'Round'
 
 export const COUNT_LABELS: readonly [keyof NonNullable<ConsoleBoard['counts']>, string][] = [
-  ['questions', 'questions'], ['decided', 'decided'], ['toPlan', 'to plan'], ['inReview', 'in review'], ['forUser', 'for you'],
+  ['questions', 'questions'], ['decided', 'decided'], ['toPlan', 'to plan'], ['toReview', 'to review'], ['toAccept', 'to accept'], ['toRatify', 'to ratify'], ['forUser', 'for you'],
 ]
 
+/** `<ready>` plus ` (k wait)` when items of that step wait (r21-q141). */
+export function countText(count: ConsoleCount | undefined): string {
+  const rest = count === undefined ? [] : ([[count.held, 'held'], [count.waiting, 'wait']] as const).filter(([n]) => n > 0).map(([n, word]) => `${n} ${word}`)
+  return `${count?.ready ?? 0}${rest.length > 0 ? ` (${rest.join(', ')})` : ''}`
+}
+
+// Change requests (r25): the queue the board prints, in words. The presses put these requests in the prompt; the console never lands.
+
+const short = (sha: string): string => sha.slice(0, 7)
+
+export function crStageText(cr: ConsoleCr): string {
+  if (cr.status === 'needs_acceptance') return cr.checkpoint === 'user' ? 'to accept (design)' : 'to accept'
+  if (cr.status === 'in_review') return cr.checkpoint === null ? 'in review' : 'checkpoint review'
+  return cr.status === 'in_progress' ? 'in work' : cr.status.replace(/_/g, ' ')
+}
+
+const CHECK_WORDS: Record<ConsoleCr['check']['state'], string> = { current: 'checks current', stale: 'stale', conflict: 'conflict', failed: 'checks failed', unchecked: 'unchecked' }
+
+/** The check state as a word; null while the change request has not reached review and nothing ran (nothing to say yet). */
+export function crCheckText(cr: ConsoleCr): string | null {
+  return cr.status !== 'in_review' && cr.status !== 'needs_acceptance' && cr.check.state === 'unchecked' ? null : CHECK_WORDS[cr.check.state]
+}
+
+/** The no-new-failures comparison: `0 new (base 3012, tip 2972)`, or the new ones named (first three); null while none ran. */
+export function crFailuresText(cr: ConsoleCr): string | null {
+  const { newFailures, baseCount, tipCount } = cr.check
+  if (newFailures === null) return null
+  const counts = baseCount === null || tipCount === null ? '' : ` (base ${baseCount}, tip ${tipCount})`
+  if (newFailures.length === 0) return `0 new${counts}`
+  const named = newFailures.slice(0, 3).join(', ')
+  return `${newFailures.length} new: ${named}${newFailures.length > 3 ? ', …' : ''}${counts}`
+}
+
+/** What holds the request up besides its check, each with its colour: setup failed, review stale (waiting for its Accept), land blocked (paths, first three), returned, lands with its base. */
+export function crMarks(cr: ConsoleCr): { text: string; isProblem: boolean }[] {
+  const blocked = cr.landBlocked ?? []
+  return [
+    ...(cr.setupFailed ? [{ text: 'setup failed', isProblem: true }] : []),
+    ...(isCrAccepting(cr) && cr.reviewState === 'stale' ? [{ text: 'review stale', isProblem: true }] : []),
+    ...(blocked.length > 0 ? [{ text: `land blocked: ${blocked.slice(0, 3).join(', ')}${blocked.length > 3 ? ', …' : ''}`, isProblem: true }] : []),
+    ...(cr.returned ? [{ text: 'returned', isProblem: false }] : []),
+    ...(cr.after !== null ? [{ text: `lands with ${cr.after}`, isProblem: false }] : []),
+  ]
+}
+
+/** `look · view` as the board holds them; null when neither is set. */
+export const crLookText = (cr: ConsoleCr): string | null => cr.look === null && cr.view === null ? null : [cr.look === null ? null : `look ${cr.look}`, cr.view].filter(part => part !== null).join(' · ')
+
+/** The stack as rows: the queue's order, each child directly under its parent; a child whose parent is not queued stands at the top. */
+export function crRows(crs: readonly ConsoleCr[]): { cr: ConsoleCr; depth: number }[] {
+  const ids = new Set(crs.map(one => one.id))
+  const rows: { cr: ConsoleCr; depth: number }[] = []
+  const seen = new Set<string>()
+  const add = (cr: ConsoleCr, depth: number) => {
+    if (seen.has(cr.id)) return
+    seen.add(cr.id)
+    rows.push({ cr, depth })
+    for (const child of crs.filter(one => one.parent === cr.id)) add(child, depth + 1)
+  }
+  for (const cr of crs.filter(one => one.parent === null || !ids.has(one.parent))) add(cr, 0)
+  for (const cr of crs) add(cr, 0)  // a parent cycle would otherwise hide its members
+  return rows
+}
+
+/** Whether the person can look at, accept or return it: the board waits for them. */
+export const isCrAccepting = (cr: ConsoleCr): boolean => cr.status === 'needs_acceptance'
+
+/** Refreshing is review work: offered only on the request the board marks as refresh work, in a session that pulls reviews. */
+export const canRefreshCr = (cr: ConsoleCr, pulls: readonly string[]): boolean => cr.refreshWork && pulls.includes('review')
+
+/** The tip a request names: the one in the review tree for this request when it is open, else the board's current tip. */
+export const crTipFor = (cr: ConsoleCr, reviewing: ConsoleReviewing | null): string | null => reviewing?.cr === cr.id ? reviewing.tip : cr.tip
+
+/** The Accept request for the lead (decide.md Accept), naming the tip it was looked at in so a moved branch is refused. */
+export function acceptText(cr: ConsoleCr, tip: string): string {
+  return cr.checkpoint === 'user'
+    ? `Accept the design of ${cr.id} (${cr.title}) at ${short(tip)}: planning continues in the same request, nothing lands.`
+    : `Accept ${cr.id} (${cr.title}) at ${short(tip)}: land it.`
+}
+export const returnText = (cr: ConsoleCr): string => `Return ${cr.id} (${cr.title}): `
+export const walkText = (cr: ConsoleCr): string => `Walk me through ${cr.id}'s result (${cr.title}).`
+export const refreshText = (cr: ConsoleCr): string => `Refresh ${cr.id} under the review protocol's Refresh.`
+
+/** One change request as a text line: state only, since a text reader presses nothing. */
+export function crLine(cr: ConsoleCr, depth: number, reviewing: ConsoleReviewing | null): string {
+  const tree = reviewing?.cr === cr.id ? (reviewing.tip === cr.tip ? 'in review tree' : 'review tree behind') : null
+  const parts = [crStageText(cr), crCheckText(cr), crFailuresText(cr), crLookText(cr), tree, cr.holder === null ? null : `held by ${cr.holder}`].filter(part => part !== null)
+  return `${'  '.repeat(depth + 1)}${cr.id}  ${cr.title} · ${parts.join(' · ')}`
+}
+
 /** `/console` as text: what the pane shows, for a bridge client or a narrow terminal. */
-export function consoleText(role: ConsoleRole, board: ConsoleBoard | null, round: ConsoleRound | null, isRoundRole: boolean, offered: readonly ConsoleSuggestion[]): string {
+export function consoleText(role: ConsoleRole, board: ConsoleBoard | null, round: ConsoleRound | null, isRoundRole: boolean, offered: readonly ConsoleSuggestion[], reviewing: ConsoleReviewing | null = null): string {
   const lines: string[] = [`Board · ${role.role} ${role.actor}`]
   if (board === null) {
     lines.push('  board views not read yet')
   } else {
-    if (board.counts !== null) lines.push('  ' + COUNT_LABELS.map(([key, label]) => `${label} ${board.counts?.[key] ?? 0}`).join(' · '))
+    if (board.counts !== null) lines.push('  ' + COUNT_LABELS.map(([key, label]) => `${label} ${countText(board.counts?.[key])}`).join(' · '))
     if (board.sync !== null) lines.push(`  ${board.sync}`)
     if (board.queues !== null) lines.push(`  ${board.queues}`)
     for (const item of board.items) lines.push(`  ${item.id}  ${item.status}  ${item.title}`)
@@ -350,6 +438,14 @@ export function consoleText(role: ConsoleRole, board: ConsoleBoard | null, round
     const holds = staleHolds(board, stale)
     if (holds.length > 0) lines.push(`  stale holds: ${holds.map(one => `${one.id} (${one.actor})`).join(', ')}`)
     if (board.error !== null) lines.push(`  board error: ${board.error}`)
+    if (board.crs.length > 0) {
+      lines.push('', 'Change requests')
+      for (const { cr, depth } of crRows(board.crs)) lines.push(crLine(cr, depth, reviewing))
+    }
+    if (board.ratifications.length > 0) {
+      lines.push('', 'To ratify')
+      for (const one of board.ratifications) lines.push(`  ${one.id}  ${one.title} · landed in ${one.cr}`)
+    }
   }
   const proposed = isRoundRole ? offered.flatMap(one => one.kind === 'round' ? [one] : []) : []
   if (proposed.length > 0) {

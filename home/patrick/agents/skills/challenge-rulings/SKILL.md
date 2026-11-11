@@ -9,19 +9,24 @@ argument-hint: "[focus and follow-ups]"
 
 # Challenge rulings
 
-1. **Inventory.** List your own rulings (the kinds Walk through discloses in `$HOME/.agents/skills/shared/asking.md`), each
-   choice you left to another role, each strong recommendation, and each
-   released ruling a recommendation rests on or Related linked
+1. **Inventory.** List your own rulings (the kinds Walk through discloses in
+   `$HOME/.agents/skills/shared/asking.md`), each choice you left to another
+   role, each strong recommendation, and each released ruling a
+   recommendation rests on or the round's Related step linked
    (`priorRulings`).
    Output: the list.
 2. **Own rulings and left choices.** Check that each is entailed (Decision
    authority in `$HOME/.agents/skills/shared/decision-protocol.md`); name its
    strongest alternative and its footguns. Make each that is not, or that you
-   are unsure of, a question with its alternatives.
+   are unsure of, a question with its alternatives; in a round, every one that
+   is not trivial.
    Output: per item, the test its alternative fails, or the question.
 3. **Strong recommendations.** Check each against the same protocol's
    Recommendation strength and its evidence; make it a lean where a criterion
-   fails. For each decisive reason, say why it decides the choice.
+   fails. For each decisive reason, say why it decides the choice. An answered
+   question's recommendation stays as advised; after answers, check instead
+   what open questions and your rulings take from them, and reopen only where
+   an answer breaks one of your rulings.
    Output: per recommendation, kept strong with its evidence re-derived this
    run, or made a lean.
 4. **Released rulings.** Say why each holds on its merits, or why it fails.

@@ -5,25 +5,19 @@
   ...
 }:
 let
-  # Out-of-store symlinks point at the live working tree, so edits (by hand,
-  # /remember, or skill-creator) apply immediately without a rebuild.
+  # bin/, hooks, the console mod, AGENTS.md and the skills link from the store-built artifacts, so they go
+  # live together in one tested generation (nh darwin switch), Codex's hooks.json with them. settings.json
+  # and the statusline script stay out of store.
   flakeRoot = if pkgs.stdenv.hostPlatform.isDarwin then "/etc/nix-darwin" else "/etc/nixos";
   claudeSrc = "${flakeRoot}/home/patrick/claude";
-  codexSrc = "${flakeRoot}/home/patrick/codex";
-  agentsSrc = "${flakeRoot}/home/patrick/agents";
   agentPackage = pkgs.callPackage ./agents-package.nix { };
   agentArtifacts = agentPackage.artifacts;
 
-  # Out-of-store links for files named in the package, which the bundle ships too.
-  outOfStoreLinks =
-    target: source: names:
+  # One store link per file named in the package, from the artifacts subfolder `from`.
+  storeLinks =
+    target: from: names:
     lib.listToAttrs (
-      map (
-        name:
-        lib.nameValuePair "${target}/${name}" {
-          source = config.lib.file.mkOutOfStoreSymlink "${source}/${name}";
-        }
-      ) names
+      map (name: lib.nameValuePair "${target}/${name}" { source = "${agentArtifacts}/${from}/${name}"; }) names
     );
 in
 {
@@ -35,19 +29,22 @@ in
       # Codex and Claude Code, and the protocol engine the console mod and Codex
       # compact-reorient call.
       home.file =
-        outOfStoreLinks ".claude/hooks" "${claudeSrc}/hooks" agentPackage.claudeOwnHooks
-        // outOfStoreLinks ".claude/hooks" "${agentsSrc}/hooks" agentPackage.claudeHooks
-        // outOfStoreLinks ".codex/hooks" "${agentsSrc}/hooks" agentPackage.codexHooks
-        // outOfStoreLinks ".agents/bin" "${agentsSrc}/bin" agentPackage.tools;
+        storeLinks ".claude/hooks" "hooks/claude" (agentPackage.claudeHooks ++ agentPackage.claudeOwnHooks)
+        // storeLinks ".codex/hooks" "hooks/codex" agentPackage.codexHooks
+        // storeLinks ".agents/bin" "bin" agentPackage.tools;
     }
   ];
 
-  home.file.".claude/CLAUDE.md".source = config.lib.file.mkOutOfStoreSymlink "${agentsSrc}/AGENTS.md";
+  # The same python3 with pyyaml the build runs the suite on, so `python3 bin/test-...` works in any session.
+  home.packages = [ (lib.hiPrio agentPackage.python) ];
+
+  home.file.".claude/CLAUDE.md".source = "${agentArtifacts}/AGENTS.md";
 
   # Codex and Claude Code deliberately use different filenames for their
-  # global guidance. Both links point at the shared AGENTS.md source.
-  home.file.".codex/AGENTS.md".source = config.lib.file.mkOutOfStoreSymlink "${agentsSrc}/AGENTS.md";
-  home.file.".codex/hooks.json".source = config.lib.file.mkOutOfStoreSymlink "${codexSrc}/hooks.json";
+  # global guidance. Both links point at the shared AGENTS.md.
+  home.file.".codex/AGENTS.md".source = "${agentArtifacts}/AGENTS.md";
+  # Hook wiring ships with the hook scripts it calls, so both change in the same switch.
+  home.file.".codex/hooks.json".source = "${agentArtifacts}/codex-hooks.json";
   home.file.".codex/agents".source = "${agentArtifacts}/codex";
 
   # settings.json is written by Claude Code itself (atomic write: temp file
@@ -73,10 +70,9 @@ in
   home.file.".claude/statusline-command.sh".source =
     config.lib.file.mkOutOfStoreSymlink "${claudeSrc}/statusline-command.sh";
 
-  # Console mod, loaded through CLAUDE_CODE_PLUGIN_DIRS; out of store so edits hot-reload and Claude can lay its
-  # API types into .claude-plugin/types/ (Git-ignored).
-  home.file.".claude/mods/console".source =
-    config.lib.file.mkOutOfStoreSymlink "${agentsSrc}/claude/mods/console";
+  # Console mod, loaded through CLAUDE_CODE_PLUGIN_DIRS. The store folder is read-only (probed: a session
+  # loads it fine); develop it with `claude --plugin-dir` on the repo folder.
+  home.file.".claude/mods/console".source = "${agentArtifacts}/mods/console";
 
   # Skills are rendered from the shared source tree so included instructions
   # remain single-sourced while each deployed SKILL.md is self-contained.
@@ -87,6 +83,4 @@ in
   home.file.".agents/skills".source = "${agentArtifacts}/skills";
 
   home.file.".claude/agents".source = "${agentArtifacts}/claude";
-
-  home.file.".claude/commands".source = config.lib.file.mkOutOfStoreSymlink "${claudeSrc}/commands";
 }

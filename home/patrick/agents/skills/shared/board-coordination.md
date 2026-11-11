@@ -1,14 +1,18 @@
 ## Board coordination (beads)
 
-Deciding and planning sessions: epics, milestones, recorded rulings and
-deferrals. The board model is [Board core](../shared/board-core.md)
+Deciding and planning sessions: epics, change requests in the queue,
+milestones, recorded rulings and deferrals. The board model is
+[Board core](../shared/board-core.md)
 (`$HOME/.agents/skills/shared/board-core.md`).
 
 ### Epics
 
 - Root a project's board at a goal epic with finite outcome epics below it.
-  Nest deeper only for independently closable sub-outcomes. Place an item
-  under the outcome it contributes to; loose items sit under the goal epic.
+  Nest deeper only for independently closable sub-outcomes. Place a
+  [change request](../shared/change-requests.md#change-requests) under the outcome
+  (topic epic) it contributes to and its work items under the CR; loose CRs
+  sit under the goal epic. An epic is a topic, never claimed; a CR without a
+  parent epic is fine.
   Topics are labels (`topic:<topic-slug>`). `board bd create --graph` copies
   no labels from the parent: give each node its `topic:` label.
 - Title: the outcome. Description: two to four sentences on what will be true,
@@ -34,15 +38,31 @@ deferrals. The board model is [Board core](../shared/board-core.md)
   milestone by the last release step as well.
 - When release checks must run on the finished scope, members block a
   `<release> scope` milestone instead, and it blocks the first checks.
-- A member epic brings all its descendants; file work that ships later under
-  another outcome.
-- Membership orders work and never cuts it: P0 items first, then milestone
-  work, then the rest, each by priority.
+- A member epic or CR brings all its descendants (epic, CR, item); file work
+  that ships later under another outcome.
+- Membership orders work and never cuts it. `board claim` order: P0 items,
+  then planning of released rulings, then milestone work, then reviewing
+  (CR reviews and refresh work), ratifying and accepting, then the rest. Within
+  each, priority, then kind (plan, review, ratify, accept, design, question,
+  implement). An item counts
+  at the highest priority of the open work waiting on it.
 - Place each new item: a member when the goal owner's criterion covers it.
   Move work in or out by adding or removing its edge.
 - When the milestone turns ready, a deciding session walks the user through
   it, closes it on acceptance and reconciles the goal owner under
   project-memory.
+
+### Change-request queue
+
+- **Accept queue:** CRs in `needs_acceptance`: parents before the CRs stacked
+  on them, then priority, then age (stacks:
+  [Change requests](../shared/change-requests.md#change-requests)).
+- **Check state** (`board queue`, `board health`, console): every live CR's
+  check against the current refs.
+- **Refresh work:** the first CR of the accept queue that waits on no other CR
+  and whose check or review is not `current` is claimable by `review` pulls as
+  kind `refresh` (the CR keeps its status); that CR only. Protocol: review.md
+  [Refresh](../role/protocols/review.md#refresh).
 
 ### Rulings
 

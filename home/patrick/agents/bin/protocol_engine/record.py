@@ -7,7 +7,7 @@ from pathlib import Path
 
 from .base import AWAY, ProtocolError, REVISES, lines, utcnow
 from . import words
-from .boards import COUNT_KEYS, held_decided, split_holds, statuses
+from .boards import held_decided, read_counts, split_holds, statuses
 from .engine import Context, by_id, fail, questions
 from .questions import board_keys
 from .told import report_hint
@@ -359,12 +359,13 @@ def refresh_board(ctx: Context) -> bool:
     not lose the board writes this call made."""
     try:
         found = ctx.board.json('health', '--json', '--items', 'decided')
+        counts, held = read_counts(found), held_decided(ctx.board, found)
     except ProtocolError as error:
         ctx.messages.append(words.counts_unavailable(error))
         return False
-    ctx.state['counts'] = {key: (found.get('counts') or {}).get(key, 0) for key in COUNT_KEYS}
+    ctx.state['counts'] = counts
     dropped = ctx.state.get('dropReasons') or {}
-    ctx.state['releasable'] = sum(1 for rid in held_decided(ctx.board, found) if rid not in dropped)
+    ctx.state['releasable'] = sum(1 for rid in held if rid not in dropped)
     return True
 
 

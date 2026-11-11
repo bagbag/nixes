@@ -5,16 +5,19 @@ import copy
 
 from .base import ProtocolError, lines
 from . import words
-from .boards import statuses
+from .boards import statuses, view_rows
 from .engine import Context, fail
 from .questions import disclosure_error
 from .told import report_hint
 from .release_set import HIT_CLASSES, SCOPED_PASSES, apply_changes, drop, in_set, scoped_records, set_rows, stop
 
 
-def board_check_enter(ctx: Context) -> None:
+def board_check_enter(ctx: Context) -> str | None:
     """The revisions the set's records name without a link (`board check --json`: a question missed them), read once on
-    entering the step and listed in its text."""
+    entering the step and listed in its text. Record files have no board: the step is skipped, said in one line."""
+    if ctx.board is None:
+        ctx.messages.append(words.BOARD_CHECK_SKIPPED)
+        return 'own-rulings'
     found = []
     try:
         rows = ctx.board.json('check', '--json')
@@ -23,6 +26,7 @@ def board_check_enter(ctx: Context) -> None:
     except ProtocolError as error:
         ctx.messages.append(words.unlinked_unavailable(error))
     ctx.round['unlinked'] = found
+    return None
 
 
 def board_check_text(ctx: Context) -> str:
@@ -144,7 +148,7 @@ def board_check_accept(ctx: Context, report: dict) -> str:
     # board release refuses a record waiting on an unsettled item outside the set: it leaves the set now, while the
     # report can still change, not after the approval (a blocker dropped here can drop its dependents in turn).
     blocked = {item['id']: item.get('blockedBy') or []
-               for item in (ctx.board.json('health', '--json', '--items', 'decided').get('items') or {}).get('decided') or []}
+               for item in view_rows(ctx.board.json('health', '--json', '--items', 'decided'), 'decided')}
     while True:
         waiting = {rid: [b for b in blocked.get(rid, []) if b not in in_set(ctx)] for rid in in_set(ctx)}
         waiting = {rid: blockers for rid, blockers in waiting.items() if blockers}

@@ -2,8 +2,8 @@
 name: step-back
 description: >-
   Rethink the direction from scratch: the cleanest end state, then gaps,
-  over-engineering and magic in the whole. Use before presenting a plan,
-  design or approval request, or when the user says "step back".
+  over-engineering and magic in the whole. Use before presenting a plan
+  or design, or when the user says "step back".
 argument-hint: "[lenses] [focus and follow-ups]"
 ---
 

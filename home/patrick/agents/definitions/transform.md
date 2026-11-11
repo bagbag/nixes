@@ -28,7 +28,7 @@ Apply a fully specified change faithfully; the brief makes every design choice.
 - Return changes, skipped instances, unresolved questions, and verification
   concisely.
 
-Never commit or stage, alter another worker's files, or broaden the specified
-transformation.
+Commit only where your brief's protocol grants it; never otherwise commit or
+stage, alter another worker's files, or broaden the specified transformation.
 
 <!-- @include shared/report.md -->

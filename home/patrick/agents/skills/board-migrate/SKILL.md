@@ -2,8 +2,9 @@
 name: board-migrate
 description: >-
   Move a project's TODO/REVIEW files, trackers or older board onto the
-  current board.
-argument-hint: "[project or arc]"
+  current board (mode tracker), or bring a board to the current model (mode
+  upgrade).
+argument-hint: "[tracker|upgrade] [project or arc]"
 disable-model-invocation: true
 ---
 
@@ -11,6 +12,17 @@ disable-model-invocation: true
 
 Migrate the project or arc the user names; derive the work from the gap
 between what exists and the target.
+
+## Modes
+
+Take the mode from the argument; ask when the project has both trackers and an
+older board.
+
+- **tracker:** trackers, backlog files or an older board onto the current
+  board: Target, Invariants, Steps, Stop, Exit and Tool facts below.
+- **upgrade:** a current-format board onto the current model:
+  [Upgrade mode](#upgrade-mode). A one-time switch-over lives only here, not in
+  protocols or other skills.
 
 ## Target
 
@@ -31,8 +43,9 @@ between what exists and the target.
   and status go to comments.
 - **History is immutable.** Leave closed board items as written: text,
   prefixes, holders and epics. Change live items only (every status except
-  closed); fix wrong edges touching a live item, on either end. Write a rule still in force that lives only in a closed
-  record into its owner and link the record; never edit it. Add missing
+  closed); fix wrong edges touching a live item, on either end. Write a rule
+  still in force that lives only in a closed record into its owner and link the
+  record; never edit it. Add missing
   `supersedes` edges on closed rulings when a release check meets them, not
   as a sweep.
 - **Triage before migrating.** Close a live item whose outcome is moot
@@ -47,8 +60,8 @@ between what exists and the target.
 - **Rules have a user source.** Trace every standing rule and constraint to a
   user source (goal, instructions, decision record). Route findings to the
   deciding session uninvestigated: a released record whose rules lack a user
-  source or exceed it stays released, with a non-blocking question "Ratify or revise the flagged rules of <id>?"
-  naming the finding. Ask the user only migration-scope choices.
+  source or exceed it stays released, with a non-blocking question
+  "Ratify or revise the flagged rules of <id>?" naming the finding. Ask the user only migration-scope choices.
 - **One owner.** Write each rule into its owner under project-memory
   [Durable owners](../shared/project-memory.md#durable-owners); the board
   keeps the decision record. Epic text holds no rules, status or history.
@@ -136,6 +149,44 @@ The target holds every live entry, history holds the rest, counts reconcile,
 replaced trackers sit in `history/`, and sessions are told to enter with
 `/role`.
 
+## Upgrade mode
+
+Per project (model:
+[Change requests](../shared/change-requests.md#change-requests)); every git
+step goes in a change set and runs on the user's confirmation.
+
+1. **Inspect.** `board check --all`, `board holders`, items in review, dirty
+   main-tree paths. A project whose tests share one database (tstdl) needs the
+   per-checkout test database landed first.
+   Output: holds by holder, in-review items, dirty path count.
+2. **Drain.** The user stops starting pull sessions; holds and agent reviews
+   of in-review tasks finish (`board mine` per session); after the board
+   switched, such a review closes as a standalone review (review.md step 7).
+   Stop no holder: half-done work must not enter the start. Designs waiting for the user's
+   accept stay; step 5 wraps them. Holds left from before the board switched
+   (no drain first) cannot hand over: their edits stay in the main tree for
+   the start, their holders `board unclaim` them, and planning cuts them into
+   CRs with the rest.
+   Output: `no holds`, or the holders still working.
+3. **Start.** The user finishes and commits the main tree; that commit is the
+   start (no baseline CR). Requests land under the no-new-failures rule, so a
+   red project needs no green first.
+   Output: the start commit.
+4. **Settings.** Add the project's setup and check scripts under
+   [Change requests](../shared/change-requests.md#change-requests) Settings
+   (vitrass keeps full commands), then
+   `board setup --target … --setup … --checks … --look … --view …` (tstdl:
+   before, code; marchin: after, result; others ask). Grant the runtimes the worktree folder `<main>-worktrees`: Codex
+   `sandbox_workspace_write.writable_roots`, Claude `additionalDirectories`.
+   Output: the settings as stored.
+5. **Reconcile.** Wrap each design still waiting for the user's accept in a
+   CR under its topic: the design its child, `checkpoint` `user`, status
+   `needs_acceptance`. `board check --all` clean but for user-accepted
+   deviations; one `board claim` of a CR works end to end. Open items stay
+   ungrouped: the plan protocol groups them into CRs when they become due. Tell the user
+   pulls may start.
+   Output: check result.
+
 ## Tool facts (bd 1.3.1)
 
 - Comments are permanent (no edit or delete). Read them as JSON with
@@ -145,8 +196,8 @@ replaced trackers sit in `history/`, and sessions are told to enter with
   otherwise choose other ids. On retry, import only missing entries.
 - Import skips a dependency whose target is missing and still succeeds:
   resolve every `Skipped dependency` it reports.
-- Import file uses the `board bd export` schema (`board bd import --help`); an omitted
-  `priority` means P0; labels are not inherited from epics; set
+- Import file uses the `board bd export` schema (`board bd import --help`); an
+  omitted `priority` means P0; labels are not inherited from epics; set
   `external_ref` to the old id and `source_system` to the source file; add
   `parent-child` dependencies explicitly.
 - Temporary environment facts import as memory rows

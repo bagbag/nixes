@@ -1,6 +1,7 @@
 # The agent config's build, shared by this machine's home-manager (agents.nix) and the bundle for
 # people without this nix config (modules/flake-parts/agent-setup.nix, agents/setup/).
 {
+  lib,
   runCommand,
   ps,
   git,
@@ -10,6 +11,30 @@
 }:
 let
   src = ./agents;
+  claudeSrc = ./claude;
+  # The build's input: test-only files leave it, so editing them rebuilds nothing. The core check lives in
+  # test-agent-configs.py, so that file stays.
+  buildSrc = lib.fileset.toSource {
+    root = ./agents;
+    fileset = lib.fileset.difference ./agents (
+      lib.fileset.unions [
+        ./agents/bin/fixtures
+        ./agents/bin/test-shared-board.py
+        ./agents/claude/mods/console/tests
+      ]
+    );
+  };
+  testInputs = [
+    # The build sandbox refuses the setuid /bin/ps; the registry liveness tests need a ps.
+    ps
+    # The protocol owner-path tests run git init and git check-ignore.
+    git
+    jq
+    python
+  ];
+
+  # The python every agents/bin script and test runs on: the build's, and the user's profile via agents.nix.
+  python = python3.withPackages (p: [ p.pyyaml ]);
 
   # Hook scripts under agents/hooks, per tool, and Claude's own under claude/hooks.
   claudeHooks = [
@@ -42,32 +67,47 @@ let
     "round-report"
   ];
 
+  # The full validator (behavior of board, protocol engine and hooks): `nix flake check`, or the dev-time gate
+  # before staging; the switch builds artifacts only.
+  checks = runCommand "agent-checks" { nativeBuildInputs = testInputs; } ''
+    python3 ${src}/bin/test-agent-configs.py ${src}
+    touch "$out"
+  '';
+
   artifacts =
     runCommand "agent-artifacts"
       {
-        nativeBuildInputs = [
-          # The build sandbox refuses the setuid /bin/ps; the registry liveness tests need a ps.
-          ps
-          # The protocol owner-path tests run git init and git check-ignore.
-          git
-          jq
-          (python3.withPackages (p: [ p.pyyaml ]))
-        ];
+        nativeBuildInputs = testInputs;
       }
       ''
-        python3 ${src}/bin/test-agent-configs.py ${src}
+        # What the build produces: skills, definitions, generators and rendered sizes.
+        python3 ${buildSrc}/bin/test-agent-configs.py ${buildSrc} --group core
         mkdir -p "$out/claude" "$out/codex" "$out/skills"
-        python3 ${src}/bin/generate-agent-configs.py \
-          --source ${src}/definitions \
+        python3 ${buildSrc}/bin/generate-agent-configs.py \
+          --source ${buildSrc}/definitions \
           --target claude \
           --output "$out/claude"
-        python3 ${src}/bin/generate-agent-configs.py \
-          --source ${src}/definitions \
+        python3 ${buildSrc}/bin/generate-agent-configs.py \
+          --source ${buildSrc}/definitions \
           --target codex \
           --output "$out/codex"
-        python3 ${src}/bin/expand-skills.py \
-          --source ${src}/skills \
+        python3 ${buildSrc}/bin/expand-skills.py \
+          --source ${buildSrc}/skills \
           --output "$out/skills"
+
+        # What agents.nix links into the home, built from the tree the suite just passed.
+        mkdir -p "$out/bin" "$out/hooks/claude" "$out/hooks/codex" "$out/mods"
+        for f in ${toString tools}; do cp -r ${buildSrc}/bin/"$f" "$out/bin/"; done
+        for f in ${toString claudeHooks}; do cp ${buildSrc}/hooks/"$f" "$out/hooks/claude/"; done
+        for f in ${toString claudeOwnHooks}; do cp ${claudeSrc}/hooks/"$f" "$out/hooks/claude/"; done
+        for f in ${toString codexHooks}; do cp ${buildSrc}/hooks/"$f" "$out/hooks/codex/"; done
+        cp ${buildSrc}/AGENTS.md "$out/AGENTS.md"
+        cp ${./codex/hooks.json} "$out/codex-hooks.json"
+        cp -r ${buildSrc}/claude/mods/console "$out/mods/console"
+        # Not part of an installed mod: tests, and the API types Claude lays into the working tree.
+        chmod -R u+w "$out/mods" "$out/bin"
+        rm -rf "$out/mods/console/tests" "$out/mods/console/.claude-plugin/types"
+        find "$out/bin" -name __pycache__ -prune -exec rm -rf {} +
       '';
 
   # A tarball, since artifacts already ran the validator: a failing tree builds no bundle.
@@ -81,21 +121,19 @@ let
     jq '{hooks}' ${./claude/settings.json} > "$name/settings/claude-hooks.json"
     jq '{hooks}' ${./codex/hooks.json} > "$name/settings/codex-hooks.json"
 
-    cp ${src}/AGENTS.md "$files/.claude/CLAUDE.md"
-    cp ${src}/AGENTS.md "$files/.codex/AGENTS.md"
+    cp ${artifacts}/AGENTS.md "$files/.claude/CLAUDE.md"
+    cp ${artifacts}/AGENTS.md "$files/.codex/AGENTS.md"
     cp -r ${artifacts}/skills "$files/.claude/skills"
     cp -r ${artifacts}/skills "$files/.agents/skills"
     cp -r ${artifacts}/claude "$files/.claude/agents"
     cp -r ${artifacts}/codex "$files/.codex/agents"
-    for f in ${toString claudeHooks}; do cp ${src}/hooks/"$f" "$files/.claude/hooks/"; done
-    for f in ${toString claudeOwnHooks}; do cp ${./claude/hooks}/"$f" "$files/.claude/hooks/"; done
-    for f in ${toString codexHooks}; do cp ${src}/hooks/"$f" "$files/.codex/hooks/"; done
-    for f in ${toString tools}; do cp -r ${src}/bin/"$f" "$files/.agents/bin/"; done
-    cp -r ${src}/claude/mods/console "$files/.claude/mods/console"
+    cp ${artifacts}/hooks/claude/* "$files/.claude/hooks/"
+    cp ${artifacts}/hooks/codex/* "$files/.codex/hooks/"
+    cp -r ${artifacts}/bin/* "$files/.agents/bin/"
+    cp -r ${artifacts}/mods/console "$files/.claude/mods/console"
 
     # Store copies are read-only, which would stick to the installed files.
     chmod -R u+w "$name"
-    rm -rf "$files/.claude/mods/console/tests" "$files/.claude/mods/console/.claude-plugin/types"
 
     mkdir -p "$out"
     tar --sort=name --mtime=@0 --owner=0 --group=0 --numeric-owner -czf "$out/$name.tar.gz" "$name"
@@ -103,7 +141,9 @@ let
 in
 {
   inherit
+    python
     artifacts
+    checks
     setup
     claudeHooks
     claudeOwnHooks

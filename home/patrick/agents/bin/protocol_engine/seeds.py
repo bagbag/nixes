@@ -5,7 +5,7 @@ import re
 
 from .base import PROPOSAL_ROUNDS, ProtocolError, SEEDS, SUMMARY_MAX, TEXT_LIMIT, TITLE_LIMIT, lines
 from . import words
-from .boards import foreign_holds
+from .boards import foreign_holds, view_rows
 from .engine import Context, fail
 from .questions import refuse_all
 from .collect import dependency_order, items_text, open_items, priority_of, read_open
@@ -16,12 +16,12 @@ from .collect import dependency_order, items_text, open_items, priority_of, read
 def seeds(ctx: Context, found: dict, position: dict) -> list[dict]:
     """The top open decision questions to start a round from: unblocked, not held by another live session; members of
     an open milestone first, then priority, then the work they hold (`board position`), prerequisites first as in Select."""
-    items = (found.get('items') or {}).get('questions') or []
+    items = view_rows(found, 'questions')
     live, _ = foreign_holds(ctx, items, position)
     member = {}
     for milestone in found.get('milestones') or []:
         scoped = ctx.board.json('health', '--json', '--root', milestone['id'], '--items', 'questions')
-        for item in (scoped.get('items') or {}).get('questions') or []:
+        for item in view_rows(scoped, 'questions'):
             member.setdefault(item['id'], milestone['id'])
     holds = {item['id']: item for item in position.get('questionsHoldingWork') or []}
     pool = [{'key': item['id'], 'id': item['id'], 'title': item.get('title', ''), 'priority': item.get('priority'),
