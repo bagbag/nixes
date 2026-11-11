@@ -8,7 +8,7 @@ import type { ConsoleBoard, ConsoleCr, ConsoleQuestion, ConsoleRecord, ConsoleRo
 import { pressAcceptCr, pressContinue, pressOpenCr, pressOpenItem, pressOpenOverlaps, pressOpenSettles, pressOpenSuggestion, pressRefreshCr, pressReturnCr, pressRole, pressRun, pressStart, pressView, pressWorkers } from './core'
 import { isRoundOpen, RELEASE_COMMAND, ROUND_ROLES } from './engine'
 import { getBoard, getExpanded, getLenses, getOpened, getPass, getPlaced, getReviewing, getRole, getRound, getRoundError, getTurnRunning, toggleExpanded, updateLenses } from './state'
-import { answerText, canRefreshCr, COUNT_GROUPS, countText, crCheckText, crDetailsText, crFailureParts, crFileHref, crMarks, crNewCountText, crRows, crStageText, isCrAccepting, isWalkCr, GROUND, GROUND_BASE, lensArgs, LENS_SETS, plural, pullsText, recommendationMark, recommendationText, roleText, roundWords, runNoun, staleHolds, staleSessions, startHint, STEP_BACK_BASE, suggestionText, WHAT, WHERE } from './words'
+import { answerText, canRefreshCr, COUNT_GROUPS, countText, crCheckText, crDetailsText, crFailureParts, crFileHref, crMarks, crNewCountText, crRows, crRowStageText, isCrAccepting, isWalkCr, GROUND, GROUND_BASE, lensArgs, LENS_SETS, plural, pullsText, recommendationMark, recommendationText, roleText, roundWords, runNoun, staleHolds, staleSessions, startHint, STEP_BACK_BASE, suggestionText, WHAT, WHERE } from './words'
 import type { Lens, LensCommand } from './words'
 
 type $ = EngineInterface
@@ -29,6 +29,7 @@ const buttonsWidth = (labels: readonly string[]): number => labels.reduce((sum, 
 const SESSION_ORDER: Record<string, number> = { active: 0, idle: 1, gone: 3 }
 const LIVE_AGENT: readonly string[] = ['pending', 'running', 'waiting', 'idle']
 const LABEL = 11
+const COUNT_LABEL_WIDTH = Math.max(...COUNT_GROUPS.map(group => group.key.length)) + 2
 const SESSION_COLUMNS = { role: 7, tool: 8, actor: 10, pulls: 9, holds: 9, workers: 13, state: 9 } as const
 
 /**
@@ -234,20 +235,25 @@ export async function drawPane($: $, e: { surface: string; props: RenderPropsOf[
     if (view.counts !== null) {
       const counts = view.counts
       rows.push(
-        <Box key="board-counts" flexDirection="row" columnGap={3} flexWrap="wrap" marginTop={1}>
+        <Box key="board-counts" flexDirection="column" marginTop={1}>
           {COUNT_GROUPS.map(group => (
-            <Box key={`board-counts-${group.key}`} flexDirection="row" columnGap={2} flexWrap="wrap">
-              <Text key={`board-counts-${group.key}-label`} bold dimColor={group.key === 'agents' ? true : undefined}>{group.key}</Text>
-              {group.counts.map(([key, label]) => {
-                const count = counts[key]
-                const isDim = group.key === 'agents' || (count.ready + count.held + count.waiting === 0)
-                const isUrgent = key === 'forUser' && !isDim
-                return (
-                  <Text key={`count-${key}`} color={isUrgent ? 'warning' : 'inactive'} dimColor={isDim ? true : undefined}>
-                    {label} <Text bold color={isUrgent ? undefined : 'text'}>{countText(count)}</Text>
-                  </Text>
-                )
-              })}
+            // the label keeps its column; the counts wrap under the first count
+            <Box key={`board-counts-${group.key}`} flexDirection="row">
+              <Box key={`board-counts-${group.key}-label`} width={COUNT_LABEL_WIDTH} flexShrink={0}>
+                <Text bold dimColor={group.key === 'agents' ? true : undefined}>{group.key}</Text>
+              </Box>
+              <Box key={`board-counts-${group.key}-counts`} flexDirection="row" columnGap={2} flexWrap="wrap" flexShrink={1}>
+                {group.counts.map(([key, label]) => {
+                  const count = counts[key]
+                  const isDim = group.key === 'agents' || (count.ready + count.held + count.waiting === 0)
+                  const isUrgent = key === 'forUser' && !isDim
+                  return (
+                    <Text key={`count-${key}`} color={isUrgent ? 'warning' : 'inactive'} dimColor={isDim ? true : undefined}>
+                      {label} <Text bold color={isUrgent ? undefined : 'text'}>{countText(count)}</Text>
+                    </Text>
+                  )
+                })}
+              </Box>
             </Box>
           ))}
         </Box>,
@@ -408,7 +414,7 @@ export async function drawPane($: $, e: { surface: string; props: RenderPropsOf[
           </Box>
         </Box>
         {/* One group that never shrinks, set off from the title by a margin: "step back" is never clipped. */}
-        <Box key={`q-${question.id}-actions`} flexShrink={0} flexDirection="row" marginLeft={1}>
+        <Box key={`q-${question.id}-actions`} flexShrink={0} flexDirection="row" marginLeft={2}>
           <Box key={`q-${question.id}-explain-box`} flexShrink={0} hover={{ scope: `q-${question.id}-explain` }}>
             <Button key={`q-${question.id}-explain`} plain onPress={run('explain', focus)}><Text color="inactive">explain</Text></Button>
           </Box>
@@ -699,7 +705,7 @@ export async function drawPane($: $, e: { surface: string; props: RenderPropsOf[
             const count = crNewCountText(cr)
             const marks = crMarks(cr).filter(mark => mark.isProblem)  // the quiet ones are the summary's
             const buttons = buttonsOf(cr)
-            const stage = crStageText(cr)
+            const stage = crRowStageText(cr)
             const status: { key: string; text: string; color: string }[] = [
               ...(check === null ? [] : [{ key: 'check', text: check, color: CHECK_COLOR[cr.check.state] }]),
               ...(count === null ? [] : [{ key: 'new', text: count, color: cr.check.newFailures !== null && cr.check.newFailures.length > 0 ? 'error' : 'inactive' }]),
@@ -713,13 +719,13 @@ export async function drawPane($: $, e: { surface: string; props: RenderPropsOf[
               ] : []),
               ...(buttons.refreshing ? [act(`cr-refresh-${cr.id}`, 'Refresh', () => pressRefreshCr($, cr.id), 'Puts the refresh request in your prompt: rebase, checks and the range-diff', 'suggestion')] : []),
             ]
-            const statusWidth = stage.length + 2 + status.reduce((sum, one) => sum + 1 + one.text.length, 0)
+            const statusWidth = stage.length + status.reduce((sum, one) => sum + 1 + one.text.length, 0)
             const rightWidth = statusWidth + (slotWidth > 0 ? 1 + slotWidth : 0)
             const isWrapped = CR_INDENT * depth + CR_ID_WIDTH + CR_TITLE_MIN + 1 + rightWidth > e.props.bodyColumns
             // never shrinks: it wraps whole rather than clipping
             const right = (
               <Box key={`cr-${cr.id}-right`} flexDirection="row" columnGap={1} flexShrink={0} marginLeft={isWrapped ? undefined : 1}>
-                <Text key={`cr-${cr.id}-stage`} inverse color={buttons.accepting ? 'warning' : 'inactive'}> {stage} </Text>
+                <Text key={`cr-${cr.id}-stage`} color={buttons.accepting ? 'warning' : 'inactive'}>{stage}</Text>
                 {status.map(one => <Text key={`cr-${cr.id}-${one.key}`} color={one.color}>{one.text}</Text>)}
                 {slotWidth > 0 && <Box key={`cr-${cr.id}-buttons`} width={slotWidth} flexShrink={0} flexDirection="row" columnGap={1} justifyContent="flex-end">{actions}</Box>}
               </Box>

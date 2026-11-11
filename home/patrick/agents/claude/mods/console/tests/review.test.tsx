@@ -47,7 +47,7 @@ describe('change request queue', () => {
   test('a stack: the child stands under its parent with stage, check state and look', async ($, on) => {
     const { ui } = await queued($, on, [...BOARD_CONSOLE_CONTRACT.crs] as unknown as Crs, repo(), { ratifications: [...BOARD_CONSOLE_CONTRACT.ratifications] })
     const drawn = await texts(ui)
-    for (const part of ['Change requests', 'Remove the legacy cache', 'Drop the cache config', 'to accept', 'checks current', '0 new', '2 new', 'checkpoint review', 'stale', 'to ratify', 'Ratify: Move the clock']) {
+    for (const part of ['Change requests', 'Remove the legacy cache', 'Drop the cache config', 'code', 'checks current', '0 new', '2 new', 'checkpoint review', 'stale', 'to ratify', 'Ratify: Move the clock']) {
       expect(drawn, part).toContain(part)
     }
     // The row holds the short status; counts, names, look and view wait in the opened summary.
@@ -129,9 +129,16 @@ describe('no new failures', () => {
     await ui.unmount()
   })
 
-  test('a design for you reads to accept (design)', async ($, on) => {
-    const { ui } = await queued($, on, [cr({ id: 'p-cr1', checkpoint: 'user' })])
-    expect(await texts(ui)).toContain('to accept (design)')
+  test('a request for you names what you look at on its row; its opened summary says it waits to accept', async ($, on) => {
+    const { ui, clock } = await queued($, on, [cr({ id: 'p-cr1', checkpoint: 'user' }), cr({ id: 'p-cr2', view: 'result' }), cr({ id: 'p-cr3' })])
+    for (const [id, kind] of [['p-cr1', 'design'], ['p-cr2', 'result'], ['p-cr3', 'code']]) {
+      const row = (await ui.find({ key: `cr-${id}` }))?.text ?? ''
+      expect(row, id).toContain(kind)
+      expect(row, id).not.toContain('to accept')
+    }
+    await ui.press({ key: 'cr-p-cr1-show' })
+    await clock.settle()
+    expect((await ui.find({ key: 'cr-p-cr1-details' }))?.text).toContain('to accept (design)')
     await ui.unmount()
   })
 
@@ -523,7 +530,7 @@ describe('request rows', () => {
       expect(await ui.find({ key: `cr-${id}-line2` }), id).toBeUndefined()
       const line = (await ui.find({ key: `cr-${id}-line1` }))?.text ?? ''
       const at = (part: string) => line.indexOf(part)
-      const places = [id, `Title of ${id}`, 'to accept', 'checks current', '0 new', 'Accept'].map(at)
+      const places = [id, `Title of ${id}`, id === 'p-cr1' ? 'code' : 'result', 'checks current', '0 new', 'Accept'].map(at)
       expect(places.every(place => place >= 0), id).toBe(true)
       expect(places, id).toEqual([...places].sort((a, b) => a - b))
       expect((await ui.find({ key: `cr-${id}-buttons` }))?.props, id).toMatchObject({ width: 38, justifyContent: 'flex-end', flexShrink: 0 })
@@ -578,11 +585,12 @@ describe('request rows', () => {
     await ui.unmount()
   })
 
-  test('the stage is a colored badge: inverse, warning while it waits for you', async ($, on) => {
+  test('the stage is colored text without a background: warning while it waits for you', async ($, on) => {
     const { ui } = await mounted($, on, [cr({ id: 'p-cr1' }), cr({ id: 'p-cr2', status: 'in_review' })], WIDE)
-    const badge = async (stage: string) => (await ui.findAll({ type: 'Text' })).find(one => one.text === ` ${stage} `)?.props
-    expect(await badge('to accept')).toMatchObject({ inverse: true, color: 'warning' })
-    expect(await badge('in review')).toMatchObject({ inverse: true, color: 'inactive' })
+    const stage = async (text: string) => (await ui.findAll({ type: 'Text' })).find(one => one.text === text)?.props
+    expect(await stage('code')).toMatchObject({ color: 'warning' })
+    expect(await stage('in review')).toMatchObject({ color: 'inactive' })
+    expect((await stage('code'))?.inverse).toBeUndefined()
     await ui.unmount()
   })
 

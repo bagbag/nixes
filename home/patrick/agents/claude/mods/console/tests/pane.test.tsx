@@ -831,17 +831,30 @@ describe('header counts', () => {
     await ready($, clock)
     const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
     type Part = { props?: { dimColor?: boolean }; children: unknown[] }
-    // Texts carry no key in the tree: a group is its label, then one Text per count.
-    const group = async (key: string) => ((await ui.find({ key }))?.children ?? []) as Part[]
-    const labels = (parts: Part[]) => parts.slice(1).map(one => one.children[0])
+    // Texts carry no key in the tree: a group's counts box holds one Text per count.
+    const group = async (key: string) => ((await ui.find({ key: `${key}-counts` }))?.children ?? []) as Part[]
+    const labels = (parts: Part[]) => parts.map(one => one.children[0])
     const you = await group('board-counts-you')
     const agents = await group('board-counts-agents')
-    expect(you[0]?.children).toEqual(['you'])
+    expect((await ui.find({ key: 'board-counts-you-label' }))?.text).toBe('you')
     expect(labels(you)).toEqual(['for you', 'to accept', 'to ratify', 'decided', 'questions'])
-    expect(agents[0]?.children).toEqual(['agents'])
+    expect((await ui.find({ key: 'board-counts-agents-label' }))?.text).toBe('agents')
     expect(labels(agents)).toEqual(['to plan', 'to review'])
-    expect(you.slice(1).map(one => one.props?.dimColor === true)).toEqual([false, false, false, true, false])  // only decided is zero
-    expect(agents.slice(1).map(one => one.props?.dimColor === true)).toEqual([true, true])  // the agents' group is dim whatever it holds
+    expect(you.map(one => one.props?.dimColor === true)).toEqual([false, false, false, true, false])  // only decided is zero
+    expect(agents.map(one => one.props?.dimColor === true)).toEqual([true, true])  // the agents' group is dim whatever it holds
+    await ui.unmount()
+  })
+
+  test('a group is one line each; its counts wrap under the first count, not under the label', async ($, on) => {
+    const { clock } = world(on)
+    await ready($, clock)
+    const ui = await $.ui.mount({ ...PANE, surface: 'terminal', props: { ...PANE_PROPS, bodyColumns: 40 } })
+    expect((await ui.find({ key: 'board-counts' }))?.props).toMatchObject({ flexDirection: 'column' })
+    for (const who of ['you', 'agents']) {
+      expect((await ui.find({ key: `board-counts-${who}` }))?.props.flexWrap, who).toBeUndefined()
+      expect((await ui.find({ key: `board-counts-${who}-label` }))?.props, who).toMatchObject({ width: 8, flexShrink: 0 })
+      expect((await ui.find({ key: `board-counts-${who}-counts` }))?.props, who).toMatchObject({ flexWrap: 'wrap', flexShrink: 1 })
+    }
     await ui.unmount()
   })
 })
@@ -851,7 +864,7 @@ describe('question row', () => {
     const { clock } = world(on)
     await ready($, clock)
     const ui = await $.ui.mount({ ...PANE, surface: 'terminal', props: { ...PANE_PROPS, bodyColumns: 40 } })
-    expect((await ui.find({ key: 'q-q2-actions' }))?.props).toMatchObject({ flexShrink: 0, marginLeft: 1 })
+    expect((await ui.find({ key: 'q-q2-actions' }))?.props).toMatchObject({ flexShrink: 0, marginLeft: 2 })
     expect((await ui.find({ key: 'q-q2-bullet' }))?.props).toMatchObject({ width: 3, flexShrink: 0 })
     expect(JSON.stringify((await ui.find({ key: 'q-q2-actions' }))?.children)).toMatch(/q-q2-explain.*q-q2-bullet.*q-q2-sb/)
     expect((await ui.find({ key: 'q-q2-body' }))?.props).toMatchObject({ flexShrink: 1, minWidth: 0 })

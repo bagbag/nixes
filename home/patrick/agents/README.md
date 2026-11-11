@@ -774,10 +774,10 @@ repeat guard, else wakes the model at the open step with `protocol status --line
 (counts, this session's items, sessions with runtime and pull initials, `auto` for autopilot, stale
 holds, live workers; the counts split by who acts, `you` (for you, to accept, to ratify,
 decided, questions) then `agents` (to plan, to review), zeros dim), Change requests
-(one line per request: id, title, a stage badge, check state, new-failure count, problem marks (setup failed, review stale, land blocked), then
+(one line per request: id, title, the stage in color (on a request waiting for you, what you look at: design, code or result), check state, new-failure count, problem marks (setup failed, review stale, land blocked), then
 Walk through (a design or a result view) or Open (code, in VS Code's review tree), Accept, Return in a right-aligned
 slot that wraps to a second line on a narrow pane; 3 show, the rest and the
-to-ratify list fold behind `+N more`; the opened summary adds look, view, the
+to-ratify list fold behind `+N more`; the opened summary adds the accept stage, look, view, the
 failure counts, the quiet marks (returned, lands with, in review tree) and each new failure as a `vscode://file` link), Suggestions while no run is open and the engine's `next`
 offers something (one row per proposed round: `[ Start ] <title> · ~N questions ·
 unblocks ~M items`, plus `· compacts first` for a

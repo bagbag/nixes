@@ -350,6 +350,10 @@ export function crStageText(cr: ConsoleCr): string {
   return cr.status === 'in_progress' ? 'in work' : cr.status.replace(/_/g, ' ')
 }
 
+/** The row's stage: for a request waiting on you, what you look at (its buttons and color already say it waits); else the stage. */
+export const crRowStageText = (cr: ConsoleCr): string =>
+  !isCrAccepting(cr) ? crStageText(cr) : cr.checkpoint === 'user' ? 'design' : cr.view === 'result' ? 'result' : 'code'
+
 const CHECK_WORDS: Record<ConsoleCr['check']['state'], string> = { current: 'checks current', stale: 'stale', conflict: 'conflict', failed: 'checks failed', unchecked: 'unchecked' }
 
 /** The check state as a word; null while the change request has not reached review and nothing ran, and for a design checkpoint with no check (`board land --checkpoint` ignores checks). */
@@ -368,10 +372,10 @@ export const crQuietMarks = (cr: ConsoleCr): string[] => crMarks(cr).filter(mark
 export const crTreeText = (cr: ConsoleCr, reviewing: ConsoleReviewing | null): string | null =>
   reviewing?.cr !== cr.id ? null : reviewing.tip === cr.tip ? 'in review tree' : 'review tree behind'
 
-/** The opened summary's details line for a change request: look, view, failure counts, then the quiet marks and the review tree's state; null when none is known. */
+/** The opened summary's details line for a change request: the accept stage the row leaves out, look, view, failure counts, then the quiet marks and the review tree's state; null when none is known. */
 export function crDetailsText(cr: ConsoleCr, reviewing: ConsoleReviewing | null): string | null {
   const { baseCount, tipCount } = cr.check
-  const parts = [crLookText(cr), baseCount === null || tipCount === null ? null : `base ${baseCount}, tip ${tipCount}`, ...crQuietMarks(cr), crTreeText(cr, reviewing)].filter(part => part !== null)
+  const parts = [isCrAccepting(cr) ? crStageText(cr) : null, crLookText(cr), baseCount === null || tipCount === null ? null : `base ${baseCount}, tip ${tipCount}`, ...crQuietMarks(cr), crTreeText(cr, reviewing)].filter(part => part !== null)
   return parts.length === 0 ? null : parts.join(' · ')
 }
 
