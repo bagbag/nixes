@@ -73,14 +73,14 @@ def next_run(ctx: Context) -> dict | None:
 def show_json(ctx: Context) -> dict:
     r = ctx.round
     base = {'version': VERSION, 'session': ctx.store.session, 'protocol': None, 'round': None, 'title': None,
-            'summary': None, 'step': None,
+            'summary': None, 'subject': None, 'step': None,
             'check': None, 'pending': None, 'questions': [], 'batch': None, 'counts': ctx.state.get('counts'),
             'progress': None, 'log': [], 'records': [], 'stopped': stopped_view(r), 'next': None}
     if not r or r['step'] == 'closed':  # contract-rulings R-B3: no open round
         return {**base, 'next': next_run(ctx)}
     check = r['check']
     return {**base, 'protocol': r['protocol'], 'round': r['id'], 'title': r.get('title'), 'summary': r.get('summary'),
-            'step': r['step'],
+            'subject': r.get('subject'), 'step': r['step'],
             'check': {'cycle': check.get('cycle', 0), 'cap': check.get('cap', CHECK_CAP), 'last': check.get('last', {})}
             if check.get('expect') else None,
             'pending': pending_view(ctx),

@@ -8,9 +8,9 @@ import { COUNTS, NO_ROUND, PANE_PROPS, SESSION, world } from './fixture'
 import { git, MAIN_TREE, repo, REVIEW_END_REF, REVIEW_TREE, sha } from './review-world'
 import type { Repo } from './review-world'
 import { parseRound } from '../hooks/engine'
-import { canRefreshCr, consoleText, countText, crFailuresText, crMarks, crRows } from '../hooks/words'
+import { canRefreshCr, consoleText, countText, crFailuresText, crMarks, crRows, crUnblocksHint, crUnblocksText, fitText } from '../hooks/words'
 import { parseWorktrees } from '../hooks/review'
-import type { ConsoleCr } from '../types'
+import type { ConsoleBoard, ConsoleCr } from '../types'
 
 const PANE = { plugin: 'console', component: 'Pane', requestId: 'console', props: PANE_PROPS } as const
 
@@ -413,7 +413,7 @@ describe('change requests in the /console text', () => {
     const { ui, clock } = await queued($, on, [...BOARD_CONSOLE_CONTRACT.crs] as unknown as Crs, repo(), { ratifications: [...BOARD_CONSOLE_CONTRACT.ratifications] })
     const out = await text($, ui, clock)
     expect(out).toContain('Change requests')
-    expect(out).toContain('  p-cr1  Remove the legacy cache · to accept · checks current · 0 new (base 3012, tip 2972) · look before · code')
+    expect(out).toContain('  p-cr1  Remove the legacy cache · to accept · unblocks 14 · 1.0-beta scope · checks current · 0 new (base 3012, tip 2972) · look before · code')
     expect(out).toContain('    p-cr2  Drop the cache config · checkpoint review · stale · 2 new: src/a.ts TS2322, src/b.ts TS2345 (base 3012, tip 3014) · look after · result · held by a1b2')
     expect(out).toContain('To ratify\n  p-rat1  Ratify: Move the clock · landed in p-cr0')
     expect(out.split('\n').filter(line => line.includes('p-cr')).join('\n')).not.toMatch(PRESSES)
@@ -523,14 +523,17 @@ describe('request rows', () => {
     return { ...made, ui }
   }
   const children = (found: { children: unknown[] } | undefined) => JSON.stringify(found?.children)
+  const ui_line2 = async (ui: Mounted, id: string) => (await ui.find({ key: `cr-${id}-line2` }))?.text ?? ''
 
-  test('one line: id, title, status and the buttons; the buttons sit in a fixed right-aligned slot so Accept and Return line up', async ($, on) => {
-    const { ui } = await mounted($, on, [cr({ id: 'p-cr1' }), cr({ id: 'p-cr2', view: 'result' })], WIDE)
+  test('two lines: id and title, then the stage, the facts and the buttons in a fixed right-aligned slot so Accept and Return line up', async ($, on) => {
+    const { ui } = await mounted($, on, [cr({ id: 'p-cr1', unblocks: 14, unblocksDirect: 7, milestone: '1.0-beta scope' }), cr({ id: 'p-cr2', view: 'result' })], WIDE)
     for (const id of ['p-cr1', 'p-cr2']) {
-      expect(await ui.find({ key: `cr-${id}-line2` }), id).toBeUndefined()
-      const line = (await ui.find({ key: `cr-${id}-line1` }))?.text ?? ''
+      const first = (await ui.find({ key: `cr-${id}-line1` }))?.text ?? ''
+      expect(first, id).toContain(`Title of ${id}`)
+      for (const part of ['checks current', 'Accept', 'code', 'result']) expect(first, `${id} line one ${part}`).not.toContain(part)
+      const line = (await ui.find({ key: `cr-${id}-line2` }))?.text ?? ''
       const at = (part: string) => line.indexOf(part)
-      const places = [id, `Title of ${id}`, id === 'p-cr1' ? 'code' : 'result', 'checks current', '0 new', 'Accept'].map(at)
+      const places = [id === 'p-cr1' ? 'code' : 'result', ...(id === 'p-cr1' ? ['unblocks 14', '1.0-beta scope'] : []), 'checks current', '0 new', 'Accept'].map(at)
       expect(places.every(place => place >= 0), id).toBe(true)
       expect(places, id).toEqual([...places].sort((a, b) => a - b))
       expect((await ui.find({ key: `cr-${id}-buttons` }))?.props, id).toMatchObject({ width: 38, justifyContent: 'flex-end', flexShrink: 0 })
@@ -544,45 +547,63 @@ describe('request rows', () => {
     await code.ui.unmount()
   })
 
-  test('on one line the status group is set off from the title by a margin', async ($, on) => {
-    const { ui } = await mounted($, on, [cr({ id: 'p-cr1' })], WIDE)
-    expect((await ui.find({ key: 'cr-p-cr1-right' }))?.props).toMatchObject({ marginLeft: 1 })
-    await ui.unmount()
-  })
-
-  test('wrapped on its own line, the status group needs no margin', async ($, on) => {
-    const { ui } = await mounted($, on, [cr({ id: 'p-cr1' })], NARROW)
-    expect((await ui.find({ key: 'cr-p-cr1-right' }))?.props.marginLeft).toBeUndefined()
-    await ui.unmount()
-  })
-
-  test('the wrap budget counts only what stays on the row: moved marks do not force a wrap', async ($, on) => {
-    const props = { ...PANE_PROPS, bodyColumns: 100 }  // a plain row needs 92 cells
-    const quiet = await mounted($, on, [cr({ id: 'p-cr1', returned: true, after: 'p-cr0' })], props)
-    expect(await quiet.ui.find({ key: 'cr-p-cr1-line2' })).toBeUndefined()
-    await quiet.ui.unmount()
-  })
-
-  test('a problem mark counts toward the budget', async ($, on) => {
-    const loud = await mounted($, on, [cr({ id: 'p-cr1', landBlocked: ['src/a.ts', 'src/b.ts'] })], { ...PANE_PROPS, bodyColumns: 100 })
-    expect(await loud.ui.find({ key: 'cr-p-cr1-line2' })).toBeDefined()
-    await loud.ui.unmount()
-  })
-
-  test('the title is the part that shrinks', async ($, on) => {
-    const { ui } = await mounted($, on, [cr({ id: 'p-cr1' })], WIDE)
+  test('the title keeps line one to itself and truncates only at the pane edge, however narrow the pane', async ($, on) => {
+    const { ui } = await mounted($, on, [cr({ id: 'p-cr1', unblocks: 3, unblocksDirect: 1, milestone: 'M' })], NARROW)
     expect((await ui.find({ key: 'cr-p-cr1-title' }))?.props).toMatchObject({ flexShrink: 1, flexGrow: 1 })
-    expect((await ui.find({ key: 'cr-p-cr1-right' }))?.props).toMatchObject({ flexShrink: 0 })
+    expect(children(await ui.find({ key: 'cr-p-cr1-line1' }))).not.toContain('cr-accept-p-cr1')
+    expect(children(await ui.find({ key: 'cr-p-cr1-line2' }))).toContain('cr-accept-p-cr1')
     await ui.unmount()
   })
 
-  test('a pane too narrow for status and buttons wraps the right group to a second line, right-aligned', async ($, on) => {
-    const { ui } = await mounted($, on, [cr({ id: 'p-cr1' })], NARROW)
-    const second = await ui.find({ key: 'cr-p-cr1-line2' })
-    expect(second?.props).toMatchObject({ justifyContent: 'flex-end' })
-    expect(children(second)).toContain('cr-accept-p-cr1')
-    expect(children(await ui.find({ key: 'cr-p-cr1-line1' }))).not.toContain('cr-accept-p-cr1')
+  test('unblocks N shows only above zero, and its hover adds the direct count', async ($, on) => {
+    const { ui } = await mounted($, on, [cr({ id: 'p-cr1', unblocks: 14, unblocksDirect: 7 }), cr({ id: 'p-cr2' })], WIDE)
+    const drawn = await texts(ui)
+    expect(drawn.split('\n').filter(one => one.startsWith('unblocks '))).toEqual(['unblocks 14'])
+    expect(drawn).toContain('p-cr1 unblocks 14 open items in all, 7 waiting on it directly')
+    expect(drawn).not.toContain('p-cr2 unblocks')
     await ui.unmount()
+  })
+
+  test('the milestone title shows when there is one', async ($, on) => {
+    const wide = await mounted($, on, [cr({ id: 'p-cr1', milestone: '1.0-beta scope' }), cr({ id: 'p-cr2' })], WIDE)
+    expect(await texts(wide.ui)).toContain('1.0-beta scope')
+    expect((await ui_line2(wide.ui, 'p-cr2'))).not.toContain('1.0-beta')
+    await wide.ui.unmount()
+  })
+
+  test('a long milestone title is cut to what the line has left, not wrapped', async ($, on) => {
+    const long = 'A milestone with a title that is far longer than any narrow pane could ever show in one line'
+    const { ui } = await mounted($, on, [cr({ id: 'p-cr1', milestone: long })], { ...PANE_PROPS, bodyColumns: 110 })
+    const shown = (await texts(ui)).split('\n').find(one => one.startsWith('A milestone')) ?? ''
+    expect(shown.endsWith('…') && shown.length < long.length).toBe(true)
+    expect(shown.length).toBe(110 - 12 - 26 - 31 - 1)  // pane minus the id column, the facts (code, checks current, 0 new, with gaps), the buttons slot and a spare cell
+    await ui.unmount()
+  })
+
+  test('only problem marks join line two, after the check and the new-failure count', async ($, on) => {
+    const { ui } = await mounted($, on, [cr({ id: 'p-cr1', landBlocked: ['src/a.ts'], returned: true })], WIDE)
+    const line = (await ui.find({ key: 'cr-p-cr1-line2' }))?.text ?? ''
+    expect(line.indexOf('land blocked: src/a.ts')).toBeGreaterThan(line.indexOf('0 new'))
+    expect(line).not.toContain('returned')
+    await ui.unmount()
+  })
+
+  test('words: unblocks text, hover and cut', () => {
+    const one = cr({ id: 'p-cr1', unblocks: 14, unblocksDirect: 7 }) as unknown as ConsoleCr
+    expect(crUnblocksText(one)).toBe('unblocks 14')
+    expect(crUnblocksText(cr({ id: 'p-cr1' }) as unknown as ConsoleCr)).toBeNull()
+    expect(crUnblocksHint(one)).toBe('p-cr1 unblocks 14 open items in all, 7 waiting on it directly')
+    expect(fitText('abcdef', 4)).toBe('abc…')
+    expect(fitText('abc', 4)).toBe('abc')
+    expect(fitText('abcdef', 0)).toBe('a…')
+  })
+
+  test('the /console text row names unblocks and the milestone', () => {
+    const board = { counts: null, forYou: [], items: [], sessions: [], held: [], crs: [cr({ id: 'p-cr1', unblocks: 14, unblocksDirect: 7, milestone: '1.0-beta scope' }), cr({ id: 'p-cr2' })] as unknown as ConsoleCr[], ratifications: [], agents: [], sync: null, queues: null, error: null }
+    const text = consoleText({ session: 's', role: 'lead', actor: 'a', tool: 'claude' }, board as unknown as ConsoleBoard, null, false, [])
+    const [first, second] = ['p-cr1', 'p-cr2'].map(id => text.split('\n').find(line => line.includes(`${id}  `)) ?? '')
+    expect(first).toContain('unblocks 14 · 1.0-beta scope')
+    expect(second).not.toContain('unblocks')
   })
 
   test('the stage is colored text without a background: warning while it waits for you', async ($, on) => {

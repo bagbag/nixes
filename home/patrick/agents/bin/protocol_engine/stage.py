@@ -22,7 +22,7 @@ def stage_text(ctx: Context) -> str:
     r = ctx.round
     dropped = {key: (ctx.state.get('dropReasons') or {})[key] for key in r['selected'] if key in (ctx.state.get('dropReasons') or {})}
     return lines(
-        words.stage_instructions(r['id'], r['selected'], bool(ctx.board), titled(ctx)),
+        words.stage_instructions(r['id'], r['selected'], bool(ctx.board), titled(ctx), [k for k in r.get('first') or [] if k in r['selected']]),
         *(words.stage_dropped(dropped) if dropped else []),
         report_hint(ctx, 'stage', words.stage_example(r['selected'][0] if r['selected'] else None)),
     )

@@ -1,7 +1,7 @@
 // The console's state contract, and the engine/board JSON it reads (console-spec 1a,
 // contract-rulings R-B2..R-B5). The engine owns those shapes; this file mirrors them.
 
-export type ConsoleStep = 'collect' | 'select' | 'stage' | 'related' | 'check' | 'ask' | 'record' | 'closed'
+export type ConsoleStep = 'prepass' | 'collect' | 'select' | 'stage' | 'related' | 'check' | 'ask' | 'record' | 'closed'
   | 'recheck' | 'board-check' | 'own-rulings' | 'scoped' | 'approval' | 'owners' | 'release'
 export type ConsolePassOrigin = 'plugin' | 'composer' | 'bridge' | 'press' | 'model'
 
@@ -71,6 +71,10 @@ export type ConsoleCr = {
     /** No-new-failures: the `file code` lines whose count rose from base to tip; null while no comparison ran. `baseCount`, `tipCount`: failures at the base and at the tip. */
     newFailures: string[] | null; baseCount: number | null; tipCount: number | null }
   parent: string | null; children: string[]
+  /** Open work, designs, questions and requests waiting on it (or its children) directly or through others; milestones, epics and gates not counted. `unblocksDirect`: those waiting on it directly. */
+  unblocks: number; unblocksDirect: number
+  /** Title of the open milestone it belongs to (a member edge on it, an ancestor or its design child); the lowest milestone id when several; null when none. */
+  milestone: string | null
   /** The agent review's verdict against the current (tip, base tip): `stale` after a base move until a refresh triage keeps or returns it; null before any review. */
   reviewState: 'current' | 'stale' | null
   /** The board's refresh work: the first non-waiting request of the accept queue whose check or review is not current (r24-q196). */
@@ -130,6 +134,8 @@ export type ConsoleRound = {
   round: string | null
   title: string | null
   summary: string | null
+  /** The artifact the round judges (`start round --subject`), or null. */
+  subject: string | null
   step: ConsoleStep | null
   check: {
     cycle: number

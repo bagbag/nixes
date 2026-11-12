@@ -63,8 +63,10 @@ def read_stdin() -> dict:
 
 
 def start(ctx: Context, name: str, report: dict, scope: str = 'board', records: Path | None = None,
-          ids: list[str] | None = None, topic: str | None = None, proposal: int | None = None) -> None:
-    """`proposal`: the number of the stored proposal row the round starts from (its topic, ids, title and summary)."""
+          ids: list[str] | None = None, topic: str | None = None, proposal: int | None = None,
+          subject: str | None = None) -> None:
+    """`proposal`: the number of the stored proposal row the round starts from (its topic, ids, title and summary).
+    `subject`: the artifact the round judges; the pre-pass presents and grounds it and its findings become the points."""
     if ctx.round and ctx.round['step'] != 'closed':
         fail(f"{ctx.round['protocol']} {ctx.round['id']} is open at {ctx.round['step']}: finish it, or `protocol abandon`"
              + (' (for a question to the user, abandon it: nothing is released, and `protocol start release` takes the same '
@@ -72,14 +74,18 @@ def start(ctx: Context, name: str, report: dict, scope: str = 'board', records: 
     if ctx.away and records is not None:
         fail(f'--no-board is refused on autopilot: nothing would track its records for ratification; {SWITCH_TO_SOLO}')
     if name == 'release':
-        if scope != 'board' or report or topic or proposal is not None:
-            fail('start release takes record ids only (no --discussion, --topic, --proposal or stdin)'
+        if scope != 'board' or report or topic or proposal is not None or subject is not None:
+            fail('start release takes record ids only (no --discussion, --topic, --proposal, --subject or stdin)'
                  ' and --no-board <dir> for the record files of a round without a board')
         if records is not None:
             start_files(ctx, records, ids or [])
         else:
             start_release(ctx, ids or [])
         return
+    if subject is not None and not subject.strip():
+        fail('--subject names the artifact the round judges: an id or a few words')
+    if subject is not None and proposal is not None:
+        fail("--subject is not for --proposal: a proposal row brings its own topic and items, while a subject's findings become the points")
     row = proposal_row(ctx, proposal, topic, ids or []) if proposal is not None else None
     if row:
         ids, topic = row.get('ids') or [], words.proposal_topic(row)
@@ -88,7 +94,8 @@ def start(ctx: Context, name: str, report: dict, scope: str = 'board', records: 
     if ctx.board is None and records is None:
         fail('no board here: name the records folder with `start round --no-board <dir>`')
     ctx.state.pop('proposal', None)  # a round starts from its proposal or without one: the next proposal is made after it
-    ctx.state['round'] = {'id': next_id(ctx.state, 'round', 'r'), 'protocol': name, 'step': 'collect',
+    ctx.state['round'] = {'id': next_id(ctx.state, 'round', 'r'), 'protocol': name, 'step': 'prepass',
+                          'subject': (subject or '').strip() or None, 'first': [],
                           'repo': ctx.board.repo if ctx.board else None, 'scope': scope,
                           'records': str(records.resolve()) if records else None, 'items': [],
                           'named': list(dict.fromkeys(ids or [])), 'topic': (topic or '').strip() or None,
@@ -97,10 +104,10 @@ def start(ctx: Context, name: str, report: dict, scope: str = 'board', records: 
     if row:
         ctx.round.update(title=row['title'].strip(), **({'summary': row['summary'].strip()} if row.get('summary') else {}))
     ctx.log('start', protocol=name, repo=ctx.state['round']['repo'], scope=scope, named=ctx.round['named'] or None,
-            topic=ctx.round['topic'])
+            topic=ctx.round['topic'], subject=ctx.round['subject'])
     for point in report.get('points') or []:
         ctx.round['points'].append({'id': next_id(ctx.state, 'point', 'pt'), 'text': str(point['text'] if isinstance(point, dict) and 'text' in point else point)})
-    ctx.go('collect')
+    ctx.go('prepass')
 
 
 class Exit(Exception):
@@ -172,6 +179,8 @@ def cli(argv: list[str]) -> int:
                                             "unreleased records); round: the open items to look at first (default: the whole list)")
     sub.add_argument('--topic', metavar='TEXT', help="round: the topic, '<title>: <summary>'")
     sub.add_argument('--proposal', metavar='N', type=int, help="round: start row N of the stored proposal; not with --topic or ids")
+    sub.add_argument('--subject', metavar='ID|TEXT', help="round: the artifact the round judges (a design's CR id, a result, a proposal); "
+                                                          "its pre-pass presents it with a verdict and findings, which become the points; not with --proposal")
     sub.add_argument('--discussion', action='store_true',
                      help="the pasted points alone (question-me): no board list at Collect; board items join through Related")
     sub.add_argument('--no-board', metavar='DIR', type=Path,
@@ -284,7 +293,7 @@ def run(ctx: Context, args) -> str:
     if command == 'next':
         return set_proposal(ctx, report)
     if command == 'start':
-        start(ctx, args.name, report, 'discussion' if args.discussion else 'board', args.no_board, args.ids, args.topic, args.proposal)
+        start(ctx, args.name, report, 'discussion' if args.discussion else 'board', args.no_board, args.ids, args.topic, args.proposal, args.subject)
         prune(ctx.store)
         return instructions(ctx)
     if command == 'pass' and report.get('command') == 'release-round':

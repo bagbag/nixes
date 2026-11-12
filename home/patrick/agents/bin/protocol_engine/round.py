@@ -10,7 +10,8 @@ from .check import (
     challenge_report_format, check_accept, check_enter, options_ids, options_report_format, pass_report_format, rescope_ids, scope_text
 )
 from .ask import ask_accept, ask_enter, ask_text
-from .collect import collect_accept, collect_enter, collect_text, select_accept, select_text
+from .collect import collect_accept, collect_text, select_accept, select_text
+from .prepass import prepass_accept, prepass_enter, prepass_text
 from .stage import related_accept, related_enter, related_text, stage_accept, stage_text
 
 
@@ -87,7 +88,8 @@ def check_text(ctx: Context) -> str:
 
 
 ROUND = Protocol('round', [
-    Step('collect', collect_text, collect_accept, collect_enter),
+    Step('prepass', prepass_text, prepass_accept, prepass_enter),
+    Step('collect', collect_text, collect_accept),
     Step('select', select_text, select_accept),
     Step('stage', stage_text, stage_accept),
     Step('related', related_text, related_accept, related_enter),

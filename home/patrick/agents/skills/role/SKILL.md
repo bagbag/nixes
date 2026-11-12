@@ -57,10 +57,11 @@ The user invokes `/role`, optionally naming a role, pulls and a worker count; or
 Give each step's output as one line.
 
 1. **Known role.** When this conversation already registered a role, or a
-   session-recovery message names one, and the invocation names no other
-   role or worker count, keep it and go to step 4.
+   session-recovery message names one, and the invocation names no role,
+   pulls or worker count, keep it and go to step 4.
    Output: `role: <role> (known)`.
-2. **Ask.** Ask for what neither the argument nor step 1 gives, under
+2. **Ask.** Ask for what neither the argument nor step 1 gives (pulls
+   named without a role give no role), under
    [Question format](../shared/question-format.md)
    (`$HOME/.agents/skills/shared/question-format.md`): the role among the four; for agent,
    the pulls as a multiple choice; for lead, whether to add pulls.
@@ -84,7 +85,9 @@ Give each step's output as one line.
    Output: `loaded <protocols>`.
 5. **Holds.** Where the repository has `.beads/`, run `board mine`.
    Output: held ids, or `none held`.
-6. **Continue** under the loaded protocols within the current task. With
+6. **Continue** the current task under the loaded protocols; with none,
+   report and wait. Run the claim loop only when the user asks for it (in
+   words, or a loop command such as `/goal`). With
    pulls beyond the decide set, loop: dispatch ready CRs of your pulls, in
    `board claim` order, to workers in parallel under the plan protocol's
    [Dispatch](protocols/plan.md#dispatch), each running

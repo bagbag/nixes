@@ -12,6 +12,9 @@
 - Merge questions only when no sensible answer would treat them differently: an
   option that splits them means separate questions, and a shared premise puts
   them in one round, not one question.
+- Cut while staging: a board item or point asking several decisions whose
+  parts rest on different premises becomes one question per part; ask the
+  direction before the details resting on it.
 - Ask each derived decision you are unsure is the only realistic clean option as
   its own question; bundle into one question only rulings with no realistic
   alternative.

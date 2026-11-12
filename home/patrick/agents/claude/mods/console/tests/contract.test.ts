@@ -22,7 +22,8 @@ describe('engine contract', () => {
 
   test('the states carry what the console acts on', () => {
     expect(parseRound(ENGINE_CONTRACT.none).round).toBeNull()
-    expect(parseRound(ENGINE_CONTRACT.check).pending).toEqual({ id: 'p1', command: 'step-back', args: 'goal foundations' })
+    expect(parseRound(ENGINE_CONTRACT.prepass)).toMatchObject({ step: 'prepass', subject: 'Cache design', pending: { command: 'step-back' } })
+    expect(parseRound(ENGINE_CONTRACT.check).pending).toEqual({ id: 'p2', command: 'step-back', args: 'goal foundations' })
     expect(parseRound(ENGINE_CONTRACT.ask).batch?.marker).toBe('round:r1:1')
     expect(parseRound(ENGINE_CONTRACT.ask).batch?.notice).toMatch(/^\*\*Cache\*\*\n\nProblem: .*\n\nCases: /)  // the text the console prints between turns
     expect(parseRound(ENGINE_CONTRACT.answered).questions[0]?.answeredAt).toBe('2026-01-01T00:00:00Z')
@@ -60,7 +61,7 @@ describe('board console contract', () => {
   test('an unknown check state reads as unchecked, a missing check as nothing run', () => {
     const board = parseBoardConsole({ crs: [{ id: 'x', check: { state: 'weird' } }, { id: 'y' }] })
     expect(board.crs.map(one => one.check.state)).toEqual(['unchecked', 'unchecked'])
-    expect(board.crs[1]).toMatchObject({ holder: null, parent: null, children: [], reviewState: null, landBlocked: null, after: null, returned: false, setupFailed: false })
+    expect(board.crs[1]).toMatchObject({ holder: null, parent: null, children: [], reviewState: null, landBlocked: null, after: null, returned: false, setupFailed: false, unblocks: 0, unblocksDirect: 0, milestone: null })
   })
 })
 

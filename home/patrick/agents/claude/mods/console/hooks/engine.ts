@@ -359,6 +359,7 @@ export function parseRound(value: unknown): ConsoleRound {
     round: nullableText(raw.round),
     title: nullableText(raw.title),
     summary: nullableText(raw.summary),
+    subject: nullableText(raw.subject),
     step: (nullableText(raw.step) as ConsoleRound['step']) ?? null,
     check: check === null ? null : {
       cycle: count(check.cycle),
@@ -403,6 +404,7 @@ function parseCr(value: unknown): ConsoleCr {
       baseCount: typeof check.baseCount === 'number' ? check.baseCount : null, tipCount: typeof check.tipCount === 'number' ? check.tipCount : null,
     },
     parent: nullableText(raw.parent), children: list(raw.children).map(text).filter(id => id !== ''),
+    unblocks: count(raw.unblocks), unblocksDirect: count(raw.unblocksDirect), milestone: nullableText(raw.milestone),
     landBlocked: Array.isArray(raw.landBlocked) ? list(raw.landBlocked).map(text).filter(one => one !== '') : null,
     after: nullableText(raw.after), returned: raw.returned === true, setupFailed: raw.setupFailed === true,
     reviewState: oneOf(raw.reviewState, ['current', 'stale']), refreshWork: raw.refreshWork === true,

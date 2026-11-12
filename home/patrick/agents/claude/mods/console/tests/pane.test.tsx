@@ -1058,6 +1058,12 @@ describe('long lists', () => {
     expect(at('stage')).toBe('staging questions for tstdl-a, tstdl-b, pt1 +1')
   })
 
+  test('the round words name the pre-pass and its subject', () => {
+    const at = (subject: string | null) => roundWords({ ...roundJson({ step: 'prepass', subject, pending: { id: 'p1', command: 'step-back', args: 'goal decisions; pre-pass' }, batch: null, questions: [] }), check: null, counts: null, note: null } as never)
+    expect(at(null)).toBe('pre-pass over the points · next /step-back')
+    expect(at('Cache design')).toBe('pre-pass on Cache design · next /step-back')
+  })
+
   test('the round banner carries its title, the summary sits under it, a question shows its full text on hover', async ($, on) => {
     const { clock } = world(on, { round: roundJson({ title: 'Queue retries', summary: 'Which limits retries use, and when they stop.' }) })
     await ready($, clock)

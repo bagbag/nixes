@@ -174,6 +174,27 @@ def options_format() -> str:
             'checked': {}, 'summary': '<one line>'}))
 
 
+# Pre-pass (prepass.py).
+
+PREPASS_EXAMPLE = {'pass': 'step-back', 'summary': '<one line: what the pre-pass found>',
+                   'points': [{'id': 'pt1', 'text': '<reworded or split-off part>'}, {'id': 'pt2', 'drop': True, 'reason': '<why>'},
+                              {'text': '<new point or finding>', 'first': True}, {'id': '<open item id>', 'first': True}],
+                   'verdict': '<with a --subject: its verdict>'}
+
+
+def prepass_instructions(round_id: str, subject: str | None, codex: bool, args: str, rows: list[str]) -> str:
+    return lines(
+        f"Round {round_id} · Pre-pass (decide.md Round 1): a step-back over the whole point set. "
+        + (f'Run the step-back skill now with the argument `{args}` (read its SKILL.md), then report the pass.' if codex else HAND_OVER),
+        '- Judge the direction, the points that are off or rest on an unclear premise (asked first), and the cut under question-format.md.',
+        *([f"- Subject: {subject}. Report its verdict and findings (findings are points); for a design, re-ground it against current "
+           'source and make drift its own finding.'] if subject else []),
+        '- The point set:' if rows else '- The point set is empty: a finding or a missing point is a new one.',
+        *rows,
+        '- `points` entries: no `id` adds a point; a pasted point\'s `id` rewords it (`text`) or drops it (`drop`, `reason`); a split '
+        'rewords one part and adds the others; `first` marks a pasted point or open item to ask first.')
+
+
 # Collect and Select (collect.py).
 
 VIEW_LABELS = {  # the views Collect offers, in listing order (`collect_enter`): heading, name in the counts
@@ -241,8 +262,8 @@ COLLECT_EXAMPLE = {'classes': {'<id>': {'class': 'ruled', 'owner': 'docs/x.md#ru
                    'points': [{'text': '<another point>', 'class': 'user'}]}
 
 
-def select_row(key: str, priority, klass, blocked_by: list[str], title: str) -> str:
-    return (f"- {key} p{priority} ({klass})"
+def select_row(key: str, priority, klass, blocked_by: list[str], title: str, first: bool = False) -> str:
+    return (f"- {key} p{priority} ({klass})" + (' ask first' if first else '')
             + (f" waits on {', '.join(blocked_by)}" if blocked_by else '') + f": {title}")
 
 
@@ -259,8 +280,8 @@ SELECT_NONE = '- none: report {"select": []} to close the round'
 
 # Stage and Related (stage.py).
 
-def stage_instructions(round_id: str, selected: list[str], has_board: bool, proposed: bool) -> str:
-    """`proposed`: the round took its title and summary from a stored proposal."""
+def stage_instructions(round_id: str, selected: list[str], has_board: bool, proposed: bool, first: list[str] | None = None) -> str:
+    """`proposed`: the round took its title and summary from a stored proposal; `first`: the selected keys the pre-pass marked to ask first."""
     return lines(
         f"Round {round_id} · Stage the questions for {', '.join(selected)} under asking.md Question format"
         + (". The round keeps the proposal's `title` and `summary`; report a `round` with both to replace them "
@@ -270,6 +291,9 @@ def stage_instructions(round_id: str, selected: list[str], has_board: bool, prop
         '- `settles` lists the items '
         f'one answer settles the same way (a rule question); an open decision outside the selection named there or in `board` joins the round. {MERGE_TEST}',
         f'- `waitsOn` names the questions a decision rests on; it holds a dependent back until its premise is answered; {WAITS_FOR}',
+        '- Cut under question-format.md: the first part keeps the item in `board`, the others are drafts (`for`: the item or point id); '
+        'a detail `waitsOn` the direction it rests on.',
+        *([f"- Asked first (the pre-pass): {', '.join(first)}; the questions resting on them wait on theirs."] if first else []),
         '- Each question carries the parts the '
         'engine prints before its dialog, in your own words. Printed parts say what is decided and what each option means for the person '
         '(what they would see, what it costs), each thing once, in plain words; how it was found (sources, measurements beyond the deciding '
@@ -739,7 +763,7 @@ def show_markdown(r: dict | None, counts: dict | None, next_step: str | None) ->
     check = r['check']
     noun = 'Release' if r['protocol'] == 'release' else 'Round'
     lines = [f"# {noun} {r['id']}{' · ' + r['title'] if r.get('title') else ''} · {r['step']}", '',
-             *([r['summary'], ''] if r.get('summary') else [])]
+             *([r['summary'], ''] if r.get('summary') else []), *([f"Subject: {r['subject']}", ''] if r.get('subject') else [])]
     if r.get('set'):
         lines += ['| record | state | title |', '|---|---|---|',
                   *(f"| {rec['id']} | {rec['state']}{' (' + rec['reason'] + ')' if rec['reason'] else ''} | {rec['title']} |"
@@ -805,7 +829,7 @@ NEXT_CAP = 'your call on the cycle cap'
 NEXT_PAUSED = 'check paused; `protocol resume` continues'
 NEXT_CHALLENGE_LAST = 'challenge-rulings, last before asking'
 NEXT_ASK_AWAY = 'act or park per question'
-NEXT_STEPS = {'select': 'select', 'stage': 'stage the questions', 'related': 'resolve related items', 'ask': 'the next batch',
+NEXT_STEPS = {'prepass': 'the pre-pass over the points', 'select': 'select', 'stage': 'stage the questions', 'related': 'resolve related items', 'ask': 'the next batch',
               'record': 'record the answers', 'recheck': 're-check the records', 'board-check': 'the board check',
               'own-rulings': 'your own rulings', 'owners': 'owner writes', 'release': 'rerun the release'}  # by step
 

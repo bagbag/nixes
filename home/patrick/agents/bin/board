@@ -3097,11 +3097,47 @@ def after_base(board: Board, cr: dict) -> str | None:
     return None
 
 
+UNBLOCKED_TYPES = (*WORK_TYPES, 'design', 'decision', CR_TYPE)  # what a request's count holds: work, not containers (milestone, epic, gate)
+
+
+def cr_unblocks(board: Board, cr_id: str) -> tuple[int, int]:
+    """(all, direct): open work waiting on the request or its children, directly or through other work's `blocks` edges.
+    Milestones, epics and gates are neither counted nor passed through; the request's own children are its part."""
+    own = {cr_id, *board.children.get(cr_id, [])}
+    direct: set[str] = set()
+    seen: set[str] = set()
+    pending = list(own)
+    while pending:
+        item_id = pending.pop()
+        for waiting in board.dependents.get(item_id, []):
+            if waiting in own or waiting in seen or not board.is_open(waiting) \
+                    or board.by_id[waiting].get('issue_type') not in UNBLOCKED_TYPES:
+                continue
+            seen.add(waiting)
+            pending.append(waiting)
+            if item_id in own:
+                direct.add(waiting)
+    return len(seen), len(direct)
+
+
+def cr_milestone(board: Board, cr_id: str) -> str | None:
+    """Title of the open milestone the request belongs to: a member edge (the milestone waits on the member) on the request,
+    an ancestor, or the design child of the request or of an ancestor request. Several: the lowest milestone id."""
+    members: set[str] = set()
+    for item_id in (cr_id, *board.ancestors(cr_id)):
+        members.add(item_id)
+        if board.is_cr(item_id):  # a request is a member through its design child; an epic's design children are not its membership
+            members.update(c for c in board.children.get(item_id, []) if board.by_id.get(c, {}).get('issue_type') == 'design')
+    found = sorted(m['id'] for m in board.milestones() if members & set(board.blockers.get(m['id'], [])))
+    return board.by_id[found[0]].get('title', '') if found else None
+
+
 def cr_json(board: Board, cr: dict, children: dict[str, list[str]], refresh_id: str | None) -> dict:
     m, info = meta(cr), cr_info(board, cr)
     pair = check_pair(cr) or {}
     base = m.get('base')
     parent = live_parent(board, cr)
+    unblocks, direct = cr_unblocks(board, cr['id'])
     return {'id': cr['id'], 'title': cr.get('title', ''), 'status': cr['status'], 'stage': cr_stage(cr),
             'holder': cr.get('assignee') or None, 'look': m.get('look') or board.settings.get('look') or None,
             'view': m.get('view') or board.settings.get('view') or None, 'checkpoint': m.get('checkpoint') or None,
@@ -3117,7 +3153,8 @@ def cr_json(board: Board, cr: dict, children: dict[str, list[str]], refresh_id: 
             'reviewState': ('current' if review_current(cr, info) else 'stale') if m.get('review_tip') else None,
             'refreshWork': cr['id'] == refresh_id,  # the console offers Refresh there alone (r27-q252)
             'after': after_base(board, cr), 'returned': cr['status'] == 'open' and bool(info['worktree']) and Path(info['worktree']).is_dir(),
-            'setupFailed': cr['status'] == 'in_progress' and bool(m.get('base_sha')) and m.get('setup_sha') != m.get('base_sha')}
+            'setupFailed': cr['status'] == 'in_progress' and bool(m.get('base_sha')) and m.get('setup_sha') != m.get('base_sha'),
+            'unblocks': unblocks, 'unblocksDirect': direct, 'milestone': cr_milestone(board, cr['id'])}
 
 
 def crs_json(board: Board) -> list[dict]:

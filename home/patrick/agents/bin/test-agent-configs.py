@@ -2872,7 +2872,7 @@ def validate_board(root: Path) -> None:
             if [c["id"] for c in crs_view] != ["fx-ovo.c2", "fx-ovo.c1", "fx-ovo.c3", "fx-ovo.c4"] or ratifications_view != [] \
                     or set(crs_view[0]) != {"id", "title", "status", "stage", "holder", "look", "view", "checkpoint", "base", "branch", "worktree", "tip",
                                             "baseTip", "check", "parent", "children", "baseSha", "landBlocked", "reviewState", "refreshWork", "after",
-                                            "returned", "setupFailed"}:
+                                            "returned", "setupFailed", "unblocks", "unblocksDirect", "milestone"}:
                 raise ValueError(f"board console crs: {crs_view}")
             # The console's stub contract (tests/board-console-contract.ts) declares the CR row it reads: every key it declares must exist.
             contract_file = root / "claude" / "mods" / "console" / "tests" / "board-console-contract.ts"
@@ -5050,13 +5050,13 @@ CONSOLE_CONTRACT = Path("claude") / "mods" / "console" / "tests" / "engine-contr
 
 
 def console_contract_states(root: Path) -> dict:
-    """The real engine's `show --json` in eleven states (no round, check, batch out, answered, a closed round with a release next, a release, a stopped release, a release with a revised record, a stored proposal, a compact-only proposal, an away round with a parked question), timestamps normalized:
+    """The real engine's `show --json` in twelve states (no round, a pre-pass, check, batch out, answered, a closed round with a release next, a release, a stopped release, a release with a revised record, a stored proposal, a compact-only proposal, an away round with a parked question), timestamps normalized:
     the console's tests parse exactly these, so a shape change on either side fails a test."""
     states = {}
     with tempfile.TemporaryDirectory() as tmp:
         env = {**os.environ, "AGENT_SESSION_STATE_DIR": tmp, "CODEX_THREAD_ID": "", "CODEX_SESSION_ID": "", "HOME": tmp}
 
-        def run(*args, stdin=None, cwd=tmp):
+        def run(*args, stdin=None, cwd=tmp, prepass=True):
             if args[:1] == ("step",) and isinstance(stdin, dict) and isinstance(stdin.get("checked"), list):  # keyed by question (r4-q15, q16)
                 note = "; ".join(stdin["checked"])
                 stdin = {**stdin, "checked": {"round": note, **{q["id"]: note for q in json.loads(run("show", "--json", cwd=cwd))["questions"]}},
@@ -5070,6 +5070,8 @@ def console_contract_states(root: Path) -> dict:
                                     cwd=cwd, env=env)
             if result.returncode != 0:
                 raise ValueError(f"protocol {' '.join(args)}: {result.stderr}")
+            if prepass and args[:2] == ("start", "round"):  # every round opens with the pre-pass: reported without a change
+                return run("step", stdin={"pass": "step-back", "summary": "No change."}, cwd=cwd)
             return result.stdout
 
         def show(cwd=tmp):
@@ -5077,7 +5079,9 @@ def console_contract_states(root: Path) -> dict:
             return json.loads(re.sub(r'"at": "\d\d:\d\d"', '"at": "00:00"', text))
 
         states["none"] = show()
-        run("start", "round", "--no-board", str(Path(tmp) / "records"), stdin={"points": ["Which cache?"]})
+        run("start", "round", "--no-board", str(Path(tmp) / "records"), "--subject", "Cache design", stdin={"points": ["Which cache?"]}, prepass=False)
+        states["prepass"] = show()
+        run("step", stdin={"pass": "step-back", "summary": "The design holds.", "verdict": "Sound.", "points": [{"id": "pt1", "first": True}]})
         run("step", stdin={"classes": {"pt1": "user"}})
         run("step", stdin={"select": ["pt1"]})
         run("step", stdin={**ROUND_INFO, "questions": [{"text": "Which cache?", "title": "Cache", "header": "Cache", "for": "pt1", "problem": "Which cache.", "cases": "Reads; writes.", "premises": "Both read the cache.", "rulings": [], "options": [
@@ -5159,6 +5163,148 @@ def console_contract_states(root: Path) -> dict:
         run("step", stdin={"settle": {json.loads(run("show", "--json", cwd=repo))["questions"][0]["id"]: "park"}}, cwd=repo)
         states["parked"] = show(cwd=repo)
     return states
+
+
+def validate_prepass(root: Path) -> None:
+    """Every round opens with the pre-pass (decide.md Round 1): one step-back over the point set (and the --subject) before
+    Collect; its report corrects the points and marks what to ask first, which Select and Stage carry on."""
+    engine = load_engine(root / "bin")
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp = Path(tmp)
+        repo, fake, config = tmp / "repo", tmp / "board", tmp / "board.json"
+        (repo / ".beads").mkdir(parents=True)
+        fake.write_text(FAKE_BOARD, encoding="utf-8")
+        fake.chmod(0o755)
+        env = {**os.environ, "AGENT_SESSION_STATE_DIR": str(tmp / "state"), "CODEX_THREAD_ID": "", "CODEX_SESSION_ID": "", "HOME": str(tmp),
+               "PROTOCOL_BOARD": str(fake), "FAKE_BOARD_CONFIG": str(config)}
+
+        def call(*args, stdin=None, cwd=tmp, ok=True):
+            code, out, err = engine.cli.run_cli(["--session", "0000-prepass", *args], env, cwd, json.dumps(stdin) if stdin is not None else "")
+            if (code == 0) != ok:
+                raise ValueError(f"protocol {' '.join(args)} exited {code} (expected {'0' if ok else 'non-zero'}): {out}{err}")
+            return out if ok else err
+
+        def view(cwd=tmp):
+            return json.loads(call("show", "--json", cwd=cwd))
+
+        def report(body, cwd=tmp, ok=True, observe=True):
+            waiting = view(cwd)["pending"]
+            if observe:  # the model's Skill call, recorded by the console with the pending pass's id
+                call("pass", "--origin", "model", stdin={"command": "step-back", "args": waiting["args"], "pending": waiting["id"]}, cwd=cwd)
+            return call("step", stdin={"pass": "step-back", "summary": "Looked.", **body}, cwd=cwd, ok=ok)
+
+        def refused(needle, *args, stdin=None, cwd=tmp):
+            err = call(*args, stdin=stdin, cwd=cwd, ok=False)
+            if needle not in err:
+                raise ValueError(f"protocol {' '.join(args)}: stderr lacks {needle!r}: {err}")
+
+        # --subject: stored on the round, in the pending pass's argument and the step text; refused where it makes no sense.
+        out = call("start", "round", "--no-board", str(tmp / "records"), "--subject", "Cache design", stdin={"points": ["Which cache?", "Which TTL?", "Naming?"]})
+        shown = view()
+        if (shown["step"], shown["subject"]) != ("prepass", "Cache design") or shown["pending"]["command"] != "step-back" \
+                or not shown["pending"]["args"].startswith("goal decisions; pre-pass on Cache design"):
+            raise ValueError(f"the round must open at the pre-pass on its subject: {shown}")
+        for needle in ("Pre-pass", "Subject: Cache design", "re-ground it against current source", "verdict", "pt1 [pasted]: Which cache?"):
+            if needle not in out:
+                raise ValueError(f"the pre-pass text lacks {needle!r}:\n{out}")
+        refused("the pre-pass waiting", "step", stdin={"classes": {"pt1": "user"}})
+        refused("no /step-back ran", "step", stdin={"pass": "step-back", "summary": "x", "verdict": "ok"})
+        waiting = view()["pending"]
+        call("pass", "--origin", "model", stdin={"command": "step-back", "args": waiting["args"], "pending": waiting["id"]})
+        refused("`verdict`", "step", stdin={"pass": "step-back", "summary": "Looked."})
+        refused("pt9 is no pasted point", "step", stdin={"pass": "step-back", "summary": "x", "verdict": "ok", "points": [{"id": "pt9", "first": True}]})
+        refused("needs a `reason`", "step", stdin={"pass": "step-back", "summary": "x", "verdict": "ok", "points": [{"id": "pt3", "drop": True}]})
+        # The report corrects the set: reword, drop, add a finding that is asked first.
+        out = report({"verdict": "Sound, one drift.", "points": [
+            {"id": "pt1", "text": "Which cache store?"}, {"id": "pt3", "drop": True, "reason": "settled by the goal"},
+            {"text": "The design's files drifted from main", "first": True}]})
+        if view()["step"] != "collect" or view()["pending"] is not None or "pt4 [pasted]: The design's files drifted" not in out \
+                or "Which cache store?" not in out or "Naming?" in out:
+            raise ValueError(f"after the pre-pass Collect lists the corrected set:\n{out}")
+        call("step", stdin={"classes": {"pt1": "user", "pt2": "user", "pt4": "user"}})
+        selecting = call("show")
+        rows = [row for row in selecting.splitlines() if row.startswith("- pt")]
+        if [row.split()[1] for row in rows] != ["pt4", "pt1", "pt2"] or "ask first" not in rows[0] or "ask first" in rows[1]:
+            raise ValueError(f"Select must lead with the ask-first point:\n{selecting}")
+        staging = call("step", stdin={"select": ["pt4", "pt1"]})
+        for needle in ("Cut under question-format.md", "Asked first (the pre-pass): pt4"):
+            if needle not in staging:
+                raise ValueError(f"the Stage text lacks {needle!r}:\n{staging}")
+        call("abandon")
+
+        # No subject: no verdict; a pasted point only can be reworded, a split is a reword plus additions.
+        pasted = re.search(r"(pt\d+) \[pasted\]", call("start", "round", "--no-board", str(tmp / "records"), stdin={"points": ["A and B?"]}))[1]
+        if view()["subject"] is not None or not view()["pending"]["args"].endswith("pre-pass over the round's points"):
+            raise ValueError(f"a round without a subject: {view()}")
+        waiting = view()["pending"]
+        call("pass", "--origin", "model", stdin={"command": "step-back", "args": waiting["args"], "pending": waiting["id"]})
+        refused("belongs to a round with a --subject", "step", stdin={"pass": "step-back", "summary": "x", "verdict": "ok"})
+        out = call("step", stdin={"pass": "step-back", "summary": "Split.", "points": [{"id": pasted, "text": "A?"}, {"text": "B?"}]})
+        if f"{pasted} [pasted]: A?" not in out or "[pasted]: B?" not in out:
+            raise ValueError(f"a split is a reword plus an addition:\n{out}")
+        call("abandon")
+
+        # Starts that make no sense.
+        refused("--subject is not for --proposal", "start", "round", "--proposal", "1", "--subject", "x")
+        refused("--subject names the artifact", "start", "round", "--no-board", str(tmp / "records"), "--subject", "  ")
+        refused("start release takes record ids only", "start", "release", "--subject", "x")
+
+        # A board round: the pre-pass shows the open items; an item can be marked first but not dropped or reworded.
+        config.write_text(json.dumps({"log": str(tmp / "calls.jsonl"), "health": {"counts": {}, "items": {"questions": [
+            {"id": f"fx-{n}", "status": "open", "type": "decision", "title": f"Item {n}?", "priority": 1, "blockedBy": []} for n in (1, 2)]}}, "items": {}}))
+        out = call("start", "round", cwd=repo)
+        if "- fx-1: Item 1?" not in out or "- fx-2: Item 2?" not in out or view(repo)["step"] != "prepass":
+            raise ValueError(f"the pre-pass lists the open board items:\n{out}")
+        waiting = view(repo)["pending"]
+        call("pass", "--origin", "model", stdin={"command": "step-back", "args": waiting["args"], "pending": waiting["id"]}, cwd=repo)
+        refused("fx-1 is a board item", "step", stdin={"pass": "step-back", "summary": "x", "points": [{"id": "fx-1", "drop": True}]}, cwd=repo)
+        call("step", stdin={"pass": "step-back", "summary": "Item 2 first.", "points": [{"id": "fx-2", "first": True}]}, cwd=repo)
+        call("step", stdin={"classes": {"fx-1": "user", "fx-2": "user"}}, cwd=repo)
+        rows = [row for row in call("show", cwd=repo).splitlines() if row.startswith("- fx-")]
+        if [row.split()[1] for row in rows] != ["fx-2", "fx-1"]:
+            raise ValueError(f"a board item marked first leads Select: {rows}")
+
+
+def validate_console_unblocks(root: Path) -> None:
+    """What a change request unblocks and the milestone it belongs to, as the console's rows carry them."""
+    loader = importlib.machinery.SourceFileLoader("board_unblocks", str(root / "bin" / "board"))
+    board = importlib.util.module_from_spec(importlib.util.spec_from_loader(loader.name, loader))
+    loader.exec_module(board)
+
+    def item(id: str, kind: str, status: str = "open", title: str = "", waits=(), parent: str | None = None) -> dict:
+        deps = [{"issue_id": id, "depends_on_id": other, "type": "blocks"} for other in waits]
+        if parent:
+            deps.append({"issue_id": id, "depends_on_id": parent, "type": "parent-child"})
+        return {"id": id, "issue_type": kind, "status": status, "title": title or id, "dependencies": deps}
+
+    deck = board.Board([
+        item("cr", "change-request", "needs_acceptance"), item("cr.d", "design", parent="cr"),
+        item("t1", "task", waits=["cr"]), item("t2", "bug", waits=["t1"]), item("q", "decision", waits=["cr.d"]),
+        item("t5", "spike", waits=["cr", "t1"]),                      # reached twice: counted once
+        item("done", "task", "closed", waits=["cr"]),                 # closed: not waiting
+        item("gate", "gate", waits=["cr"]), item("after-gate", "task", waits=["gate"]),
+        item("epic", "epic", waits=["cr"]), item("after-epic", "task", waits=["epic"]),
+        item("ms", "milestone", waits=["cr"]), item("after-ms", "task", waits=["ms"]),
+        item("next-cr", "change-request", waits=["t2"]),              # a request waiting through work counts
+        item("lone", "change-request"),
+        item("m-b", "milestone", title="Second", waits=["epic", "cr.d2"]), item("m-a", "milestone", title="First", waits=["epic"]),
+        item("gone", "milestone", "closed", title="Closed", waits=["lone"]),
+        item("sub", "change-request", parent="epic"), item("cr2", "change-request"), item("cr2.d", "design", parent="cr2"),
+        item("cr.d2", "design", parent="cr3"), item("cr3", "change-request"), item("stack", "change-request", parent="cr3"),
+        item("m-c", "milestone", title="Third", waits=["cr2.d"]),
+        item("epic2", "epic"), item("epic2.d", "design", parent="epic2"), item("m-d", "milestone", title="Fourth", waits=["epic2.d"]),
+        item("sub2", "change-request", parent="epic2"),                # an epic is no member through its design child
+    ])
+    for cr_id, wanted in (("cr", (5, 3)), ("lone", (0, 0)), ("cr2", (0, 0))):
+        got = board.cr_unblocks(deck, cr_id)
+        if got != wanted:
+            raise ValueError(f"cr_unblocks({cr_id}) = {got}, wanted (all, direct) {wanted}")
+    # t1, t2, q, t5 and next-cr are work waiting through blocks edges; the milestone, epic, gate and what waits only on them are not.
+    for cr_id, wanted in (("cr", "ms"), ("sub", "First"), ("cr2", "Third"), ("cr3", "Second"), ("stack", "Second"), ("lone", None), ("sub2", None)):
+        got = board.cr_milestone(deck, cr_id)
+        if got != wanted:
+            raise ValueError(f"cr_milestone({cr_id}) = {got!r}, wanted {wanted!r} (a member edge on the request, an ancestor or their design children counts, "
+                             "a closed milestone does not, several pick the lowest id)")
 
 
 def validate_console_contract(root: Path) -> None:
@@ -5449,7 +5595,7 @@ def validate_protocol(root: Path, part: str) -> None:
         if cap_cycles != 10:
             raise ValueError(f"the check-loop cap is 10 cycles (r2-q8): {cap_cycles}")
 
-        def proto(*args, stdin=None, cwd=plain, session="0000-lead0001", ok=True, env=None, process=False, observe=True, explore=True, cover=True):
+        def proto(*args, stdin=None, cwd=plain, session="0000-lead0001", ok=True, env=None, process=False, observe=True, explore=True, cover=True, prepass=True):
             """The engine's `run_cli` in this process; `process=True` runs the real executable (the end-to-end path).
             A Claude session's pass report needs an observed run of its pass (the model's Skill call, which the console
             records as `pass --origin model`): unless `observe=False`, a report without one is preceded by it. The options
@@ -5507,6 +5653,9 @@ def validate_protocol(root: Path, part: str) -> None:
             if ok is not None and (result.returncode == 0) != ok:
                 raise ValueError(f"protocol {' '.join(args)} exited {result.returncode} (expected {'0' if ok else 'non-zero'}):"
                                  f"\n{result.stdout[-1500:]}\n{result.stderr}")
+            if prepass and args[:2] == ("start", "round") and result.returncode == 0 and "Pre-pass" in result.stdout:
+                # Every round opens with the pre-pass: tests not about it report it without a change and go on from Collect.
+                return proto("step", stdin={"pass": "step-back", "summary": "No change."}, cwd=cwd, session=session, env=env, process=process)
             return result
 
         def shown(**kwargs):
@@ -5598,7 +5747,7 @@ def validate_protocol(root: Path, part: str) -> None:
         if part == "rounds":
             # No open round (R-B3): the null shape, `pending` null, exit 0.
             empty = shown()
-            if empty != {"version": 1, "session": "0000-lead0001", "protocol": None, "round": None, "title": None, "summary": None,
+            if empty != {"version": 1, "session": "0000-lead0001", "protocol": None, "round": None, "title": None, "summary": None, "subject": None,
                          "step": None, "check": None,
                          "pending": None, "questions": [], "batch": None, "counts": None, "progress": None, "log": [],
                          "records": [], "stopped": None, "next": None} \
@@ -5903,7 +6052,7 @@ def validate_protocol(root: Path, part: str) -> None:
             history = proto("history").stdout
             if "0000-lead0001 r2:" not in history or "restarts q2 (criterion: only reversible caches)" not in history \
                     or "cap Continue, Ask now" not in history or "declines 2" not in history \
-                    or "0000-lead0001 r1: passes model 9, plugin 1" not in history:
+                    or "0000-lead0001 r1: passes model 10, plugin 1" not in history:
                 raise ValueError(f"protocol history:\n{history}")
             line = proto("status", "--line").stdout.strip()
             if not line.startswith(f"protocol: round r2 · check 1/{cap_cycles} · pending /step-back (p") or "1 draft" not in line:
@@ -9678,15 +9827,18 @@ def run_group(name: str, root: Path) -> None:
     elif name == "board":
         validate_board(root)  # patches os.environ and stdout in-process: nothing else shares this process
         validate_shared_board(root)
+        validate_console_unblocks(root)
     elif name == "contract":
         validate_console_contract(root)
+    elif name == "prepass":
+        validate_prepass(root)
     elif name.startswith("engine-"):
         validate_protocol(root, name.removeprefix("engine-"))
     else:
         raise SystemExit(f"unknown group {name}")
 
 
-GROUPS = ("core", "hooks", "board", "contract", *(f"engine-{part}" for part in PROTOCOL_PARTS))
+GROUPS = ("core", "hooks", "board", "contract", "prepass", *(f"engine-{part}" for part in PROTOCOL_PARTS))
 
 
 def main() -> int:

@@ -183,6 +183,7 @@ function stepWords(round: ConsoleRound): string {
   const p = round.progress
   const count = (status: string) => round.questions.filter(one => one.status === status).length
   switch (round.step) {
+    case 'prepass': return round.subject === null ? 'pre-pass over the points' : `pre-pass on ${round.subject}`
     case 'collect': return p === null ? 'collecting' : `collecting · ${p.classified}/${p.items + p.points} classified`
     case 'select': return p === null || p.candidates === null ? 'selecting' : `selecting from ${plural(p.candidates, 'candidate')}`
     case 'stage': return p === null || p.selected.length === 0 ? 'staging' : `staging questions for ${someIds(p.selected)}`
@@ -451,10 +452,19 @@ export const isWalkCr = (cr: ConsoleCr): boolean => cr.checkpoint === 'user' || 
 export const walkText = (cr: ConsoleCr): string => cr.checkpoint === 'user' ? `Walk me through ${cr.id}'s design (${cr.title}).` : `Walk me through ${cr.id}'s result (${cr.title}).`
 export const refreshText = (cr: ConsoleCr): string => `Refresh ${cr.id} under the review protocol's Refresh.`
 
+/** `unblocks 14` while open work waits on the request (directly or through others); null at none. */
+export const crUnblocksText = (cr: ConsoleCr): string | null => cr.unblocks > 0 ? `unblocks ${cr.unblocks}` : null
+
+/** The unblocks hover: the direct share of the count. */
+export const crUnblocksHint = (cr: ConsoleCr): string => `${cr.id} unblocks ${cr.unblocks} open items in all, ${cr.unblocksDirect} waiting on it directly`
+
+/** The text cut to `width` cells, `…` ending a cut one; at least one cell stays. */
+export const fitText = (value: string, width: number): string => value.length <= width ? value : `${value.slice(0, Math.max(1, width - 1)).trimEnd()}…`
+
 /** One change request as a text line: state only, since a text reader presses nothing. */
 export function crLine(cr: ConsoleCr, depth: number, reviewing: ConsoleReviewing | null): string {
   const tree = reviewing?.cr === cr.id ? (reviewing.tip === cr.tip ? 'in review tree' : 'review tree behind') : null
-  const parts = [crStageText(cr), crCheckText(cr), crFailuresText(cr), crLookText(cr), tree, cr.holder === null ? null : `held by ${cr.holder}`].filter(part => part !== null)
+  const parts = [crStageText(cr), crUnblocksText(cr), cr.milestone, crCheckText(cr), crFailuresText(cr), crLookText(cr), tree, cr.holder === null ? null : `held by ${cr.holder}`].filter(part => part !== null)
   return `${'  '.repeat(depth + 1)}${cr.id}  ${cr.title} · ${parts.join(' · ')}`
 }
 

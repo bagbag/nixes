@@ -114,12 +114,13 @@ def candidates(ctx: Context) -> list[dict]:
     pool = [{**item, 'key': item['id'], 'source': 'board'} for item in r['items'] if scoped(item['id'])]
     pool += [{'key': p['id'], 'id': p['id'], 'title': p['text'], 'priority': 9, 'blockedBy': [], 'source': 'pasted'}
              for p in r['points'] if scoped(p['id'])]
-    return dependency_order(pool, lambda c: (priority_of(c), c['key']))
+    first = set(r.get('first') or [])  # the pre-pass's ask-first points lead (prerequisites still come before their dependents)
+    return dependency_order(pool, lambda c: (c['key'] not in first, priority_of(c), c['key']))
 
 
 def select_text(ctx: Context) -> str:
     rows = [words.select_row(c['key'], c.get('priority', '?'), ctx.round['classes'].get(c['key'], {}).get('class'),
-                             c.get('blockedBy') or [], c['title'])
+                             c.get('blockedBy') or [], c['title'], c['key'] in (ctx.round.get('first') or []))
             for c in candidates(ctx)]
     return lines(
         words.select_intro(ctx.round['id'], ctx.round.get('topic'), bool(ctx.round.get('topic') or ctx.round.get('named'))),
@@ -213,7 +214,9 @@ def named_errors(ctx: Context, named: list[str], items: list[dict], elsewhere: d
     return errors
 
 
-def collect_enter(ctx: Context) -> None:
+def read_listing(ctx: Context) -> None:
+    """The board's open items for the round (read as it starts, so a bad named id refuses `start round`); the pre-pass shows them
+    and Collect classifies them."""
     if not ctx.board or ctx.round.get('scope') == 'discussion':
         return  # a discussion round's points come from the model; board items join through Related
     found, position = read_open(ctx)

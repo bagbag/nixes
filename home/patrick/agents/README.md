@@ -413,6 +413,21 @@ A round:
   that record, so `board release --closes` closes it; one still open afterwards
   follows the partial-failure path. A `--no-board` round only names the settled
   points in the record file. `show --json` questions carry `settles`.
+- Every round opens with the pre-pass (step `prepass`, before Collect; r1-q7 in `.scratch/agents-workflow/decisions`): the
+  engine queues a `step-back` pass with the lenses `goal decisions` and the focus `pre-pass over the round's points`
+  (`pre-pass on <subject>`), over the pasted points and the board items listed as read at `start`. It is the rough overview
+  of the whole set (direction; points that are off or rest on an unclear premise, asked first; the cut under
+  question-format), where the path pass after staging judges each drafted question. Its report `{"pass": "step-back",
+  "summary", "points"?, "verdict"?}` takes `points` entries: no `id` adds a point, a pasted point's `id` rewords it (`text`)
+  or drops it (`drop`, with a `reason`), and `first` marks a pasted point or an open board item to ask before the rest
+  (Select leads with it and says "ask first"; Stage names it so dependents wait on it). A board item is not reworded or
+  dropped there (unclassified at Collect, or cut at Stage). The pass needs an observed run carrying the pending id, like the
+  release's scoped pass. `start round --subject <id|text>` names the artifact the round judges (a design, a result, a
+  proposal); `show --json` carries `subject`. The pre-pass then presents it with a verdict and findings (`verdict` is
+  required and refused without a subject; the findings are added points), and for a design re-grounds it against current
+  source, staging drift as its own question (r1-q1, q2, q6). `--subject` is refused with `--proposal` (the row brings its
+  own topic and items) and on `start release`. Stage's text points to the cut in question-format.md and adds its
+  mechanics (the first part keeps the item, the others are drafts).
 - Related searches each new draft and needs an outcome per hit.
 - Check runs the full set on every question (r18-q120 reverted r13-q64's
   light start), per round: the path pass once (`step-back goal foundations`,
@@ -773,10 +788,9 @@ repeat guard, else wakes the model at the open step with `protocol status --line
 `/console-item <id>` prints an item's summary in the chat; `/console-questions` prints the issued batch's text) shows Board
 (counts, the ready items for you (id, type, title; 3 show, the rest fold behind `+N more`), sessions with runtime and pull initials, `auto` for autopilot,
 this session's items under `this session holds`, stale holds, live workers; the counts split by who acts, `you` (for you, to accept, to ratify,
-decided, questions) then `agents` (to plan, to review), zeros dim), Change requests
-(one line per request: id, title, the stage in color (on a request waiting for you, what you look at: design, code or result), check state, new-failure count, problem marks (setup failed, review stale, land blocked), then
-Walk through (a design or a result view) or Open (code, in VS Code's review tree), Accept, Return in a right-aligned
-slot that wraps to a second line on a narrow pane; 3 show, the rest and the
+decided, questions) then `agents` (to plan, to design, to implement, to review), zeros dim; in a project without a board, a dim `no board` beside the title and nothing else, while a failing board keeps its error), Change requests
+(only the requests waiting for you and those in work (being built or under agent review); the banner counts `N to accept · N in work · N queued`, the queued ones listed nowhere in the pane; two lines per request: id and full title, then the stage in color (on a request waiting for you, what you look at: design, code or result), `unblocks N` (open work, designs, questions and requests waiting on it directly or through others; milestones and epics not counted) when N > 0, the milestone it belongs to (directly, through an ancestor or its design child), check state, new-failure count, problem marks (setup failed, review stale, land blocked), then
+Walk through (a design or a result view) or Open (code, in VS Code's review tree), Accept, Return; 3 show, the rest and the
 to-ratify list fold behind `+N more`; the opened summary adds the accept stage, look, view, the
 failure counts, the quiet marks (returned, lands with, in review tree) and each new failure as a `vscode://file` link), Round: while no run is open and the engine's `next`
 offers something, the banner reads `the next step, proposed` over the proposals (one row per proposed round: `[ Start ] <title> · ~N questions ·

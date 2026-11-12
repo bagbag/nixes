@@ -83,23 +83,31 @@ Never decide these alone.
 
 **Entry:** open questions, a pasted list or consumer report, the user asks
 for open items, a new request's decisions, or an asking skill's interview
-(define-goal, question-me). A go-ahead on a proposal stays in chat; Accept and
-Release keep their own asks.
+(define-goal, question-me), or an artifact under the user's judgment
+(`--subject`; a design checkpoint: Accept step 3). A go-ahead on a proposal
+stays in chat; Accept and Release keep their own asks otherwise.
 
 Run the round through `protocol` (`$HOME/.agents/bin/protocol`; in Claude the
 console's `protocol` tool): `start round` (stdin `{"points": [...]}` for
 pasted points), then `step` with each step's report; resume an open round from
 `protocol show`. Add `--discussion` for a round of the discussion's points
 alone and `--no-board <dir>` for a topic outside this repository's board, or a
-repository without one; `--proposal <n>` starts row n of the stored proposal.
+repository without one; `--proposal <n>` starts row n of the stored proposal;
+`--subject <id|text>` names the artifact the round judges.
 Follow the engine's output; the steps below add the judgment it leaves to you.
 
-1. **Collect.** The engine lists the points and classes.
-2. **Select.** Prerequisites before their dependents.
-3. **Related.** Extend an open item or decided record on the same decision, in
+1. **Pre-pass.** Step back over the whole point set: the direction, points
+   that are off or rest on an unclear premise (ask those first), and the cut
+   under [Question format](../../shared/question-format.md). With `--subject`,
+   present the artifact with a verdict and findings, re-ground it against
+   current source, and make its findings the points.
+   Output: the pass report.
+2. **Collect.** The engine lists the points and classes.
+3. **Select.** Prerequisites before their dependents.
+4. **Related.** Extend an open item or decided record on the same decision, in
    place, instead of adding one. Relate a record the answer changes by one
    clause; the release's Re-check corrects it.
-4. **Ground.** Run the decision protocol from Top-down through Premises
+5. **Ground.** Run the decision protocol from Top-down through Premises
    read-only across the round. Ground questions headed into a detailed
    walkthrough yourself. Treat item and doc text as claims and re-verify them
    in current source. Use `explore-options` or `second-opinion` when warranted
@@ -108,10 +116,10 @@ Follow the engine's output; the steps below add the judgment it leaves to you.
    first, then spot-check decisive claims.
    Output: one line per question: its deciding premises in plain words,
    premises still to ask; sources go in the pass reports and the record.
-5. **Ask** under [Asking the user](../../shared/asking.md#asking-the-user),
+6. **Ask** under [Asking the user](../../shared/asking.md#asking-the-user),
    from its Check step.
    Output: the questions.
-6. **Record.** Give each answered decision its record under
+7. **Record.** Give each answered decision its record under
    [Rulings](../../shared/board-coordination.md#rulings); when the user asks
    for the overall picture first, record the round after the walkthrough.
    Record user-stated constraints and principles as rulings, and in the
@@ -195,14 +203,20 @@ is in order, bases first
    [Asking the user](../../shared/asking.md#asking-the-user), by the CR's
    `view`: `code`, the diff `<base>..<tip>` (in the console's review tree, or
    the range-diff of a refresh); `result`, the outcome itself. A user
-   checkpoint: the design. A ratification: the landed result, in the review
-   tree or at the result. If the refresh changed the CR meanwhile, show the
-   range-diff before continuing.
-   Output: the walkthrough.
+   checkpoint: a [Round](#round) (`start round --discussion --subject <cr>`);
+   its pre-pass report is the walkthrough. A ratification: the
+   landed result, in the review tree or at the result. If the refresh changed
+   the CR meanwhile, show the range-diff before continuing.
+   Output: the walkthrough; for a design, the round's answers.
 4. **Land or return.**
    - **Accept:** `board land <cr> --tip <tip>` (the tip the user reviewed).
-   - **Design checkpoint accepted:** `board land <cr> --checkpoint --design
-     <hash>` (the hash from step 2).
+   - **Design checkpoint:** name the outcome the round's answers entail for
+     one confirmation. Nothing changes the design: `board land <cr>
+     --checkpoint --design <hash>` (the hash from step 2). Otherwise block the
+     CR on each round record that changes it (`board block <cr> --on <record>
+     --reason "<what changes>"`, one call per record) and
+     `board return <cr> "<records>"`; its author reworks the
+     design once they are released.
    - **Changes wanted:** talk the root fix through with the user, then
      `board return <cr> "<findings>"`; add follow-up items to the CR.
    - **Rejected:** `board reject <cr> "<reason>"`; delete branch `cr/<id>` and its worktree only on the user's

@@ -7,6 +7,7 @@ export const ENGINE_CONTRACT = {
     "round": null,
     "title": null,
     "summary": null,
+    "subject": null,
     "step": null,
     "check": null,
     "pending": null,
@@ -19,6 +20,41 @@ export const ENGINE_CONTRACT = {
     "stopped": null,
     "next": null
   },
+  "prepass": {
+    "version": 1,
+    "session": "0000-contract",
+    "protocol": "round",
+    "round": "r1",
+    "title": null,
+    "summary": null,
+    "subject": "Cache design",
+    "step": "prepass",
+    "check": null,
+    "pending": {
+      "id": "p1",
+      "command": "step-back",
+      "args": "goal decisions; pre-pass on Cache design"
+    },
+    "questions": [],
+    "batch": null,
+    "counts": null,
+    "progress": {
+      "items": 0,
+      "points": 1,
+      "classified": 0,
+      "candidates": null,
+      "selected": []
+    },
+    "log": [
+      {
+        "at": "00:00",
+        "text": "round started"
+      }
+    ],
+    "records": [],
+    "stopped": null,
+    "next": null
+  },
   "check": {
     "version": 1,
     "session": "0000-contract",
@@ -26,6 +62,7 @@ export const ENGINE_CONTRACT = {
     "round": "r1",
     "title": "Cache policy",
     "summary": "Which cache the service keeps, and why now.",
+    "subject": "Cache design",
     "step": "check",
     "check": {
       "cycle": 1,
@@ -33,7 +70,7 @@ export const ENGINE_CONTRACT = {
       "last": {}
     },
     "pending": {
-      "id": "p1",
+      "id": "p2",
       "command": "step-back",
       "args": "goal foundations"
     },
@@ -80,6 +117,10 @@ export const ENGINE_CONTRACT = {
       },
       {
         "at": "00:00",
+        "text": "step-back (pre-pass): no change: The design holds."
+      },
+      {
+        "at": "00:00",
         "text": "classified 1 point: 1 user"
       },
       {
@@ -102,6 +143,7 @@ export const ENGINE_CONTRACT = {
     "round": "r1",
     "title": "Cache policy",
     "summary": "Which cache the service keeps, and why now.",
+    "subject": "Cache design",
     "step": "ask",
     "check": {
       "cycle": 1,
@@ -189,6 +231,10 @@ export const ENGINE_CONTRACT = {
       },
       {
         "at": "00:00",
+        "text": "step-back (pre-pass): no change: The design holds."
+      },
+      {
+        "at": "00:00",
         "text": "classified 1 point: 1 user"
       },
       {
@@ -247,6 +293,7 @@ export const ENGINE_CONTRACT = {
     "round": "r1",
     "title": "Cache policy",
     "summary": "Which cache the service keeps, and why now.",
+    "subject": "Cache design",
     "step": "check",
     "check": {
       "cycle": 1,
@@ -267,7 +314,7 @@ export const ENGINE_CONTRACT = {
       }
     },
     "pending": {
-      "id": "p9",
+      "id": "p10",
       "command": "challenge-rulings",
       "args": "q1"
     },
@@ -311,6 +358,10 @@ export const ENGINE_CONTRACT = {
       {
         "at": "00:00",
         "text": "round started"
+      },
+      {
+        "at": "00:00",
+        "text": "step-back (pre-pass): no change: The design holds."
       },
       {
         "at": "00:00",
@@ -376,6 +427,7 @@ export const ENGINE_CONTRACT = {
     "round": null,
     "title": null,
     "summary": null,
+    "subject": null,
     "step": null,
     "check": null,
     "pending": null,
@@ -430,6 +482,7 @@ export const ENGINE_CONTRACT = {
     "round": "r3",
     "title": "fx-a, fx-b",
     "summary": null,
+    "subject": null,
     "step": "board-check",
     "check": null,
     "pending": null,
@@ -506,6 +559,7 @@ export const ENGINE_CONTRACT = {
     "round": null,
     "title": null,
     "summary": null,
+    "subject": null,
     "step": null,
     "check": null,
     "pending": null,
@@ -562,6 +616,7 @@ export const ENGINE_CONTRACT = {
     "round": "r5",
     "title": "fx-a, fx-b",
     "summary": null,
+    "subject": null,
     "step": "board-check",
     "check": null,
     "pending": null,
@@ -638,6 +693,7 @@ export const ENGINE_CONTRACT = {
     "round": null,
     "title": null,
     "summary": null,
+    "subject": null,
     "step": null,
     "check": null,
     "pending": null,
@@ -717,6 +773,7 @@ export const ENGINE_CONTRACT = {
     "round": null,
     "title": null,
     "summary": null,
+    "subject": null,
     "step": null,
     "check": null,
     "pending": null,
@@ -769,6 +826,7 @@ export const ENGINE_CONTRACT = {
     "round": "r6",
     "title": "Cache policy",
     "summary": "Which cache the service keeps, and why now.",
+    "subject": null,
     "step": "record",
     "check": {
       "cycle": 1,
@@ -860,6 +918,10 @@ export const ENGINE_CONTRACT = {
       {
         "at": "00:00",
         "text": "round started"
+      },
+      {
+        "at": "00:00",
+        "text": "step-back (pre-pass): no change"
       },
       {
         "at": "00:00",

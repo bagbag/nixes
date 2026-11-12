@@ -8,7 +8,7 @@ import type { ConsoleBoard, ConsoleCr, ConsoleItem, ConsoleQuestion, ConsoleReco
 import { pressAcceptCr, pressContinue, pressOpenCr, pressOpenItem, pressOpenOverlaps, pressOpenSettles, pressOpenSuggestion, pressRefreshCr, pressReturnCr, pressRole, pressRun, pressStart, pressView, pressWorkers } from './core'
 import { isRoundOpen, RELEASE_COMMAND, ROUND_ROLES } from './engine'
 import { getBoard, getExpanded, getLenses, getOpened, getPass, getPlaced, getReviewing, getRole, getRound, getRoundError, getTurnRunning, toggleExpanded, updateLenses } from './state'
-import { answerText, canRefreshCr, COUNT_GROUPS, countText, crCheckText, crDetailsText, crFailureParts, crFileHref, crMarks, crNewCountText, crRows, crRowStageText, isCrAccepting, isWalkCr, GROUND, GROUND_BASE, lensArgs, LENS_SETS, plural, pullsText, recommendationMark, recommendationText, roleText, roundWords, runNoun, staleHolds, staleSessions, startHint, STEP_BACK_BASE, suggestionText, WHAT, WHERE } from './words'
+import { answerText, canRefreshCr, COUNT_GROUPS, countText, crCheckText, crDetailsText, crFailureParts, crFileHref, crMarks, crNewCountText, crRows, crRowStageText, crUnblocksHint, crUnblocksText, fitText, isCrAccepting, isWalkCr, GROUND, GROUND_BASE, lensArgs, LENS_SETS, plural, pullsText, recommendationMark, recommendationText, roleText, roundWords, runNoun, staleHolds, staleSessions, startHint, STEP_BACK_BASE, suggestionText, WHAT, WHERE } from './words'
 import type { Lens, LensCommand } from './words'
 
 type $ = EngineInterface
@@ -21,7 +21,7 @@ const BOARD_ROWS_SHOWN = 10
 const CR_ROWS_SHOWN = 3  // change requests, ratifications and items for you: the head of what waits on the person
 const CR_INDENT = 2  // cells a stacked request steps in
 const CR_ID_WIDTH = 12
-const CR_TITLE_MIN = 16  // narrower than this and the status and buttons wrap to a second line
+const MILESTONE_MIN = 8  // cells the milestone title keeps however narrow the pane
 const BUTTON_FRAME = 4  // `[ label ]`
 const CR_BUTTONS = { walk: 'Walk through', accept: 'Accept', return: 'Return', refresh: 'Refresh' } as const
 /** The cells a row of buttons takes (frames and one gap between): the slot sized to the widest row lines Accept and Return up on every row. */
@@ -712,7 +712,13 @@ export async function drawPane($: $, e: { surface: string; props: RenderPropsOf[
             const marks = crMarks(cr).filter(mark => mark.isProblem)  // the quiet ones are the summary's
             const buttons = buttonsOf(cr)
             const stage = crRowStageText(cr)
-            const status: { key: string; text: string; color: string }[] = [
+            const unblocks = crUnblocksText(cr)
+            if (unblocks !== null) hint.add(`unblocks-${cr.id}`, crUnblocksHint(cr))
+            const facts: { key: string; text: string; color: string; hover?: string }[] = [
+              { key: 'stage', text: stage, color: buttons.accepting ? 'warning' : 'inactive' },
+              ...(unblocks === null ? [] : [{ key: 'unblocks', text: unblocks, color: 'inactive', hover: `unblocks-${cr.id}` }]),
+            ]
+            const rest: { key: string; text: string; color: string }[] = [
               ...(check === null ? [] : [{ key: 'check', text: check, color: CHECK_COLOR[cr.check.state] }]),
               ...(count === null ? [] : [{ key: 'new', text: count, color: cr.check.newFailures !== null && cr.check.newFailures.length > 0 ? 'error' : 'inactive' }]),
               ...marks.map(mark => ({ key: `mark-${mark.text}`, text: mark.text, color: mark.isProblem ? 'error' : 'inactive' })),
@@ -725,17 +731,14 @@ export async function drawPane($: $, e: { surface: string; props: RenderPropsOf[
               ] : []),
               ...(buttons.refreshing ? [act(`cr-refresh-${cr.id}`, 'Refresh', () => pressRefreshCr($, cr.id), 'Puts the refresh request in your prompt: rebase, checks and the range-diff', 'suggestion')] : []),
             ]
-            const statusWidth = stage.length + status.reduce((sum, one) => sum + 1 + one.text.length, 0)
-            const rightWidth = statusWidth + (slotWidth > 0 ? 1 + slotWidth : 0)
-            const isWrapped = CR_INDENT * depth + CR_ID_WIDTH + CR_TITLE_MIN + 1 + rightWidth > e.props.bodyColumns
-            // never shrinks: it wraps whole rather than clipping
-            const right = (
-              <Box key={`cr-${cr.id}-right`} flexDirection="row" columnGap={1} flexShrink={0} marginLeft={isWrapped ? undefined : 1}>
-                <Text key={`cr-${cr.id}-stage`} color={buttons.accepting ? 'warning' : 'inactive'}>{stage}</Text>
-                {status.map(one => <Text key={`cr-${cr.id}-${one.key}`} color={one.color}>{one.text}</Text>)}
-                {slotWidth > 0 && <Box key={`cr-${cr.id}-buttons`} width={slotWidth} flexShrink={0} flexDirection="row" columnGap={1} justifyContent="flex-end">{actions}</Box>}
-              </Box>
-            )
+            // the milestone is the line's one shrinking part: it takes what the other facts and the buttons slot leave
+            const fixedWidth = [...facts, ...rest].reduce((sum, one) => sum + one.text.length + 1, 0)
+            const room = e.props.bodyColumns - CR_INDENT * depth - CR_ID_WIDTH - fixedWidth - (slotWidth > 0 ? 1 + slotWidth : 0) - 1
+            const milestone = cr.milestone === null ? null : fitText(cr.milestone, Math.max(MILESTONE_MIN, room))
+            const fact = (one: { key: string; text: string; color: string; hover?: string }) => {
+              const text = <Text key={`cr-${cr.id}-${one.key}`} color={one.color}>{one.text}</Text>
+              return one.hover === undefined ? text : <Box key={`cr-${cr.id}-${one.key}-box`} flexShrink={0} hover={{ scope: one.hover }}>{text}</Box>
+            }
             return (
               <Box key={`cr-${cr.id}`} flexDirection="column">
                 <Box key={`cr-${cr.id}-line1`} flexDirection="row">
@@ -744,9 +747,16 @@ export async function drawPane($: $, e: { surface: string; props: RenderPropsOf[
                     <Button key={`cr-${cr.id}-show`} plain onPress={() => pressOpenItem($, cr.id)}>{cr.id}</Button>
                   </Box>
                   <Box key={`cr-${cr.id}-title`} flexGrow={1} flexShrink={1} minWidth={0}><Text wrap="truncate-end">{cr.title}</Text></Box>
-                  {!isWrapped && right}
                 </Box>
-                {isWrapped && <Box key={`cr-${cr.id}-line2`} flexDirection="row" justifyContent="flex-end">{right}</Box>}
+                <Box key={`cr-${cr.id}-line2`} flexDirection="row">
+                  <Box width={CR_INDENT * depth + CR_ID_WIDTH} flexShrink={0}><Text> </Text></Box>
+                  <Box key={`cr-${cr.id}-facts`} flexDirection="row" columnGap={1} flexGrow={1} flexShrink={1} minWidth={0}>
+                    {facts.map(fact)}
+                    {milestone !== null && <Text key={`cr-${cr.id}-milestone`} wrap="truncate-end">{milestone}</Text>}
+                    {rest.map(fact)}
+                  </Box>
+                  {slotWidth > 0 && <Box key={`cr-${cr.id}-buttons`} width={slotWidth} flexShrink={0} flexDirection="row" columnGap={1} justifyContent="flex-end">{actions}</Box>}
+                </Box>
                 {slot(cr.id)}
                 {crDetails(cr)}
               </Box>

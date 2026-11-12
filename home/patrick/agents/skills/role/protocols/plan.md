@@ -61,7 +61,8 @@ findings or stops.
 ## Exit
 
 No released ruling waits unplanned except on what its planning needs
-([board-core.md](../../shared/board-core.md) released row); ready work is
+([board-core.md](../../shared/board-core.md) released row); `board check`
+reports no deviation on the items this pass touched; ready work is
 dispatched or claimable; the checkpoint file is current; the report is given.
 
 ## Released rulings
@@ -70,7 +71,8 @@ dispatched or claimable; the checkpoint file is current; the report is given.
    `board claim <id>` otherwise. Read the record and its
    rule owner section. A ruling settles only its stated choice; linked reports
    are evidence and hints are planning input; a supersession is an authorized
-   revision.
+   revision. Act on each `fix:` line the claim prints, or state why it does
+   not apply.
 2. Block each open item the ruling changes on it
    (`board block <item>… --on <ruling> --reason "<what changes>"`); relate
    items it only informs (`board bd dep relate <ruling> <item>`). Add the
