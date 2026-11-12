@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from .base import lines
 from . import words
-from .collect import read_listing
+from .collect import items_text, read_listing
 from .engine import Context, fail
 from .questions import refuse_all
 from .store import next_id
@@ -27,9 +27,11 @@ def prepass_enter(ctx: Context) -> str | None:
 def prepass_text(ctx: Context) -> str:
     r = ctx.round
     pending = r['pending'] or {}
-    rows = [words.collect_point(p) for p in r['points']] + [words.item_row(i) for i in r['items']]
+    listing = items_text(ctx, r['items'], r.get('heldElsewhere') or {}, r.get('waiting') or [], r.get('named') or [],
+                         bare=not r.get('named'), whole=bool(r.get('topic')))
     return lines(
-        words.prepass_instructions(r['id'], r.get('subject'), ctx.codex, pending.get('args') or '', rows),
+        words.prepass_instructions(r['id'], r.get('subject'), ctx.codex, pending.get('args') or '', [words.collect_point(p) for p in r['points']], bool(listing)),
+        listing,
         report_hint(ctx, 'prepass', words.PREPASS_EXAMPLE),
     )
 
@@ -39,7 +41,7 @@ def prepass_accept(ctx: Context, report: dict) -> str:
     pending = r['pending'] or {}
     command = report.get('pass')
     if command != pending.get('command'):
-        fail(f"`pass` is {pending.get('command')}, the pre-pass waiting; the questions' passes follow Stage")
+        fail(f"`pass` must be {pending.get('command')}: the pre-pass is waiting; the questions' passes follow Stage")
     if not ctx.codex:  # Codex has no console to observe its runs
         if command not in r['observed']:
             fail(words.no_run(command, pending))

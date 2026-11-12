@@ -3,7 +3,8 @@ import { describe, expect, test } from 'claude-code/testing'
 
 import { cr } from './board-console-contract'
 import { BATCH, HOME, NO_ROUND, notices, PANE_PROPS, roundJson, SESSION, world } from './fixture'
-import { parseRound } from '../hooks/engine'
+import { parseBoardConsole, parseRound } from '../hooks/engine'
+import type { ConsoleBoard } from '../types'
 import { suggestions } from '../hooks/pane'
 import { consoleText, openDialogText, protocolCallText, protocolResultText, pullsText, recommendationText, roundWords, suggestionText } from '../hooks/words'
 
@@ -891,9 +892,21 @@ describe('header counts', () => {
     expect((await ui.find({ key: 'board-counts-you-label' }))?.text).toBe('you')
     expect(labels(you)).toEqual(['for you', 'to accept', 'to ratify', 'decided', 'questions'])
     expect((await ui.find({ key: 'board-counts-agents-label' }))?.text).toBe('agents')
-    expect(labels(agents)).toEqual(['to plan', 'to review'])
+    expect(labels(agents)).toEqual(['to plan', 'to design', 'to implement', 'to review'])
     expect(you.map(one => one.props?.dimColor === true)).toEqual([false, false, false, true, false])  // only decided is zero
-    expect(agents.map(one => one.props?.dimColor === true)).toEqual([true, true])  // the agents' group is dim whatever it holds
+    expect(agents.map(one => one.props?.dimColor === true)).toEqual([true, true, true, true])  // the agents' group is dim whatever it holds
+    await ui.unmount()
+  })
+
+  test('no board: a dim notice beside the title and nothing else from the board', async ($, on) => {
+    const { clock } = world(on, { noBoard: true, sessions: [], items: [] })
+    await ready($, clock)
+    const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+    expect((await ui.find({ key: 'board-banner' }))?.text).toContain('no board')
+    expect(await ui.find({ key: 'board-counts' })).toBeUndefined()
+    const drawn = await texts(ui)
+    for (const part of ['to plan', 'to accept', 'reading the board']) expect(drawn, part).not.toContain(part)
+    expect(consoleText({ session: 's', role: 'lead', actor: 'a', tool: 'claude' }, parseBoardConsole({ noBoard: true }) as unknown as ConsoleBoard, null, false, [])).toBe('Board · lead a · no board')
     await ui.unmount()
   })
 

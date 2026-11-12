@@ -11,10 +11,10 @@ from .told import first_time, report_hint
 
 def items_text(ctx: Context, items: list[dict], elsewhere: dict[str, list[str]], waiting: list[dict],
                named: list[str] | None = None, bare: bool = False, whole: bool = False) -> str:
-    """The open-item list: whole the first time between compactions, whichever of `protocol next` and a round's Collect
-    comes first, its rows grouped under a heading per view and status (r18-q68, q69); `whole`, a topic round's Collect,
-    prints it whole every time (r24-q104). Later the named ids, the counts per kind and the command that lists them
-    again; a bare round lists before it selects."""
+    """The open-item list: whole the first time between compactions that `protocol next` or a round's pre-pass needs it,
+    its rows grouped under a heading per view and status (r18-q68, q69); `whole` (a topic round's pre-pass) prints it
+    whole every time (r24-q104). Later the named ids, the counts per kind and the command that lists them again; `bare`
+    adds that a bare round lists before it selects."""
     if not items and not elsewhere and not waiting:
         return ''
     if first_time(ctx, 'items') or whole:
@@ -36,8 +36,7 @@ def collect_text(ctx: Context) -> str:
     points = [words.collect_point(point) for point in r['points']]
     missing = [p['id'] for p in r['points'] if p['id'] not in r['classes']]
     topic = r.get('topic')
-    listing = items_text(ctx, r['items'], r.get('heldElsewhere') or {}, r.get('waiting') or [], named, bare=not named,
-                         whole=bool(topic))
+    listing = items_text(ctx, r['items'], r.get('heldElsewhere') or {}, r.get('waiting') or [], named)  # the pre-pass printed the list
     return lines(
         words.collect_intro(r['id']),
         *([words.collect_topic(topic)] if topic else []),

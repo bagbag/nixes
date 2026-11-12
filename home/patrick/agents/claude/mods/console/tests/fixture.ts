@@ -25,6 +25,9 @@ export const COUNTS = {
   toReview: { ready: 0, held: 0, waiting: 0 }, toAccept: { ready: 13, held: 0, waiting: 1 }, toRatify: { ready: 1, held: 0, waiting: 0 }, forUser: { ready: 3, held: 0, waiting: 0 },
 }
 
+/** `board console` counts: the round's, plus the agent steps the board adds. */
+export const BOARD_COUNTS = { ...COUNTS, toDesign: { ready: 6, held: 1, waiting: 0 }, toImplement: { ready: 90, held: 1, waiting: 1 } }
+
 export function roundJson(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
     version: 1, session: SESSION, protocol: 'round', round: 'r4', step: 'check',
@@ -76,6 +79,14 @@ export type World = {
   held: unknown[]
   /** `board console` `crs` and `ratifications` (Front B's shape, tests/board-console-contract.ts). */
   crs: unknown[]
+  /** `board console` `queued`: the requests waiting for an agent, counted not listed. */
+  queued: number
+  /** `board console` `waitingOnYou`: the queued requests whose unit waits on a decision of the person. */
+  waitingOnYou: number
+  /** `board console` `prefix`: the board's own id prefix, which the pane leaves off. */
+  prefix: string | null
+  /** `board console` `noBoard`: the directory has no board. */
+  noBoard: boolean
   ratifications: unknown[]
   agents: { id: string; description: string; type: string; status: string }[]
   sync?: string | null
@@ -106,7 +117,7 @@ export type World = {
 }
 
 /** Registers the world's hooks beneath the console; returns it, the clock and the session record. */
-export function world(on: On, init: Partial<Pick<World, 'round' | 'role' | 'surfaces' | 'sessions' | 'items' | 'forYou' | 'held' | 'crs' | 'ratifications' | 'agents' | 'sync' | 'queueLine' | 'activateError'>> = {}) {
+export function world(on: On, init: Partial<Pick<World, 'round' | 'role' | 'surfaces' | 'sessions' | 'items' | 'forYou' | 'held' | 'crs' | 'queued' | 'waitingOnYou' | 'prefix' | 'noBoard' | 'ratifications' | 'agents' | 'sync' | 'queueLine' | 'activateError'>> = {}) {
   const w: World = {
     round: init.round ?? roundJson(),
     role: init.role === undefined ? { session: SESSION, role: 'lead', actor: '617adf08', tool: 'claude' } : init.role,
@@ -121,6 +132,10 @@ export function world(on: On, init: Partial<Pick<World, 'round' | 'role' | 'surf
     forYou: init.forYou ?? [],
     held: init.held ?? [],
     crs: init.crs ?? [],
+    queued: init.queued ?? 0,
+    waitingOnYou: init.waitingOnYou ?? 0,
+    prefix: init.prefix ?? null,
+    noBoard: init.noBoard ?? false,
     ratifications: init.ratifications ?? [],
     sync: init.sync,
     queueLine: init.queueLine,
@@ -218,7 +233,7 @@ export function world(on: On, init: Partial<Pick<World, 'round' | 'role' | 'surf
       if (answered !== undefined) return { value: { exitCode: answered.exitCode, stdout: answered.stdout ?? '', stderr: answered.stderr ?? '', isStdoutTruncated: false, isStderrTruncated: false } }
     }
     if (argv[0] === BOARD) {
-      if (argv[1] === 'console') return ok({ counts: COUNTS, forYou: w.forYou, items: w.items, sessions: w.sessions, held: w.held, crs: w.crs, ratifications: w.ratifications, sync: w.sync, queueLine: w.queueLine })
+      if (argv[1] === 'console') return ok({ noBoard: w.noBoard, counts: w.noBoard ? null : BOARD_COUNTS, forYou: w.forYou, items: w.items, sessions: w.sessions, held: w.held, crs: w.crs, queued: w.queued, waitingOnYou: w.waitingOnYou, prefix: w.prefix, ratifications: w.ratifications, sync: w.sync, queueLine: w.queueLine })
       if (argv[1] === 'show' && w.show.exit !== 0) return { value: { exitCode: w.show.exit, stdout: '', stderr: 'no such item', isStdoutTruncated: false, isStderrTruncated: false } }
       if (argv[1] === 'show' && argv.includes('--json')) return ok(w.show.bad ? 'not json' : { [argv[2] as string]: w.show.record })
       if (argv[1] === 'show') return ok(`${argv[2]}: Which engine name?\nstatus: in_progress`)

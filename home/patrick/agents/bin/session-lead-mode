@@ -15,10 +15,18 @@
 # stopping together would overwrite each other's marks in one shared file). Codex records no process: the nearest `codex`
 # ancestor can be an app-server daemon shared by many sessions or a
 # per-command `codex sandbox` helper, so Codex holds keep the idle hint.
+# After its write, activate prunes registrations idle prune_days (last activity, else registration) whose process
+# ended or that record none (Codex), skipping when the lock is busy; their actors go to `ended`, which board reads
+# so their holds still show gone. Registration writes and the prune hold one lockf(1) lock on $state/.lock (freed
+# when its holder dies); `list` and activity writes take none. `list` prints one JSON line per registration,
+# {"unreadable": <file>} for one it cannot parse.
 set -euo pipefail
 
 state_dir=${AGENT_SESSION_STATE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/agent-sessions}
 pull_order=(plan design implement review)
+prune_days=7
+lock_file=$state_dir/.lock
+lock_wait=10  # seconds a registration write waits for the lock
 
 usage() {
   cat >&2 <<'EOF'
@@ -28,6 +36,7 @@ usage: session-lead-mode activate <lead|agent|solo|autopilot> [--pulls plan,desi
        session-lead-mode get <id>
        session-lead-mode show <id>
        session-lead-mode list
+       session-lead-mode ended
        session-lead-mode state-dir
        session-lead-mode alive
        session-lead-mode session-active
@@ -46,6 +55,7 @@ fail() {
 }
 
 [[ $# -gt 0 ]] || usage
+original=("$@")
 command=$1
 shift
 role='' pulls='' workers='' session='' tool='' thread=''
@@ -173,6 +183,121 @@ read_project() {
 }
 project_filter='def located: if $project == "" then {} else {project: $project} end;'
 
+# Runs this script again with the same arguments as $2... under the registry lock, waiting $1 seconds for it (0: not at
+# all). lockf's own failures come back as its status: 73 the lock file cannot be opened, 75 the wait ran out.
+run_locked() {
+  local wait=$1
+  shift
+  mkdir -p "$state_dir" 2>/dev/null || return 73
+  SLM_LOCKED=1 /usr/bin/lockf -k -t "$wait" "$lock_file" bash "$0" "$@"
+}
+
+# Whether the registered process is gone: ps finds no such pid, or the pid now names a process started at another time.
+# Unknown (no ps, ps failing for another reason) is not ended.
+process_ended() {
+  local current status=0
+  current=$(LC_ALL=C TZ=UTC0 "$ps_command" -o lstart= -p "$1" 2>/dev/null) || status=$?
+  if ((status == 0)) && [[ -n "$current" ]]; then
+    read -r -a current <<<"$current"
+    [[ "${current[*]}" != "$2" ]]
+  else
+    ((status == 1)) && [[ -z "$current" ]]
+  fi
+}
+
+# Entry lines on stdin -> "session<TAB>pid<TAB>pid_started<TAB>actor" of each one idle over prune_days; pid and
+# pid_started are "-" without a recorded process.
+stale_registrations() {
+  jq -r --argjson days "$prune_days" '
+    select(.unreadable == null)
+    | ([.registered_at, .active_at, (.workers // {} | .[])] | map(select(. != null)) | max) as $last
+    | select($last != null and $last < (now - $days * 86400 | strftime("%Y-%m-%dT%H:%M:%SZ")))
+    | ((.pid | type) == "number" and (.pid_started | type) == "string") as $process
+    | [.session, (if $process then (.pid | tostring) else "-" end), (if $process then .pid_started else "-" end), .actor] | @tsv' 2>/dev/null
+}
+
+# Prints how many registrations it removed: those idle over prune_days whose process ended (or that record none). Runs
+# under the registry lock and reads the registrations itself, so a session that registered meanwhile keeps its
+# registration. The actor reaches `ended` first, so an interrupted prune leaves a registration, never a lost actor.
+prune_ended() {
+  local row session pid started actor temporary removed=0
+  while IFS= read -r row; do
+    [[ -n "$row" ]] || continue
+    IFS=$'\t' read -r session pid started actor <<<"$row"
+    [[ "$session" =~ ^[A-Za-z0-9._-]{8,}$ && -n "$actor" ]] || continue
+    if [[ "$pid" == - ]] || process_ended "$pid" "$started"; then
+      umask 077
+      temporary=$(mktemp "$state_dir/.ended.XXXXXX")
+      { cat -- "$state_dir/ended" 2>/dev/null || true; printf '%s\n' "$actor"; } | awk 'NF && !seen[$0]++' >"$temporary"
+      mv -f "$temporary" "$state_dir/ended"
+      rm -rf -- "$state_dir/$session.json" "$state_dir/$session.active" "$state_dir/$session.workers" "$state_dir/$session.ended"
+      removed=$((removed + 1))
+    fi
+  done < <(list_entries | stale_registrations)
+  echo "$removed"
+}
+
+# Every readable registration as one JSON line (what list prints), and an unreadable one as {"unreadable": <file>}.
+list_entries() {
+  shopt -s nullglob
+  files=("$state_dir"/*.json)
+  ((${#files[@]})) || return 0
+  # One jq over every registration (a jq per file made the list the console's slowest read): bash globs the
+  # activity files, one stat reads their times, and entry_json's output shape is rebuilt from both. A file
+  # that does not parse as an object is skipped alone; an empty one lists nothing.
+  timed=()
+  for registration in "${files[@]}"; do
+    drop_legacy_markers "$registration"
+    timed+=("$registration")
+    [[ ! -e "${registration%.json}.active" ]] || timed+=("${registration%.json}.active")
+    for marker in "${registration%.json}.workers"/*; do
+      [[ ! -e "$marker" ]] || timed+=("$marker")
+    done
+  done
+  # GNU stat takes -c, BSD stat -f.
+  if stat -c %Y / >/dev/null 2>&1; then stat_format=(-c '%Y %n'); else stat_format=(-f '%m %N'); fi
+  # --rawfile per registration, not -R over all of them: jq joins a file's unterminated last line to the next file.
+  contents=() readable=()
+  for registration in "${files[@]}"; do
+    if [[ -r "$registration" ]]; then
+      contents+=(--rawfile "f${#readable[@]}" "$registration")
+      readable+=("$registration")
+    else
+      jq -n -c --arg file "$registration" '{unreadable: $file}'
+    fi
+  done
+  ((${#readable[@]})) || return 0
+  jq -n -c "${contents[@]}" --rawfile stats <(((${#timed[@]})) && stat "${stat_format[@]}" "${timed[@]}" 2>/dev/null; true) '
+    def stamp: strftime("%Y-%m-%dT%H:%M:%SZ");
+    ([$stats | split("\n")[] | capture("^(?<t>[0-9]+) (?<n>.*)$")? | {n, t: (.t | tonumber | stamp)}]) as $times
+    | $ARGS.positional | to_entries[] | .value as $file | ($file | rtrimstr(".json")) as $stem
+    | $ARGS.named["f\(.key)"] as $text
+    | (try ($text | fromjson) catch null) as $entry
+    | if ($entry | type) != "object" then
+        (if ($text | test("^\\s*$")) then empty else {unreadable: $file} end)
+      else
+        $entry | {role, pulls, actor, tool, session, registered_at, pid, pid_started, project, worker_cap,
+          active_at: (first($times[] | select(.n == ($stem + ".active")) | .t) // null),
+          workers: ([$times[] | select(.n | startswith($stem + ".workers/")) | {(.n | ltrimstr($stem + ".workers/")): .t}] | add // {})}
+      end' --args "${readable[@]}"
+}
+
+# Registration writes run again under the registry lock (the child sees SLM_LOCKED); activate then prunes, best effort.
+if [[ -z ${SLM_LOCKED-} ]]; then
+  case "$command" in
+    activate | set-workers | alive)
+      [[ "$command" != alive ]] || { [[ -z "$role$pulls" ]] || usage; registered_session; }  # no lock for the hook's no-op
+      locked=0
+      run_locked "$lock_wait" "${original[@]}" || locked=$?
+      case $locked in
+        73 | 75) fail "the registry is locked or not writable ($lock_file)" ;;
+      esac
+      if [[ "$command" == activate && $locked -eq 0 ]]; then run_locked 0 prune >/dev/null 2>&1 || true; fi
+      exit "$locked"
+      ;;
+  esac
+fi
+
 case "$command" in
   activate)
     case "$role" in
@@ -224,8 +349,8 @@ case "$command" in
     session=$role
     valid_session_id "$session"
     target="$state_dir/$session.json"
-    [[ -f "$target" ]] || fail "session $session has no role"
     umask 077
+    [[ -f "$target" ]] || fail "session $session has no role"
     temporary=$(mktemp "$state_dir/.$session.XXXXXX")
     jq --argjson worker_cap "$workers" '.worker_cap = $worker_cap' "$target" >"$temporary"
     mv -f "$temporary" "$target"
@@ -236,10 +361,15 @@ case "$command" in
     read_identity
     read_project
     umask 077
+    [[ -f "$target" ]] || exit 0  # pruned meanwhile: it registers again
     temporary=$(mktemp "$state_dir/.$session.XXXXXX")
     jq --arg pid "$pid" --arg pid_started "$pid_started" --arg project "$project" \
       "$identity_filter$project_filter"'del(.pid, .pid_started, .project, .ended_workers) + identity + located' "$target" >"$temporary"
     mv -f "$temporary" "$target"
+    ;;
+  prune)
+    [[ -n ${SLM_LOCKED-} ]] || usage
+    prune_ended
     ;;
   session-active)
     [[ -z "$role$pulls" ]] || usage
@@ -297,46 +427,11 @@ case "$command" in
   list)
     [[ -z "$role$session$pulls$tool" ]] || usage
     [[ -d "$state_dir" ]] || exit 0
-    shopt -s nullglob
-    files=("$state_dir"/*.json)
-    ((${#files[@]})) || exit 0
-    # One jq over every registration (a jq per file made the list the console's slowest read): bash globs the
-    # activity files, one stat reads their times, and entry_json's output shape is rebuilt from both. A file
-    # that does not parse as an object is skipped alone; an empty one lists nothing.
-    timed=()
-    for registration in "${files[@]}"; do
-      drop_legacy_markers "$registration"
-      [[ ! -e "${registration%.json}.active" ]] || timed+=("${registration%.json}.active")
-      for marker in "${registration%.json}.workers"/*; do
-        [[ ! -e "$marker" ]] || timed+=("$marker")
-      done
-    done
-    # GNU stat takes -c, BSD stat -f.
-    if stat -c %Y / >/dev/null 2>&1; then stat_format=(-c '%Y %n'); else stat_format=(-f '%m %N'); fi
-    # --rawfile per registration, not -R over all of them: jq joins a file's unterminated last line to the next file.
-    contents=() readable=()
-    for registration in "${files[@]}"; do
-      if [[ -r "$registration" ]]; then
-        contents+=(--rawfile "f${#readable[@]}" "$registration")
-        readable+=("$registration")
-      else
-        echo "session-lead-mode: skipped unreadable registration $registration" >&2
-      fi
-    done
-    ((${#readable[@]})) || exit 0
-    jq -n -c "${contents[@]}" --rawfile stats <(((${#timed[@]})) && stat "${stat_format[@]}" "${timed[@]}" 2>/dev/null; true) '
-      def stamp: strftime("%Y-%m-%dT%H:%M:%SZ");
-      ([$stats | split("\n")[] | capture("^(?<t>[0-9]+) (?<n>.*)$")? | {n, t: (.t | tonumber | stamp)}]) as $times
-      | $ARGS.positional | to_entries[] | .value as $file | ($file | rtrimstr(".json")) as $stem
-      | $ARGS.named["f\(.key)"] as $text
-      | (try ($text | fromjson) catch null) as $entry
-      | if ($entry | type) != "object" then
-          (if ($text | test("^\\s*$")) then empty else ("session-lead-mode: skipped unreadable registration \($file)\n" | stderr | empty) end)
-        else
-          $entry | {role, pulls, actor, tool, session, registered_at, pid, pid_started, project, worker_cap,
-            active_at: (first($times[] | select(.n == ($stem + ".active")) | .t) // null),
-            workers: ([$times[] | select(.n | startswith($stem + ".workers/")) | {(.n | ltrimstr($stem + ".workers/")): .t}] | add // {})}
-        end' --args "${readable[@]}"
+    list_entries
+    ;;
+  ended)
+    [[ -z "$role$session$pulls$tool" ]] || usage
+    cat -- "$state_dir/ended" 2>/dev/null || true
     ;;
   *) usage ;;
 esac

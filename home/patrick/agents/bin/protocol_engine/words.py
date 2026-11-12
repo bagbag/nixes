@@ -182,14 +182,15 @@ PREPASS_EXAMPLE = {'pass': 'step-back', 'summary': '<one line: what the pre-pass
                    'verdict': '<with a --subject: its verdict>'}
 
 
-def prepass_instructions(round_id: str, subject: str | None, codex: bool, args: str, rows: list[str]) -> str:
+def prepass_instructions(round_id: str, subject: str | None, codex: bool, args: str, rows: list[str], items_listed: bool) -> str:
     return lines(
         f"Round {round_id} · Pre-pass (decide.md Round 1): a step-back over the whole point set. "
         + (f'Run the step-back skill now with the argument `{args}` (read its SKILL.md), then report the pass.' if codex else HAND_OVER),
         '- Judge the direction, the points that are off or rest on an unclear premise (asked first), and the cut under question-format.md.',
         *([f"- Subject: {subject}. Report its verdict and findings (findings are points); for a design, re-ground it against current "
            'source and make drift its own finding.'] if subject else []),
-        '- The point set:' if rows else '- The point set is empty: a finding or a missing point is a new one.',
+        '- The point set:' if rows else '- The point set: the open items below; a finding or a missing point is a new one.'
+        if items_listed else '- The point set is empty: a finding or a missing point is a new one.',
         *rows,
         '- `points` entries: no `id` adds a point; a pasted point\'s `id` rewords it (`text`) or drops it (`drop`, `reason`); a split '
         'rewords one part and adds the others; `first` marks a pasted point or open item to ask first.')
@@ -197,7 +198,7 @@ def prepass_instructions(round_id: str, subject: str | None, codex: bool, args: 
 
 # Collect and Select (collect.py).
 
-VIEW_LABELS = {  # the views Collect offers, in listing order (`collect_enter`): heading, name in the counts
+VIEW_LABELS = {  # the views Collect offers, in listing order: heading, name in the counts
     'decided': ('decided, awaiting release', 'decided'), 'questions': ('open questions', 'open questions'),
     'ratification': ('awaiting ratification', 'awaiting ratification'), 'toAccept': ('to accept (designs in review)', 'to accept'),
     'toReview': ('to review (work in review)', 'to review'),

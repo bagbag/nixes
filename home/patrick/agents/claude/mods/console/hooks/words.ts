@@ -332,8 +332,21 @@ type CountKey = keyof NonNullable<ConsoleBoard['counts']>
 /** The header counts split by who acts: what waits on the person (a release needs them too, so `decided` counts), then the agents' queues. */
 export const COUNT_GROUPS: readonly { key: 'you' | 'agents'; counts: readonly (readonly [CountKey, string])[] }[] = [
   { key: 'you', counts: [['forUser', 'for you'], ['toAccept', 'to accept'], ['toRatify', 'to ratify'], ['decided', 'decided'], ['questions', 'questions']] },
-  { key: 'agents', counts: [['toPlan', 'to plan'], ['toReview', 'to review']] },
+  { key: 'agents', counts: [['toPlan', 'to plan'], ['toDesign', 'to design'], ['toImplement', 'to implement'], ['toReview', 'to review']] },
 ]
+
+/** An id as the pane shows it: without the board's own prefix (`tstdl-28g0i` is `28g0i`), another prefix stays. Display only: presses and prompts keep the full id. */
+export const displayId = (id: string, prefix: string | null): string => prefix !== null && prefix !== '' && id.startsWith(`${prefix}-`) ? id.slice(prefix.length + 1) : id
+
+/** `text` with every id of the board's own prefix shown without it (a hover, a summary line). */
+export const displayIds = (value: string, prefix: string | null): string =>
+  prefix === null || prefix === '' ? value : value.replace(new RegExp(`(?<![\\w-])${prefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}-(?=\\w)`, 'g'), '')
+
+/** The change requests block's banner: `3 to accept · 2 in work · 5 wait on your answers · 97 queued`, zero parts left out. */
+export function crSummaryText(board: Pick<ConsoleBoard, 'crs' | 'queued' | 'waitingOnYou'>): string {
+  const accepting = board.crs.filter(isCrAccepting).length
+  return [[accepting, 'to accept'], [board.crs.length - accepting, 'in work'], [board.waitingOnYou, 'wait on your answers'], [board.queued, 'queued']].filter(([n]) => n !== 0).map(([n, word]) => `${n} ${word}`).join(' · ')
+}
 
 /** `<ready>` plus ` (k wait)` when items of that step wait (r21-q141). */
 export function countText(count: ConsoleCount | undefined): string {
@@ -366,17 +379,17 @@ export function crCheckText(cr: ConsoleCr): string | null {
 /** The row's failure word: how many failures are new; null while no comparison ran. */
 export const crNewCountText = (cr: ConsoleCr): string | null => cr.check.newFailures === null ? null : `${cr.check.newFailures.length} new`
 
-/** What the row leaves out: marks that are no problem (returned, lands with <id>). */
-export const crQuietMarks = (cr: ConsoleCr): string[] => crMarks(cr).filter(mark => !mark.isProblem).map(mark => mark.text)
+/** What the row leaves out: marks that are no problem (lands with <id>). */
+export const crQuietMarks = (cr: ConsoleCr, prefix: string | null = null): string[] => crMarks(cr, prefix).filter(mark => !mark.isProblem).map(mark => mark.text)
 
 /** The review tree's state for this request: null while it is not the one open there. */
 export const crTreeText = (cr: ConsoleCr, reviewing: ConsoleReviewing | null): string | null =>
   reviewing?.cr !== cr.id ? null : reviewing.tip === cr.tip ? 'in review tree' : 'review tree behind'
 
 /** The opened summary's details line for a change request: the accept stage the row leaves out, look, view, failure counts, then the quiet marks and the review tree's state; null when none is known. */
-export function crDetailsText(cr: ConsoleCr, reviewing: ConsoleReviewing | null): string | null {
+export function crDetailsText(cr: ConsoleCr, reviewing: ConsoleReviewing | null, prefix: string | null = null): string | null {
   const { baseCount, tipCount } = cr.check
-  const parts = [isCrAccepting(cr) ? crStageText(cr) : null, crLookText(cr), baseCount === null || tipCount === null ? null : `base ${baseCount}, tip ${tipCount}`, ...crQuietMarks(cr), crTreeText(cr, reviewing)].filter(part => part !== null)
+  const parts = [isCrAccepting(cr) ? crStageText(cr) : null, crLookText(cr), baseCount === null || tipCount === null ? null : `base ${baseCount}, tip ${tipCount}`, ...crQuietMarks(cr, prefix), crTreeText(cr, reviewing)].filter(part => part !== null)
   return parts.length === 0 ? null : parts.join(' · ')
 }
 
@@ -400,15 +413,14 @@ export function crFailuresText(cr: ConsoleCr): string | null {
   return `${newFailures.length} new: ${named}${newFailures.length > 3 ? ', …' : ''}${counts}`
 }
 
-/** What holds the request up besides its check, each with its colour: setup failed, review stale (waiting for its Accept), land blocked (paths, first three), returned, lands with its base. */
-export function crMarks(cr: ConsoleCr): { text: string; isProblem: boolean }[] {
+/** What holds the request up besides its check, each with its colour: setup failed, review stale (waiting for its Accept), land blocked (paths, first three), lands with its base. */
+export function crMarks(cr: ConsoleCr, prefix: string | null = null): { text: string; isProblem: boolean }[] {
   const blocked = cr.landBlocked ?? []
   return [
     ...(cr.setupFailed ? [{ text: 'setup failed', isProblem: true }] : []),
     ...(isCrAccepting(cr) && cr.reviewState === 'stale' ? [{ text: 'review stale', isProblem: true }] : []),
     ...(blocked.length > 0 ? [{ text: `land blocked: ${blocked.slice(0, 3).join(', ')}${blocked.length > 3 ? ', …' : ''}`, isProblem: true }] : []),
-    ...(cr.returned ? [{ text: 'returned', isProblem: false }] : []),
-    ...(cr.after !== null ? [{ text: `lands with ${cr.after}`, isProblem: false }] : []),
+    ...(cr.after !== null ? [{ text: `lands with ${displayId(cr.after, prefix)}`, isProblem: false }] : []),
   ]
 }
 
@@ -456,28 +468,37 @@ export const refreshText = (cr: ConsoleCr): string => `Refresh ${cr.id} under th
 export const crUnblocksText = (cr: ConsoleCr): string | null => cr.unblocks > 0 ? `unblocks ${cr.unblocks}` : null
 
 /** The unblocks hover: the direct share of the count. */
-export const crUnblocksHint = (cr: ConsoleCr): string => `${cr.id} unblocks ${cr.unblocks} open items in all, ${cr.unblocksDirect} waiting on it directly`
+export const crUnblocksHint = (cr: ConsoleCr, prefix: string | null = null): string => `${displayId(cr.id, prefix)} unblocks ${cr.unblocks} open items in all, ${cr.unblocksDirect} waiting on it directly`
+
+/** `P1`: the priority the board ranks the request at (dim on line two). */
+export const crPriorityText = (cr: ConsoleCr): string => `P${cr.priority}`
+
+/** The hover of a raised priority: `P2, counts as P1: blocks 28g0i`; null when the request's own priority stands. */
+export const crPriorityHint = (cr: ConsoleCr, prefix: string | null): string | null =>
+  cr.raisedBy === null || cr.priority >= cr.ownPriority ? null : `P${cr.ownPriority}, counts as P${cr.priority}: ${cr.raisedBy.isItem ? 'its item' : 'blocks'} ${displayId(cr.raisedBy.id, prefix)}`
 
 /** The text cut to `width` cells, `…` ending a cut one; at least one cell stays. */
 export const fitText = (value: string, width: number): string => value.length <= width ? value : `${value.slice(0, Math.max(1, width - 1)).trimEnd()}…`
 
 /** One change request as a text line: state only, since a text reader presses nothing. */
-export function crLine(cr: ConsoleCr, depth: number, reviewing: ConsoleReviewing | null): string {
+export function crLine(cr: ConsoleCr, depth: number, reviewing: ConsoleReviewing | null, prefix: string | null = null): string {
   const tree = reviewing?.cr === cr.id ? (reviewing.tip === cr.tip ? 'in review tree' : 'review tree behind') : null
-  const parts = [crStageText(cr), crUnblocksText(cr), cr.milestone, crCheckText(cr), crFailuresText(cr), crLookText(cr), tree, cr.holder === null ? null : `held by ${cr.holder}`].filter(part => part !== null)
-  return `${'  '.repeat(depth + 1)}${cr.id}  ${cr.title} · ${parts.join(' · ')}`
+  const parts = [crStageText(cr), crPriorityText(cr), crUnblocksText(cr), cr.milestone, crCheckText(cr), crFailuresText(cr), crLookText(cr), tree, cr.holder === null ? null : `held by ${cr.holder}`].filter(part => part !== null)
+  return `${'  '.repeat(depth + 1)}${displayId(cr.id, prefix)}  ${cr.title} · ${parts.join(' · ')}`
 }
 
 /** `/console` as text: what the pane shows, for a bridge client or a narrow terminal. */
 export function consoleText(role: ConsoleRole, board: ConsoleBoard | null, round: ConsoleRound | null, isRoundRole: boolean, offered: readonly ConsoleSuggestion[], reviewing: ConsoleReviewing | null = null): string {
-  const lines: string[] = [`Board · ${role.role} ${role.actor}`]
+  const prefix = board?.prefix ?? null
+  const shown = (id: string) => displayId(id, prefix)
+  const lines: string[] = [`Board · ${role.role} ${role.actor}${board?.isMissing === true ? ' · no board' : ''}`]
   if (board === null) {
     lines.push('  board views not read yet')
-  } else {
+  } else if (!board.isMissing) {
     if (board.counts !== null) {
       for (const { key: who, counts } of COUNT_GROUPS) lines.push(`  ${who}: ${counts.map(([key, label]) => `${label} ${countText(board.counts?.[key])}`).join(' · ')}`)
     }
-    for (const item of board.forYou) lines.push(`  for you: ${item.id}  ${item.type}  ${item.title}`)
+    for (const item of board.forYou) lines.push(`  for you: ${shown(item.id)}  ${item.type}  ${item.title}`)
     if (board.sync !== null) lines.push(`  ${board.sync}`)
     if (board.queues !== null) lines.push(`  ${board.queues}`)
     const stale = staleSessions(board)
@@ -486,16 +507,16 @@ export function consoleText(role: ConsoleRole, board: ConsoleBoard | null, round
       lines.push(`  ${session.role} ${session.tool || '?'} ${session.actor}${session.pulls.length > 0 ? ` (${session.pulls.join(', ')})` : ''} · holds ${session.holds}${workers} · ${session.state || 'unknown'}`)
     }
     const holds = staleHolds(board, stale)
-    if (holds.length > 0) lines.push(`  stale holds: ${holds.map(one => `${one.id} (${one.actor})`).join(', ')}`)
-    if (board.items.length > 0) lines.push('  this session holds:', ...board.items.map(item => `    ${item.id}  ${item.status}  ${item.title}`))
+    if (holds.length > 0) lines.push(`  stale holds: ${holds.map(one => `${shown(one.id)} (${one.actor})`).join(', ')}`)
+    if (board.items.length > 0) lines.push('  this session holds:', ...board.items.map(item => `    ${shown(item.id)}  ${item.status}  ${item.title}`))
     if (board.error !== null) lines.push(`  board error: ${board.error}`)
-    if (board.crs.length > 0) {
-      lines.push('', 'Change requests')
-      for (const { cr, depth } of crRows(board.crs)) lines.push(crLine(cr, depth, reviewing))
+    if (board.crs.length > 0 || board.queued > 0 || board.waitingOnYou > 0) {
+      lines.push('', `Change requests · ${crSummaryText(board)}`)
+      for (const { cr, depth } of crRows(board.crs)) lines.push(crLine(cr, depth, reviewing, prefix))
     }
     if (board.ratifications.length > 0) {
       lines.push('', 'To ratify')
-      for (const one of board.ratifications) lines.push(`  ${one.id}  ${one.title} · landed in ${one.cr}`)
+      for (const one of board.ratifications) lines.push(`  ${shown(one.id)}  ${one.title} · landed in ${shown(one.cr)}`)
     }
   }
   const proposed = isRoundRole ? offered.flatMap(one => one.kind === 'round' ? [one] : []) : []
@@ -504,15 +525,15 @@ export function consoleText(role: ConsoleRole, board: ConsoleBoard | null, round
     for (const one of proposed) lines.push(`  ${one.number}. ${[suggestionText(one), one.summary, `type /${START_COMMAND} ${one.number}`].filter(part => part !== '').join(' · ')}`)
   }
   if (isRoundRole && round !== null && !isRoundOpen(round) && round.stopped !== null) {
-    lines.push('', `Release ${round.stopped.run} stopped: ${round.stopped.reason} · next: a round on ${round.stopped.ids.join(', ')}`)
+    lines.push('', `Release ${round.stopped.run} stopped: ${round.stopped.reason} · next: a round on ${round.stopped.ids.map(shown).join(', ')}`)
   }
   if (isRoundRole && round !== null && isRoundOpen(round)) {
     lines.push('', `${runNoun(round)} ${round.round}${round.title ? ` · ${round.title}` : ''} · ${roundWords(round)}`)
     if (round.summary) lines.push(`  ${round.summary}`)
-    for (const one of round.records) lines.push(`  ${one.state.padEnd(8)} ${one.id}  ${one.title}${one.reason === null ? '' : ` · ${one.reason}`}`)
+    for (const one of round.records) lines.push(`  ${one.state.padEnd(8)} ${shown(one.id)}  ${one.title}${one.reason === null ? '' : ` · ${one.reason}`}`)
     for (const question of round.questions) {
       const overlaps = question.overlaps.filter(one => one.outcome === null).map(one => one.id)
-      lines.push(`  ${question.status.padEnd(8)} ${question.id}  ${question.title}${overlaps.length > 0 ? ` · overlaps ${overlaps.join(', ')}` : ''}`)
+      lines.push(`  ${question.status.padEnd(8)} ${question.id}  ${question.title}${overlaps.length > 0 ? ` · overlaps ${overlaps.map(shown).join(', ')}` : ''}`)
     }
   }
   return lines.join('\n')

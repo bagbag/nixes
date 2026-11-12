@@ -335,12 +335,15 @@ def answer(ctx: Context, report: dict, origin: str) -> str:
     return ' '.join(notes)
 
 
+RESTART_STEPS = ('related', 'check', 'ask', 'record')  # the steps after Stage, while the round is open
+
+
 def restart(ctx: Context, ids: list[str], reason: str | None) -> None:
     r = ctx.round
     if r and r['protocol'] == 'release' and r['step'] != 'closed':
         fail('restart is a round verb: in a release, a criterion holds the set (answer Hold, or `protocol abandon`) '
              'and the next round restarts it')
-    if not r or r['step'] in ('collect', 'select', 'stage', 'closed'):
+    if not r or r['step'] not in RESTART_STEPS:
         fail('restart needs an open round past Stage')
     targets = [by_id(ctx, qid) for qid in ids]
     # Answers resting on a restarted premise go with it, through chains (r23-q92): their options assumed the old answer.

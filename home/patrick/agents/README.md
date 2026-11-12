@@ -198,9 +198,15 @@ session when it holds items here, or when its project is this board's and the la
 registration and last activity is within 24 hours (a session with no project and no holds is
 not listed; a project without a board has no session list); the per-kind session counts, the
 pane and `board console` read that one list.
-`board position` marks holders GONE when their session's process ended
-(Claude; Codex records no process: the nearest `codex` ancestor can be a
-shared app-server or a per-command sandbox helper), derives idle from the
+`board position` marks holders GONE when their session's process ended (Claude; Codex records no process: the
+nearest `codex` ancestor can be a shared app-server or a per-command sandbox helper) or its registration was
+pruned. `session-lead-mode activate` prunes
+registrations idle 7 days (last activity, else registration) whose process ended or that record none,
+appending their actors to the state dir's `ended` file (`session-lead-mode ended` prints it); a hold of an
+ended actor with no registration shows GONE, `held elsewhere` included (r3-q17). Registration writes and the
+prune hold one `lockf` lock (`$state/.lock`, freed when its holder dies; the prune re-reads each registration
+under it and skips when the lock is busy); `list` is a pure read, activity writes stay unlocked, and `list`
+prints a registration it cannot parse as `{"unreadable": <file>}`. `board` derives idle from the
 holder's last tool call (else the item's update) and shows
 `workers <active>/<cap>`. `board mine` marks holds of the caller's workers
 without a marker WORKER STOPPED once the session's `.active` exists (only the
@@ -216,11 +222,12 @@ items) unless `--force "<reason>"`; a takeover of a work item held in progress (
 `board take`) counts the same way and takes `--force` past the cap (r16-q93); position, mine, claim and check flag a forced hold `FORCED: <reason>`
 (item metadata `forced_hold_by`/`forced_hold`, shown while that actor holds it). A held work item
 with no update (fields, notes, comments) for an hour is `STALE` in position, mine, check and the
-holder's claim output (r13-q76); nothing is refused. Registration takes `--pulls` for every role;
+holder's claim output (r13-q76); nothing is refused. An unregistered session has no cap; one whose own registration file
+exists but is unreadable is refused by `board claim` and `board take` until it registers again (r3-q16). Registration takes `--pulls` for every role;
 lead, solo and agent are presets, and a session's pulls add to its preset for bare claims, handles
 and capacity (r13-q61). `board create` and `board bd create|update` refuse a task, bug, design or
 spike whose description, design, acceptance or notes is over 2000 characters (naming field and size;
-`--append-notes` counts the old notes plus the appended text); an update that shrinks an over-limit field
+`--append-notes` counts the old notes plus the appended text; the refusal says how to cut, r3-q14); an update that shrinks an over-limit field
 passes, and decision records are not limited (r13-q74, r16-q96). Comments a session writes are held to
 the same 2000 (`board bd comments add` by text, `-f` or stdin, `board handover` evidence, `board return`
 findings, `board block` reasons); the board's own packets are exempt: the protocol engine's autopilot
@@ -262,7 +269,7 @@ headlines, log lines), shaped like the console's `hooks/words.ts`: constants
 and functions taking the values they interpolate, imported by the modules that
 decide what to say; error and refusal messages and the CLI help stay where
 they are raised or defined. Its protocols are `round` (the decide protocol's
-Round from Collect to Record) and `release` (its Release).
+Round from the pre-pass to Record) and `release` (its Release).
 A question whose Related outcome supersedes a decided record closes it at Record
 (`board supersede`: waiting items, settled items and a pending revision move to
 the new record; the dialog names it by id and title); a released record is
@@ -284,10 +291,11 @@ A round:
   the engine keeps every open item either way, so a round can classify an id it
   did not print. The open-item list prints whole, grouped under a heading per view
   and status, the first time between compactions that `protocol next` or a
-  round's Collect needs it; after that Collect prints the named ids, the counts
+  round's pre-pass needs it, and at every topic round's pre-pass. After that
+  a step prints the named ids, the counts
   per kind and the command that lists everything (`board health --items
   <COLLECT_VIEWS>`, plus `board position` for ready milestones and finished
-  epics), and a bare round is told to list before it selects. A restart, a
+  epics), and a bare round's pre-pass is told to list before it selects. A restart, a
   Related step and the pass report format name that command where a round's scope
   widens.
 - Select claims the selected items (a gone session's hold through `board
@@ -694,8 +702,8 @@ title alone. `start round` clears the proposal. `start round --proposal <n>`
 starts row n: topic `<title>: <summary>`, the row's `ids` named, the row's title
 and summary the round's; not with `--topic` or ids. Stage then requires `round`
 only when the round has no title and summary. `start round --topic '<title>:
-<summary>' [ids]` keeps the topic on the round. Either way Collect prints the whole open list every
-time, with the steer to group by default (a round takes every ready question
+<summary>' [ids]` keeps the topic on the round. Either way the pre-pass prints the whole open list every
+time, and Collect carries the steer to group by default (a round takes every ready question
 sharing a premise, root cause, flow or sources; a single question names why none
 does), and Select repeats it. The release's close text tells the model to run
 `protocol next`.
@@ -789,10 +797,8 @@ repeat guard, else wakes the model at the open step with `protocol status --line
 (counts, the ready items for you (id, type, title; 3 show, the rest fold behind `+N more`), sessions with runtime and pull initials, `auto` for autopilot,
 this session's items under `this session holds`, stale holds, live workers; the counts split by who acts, `you` (for you, to accept, to ratify,
 decided, questions) then `agents` (to plan, to design, to implement, to review), zeros dim; in a project without a board, a dim `no board` beside the title and nothing else, while a failing board keeps its error), Change requests
-(only the requests waiting for you and those in work (being built or under agent review); the banner counts `N to accept · N in work · N queued`, the queued ones listed nowhere in the pane; two lines per request: id and full title, then the stage in color (on a request waiting for you, what you look at: design, code or result), `unblocks N` (open work, designs, questions and requests waiting on it directly or through others; milestones and epics not counted) when N > 0, the milestone it belongs to (directly, through an ancestor or its design child), check state, new-failure count, problem marks (setup failed, review stale, land blocked), then
-Walk through (a design or a result view) or Open (code, in VS Code's review tree), Accept, Return; 3 show, the rest and the
-to-ratify list fold behind `+N more`; the opened summary adds the accept stage, look, view, the
-failure counts, the quiet marks (returned, lands with, in review tree) and each new failure as a `vscode://file` link), Round: while no run is open and the engine's `next`
+(only the requests waiting for you and those in work (being built or under agent review), in the accept-queue order (board-coordination.md#change-request-queue; in-work rows by created); the banner counts `N to accept · N in work · N wait on your answers · N queued` (zero parts left out; waiting on your answers: queued requests whose work unit waits on an unreleased decision), the queued ones listed nowhere in the pane; two lines per request: id and title with the buttons Walk through (a design or a result view) or Open (code, in VS Code's review tree), Accept, Return, Refresh, then the stage in color (on a request waiting for you, what you look at: design, code or result), `unblocks N` (open work, designs, questions and requests waiting on it directly or through others; milestones and epics not counted) when N > 0, the effective priority dim (the hover names what raised it), the milestone it is work of, check state, new-failure count, problem marks (setup failed, review stale, land blocked); 3 show, the rest and the to-ratify list fold behind `+N more`; ids show without the board's own prefix, while presses and prompts keep the full id (`board` resolves a bare id to the board prefix); the opened summary adds the accept stage, look, view, the
+failure counts, the quiet marks (lands with, in review tree) and each new failure as a `vscode://file` link), Round: while no run is open and the engine's `next`
 offers something, the banner reads `the next step, proposed` over the proposals (one row per proposed round: `[ Start ] <title> · ~N questions ·
 unblocks ~M items`, plus `· compacts first` for a
 `fresh` round while the context is at 150k tokens or more

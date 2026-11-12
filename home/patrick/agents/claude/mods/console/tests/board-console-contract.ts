@@ -12,7 +12,7 @@ export function cr(over: CrInit): Record<string, unknown> {
     base: 'main', branch: `cr/${over.id}`, worktree: `/main/.worktrees/${over.id}`, tip: sha(2), baseTip: sha(1),
     check: { state: 'current', tip: sha(2), baseTip: sha(1), at: '2026-11-11T09:00:00Z', result: 'pass', newFailures: [], baseCount: 3012, tipCount: 2972 },
     parent: null, children: [], unblocks: 0, unblocksDirect: 0, milestone: null,
-    reviewState: 'current', refreshWork: false, landBlocked: null, after: null, returned: false, setupFailed: false,
+    reviewState: 'current', refreshWork: false, landBlocked: null, after: null, setupFailed: false, priority: 2, ownPriority: 2, raisedBy: null,
     ...over,
   }
 }
@@ -20,7 +20,7 @@ export function cr(over: CrInit): Record<string, unknown> {
 export const BOARD_CONSOLE_CONTRACT = {
   counts: {
     questions: { ready: 0, held: 0, waiting: 0 }, decided: { ready: 0, held: 0, waiting: 0 }, toPlan: { ready: 0, held: 0, waiting: 0 },
-    toReview: { ready: 2, held: 0, waiting: 0 }, toAccept: { ready: 1, held: 0, waiting: 1 }, toRatify: { ready: 1, held: 0, waiting: 0 }, forUser: { ready: 0, held: 0, waiting: 0 },
+    toDesign: { ready: 6, held: 1, waiting: 0 }, toImplement: { ready: 90, held: 1, waiting: 1 }, toReview: { ready: 2, held: 0, waiting: 0 }, toAccept: { ready: 1, held: 0, waiting: 1 }, toRatify: { ready: 1, held: 0, waiting: 0 }, forUser: { ready: 0, held: 0, waiting: 0 },
   },
   crs: [
     cr({ id: 'p-cr1', title: 'Remove the legacy cache', children: ['p-cr2'], unblocks: 14, unblocksDirect: 7, milestone: '1.0-beta scope' }),
@@ -29,5 +29,9 @@ export const BOARD_CONSOLE_CONTRACT = {
       look: 'after', view: 'result', checkpoint: 'agent', check: { state: 'stale', tip: sha(4), baseTip: sha(1), at: '2026-11-11T09:30:00Z', result: 'fail', newFailures: ['src/a.ts TS2322', 'src/b.ts TS2345'], baseCount: 3012, tipCount: 3014 },
     }),
   ],
+  waitingOnYou: 5,
+  queued: 92,
+  prefix: 'p',
+  noBoard: false,
   ratifications: [{ id: 'p-rat1', cr: 'p-cr0', title: 'Ratify: Move the clock' }],
 } as const

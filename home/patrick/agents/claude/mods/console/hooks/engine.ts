@@ -4,7 +4,7 @@
 import type { EngineInterface } from 'claude-code'
 
 import type {
-  ConsoleAction, ConsoleAgent, ConsoleBoard, ConsoleCheckState, ConsoleCount, ConsoleCounts, ConsoleCr, ConsoleDialogQuestion, ConsoleHeld, ConsoleItem, ConsolePassOrigin, ConsolePending, ConsoleProgress, ConsoleProposal, ConsoleQuestion,
+  ConsoleAction, ConsoleAgent, ConsoleBoard, ConsoleBoardCounts, ConsoleCheckState, ConsoleCount, ConsoleCounts, ConsoleCr, ConsoleDialogQuestion, ConsoleHeld, ConsoleItem, ConsolePassOrigin, ConsolePending, ConsoleProgress, ConsoleProposal, ConsoleQuestion,
   ConsoleRatification, ConsoleRecord, ConsoleRole, ConsoleRound, ConsoleSession,
 } from '../types'
 
@@ -220,12 +220,16 @@ export async function boardViews($: $, session: string): Promise<ConsoleBoard> {
 export function parseBoardConsole(raw: unknown): Omit<ConsoleBoard, 'agents' | 'error'> {
   const view = raw === null ? null : record(raw)
   return {
-    counts: view === null ? null : parseCounts(view.counts),
+    isMissing: view !== null && view.noBoard === true,
+    counts: view === null ? null : parseBoardCounts(view.counts),
     forYou: view === null ? [] : list(view.forYou).map(parseItem),
     items: view === null ? [] : list(view.items).map(parseItem),
     sessions: view === null ? [] : list(view.sessions).map(parseSession),
     held: view === null ? [] : list(view.held).map(parseHeld),
     crs: view === null ? [] : list(view.crs).map(parseCr).filter(one => one.id !== ''),
+    waitingOnYou: view === null ? 0 : count(view.waitingOnYou),
+    queued: view === null ? 0 : count(view.queued),
+    prefix: view === null ? null : nullableText(view.prefix),
     ratifications: view === null ? [] : list(view.ratifications).map(parseRatification).filter(one => one.id !== ''),
     sync: view === null ? null : nullableText(view.sync),
     queues: view === null ? null : nullableText(view.queueLine),
@@ -278,6 +282,12 @@ function parseCounts(value: unknown): ConsoleCounts | null {
     questions: parseCount(raw.questions), decided: parseCount(raw.decided), toPlan: parseCount(raw.toPlan),
     toReview: parseCount(raw.toReview), toAccept: parseCount(raw.toAccept), toRatify: parseCount(raw.toRatify), forUser: parseCount(raw.forUser),
   }
+}
+
+function parseBoardCounts(value: unknown): ConsoleBoardCounts | null {
+  const counts = parseCounts(value)
+  const raw = record(value)
+  return counts === null ? null : { ...counts, toDesign: parseCount(raw.toDesign), toImplement: parseCount(raw.toImplement) }
 }
 
 const STATUSES: readonly string[] = ['draft', 'ready', 'asked', 'answered', 'held', 'parked']
@@ -406,7 +416,9 @@ function parseCr(value: unknown): ConsoleCr {
     parent: nullableText(raw.parent), children: list(raw.children).map(text).filter(id => id !== ''),
     unblocks: count(raw.unblocks), unblocksDirect: count(raw.unblocksDirect), milestone: nullableText(raw.milestone),
     landBlocked: Array.isArray(raw.landBlocked) ? list(raw.landBlocked).map(text).filter(one => one !== '') : null,
-    after: nullableText(raw.after), returned: raw.returned === true, setupFailed: raw.setupFailed === true,
+    after: nullableText(raw.after), setupFailed: raw.setupFailed === true,
+    priority: typeof raw.priority === 'number' ? raw.priority : 9, ownPriority: typeof raw.ownPriority === 'number' ? raw.ownPriority : 9,
+    raisedBy: raw.raisedBy === null || raw.raisedBy === undefined || text(record(raw.raisedBy).id) === '' ? null : { id: text(record(raw.raisedBy).id), isItem: record(raw.raisedBy).isItem === true },
     reviewState: oneOf(raw.reviewState, ['current', 'stale']), refreshWork: raw.refreshWork === true,
   }
 }

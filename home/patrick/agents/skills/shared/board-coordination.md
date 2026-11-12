@@ -45,7 +45,9 @@ milestones, recorded rulings and deferrals. The board model is
   (CR reviews and refresh work), ratifying and accepting, then the rest. Within
   each, priority, then kind (plan, review, ratify, accept, design, question,
   implement). An item counts
-  at the highest priority of the open work waiting on it.
+  at the highest priority of the open work waiting on it; a CR counts with its
+  open items, and is milestone work when it, one of its open items or a CR it
+  sits under is.
 - Place each new item: a member when the goal owner's criterion covers it.
   Move work in or out by adding or removing its edge.
 - When the milestone turns ready, a deciding session walks the user through
@@ -55,7 +57,8 @@ milestones, recorded rulings and deferrals. The board model is
 ### Change-request queue
 
 - **Accept queue:** CRs in `needs_acceptance`: parents before the CRs stacked
-  on them, then priority, then age (stacks:
+  on them, then the `board claim` order without kind
+  ([Milestones](#milestones)), then age (stacks:
   [Change requests](../shared/change-requests.md#change-requests)).
 - **Check state** (`board queue`, `board health`, console): every live CR's
   check against the current refs.

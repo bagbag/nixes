@@ -55,6 +55,9 @@ export type ConsoleCount = { ready: number; held: number; waiting: number }
 
 export type ConsoleCounts = { questions: ConsoleCount; decided: ConsoleCount; toPlan: ConsoleCount; toReview: ConsoleCount; toAccept: ConsoleCount; toRatify: ConsoleCount; forUser: ConsoleCount }
 
+/** The board's counts: the protocol's seven plus the two agent steps between plan and review (`board console`; the round carries no such step). */
+export type ConsoleBoardCounts = ConsoleCounts & { toDesign: ConsoleCount; toImplement: ConsoleCount }
+
 /** A change request's check against the current refs (`board console`): `stale` the base moved, `conflict` it would not rebase cleanly, `failed` the checks failed, `unchecked` none ran yet. */
 export type ConsoleCheckState = 'current' | 'stale' | 'conflict' | 'failed' | 'unchecked'
 
@@ -73,8 +76,11 @@ export type ConsoleCr = {
   parent: string | null; children: string[]
   /** Open work, designs, questions and requests waiting on it (or its children) directly or through others; milestones, epics and gates not counted. `unblocksDirect`: those waiting on it directly. */
   unblocks: number; unblocksDirect: number
-  /** Title of the open milestone it belongs to (a member edge on it, an ancestor or its design child); the lowest milestone id when several; null when none. */
+  /** Title of the open milestone it belongs to (a member edge on it, on one of its open items, or on an ancestor request); the lowest milestone id when several; null when none. */
   milestone: string | null
+  /** The priority the board ranks it at (`priority`): the highest of its work unit (the request and its open items) and what waits on them; `ownPriority` is the request's own. `raisedBy` names what sets the higher one (a waiting item, or one of its own items); null when its own is the highest. */
+  priority: number; ownPriority: number
+  raisedBy: { id: string; isItem: boolean } | null
   /** The agent review's verdict against the current (tip, base tip): `stale` after a base move until a refresh triage keeps or returns it; null before any review. */
   reviewState: 'current' | 'stale' | null
   /** The board's refresh work: the first non-waiting request of the accept queue whose check or review is not current (r24-q196). */
@@ -83,8 +89,6 @@ export type ConsoleCr = {
   landBlocked: string[] | null
   /** Look-after child that passed review and lands with this base; null otherwise. */
   after: string | null
-  /** Returned: open again with its worktree kept for the next claimer. */
-  returned: boolean
   /** The project setup failed in its worktree after the last claim or rebase; the holder keeps the claim. */
   setupFailed: boolean
 }
@@ -180,13 +184,22 @@ export type ConsoleHeld = { id: string; holder: string; mark: 'idle' | 'gone' | 
 
 /** `board console` and this session's workers. */
 export type ConsoleBoard = {
-  counts: ConsoleCounts | null
+  /** The directory has no board (no .beads): the pane says so beside the title and shows nothing else of the board. A bd failure on a board is `error`. */
+  isMissing: boolean
+  counts: ConsoleBoardCounts | null
   /** The ready items assigned to the user (`forUser`'s ready part). */
   forYou: ConsoleItem[]
   items: ConsoleItem[]
   sessions: ConsoleSession[]
   held: ConsoleHeld[]
+  /** Requests waiting for you (`needs_acceptance`) and in work (`in_progress`, `in_review`), the accept queue first. */
   crs: ConsoleCr[]
+  /** Queued requests (`open`) whose work unit waits on a question not yet released: counted apart, never listed. */
+  waitingOnYou: number
+  /** The other queued requests, waiting for an agent to pick them up: counted, never listed. */
+  queued: number
+  /** The board's own id prefix: the pane shows ids without it. Null without a board. */
+  prefix: string | null
   ratifications: ConsoleRatification[]
   agents: ConsoleAgent[]
   /** A shared board's stopped or failing sync, or its store warning, with the fix; null otherwise. */

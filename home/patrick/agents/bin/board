@@ -179,11 +179,10 @@ def ensure_server(start: Path | None = None) -> None:
     if _server_checked:
         return
     _server_checked = True
-    start = (start or Path.cwd()).resolve()
-    root = next((d for d in (start, *start.parents) if (d / '.beads' / 'metadata.json').is_file()), None)
-    if root is None:
+    beads = beads_dir(start)
+    if beads is None:
         return
-    beads = root / '.beads'
+    root = beads.parent
     try:
         if json.loads((beads / 'metadata.json').read_text(encoding='utf-8')).get('dolt_mode') != 'server':
             return
@@ -218,7 +217,10 @@ def bd_checked(*args: str, stdin: str | None = None) -> str:
 # Shared boards: skills/shared/beads-setup.md#shared-boards.
 
 def beads_dir(start: Path | None = None) -> Path | None:
-    """This folder's board: the nearest `.beads`, else (a linked worktree) the main checkout's."""
+    """This folder's board: BEADS_DIR (as bd reads it), else the nearest `.beads`, else (a linked worktree) the main checkout's."""
+    named = Path(os.environ['BEADS_DIR']) if os.environ.get('BEADS_DIR') else None
+    if named is not None and (named / 'metadata.json').is_file():
+        return named
     start = (start or Path.cwd()).resolve()
     found = next((d / '.beads' for d in (start, *start.parents) if (d / '.beads' / 'metadata.json').is_file()), None)
     if found is not None:
@@ -597,7 +599,7 @@ def may_move(board: 'Board | None' = None) -> bool:
     if actor != session_actor(actor):
         return False
     try:
-        entry = (board.registry() if board else registry_by_actor(registrations())).get(actor)
+        entry = (board.registry() if board else registry_by_actor(registrations()[0])).get(actor)
     except BoardError:
         return False
     return bool(entry and entry.get('role') in MOVERS)
@@ -616,13 +618,41 @@ def bd_show(ids: list[str], *flags: str, comments: bool = True) -> list[dict]:
     return json.loads(result.stdout or '[]')
 
 
-def registrations() -> list[dict]:
+def registrations() -> tuple[list[dict], set[str]]:
+    """(readable registrations, actors of the files that cannot be read): one `session-lead-mode list` call. An unreadable
+    file's session counts as unregistered; the person is told once."""
     result = subprocess.run(['bash', str(REGISTRY), 'list'], capture_output=True, text=True)
     if result.returncode != 0:
         raise BoardError(f'session registry unreadable: {result.stderr.strip()}')
-    if result.stderr.strip():  # registrations it skipped: their sessions count as unregistered
-        print(result.stderr.strip(), file=sys.stderr)
-    return [json.loads(line) for line in result.stdout.splitlines() if line.strip()]
+    rows = [json.loads(line) for line in result.stdout.splitlines() if line.strip()]
+    skipped = [row['unreadable'] for row in rows if 'unreadable' in row]
+    for file in skipped:
+        print(f'session-lead-mode: skipped unreadable registration {file}', file=sys.stderr)
+    return [row for row in rows if 'unreadable' not in row], {Path(file).stem[-8:] for file in skipped}
+
+
+def bd_closed() -> list[dict]:
+    """Every closed item without its free text, in one call."""
+    return json.loads(bd_checked('list', '--status', 'closed', '--brief', '--json', '--limit', '0') or '[]')
+
+
+_prefix: list[str | None] = []
+
+
+def board_prefix() -> str | None:
+    """The board's own id prefix (bd `issue_prefix`), read once; None when bd has none to give."""
+    if not _prefix:
+        try:
+            _prefix.append(current_setting('issue_prefix') or None)
+        except (BoardError, ValueError):
+            _prefix.append(None)
+    return _prefix[0]
+
+
+def board_id(raw: str) -> str:
+    """An id as bd takes it: a bare one (`28g0i`, `overhaul.2.25`; every full id has `<prefix>-`) gets the board's prefix."""
+    prefix = board_prefix() if re.fullmatch(r'[0-9a-z][0-9a-z.]*', raw) else None
+    return f'{prefix}-{raw}' if prefix else raw
 
 
 def board_project() -> str | None:
@@ -770,7 +800,8 @@ class Board:
         self.issues = issues
         self._milestone_work: dict[str, set[str]] = {}
         self._in_milestone: dict[str, list[str]] | None = None
-        self.effective: dict[str, tuple[int, str | None]] = {}  # item id -> effective_priority
+        self._accept_queue: tuple[tuple, list[dict]] | None = None  # (key, queue): see accept_queue
+        self.effective: dict[str, tuple[int, str | None, bool]] = {}  # item id -> effective_priority
         self.by_id = {issue['id']: issue for issue in issues}
         self.parent: dict[str, str] = {}
         self.parents: dict[str, list[str]] = {}  # bd allows several; `parent` keeps the last for the views that assume one
@@ -780,6 +811,8 @@ class Board:
         self._outside_type: dict[str, str | None] = {}
         self.settings: dict[str, str] = {}  # project settings read so far (board_setting)
         self._registry: dict[str, dict] | None = None
+        self._unreadable: set[str] = set()
+        self._ended: set[str] | None = None
         self._cr_blockers_read = False
         self.git_view: GitView | None = None  # set by `read_git_view` on a read-only command; dropped when the command changes git state
         self._ref_format: dict[str, bool] = {}
@@ -850,8 +883,21 @@ class Board:
     def registry(self) -> dict[str, dict]:
         """The session registry by actor, read once per command (board never writes it; a failed read is not kept)."""
         if self._registry is None:
-            self._registry = registry_by_actor(registrations())
+            entries, self._unreadable = registrations()
+            self._registry = registry_by_actor(entries)
         return self._registry
+
+    def unreadable(self) -> set[str]:
+        """Actors whose registration file exists but cannot be read, from the same `list` call as the registry."""
+        self.registry()
+        return self._unreadable
+
+    def ended(self) -> set[str]:
+        """Actors of the sessions whose registration was pruned (session-lead-mode `ended`), read on first use."""
+        if self._ended is None:
+            result = subprocess.run(['bash', str(REGISTRY), 'ended'], capture_output=True, text=True)
+            self._ended = set(result.stdout.split()) if result.returncode == 0 else set()
+        return self._ended
 
     def hydrate(self, ids) -> None:
         """Adds what a status read leaves out, for the given items, in one bd call: comments, and an epic's
@@ -1051,10 +1097,18 @@ class Board:
 
     def fetch_cr_blockers(self) -> None:
         """Reads the blockers outside the snapshot of every change request in one call, not one per request (a bd call
-        costs ~0.1 s); the blockers' parents come along, so no level of the walk reads again."""
+        costs ~0.1 s). Those are closed items, and all a change request needs of one is its parents (to lift it to its
+        request): one list of the closed items, free text omitted, costs ~0.3 s however many blockers there are, where
+        `bd show` of them cost ~16 ms each."""
         if not self._cr_blockers_read:
-            self.fetch_outside(b for issue in self.issues if self.is_cr(issue['id']) for b in self.cr_blockers(issue)
-                               if b not in self.by_id and not b.startswith('external:'))
+            wanted = [b for issue in self.issues if self.is_cr(issue['id']) for b in self.cr_blockers(issue)
+                      if b not in self.by_id and not b.startswith('external:')]
+            if any(b not in self._loaded and b not in self._outside for b in wanted):
+                for row in bd_closed():
+                    self._outside.setdefault(row['id'], (row.get('labels') or [], [d['depends_on_id'] for d in row.get('dependencies') or []
+                                                                                  if d.get('type') == 'parent-child']))
+                    self._outside_type.setdefault(row['id'], row.get('issue_type'))
+            self.fetch_outside(wanted)  # what the list lacks (an item that is not closed or not there)
             self._cr_blockers_read = True  # only a read that worked: a failed one is asked again
 
     def cr_waits(self, issue: dict) -> tuple[list[str], list[str]]:
@@ -1179,31 +1233,69 @@ def by_priority(issue: dict):
     return (issue.get('priority', 9), issue.get('created_at') or '', issue['id'])
 
 
-def effective_priority(board: Board, issue: dict) -> tuple[int, str | None]:
-    """(priority, waiting item) the claim order counts the item at (r22-q179): the highest priority among the item and every
-    open item waiting on it through blocking edges, transitively. The second field is the nearest such item that sets it,
-    None when the item's own priority is the highest. A milestone confers none: its whole scope waits on each member."""
+def work_unit(board: Board, issue: dict) -> list[str]:
+    """What ranks together (r5-q20): a change request and its open items, which are claimed, reviewed and landed as one;
+    any other item stands alone."""
+    if issue.get('issue_type') != CR_TYPE:
+        return [issue['id']]
+    return [issue['id'], *(item['id'] for item in board.cr_items(issue['id']) if item.get('issue_type') != CR_TYPE)]  # not the requests stacked under it
+
+
+def waiting_priority(board: Board, item: dict) -> tuple[int, str | None]:
+    """(priority, waiting item) of the item alone: the highest priority among it and every open item waiting on it through
+    blocking edges, transitively (r22-q179). The second field is the nearest such item that sets it, None when the item's
+    own priority is the highest. A milestone confers none: its whole scope waits on each member."""
+    best, via = item.get('priority', 9), None
+    seen, pending = {item['id']}, [item['id']]
+    while pending:
+        for waiting in board.dependents.get(pending.pop(0), []):
+            if waiting in seen or not board.is_open(waiting) or board.by_id[waiting].get('issue_type') == 'milestone':
+                continue
+            seen.add(waiting)
+            if (priority := board.by_id[waiting].get('priority', 9)) < best:
+                best, via = priority, waiting
+            pending.append(waiting)
+    return best, via
+
+
+def effective_priority(board: Board, issue: dict) -> tuple[int, str | None, bool]:
+    """(priority, item that sets it, whether that item is part of the request's own unit) the rank counts the item at: its
+    `waiting_priority`; a change request counts with its work unit. A request under another counts alone: priority does not
+    pass up through a parent request."""
     if issue['id'] not in board.effective:
-        best, via = issue.get('priority', 9), None
-        seen, pending = {issue['id']}, [issue['id']]
-        while pending:
-            for waiting in board.dependents.get(pending.pop(0), []):
-                if waiting in seen or not board.is_open(waiting) or board.by_id[waiting].get('issue_type') == 'milestone':
-                    continue
-                seen.add(waiting)
-                if (priority := board.by_id[waiting].get('priority', 9)) < best:
-                    best, via = priority, waiting
-                pending.append(waiting)
-        board.effective[issue['id']] = (best, via)
+        best, via = waiting_priority(board, issue)
+        own = False
+        for member in work_unit(board, issue)[1:]:
+            priority, raised = waiting_priority(board, board.by_id[member])
+            if priority < best:
+                best, via, own = priority, raised or member, raised is None
+        board.effective[issue['id']] = (best, via, own)
     return board.effective[issue['id']]
+
+
+def milestones_of(board: Board, issue: dict) -> list[str]:
+    """The open milestones the item is work of (`Board.in_milestone`); a change request also through its open items and
+    through a change request it sits under (r5-q20)."""
+    if issue.get('issue_type') != CR_TYPE:
+        return board.in_milestone.get(issue['id'], [])
+    reached = set(work_unit(board, issue))
+    for ancestor in board.ancestors(issue['id']):
+        if board.is_cr(ancestor):
+            reached.update(work_unit(board, board.by_id[ancestor]))
+    return sorted({m for item_id in reached for m in board.in_milestone.get(item_id, [])})
+
+
+def work_rank(board: Board, issue: dict) -> tuple[bool, int]:
+    """(milestone work, effective priority): the rank claims, `board queue` and the change-request lists share."""
+    return bool(milestones_of(board, issue)), effective_priority(board, issue)[0]
 
 
 def claim_order(board: Board, issue: dict):
     # Tiers (r22-q176, r23-q180): P0, then the planning of any released ruling, milestone work (board-coordination.md#milestones),
     # review, ratification and acceptance, the rest. Within a tier: effective priority, kind (CLAIM_RANK), then created.
-    priority = effective_priority(board, issue)[0]
+    milestone, priority = work_rank(board, issue)
     kind = board.claimable(issue) or board.kind(issue)  # refresh work ranks as a refresh, not as its Accept
-    tier = 0 if priority == 0 else 1 if kind == 'plan' else 2 if issue['id'] in board.in_milestone else 3 if kind in FINISHING else 4
+    tier = 0 if priority == 0 else 1 if kind == 'plan' else 2 if milestone else 3 if kind in FINISHING else 4
     return (tier, priority, CLAIM_RANK.get(kind, len(CLAIM_RANK)), issue.get('created_at') or '', issue['id'])
 
 
@@ -1502,11 +1594,11 @@ def position_data(board: Board, args) -> dict:
         updated = board.last_activity(issue)
         recorded = holder_activity(entry, issue['assignee'])
         activity = recorded or updated
-        gone = liveness(entry) == 'GONE'
+        gone = liveness(entry) == 'GONE' or (entry is None and session_actor(issue['assignee']) in board.ended())  # pruned: its process ended, or a pid-less one idle (r3-q17, r5-q25)
         idle = not gone and (activity is None or (now - activity).total_seconds() > IDLE_HOURS * 3600)
         # This machine can't know another machine's session: no idleness to claim, nothing to offer.
         elsewhere = shared is not None and entry is None and bool(ACTOR.fullmatch(issue['assignee']))
-        holds.append((issue, entry, updated, recorded, 'elsewhere' if elsewhere else 'gone' if gone else 'idle' if idle else None))
+        holds.append((issue, entry, updated, recorded, 'gone' if gone else 'elsewhere' if elsewhere else 'idle' if idle else None))
     questions = sorted(((board.holds(issue['id']), issue) for issue in items
                         if issue.get('issue_type') == 'decision' and issue['status'] not in ('released', 'deferred')),
                        key=lambda pair: (-pair[0][0], -pair[0][1], by_priority(pair[1])))
@@ -1584,7 +1676,7 @@ def position(board: Board, args) -> None:
     if any(stale_since(board, issue) for issue, *_ in data['held']):
         print(STALE_OTHERS_LEGEND)
     if gone:
-        print(f"  GONE = the holding session's process ended. Free {', '.join(gone)}: board take <id> | board unclaim <id> (the user or a deciding session)")
+        print(f"  GONE = the holding session ended or its registration was pruned. Free {', '.join(gone)}: board take <id> | board unclaim <id> (the user or a deciding session)")
     if idle:
         print(f'  idle = no activity for {IDLE_HOURS} h. '
               'If that session is gone: board take <id> | board unclaim <id> (the user or a deciding session)')
@@ -1949,14 +2041,15 @@ def queue(board: Board, args) -> None:
                    key=lambda issue: claim_order(board, issue))
 
     def marker(issue: dict) -> str:
-        milestones = board.in_milestone.get(issue['id'])
+        milestones = milestones_of(board, issue)
         return f"m:{','.join(milestones)}" if milestones else ''
 
     for kind in KINDS:
         section(kind, [line(issue, f"p{issue.get('priority', '?')}", marker(issue))
                        for issue in ready if board.claimable(issue) == kind], args.limit)
     shown = {i['id'] for i in board.listed(args.root)}
-    live = [i for i in accept_queue(board) + [i for i in live_crs(board) if i not in accept_queue(board)]
+    accepting = accept_queue(board)
+    live = [i for i in accepting + [i for i in live_crs(board) if i not in accepting]
             if i['id'] in shown and i['status'] != 'open']  # open ones are in their pull's section above
     section('change requests (stage, check state, stack base)',
             [line(i, cr_stage(i) or '', f"check {cr_info(board, i)['state']}", f"base {meta(i).get('base') or '-'}",
@@ -2248,6 +2341,15 @@ def counted_holds(board: Board, actor: str) -> list[dict]:
     return [issue for issue in board.issues if issue['status'] == 'in_progress' and issue.get('assignee') == actor and is_work_hold(issue)]
 
 
+def own_entry(board: Board, actor: str) -> dict | None:
+    """The calling session's registration: None for an unregistered session (no cap, r3-q16). A registration that exists
+    but cannot be read is no such session: claims and takeovers are refused until it registers again."""
+    entry = board.registry().get(session_actor(actor))
+    if entry is None and session_actor(actor) in board.unreadable():
+        raise BoardError("this session's registration is unreadable. Register again: /role <role> (Codex: $role <role>)")
+    return entry
+
+
 def cap_refusal(board: Board, entry: dict | None, actor: str, claimed: list[dict]) -> str | None:
     """Why this actor may not claim one more work item, None when it may (an unregistered session has no cap)."""
     if entry is None:
@@ -2303,19 +2405,44 @@ def mine_data(board: Board, args) -> tuple[str, list[tuple[dict, bool]]]:
     return actor, [(issue, worker_stopped(entry, issue)) for issue in held_by_session(board, actor) if issue['id'] in scoped]
 
 
+def console_counts(board: Board, views: dict, position: dict) -> dict:
+    """The health counts with the design and implement steps between plan and review, counted as `board position` counts them."""
+    counts = health_counts(board, views)
+    step = lambda kind: {name: position['ready'][kind][name] for name in ('ready', 'held', 'waiting')}
+    ordered: dict = {}
+    for name, value in counts.items():
+        if name == 'toReview':
+            ordered |= {'toDesign': step('design'), 'toImplement': step('implement')}
+        ordered[name] = value
+    return ordered
+
+
 def console_json(board: Board, args) -> dict:
     """What the console pane draws, from one snapshot: health counts, the user's ready items, this session's holds, the
-    sessions and every hold with its idle or gone mark."""
+    sessions and every hold with its idle or gone mark. `crs` lists the requests waiting for the user and those in work;
+    `queued` counts the rest."""
     position = position_json(board, args)
     views = health_views(board, args.root)  # counts and forYou only: health's deviations, claimable kinds and milestones are not read
+    queue = accept_queue(board)
+    listed, answering, queued = console_crs(board, queue)
     return {**({'sync': (shared.problem() or shared.store_warning()), 'queueLine': queue_line(board, args.root)} if shared else {}),
-            'counts': health_counts(board, views),
+            'noBoard': False, 'prefix': board_prefix(),
+            'counts': console_counts(board, views, position),
             'forYou': [item_json(board, issue) for issue in sorted(views['user'][1], key=by_priority)
                        if not step_blocked(board, 'user', issue) and not held_by_a_session(issue)],  # the ready part of forUser
             'items': [item for item in mine_json(board, args)['items'] if item['type'] != CR_TYPE],  # held CRs show in crs
-            'crs': crs_json(board), 'ratifications': ratifications_json(board),
+            'crs': crs_json(board, listed, queue), 'waitingOnYou': answering, 'queued': queued, 'ratifications': ratifications_json(board),
             'sessions': position['sessions'],
             'held': [{'id': h['id'], 'holder': h['holder'], 'mark': h['mark']} for h in position['held']]}
+
+
+def no_board_json() -> dict:
+    """`board console` outside a board: the same shape, empty. Not an error; a bd failure on a board still is one."""
+    return {'noBoard': True, 'counts': None, 'forYou': [], 'items': [], 'crs': [], 'waitingOnYou': 0, 'queued': 0, 'prefix': None, 'ratifications': [], 'sessions': [], 'held': []}
+
+
+def has_board() -> bool:
+    return beads_dir() is not None
 
 
 def console(board: Board, args) -> None:
@@ -2411,7 +2538,7 @@ def mark_forced(issue: dict, actor: str, reason: str | None) -> None:
 def claim(board: Board, args) -> int:
     actor = caller()
     claimed, failed, forced = [], [], {}
-    entry = board.registry().get(session_actor(actor))
+    entry = own_entry(board, actor)
     if args.ids:
         for item_id in args.ids:
             issue = board.by_id.get(item_id)
@@ -2521,7 +2648,7 @@ def claim(board: Board, args) -> int:
         kind = issue.get('claim_kind') or board.kind(issue) or issue.get('issue_type')
         by = f'; {author_label(board, issue)}' if issue['status'] == 'in_review' and kind == 'review' else ''
         inherited = effective_priority(board, issue)
-        counts_as = f"; P{issue.get('priority', 9)}, counts as P{inherited[0]}: blocks {inherited[1]}" if inherited[1] else ''
+        counts_as = f"; P{issue.get('priority', 9)}, counts as P{inherited[0]}: {'its item' if inherited[2] else 'blocks'} {inherited[1]}" if inherited[1] else ''
         print(f"claimed {issue['id']} ({kind}{by}{counts_as}): {issue.get('title', '')}")
         if kind == 'refresh':
             print(f"  refresh work: board refresh {issue['id']}, then board unclaim {issue['id']}")
@@ -2594,7 +2721,7 @@ def require_open(board: Board, ids: list[str]) -> list[dict]:
 
 def take(board: Board, args) -> int:
     actor = caller()
-    entry = board.registry().get(session_actor(actor))
+    entry = own_entry(board, actor)
     taken, failed = [], False
     for issue in require_open(board, args.ids):
         refusal = foreign_claim(board, issue['id'])
@@ -3023,10 +3150,10 @@ def live_crs(board: Board) -> list[dict]:
     return [i for i in board.issues if i.get('issue_type') == CR_TYPE and i['status'] != 'closed']
 
 
-def accept_queue(board: Board) -> list[dict]:
-    """Change requests waiting for the user: a stack's base before the CRs on it, then priority, then age (q218)."""
-    waiting = [i for i in live_crs(board) if i['status'] == ACCEPT]
-    ids = {i['id'] for i in waiting}
+def stacked_order(board: Board, issues: list[dict], since) -> list[dict]:
+    """Change requests in list order (r5-q21): a stack's base before the requests on it, then the claim order's tiers without
+    kind (P0, milestone work, effective priority; `work_rank`), then `since(issue)`, then id."""
+    ids = {i['id'] for i in issues}
     ordered: list[dict] = []
     seen: set[str] = set()
 
@@ -3039,9 +3166,29 @@ def accept_queue(board: Board) -> list[dict]:
             emit(board.by_id[base])
         ordered.append(issue)
 
-    for issue in sorted(waiting, key=lambda i: (i.get('priority', 9), meta(i).get('since') or i.get('updated_at') or '', i['id'])):
+    def key(issue: dict):
+        milestone, priority = work_rank(board, issue)
+        return (priority != 0, not milestone, priority, since(issue), issue['id'])
+
+    for issue in sorted(issues, key=key):
         emit(issue)
     return ordered
+
+
+def accept_queue(board: Board) -> list[dict]:
+    """Change requests waiting for the user, in `stacked_order` by the time they began waiting. Kept per snapshot, since every
+    unheld accept request's claimability asks for the head; the key notices the status and base writes a command makes."""
+    live = live_crs(board)
+    key = tuple((i['id'], i['status'], meta(i).get('since'), i.get('updated_at'), meta(i).get('base')) for i in live)
+    if board._accept_queue is None or board._accept_queue[0] != key:
+        board._accept_queue = (key, stacked_order(board, [i for i in live if i['status'] == ACCEPT],
+                                                  lambda i: meta(i).get('since') or i.get('updated_at') or ''))
+    return list(board._accept_queue[1])
+
+
+def in_work_crs(board: Board) -> list[dict]:
+    """Change requests being built or reviewed, in `stacked_order` by creation."""
+    return stacked_order(board, [i for i in live_crs(board) if i['status'] in ('in_review', 'in_progress')], lambda i: i.get('created_at') or '')
 
 
 def queue_head(board: Board, queue: list[dict] | None = None) -> dict | None:
@@ -3101,9 +3248,10 @@ UNBLOCKED_TYPES = (*WORK_TYPES, 'design', 'decision', CR_TYPE)  # what a request
 
 
 def cr_unblocks(board: Board, cr_id: str) -> tuple[int, int]:
-    """(all, direct): open work waiting on the request or its children, directly or through other work's `blocks` edges.
-    Milestones, epics and gates are neither counted nor passed through; the request's own children are its part."""
-    own = {cr_id, *board.children.get(cr_id, [])}
+    """(all, direct): open work waiting on the request or its work unit, directly or through other work's `blocks` edges.
+    Milestones, epics and gates are neither counted nor passed through (so `Board.downstream` does not serve: it counts and
+    crosses them); the request's own unit is its part."""
+    own = set(work_unit(board, board.by_id[cr_id]))
     direct: set[str] = set()
     seen: set[str] = set()
     pending = list(own)
@@ -3121,14 +3269,8 @@ def cr_unblocks(board: Board, cr_id: str) -> tuple[int, int]:
 
 
 def cr_milestone(board: Board, cr_id: str) -> str | None:
-    """Title of the open milestone the request belongs to: a member edge (the milestone waits on the member) on the request,
-    an ancestor, or the design child of the request or of an ancestor request. Several: the lowest milestone id."""
-    members: set[str] = set()
-    for item_id in (cr_id, *board.ancestors(cr_id)):
-        members.add(item_id)
-        if board.is_cr(item_id):  # a request is a member through its design child; an epic's design children are not its membership
-            members.update(c for c in board.children.get(item_id, []) if board.by_id.get(c, {}).get('issue_type') == 'design')
-    found = sorted(m['id'] for m in board.milestones() if members & set(board.blockers.get(m['id'], [])))
+    """Title of the open milestone the request is work of (`milestones_of`); several: the lowest milestone id."""
+    found = milestones_of(board, board.by_id[cr_id])
     return board.by_id[found[0]].get('title', '') if found else None
 
 
@@ -3138,6 +3280,7 @@ def cr_json(board: Board, cr: dict, children: dict[str, list[str]], refresh_id: 
     base = m.get('base')
     parent = live_parent(board, cr)
     unblocks, direct = cr_unblocks(board, cr['id'])
+    priority, raised_by, by_item = effective_priority(board, cr)
     return {'id': cr['id'], 'title': cr.get('title', ''), 'status': cr['status'], 'stage': cr_stage(cr),
             'holder': cr.get('assignee') or None, 'look': m.get('look') or board.settings.get('look') or None,
             'view': m.get('view') or board.settings.get('view') or None, 'checkpoint': m.get('checkpoint') or None,
@@ -3152,27 +3295,46 @@ def cr_json(board: Board, cr: dict, children: dict[str, list[str]], refresh_id: 
             'children': children.get(cr['id'], []), 'baseSha': m.get('base_sha') or None, 'landBlocked': info['blocked'] or None,
             'reviewState': ('current' if review_current(cr, info) else 'stale') if m.get('review_tip') else None,
             'refreshWork': cr['id'] == refresh_id,  # the console offers Refresh there alone (r27-q252)
-            'after': after_base(board, cr), 'returned': cr['status'] == 'open' and bool(info['worktree']) and Path(info['worktree']).is_dir(),
+            'after': after_base(board, cr),
             'setupFailed': cr['status'] == 'in_progress' and bool(m.get('base_sha')) and m.get('setup_sha') != m.get('base_sha'),
-            'unblocks': unblocks, 'unblocksDirect': direct, 'milestone': cr_milestone(board, cr['id'])}
+            'unblocks': unblocks, 'unblocksDirect': direct, 'milestone': cr_milestone(board, cr['id']),
+            'priority': priority, 'ownPriority': cr.get('priority', 9),  # the rank counts it at `priority`; raisedBy names what sets it
+            'raisedBy': {'id': raised_by, 'isItem': by_item} if raised_by else None}
 
 
-def crs_json(board: Board) -> list[dict]:
+ANSWER_WAIT = ('open', 'in_progress', 'decided')  # a question the user answers, in a round, or a ruling not yet released
+
+
+def waits_on_answers(board: Board, cr: dict) -> bool:
+    """The request or one of its open items waits on a question not yet released (r5-q26); a released ruling waits for planning."""
+    unit = work_unit(board, cr)
+    return any(board.by_id.get(b, {}).get('issue_type') == 'decision' and board.by_id[b]['status'] in ANSWER_WAIT
+               for member in unit for b in board.blockers.get(member, []) if b not in unit)
+
+
+def console_crs(board: Board, queue: list[dict]) -> tuple[list[dict], int, int]:
+    """(the requests the console lists, those waiting on your answers, those queued): the accept queue, then those in work. The
+    rest wait for an agent to pick them up and are only counted."""
+    in_work = in_work_crs(board)
+    rest = [i for i in live_crs(board) if i['status'] not in (ACCEPT, 'in_review', 'in_progress')]
+    answering = sum(1 for i in rest if waits_on_answers(board, i))
+    return [*queue, *in_work], answering, len(rest) - answering
+
+
+def crs_json(board: Board, listed: list[dict], queue: list[dict]) -> list[dict]:
     for name in ('look', 'view', 'target'):  # the defaults a CR without its own value shows
         try:
             board_setting(board, name)
         except BoardError:
             pass
-    queue = accept_queue(board)
-    rest = sorted((i for i in live_crs(board) if i not in queue), key=lambda i: ({'in_review': 0, 'in_progress': 1}.get(i['status'], 2), i['id']))
     children: dict[str, list[str]] = {}
-    for issue in [*queue, *rest]:
+    for issue in listed:
         base = live_parent(board, issue)
         if base:
             children.setdefault(base, []).append(issue['id'])
     head = queue_head(board, queue)
     refresh_id = head['id'] if head and needs_refresh(board, head) else None
-    return [cr_json(board, issue, children, refresh_id) for issue in [*queue, *rest]]
+    return [cr_json(board, issue, children, refresh_id) for issue in listed]
 
 
 def ratifications_json(board: Board) -> list[dict]:
@@ -3787,8 +3949,10 @@ def size_guard(command: str, rest: list[str]) -> tuple[str | None, str | None]:
             sizes['notes'] = len(old) + (1 if old else 0) + len(appended)
         for field, size in sizes.items():
             if size > FIELD_LIMIT and size >= len(issue.get(field) or ''):
-                return (f"{issue['id']}: {field} is {size} characters, over the {FIELD_LIMIT} limit. Keep only the current state "
-                        '(replace, do not append); history is a one-line comment; long material belongs in a doc the item links.'), stdin
+                old_text = ' (the board keeps the old text)' if command == 'update' else ''
+                return (f"{issue['id']}: {field} is {size} characters, over the {FIELD_LIMIT} limit. Rewrite it shorter as the current state: "
+                        f'dated history leaves{old_text}; every rule, gate and criterion still in force stays. '
+                        'Long material may go in a doc the item links, where that fits.'), stdin
     return None, stdin
 
 
@@ -4999,7 +5163,7 @@ def run_command(argv: list[str]) -> int:
             return 1
     parser = argparse.ArgumentParser(prog='board', description=__doc__.split('\n\n')[0])
     scope = argparse.ArgumentParser(add_help=False)
-    scope.add_argument('--root', metavar='EPIC', help="limit to items below this epic, or to a milestone's work "
+    scope.add_argument('--root', metavar='EPIC', type=board_id, help="limit to items below this epic, or to a milestone's work "
                        '(default: whole board)')
     listing = argparse.ArgumentParser(add_help=False)
     listing.add_argument('--offset', type=int, default=0, metavar='N', help='skip the first N rows (paging a cut output)')
@@ -5059,7 +5223,7 @@ def run_command(argv: list[str]) -> int:
               console, [scope])
     sub.set_defaults(items=set(), limit=0)
     sub = add('show', 'items with links, fields and newest comments, within the read budget', show)
-    sub.add_argument('ids', nargs='+')
+    sub.add_argument('ids', nargs='+', type=board_id)
     sub.add_argument('--section', dest='sections', action='append', default=[], metavar='NAME',
                      help='a field or a ##/### heading (case-insensitive prefix; repeatable)')
     sub.add_argument('--field', dest='fields', action='append', default=[], metavar='FIELD',
@@ -5068,76 +5232,76 @@ def run_command(argv: list[str]) -> int:
     sub.add_argument('--full', action='store_true', help=f'no {READ_BUDGET}-character budget')
     sub.add_argument('--json', action='store_true', help='with --field: {id: {field: value}}, unbudgeted')
     sub = add('claim', 'claim the next item routed to your role, or the given ids; a work item past your worker cap needs --force', claim, [scope])
-    sub.add_argument('ids', nargs='*')
+    sub.add_argument('ids', nargs='*', type=board_id)
     sub.add_argument('--force', metavar='REASON', type=nonempty,
                      help="hold a work item past your worker cap, flagged with this reason in position and check")
     sub = add('record', 'write the decision record you hold from a file and set it decided', record)
-    sub.add_argument('id')
+    sub.add_argument('id', type=board_id)
     sub.add_argument('file')
     sub.add_argument('--status', choices=('decided', 'needs_ratification'), default='decided',
                      help='needs_ratification: an autopilot ruling; requires ## Reversal and frees the hold')
     sub = add('block', 'make items wait on a blocker, with the reason commented on each item', block)
-    sub.add_argument('ids', nargs='+', metavar='item')
-    sub.add_argument('--on', dest='blocker', required=True)
+    sub.add_argument('ids', nargs='+', metavar='item', type=board_id)
+    sub.add_argument('--on', dest='blocker', required=True, type=board_id)
     sub.add_argument('--reason', required=True, type=nonempty)
     sub = add('land', "fast-forward the target to a change request's tip (its Accept), or pass its design checkpoint with --checkpoint", land)
-    sub.add_argument('id')
+    sub.add_argument('id', type=board_id)
     sub.add_argument('--tip', metavar='SHA', help='the tip you reviewed: refused when the branch moved since')
     sub.add_argument('--checkpoint', action='store_true', help="accept a user design checkpoint: the change request returns to planning, nothing lands")
     sub.add_argument('--design', metavar='HASH', help='required with --checkpoint: the design hash `board claim` printed; refused when the design text changed since')
     sub = add('refresh', "rebase a change request onto its base in its worktree, set up, check, and print the range-diff and the incoming files", refresh)
-    sub.add_argument('id')
+    sub.add_argument('id', type=board_id)
     sub.add_argument('--review-holds', action='store_true', help='the triage found the incoming change does not touch it: keep its review for the new (tip, base tip); refused unless the check passes and its commits are the reviewed changes')
     sub = add('reject', 'close a change request unlanded: its items reopen, change requests stacked on it go back to planning', reject)
-    sub.add_argument('id')
+    sub.add_argument('id', type=board_id)
     sub.add_argument('reason', type=nonempty)
     sub = add('revise', 'open a revision question linked to the record it revises; prints its id', revise)
-    sub.add_argument('old')
+    sub.add_argument('old', type=board_id)
     sub.add_argument('--title', required=True, type=nonempty)
     sub.add_argument('--body-file', required=True)
     sub.add_argument('--partial', metavar='RULE', help='revise one named rule; the rest stays in force')
     sub.add_argument('-p', '--priority', type=int, choices=range(5), help="default: the old record's")
-    sub.add_argument('--parent', help="default: the old record's parent")
+    sub.add_argument('--parent', type=board_id, help="default: the old record's parent")
     sub.add_argument('-l', '--labels', action='append', default=[], help="default: the old record's topic: labels")
     sub.add_argument('--external-ref', metavar='REF', help='tag the new question with an external reference')
     sub = add('release', 'release decided rulings in one bd batch; supersedes the records they revise, then closes '
               'the questions they answer', release)
-    sub.add_argument('ids', nargs='+')
+    sub.add_argument('ids', nargs='+', type=board_id)
 
     def answered(value: str) -> tuple[str, list[str]]:
         question, _, records = value.partition('=')
         named = [record for record in records.split(',') if record]
         if not question or not named:
             raise argparse.ArgumentTypeError('QUESTION=RECORD[,RECORD]')
-        return question, named
+        return board_id(question), [board_id(record) for record in named]
 
     sub.add_argument('--closes', nargs='+', type=answered, default=[], metavar='QUESTION=RECORD[,RECORD]',
                      help='close each question as answered by the named released rulings, in dependency order; '
                           'forces only past blockers released or closed in this call')
     sub = add('supersede', "supersede a ruling; a full replacement blocks the old record's open items", supersede)
-    sub.add_argument('old')
-    sub.add_argument('--with', dest='new', required=True)
+    sub.add_argument('old', type=board_id)
+    sub.add_argument('--with', dest='new', required=True, type=board_id)
     sub.add_argument('--partial', metavar='RULE', nargs='?', const='', help='one rule of the old record: add the edge only')
     add('bd', 'run any bd command with your actor (board bd <args>)', None)
     sub = add('handover', 'comment the evidence and hand your item over for review', handover)
-    sub.add_argument('id')
+    sub.add_argument('id', type=board_id)
     sub.add_argument('evidence', type=nonempty)
     sub = add('return', 'return a claimed review to the work queue with its findings', return_item)
-    sub.add_argument('id')
+    sub.add_argument('id', type=board_id)
     sub.add_argument('findings', type=nonempty)
     for name, run, text in (('take', take, 'reassign held items to yourself (with a comment)'),
                             ('unclaim', unclaim, "free a hold, yours or another's (with a comment)")):
         sub = add(name, text, run)
-        sub.add_argument('ids', nargs='+')
+        sub.add_argument('ids', nargs='+', type=board_id)
         if name == 'take':
             sub.add_argument('--force', metavar='REASON', type=nonempty,
                              help="take a work item past your worker cap, flagged with this reason in position and check")
     sub = add('route', "move items into a person's queue (lead, solo or a person's terminal); an inbox item leaves the inbox", route)
     sub.add_argument('person')
-    sub.add_argument('ids', nargs='+')
+    sub.add_argument('ids', nargs='+', type=board_id)
     sub = add('send', "move top-level items into a person's inbox, unrouted until their lead routes them (lead, solo or a person's terminal)", send)
     sub.add_argument('person')
-    sub.add_argument('ids', nargs='+')
+    sub.add_argument('ids', nargs='+', type=board_id)
     sub = add('create', "file a top-level item for another person: held in your queue for your check, then board send", None)
     sub.add_argument('--for', dest='for_', required=True, metavar='PERSON')
     sub.add_argument('args', nargs=argparse.REMAINDER, help='bd create arguments')
@@ -5188,6 +5352,9 @@ def run_command(argv: list[str]) -> int:
             else 'status'
         if args.run in (route, send):
             mover(None, args, args.command)  # refuse before reading
+        if args.run is console and not has_board():
+            print(json.dumps(no_board_json(), indent=2, ensure_ascii=False))
+            return 0
         board = Board.load(scope, args.ids if scope == 'ids' else None)
         if args.run is console:  # reads only: one read of the repository serves every change request, settle_landed's included
             read_git_view(board)

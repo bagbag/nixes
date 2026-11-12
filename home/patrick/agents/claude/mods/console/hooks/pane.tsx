@@ -8,7 +8,7 @@ import type { ConsoleBoard, ConsoleCr, ConsoleItem, ConsoleQuestion, ConsoleReco
 import { pressAcceptCr, pressContinue, pressOpenCr, pressOpenItem, pressOpenOverlaps, pressOpenSettles, pressOpenSuggestion, pressRefreshCr, pressReturnCr, pressRole, pressRun, pressStart, pressView, pressWorkers } from './core'
 import { isRoundOpen, RELEASE_COMMAND, ROUND_ROLES } from './engine'
 import { getBoard, getExpanded, getLenses, getOpened, getPass, getPlaced, getReviewing, getRole, getRound, getRoundError, getTurnRunning, toggleExpanded, updateLenses } from './state'
-import { answerText, canRefreshCr, COUNT_GROUPS, countText, crCheckText, crDetailsText, crFailureParts, crFileHref, crMarks, crNewCountText, crRows, crRowStageText, crUnblocksHint, crUnblocksText, fitText, isCrAccepting, isWalkCr, GROUND, GROUND_BASE, lensArgs, LENS_SETS, plural, pullsText, recommendationMark, recommendationText, roleText, roundWords, runNoun, staleHolds, staleSessions, startHint, STEP_BACK_BASE, suggestionText, WHAT, WHERE } from './words'
+import { answerText, canRefreshCr, COUNT_GROUPS, countText, crCheckText, crDetailsText, crFailureParts, crFileHref, crMarks, crNewCountText, crPriorityHint, crPriorityText, crRows, crRowStageText, crSummaryText, crUnblocksHint, crUnblocksText, displayId, displayIds, fitText, isCrAccepting, isWalkCr, GROUND, GROUND_BASE, lensArgs, LENS_SETS, plural, pullsText, recommendationMark, recommendationText, roleText, roundWords, runNoun, staleHolds, staleSessions, startHint, STEP_BACK_BASE, suggestionText, WHAT, WHERE } from './words'
 import type { Lens, LensCommand } from './words'
 
 type $ = EngineInterface
@@ -20,7 +20,7 @@ const LOG_SHOWN = 10  // the newest log lines; the rest of the round's log folds
 const BOARD_ROWS_SHOWN = 10
 const CR_ROWS_SHOWN = 3  // change requests, ratifications and items for you: the head of what waits on the person
 const CR_INDENT = 2  // cells a stacked request steps in
-const CR_ID_WIDTH = 12
+const ID_GAP = 2  // cells between an id column and what follows
 const MILESTONE_MIN = 8  // cells the milestone title keeps however narrow the pane
 const BUTTON_FRAME = 4  // `[ label ]`
 const CR_BUTTONS = { walk: 'Walk through', accept: 'Accept', return: 'Return', refresh: 'Refresh' } as const
@@ -82,6 +82,11 @@ export async function drawPane($: $, e: { surface: string; props: RenderPropsOf[
   const reviewing = await getReviewing($)
   const isTurnRunning = await getTurnRunning($)
   const hint = hints()
+  const boardPrefix = board?.prefix ?? null
+  const shown = (id: string) => displayId(id, boardPrefix)
+  /** The id column: as wide as the widest id shown in it. */
+  const idWidth = (ids: readonly string[]) => Math.max(0, ...ids.map(id => shown(id).length)) + ID_GAP
+  const dimId = (id: string) => <Text color="inactive">{shown(id)}</Text>
   const isRoundRole = role !== null && ROUND_ROLES.includes(role.role)
   const isAutopilot = role?.role === 'autopilot'  // away: nothing is proposed to start, and no release (the engine refuses both)
   const suggested = isRoundRole && !isAutopilot ? suggestions(round) : []
@@ -113,7 +118,7 @@ export async function drawPane($: $, e: { surface: string; props: RenderPropsOf[
   const slot = (id: string, from: string | null = null) => {
     if (opened?.kind !== 'item' || opened.id !== id || opened.from !== from) return null
     const read = opened.phase === 'read' ? opened.slot : null
-    if (read !== null && read.linked !== '') hint.add(`slot-${id}`, `${id}: ${read.linked}`)
+    if (read !== null && read.linked !== '') hint.add(`slot-${id}`, `${shown(id)}: ${displayIds(read.linked, boardPrefix)}`)
     return (
       <Box key={`open-${from ?? ''}-${id}`} flexDirection="column" paddingLeft={2}>
         {opened.phase === 'reading' && <Text color="inactive">reading…</Text>}
@@ -121,7 +126,7 @@ export async function drawPane($: $, e: { surface: string; props: RenderPropsOf[
         {read !== null && read.lines.map((line, i) => <Text key={`open-${id}-${i}`} wrap="truncate-end">{line}</Text>)}
         {read !== null && (
           <Box key={`open-${id}-facts`} hover={read.linked === '' ? undefined : { scope: `slot-${id}` }}>
-            <Text color="inactive" wrap="truncate-end">{read.facts}</Text>
+            <Text color="inactive" wrap="truncate-end">{displayIds(read.facts, boardPrefix)}</Text>
           </Box>
         )}
       </Box>
@@ -138,7 +143,7 @@ export async function drawPane($: $, e: { surface: string; props: RenderPropsOf[
               {/* A pasted point has no board item to open. */}
               {/^pt\d+$/.test(id)
                 ? <Text bold>{id}</Text>
-                : <Button key={`st-${question}-${id}-open`} plain onPress={() => pressOpenItem($, id, question)}><Text bold>{id}</Text></Button>}
+                : <Button key={`st-${question}-${id}-open`} plain onPress={() => pressOpenItem($, id, question)}>{dimId(id)}</Button>}
             </Box>
           ))}
         </Box>
@@ -150,7 +155,7 @@ export async function drawPane($: $, e: { surface: string; props: RenderPropsOf[
         <Text color="inactive">each needs an outcome before asking; click an id to open it</Text>
         {opened.overlaps.map(one => (
           <Box key={`ov-${question}-${one.id}`} flexDirection="row">
-            <Box width={14} flexShrink={0}><Button key={`ov-${question}-${one.id}-open`} plain onPress={() => pressOpenItem($, one.id, question)}><Text bold>{one.id}</Text></Button></Box>
+            <Box width={idWidth(opened.overlaps.map(other => other.id))} flexShrink={0}><Button key={`ov-${question}-${one.id}-open`} plain onPress={() => pressOpenItem($, one.id, question)}>{dimId(one.id)}</Button></Box>
             <Box flexGrow={1} flexShrink={1}><Text wrap="truncate-end">{one.title}</Text></Box>
           </Box>
         ))}
@@ -166,7 +171,7 @@ export async function drawPane($: $, e: { surface: string; props: RenderPropsOf[
         <Text color="inactive">click an id to open it</Text>
         {opened.leads.map(one => (
           <Box key={`sg-${key}-${one.id}`} flexDirection="row">
-            <Box width={14} flexShrink={0}><Button key={`sg-${key}-${one.id}-open`} plain onPress={() => pressOpenItem($, one.id, key)}><Text bold>{one.id}</Text></Button></Box>
+            <Box width={idWidth(opened.leads.map(other => other.id))} flexShrink={0}><Button key={`sg-${key}-${one.id}-open`} plain onPress={() => pressOpenItem($, one.id, key)}>{dimId(one.id)}</Button></Box>
             <Box flexGrow={1} flexShrink={1}><Text wrap="truncate-end">{one.title}</Text></Box>
           </Box>
         ))}
@@ -227,16 +232,17 @@ export async function drawPane($: $, e: { surface: string; props: RenderPropsOf[
   /** Item rows (id, `second` column, title) capped like the board lists; the id opens the item's summary below its row. */
   const itemList = (key: string, prefix: string, section: ConsoleSection, all: readonly ConsoleItem[], limit: number, second: (item: ConsoleItem) => { text: string; color: string }, what: string, label?: string) => {
     const items = capped(section, all, limit)
+    const width = idWidth(items.shown.map(item => item.id))
     return (
       <Box key={key} flexDirection="column" marginTop={1}>
         {label !== undefined && <Text key={`${key}-label`} color="inactive">{label}</Text>}
         {items.shown.map(item => {
-          hint.add(`item-${item.id}`, `${item.id}: open its summary here`)
+          hint.add(`item-${item.id}`, `${shown(item.id)}: open its summary here`)
           return (
             <Box key={`${prefix}-${item.id}`} flexDirection="column">
               <Box flexDirection="row">
-                <Box key={`${prefix}-${item.id}-idbox`} width={12} flexShrink={0} hover={{ scope: `item-${item.id}` }}>
-                  <Button key={`${prefix}-${item.id}-show`} plain onPress={() => pressOpenItem($, item.id)}>{item.id}</Button>
+                <Box key={`${prefix}-${item.id}-idbox`} width={width} flexShrink={0} hover={{ scope: `item-${item.id}` }}>
+                  <Button key={`${prefix}-${item.id}-show`} plain onPress={() => pressOpenItem($, item.id)}>{dimId(item.id)}</Button>
                 </Box>
                 <Box width={13} flexShrink={0}><Text color={second(item).color}>{second(item).text}</Text></Box>
                 <Box flexGrow={1} flexShrink={1}><Text wrap="truncate-end">{item.title}</Text></Box>
@@ -253,7 +259,7 @@ export async function drawPane($: $, e: { surface: string; props: RenderPropsOf[
   // Board block
 
   const boardBlock = (who: ConsoleRole, view: ConsoleBoard | null) => {
-    const rows: any[] = [banner('board-banner', 'Board', `${who.role} ${who.actor}`, 0)]
+    const rows: any[] = [banner('board-banner', 'Board', `${who.role} ${who.actor}${view?.isMissing === true ? ' · no board' : ''}`, 0)]
     if (view === null) {
       rows.push(<Box key="board-wait" marginTop={1}><Text color="inactive">reading the board…</Text></Box>)
       return rows
@@ -335,7 +341,7 @@ export async function drawPane($: $, e: { surface: string; props: RenderPropsOf[
               {holds.map((one, i) => (
                 <Box key={`stale-${one.id}-box`} flexDirection="row" hover={{ scope: 'stale-holds' }}>
                   {i > 0 && <Text color="inactive">, </Text>}
-                  <Button key={`stale-${one.id}`} plain onPress={() => pressOpenItem($, one.id)}><Text color="warning">{one.id}</Text></Button>
+                  <Button key={`stale-${one.id}`} plain onPress={() => pressOpenItem($, one.id)}><Text color="warning">{shown(one.id)}</Text></Button>
                   <Text color="inactive"> ({one.actor})</Text>
                 </Box>
               ))}
@@ -575,13 +581,13 @@ export async function drawPane($: $, e: { surface: string; props: RenderPropsOf[
   const recordRows = (open: ConsoleRound) => (
     <Box key="release-records" flexDirection="column" marginTop={1}>
       {open.records.map(one => {
-        if (one.reason !== null) hint.add(`rec-${one.id}`, `${one.id}: ${one.reason}`)
+        if (one.reason !== null) hint.add(`rec-${one.id}`, `${shown(one.id)}: ${one.reason}`)
         return (
           <Box key={`rec-${one.id}`} flexDirection="column">
             <Box flexDirection="row" hover={one.reason === null ? undefined : { scope: `rec-${one.id}` }}>
               <Box width={10} flexShrink={0}><Text color={RECORD_COLOR[one.state]}>{one.state}</Text></Box>
-              <Box key={`rec-${one.id}-idbox`} width={14} flexShrink={0}>
-                <Button key={`rec-${one.id}-show`} plain onPress={() => pressOpenItem($, one.id)}><Text bold>{one.id}</Text></Button>
+              <Box key={`rec-${one.id}-idbox`} width={idWidth(open.records.map(other => other.id))} flexShrink={0}>
+                <Button key={`rec-${one.id}-show`} plain onPress={() => pressOpenItem($, one.id)}>{dimId(one.id)}</Button>
               </Box>
               <Box flexGrow={1} flexShrink={1}><Text wrap="truncate-end">{one.title}</Text></Box>
             </Box>
@@ -600,7 +606,7 @@ export async function drawPane($: $, e: { surface: string; props: RenderPropsOf[
     if (roundError !== null) rows.push(<Box key="round-error"><Text color="error" wrap="truncate-end">{roundError}</Text></Box>)
     if (!isOpen && current !== null && current.stopped !== null) {
       const { run: id, reason, ids } = current.stopped
-      rows.push(<Box key="release-stopped" marginTop={1}><Text color="warning" wrap="wrap">release {id} stopped: {reason} · next: a round on {ids.join(', ')}</Text></Box>)
+      rows.push(<Box key="release-stopped" marginTop={1}><Text color="warning" wrap="wrap">release {id} stopped: {reason} · next: a round on {ids.map(shown).join(', ')}</Text></Box>)
     }
     if (isOpen && current.records.length > 0) rows.push(recordRows(current))
     if (isOpen && current.questions.length > 0) rows.push(questionRows(current))
@@ -672,7 +678,7 @@ export async function drawPane($: $, e: { surface: string; props: RenderPropsOf[
   }
   const crDetails = (cr: ConsoleCr) => {
     if (opened?.kind !== 'item' || opened.id !== cr.id || opened.from !== null || opened.phase !== 'read') return null
-    const details = crDetailsText(cr, reviewing)
+    const details = crDetailsText(cr, reviewing, boardPrefix)
     const failures = cr.check.newFailures ?? []
     if (details === null && failures.length === 0) return null
     return (
@@ -688,9 +694,9 @@ export async function drawPane($: $, e: { surface: string; props: RenderPropsOf[
     )
   }
   const crBlock = (view: ConsoleBoard | null) => {
-    if (view === null || (view.crs.length === 0 && view.ratifications.length === 0)) return []
+    if (view === null || (view.crs.length === 0 && view.queued === 0 && view.waitingOnYou === 0 && view.ratifications.length === 0)) return []
     const pulls = view.sessions.find(one => one.session === role?.session)?.pulls ?? []
-    const rows: any[] = [banner('cr-banner', 'Change requests', view.crs.length === 0 ? '' : plural(view.crs.length, 'request'), 1)]
+    const rows: any[] = [banner('cr-banner', 'Change requests', crSummaryText(view), 1)]
     if (view.crs.length > 0) {
       const queue = capped('crs', crRows(view.crs), CR_ROWS_SHOWN)
       const buttonsOf = (cr: ConsoleCr) => {
@@ -699,23 +705,27 @@ export async function drawPane($: $, e: { surface: string; props: RenderPropsOf[
         const refreshing = canRefreshCr(cr, pulls)
         return {
           accepting, refreshing, width: buttonsWidth([...(accepting ? [walkLabel, CR_BUTTONS.accept, CR_BUTTONS.return] : []), ...(refreshing ? [CR_BUTTONS.refresh] : [])]),
-          walkLabel, walkHint: isWalkCr(cr) ? 'Puts the walk-through request in your prompt' : `Opens ${cr.id} in the review tree (its diff unstaged against where it forked)`,
+          walkLabel, walkHint: isWalkCr(cr) ? 'Puts the walk-through request in your prompt' : `Opens ${shown(cr.id)} in the review tree (its diff unstaged against where it forked)`,
         }
       }
       const slotWidth = Math.max(0, ...queue.shown.map(one => buttonsOf(one.cr).width))
+      const crIdWidth = idWidth(queue.shown.map(one => one.cr.id))
       rows.push(
         <Box key="cr-rows" flexDirection="column" marginTop={1}>
           {queue.shown.map(({ cr, depth }) => {
-            hint.add(`item-${cr.id}`, `${cr.id}: open its summary here`)
+            hint.add(`item-${cr.id}`, `${shown(cr.id)}: open its summary here`)
             const check = crCheckText(cr)
             const count = crNewCountText(cr)
             const marks = crMarks(cr).filter(mark => mark.isProblem)  // the quiet ones are the summary's
             const buttons = buttonsOf(cr)
             const stage = crRowStageText(cr)
             const unblocks = crUnblocksText(cr)
-            if (unblocks !== null) hint.add(`unblocks-${cr.id}`, crUnblocksHint(cr))
+            if (unblocks !== null) hint.add(`unblocks-${cr.id}`, crUnblocksHint(cr, boardPrefix))
+            const raised = crPriorityHint(cr, boardPrefix)
+            if (raised !== null) hint.add(`priority-${cr.id}`, raised)
             const facts: { key: string; text: string; color: string; hover?: string }[] = [
               { key: 'stage', text: stage, color: buttons.accepting ? 'warning' : 'inactive' },
+              { key: 'priority', text: crPriorityText(cr), color: 'inactive', ...(raised === null ? {} : { hover: `priority-${cr.id}` }) },
               ...(unblocks === null ? [] : [{ key: 'unblocks', text: unblocks, color: 'inactive', hover: `unblocks-${cr.id}` }]),
             ]
             const rest: { key: string; text: string; color: string }[] = [
@@ -731,10 +741,11 @@ export async function drawPane($: $, e: { surface: string; props: RenderPropsOf[
               ] : []),
               ...(buttons.refreshing ? [act(`cr-refresh-${cr.id}`, 'Refresh', () => pressRefreshCr($, cr.id), 'Puts the refresh request in your prompt: rebase, checks and the range-diff', 'suggestion')] : []),
             ]
-            // the milestone is the line's one shrinking part: it takes what the other facts and the buttons slot leave
+            // line two: the milestone shrinks first, down to MILESTONE_MIN; what still does not fit wraps to a next line of the facts
             const fixedWidth = [...facts, ...rest].reduce((sum, one) => sum + one.text.length + 1, 0)
-            const room = e.props.bodyColumns - CR_INDENT * depth - CR_ID_WIDTH - fixedWidth - (slotWidth > 0 ? 1 + slotWidth : 0) - 1
+            const room = e.props.bodyColumns - CR_INDENT * depth - crIdWidth - fixedWidth - 1
             const milestone = cr.milestone === null ? null : fitText(cr.milestone, Math.max(MILESTONE_MIN, room))
+            if (cr.milestone !== null && milestone !== cr.milestone) hint.add(`milestone-${cr.id}`, `${shown(cr.id)} belongs to: ${cr.milestone}`)
             const fact = (one: { key: string; text: string; color: string; hover?: string }) => {
               const text = <Text key={`cr-${cr.id}-${one.key}`} color={one.color}>{one.text}</Text>
               return one.hover === undefined ? text : <Box key={`cr-${cr.id}-${one.key}-box`} flexShrink={0} hover={{ scope: one.hover }}>{text}</Box>
@@ -743,19 +754,21 @@ export async function drawPane($: $, e: { surface: string; props: RenderPropsOf[
               <Box key={`cr-${cr.id}`} flexDirection="column">
                 <Box key={`cr-${cr.id}-line1`} flexDirection="row">
                   <Box width={CR_INDENT * depth} flexShrink={0}><Text> </Text></Box>
-                  <Box key={`cr-${cr.id}-idbox`} width={CR_ID_WIDTH} flexShrink={0} hover={{ scope: `item-${cr.id}` }}>
-                    <Button key={`cr-${cr.id}-show`} plain onPress={() => pressOpenItem($, cr.id)}>{cr.id}</Button>
+                  <Box key={`cr-${cr.id}-idbox`} width={crIdWidth} flexShrink={0} hover={{ scope: `item-${cr.id}` }}>
+                    <Button key={`cr-${cr.id}-show`} plain onPress={() => pressOpenItem($, cr.id)}>{dimId(cr.id)}</Button>
                   </Box>
                   <Box key={`cr-${cr.id}-title`} flexGrow={1} flexShrink={1} minWidth={0}><Text wrap="truncate-end">{cr.title}</Text></Box>
+                  {slotWidth > 0 && <Box key={`cr-${cr.id}-buttons`} width={slotWidth} marginLeft={1} flexShrink={0} flexDirection="row" columnGap={1} justifyContent="flex-end">{actions}</Box>}
                 </Box>
                 <Box key={`cr-${cr.id}-line2`} flexDirection="row">
-                  <Box width={CR_INDENT * depth + CR_ID_WIDTH} flexShrink={0}><Text> </Text></Box>
-                  <Box key={`cr-${cr.id}-facts`} flexDirection="row" columnGap={1} flexGrow={1} flexShrink={1} minWidth={0}>
+                  <Box width={CR_INDENT * depth + crIdWidth} flexShrink={0}><Text> </Text></Box>
+                  <Box key={`cr-${cr.id}-facts`} flexDirection="row" flexWrap="wrap" columnGap={1} flexGrow={1} flexShrink={1} minWidth={0}>
                     {facts.map(fact)}
-                    {milestone !== null && <Text key={`cr-${cr.id}-milestone`} wrap="truncate-end">{milestone}</Text>}
+                    {milestone !== null && (milestone === cr.milestone
+                      ? <Text key={`cr-${cr.id}-milestone`}>{milestone}</Text>
+                      : <Box key={`cr-${cr.id}-milestone-box`} flexShrink={0} hover={{ scope: `milestone-${cr.id}` }}><Text key={`cr-${cr.id}-milestone`}>{milestone}</Text></Box>)}
                     {rest.map(fact)}
                   </Box>
-                  {slotWidth > 0 && <Box key={`cr-${cr.id}-buttons`} width={slotWidth} flexShrink={0} flexDirection="row" columnGap={1} justifyContent="flex-end">{actions}</Box>}
                 </Box>
                 {slot(cr.id)}
                 {crDetails(cr)}
@@ -772,12 +785,12 @@ export async function drawPane($: $, e: { surface: string; props: RenderPropsOf[
         <Box key="cr-ratify" flexDirection="column" marginTop={1}>
           <Text color="warning">to ratify</Text>
           {ratify.shown.map(one => {
-            hint.add(`item-${one.id}`, `${one.id}: open its summary here`)
+            hint.add(`item-${one.id}`, `${shown(one.id)}: open its summary here`)
             return (
               <Box key={`ratify-${one.id}`} flexDirection="column">
                 <Box flexDirection="row">
-                  <Box key={`ratify-${one.id}-idbox`} width={12} flexShrink={0} hover={{ scope: `item-${one.id}` }}>
-                    <Button key={`ratify-${one.id}-show`} plain onPress={() => pressOpenItem($, one.id)}>{one.id}</Button>
+                  <Box key={`ratify-${one.id}-idbox`} width={idWidth(ratify.shown.map(other => other.id))} flexShrink={0} hover={{ scope: `item-${one.id}` }}>
+                    <Button key={`ratify-${one.id}-show`} plain onPress={() => pressOpenItem($, one.id)}>{dimId(one.id)}</Button>
                   </Box>
                   <Box flexGrow={1} flexShrink={1}><Text wrap="truncate-end">{one.title}</Text></Box>
                 </Box>

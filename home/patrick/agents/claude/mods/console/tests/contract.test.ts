@@ -58,14 +58,42 @@ describe('board console contract', () => {
     expect(board.counts?.toRatify).toEqual({ ready: 1, held: 0, waiting: 0 })
   })
 
+  test('the agent steps design and implement are counted, the queue is a count, and a board is there', () => {
+    const board = parseBoardConsole(BOARD_CONSOLE_CONTRACT)
+    expect(board.counts).toMatchObject({ toDesign: { ready: 6, held: 1, waiting: 0 }, toImplement: { ready: 90, held: 1, waiting: 1 } })
+    expect(board.queued).toBe(92)
+    expect(board.waitingOnYou).toBe(5)
+    expect(board.prefix).toBe('p')
+    expect(board.isMissing).toBe(false)
+  })
+
+  test('no board is data: the board says so and the rest reads empty', () => {
+    const missing = parseBoardConsole({ noBoard: true, counts: null, forYou: [], items: [], crs: [], queued: 0, ratifications: [], sessions: [], held: [] })
+    expect(missing).toMatchObject({ isMissing: true, counts: null, crs: [], queued: 0, items: [], sessions: [] })
+  })
+
+  test('a board without the new fields reads as a board with none queued and nothing to design or implement', () => {
+    const board = parseBoardConsole({ counts: { toPlan: { ready: 1, held: 0, waiting: 0 } } })
+    expect(board).toMatchObject({ isMissing: false, queued: 0 })
+    expect(board.counts?.toDesign).toEqual({ ready: 0, held: 0, waiting: 0 })
+  })
+
   test('an unknown check state reads as unchecked, a missing check as nothing run', () => {
     const board = parseBoardConsole({ crs: [{ id: 'x', check: { state: 'weird' } }, { id: 'y' }] })
     expect(board.crs.map(one => one.check.state)).toEqual(['unchecked', 'unchecked'])
-    expect(board.crs[1]).toMatchObject({ holder: null, parent: null, children: [], reviewState: null, landBlocked: null, after: null, returned: false, setupFailed: false, unblocks: 0, unblocksDirect: 0, milestone: null })
+    expect(board.crs[1]).toMatchObject({ holder: null, parent: null, children: [], reviewState: null, landBlocked: null, after: null, setupFailed: false, unblocks: 0, unblocksDirect: 0, milestone: null })
   })
 })
 
 test('a check without a comparison reads as none ran', () => {
   const check = parseBoardConsole({ crs: [{ id: 'x', check: { state: 'current' } }] }).crs[0]?.check
   expect(check).toMatchObject({ newFailures: null, baseCount: null, tipCount: null })
+})
+
+test('the priority fields, the answers count and the prefix are read', () => {
+  const board = parseBoardConsole({ waitingOnYou: 5, prefix: 'p', crs: [{ id: 'x', priority: 1, ownPriority: 2, raisedBy: { id: 'p-i', isItem: true } }, { id: 'y' }] })
+  expect(board).toMatchObject({ waitingOnYou: 5, prefix: 'p' })
+  expect(board.crs[0]).toMatchObject({ priority: 1, ownPriority: 2, raisedBy: { id: 'p-i', isItem: true } })
+  expect(board.crs[1]?.raisedBy).toBeNull()
+  expect(parseBoardConsole({ noBoard: true })).toMatchObject({ waitingOnYou: 0, prefix: null })
 })
