@@ -145,11 +145,9 @@ Establish the outcome's contribution to its milestone:
   dependencies: independent CRs run in parallel, overlapping work gets a
   dependency edge (the later CR stacks on, or waits for, the earlier).
 - Write each item's expected behavior as short examples (input → result) in
-  its `--design`.
-- Mark a CR for `deep-review` when a bug in it would be hidden and costly
-  ([definition](../../shared/acceptance.md#review-policy)):
-  `board bd update <cr> --set-metadata deep_review="<named harm>"`. Leave it
-  unmarked when unsure. State each agent checkpoint the CR needs in the CR.
+  its `--design`, and the tests worth writing (global instructions' Tests) in
+  its `--acceptance`.
+- State each agent checkpoint the CR needs in the CR.
 - Place each new CR in or out of the open milestone under
   [Milestones](../../shared/board-coordination.md#milestones).
 - Use a separate plan for cross-item reasoning, blast-radius integration
@@ -176,10 +174,12 @@ Establish the outcome's contribution to its milestone:
 - Probe novel load-bearing assumptions before dependent work. Plan golden
   examples and hand-verified fixtures for domain-heavy work.
 - For material decomposition or integration uncertainty, assign `plan`.
-  Obtain an independent plan assessment of every plan before dispatch:
-  coverage, grounding, dependencies, integration, verification, silent
-  failures. Select gates under Acceptance
-  [Review policy](../../shared/acceptance.md#review-policy).
+  Before dispatch, have a `review` worker assess each planning pass a `plan`
+  worker wrote or that rewrites existing items: coverage, grounding,
+  dependencies, integration, verification, silent failures. Put its verdict
+  in one comment on the planned epic or released ruling (without a board, in
+  the plan file). Check other planning (added items or acceptance lines,
+  regroupings) yourself.
 
 ## Queue
 
@@ -212,7 +212,7 @@ Establish the outcome's contribution to its milestone:
   Orchestration).
 - Send review to a session pulling `review` when one is active; otherwise
   dispatch a fresh-context worker that did not author the CR: `review`, or
-  `deep-review` where the Review policy names it.
+  `deep-review` for an item a review escalated.
 - Work inline under the global instructions' Orchestration.
 - Dispatch dependency-ready waves of CRs; shared contracts are sequenced by
   dependency edges. Use native liveness, wait

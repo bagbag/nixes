@@ -1330,6 +1330,28 @@ def validate_setup_portable(root: Path) -> None:
                 raise ValueError(f"{path}:{number} needs a newer bash than 3.2: {line.strip()}")
 
 
+def validate_review_tiers(root: Path) -> None:
+    """r7-q28: every first review goes to review; deep-review only on escalation, in the policy table, the agent
+    descriptions and the plan protocol alike."""
+    def description(name: str) -> str:
+        front = (root / "definitions" / f"{name}.md").read_text(encoding="utf-8").split("---", 2)[1]
+        return " ".join(front.split("description:", 1)[1].split("\neffort:", 1)[0].split())
+    policy = (root / "skills" / "shared" / "acceptance.md").read_text(encoding="utf-8")
+    rows = {line.rsplit("|", 2)[1].strip(): line for line in policy.splitlines() if line.startswith("| ") and line.count("|") == 3}
+    deep = next((line for gate, line in rows.items() if gate.startswith("`deep-review`")), "")
+    first = next((line for gate, line in rows.items() if gate.startswith("`review`")), "")
+    if "escalat" not in deep or any(word in deep for word in ("plan", "design", "contract")):
+        raise ValueError("acceptance.md: the deep-review row must name escalation only")
+    if not all(word in first for word in ("plan", "design", "contract")):
+        raise ValueError("acceptance.md: the review row must cover plans, designs and contracts")
+    if "escalat" not in description("deep-review") or "plan, design or contract" in description("deep-review"):
+        raise ValueError("deep-review description must route escalations only")
+    if "deep-review" in description("second-opinion"):
+        raise ValueError("second-opinion description must not name deep-review as a first gate")
+    if "deep_review=" in (root / "skills" / "role" / "protocols" / "plan.md").read_text(encoding="utf-8"):
+        raise ValueError("plan.md: planners no longer mark deep_review")
+
+
 def validate_shebang_modes(root: Path) -> None:
     """A file starting with a shebang is executable (the Claude-only scripts beside the agents root included when present)."""
     skip = {".git", "node_modules", "__pycache__"}
@@ -10309,6 +10331,7 @@ def run_group(name: str, root: Path) -> None:
         validate_engine_counts(root)
         validate_lens_names(root)
         validate_shebang_modes(root)
+        validate_review_tiers(root)
     elif name == "hooks":
         validate_hooks(root)
     elif name == "board":

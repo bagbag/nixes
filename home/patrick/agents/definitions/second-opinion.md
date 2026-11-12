@@ -4,8 +4,8 @@ description: >-
   Fresh independent judgment on a consequential decision, plan, or proposal.
   Reassesses the premise, explores alternatives, and recommends a direction;
   provides strict sign-off when requested. Not for the acceptance gate of a
-  plan, design or diff (deep-review, review). May write the assessment to an
-  assigned path.
+  plan, design or diff (review). May write the assessment to an assigned
+  path.
 effort: high
 claude-tools: Read, Edit, Write, Grep, Glob, Bash, WebSearch, WebFetch, Skill
 claude-model: opus

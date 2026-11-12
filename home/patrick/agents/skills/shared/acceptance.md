@@ -9,27 +9,29 @@ open), sized to stakes; a role protocol may tighten it.
 |---|---|
 | Settled by a cheap check | Inline check by the acceptor. |
 | Checkable beyond that | `verify`. |
-| Consequential code or cross-cutting change | `review`, reproducing decisive checks; add `verify` only for remaining open claims. |
-| Contract, design, plan; work the planner marked hidden-and-costly; escalation at the retry limit | `deep-review`. |
+| Consequential code, cross-cutting change, plan, design, contract or challenge | `review`, reproducing decisive checks; add `verify` only for remaining open claims. |
+| A `review`'s escalation of a hidden-and-costly path, escalation at the retry limit, or the user's request | `deep-review` of the whole item, the escalated path first. |
 | Repair after a return | The reviewer that returned it ([Reviewers](../shared/reviewers.md#reviewers)). |
 
 - Reuse a planned later review of the same target (staged or integration
   review) where it replaces a redundant earlier gate.
-- A `review` that finds unmarked work hidden-and-costly may ask for
-  `deep-review`; the planner's mark rule is plan.md
-  [Cut work](../role/protocols/plan.md#cut-work).
+- A `review` escalates under review.md
+  [Steps](../role/protocols/review.md#steps) step 7; brief the
+  `deep-review` with that review's findings and evidence, not its verdict.
 - Select and brief reviewers under
   [Reviewers](../shared/reviewers.md#reviewers).
-- **Hidden and costly:** a bug that play, tests and the type checker would
-  miss, whose harm (to users, data or security, or breaking a published
-  contract) is hard to undo. The planner names the harm when marking work.
+- **Hidden and costly:** a concrete failure path the review could not settle
+  (no test settles it: a race, real production data) whose damage a code fix
+  cannot undo: data lost beyond recovery, a leaked secret or access, writes
+  into the wrong tenant, money moved or messages sent to outside parties, a
+  one-way migration of production data.
 
 ### Evidence and gates
 
 - Accept author gate results with recorded command and output. Reproduce the
   decisive check as a non-author for missing or contradictory output,
   surprising or disputed claims, security, data-integrity or persistence
-  changes, or an item marked hidden-and-costly.
+  changes, or an escalated item.
 - Let gates fail; fix causes, not results.
 - For test gates, confirm the required cases executed and record passed, failed
   and skipped counts alongside the exit code. Skipped or setup-blocked

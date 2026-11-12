@@ -234,7 +234,7 @@ findings, `board block` reasons); the board's own packets are exempt: the protoc
 park adds its packet with `--board-packet`, which `board bd` strips before bd (r16-q87). Plain
 `board show` prints the item's newest 5 comments, each cut at 2000 characters with a pointer to
 `board show <id> --comments`, which prints them whole (r16-q88, q89); it prints item metadata
-`deep_review=<harm>` as `deep-review: <harm>` (r16-q94).
+`deep_review=<path>`, the failure path a review escalated, as `deep-review: <path>` (r16-q94, r7-q28).
 `board check` encodes the board-core
 conventions mechanically; change both in the same change, so drifted boards
 surface in `board health` and move through `/board-migrate`.

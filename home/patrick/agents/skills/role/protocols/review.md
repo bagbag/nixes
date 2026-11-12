@@ -64,8 +64,15 @@ steps 3-7.
    standalone review closes with `board bd close <id> --reason "<verdict>"`,
    recording each finding as a new item discovered from it
    (`--deps discovered-from:<id>`).
-   Output: `passed <cr> to <status>`, `returned <cr>`, `question <id>` or
-   `closed <id>`, plus the new item ids for a standalone review.
+   Escalate instead of passing when a
+   [hidden-and-costly](../../shared/acceptance.md#review-policy) path stays
+   unsettled: comment your findings and evidence, then
+   `board bd update <id> --set-metadata deep_review="<the path>"` and
+   `board unclaim <id>`. A `deep-review` ending an escalated item removes the
+   mark (`--unset-metadata deep_review`).
+   Output: `passed <cr> to <status>`, `returned <cr>`, `question <id>`,
+   `escalated <id>` or `closed <id>`, plus the new item ids for a standalone
+   review.
 
 ## Stop
 

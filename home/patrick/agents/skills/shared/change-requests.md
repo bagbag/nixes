@@ -18,7 +18,8 @@ queue order and refresh work: [Board coordination](board-coordination.md).
 - **Metadata:** `look` (`before`: lands on the user's Accept; `after`: lands
   after agent review), `view` (`code`: the user reads the diff; `result`: walked through the
   outcome), `checkpoint` (`agent|user`: a
-  design checkpoint, cleared when passed), `deep_review`, `base` (target or
+  design checkpoint, cleared when passed), `deep_review` (the path a review
+  escalated, removed by the deep-review), `base` (target or
   CR), `base_sha` (fork point, set at creation and after every rebase),
   `setup_sha`, `check` and `review` = {tip, baseTip, result, at}.
 - **Settings** (project bd config): `target`, `setup`, `checks`, `look`,

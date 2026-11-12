@@ -131,6 +131,7 @@ Write brief progress notes and findings as you work. Everything the user needs t
 
 - **Bugs**: write a failing test that reproduces the bug *before* the fix.
 - **Features**: write tests alongside the implementation, not after.
+- **Which tests**: test the behavior consumers rely on (contracts, edge cases, failure handling) and every failure path whose damage a code fix cannot undo; skip tests that restate the implementation, repeat existing coverage, vary a case without new risk, or test the framework.
 - **Each new test**: break the behavior it covers once, see the test fail, restore it, and list the breaks in your report.
 
 ## Keep docs in sync with the change that touches reality
