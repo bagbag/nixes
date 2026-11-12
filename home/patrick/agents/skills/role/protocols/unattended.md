@@ -71,7 +71,7 @@ findings or stops.
      checkpoint file.
    - Ask last whether to start now, first naming a round or release still open
      (`protocol status --line`) for the user to answer or abandon. On the user's
-     go run `bash $HOME/.agents/bin/session-lead-mode activate autopilot`. When
+     go run `$HOME/.agents/bin/session-lead-mode activate autopilot`. When
      the user returns and leaves again, confirm only the budget and the go.
    Output: ratified budget, authority and baseline, one line each;
    `registered autopilot`.
@@ -106,7 +106,7 @@ findings or stops.
    (`board health --root <epic> --items ratification,questions`);
    failure and park diagnoses; and the CRs waiting for the user's Accept.
    Keep incompleteness explicit.
-   Then run `bash $HOME/.agents/bin/session-lead-mode activate solo`. Stay on
+   Then run `$HOME/.agents/bin/session-lead-mode activate solo`. Stay on
    autopilot through a passing message that does not end the run.
    Output: the return report; `registered solo`.
 

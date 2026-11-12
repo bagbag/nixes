@@ -1330,6 +1330,17 @@ def validate_setup_portable(root: Path) -> None:
                 raise ValueError(f"{path}:{number} needs a newer bash than 3.2: {line.strip()}")
 
 
+def validate_shebang_modes(root: Path) -> None:
+    """A file starting with a shebang is executable (the Claude-only scripts beside the agents root included when present)."""
+    skip = {".git", "node_modules", "__pycache__"}
+    files = [p for p in root.rglob("*") if p.is_file() and not skip & set(p.relative_to(root).parts)]
+    files += sorted((root.parent / "claude").rglob("*.sh"))
+    for path in files:
+        with path.open("rb") as handle:
+            if handle.read(2) == b"#!" and not os.access(path, os.X_OK):
+                raise ValueError(f"{path} starts with a shebang but is not executable: chmod +x it")
+
+
 def validate_setup_installer(root: Path) -> None:
     """setup/install.sh in a fake home: keeps the user's files, upgrades by its own state, stops before any change."""
     installer = root / "setup" / "install.sh"
@@ -10297,6 +10308,7 @@ def run_group(name: str, root: Path) -> None:
         validate_strength_rules(root)
         validate_engine_counts(root)
         validate_lens_names(root)
+        validate_shebang_modes(root)
     elif name == "hooks":
         validate_hooks(root)
     elif name == "board":

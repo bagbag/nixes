@@ -22,7 +22,6 @@ export async function home($: $): Promise<string> {
   return value
 }
 
-/** session-lead-mode is a bash script without the execute bit, run through bash as every caller does. */
 async function registry($: $, args: readonly string[]): Promise<Ran> {
   const ran = await $.process.run(['bash', binary(await home($), 'session-lead-mode'), ...args], { timeoutMs: 10_000 })
   return { exitCode: ran.exitCode, stdout: ran.stdout, stderr: ran.stderr }
