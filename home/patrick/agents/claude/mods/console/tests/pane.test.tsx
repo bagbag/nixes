@@ -616,14 +616,14 @@ describe('band', () => {
       await band.unmount()
     })
 
-    test('while autopilot the pane hides Suggestions, Start and Release Round; solo shows them', async ($, on) => {
+    test('while autopilot the pane hides the proposals, Start and Release Round; solo shows them', async ($, on) => {
       const { clock } = world(on, { role: autopilot, round: closedWith(proposed) })
       await ready($, clock)
       let pane = await $.ui.mount({ ...PANE, surface: 'terminal' })
       expect(await pane.find({ key: 'sg-round-0-start' })).toBeUndefined()
       expect(await pane.find({ key: 'sg-release-start' })).toBeUndefined()
       expect(await pane.find({ key: 'actions-row-release' })).toBeUndefined()
-      expect(await texts(pane)).not.toContain('Suggestions')
+      expect(await texts(pane)).not.toContain('the next step, proposed')
       await pane.unmount()
       const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
       expect(await band.find({ key: 'band-start' })).toBeUndefined()
@@ -635,7 +635,7 @@ describe('band', () => {
       const { w, clock } = world(on, { role: solo, round: closedWith(proposed) })
       await ready($, clock)
       const pane = await $.ui.mount({ ...PANE, surface: 'terminal' })
-      expect(await texts(pane)).toContain('Suggestions')
+      expect(await texts(pane)).toContain('the next step, proposed')
       expect(await pane.find({ key: 'sg-round-0-start' })).toBeDefined()
       expect(await pane.find({ key: 'actions-row-release' })).toBeDefined()
       expect((await pane.find({ key: 'actions-row-role-autopilot' }))?.text).toContain('Autopilot')
@@ -822,6 +822,58 @@ describe('accept notification', () => {
     w.crs = [cr({ id: 'p-cr1' })]
     await clock.advance(62_000)
     expect(w.notified).toEqual([])
+  })
+})
+
+describe('board block', () => {
+  const item = (n: number) => ({ id: `tstdl-u${n}`, type: 'task', status: 'open', title: `Your task ${n}`, holder: 'user' })
+
+  test('for you: the ready items under the counts, 3 shown, the rest behind +N more; an id opens its summary', async ($, on) => {
+    const { w, clock } = world(on, { forYou: [1, 2, 3, 4, 5].map(item) })
+    await ready($, clock)
+    const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+    const drawn = await texts(ui)
+    for (const n of [1, 2, 3]) expect(drawn).toContain(`Your task ${n}`)
+    expect(drawn).not.toContain('Your task 4')
+    expect(drawn).toContain('+2 more ▸')
+    expect(drawn.indexOf('to review')).toBeLessThan(drawn.indexOf('Your task 1'))
+    expect(drawn.indexOf('Your task 1')).toBeLessThan(drawn.indexOf('holds 2'))
+    expect((await ui.find({ key: 'foryou-tstdl-u1' }))?.text).toMatch(/tstdl-u1\s*task\s*Your task 1/)
+    await ui.press({ key: 'forYou-toggle' })
+    expect(await texts(ui)).toContain('Your task 5')
+    await ui.press({ key: 'foryou-tstdl-u1-show' })
+    await clock.settle()
+    expect(w.calls.some(one => one.argv[1] === 'show' && one.argv[2] === 'tstdl-u1')).toBe(true)
+    await ui.unmount()
+  })
+
+  test('nothing for you: no list', async ($, on) => {
+    const { clock } = world(on)
+    await ready($, clock)
+    const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+    expect(await ui.find({ key: 'board-foryou' })).toBeUndefined()
+    await ui.unmount()
+  })
+
+  test("this session's holds sit under the sessions table, labelled", async ($, on) => {
+    const { clock } = world(on)
+    await ready($, clock)
+    const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+    const drawn = await texts(ui)
+    expect(drawn.indexOf('holds 2')).toBeLessThan(drawn.indexOf('this session holds'))
+    expect(drawn.indexOf('this session holds')).toBeLessThan(drawn.indexOf('tstdl-x1'))
+    await ui.unmount()
+  })
+
+  test('/console text: the for-you lines under the counts, the holds labelled under the sessions', async ($, on) => {
+    const { clock } = world(on, { forYou: [item(1)] })
+    await ready($, clock)
+    const ran = await $.command.run({ command: 'console', args: '', origin: { kind: 'bridge' }, presentation: { isFullscreen: true, columns: 160 } })
+    const text = ran.text ?? ''
+    expect(text).toContain('  for you: tstdl-u1  task  Your task 1')
+    expect(text.indexOf('for you: tstdl-u1')).toBeLessThan(text.indexOf('holds 2'))
+    expect(text).toContain('  this session holds:\n    tstdl-x1  in_progress  Which engine name?')
+    expect(text.indexOf('holds 2')).toBeLessThan(text.indexOf('this session holds'))
   })
 })
 
@@ -1204,7 +1256,7 @@ describe('suggestions', () => {
     await ready($, clock)
     const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
     const color = async (text: string) => (await ui.findAll({ type: 'Text', text })).filter(one => one.text === text).map(one => one.props.color)
-    expect(await texts(ui)).toContain('Suggestions')
+    expect(await texts(ui)).toContain('the next step, proposed')
     expect(await color('Cache questions · ~3 questions · unblocks ~8 items')).toEqual(['suggestion'])
     expect(await color('Queue retry · ~1 question · unblocks ~5 items · compacts first')).toEqual([undefined])
     // the summary is the dim wrapping second line; the model's `why` is the Start's hover hint, with what Start runs
@@ -1230,21 +1282,36 @@ describe('suggestions', () => {
     await ui.unmount()
   })
 
-  test('the pane shows no Suggestions area without a proposal, with a round open, or for an agent', async ($, on) => {
+  test('the pane shows no proposals without one, with a round open, or for an agent', async ($, on) => {
     const { w, clock } = world(on, { round: closed(null) })
     await ready($, clock)
     let ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
-    expect(await texts(ui)).not.toContain('Suggestions')
+    expect(await texts(ui)).not.toContain('the next step, proposed')
+    expect(await texts(ui)).toContain('none open')
     await ui.unmount()
     w.round = roundJson({ next: PROPOSED })
     await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
     await clock.settle()
     ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
-    expect(await texts(ui)).not.toContain('Suggestions')
+    expect(await texts(ui)).not.toContain('the next step, proposed')
     await ui.unmount()
   })
 
-  test('Release Round and a compact-only proposal show in Suggestions, and their Actions twins take the suggestion color exactly then', async ($, on) => {
+  test('the proposals fill the Round slot: below the board, in place of none open, with no section of their own', async ($, on) => {
+    const { clock } = world(on, { round: closed(PROPOSED) })
+    await ready($, clock)
+    const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+    const drawn = await texts(ui)
+    expect(drawn).not.toContain('Suggestions')
+    expect(drawn).not.toContain('none open')
+    expect((await ui.find({ key: 'round-banner' }))?.text).toContain('the next step, proposed')
+    expect(drawn.indexOf('holds 2')).toBeLessThan(drawn.indexOf('the next step, proposed'))
+    expect(drawn.indexOf('the next step, proposed')).toBeLessThan(drawn.indexOf('Cache questions'))
+    expect(drawn.indexOf('Cache questions')).toBeLessThan(drawn.indexOf('Controls'))
+    await ui.unmount()
+  })
+
+  test('Release Round and a compact-only proposal show among the proposals, and their Actions twins take the suggestion color exactly then', async ($, on) => {
     const { w, clock } = world(on, { round: closed({ release: { count: 3 } }) })
     await ready($, clock)
     let ui = await $.ui.mount({ ...PANE, surface: 'terminal' })

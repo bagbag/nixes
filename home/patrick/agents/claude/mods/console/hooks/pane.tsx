@@ -3,7 +3,7 @@
 // ` • ` = toggle or link, secondary text `inactive`, hover hints gathered at the bottom.
 import type { EngineInterface, RenderPropsOf } from 'claude-code'
 
-import type { ConsoleBoard, ConsoleCr, ConsoleQuestion, ConsoleRecord, ConsoleRole, ConsoleRound, ConsoleSection, ConsoleSession, ConsoleSuggestion } from '../types'
+import type { ConsoleBoard, ConsoleCr, ConsoleItem, ConsoleQuestion, ConsoleRecord, ConsoleRole, ConsoleRound, ConsoleSection, ConsoleSession, ConsoleSuggestion } from '../types'
 
 import { pressAcceptCr, pressContinue, pressOpenCr, pressOpenItem, pressOpenOverlaps, pressOpenSettles, pressOpenSuggestion, pressRefreshCr, pressReturnCr, pressRole, pressRun, pressStart, pressView, pressWorkers } from './core'
 import { isRoundOpen, RELEASE_COMMAND, ROUND_ROLES } from './engine'
@@ -18,7 +18,7 @@ const QUESTIONS_SHOWN = 10  // this many questions show while enough exist: ever
 const ANSWERED_SHOWN = 2
 const LOG_SHOWN = 10  // the newest log lines; the rest of the round's log folds behind +N more
 const BOARD_ROWS_SHOWN = 10
-const CR_ROWS_SHOWN = 3  // change requests and ratifications: the head of the accept queue is the part waiting on the person
+const CR_ROWS_SHOWN = 3  // change requests, ratifications and items for you: the head of what waits on the person
 const CR_INDENT = 2  // cells a stacked request steps in
 const CR_ID_WIDTH = 12
 const CR_TITLE_MIN = 16  // narrower than this and the status and buttons wrap to a second line
@@ -173,10 +173,10 @@ export async function drawPane($: $, e: { surface: string; props: RenderPropsOf[
       </Box>
     )
   }
-  const suggestionBlock = () => {
+  // The proposals fill the Round slot while no run is open (suggestions() offers none while one is).
+  const suggestionRows = () => {
     if (suggested.length === 0) return []
     return [
-      banner('suggestions-banner', 'Suggestions', 'the next step, proposed', 0),
       <Box key="suggestions" flexDirection="column" marginTop={1}>
         {suggested.map(one => {
           const color = one.isRecommended ? 'suggestion' : undefined
@@ -224,10 +224,36 @@ export async function drawPane($: $, e: { surface: string; props: RenderPropsOf[
       ? { shown: rows, hidden: 0 }
       : { shown: rows.slice(0, limit), hidden: rows.length - limit }
 
+  /** Item rows (id, `second` column, title) capped like the board lists; the id opens the item's summary below its row. */
+  const itemList = (key: string, prefix: string, section: ConsoleSection, all: readonly ConsoleItem[], limit: number, second: (item: ConsoleItem) => { text: string; color: string }, what: string, label?: string) => {
+    const items = capped(section, all, limit)
+    return (
+      <Box key={key} flexDirection="column" marginTop={1}>
+        {label !== undefined && <Text key={`${key}-label`} color="inactive">{label}</Text>}
+        {items.shown.map(item => {
+          hint.add(`item-${item.id}`, `${item.id}: open its summary here`)
+          return (
+            <Box key={`${prefix}-${item.id}`} flexDirection="column">
+              <Box flexDirection="row">
+                <Box key={`${prefix}-${item.id}-idbox`} width={12} flexShrink={0} hover={{ scope: `item-${item.id}` }}>
+                  <Button key={`${prefix}-${item.id}-show`} plain onPress={() => pressOpenItem($, item.id)}>{item.id}</Button>
+                </Box>
+                <Box width={13} flexShrink={0}><Text color={second(item).color}>{second(item).text}</Text></Box>
+                <Box flexGrow={1} flexShrink={1}><Text wrap="truncate-end">{item.title}</Text></Box>
+              </Box>
+              {slot(item.id)}
+            </Box>
+          )
+        })}
+        {more(section, items.hidden, what)}
+      </Box>
+    )
+  }
+
   // Board block
 
   const boardBlock = (who: ConsoleRole, view: ConsoleBoard | null) => {
-    const rows: any[] = [banner('board-banner', 'Board', `${who.role} ${who.actor}`, suggested.length > 0 ? 1 : 0)]
+    const rows: any[] = [banner('board-banner', 'Board', `${who.role} ${who.actor}`, 0)]
     if (view === null) {
       rows.push(<Box key="board-wait" marginTop={1}><Text color="inactive">reading the board…</Text></Box>)
       return rows
@@ -261,29 +287,7 @@ export async function drawPane($: $, e: { surface: string; props: RenderPropsOf[
     }
     if (view.sync !== null) rows.push(<Box key="board-sync" marginTop={1}><Text color="warning">{view.sync}</Text></Box>)
     if (view.queues !== null) rows.push(<Box key="board-queues" marginTop={1}><Text color="inactive">{view.queues}</Text></Box>)
-    if (view.items.length > 0) {
-      const items = capped('items', view.items)
-      rows.push(
-        <Box key="board-items" flexDirection="column" marginTop={1}>
-          {items.shown.map(item => {
-            hint.add(`item-${item.id}`, `${item.id}: open its summary here`)
-            return (
-              <Box key={`item-${item.id}`} flexDirection="column">
-                <Box flexDirection="row">
-                  <Box key={`item-${item.id}-idbox`} width={12} flexShrink={0} hover={{ scope: `item-${item.id}` }}>
-                    <Button key={`item-${item.id}-show`} plain onPress={() => pressOpenItem($, item.id)}>{item.id}</Button>
-                  </Box>
-                  <Box width={13} flexShrink={0}><Text color={ITEM_COLOR[item.status] ?? 'inactive'}>{item.status}</Text></Box>
-                  <Box flexGrow={1} flexShrink={1}><Text wrap="truncate-end">{item.title}</Text></Box>
-                </Box>
-                {slot(item.id)}
-              </Box>
-            )
-          })}
-          {more('items', items.hidden, 'items')}
-        </Box>,
-      )
-    }
+    if (view.forYou.length > 0) rows.push(itemList('board-foryou', 'foryou', 'forYou', view.forYou, CR_ROWS_SHOWN, item => ({ text: item.type, color: 'inactive' }), 'items for you'))
     if (view.sessions.length > 0) {
       const rank = (one: ConsoleSession) => SESSION_ORDER[one.state] ?? 2
       hint.add('stale-holds', 'Holds of sessions that are gone or unknown with only idle holds: board take <id> or board unclaim <id>')
@@ -341,6 +345,7 @@ export async function drawPane($: $, e: { surface: string; props: RenderPropsOf[
         </Box>,
       )
     }
+    if (view.items.length > 0) rows.push(itemList('board-items', 'item', 'items', view.items, BOARD_ROWS_SHOWN, item => ({ text: item.status, color: ITEM_COLOR[item.status] ?? 'inactive' }), 'items', 'this session holds'))
     const viewed = e.props.view.agentId
     // Live workers only: Claude Code keeps finished ones listed for the whole session. The one in view stays.
     const workers = view.agents.filter(agent => LIVE_AGENT.includes(agent.status) || agent.id === viewed)
@@ -590,7 +595,7 @@ export async function drawPane($: $, e: { surface: string; props: RenderPropsOf[
   const roundBlock = (current: ConsoleRound | null) => {
     const isOpen = current !== null && isRoundOpen(current)
     const rows: any[] = [banner('round-banner', isOpen ? `${runNoun(current)} ${current.round}` : 'Round',
-      isOpen ? [current.title, roundWords(current)].filter(Boolean).join(' · ') : 'none open', 1)]
+      isOpen ? [current.title, roundWords(current)].filter(Boolean).join(' · ') : suggested.length > 0 ? 'the next step, proposed' : 'none open', 1)]
     if (isOpen && current.summary !== null) rows.push(<Box key="round-summary" marginTop={1}><Text color="inactive">{current.summary}</Text></Box>)
     if (roundError !== null) rows.push(<Box key="round-error"><Text color="error" wrap="truncate-end">{roundError}</Text></Box>)
     if (!isOpen && current !== null && current.stopped !== null) {
@@ -599,6 +604,7 @@ export async function drawPane($: $, e: { surface: string; props: RenderPropsOf[
     }
     if (isOpen && current.records.length > 0) rows.push(recordRows(current))
     if (isOpen && current.questions.length > 0) rows.push(questionRows(current))
+    rows.push(...suggestionRows())
     return rows
   }
 
@@ -777,7 +783,7 @@ export async function drawPane($: $, e: { surface: string; props: RenderPropsOf[
   }
 
   const actionsRow = () => {
-    // The twins of the Suggestions rows: in the suggestion color exactly when suggestions() offers them.
+    // The twins of the proposal rows: in the suggestion color exactly when suggestions() offers them.
     const twin = (kind: 'release' | 'compact', label: string) =>
       suggested.some(one => one.kind === kind) ? <Text color="suggestion">{label}</Text> : label
     const entries = [
@@ -799,7 +805,6 @@ export async function drawPane($: $, e: { surface: string; props: RenderPropsOf[
 
   if (role === null) return <Text color="inactive">The console waits for a registered role (/role).</Text>
   const body = [
-    ...(isRoundRole ? suggestionBlock() : []),
     ...boardBlock(role, board),
     ...crBlock(board),
     ...(isRoundRole ? [...roundBlock(round), ...controlsBlock()] : []),

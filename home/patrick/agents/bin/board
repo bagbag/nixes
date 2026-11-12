@@ -2275,11 +2275,13 @@ def mine_data(board: Board, args) -> tuple[str, list[tuple[dict, bool]]]:
 
 
 def console_json(board: Board, args) -> dict:
-    """What the console pane draws, from one snapshot: health counts, this session's holds, the sessions and every
-    hold with its idle or gone mark."""
+    """What the console pane draws, from one snapshot: health counts, the user's ready items, this session's holds, the
+    sessions and every hold with its idle or gone mark."""
     position = position_json(board, args)
     return {**({'sync': (shared.problem() or shared.store_warning()), 'queueLine': queue_line(board, args.root)} if shared else {}),
             'counts': health_json(board, args)['counts'],
+            'forYou': [item_json(board, issue) for issue in sorted(health_views(board, args.root)['user'][1], key=by_priority)
+                       if not step_blocked(board, 'user', issue) and not held_by_a_session(issue)],  # the ready part of forUser
             'items': [item for item in mine_json(board, args)['items'] if item['type'] != CR_TYPE],  # held CRs show in crs
             'crs': crs_json(board), 'ratifications': ratifications_json(board),
             'sessions': position['sessions'],

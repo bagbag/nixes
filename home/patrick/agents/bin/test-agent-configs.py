@@ -2777,6 +2777,7 @@ def validate_board(root: Path) -> None:
             position_view = json.loads(position_text)
             crs_view = console_json.pop("crs")
             ratifications_view = console_json.pop("ratifications")
+            console_json.pop("forYou")
             if [c["id"] for c in crs_view] != ["fx-ovo.c2", "fx-ovo.c1", "fx-ovo.c3", "fx-ovo.c4"] or ratifications_view != [] \
                     or set(crs_view[0]) != {"id", "title", "status", "stage", "holder", "look", "view", "checkpoint", "base", "branch", "worktree", "tip",
                                             "baseTip", "check", "parent", "children", "items", "baseSha", "landBlocked", "reviewState", "refreshWork", "after",
@@ -3180,6 +3181,13 @@ def validate_board(root: Path) -> None:
             user_held = variant(**{"Ready task": {"assignee": "user"}, "Loose item": {"assignee": "user"}})
             if json.loads(invoke(["health", "--json"], Fake(user_held))[1])["counts"]["forUser"] != {"ready": 2, "held": 0, "waiting": 0}:
                 raise ValueError("the user view's own holds are not held")
+            # board console forYou: the user view's ready items (a blocked one only counts as waiting), for the pane's list.
+            blocked_user = [{**row, "dependencies": [*(row.get("dependencies") or []), {"issue_id": row["id"], "depends_on_id": question, "type": "blocks"}]}
+                            if row["title"] == "Loose item" else row for row in user_held]
+            for_you = json.loads(invoke(["console"], Fake(blocked_user), "aaaa1111")[1])["forYou"]
+            if [row["id"] for row in for_you] != [next(r["id"] for r in user_held if r["title"] == "Ready task")] \
+                    or set(for_you[0]) != {"id", "type", "status", "priority", "holder", "title", "labels", "blockedBy"}:
+                raise ValueError(f"board console forYou must list the ready items assigned to the user, not the blocked one: {for_you}")
             # r22-q171: an item assigned to the user is never held, in any view; a session's hold still is.
             mixed = variant(**{"Store choice": {"status": "open", "assignee": "user"}, "Ready task": {"assignee": "user"}})
             unassigned = variant(**{"Store choice": {"status": "open", "assignee": None}, "Ready task": {"assignee": None}})

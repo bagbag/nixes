@@ -221,6 +221,7 @@ export function parseBoardConsole(raw: unknown): Omit<ConsoleBoard, 'agents' | '
   const view = raw === null ? null : record(raw)
   return {
     counts: view === null ? null : parseCounts(view.counts),
+    forYou: view === null ? [] : list(view.forYou).map(parseItem),
     items: view === null ? [] : list(view.items).map(parseItem),
     sessions: view === null ? [] : list(view.sessions).map(parseSession),
     held: view === null ? [] : list(view.held).map(parseHeld),

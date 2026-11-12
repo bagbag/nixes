@@ -467,9 +467,9 @@ export function consoleText(role: ConsoleRole, board: ConsoleBoard | null, round
     if (board.counts !== null) {
       for (const { key: who, counts } of COUNT_GROUPS) lines.push(`  ${who}: ${counts.map(([key, label]) => `${label} ${countText(board.counts?.[key])}`).join(' · ')}`)
     }
+    for (const item of board.forYou) lines.push(`  for you: ${item.id}  ${item.type}  ${item.title}`)
     if (board.sync !== null) lines.push(`  ${board.sync}`)
     if (board.queues !== null) lines.push(`  ${board.queues}`)
-    for (const item of board.items) lines.push(`  ${item.id}  ${item.status}  ${item.title}`)
     const stale = staleSessions(board)
     for (const session of board.sessions.filter(one => !stale.has(one.actor))) {
       const workers = session.workers === null ? '' : ` · workers ${session.workers.active}/${session.workers.cap}`
@@ -477,6 +477,7 @@ export function consoleText(role: ConsoleRole, board: ConsoleBoard | null, round
     }
     const holds = staleHolds(board, stale)
     if (holds.length > 0) lines.push(`  stale holds: ${holds.map(one => `${one.id} (${one.actor})`).join(', ')}`)
+    if (board.items.length > 0) lines.push('  this session holds:', ...board.items.map(item => `    ${item.id}  ${item.status}  ${item.title}`))
     if (board.error !== null) lines.push(`  board error: ${board.error}`)
     if (board.crs.length > 0) {
       lines.push('', 'Change requests')

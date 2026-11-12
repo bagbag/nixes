@@ -71,6 +71,8 @@ export type World = {
   sessions: unknown[]
   activateError: string | undefined
   items: unknown[]
+  /** `board console` `forYou`: the ready items assigned to the user. */
+  forYou: unknown[]
   held: unknown[]
   /** `board console` `crs` and `ratifications` (Front B's shape, tests/board-console-contract.ts). */
   crs: unknown[]
@@ -104,7 +106,7 @@ export type World = {
 }
 
 /** Registers the world's hooks beneath the console; returns it, the clock and the session record. */
-export function world(on: On, init: Partial<Pick<World, 'round' | 'role' | 'surfaces' | 'sessions' | 'items' | 'held' | 'crs' | 'ratifications' | 'agents' | 'sync' | 'queueLine' | 'activateError'>> = {}) {
+export function world(on: On, init: Partial<Pick<World, 'round' | 'role' | 'surfaces' | 'sessions' | 'items' | 'forYou' | 'held' | 'crs' | 'ratifications' | 'agents' | 'sync' | 'queueLine' | 'activateError'>> = {}) {
   const w: World = {
     round: init.round ?? roundJson(),
     role: init.role === undefined ? { session: SESSION, role: 'lead', actor: '617adf08', tool: 'claude' } : init.role,
@@ -116,6 +118,7 @@ export function world(on: On, init: Partial<Pick<World, 'round' | 'role' | 'surf
       { session: SESSION, role: 'lead', actor: '617adf08', pulls: [], holds: 2, workers: null, state: 'active', idleSince: null, claimable: 0 },
     ],
     items: init.items ?? [{ id: 'tstdl-x1', type: 'decision', status: 'in_progress', title: 'Which engine name?', holder: '617adf08' }],
+    forYou: init.forYou ?? [],
     held: init.held ?? [],
     crs: init.crs ?? [],
     ratifications: init.ratifications ?? [],
@@ -215,7 +218,7 @@ export function world(on: On, init: Partial<Pick<World, 'round' | 'role' | 'surf
       if (answered !== undefined) return { value: { exitCode: answered.exitCode, stdout: answered.stdout ?? '', stderr: answered.stderr ?? '', isStdoutTruncated: false, isStderrTruncated: false } }
     }
     if (argv[0] === BOARD) {
-      if (argv[1] === 'console') return ok({ counts: COUNTS, items: w.items, sessions: w.sessions, held: w.held, crs: w.crs, ratifications: w.ratifications, sync: w.sync, queueLine: w.queueLine })
+      if (argv[1] === 'console') return ok({ counts: COUNTS, forYou: w.forYou, items: w.items, sessions: w.sessions, held: w.held, crs: w.crs, ratifications: w.ratifications, sync: w.sync, queueLine: w.queueLine })
       if (argv[1] === 'show' && w.show.exit !== 0) return { value: { exitCode: w.show.exit, stdout: '', stderr: 'no such item', isStdoutTruncated: false, isStderrTruncated: false } }
       if (argv[1] === 'show' && argv.includes('--json')) return ok(w.show.bad ? 'not json' : { [argv[2] as string]: w.show.record })
       if (argv[1] === 'show') return ok(`${argv[2]}: Which engine name?\nstatus: in_progress`)

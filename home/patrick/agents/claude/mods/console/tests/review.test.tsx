@@ -458,7 +458,7 @@ describe('counts', () => {
   })
 
   test('the /console text prints the same labels', () => {
-    const text = consoleText({ session: 's', role: 'lead', actor: 'a', tool: 'claude' }, { counts: COUNTS, items: [], sessions: [], held: [], crs: [], ratifications: [], agents: [], sync: null, queues: null, error: null }, null, false, [])
+    const text = consoleText({ session: 's', role: 'lead', actor: 'a', tool: 'claude' }, { counts: COUNTS, forYou: [], items: [], sessions: [], held: [], crs: [], ratifications: [], agents: [], sync: null, queues: null, error: null }, null, false, [])
     expect(text).toContain('you: for you 3 · to accept 13 (1 wait) · to ratify 1 · decided 0 · questions 186 (2 held)')
     expect(text).toContain('agents: to plan 0 (57 wait) · to review 0')
   })

@@ -175,6 +175,8 @@ export type ConsoleHeld = { id: string; holder: string; mark: 'idle' | 'gone' | 
 /** `board console` and this session's workers. */
 export type ConsoleBoard = {
   counts: ConsoleCounts | null
+  /** The ready items assigned to the user (`forUser`'s ready part). */
+  forYou: ConsoleItem[]
   items: ConsoleItem[]
   sessions: ConsoleSession[]
   held: ConsoleHeld[]
@@ -222,7 +224,7 @@ export type ConsoleStart = { command: string; args: string; title: string; at: n
 export type ConsoleDeferred = { command: string; args: string }
 
 /** Pane lists the person expanded past their cap. */
-export type ConsoleSection = 'questions' | 'held' | 'items' | 'sessions' | 'log' | 'crs' | 'ratify'
+export type ConsoleSection = 'questions' | 'held' | 'items' | 'forYou' | 'sessions' | 'log' | 'crs' | 'ratify'
 
 declare module 'claude-code' {
   /** The console's tool, by hand: the generated snapshot (`.claude-plugin/types/claude-code-mcp`) can miss it at a save, while the mod reloads. Keep in step with the inputSchema in hooks/core.ts. */
