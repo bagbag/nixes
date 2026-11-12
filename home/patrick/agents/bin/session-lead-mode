@@ -299,9 +299,44 @@ case "$command" in
     [[ -d "$state_dir" ]] || exit 0
     shopt -s nullglob
     files=("$state_dir"/*.json)
+    ((${#files[@]})) || exit 0
+    # One jq over every registration (a jq per file made the list the console's slowest read): bash globs the
+    # activity files, one stat reads their times, and entry_json's output shape is rebuilt from both. A file
+    # that does not parse as an object is skipped alone; an empty one lists nothing.
+    timed=()
     for registration in "${files[@]}"; do
-      entry_json "$registration"
+      drop_legacy_markers "$registration"
+      [[ ! -e "${registration%.json}.active" ]] || timed+=("${registration%.json}.active")
+      for marker in "${registration%.json}.workers"/*; do
+        [[ ! -e "$marker" ]] || timed+=("$marker")
+      done
     done
+    # GNU stat takes -c, BSD stat -f.
+    if stat -c %Y / >/dev/null 2>&1; then stat_format=(-c '%Y %n'); else stat_format=(-f '%m %N'); fi
+    # --rawfile per registration, not -R over all of them: jq joins a file's unterminated last line to the next file.
+    contents=() readable=()
+    for registration in "${files[@]}"; do
+      if [[ -r "$registration" ]]; then
+        contents+=(--rawfile "f${#readable[@]}" "$registration")
+        readable+=("$registration")
+      else
+        echo "session-lead-mode: skipped unreadable registration $registration" >&2
+      fi
+    done
+    ((${#readable[@]})) || exit 0
+    jq -n -c "${contents[@]}" --rawfile stats <(((${#timed[@]})) && stat "${stat_format[@]}" "${timed[@]}" 2>/dev/null; true) '
+      def stamp: strftime("%Y-%m-%dT%H:%M:%SZ");
+      ([$stats | split("\n")[] | capture("^(?<t>[0-9]+) (?<n>.*)$")? | {n, t: (.t | tonumber | stamp)}]) as $times
+      | $ARGS.positional | to_entries[] | .value as $file | ($file | rtrimstr(".json")) as $stem
+      | $ARGS.named["f\(.key)"] as $text
+      | (try ($text | fromjson) catch null) as $entry
+      | if ($entry | type) != "object" then
+          (if ($text | test("^\\s*$")) then empty else ("session-lead-mode: skipped unreadable registration \($file)\n" | stderr | empty) end)
+        else
+          $entry | {role, pulls, actor, tool, session, registered_at, pid, pid_started, project, worker_cap,
+            active_at: (first($times[] | select(.n == ($stem + ".active")) | .t) // null),
+            workers: ([$times[] | select(.n | startswith($stem + ".workers/")) | {(.n | ltrimstr($stem + ".workers/")): .t}] | add // {})}
+        end' --args "${readable[@]}"
     ;;
   *) usage ;;
 esac

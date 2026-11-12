@@ -39,6 +39,7 @@ import time
 import tomllib
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from typing import NamedTuple
 
 HOLDS_LEGEND = 'holds a/b: a stops at a milestone, b counts everything downstream'
 IDLE_HOURS = 1  # holds without activity (holder's tool call, else item update) for longer are hinted as idle
@@ -86,9 +87,9 @@ ROLE_HANDLES = {'lead': ('question', 'accept', 'ratify', 'milestone'), 'agent': 
 TEXT_FIELDS = ('title', 'description', 'design', 'acceptance_criteria', 'notes', 'close_reason')
 SHOW_FIELDS = TEXT_FIELDS[1:]
 # Fields `board show --field` accepts besides those on the shown items (a read of few items would otherwise hide
-# the ones its items leave unset).
+# the ones its items leave unset; bd omits an empty `labels` and a root's `parent`).
 ITEM_FIELDS = {*TEXT_FIELDS, 'comments', 'assignee', 'metadata', 'closed_at', 'started_at', 'external_ref', 'source_system', 'spec_id',
-               'lease_expires_at', 'heartbeat_at', 'await_type'}
+               'lease_expires_at', 'heartbeat_at', 'await_type', 'labels', 'parent'}
 # A decision record's `##` sections (board-coordination.md#rulings). bd lint accepts the words anywhere in the text,
 # so board checks the headings itself.
 RECORD_SECTIONS = ('Question', 'Alternatives Considered', 'Decision', 'Rationale', 'Rule owner')
@@ -588,7 +589,7 @@ def find_shared(start: Path | None = None) -> Shared | None:
     return Shared(beads, mark['remote']) if mark else None
 
 
-def may_move() -> bool:
+def may_move(board: 'Board | None' = None) -> bool:
     """A person's terminal has no actor and isn't limited; a session with no registered role and a worker count as agents."""
     actor = derived_actor()
     if not actor:
@@ -596,7 +597,7 @@ def may_move() -> bool:
     if actor != session_actor(actor):
         return False
     try:
-        entry = registry_by_actor(registrations()).get(actor)
+        entry = (board.registry() if board else registry_by_actor(registrations())).get(actor)
     except BoardError:
         return False
     return bool(entry and entry.get('role') in MOVERS)
@@ -619,6 +620,8 @@ def registrations() -> list[dict]:
     result = subprocess.run(['bash', str(REGISTRY), 'list'], capture_output=True, text=True)
     if result.returncode != 0:
         raise BoardError(f'session registry unreadable: {result.stderr.strip()}')
+    if result.stderr.strip():  # registrations it skipped: their sessions count as unregistered
+        print(result.stderr.strip(), file=sys.stderr)
     return [json.loads(line) for line in result.stdout.splitlines() if line.strip()]
 
 
@@ -776,6 +779,10 @@ class Board:
         self._outside: dict[str, tuple[list[str], list[str]]] = {}  # item not in the snapshot -> (labels, parents)
         self._outside_type: dict[str, str | None] = {}
         self.settings: dict[str, str] = {}  # project settings read so far (board_setting)
+        self._registry: dict[str, dict] | None = None
+        self._cr_blockers_read = False
+        self.git_view: GitView | None = None  # set by `read_git_view` on a read-only command; dropped when the command changes git state
+        self._ref_format: dict[str, bool] = {}
         self._cr: dict[str, dict] = {}  # change request id -> git facts read so far (cr_info)
         self._cr_items: dict[str, list[dict]] = {}
         self._queues: dict[str, list[str]] = {}
@@ -839,6 +846,12 @@ class Board:
         for other_id, stub in stubs.items():
             board.by_id.setdefault(other_id, full.get(other_id, stub))
         return board
+
+    def registry(self) -> dict[str, dict]:
+        """The session registry by actor, read once per command (board never writes it; a failed read is not kept)."""
+        if self._registry is None:
+            self._registry = registry_by_actor(registrations())
+        return self._registry
 
     def hydrate(self, ids) -> None:
         """Adds what a status read leaves out, for the given items, in one bd call: comments, and an epic's
@@ -1031,15 +1044,27 @@ class Board:
         or at a design checkpoint (q235, q230)."""
         return issue['status'] == ACCEPT and not meta(issue).get('checkpoint')
 
+    def cr_blockers(self, issue: dict) -> list[str]:
+        """What the CR and its open items wait on, apart from each other."""
+        members = [issue['id'], *self.children.get(issue['id'], [])]
+        return [b for m in members if m in self.by_id and self.is_open(m) for b in self.blockers.get(m, []) if b not in members]
+
+    def fetch_cr_blockers(self) -> None:
+        """Reads the blockers outside the snapshot of every change request in one call, not one per request (a bd call
+        costs ~0.1 s); the blockers' parents come along, so no level of the walk reads again."""
+        if not self._cr_blockers_read:
+            self.fetch_outside(b for issue in self.issues if self.is_cr(issue['id']) for b in self.cr_blockers(issue)
+                               if b not in self.by_id and not b.startswith('external:'))
+            self._cr_blockers_read = True  # only a read that worked: a failed one is asked again
+
     def cr_waits(self, issue: dict) -> tuple[list[str], list[str]]:
         """(waits, stackable bases) of a change request (A2): the blockers of the CR and of its open items, lifted to their CRs.
         An unlanded CR is a wait unless it is stackable; one stackable base is the base, a second one is a wait. Items of
         the CR order its own work only."""
         waits: list[str] = []
         bases: list[str] = []
-        members = [issue['id'], *self.children.get(issue['id'], [])]
-        blockers = [b for m in members if m in self.by_id and self.is_open(m) for b in self.blockers.get(m, []) if b not in members]
-        self.fetch_outside(b for b in blockers if b not in self.by_id and not b.startswith('external:'))
+        blockers = self.cr_blockers(issue)
+        self.fetch_cr_blockers()
         for blocker in dict.fromkeys(blockers):
             record = self.by_id.get(blocker)
             if record is not None and not self.is_open(blocker) and self.cr_of(blocker) is None:
@@ -1358,14 +1383,18 @@ def queues_json(board: Board, root: str | None) -> dict:
                        'blocking': [item_json(board, issue, queue=board.queue(issue['id'])) for issue in summary['blocking']]}}
 
 
+def health_counts(board: Board, views: dict) -> dict:
+    """The `counts` of a --json health view, from its `health_views`."""
+    steps = step_counts(board, views)
+    return {JSON_COUNTS.get(view, view): ({'ready': steps[view][0], 'held': steps[view][1], 'waiting': steps[view][2]} if view in steps else len(rows))
+            for view, (_, rows) in views.items()}
+
+
 def health_json(board: Board, args) -> dict:
     views = health_views(board, args.root)
     ready = views['ready'][1]
     found = deviations(board, args.root)
-    steps = step_counts(board, views)
-    counts = {JSON_COUNTS.get(view, view): ({'ready': steps[view][0], 'held': steps[view][1], 'waiting': steps[view][2]} if view in steps else len(rows))
-              for view, (_, rows) in views.items()}
-    return {**queues_json(board, args.root), 'counts': counts,
+    return {**queues_json(board, args.root), 'counts': health_counts(board, views),
             'claimable': {kind: sum(1 for i in ready if board.claimable(i) == kind) for kind in KINDS},
             'items': {JSON_COUNTS.get(view, view): [item_json(board, issue) for issue in sorted(views[view][1], key=by_priority)]
                       for view in HEALTH_VIEWS if view in args.items},
@@ -1446,7 +1475,7 @@ def position_data(board: Board, args) -> dict:
     # One bd call for the held items' comments and the epics with no open child (all their children may be closed).
     board.hydrate([*board.held_ids(), *(issue['id'] for issue in items if issue.get('issue_type') == 'epic'
                                         and not any(board.is_open(child) for child in board.children.get(issue['id'], [])))])
-    known = registry_by_actor(registrations())
+    known = board.registry()
     now = utcnow()
     ready = [issue for issue in items if board.claimable(issue)]
     held = sorted((issue for issue in items if held_by_a_session(issue) and issue.get('issue_type') != 'epic'),
@@ -2268,7 +2297,7 @@ def mine_data(board: Board, args) -> tuple[str, list[tuple[dict, bool]]]:
     board.hydrate(board.held_ids())
     scoped = {issue['id'] for issue in board.scoped(args.root)}
     try:
-        entry = registry_by_actor(registrations()).get(session_actor(actor))
+        entry = board.registry().get(session_actor(actor))
     except BoardError:
         entry = None  # no marks without the registry; the holds still list
     return actor, [(issue, worker_stopped(entry, issue)) for issue in held_by_session(board, actor) if issue['id'] in scoped]
@@ -2278,9 +2307,10 @@ def console_json(board: Board, args) -> dict:
     """What the console pane draws, from one snapshot: health counts, the user's ready items, this session's holds, the
     sessions and every hold with its idle or gone mark."""
     position = position_json(board, args)
+    views = health_views(board, args.root)  # counts and forYou only: health's deviations, claimable kinds and milestones are not read
     return {**({'sync': (shared.problem() or shared.store_warning()), 'queueLine': queue_line(board, args.root)} if shared else {}),
-            'counts': health_json(board, args)['counts'],
-            'forYou': [item_json(board, issue) for issue in sorted(health_views(board, args.root)['user'][1], key=by_priority)
+            'counts': health_counts(board, views),
+            'forYou': [item_json(board, issue) for issue in sorted(views['user'][1], key=by_priority)
                        if not step_blocked(board, 'user', issue) and not held_by_a_session(issue)],  # the ready part of forUser
             'items': [item for item in mine_json(board, args)['items'] if item['type'] != CR_TYPE],  # held CRs show in crs
             'crs': crs_json(board), 'ratifications': ratifications_json(board),
@@ -2325,7 +2355,7 @@ def capacity(board: Board, args) -> None:
     if not actor or actor != session_actor(actor):
         return
     try:
-        entry = registry_by_actor(registrations()).get(actor)
+        entry = board.registry().get(actor)
         pulls = entry.get('pulls') or () if entry else ()
         if entry is None or not (entry.get('role') in CAPACITY_ROLES or pulls):
             return
@@ -2381,7 +2411,7 @@ def mark_forced(issue: dict, actor: str, reason: str | None) -> None:
 def claim(board: Board, args) -> int:
     actor = caller()
     claimed, failed, forced = [], [], {}
-    entry = registry_by_actor(registrations()).get(session_actor(actor))
+    entry = board.registry().get(session_actor(actor))
     if args.ids:
         for item_id in args.ids:
             issue = board.by_id.get(item_id)
@@ -2413,7 +2443,7 @@ def claim(board: Board, args) -> int:
                 failed.append(item_id)
                 print(refusal, file=sys.stderr)
                 continue
-            if holder and shared is not None and ACTOR.fullmatch(holder) and session_actor(holder) not in registry_by_actor(registrations()):
+            if holder and shared is not None and ACTOR.fullmatch(holder) and session_actor(holder) not in board.registry():
                 failed.append(item_id)
                 print(f'{item_id}: held elsewhere by {holder}, updated {age(board.last_activity(issue))} ago', file=sys.stderr)
                 continue
@@ -2429,7 +2459,7 @@ def claim(board: Board, args) -> int:
                 continue
             if board.is_cr(item_id):
                 kind = board.claimable(issue)
-                if kind is None and issue['status'] == 'in_review' and after_base(board, issue) and may_move():
+                if kind is None and issue['status'] == 'in_review' and after_base(board, issue) and may_move(board):
                     # a passed look-after child waiting for its parent: a deciding session takes it so it can return it
                     ok, message = claim_one(issue, actor)
                     if ok:
@@ -2564,7 +2594,7 @@ def require_open(board: Board, ids: list[str]) -> list[dict]:
 
 def take(board: Board, args) -> int:
     actor = caller()
-    entry = registry_by_actor(registrations()).get(session_actor(actor))
+    entry = board.registry().get(session_actor(actor))
     taken, failed = [], False
     for issue in require_open(board, args.ids):
         refusal = foreign_claim(board, issue['id'])
@@ -2739,6 +2769,35 @@ def exclude_worktrees(main: Path) -> None:
             out.write(('\n' if text and not text.endswith('\n') else '') + line + '\n')
 
 
+class GitView(NamedTuple):
+    """The repository facts a read-only view needs for every change request, read once: the main checkout, the local
+    branch tips and the worktrees. A command that writes git state keeps the live reads."""
+    main: Path
+    heads: dict[str, str]
+    worktrees: list[dict]
+
+
+def read_git_view(board: Board) -> None:
+    """Fills `board.git_view` (one `git worktree list`, one `git for-each-ref`); none outside a repository."""
+    try:
+        main = main_root()
+        rows = git_text(main, 'for-each-ref', '--format=%(objectname) %(refname)', 'refs/heads').splitlines()
+        board.git_view = GitView(main, {ref: sha for sha, _, ref in (row.partition(' ') for row in rows)}, worktrees_listing(main))
+    except BoardError:
+        return  # the live reads follow, and fail per change request as they always did
+
+
+def view_main(board: Board) -> Path:
+    return board.git_view.main if board.git_view else main_root()
+
+
+def view_rev(board: Board, root: Path, ref: str) -> str | None:
+    """`rev` of a local branch, from the view when the command read one."""
+    if board.git_view and ref.startswith('refs/heads/') and root == board.git_view.main:
+        return board.git_view.heads.get(ref)
+    return rev(root, ref)
+
+
 def rev(root: Path, ref: str) -> str | None:
     found = git(root, 'rev-parse', '--verify', '-q', f'{ref}^{{commit}}', check=False)
     return found.stdout.decode().strip() or None
@@ -2750,7 +2809,9 @@ def is_ancestor(root: Path, ancestor: str, descendant: str) -> bool:
 
 def target_branch(board: Board, main: Path) -> str:
     name = board_setting(board, 'target')
-    if git(main, 'check-ref-format', '--branch', name, check=False).returncode != 0 or rev(main, f'refs/heads/{name}') is None:
+    if name not in board._ref_format:  # a property of the name alone
+        board._ref_format[name] = git(main, 'check-ref-format', '--branch', name, check=False).returncode == 0
+    if not board._ref_format[name] or view_rev(board, main, f'refs/heads/{name}') is None:
         raise BoardError(f"{SETTINGS['target']} {name!r} is not a local branch: board setup --target <branch>")
     return name
 
@@ -2909,10 +2970,10 @@ def dirty_paths(wt: Path) -> set[str]:
     return paths
 
 
-def checked_out_at(main: Path, ref: str) -> tuple[Path | None, str | None]:
+def checked_out_at(main: Path, ref: str, listing: list[dict] | None = None) -> tuple[Path | None, str | None]:
     """(the worktree with this branch checked out, why a landing must wait): a worktree that is rebasing or bisecting the
     branch has it detached, and moving the ref under it would be undone by its abort (F7)."""
-    for entry in worktrees_listing(main):
+    for entry in worktrees_listing(main) if listing is None else listing:
         path = Path(entry['worktree'])
         if 'prunable' in entry:  # its directory is gone: nothing there rebases or holds a branch
             continue
@@ -2929,11 +2990,12 @@ def checked_out_at(main: Path, ref: str) -> tuple[Path | None, str | None]:
     return None, None
 
 
-def land_blocked(main: Path, name: str, tip: str) -> list[str]:
+def land_blocked(main: Path, name: str, tip: str, board: Board | None = None) -> list[str]:
     """Paths the landing changes that hold uncommitted edits in the worktree with the target checked out."""
     ref = f'refs/heads/{name}'
-    where, _ = checked_out_at(main, ref)
-    old = rev(main, ref)
+    view = board.git_view if board else None
+    where, _ = checked_out_at(main, ref, view.worktrees if view else None)
+    old = view_rev(board, main, ref) if board else rev(main, ref)
     if where is None or old is None:
         return []
     changed = set(git_text(main, 'diff', '--name-only', '--no-renames', old, tip).splitlines())
@@ -2945,12 +3007,12 @@ def cr_info(board: Board, cr: dict) -> dict:
     if cr['id'] not in board._cr:
         info = {'main': None, 'branch': cr_branch(cr['id']), 'worktree': None, 'tip': None, 'baseTip': None, 'state': 'unchecked', 'blocked': []}
         try:
-            main = main_root()
-            info.update(main=main, worktree=str(cr_worktree(main, cr['id'])), tip=rev(main, f"refs/heads/{info['branch']}"))
-            info['baseTip'] = rev(main, cr_base(board, cr, main)[1])
+            main = view_main(board)
+            info.update(main=main, worktree=str(cr_worktree(main, cr['id'])), tip=view_rev(board, main, f"refs/heads/{info['branch']}"))
+            info['baseTip'] = view_rev(board, main, cr_base(board, cr, main)[1])
             info['state'] = check_state(main, cr, info['tip'], info['baseTip'])
             if cr['status'] == ACCEPT and info['tip'] and not live_parent(board, cr):
-                info['blocked'] = land_blocked(main, target_branch(board, main), info['tip'])
+                info['blocked'] = land_blocked(main, target_branch(board, main), info['tip'], board)
         except BoardError:
             pass
         board._cr[cr['id']] = info
@@ -3055,9 +3117,7 @@ def cr_json(board: Board, cr: dict, children: dict[str, list[str]], refresh_id: 
             'reviewState': ('current' if review_current(cr, info) else 'stale') if m.get('review_tip') else None,
             'refreshWork': cr['id'] == refresh_id,  # the console offers Refresh there alone (r27-q252)
             'after': after_base(board, cr), 'returned': cr['status'] == 'open' and bool(info['worktree']) and Path(info['worktree']).is_dir(),
-            'setupFailed': cr['status'] == 'in_progress' and bool(m.get('base_sha')) and m.get('setup_sha') != m.get('base_sha'),
-            'items': {'open': len(board.cr_items(cr['id'])),
-                      'closed': sum(1 for i in cr_closed_items(board, cr['id']) if i['status'] == 'closed')}}
+            'setupFailed': cr['status'] == 'in_progress' and bool(m.get('base_sha')) and m.get('setup_sha') != m.get('base_sha')}
 
 
 def crs_json(board: Board) -> list[dict]:
@@ -3285,17 +3345,18 @@ def settle_landed(board: Board) -> bool:
     if not live:
         return False
     try:
-        main = main_root()
+        main = view_main(board)
         name = target_branch(board, main)
     except BoardError:
         return False
-    target_tip = rev(main, f'refs/heads/{name}')
+    target_tip = view_rev(board, main, f'refs/heads/{name}')
     problems = board.__dict__.setdefault('settle_problems', {})
     for cr in live:
         tip = cr_info(board, cr)['tip']
         fork, m = meta(cr).get('base_sha'), meta(cr)
         vouched = bool(tip) and (m.get('landing') == tip or (m.get('check_tip') == tip and bool(fork) and tip != fork))
         if vouched and target_tip and is_ancestor(main, tip, target_tip):
+            board.git_view = None  # finishing a landing (even a failed one) moves branches and worktrees: live reads from here on
             try:
                 for note in finish_landing(board, cr, tip, name, main):
                     print(f"{cr['id']}: landed on {name} (the target holds {tip[:12]}); {note}", file=sys.stderr)
@@ -3468,7 +3529,7 @@ def return_item(board: Board, args) -> None:
     if cr['status'] not in ('in_review', ACCEPT):
         raise BoardError(f"{args.id}: {cr['status']}; only a change request in review or waiting for its Accept is returned (unclaim frees work in hand)")
     if cr['status'] == ACCEPT:
-        if not may_move():
+        if not may_move(board):
             raise BoardError(f'{args.id}: waiting for your Accept; the lead returns it with the findings you gave')
         if cr.get('assignee') and not holds_cr(cr, actor):
             raise BoardError(f"{args.id}: held by {cr['assignee']} (a refresh); return it once that is released")
@@ -3494,7 +3555,7 @@ def design_pin(board: Board, cr: dict) -> tuple[str, list[str]]:
 def land(board: Board, args) -> int:
     caller_actor = derived_actor() or 'user'
     cr = cr_arg(board, args.id, 'land')
-    if not may_move():
+    if not may_move(board):
         raise BoardError('only a lead or solo session, or a person, lands a change request (the Accept)')
     m = meta(cr)
     if cr['status'] != ACCEPT:
@@ -3527,7 +3588,7 @@ def land(board: Board, args) -> int:
 def reject(board: Board, args) -> int:
     actor = derived_actor() or 'user'
     cr = cr_arg(board, args.id, 'reject')
-    if not may_move():
+    if not may_move(board):
         raise BoardError('only a lead or solo session, or a person, rejects a change request')
     refuse_long_comment(f'board reject: {args.reason}')
     comment(args.id, f'board reject: {actor}: {args.reason}')
@@ -5091,6 +5152,8 @@ def run_command(argv: list[str]) -> int:
         if args.run in (route, send):
             mover(None, args, args.command)  # refuse before reading
         board = Board.load(scope, args.ids if scope == 'ids' else None)
+        if args.run is console:  # reads only: one read of the repository serves every change request, settle_landed's included
+            read_git_view(board)
         if scope != 'ids' and args.command in CR_AWARE and settle_landed(board):
             global settled
             settled = True

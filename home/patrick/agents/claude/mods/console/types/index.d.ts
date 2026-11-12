@@ -70,7 +70,7 @@ export type ConsoleCr = {
   check: { state: ConsoleCheckState; tip: string | null; baseTip: string | null; at: string | null; result: 'pass' | 'fail' | null
     /** No-new-failures: the `file code` lines whose count rose from base to tip; null while no comparison ran. `baseCount`, `tipCount`: failures at the base and at the tip. */
     newFailures: string[] | null; baseCount: number | null; tipCount: number | null }
-  parent: string | null; children: string[]; items: { open: number; closed: number }
+  parent: string | null; children: string[]
   /** The agent review's verdict against the current (tip, base tip): `stale` after a base move until a refresh triage keeps or returns it; null before any review. */
   reviewState: 'current' | 'stale' | null
   /** The board's refresh work: the first non-waiting request of the accept queue whose check or review is not current (r24-q196). */

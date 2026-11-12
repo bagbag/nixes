@@ -782,6 +782,58 @@ def validate_session_registry(root: Path) -> None:
         if sorted(entry["actor"] for entry in listed) != sorted([SESSION_ACTOR, other[-8:]]):
             raise ValueError(f"session-lead-mode list: {listed}")
 
+    # list is one jq over all registrations: each line must equal what `show` (one registration, entry_json) prints, whatever the
+    # number of files, a state dir with spaces, activity files and worker markers; an unparseable file is skipped alone.
+    with tempfile.TemporaryDirectory() as raw_state:
+        state_dir = str(Path(raw_state) / "state dir")
+        Path(state_dir).mkdir()
+        env = session_env(state_dir)
+        pipe_read, pipe_write = os.pipe()  # an open stdin that never delivers: a list that reads it hangs
+        try:
+            def listing() -> subprocess.CompletedProcess:
+                return subprocess.run(["bash", str(script), "list"], text=True, capture_output=True, env={**os.environ, **env},
+                                      stdin=pipe_read, timeout=30)
+
+            if listing().returncode != 0 or listing().stdout != "":
+                raise ValueError("session-lead-mode list of a state dir without registrations must print nothing")
+            sessions = [f"sess{n:02d}-abcdef" for n in range(12)]
+            for n, session in enumerate(sessions):
+                Path(state_dir, f"{session}.json").write_text(json.dumps({
+                    "session": session, "role": ("lead", "solo")[n % 2], "pulls": ["plan"], "actor": session[-8:], "tool": "claude",
+                    "registered_at": f"2026-11-0{n % 9 + 1}T10:00:00Z", **({"pid": 40 + n, "pid_started": "x y", "project": "/p q"} if n % 3 else {})}, indent=2), encoding="utf-8")
+                if n % 2:
+                    Path(state_dir, f"{session}.active").touch()
+                    os.utime(Path(state_dir, f"{session}.active"), (1_700_000_000 + n, 1_700_000_000 + n))
+                for marker in range(n % 4):
+                    workers = Path(state_dir, f"{session}.workers")
+                    workers.mkdir(exist_ok=True)
+                    (workers / f"w{marker}-spaced name").touch()
+                    os.utime(workers / f"w{marker}-spaced name", (1_700_001_000 + marker, 1_700_001_000 + marker))
+            shown = [run("show", session, env=env).stdout for session in sorted(sessions)]
+            listed = listing()
+            if listed.returncode != 0 or listed.stdout.splitlines() != [line for text in shown for line in text.splitlines()] \
+                    or len(shown) != 12 or '"workers":{"w0-spaced name"' not in listed.stdout or '"active_at":"2023-11-14' not in listed.stdout:
+                raise ValueError(f"session-lead-mode list differs from show per registration: {listed.stdout!r} {listed.stderr!r}")
+            Path(state_dir, "sess05-abcdef.json").write_text('{"session": "sess05-abc', encoding="utf-8")  # half-written
+            Path(state_dir, "sess06-abcdef.json").write_text("", encoding="utf-8")
+            Path(state_dir, "sess07-abcdef.json").write_text("[1]", encoding="utf-8")
+            listed = listing()
+            if listed.returncode != 0 or len(listed.stdout.splitlines()) != 9 or "sess05" in listed.stdout or "sess07-abcdef" in listed.stdout \
+                    or "sess05-abcdef" not in listed.stderr:
+                raise ValueError(f"session-lead-mode list must skip an unparseable registration alone: {listed.stdout!r} {listed.stderr!r}")
+            if os.geteuid() != 0:  # a file jq cannot open is skipped alone too
+                denied = Path(state_dir, "sess04-abcdef.json")
+                denied.chmod(0)
+                try:
+                    listed = listing()
+                finally:
+                    denied.chmod(0o600)
+                if listed.returncode != 0 or len(listed.stdout.splitlines()) != 8 or "sess04-abcdef.json" not in listed.stderr:
+                    raise ValueError(f"session-lead-mode list must skip an unreadable file alone: {listed.stdout!r} {listed.stderr!r}")
+        finally:
+            os.close(pipe_read)
+            os.close(pipe_write)
+
     # Process identity: the nearest ancestor named claude (a symlink to bash stands in); Codex records none.
     with tempfile.TemporaryDirectory() as state_dir, tempfile.TemporaryDirectory() as bin_dir:
         env = session_env(state_dir)
@@ -2769,6 +2821,45 @@ def validate_board(root: Path) -> None:
                     or {h["id"] for h in position_json["held"]} != {ids["Held task"], ids["Open cache question"], "fx-ovo.c2"} \
                     or len(position_json["questionsHoldingWork"]) != 2 or len(position_json["finishedEpics"]) != 1:
                 raise ValueError(f"board position --json: {text[:2000]}")
+            # One command reads the session registry once, whatever number of views and claims consult it (a read costs a bash + jq run).
+            class RegistryCounting(Fake):
+                registry_reads = 0
+
+                def __call__(self, command, **kwargs):
+                    if command[0] == "bash" and command[-1] == "list" and Path(command[-2]).name == "session-lead-mode":
+                        self.registry_reads += 1
+                    return super().__call__(command, **kwargs)
+
+            for argv, who in ((["console"], "aaaa1111"), (["position"], "aaaa1111"), (["mine"], "aaaa1111"), (["claim"], "lead0001"),
+                              (["take", ids["Held task"]], "aaaa1111")):
+                counting = RegistryCounting(fixture)
+                invoke(argv, counting, who)
+                if counting.registry_reads != 1:
+                    raise ValueError(f"board {argv[0]} read the session registry {counting.registry_reads} times, expected 1")
+            # An unreadable registration is skipped alone, its warning reaches the caller once, and its session is then an unregistered
+            # one: not marked gone, not allowed to move items (the other sessions are unaffected).
+            solo_file = Path(state_dir, "0000-solo0001.json")
+            solo_text = solo_file.read_text(encoding="utf-8")
+            with patch.dict(os.environ, {"BEADS_ACTOR": "solo0001", "CODEX_SESSION_ID": "", "CLAUDE_CODE_SESSION_ID": ""}), \
+                    patch.object(board.subprocess, "run", Fake(fixture)):
+                if board.may_move() is not True:
+                    raise ValueError("a registered solo session must be allowed to move items")
+                solo_file.write_text("{bad", encoding="utf-8")
+                try:
+                    if board.may_move() is not False:
+                        raise ValueError("a session whose registration is unreadable must not be allowed to move items")
+                    _, text, errors = invoke(["position", "--json"], Fake(fixture), "lead0001")
+                    position_corrupt = json.loads(text)
+                finally:
+                    solo_file.write_text(solo_text, encoding="utf-8")
+            if errors.count("skipped unreadable registration") != 1 or "0000-solo0001.json" not in errors:
+                raise ValueError(f"board must relay the registry's skip warning once per command: {errors!r}")
+            if {s["actor"] for s in position_corrupt["sessions"]} & {"solo0001"} or any(h["mark"] == "gone" for h in position_corrupt["held"] if h["holder"] == "solo0001"):
+                raise ValueError(f"a skipped registration must not read as a gone session: {position_corrupt['sessions']}")
+            # The pane reads health's counts only: the deviations scan (a bd call per candidate) stays off its path.
+            with patch.object(board, "deviations", side_effect=AssertionError("board console ran the deviations scan")):
+                if invoke(["console"], Fake(fixture), "aaaa1111")[0] != 0:
+                    raise ValueError("board console failed without the deviations scan")
             # board console: the three views the pane draws, from one snapshot.
             _, text, _ = invoke(["console"], Fake(fixture), "aaaa1111")
             console_json = json.loads(text)
@@ -2780,7 +2871,7 @@ def validate_board(root: Path) -> None:
             console_json.pop("forYou")
             if [c["id"] for c in crs_view] != ["fx-ovo.c2", "fx-ovo.c1", "fx-ovo.c3", "fx-ovo.c4"] or ratifications_view != [] \
                     or set(crs_view[0]) != {"id", "title", "status", "stage", "holder", "look", "view", "checkpoint", "base", "branch", "worktree", "tip",
-                                            "baseTip", "check", "parent", "children", "items", "baseSha", "landBlocked", "reviewState", "refreshWork", "after",
+                                            "baseTip", "check", "parent", "children", "baseSha", "landBlocked", "reviewState", "refreshWork", "after",
                                             "returned", "setupFailed"}:
                 raise ValueError(f"board console crs: {crs_view}")
             # The console's stub contract (tests/board-console-contract.ts) declares the CR row it reads: every key it declares must exist.
@@ -2788,7 +2879,7 @@ def validate_board(root: Path) -> None:
             if contract_file.is_file():
                 body = contract_file.read_text(encoding="utf-8").split("export function cr(")[1].split("return {")[1].split("...over")[0]
                 declared = set(re.findall(r"\b([A-Za-z]\w*):", body))
-                real_keys = set(crs_view[0]) | set(crs_view[0]["check"]) | set(crs_view[0]["items"])
+                real_keys = set(crs_view[0]) | set(crs_view[0]["check"])
                 if declared - real_keys:
                     raise ValueError(f"board console crs lacks keys the console's contract declares: {sorted(declared - real_keys)}")
             if console_json != {"counts": json.loads(health_text)["counts"],
@@ -2996,6 +3087,10 @@ def validate_board(root: Path) -> None:
             code, text, errors = invoke(["show", old, "--json", "--field", "metadata"], Fake(shown))  # a field no shown item sets
             if code or json.loads(text) != {old: {"metadata": None}}:
                 raise ValueError(f"board show --json --field metadata must answer null for an item without metadata: {text} {errors}")
+            for omitted in ("labels", "parent"):  # bd omits these when empty, like metadata
+                code, text, errors = invoke(["show", old, "--json", "--field", omitted], Fake(shown))
+                if code or json.loads(text) != {old: {omitted: None}}:
+                    raise ValueError(f"board show --json --field {omitted} must answer null for an item without it: {text} {errors}")
             if invoke(["show", new, "--json"], Fake(shown))[0] != 1 or invoke(["show", "fx-nope"], Fake(shown))[0] != 1 \
                     or invoke(["show", new, "--field", "desc"], Fake(shown))[0] != 1:
                 raise ValueError("board show must refuse --json without --field, unknown ids and unknown fields")
@@ -3615,6 +3710,38 @@ def validate_board(root: Path) -> None:
             plain = readiness(cr_issue("w"), cr_item("w.i", "w", blocks=("q",)), {**entry("q", "decision", "open", 2)})["w"]
             if plain[0] is not None or plain[1][0] != ["q"]:
                 raise ValueError(f"an open decision before an item must hold its CR: {plain}")
+            # Blockers outside the status snapshot are read in one bd call for all change requests; an id bd does not know
+            # (deleted) is absent from the answer and counts as closed, as it did when each CR read its own.
+            shows = []
+
+            def show_outside(ids, *flags, comments=True):
+                shows.append(list(ids))
+                return [{"id": i, "labels": [], "dependencies": [], "issue_type": "task"} for i in ids if i != "gone"]
+
+            batch = [cr_issue(f"w{n}", blocks=(f"ext{n}",)) for n in range(3)] + [cr_issue("wg", blocks=("gone",))]
+            with patch.object(board, "bd_show", show_outside):
+                waits = readiness(*batch, *(item for cr in batch for item in item_of(cr)))
+            if shows != [["ext0", "ext1", "ext2", "gone"]] or list(waits.values()) != [("implement", ([], []))] * 4:
+                raise ValueError(f"the outside blockers of every change request must be read in one call: {shows} {waits}")
+            # A failed read of the outside blockers is not remembered: the next ask reads them again, not treats them as closed.
+            def failing_once(ids, *flags, comments=True):
+                shows.append(list(ids))
+                if len(shows) == 1:
+                    raise board.BoardError("bd down")
+                return show_outside(ids)
+
+            shows.clear()
+            retry_deck = bare_deck([cr_issue("rw", blocks=("ext9",)), *item_of(cr_issue("rw"))], complete=False)
+            with patch.object(board, "bd_show", failing_once):
+                try:
+                    retry_deck.fetch_cr_blockers()
+                except board.BoardError:
+                    pass
+                if retry_deck._cr_blockers_read:
+                    raise ValueError("a failed read of the outside blockers must not be remembered as done")
+                retry_deck.fetch_cr_blockers()
+            if not retry_deck._cr_blockers_read or shows[-1] != ["ext9"]:
+                raise ValueError(f"the next ask must read the outside blockers again: {shows}")
             # A review waits while its base was returned (q206).
             for base_status, expect in (("open", None), ("in_review", None), ("needs_acceptance", "review")):
                 child = cr_issue("w", "in_review", blocks=("b",), base="b")
@@ -3718,6 +3845,55 @@ def validate_board(root: Path) -> None:
                 moved = [{**issues[0], "metadata": {**issues[0]["metadata"]}}, issues[1]]
                 if next(c for c in states(moved) if c["id"] == "states")["check"]["state"] != "conflict":
                     raise ValueError("a base that moved onto the branch's changes must show conflict")
+
+                # The console's git reads do not grow with the number of change requests: the main checkout, the target branch and
+                # the branch tips are each read once for all of them.
+                class GitCounting(Fake):
+                    def __call__(self, command, **kwargs):
+                        if command[0] == "git":
+                            key = " ".join(command[3:5] if command[1] == "-C" else command[1:3])
+                            self.git_calls[key] = self.git_calls.get(key, 0) + 1
+                        return super().__call__(command, **kwargs)
+
+                def git_reads(rows):
+                    counting = GitCounting(rows)
+                    counting.git_calls = {}
+                    invoke(["console"], counting, "lead0001")
+                    return {k: v for k, v in counting.git_calls.items() if k.split()[0] in ("worktree", "rev-parse", "check-ref-format", "for-each-ref")}
+
+                extra_crs = [make_cr(f"gx{n}", f"gx{n}.txt", "g\n") for n in (1, 2, 3)]
+                few, many = git_reads(issues), git_reads([*issues, *(row for made in extra_crs for row in made[0])])
+                if few != many or sum(many.values()) > 6:
+                    raise ValueError(f"board console git reads must not grow with the change requests: {few} vs {many}")
+                for _, _, extra_wt in extra_crs:
+                    git("worktree", "remove", "--force", str(extra_wt))
+                for n in (1, 2, 3):
+                    git("branch", "-D", f"cr/gx{n}")
+
+                # A git failure while reading the console's view degrades to the live reads (unchecked per CR), not a failed command.
+                with patch.object(board, "worktrees_listing", side_effect=board.BoardError("git failed")):
+                    probe = board.Board([])
+                    board.read_git_view(probe)
+                    if probe.git_view is not None:
+                        raise ValueError("read_git_view must leave no view when a git read fails")
+
+                # A landing that settle_landed finishes removes its worktree: a later change request must not read the stale listing
+                # (target checked out in a worktree listed after the landed one, with edits the next CR would overwrite).
+                landed, landed_tip, landed_wt = make_cr("sl1", "sl1.txt", "1\n")
+                git("checkout", "-q", "-b", "elsewhere2")
+                target_wt = Path(repo_root, ".worktrees", "zz-target")
+                git("worktree", "add", "-q", str(target_wt), "main")
+                git("merge", "-q", "--ff-only", "cr/sl1", cwd=target_wt)
+                waiting, waiting_tip, waiting_wt = make_cr("sl2", "sl2.txt", "2\n")
+                Path(target_wt, "sl2.txt").write_text("local edit\n", encoding="utf-8")
+                rows = json.loads(invoke(["console"], Fake([*landed, *waiting]), "lead0001")[1])["crs"]
+                if [c["id"] for c in rows] != ["sl2"] or rows[0]["landBlocked"] != ["sl2.txt"] or landed_wt.exists():
+                    raise ValueError(f"board console after a settled landing must read the live worktrees: {rows} {landed_wt.exists()}")
+                git("worktree", "remove", "--force", str(waiting_wt))
+                git("worktree", "remove", "--force", str(target_wt))
+                git("branch", "-D", "cr/sl2")
+                git("checkout", "-q", "main")
+                git("branch", "-D", "elsewhere2")
 
                 # Refresh: rebase `--onto <base tip> <fork point>` after the base was rewritten; its range-diff and incoming files print.
                 base_issues, base_tip_old, base_wt = make_cr("pbase", "p.txt", "p\n")
@@ -4365,7 +4541,7 @@ def validate_board(root: Path) -> None:
                         or by_id["sf"]["setupFailed"] is not True or by_id["freshcr"]["setupFailed"] is not False \
                         or by_id["freshcr"]["baseSha"] != fresh_tip or by_id["freshcr"]["branch"] != "cr/freshcr" \
                         or by_id["freshcr"]["worktree"] != str(Path(repo_root, ".worktrees", "freshcr")) \
-                        or by_id["freshcr"]["items"] != {"open": 1, "closed": 0} or by_id["freshcr"]["check"]["state"] != "unchecked":
+                        or "items" in by_id["freshcr"] or by_id["freshcr"]["check"]["state"] != "unchecked":
                     raise ValueError(f"board console crs: {json.dumps(rows, indent=1)}")
                 loose = {**entry("loose-task", "task", "open", 2), "description": "d"}
                 no_worktree = cr_issue("nowt", "in_progress", assignee="aaaa1111", base="main", base_sha=fresh_tip)

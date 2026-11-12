@@ -392,7 +392,6 @@ const oneOf = <T extends string>(value: unknown, allowed: readonly T[]): T | nul
 function parseCr(value: unknown): ConsoleCr {
   const raw = record(value)
   const check = record(raw.check)
-  const items = record(raw.items)
   return {
     id: text(raw.id), title: text(raw.title), status: text(raw.status), holder: nullableText(raw.holder),
     look: oneOf(raw.look, ['before', 'after']), view: oneOf(raw.view, ['code', 'result']), checkpoint: oneOf(raw.checkpoint, ['agent', 'user']),
@@ -403,7 +402,7 @@ function parseCr(value: unknown): ConsoleCr {
       newFailures: Array.isArray(check.newFailures) ? list(check.newFailures).map(text).filter(one => one !== '') : null,
       baseCount: typeof check.baseCount === 'number' ? check.baseCount : null, tipCount: typeof check.tipCount === 'number' ? check.tipCount : null,
     },
-    parent: nullableText(raw.parent), children: list(raw.children).map(text).filter(id => id !== ''), items: { open: count(items.open), closed: count(items.closed) },
+    parent: nullableText(raw.parent), children: list(raw.children).map(text).filter(id => id !== ''),
     landBlocked: Array.isArray(raw.landBlocked) ? list(raw.landBlocked).map(text).filter(one => one !== '') : null,
     after: nullableText(raw.after), returned: raw.returned === true, setupFailed: raw.setupFailed === true,
     reviewState: oneOf(raw.reviewState, ['current', 'stale']), refreshWork: raw.refreshWork === true,
