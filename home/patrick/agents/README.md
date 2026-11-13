@@ -229,7 +229,7 @@ lead, solo and agent are presets, and a session's pulls add to its preset for ba
 and capacity (r13-q61). `board create` and `board bd create|update` refuse a task, bug, design or
 spike whose description, design, acceptance or notes is over 2000 characters (naming field and size;
 `--append-notes` counts the old notes plus the appended text; the refusal says how to cut, r3-q14); an update that shrinks an over-limit field
-passes, and decision records are not limited (r13-q74, r16-q96). Comments a session writes are held to
+or only replaces paths in it (same tokens and whitespace, each changed token holding a `/`; the rewrite after a scratch move) passes, and decision records are not limited (r13-q74, r16-q96). Comments a session writes are held to
 the same 2000 (`board bd comments add` by text, `-f` or stdin, `board handover` evidence, `board return`
 findings, `board block` reasons); the board's own packets are exempt: the protocol engine's autopilot
 park adds its packet with `--board-packet`, which `board bd` strips before bd (r16-q87). Plain

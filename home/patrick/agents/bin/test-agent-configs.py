@@ -3057,6 +3057,23 @@ def validate_board(root: Path) -> None:
             if guarded(["update", spike, "--notes", "m" * 2200], noted)[0] or not guarded(["update", spike, "--notes", "m" * 2600], noted)[0]:
                 raise ValueError("a shrinking notes edit must pass, a growing one over the limit must not")
 
+            # A path-only edit passes over the limit: same tokens and whitespace, each changed token a path (a "/" on both sides).
+            filler = " ".join(["word"] * 500)
+            path_old = variant(**{"Ready task": {"description": f"see .scratch/a/plan.md and `.scratch/b` {filler}"}})
+            moved = "see ~/.local/state/agents/scratch/r/shared/a/plan.md and `~/.local/state/agents/scratch/r/shared/b` " + filler
+
+            def path_edit(text, issues=path_old):
+                return guarded(["update", ready, "--description", text], issues)[0]
+            if path_edit(moved):
+                raise ValueError(f"a path-only edit of an over-limit field must pass: {path_edit(moved)}")
+            for what, text in (("an added word", moved + " more"), ("a changed word", moved.replace("see", "saw")),
+                               ("a changed word without a slash", moved.replace("and", "or")), ("changed spacing", moved.replace("and ", "and  ")),
+                               ("a word turned into a path", moved.replace("word", "a/b", 1))):
+                if not path_edit(text):
+                    raise ValueError(f"an over-limit edit with {what} must be refused")
+            if not guarded(["create", "T", "--description", moved + " " + filler])[0] or not path_edit(moved, variant(**{"Ready task": {"description": "q" * 2500}})):
+                raise ValueError("a path-only edit must not pass for a new item or for an old text without those paths")
+
             # Comments a session writes (r16-q87): text argument, --file, stdin; the board's own packet passes.
             PACKET = "--board-packet"
 

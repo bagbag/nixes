@@ -4273,10 +4273,17 @@ def field_texts(rest: list[str]) -> tuple[dict[str, str], str | None]:
     return texts, stdin
 
 
+def path_only_edit(old: str, new: str) -> bool:
+    """True when new is old with paths replaced: the same tokens and whitespace, each changed token a path (a `/` in both)."""
+    before, after = re.findall(r'\s+|\S+', old), re.findall(r'\s+|\S+', new)
+    return len(before) == len(after) and all(a == b or ('/' in a and '/' in b and not a.isspace()) for a, b in zip(before, after))
+
+
 def size_guard(command: str, rest: list[str]) -> tuple[str | None, str | None]:
     """(refusal, stdin read to judge it): a work item's description, design, acceptance or notes stays within FIELD_LIMIT
-    characters, so items hold current state and not history. An edit that shrinks an over-limit field passes; an append
-    to notes counts the old notes plus the new text. Decisions and other types are not work items: records are long by design."""
+    characters, so items hold current state and not history. An edit that shrinks an over-limit field or only replaces
+    paths in it (a move of the files it names) passes; an append to notes counts the old notes plus the new text.
+    Decisions and other types are not work items: records are long by design."""
     if command not in ('create', 'new', 'update'):
         return None, None
     texts, stdin = field_texts(rest)
@@ -4296,7 +4303,8 @@ def size_guard(command: str, rest: list[str]) -> tuple[str | None, str | None]:
             old = issue.get('notes') or ''
             sizes['notes'] = len(old) + (1 if old else 0) + len(appended)
         for field, size in sizes.items():
-            if size > FIELD_LIMIT and size >= len(issue.get(field) or ''):
+            if size > FIELD_LIMIT and size >= len(issue.get(field) or '') \
+                    and not (field in texts and path_only_edit(issue.get(field) or '', texts[field])):
                 old_text = ' (the board keeps the old text)' if command == 'update' else ''
                 return (f"{issue['id']}: {field} is {size} characters, over the {FIELD_LIMIT} limit. Rewrite it shorter as the current state: "
                         f'dated history leaves{old_text}; every rule, gate and criterion still in force stays. '
