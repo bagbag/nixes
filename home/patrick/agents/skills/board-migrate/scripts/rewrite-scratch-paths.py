@@ -8,8 +8,9 @@ in its absolute, `~` and repository-relative forms to the new path in `~` form. 
 notes of items that are not closed (decision records past decision stay as written) and memory values, only with
 --apply; comments are never changed. A form several moves share (a repository-relative path present in more than one
 checkout) is rewritten where exactly one of their new paths holds the rest of the named path, else left as written and
-printed as `ambiguous <path>: <new> | <new>` for the session. Run it in the repository after the moves;
-AGENT_BOARD_COMMAND overrides the board command.
+printed as `ambiguous <path>: <new> | <new>` for the session. Every run also reports, without changing the exit code or
+blocking --apply, each new path it writes that does not exist (`missing <path>: <n> items (scratch restore <name>)`) and each cited `.scratch/<name>` no move covers, left as written (`unmapped .scratch/<name>:
+<n> items`). Run it in the repository after the moves; AGENT_BOARD_COMMAND overrides the board command.
 """
 from __future__ import annotations
 
@@ -66,18 +67,20 @@ def moves(logs: list[str]) -> tuple[dict[str, str], dict[str, list[str]]]:
 
 
 def resolver(mapping: dict[str, str], ambiguous: dict[str, list[str]]):
-    """rewrite(text) -> (text, lines): each mapped form replaced, an ambiguous one only where exactly one of its new
-    paths holds the rest of the named path; lines name each replacement and each ambiguous path left as written."""
+    """rewrite(text) -> (text, lines, written): each mapped form replaced, an ambiguous one only where exactly one of
+    its new paths holds the rest of the named path; lines name each replacement and each ambiguous path left as
+    written; written lists (new path as written, moved folder's name) of each mapped replacement."""
     keys = sorted({*mapping, *ambiguous}, key=len, reverse=True)
     pattern = re.compile(rf'(?<!{PATH_CHAR})(' + '|'.join(map(re.escape, keys)) + rf')(/{PATH_CHAR}*)?(?!{PATH_CHAR})')
 
-    def rewrite(text: str) -> tuple[str, list[str]]:
-        lines = []
+    def rewrite(text: str) -> tuple[str, list[str], list[tuple[str, str]]]:
+        lines, written = [], []
 
         def one(match: re.Match) -> str:
             form, rest = match.group(1), match.group(2) or ''
             if form in mapping:
                 lines.append(f'  {form} -> {mapping[form]}')
+                written.append((mapping[form] + rest.rstrip('.'), os.path.basename(mapping[form])))
                 return mapping[form] + rest
             tail = rest.rstrip('.')  # a sentence's full stop
             held = [new for new in ambiguous[form] if os.path.lexists(os.path.expanduser(new) + tail)]
@@ -87,7 +90,7 @@ def resolver(mapping: dict[str, str], ambiguous: dict[str, list[str]]):
             lines.append(f'  {form}{tail} -> {held[0]}{tail}')
             return held[0] + rest
 
-        return pattern.sub(one, text), lines
+        return pattern.sub(one, text), lines, written
 
     return rewrite
 
@@ -102,6 +105,19 @@ def main() -> int:
         sys.exit('no moves: pass --moves <log> (the output of move-scratch-records.py --apply, scratch migrate)')
     rewrite = resolver(mapping, ambiguous)
     items = memories = unresolved = 0
+    moved = {form.split('.scratch/')[-1] for form in (*mapping, *ambiguous) if '.scratch/' in form}  # whole top-level moves
+    missing: dict[tuple[str, str], set[str]] = {}  # (new path, moved name) -> the items and memories writing it
+    unmapped: dict[str, set[str]] = {}  # .scratch/<name> left as written -> the items and memories citing it
+
+    def report(owner: str, texts) -> None:
+        for text in texts:
+            new, _, written = rewrite(text)
+            for path, name in written:
+                if not os.path.lexists(os.path.expanduser(path.rstrip('/'))):
+                    missing.setdefault((path.rstrip('/'), name), set()).add(owner)
+            for name in re.findall(r'\.scratch/([\w.-]*[\w-])', new):
+                if name not in moved:
+                    unmapped.setdefault(name, set()).add(owner)
 
     def show(head: str, texts) -> None:
         nonlocal unresolved
@@ -118,6 +134,7 @@ def main() -> int:
         texts = {flag: row.get(field) or '' for field, flag in FIELDS}
         changed = {flag: new for flag, text in texts.items() if (new := rewrite(text)[0]) != text}
         show(f"{row['id']}: {', '.join(flag[2:] for flag in changed) or 'nothing rewritten'}", texts.values())
+        report(row['id'], texts.values())
         if changed:
             items += 1
             if args.apply:  # flag=value: a text starting with '-' stays a value
@@ -127,10 +144,15 @@ def main() -> int:
             continue
         new = rewrite(value)[0]
         show(f'memory {key}', [value])
+        report(f'memory {key}', [value])
         if new != value:
             memories += 1
             if args.apply:
                 board('bd', 'remember', '--key', key, '--', new)
+    for (path, name), owners in sorted(missing.items()):
+        print(f'missing {path}: {len(owners)} items (scratch restore {name})')
+    for name, owners in sorted(unmapped.items()):
+        print(f'unmapped .scratch/{name}: {len(owners)} items')
     print(f"{items} items, {memories} memories" + (' rewritten' if args.apply else ' (dry run; --apply writes)')
           + (f'; {unresolved} ambiguous paths left as written' if unresolved else ''))
     return 0

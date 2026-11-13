@@ -36,6 +36,8 @@ FAKE_BOARD = '''#!{python}
 import json, os, sys
 items = dict(line.split() for line in open(os.environ['FAKE_BOARD_ITEMS']).read().splitlines() if line.strip())
 args = sys.argv[1:]
+if os.environ.get('FAKE_BOARD_LOG'):
+    open(os.environ['FAKE_BOARD_LOG'], 'a').write(os.getcwd() + ' ' + ' '.join(args) + '\\n')
 if os.environ.get('FAKE_BOARD_FAIL'):
     sys.exit(1)
 if args[:1] == ['show']:
@@ -531,7 +533,7 @@ def ready_idle_judged_per_entry_by_newest_write(e: Env):
 
 
 @test
-def ready_is_idle_only_whoever_owns_it(e: Env):
+def ready_is_idle_only_except_for_open_items(e: Env):
     repo = e.repo('proj', board=True)
     Path(e.items).write_text('t-done closed\nt-open open\n')
     for item in ('t-done', 't-open'):
@@ -545,7 +547,7 @@ def ready_is_idle_only_whoever_owns_it(e: Env):
         e.make(f'{sessions}/{actor}', 'f.txt')
     Path(f'{e.sessions}/ended').write_text('endedone\n')
     e.make(e.scratch('dir', '--shared', 'fx', cwd=repo).stdout.strip(), 'f.txt')
-    blind = {'AGENT_BOARD_COMMAND': '/nonexistent', 'AGENT_SESSION_COMMAND': '/nonexistent'}  # readiness reads neither
+    blind = {'AGENT_SESSION_COMMAND': '/nonexistent'}  # readiness reads no session; the board only for an idle item entry
 
     def ready_at(days: int) -> dict:
         found = rows(e.scratch('list', '--json', cwd=repo, SCRATCH_NOW=str(time.time() + days * DAY), **blind))
@@ -553,8 +555,85 @@ def ready_is_idle_only_whoever_owns_it(e: Env):
 
     check(ready_at(13) == {}, f'nothing idle under 14 days is ready, whatever the owner state: {ready_at(13)}')
     later = ready_at(15)
-    check(len(later) == 6 and all(reason == 'idle 15 days' for reason in later.values()),
-          f'closed, open, gone, ended, live and shared alike are ready after 15 days: {later}')
+    check(len(later) == 5 and all(reason == 'idle 15 days' for reason in later.values())
+          and not any('t-open' in path for path in later),
+          f'closed item, gone, ended, live and shared alike are ready after 15 days, the open item is not: {later}')
+
+
+def item_repo(e: Env, **status: str):
+    """A boarded repo whose items hold one idle entry each (20 days on a clock 20 days ahead); status: id -> board
+    status, an id the board does not list ('gone') gets a folder made by hand. Returns (repo, {id: entry path})."""
+    e.skew = 20
+    repo = e.repo('proj', board=True)
+    Path(e.items).write_text(''.join(f'{i} {s}\n' for i, s in status.items() if s != 'gone'))
+    e.session_dir(repo)  # creates the repo folder and its .repo
+    entries = {}
+    for item in status:
+        base = f'{e.folder(repo)}/items/{item}'
+        if status[item] != 'gone':
+            base = e.scratch('dir', '--for', item, cwd=repo).stdout.strip()
+        entries[item] = e.make(base, 'f.txt', days=20)
+    return repo, entries
+
+
+@test
+def item_entries_expire_only_once_the_item_is_closed(e: Env):
+    repo, entries = item_repo(e, **{'t-open': 'open', 't-done': 'closed', 't-gone': 'gone'})
+    listed = {r['path']: r['ready'] for r in rows(e.scratch('list', '--json', cwd=repo))}
+    check(listed == {entries['t-open']: None, entries['t-done']: 'idle 20 days', entries['t-gone']: 'idle 20 days'},
+          f'list must agree with the scan (open kept, closed and unknown ready): {listed}')
+    e.scratch('__scan', cwd=repo)
+    check(os.path.exists(entries['t-open']), 'an open item\'s idle entry stays')
+    check(not os.path.exists(entries['t-done']) and not os.path.exists(entries['t-gone']), 'closed and unknown items expire')
+
+
+@test
+def item_entries_stay_when_the_board_cannot_answer(e: Env):
+    repo, entries = item_repo(e, **{'t-done': 'closed'})
+    e.scratch('__scan', cwd=repo, FAKE_BOARD_FAIL='1')
+    check(os.path.exists(entries['t-done']), 'a failing board command keeps the entry')
+    blind = e.scratch('list', '--json', cwd=repo, AGENT_BOARD_COMMAND='/nonexistent')
+    check([r['ready'] for r in rows(blind)] == [None], f'an unreachable board keeps it: {blind.stdout}')
+    held = f'{e.folder(repo)}/.repo'
+    Path(held).write_text(f'{e.tmp}/moved-away\n')
+    e.scratch('sweep', cwd=e.work)
+    check(os.path.exists(entries['t-done']), 'a repo path that is gone keeps it')
+    Path(held).write_text(repo + '\n')
+    e.scratch('__scan', cwd=repo)
+    check(not os.path.exists(entries['t-done']), 'and the answer closed expires it')
+
+
+@test
+def item_entries_without_a_board_expire_by_time(e: Env):
+    e.skew = 20
+    repo = e.repo('plain')
+    folder = e.folder(repo)
+    e.session_dir(repo)
+    entry = e.make(f'{folder}/items/t-1', 'f.txt', days=20)
+    log = f'{e.tmp}/board.log'
+    e.scratch('__scan', cwd=repo, FAKE_BOARD_LOG=log, FAKE_BOARD_FAIL='1')
+    check(not os.path.exists(entry) and not os.path.exists(log), 'a repo without .beads has no board: time decides')
+
+
+@test
+def the_board_is_read_only_for_idle_item_entries_once_per_item(e: Env):
+    repo, entries = item_repo(e, **{'t-a': 'closed', 't-b': 'closed'})
+    log = f'{e.tmp}/board.log'
+    fresh = e.make(f'{e.folder(repo)}/items/t-b', 'new.txt', days=0)
+    e.make(f'{e.folder(repo)}/items/t-b', 'g.txt', days=20)
+    second = e.make(f'{e.folder(repo)}/items/t-a', 'g.txt', days=20)
+    e.make(e.scratch('dir', '--shared', 'fx', cwd=repo).stdout.strip(), 'f.txt', days=20)
+    e.make(e.session_dir(repo), 'f.txt', days=20)
+    out = e.scratch('sweep', cwd=e.work, FAKE_BOARD_LOG=log)  # from outside the repo
+    check(out.returncode == 0, out.stderr)
+    calls = Path(log).read_text().splitlines()
+    real = os.path.realpath(repo)
+    check(sorted(calls) == sorted(f'{real} show {i} --json --field status' for i in ('t-a', 't-b')),
+          f'one read per idle item, in its repo: {calls}')
+    check(os.path.exists(fresh) and not os.path.exists(entries['t-a']) and not os.path.exists(second), f'expiry: {out.stdout}')
+    os.remove(log)
+    e.scratch('__scan', cwd=repo, FAKE_BOARD_LOG=log)
+    check(not os.path.exists(log), 'nothing idle in an item: no board read (shared and session entries never read it)')
 
 
 @test
@@ -1224,6 +1303,62 @@ def rewrite_paths_resolves_a_relative_form_of_several_checkouts_by_what_exists(e
     want = f'see {main_new}/only-main.md, .scratch/role/both.md and {tree_new}/y.md'
     check(done == [['bd', 'update', 'a-1', f'--description={want}']],
           f'the path one target holds and the absolute form are rewritten, the ambiguous one left: {done}')
+
+
+def rewrite_reports(e: Env, texts: list[str], moves: str, memory: str = '') -> dict:
+    """Run the path rewriter over one open item per text (plus a closed one citing .scratch/closed-only, and a
+    memory) and return {'dry': stdout, 'apply': stdout} after checking both exit 0."""
+    rows = [{'id': f'r-{n}', 'status': 'open', 'issue_type': 'task', 'description': text} for n, text in enumerate(texts)]
+    rows.append({'id': 'r-closed', 'status': 'closed', 'issue_type': 'task', 'description': '.scratch/closed-only'})
+    Path(f'{e.tmp}/rep.jsonl').write_text(''.join(json.dumps(r) + '\n' for r in rows))
+    Path(f'{e.tmp}/rep-mem.json').write_text(json.dumps({'m': memory} if memory else {}))
+    log, board = f'{e.tmp}/rep.log', f'{e.tmp}/rep-board'
+    Path(log).write_text(moves)
+    Path(board).write_text(REWRITE_BOARD.format(python=sys.executable))
+    os.chmod(board, 0o755)
+    env = e.environ(False, AGENT_BOARD_COMMAND=board, FAKE_EXPORT=f'{e.tmp}/rep.jsonl', FAKE_MEMORIES=f'{e.tmp}/rep-mem.json',
+                    FAKE_WRITES=f'{e.tmp}/rep-writes.jsonl')
+    out = {}
+    for mode, args in (('dry', []), ('apply', ['--apply'])):
+        done = subprocess.run([sys.executable, '-B', str(REWRITE), '--moves', log, *args], cwd=e.work, env=env,
+                              capture_output=True, text=True, stdin=subprocess.DEVNULL, timeout=60)
+        check(done.returncode == 0, f'{mode}: the reports never change the exit code: {done.returncode} {done.stderr}')
+        out[mode] = done.stdout
+    return out
+
+
+@test
+def rewrite_paths_reports_new_paths_that_do_not_exist(e: Env):
+    real = os.path.realpath(e.work)
+    kept, trashed = f'{e.tmp}/data/kept', f'{e.tmp}/data/trashed'
+    e.make(kept, 'here.md')
+    out = rewrite_reports(e, ['.scratch/kept/here.md and .scratch/kept/lost.md and .scratch/trashed/x.md.',
+                              'again .scratch/trashed/x.md and .scratch/trashed'],
+                          f'moved {real}/.scratch/kept -> {kept}\nmoved {real}/.scratch/trashed -> {trashed}\n')
+    for mode, text in out.items():
+        check(f'missing {trashed}/x.md: 2 items (scratch restore trashed)' in text, f'{mode}: a missing target with its item count:\n{text}')
+        check(f'missing {trashed}: 1 items (scratch restore trashed)' in text, f'{mode}: the bare folder form:\n{text}')
+        check(f'missing {kept}/lost.md: 1 items (scratch restore kept)' in text, f'{mode}: a missing path below an existing folder:\n{text}')
+        check(f'{kept}/here.md:' not in text and f'missing {kept}:' not in text, f'{mode}: an existing target is not reported:\n{text}')
+        check('items, 0 memories' in text, f'{mode}: the summary line stays:\n{text}')
+
+
+@test
+def rewrite_paths_reports_scratch_names_with_no_move(e: Env):
+    real = os.path.realpath(e.work)
+    moved = f'{e.tmp}/data/moved'
+    e.make(moved, 'a.md')
+    tree = f'{real}/.worktrees/w'
+    subprocess.run(['git', 'init', '-q', tree], check=True, env=e.environ(False))
+    out = rewrite_reports(e, ['see .scratch/loose/a.md and .scratch/moved/a.md', 'the .scratch/loose.', 'x .scratch/loosely',
+                              'and .scratch/twice/f.md'],
+                          f'moved {real}/.scratch/moved -> {moved}\nmoved {real}/.scratch/twice -> {e.tmp}/d/one\n'
+                          f'moved {tree}/.scratch/twice -> {e.tmp}/d/two\n', memory='from .scratch/loose')
+    for mode, text in out.items():
+        check('unmapped .scratch/loose: 3 items' in text, f'{mode}: a name with no move, counting items and memories:\n{text}')
+        check('unmapped .scratch/loosely: 1 items' in text, f'{mode}: a longer name is its own:\n{text}')
+        check('unmapped .scratch/moved' not in text and 'closed-only' not in text and 'unmapped .scratch/twice' not in text,
+              f'{mode}: a moved name (even an ambiguous one) and a closed item are not reported:\n{text}')
 
 
 MOVE_RECORDS = HERE.parent / 'skills' / 'board-migrate' / 'scripts' / 'move-scratch-records.py'

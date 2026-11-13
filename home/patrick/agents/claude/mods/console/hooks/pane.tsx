@@ -706,7 +706,7 @@ export async function drawPane($: $, e: { surface: string; props: RenderPropsOf[
         const refreshing = canRefreshCr(cr, pulls)
         return {
           accepting, refreshing, width: buttonsWidth([...(accepting ? [walkLabel, CR_BUTTONS.accept, CR_BUTTONS.return] : []), ...(refreshing ? [CR_BUTTONS.refresh] : [])]),
-          walkLabel, walkHint: isWalkCr(cr) ? 'Puts the walk-through request in your prompt' : `Opens ${shown(cr.id)} in the review tree (its diff unstaged against where it forked)`,
+          walkLabel, walkHint: isWalkCr(cr) ? 'Sends the walk-through request' : `Opens ${shown(cr.id)} in the review tree (its diff unstaged against where it forked)`,
         }
       }
       const slotWidth = Math.max(0, ...queue.shown.map(one => buttonsOf(one.cr).width))
@@ -739,10 +739,10 @@ export async function drawPane($: $, e: { surface: string; props: RenderPropsOf[
             const actions = [
               ...(buttons.accepting ? [
                 act(`cr-open-${cr.id}`, buttons.walkLabel, () => pressOpenCr($, cr.id), buttons.walkHint),
-                act(`cr-accept-${cr.id}`, 'Accept', () => pressAcceptCr($, cr.id), 'Puts the accept request in your prompt; your session lands it', 'success'),
+                act(`cr-accept-${cr.id}`, 'Accept', () => pressAcceptCr($, cr.id), 'Sends the accept request; your session lands it', 'success'),
                 act(`cr-return-${cr.id}`, 'Return', () => pressReturnCr($, cr.id), 'Puts the return request in your prompt, ready for your changes'),
               ] : []),
-              ...(buttons.refreshing ? [act(`cr-refresh-${cr.id}`, 'Refresh', () => pressRefreshCr($, cr.id), 'Puts the refresh request in your prompt: rebase, checks and the range-diff', 'suggestion')] : []),
+              ...(buttons.refreshing ? [act(`cr-refresh-${cr.id}`, 'Refresh', () => pressRefreshCr($, cr.id), 'Sends the refresh request: rebase, checks and the range-diff', 'suggestion')] : []),
             ]
             // line two: the milestone shrinks first, down to MILESTONE_MIN; what still does not fit wraps to a next line of the facts
             const fixedWidth = [...facts, ...rest].reduce((sum, one) => sum + one.text.length + 1, 0)

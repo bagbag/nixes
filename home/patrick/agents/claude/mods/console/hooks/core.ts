@@ -960,7 +960,7 @@ export async function pressView($: $, agentId: string | undefined): Promise<void
   if (viewed.deny !== undefined) $.ui.toast(`console: ${viewed.deny}`)
 }
 
-// The change-request presses (r25). The console never lands: Accept and Return put the lead's request in the prompt. Single flight: git works on one tree at a time.
+// The change-request presses (r25). The console never lands: Walk through, Accept and Refresh send the lead's request as your message; Return puts it in the prompt for your reason. Single flight: git works on one tree at a time.
 let isReviewBusy = false
 
 async function crPress($: $, press: () => Promise<string | null>): Promise<void> {
@@ -977,6 +977,12 @@ async function crPress($: $, press: () => Promise<string | null>): Promise<void>
       isReviewBusy = false
     }
   })
+}
+
+/** Sends the request as the person's own message; a refusal reports through pressSubmit's failure toast. */
+async function sendRequest($: $, text: string): Promise<string | null> {
+  await pressSubmit($, text)
+  return null
 }
 
 async function fillPrompt($: $, text: string): Promise<string | null> {
@@ -1002,7 +1008,7 @@ export async function pressOpenCr($: $, id: string): Promise<void> {
     const found = await waitingCr($, id)
     if ('said' in found) return found.said
     const { cr } = found
-    if (isWalkCr(cr)) return fillPrompt($, walkText(cr))
+    if (isWalkCr(cr)) return sendRequest($, walkText(cr))
     if (cr.tip === null || cr.baseTip === null) return `Change request: ${cr.id} has no branch tip to open`
     const picked = await pickRange((argv, env) => gitRun($, argv, env), await $.session.cwd(), { tip: cr.tip, baseTip: cr.baseTip })
     if (!picked.ok || picked.open === undefined) return `Change request: ${picked.ok ? 'nothing opened' : picked.why}`
@@ -1051,7 +1057,7 @@ export async function pressAcceptCr($: $, id: string): Promise<void> {
     if ('said' in found) return found.said
     const state = await reviewState($, found.cr)
     if ('said' in state) return state.said
-    return state.tip === null && found.cr.checkpoint !== 'user' ? `Change request: ${id} has no branch tip` : fillPrompt($, acceptText(found.cr, state.tip, state.edits))
+    return state.tip === null && found.cr.checkpoint !== 'user' ? `Change request: ${id} has no branch tip` : sendRequest($, acceptText(found.cr, state.tip, state.edits))
   })
 }
 
@@ -1069,6 +1075,6 @@ export async function pressReturnCr($: $, id: string): Promise<void> {
 export async function pressRefreshCr($: $, id: string): Promise<void> {
   await crPress($, async () => {
     const found = await waitingCr($, id)
-    return 'said' in found ? found.said : fillPrompt($, refreshText(found.cr))
+    return 'said' in found ? found.said : sendRequest($, refreshText(found.cr))
   })
 }

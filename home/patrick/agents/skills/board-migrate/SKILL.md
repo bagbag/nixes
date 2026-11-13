@@ -202,11 +202,15 @@ log in `$HOME/.agents/bin/scratch dir`.
    record that differs from the file at its target.
    Output: moved and skipped counts.
 2. **Migrate.** `$HOME/.agents/bin/scratch migrate` (the migrate log); resolve
-   each skipped or broken-link line. Show the user what it trashed and
-   restore what they name.
+   each skipped or broken-link line: loose files go to `shared/loose`; a name
+   clash goes to `shared/<name>-<folder that held the .scratch>` (`base/.scratch/orm`
+   becomes `shared/orm-base`); anything else goes to the user. Show the user
+   what it trashed and restore what they name (move a restored folder a live
+   item cites into `items/<id>` only if they ask).
    Output: moved, skipped and trashed counts.
 3. **Paths.** `python3 <scripts>/rewrite-scratch-paths.py --moves <records
-   log> --moves <migrate log>`; show the user its dry run, then rerun with
+   log> --moves <migrate log>`; show the user its dry run with the `missing`
+   and `unmapped` lines, restore or decide each before rerunning with
    `--apply`; rewrite each `ambiguous` path by hand to the one its item means.
    Tell the user sessions may resume.
    Output: rewritten item and memory counts, the paths rewritten by hand.

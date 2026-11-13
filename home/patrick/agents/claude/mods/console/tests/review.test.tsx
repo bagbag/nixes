@@ -1,5 +1,5 @@
 // Change requests (r25): the queue section, the review tree set to a request's (base tip, tip), and the Open / Accept / Return /
-// Refresh presses, which put requests in the prompt (the console never lands); the counts display (r21-q141, q146).
+// Refresh presses, which send requests as your message (Return fills the prompt; the console never lands); the counts display (r21-q141, q146).
 import { describe, expect, test } from 'claude-code/testing'
 import type { Mounted } from 'claude-code/testing'
 
@@ -101,8 +101,7 @@ describe('change request queue', () => {
     expect(await ui.find({ key: 'cr-refresh-p-cr2' })).toBeUndefined()
     await ui.press({ key: 'cr-refresh-p-cr1' })
     await clock.settle()
-    expect(w.box).toBe("Refresh p-cr1 under the review protocol's Refresh.")
-    expect(w.prompts).toEqual([])
+    expect(w.prompts).toEqual(["Refresh p-cr1 under the review protocol's Refresh."])
     await ui.unmount()
   })
 })
@@ -276,26 +275,25 @@ describe('Open', () => {
     await ui.unmount()
   })
 
-  test('view=result sets no tree: the walk-through request goes in the prompt', async ($, on) => {
+  test('view=result sets no tree: the walk-through request is sent', async ($, on) => {
     const r = repo()
     const { ui, clock, w } = await queued($, on, [cr({ id: 'p-cr1', view: 'result', title: 'Remove X' })], r)
     await ui.press({ key: 'cr-open-p-cr1' })
     await clock.settle()
-    expect(w.box).toBe("Walk me through p-cr1's result (Remove X).")
-    expect(w.prompts).toEqual([])
+    expect(w.prompts).toEqual(["Walk me through p-cr1's result (Remove X)."])
     expect(r.all).toEqual([])
     expect(r.opened).toEqual([])
     await ui.unmount()
   })
 
-  test('a design has no branch: its button is Walk through, and it puts the walk-through request in the prompt', async ($, on) => {
+  test('a design has no branch: its button is Walk through, and it sends the walk-through request', async ($, on) => {
     const r = repo()
     const design = cr({ id: 'p-cr1', title: 'Design Y', checkpoint: 'user', tip: null, baseTip: null, worktree: null })
     const { ui, clock, w } = await queued($, on, [design], r)
     expect((await ui.find({ key: 'cr-open-p-cr1' }))?.text).toBe('Walk through')
     await ui.press({ key: 'cr-open-p-cr1' })
     await clock.settle()
-    expect(w.box).toBe("Walk me through p-cr1's design (Design Y).")
+    expect(w.prompts).toEqual(["Walk me through p-cr1's design (Design Y)."])
     expect(w.toasts).toEqual([])
     expect(r.all).toEqual([])
     await ui.unmount()
@@ -397,7 +395,7 @@ describe('scratch line', () => {
 })
 
 describe('Accept, Return', () => {
-  test('Accept puts the lead\'s request in the prompt with the tip you looked at; nothing is sent', async ($, on) => {
+  test('Accept sends the lead\'s request with the tip you looked at', async ($, on) => {
     const r = repo()
     const { ui, clock, w } = await queued($, on, [cr({ id: 'p-cr1', title: 'Remove X', tip: sha(2) })], r)
     await ui.press({ key: 'cr-open-p-cr1' })
@@ -405,8 +403,7 @@ describe('Accept, Return', () => {
     w.crs = [cr({ id: 'p-cr1', title: 'Remove X', tip: sha(9) })]  // the branch moved after you looked
     await ui.press({ key: 'cr-accept-p-cr1' })
     await clock.settle()
-    expect(w.box).toBe(`Accept p-cr1 (Remove X) at ${short(2)}: land it.`)
-    expect(w.prompts).toEqual([])
+    expect(w.prompts).toEqual([`Accept p-cr1 (Remove X) at ${short(2)}: land it.`])
     await ui.unmount()
   })
 
@@ -414,7 +411,7 @@ describe('Accept, Return', () => {
     const { ui, clock, w } = await queued($, on, [cr({ id: 'p-cr1', tip: sha(4) })])
     await ui.press({ key: 'cr-accept-p-cr1' })
     await clock.settle()
-    expect(w.box).toContain(`at ${short(4)}`)
+    expect(w.prompts.join('\n')).toContain(`at ${short(4)}`)
     await ui.unmount()
   })
 
@@ -422,7 +419,7 @@ describe('Accept, Return', () => {
     const { ui, clock, w } = await queued($, on, [cr({ id: 'p-cr1', checkpoint: 'user', title: 'Design Y' })])
     await ui.press({ key: 'cr-accept-p-cr1' })
     await clock.settle()
-    expect(w.box).toBe(`Accept the design of p-cr1 (Design Y) at ${short(2)}: planning continues in the same request, nothing lands.`)
+    expect(w.prompts).toEqual([`Accept the design of p-cr1 (Design Y) at ${short(2)}: planning continues in the same request, nothing lands.`])
     await ui.unmount()
   })
 
@@ -430,7 +427,7 @@ describe('Accept, Return', () => {
     const { ui, clock, w } = await queued($, on, [cr({ id: 'p-cr1', checkpoint: 'user', title: 'Design Y', tip: null, baseTip: null })])
     await ui.press({ key: 'cr-accept-p-cr1' })
     await clock.settle()
-    expect(w.box).toBe('Accept the design of p-cr1 (Design Y): planning continues in the same request, nothing lands.')
+    expect(w.prompts).toEqual(['Accept the design of p-cr1 (Design Y): planning continues in the same request, nothing lands.'])
     expect(w.toasts).toEqual([])
     await ui.unmount()
   })
@@ -439,7 +436,7 @@ describe('Accept, Return', () => {
     const { ui, clock, w } = await queued($, on, [cr({ id: 'p-cr1', tip: null })])
     await ui.press({ key: 'cr-accept-p-cr1' })
     await clock.settle()
-    expect(w.box).toBe('')
+    expect(w.prompts).toEqual([])
     expect(w.toasts.at(-1)).toContain('has no branch tip')
     await ui.unmount()
   })
@@ -465,9 +462,8 @@ describe('Accept, Return', () => {
     r.hasEdits = true
     await ui.press({ key: 'cr-accept-p-cr1' })
     await clock.settle()
-    expect(w.box).toContain(`Accept p-cr1 (Remove X) at ${short(2)}: land it.`)
-    expect(w.box).toContain(`board cr edits p-cr1 --from ${REVIEW_TREE} --tip ${sha(2)}`)
-    expect(w.prompts).toEqual([])
+    expect(w.prompts.join('\n')).toContain(`Accept p-cr1 (Remove X) at ${short(2)}: land it.`)
+    expect(w.prompts.join('\n')).toContain(`board cr edits p-cr1 --from ${REVIEW_TREE} --tip ${sha(2)}`)
     expect(r.changes.filter(one => !one.includes('worktree add') && !one.includes('reset') && !one.includes('update-ref'))).toEqual([])
     expect(await ui.find({ key: 'cr-done-p-cr1' })).toBeUndefined()
     await ui.unmount()
@@ -481,7 +477,7 @@ describe('Accept, Return', () => {
     r.hasUntracked = true
     await ui.press({ key: 'cr-accept-p-cr1' })
     await clock.settle()
-    expect(w.box).toContain('board cr edits p-cr1')
+    expect(w.prompts.join('\n')).toContain('board cr edits p-cr1')
     await ui.unmount()
   })
 
@@ -509,7 +505,7 @@ describe('Accept, Return', () => {
     w.crs = [cr({ id: 'p-cr1', tip: sha(9) })]
     await ui.press({ key: 'cr-accept-p-cr1' })
     await clock.settle()
-    expect(w.box).toBe(`Accept p-cr1 (Title of p-cr1) at ${short(9)}: land it.`)
+    expect(w.prompts).toEqual([`Accept p-cr1 (Title of p-cr1) at ${short(9)}: land it.`])
     await ui.unmount()
   })
 
@@ -523,7 +519,7 @@ describe('Accept, Return', () => {
     w.crs = [cr({ id: 'p-cr1', tip: sha(12) })]
     await ui.press({ key: 'cr-accept-p-cr1' })
     await clock.settle()
-    expect(w.box).toBe(`Accept p-cr1 (Title of p-cr1) at ${short(9)}: land it.`)
+    expect(w.prompts).toEqual([`Accept p-cr1 (Title of p-cr1) at ${short(9)}: land it.`])
     await ui.unmount()
   })
 
@@ -538,8 +534,8 @@ describe('Accept, Return', () => {
     w.crs = [cr({ id: 'p-cr1', tip: sha(12) })]  // the failed check rebased the branch: the edits are still against the edit commit
     await ui.press({ key: 'cr-accept-p-cr1' })
     await clock.settle()
-    expect(w.box).toContain(`at ${short(9)}: land it.`)
-    expect(w.box).toContain(`board cr edits p-cr1 --from ${REVIEW_TREE} --tip ${sha(9)}`)
+    expect(w.prompts.join('\n')).toContain(`at ${short(9)}: land it.`)
+    expect(w.prompts.join('\n')).toContain(`board cr edits p-cr1 --from ${REVIEW_TREE} --tip ${sha(9)}`)
     await ui.unmount()
   })
 
@@ -610,7 +606,7 @@ describe('Accept, Return', () => {
     r.hasEdits = true  // edits on the ratification's range are not this request's
     await ui.press({ key: 'cr-accept-p-cr1' })
     await clock.settle()
-    expect(w.box).toBe(`Accept p-cr1 (Title of p-cr1) at ${short(2)}: land it.`)
+    expect(w.prompts).toEqual([`Accept p-cr1 (Title of p-cr1) at ${short(2)}: land it.`])
     await ui.unmount()
   })
 
@@ -1047,7 +1043,7 @@ describe('priority, waiting on answers and the board prefix', () => {
     await clock.settle()
     await ui.press({ key: 'cr-accept-p-cr1' })
     await clock.settle()
-    expect(w.box).toContain('Accept p-cr1 (')
+    expect(w.prompts.join('\n')).toContain('Accept p-cr1 (')
     await ui.unmount()
   })
 

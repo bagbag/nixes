@@ -12,6 +12,9 @@ Layout under ${XDG_STATE_HOME:-~/.local/state}/agents/scratch/:
 Entries expire on their own: the hourly scan (started by dir and status, one per scratch root; `scratch sweep` runs it
 now) goes over every repository folder, each under its own lock, and trashes every top-level entry unchanged (mtime and
 ctime of everything in it) for IDLE_DAYS, and removes owner folders left empty that long; migrate scans its own repository.
+An items/<id> entry also needs its item closed or unknown to the board (r22-q102, revising r18-q95): the board is read
+only for an idle item entry, once per item, in the repository the folder belongs to; an unreachable board, a failing
+command or a gone repository keeps the entry; a repository without .beads has no board (time alone decides).
 The trash deletes after TRASH_DAYS; a trashed entry is restored from inside its repository.
 
 Test and tooling hooks: AGENT_SESSION_COMMAND, AGENT_BOARD_COMMAND (default: the files beside this one),
@@ -53,10 +56,11 @@ HELP = """scratch: scratch folders outside the checkout (one tree per repository
       scratch restore dump
       scratch restore ~/.local/state/agents/scratch/-repo/sessions/<actor>/dump
   scratch list [--all] [--json]        entries (owner, size, last change, idle days when the next scan trashes it); --all: every repo folder
+                                       an item's entry idle 14 days is kept while the item is open (the board is read) or unreachable
       scratch list --json
   scratch status [--line]              totals; --line: what the trash holds (empty when nothing)
       scratch status --line
-  scratch sweep                        run the expiry scan now over every repository (14-day rule) and print what it trashed
+  scratch sweep                        run the expiry scan now over every repository (14-day rule; open items' entries stay) and print what it trashed
       scratch sweep
   scratch migrate                      one-time move of every .scratch folder's entries (any depth) into shared/<name>/, then the expiry scan
       scratch migrate
@@ -244,15 +248,39 @@ def real_dirs(parent: Path) -> list[Path]:
     return [parent / n for n in names if not os.path.islink(parent / n) and os.path.isdir(parent / n)]
 
 
+def item_kept(folder: Path, item: str) -> bool:
+    """r22-q102: an idle item entry stays unless its item is closed or unknown to the board (see the module docstring);
+    an answer that cannot be read keeps it."""
+    repo = load_text(folder / '.repo')
+    if not repo or not os.path.isdir(repo):
+        return True
+    if not (Path(repo) / '.beads' / 'metadata.json').is_file():
+        return False
+    result = run([sibling('board', 'AGENT_BOARD_COMMAND'), 'show', item, '--json', '--field', 'status'], repo)
+    if result.returncode != 0:
+        return f'unknown {item}' not in result.stderr
+    try:
+        (found,) = json.loads(result.stdout).values()
+        return found['status'] != 'closed'
+    except (ValueError, TypeError, KeyError, AttributeError):
+        return True
+
+
 def collect(folder: Path, renamed: tuple[str, ...] = ()) -> list[dict]:
     """The folder's entries: top-level entries of each session and item folder, each shared/<name> as one. Ready =
-    nothing changed for IDLE_DAYS, whoever owns it."""
+    nothing changed for IDLE_DAYS, and for an item's entry the item is closed or unknown (one board read per item
+    with an idle entry)."""
     found = []
     moment = now()
+    kept: dict[str, bool] = {}
 
-    def add(path: Path, owner: str) -> None:
+    def add(path: Path, owner: str, item: str | None = None) -> None:
         size, newest = survey(str(path), str(path) in renamed)
         reason = f'idle {int((moment - newest) // 86400)} days' if moment - newest > IDLE_DAYS * 86400 else None
+        if reason and item:
+            if item not in kept:
+                kept[item] = item_kept(folder, item)
+            reason = None if kept[item] else reason
         found.append({'path': str(path), 'owner': owner, 'size': size, 'mtime': newest, 'ready': reason})
 
     for kind in ('sessions', 'items'):
@@ -263,7 +291,8 @@ def collect(folder: Path, renamed: tuple[str, ...] = ()) -> list[dict]:
                 print(f'scratch: cannot read {owner}, skipped: {error.strerror}', file=sys.stderr)
                 continue
             for name in names:
-                add(owner / name, f"{'session' if kind == 'sessions' else 'item'} {owner.name}")
+                add(owner / name, f"{'session' if kind == 'sessions' else 'item'} {owner.name}",
+                    owner.name if kind == 'items' else None)
     for named in real_dirs(folder / 'shared'):
         add(named, f'shared {named.name}')
     return found
