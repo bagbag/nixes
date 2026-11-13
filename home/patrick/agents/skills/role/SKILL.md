@@ -69,7 +69,7 @@ Give each step's output as one line.
 3. **Register.**
 
    ```sh
-   $HOME/.agents/bin/session-lead-mode activate <role> [--pulls <pull>,<pull>] [--workers <n>]
+   $HOME/.agents/bin/session activate <role> [--pulls <pull>,<pull>] [--workers <n>]
    ```
 
    Pass `--pulls` for agent and for any pulls added to lead, and `--workers`

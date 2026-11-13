@@ -50,7 +50,7 @@ Nix generates the Claude Code and Codex representations into the store, and
 Home Manager links them at activation. It also renders the shared skill tree
 into the store; generated files do not live in Git. Skill changes therefore
 require `darwin-rebuild switch` before they become active.
-Hooks, the `bin/` scripts (`board`, `session-lead-mode`), the hook
+Hooks, the `bin/` scripts (`board`, `session`), the hook
 registrations and the global instructions (`AGENTS.md`) are linked out of
 store to the working tree, so their edits are live at once; rendered skills,
 agent definitions and newly added links change only at the switch.
@@ -105,7 +105,7 @@ Workflow owners:
 
 - [Role](skills/role/SKILL.md): the user-invoked session entry. It registers
   the session's role (lead, agent with pulls, solo, autopilot) through
-  `bin/session-lead-mode` and owns the role-to-protocol mapping.
+  `bin/session` and owns the role-to-protocol mapping.
 - [Protocols](skills/role/protocols/): [decide](skills/role/protocols/decide.md)
   (rounds, release, acceptance of designs and user-judged outcomes),
   [plan](skills/role/protocols/plan.md) (released rulings into work, framing,
@@ -161,6 +161,7 @@ of exec'ing it, to retry `foreign key conflicts` and start the wait. `Board.list
 filter, `queue_guard` refuses moves and cross-queue claims, and `rewritten_create` makes plain child
 ids on every board. `board console` adds `sync` (the problem line) and `queueLine` (other queues,
 unrouted with the count for you, blocking yours), both shown in the pane.
+The console pane shows the repository's scratch line (`scratch status --line`, read on every refresh; nothing when empty or when scratch fails) as one informational line (no button; trashed folders expire by themselves, in every repository); no model context gets the line (r15-q83 revised).
 `AGENT_BOARD_SYNC_SECONDS` shortens the window for tests. `bin/test-shared-board.py` runs the
 behaviour through real clones and a local bare remote; the validator's `validate_shared_board` holds
 the fake-bd checks the build sandbox can run.
@@ -176,13 +177,13 @@ the way on named in one line; a plain `bd show`, `view` or comment listing by
 ids runs `board show`, and type `question` runs as `decision`, each with a
 stderr note, r9-q35). It starts a stopped
 server on server-mode boards (bd's auto-start is off) and takes the actor from
-`session-lead-mode actor`, the owner of the session identity
+`session actor`, the owner of the session identity
 (`CODEX_SESSION_ID`/`CODEX_THREAD_ID`, else `CLAUDE_CODE_SESSION_ID`). Hooks
 add: bd-guard denies bare `bd` and sets Claude subagents' own actors (without
 it they act as their session, so in-session reviews by them are not
 independent); session-register keeps workers from registering; the
 session-start hook starts the server before `bd prime`, and on Claude
-refreshes the session's registered process and project (`session-lead-mode alive`);
+refreshes the session's registered process and project (`session alive`);
 session-activity records activity as file mtimes: SubagentStart and a
 worker's tool calls create or touch the worker's marker, SubagentStop deletes
 it, and the session's own tool calls touch `<session>.active`. Probed on
@@ -190,7 +191,7 @@ Codex 0.166 (2026-10-31): SubagentStart fires on first spawn, the matcher-less
 PreToolUse group fires for shell and apply_patch calls, a worker's payload
 `session_id` is its parent's, and its `agent_id` equals its
 `CODEX_THREAD_ID`, which the worker actor's suffix comes from.
-`session-lead-mode activate` and `alive` record `project`, the resolved (realpath) folder of the
+`session activate` and `alive` record `project`, the resolved (realpath) folder of the
 session's board, found through `board bd where` (its first line names the `.beads`; a git
 worktree names the main checkout's); a failed lookup records none and the command still
 succeeds, and `alive` corrects it at every Claude session start. `board position` lists a
@@ -200,9 +201,9 @@ not listed; a project without a board has no session list); the per-kind session
 pane and `board console` read that one list.
 `board position` marks holders GONE when their session's process ended (Claude; Codex records no process: the
 nearest `codex` ancestor can be a shared app-server or a per-command sandbox helper) or its registration was
-pruned. `session-lead-mode activate` prunes
+pruned. `session activate` prunes
 registrations idle 7 days (last activity, else registration) whose process ended or that record none,
-appending their actors to the state dir's `ended` file (`session-lead-mode ended` prints it); a hold of an
+appending their actors to the state dir's `ended` file (`session ended` prints it); a hold of an
 ended actor with no registration shows GONE, `held elsewhere` included (r3-q17). Registration writes and the
 prune hold one `lockf` lock (`$state/.lock`, freed when its holder dies; the prune re-reads each registration
 under it and skips when the lock is busy); `list` is a pure read, activity writes stay unlocked, and `list`
@@ -213,7 +214,7 @@ without a marker WORKER STOPPED once the session's `.active` exists (only the
 owner knows whether it continues the worker). `claim`, `handover`, `return`,
 `block`, `mine` and `queue` print a capacity line for dispatching sessions
 below the worker cap with ready work. The cap is 3 unless
-`session-lead-mode activate --workers <n>` sets the session's own, which a
+`session activate --workers <n>` sets the session's own, which a
 later role switch keeps; a non-lead session row's select in the console pane
 sets it with no model turn (`set-workers`); Codex's thread limits lower it.
 The cap also limits holds (r13-q71): `board claim` refuses a task, bug, design or spike that would take
@@ -238,12 +239,46 @@ park adds its packet with `--board-packet`, which `board bd` strips before bd (r
 `board check` encodes the board-core
 conventions mechanically; change both in the same change, so drifted boards
 surface in `board health` and move through `/board-migrate`.
+`board bd update --set-metadata look=…|view=…` and `create --graph` node metadata are refused when the value equals the
+project default (an unreadable default lets bd answer); `board setup` that changes `look` or `view` prints, under the
+`old -> new` line, the open CRs keeping their own value, each with the first line of its description, design or notes naming the
+setting (`no reason in its text` otherwise) and a note when it now equals the default (r10-q52).
+`ITEM_TYPES` in `bin/board` is the one list of item types (board-core.md Kinds, a test compares them):
+`board bd create`, `create --graph` and `update --type` refuse any other type, `question` is read as
+`decision`, and `board check` flags a live item of another type (class `unknown-type`).
+Metadata `no_code=1`, set at creation (`create --metadata` or a graph node), marks work that changes no code
+(r10-q50): it may be claimed outside a CR and `board check` drops its `no-cr` flag; `update --set-metadata no_code`
+is refused. A CR whose branch has no commits of its own lands on its passed review in either look, with no
+ratification and no Accept (a stacked one with its base); a design checkpoint is the exception.
+`board cr edits <cr> --from <tree> --tip <sha> [--commit -m <msg> [--gate '<cmd>' | --no-gate '<reason>' | --checks]]` carries the
+user's review-tree edits (r15-q75..q79). Without `--commit` it prints them (tracked and new, not ignored files) against
+`<tip>` and refuses a branch that left `<tip>`, or a tree set to another tip. `--commit` commits exactly the tree on disk
+(`commit-tree`, the review tree's files untouched): author the repository's `user.name`/`user.email`, committer the session, no trailer: the
+board records `{commit}` in the CR's `review_edits` metadata, and moves the review tree's marker `refs/worktree/console-review-end` from
+`<tip>` to that commit by compare-and-swap (`mark_reviewed`; a tree set to another range meanwhile rolls the branch back and commits
+nothing). The marker always names that commit, also when `--checks` then rebases the branch (its failure says to Open again). `--gate` runs the command in the CR worktree and stores it as a targeted check for
+that tip (`check_kind=targeted`, `check_command`, output); `--no-gate` stores `check_kind=none` with the reason; `--checks` reuses `sync_branch` (rebase, setup, project checks, no new failures) and stores a normal full check; none
+stores nothing (Return). Both show as such (`board queue`: `check current (targeted: …)`, the console's `check.kind`) and
+land only for that tip. A full check (`handover`, `refresh`) clears the kind. The review stays current past its tip while
+every later commit is a recorded edit commit or its replay (`edits_only`, `is_replay`: replaying the recorded change onto the commit's
+parent by 3-way merge gives exactly its tree, so a rebase keeps it, and a copied message, a reindent or the same change at another place
+does not; `refresh --review-holds` drops such commits from the new range before comparing patch-ids with the reviewed one). A
+failing gate leaves the commit, stores the failure and the CR waiting for the user. On a ratification item `--commit`
+starts a follow-up CR (`open_worktree` forked at the landed tip, linked `discovered-from` the ratification) whose first
+commit is the edit; it takes no gate. The console's review tree (`<main>-review`) is clean when its files, written as a tree in a
+throwaway index from the marker (`read-tree`, `add -A`, `write-tree`: the board's `review_edits_tree` recipe, review.ts `snapshotTree`),
+equal the marker's tree. Open resets only a clean tree; Accept names the marker's commit (the tip you looked at plus the edits the board
+committed), and with the tree unclean Accept and Return add the edits and the `board cr edits … --tip <marker>` line. The pane's
+"in review tree" / "review tree behind" compares the marker with the CR's tip. While the marker names the tip of a CR waiting
+for the user (`held_by_review_tree`), only a session holding it (a deciding session's claim) refreshes it: it is no refresh
+work, another session's `board cr refresh` refuses it, and `board console --json` marks it `heldByReviewTree` ("held by your
+review tree" on its row). `cr edits` still refuses a moved tip.
 `health`, `mine`, `position` and `related` take `--json` (every row; `related`
 keeps `--limit` per list) for the engine and the console; text output stays
 unchanged. `board console` prints the console pane's JSON (health counts,
 `mine` items, `position` sessions and holds with their marks) from one
 snapshot.
-`board release <ids> --closes <question>=<record>[,<record>]` releases the
+`board ruling release <ids> --closes <question>=<record>[,<record>]` releases the
 decided rulings (already released ones count as done, so a rerun retries only
 a failed revise supersede), then closes the answered questions in dependency
 order with "Answered by released <record>", forcing only past rulings of the
@@ -253,8 +288,42 @@ record nor an answered question, only the open items it changes.
 `board position` and `board holders` print `holds a/b`: `a` counts a milestone as
 one item and stops there, which tells a milestone's members apart; `b` counts
 everything downstream. Lists sort by `a`, then `b`; JSON gives `holds` and `holdsAll`.
-`session-lead-mode state-dir` names the state dir; the engine and the console
+`session state-dir` names the state dir; the engine and the console
 ask it instead of restating the location.
+
+Every multi-verb tool answers `help` (each verb with one example) and prints
+the same for a bare call, exit 0: `board`, `protocol`, `session` and `scratch` (r15-q88). `protocol help`
+lists the verbs sessions run (`*`: the accepted `--origin` depends on the caller) before
+`console only:`; both sections come from `base.VERBS`, the one table that owns each
+verb's audience and accepted origins and that `require_origin` also reads. An unknown
+`board` verb that the installed bd knows (`bd <verb> --help` exits 0) fails with exit 2 and
+`board: no verb 'comment'; run: board bd comment <args>`; a verb that moved into a group
+points to `board cr land` or `board ruling release`; nothing runs or forwards, and a word bd
+does not know keeps argparse's error (r15-q90).
+
+`bin/scratch` (installed as `$HOME/.agents/bin/scratch`) owns working files outside the
+repositories: `${XDG_STATE_HOME:-~/.local/state}/agents/scratch/<repo>/` with `<repo>` the
+resolved repository path (`--git-common-dir`, so worktrees share it) with `/` as `-`, a `.repo`
+file naming that path and a `-2` suffix on a clash (r15-q71). Owners sit in the path:
+`sessions/<actor>/`, `items/<board id>/`, `shared/<name>/` (r15-q84). Verbs (r15-q85/q86):
+`dir [--for <id> | --shared <name>]` prints and creates a folder (outside a session `--for` or
+`--shared` is required; `--for` needs a board and a known id); `trash` moves a path inside this
+repository's folder to `.trash/<repo>/<name>/` (`-2`, `-3` on a clash; leading dots dropped from the name; the trash time is stored
+in the entry; root and repo folders refused, links moved as links); `restore [<name> | <path>]` (lists
+the trash without an argument; a path is where the entry was trashed from, `~`, absolute or relative, and the newest
+entry of that path wins, which it says); `list [--all] [--json]` (`--all` flags gone
+repositories for removal by hand, r15-q87); `status [--line]` (`--line`: what the trash holds, e.g.
+`scratch: 3 trashed (1.0 GB), the first is deleted within 7 days (scratch restore)`, empty when nothing);
+`sweep` (the expiry scan now, in the foreground, over every repository; prints one line per trashed entry: repo folder, path, size, idle days; r18-q97); `migrate` (the one-time move of the entries of every `.scratch` folder at any depth in the main tree and each worktree, except inside node_modules and .git, then the expiry scan at
+once, listing what it trashed; board-migrate Upgrade step 6). Scratch cleans itself by age: the
+background scan (hourly for the whole scratch root, marker `.cache/.scanned.json`, started by `dir` and `status`; it goes over every repository folder under that repository's lock folder, skipping a locked one, atomic per-repository cache; r18-q93)
+trashes every ready entry in every repository, restorable from inside its own repository: a top-level entry of a session or item folder, or a whole shared folder,
+unchanged for 14 days whoever owns it (change = the newest mtime or ctime of anything in it, so
+`cp -a`, `tar x`, `rsync -a` and `restore` count as fresh; no board or session-registry read), and
+removes an owner folder left empty and unchanged that long (r15-q72, revised). Trash entries are deleted
+after 7 days, counted from the time stored in the entry (its wrapper's mtime if that is unreadable). The
+console shows the `status --line` text, nothing more (r15-q83). Codex's `writable_roots` and Claude's `Edit` allow
+rules grant the scratch and records roots. Tests: `bin/test-scratch.py`.
 
 `bin/protocol` (installed as `$HOME/.agents/bin/protocol`) is the protocol
 engine of deciding sessions: it owns each session's protocol state in
@@ -271,18 +340,21 @@ decide what to say; error and refusal messages and the CLI help stay where
 they are raised or defined. Its protocols are `round` (the decide protocol's
 Round from the pre-pass to Record) and `release` (its Release).
 A question whose Related outcome supersedes a decided record closes it at Record
-(`board supersede`: waiting items, settled items and a pending revision move to
+(`board ruling supersede`: waiting items, settled items and a pending revision move to
 the new record; the dialog names it by id and title); a released record is
 revised and replaced at release. Related may mark any decided record this way,
 a hit or not, by naming its id under `outcomes` (only a recorded ruling; a
-record another live session holds is refused). `board record` writes the record and no comment copies of
+record another live session holds is refused). `board ruling record` writes the record and no comment copies of
 the replaced text; the board's history (`board bd history`) keeps earlier versions (r16-q95).
 A round:
 
 - Collect classifies every pasted point and the board items in the round's
   scope; `start round --discussion` takes the pasted points alone, and
-  `--no-board <dir>` (required without a board) writes the records as files
-  in `<dir>` with no board reads or writes. Items another live session holds
+  `--no-board [<dir>]` (required without a board) writes the records as files
+  with no board reads or writes: in `<dir>`, else in the repository's private
+  folder `${XDG_DATA_HOME:-~/.local/share}/agents/decisions/<repo>/` (`<repo>`
+  is the repository's scratch folder name; a release takes the files there too, ids
+  before a bare option; a named topic is its own `<dir>`). Items another live session holds
   stay out, named in one line; a gone session's hold is offered, marked.
   `start round <ids>` names the open items to look at first (an id that is closed,
   held by another live session or no item a round offers is refused by name);
@@ -301,13 +373,17 @@ A round:
 - Select claims the selected items (a gone session's hold through `board
   take`); Stage requires a plain round title and
   summary and, per question, a plain title, `problem` (what is decided and why
-  now), 2-4 options each with
+  now), `root` (record-only, never printed: "cause; end state", or "does not apply: <why>"; the
+  goal check may update it and the record keeps it as `## Root`), 2-4 options each with
   `for` and `against`, the recommended option and its strength under decision-protocol.md Recommendation strength
   (a lean names its cause, a strong one carries the five-criterion checklist).
   The Stage text states the lengths to keep to (round `summary` 240, `title` 60, question
-  `text` 160, `header` 12, option `description` 150; a report is refused only
-  above text 240, title 75, description 200, or summary 240 and header 12, naming the
-  measured length; all built from the
+  `text` 160, `header` 12, option `description` 150; above a target and within its
+  limit (title 75, text 240, description 200) a report is accepted with one warning
+  line per field (`q62: title is 68 characters; keep it to about 60 (refused over
+  75)`; a round's `title` and `overview` get the same band: 60/75 and 160/240), for the fields the call sets (a new question: all; an update: the ones it
+  carries); a report is refused above text 240, title 75, description 200, or summary 240
+  and header 12, naming the measured length, and prints no warnings; all built from the
   engine's constants) and who reads each field; every option of a code, API, naming or
   shape choice carries an `example`, printed as a code block under its For/Against before the
   dialog, never in it; a `preview` is
@@ -316,7 +392,7 @@ A round:
   (what it rests on), `rulings` (the lead's own rulings, each with a release's four fields) and `note`
   are optional and print only when present (r27-q123); an engine-built approval or cap question
   carries no parts. The round
-  description may carry one `overview` line (at most 240 characters). A refused
+  description may carry one `overview` line (at most 240 characters; warned over 160). A refused
   Stage report, or a new question in a pass report, lists every error at once;
   an update that touches `problem`, `cases`, `premises`, `options` or `rulings` repeats the checks for
   them (`note` is presentation: it re-issues the batch without a loop).
@@ -418,10 +494,10 @@ A round:
   relate), because a released ruling blocks what it changes until planned. The
   release pre-fills, for each settled board item of a rule record in its set
   (this session's state), the answers row `answered: close` and the close by
-  that record, so `board release --closes` closes it; one still open afterwards
+  that record, so `board ruling release --closes` closes it; one still open afterwards
   follows the partial-failure path. A `--no-board` round only names the settled
   points in the record file. `show --json` questions carry `settles`.
-- Every round opens with the pre-pass (step `prepass`, before Collect; r1-q7 in `.scratch/agents-workflow/decisions`): the
+- Every round opens with the pre-pass (step `prepass`, before Collect; r1-q7): the
   engine queues a `step-back` pass with the lenses `goal decisions` and the focus `pre-pass over the round's points`
   (`pre-pass on <subject>`), over the pasted points and the board items listed as read at `start`. It is the rough overview
   of the whole set (direction; points that are off or rest on an unclear premise, asked first; the cut under
@@ -511,9 +587,11 @@ A round:
   strength or its backing alone re-issue the batch; other changes rerun the
   loop. The Claude hand-off names no pass (the console runs it); Codex's names
   the skill to run (its full text, every pass). A step's report format goes
-  out once per step kind between compactions, and with every refused report (a
-  refused `step` repeats the formats its step offers; the dialog JSON always
-  prints). In Claude sessions a
+  out once per step kind between compactions. A refused `step` reprints only the
+  formats its step offers that the session was not told since its last compaction
+  (`state['told']`, `format:<kind>`), and adds one line, "The report format:
+  `protocol show` prints it again.", when it left one out; a refused `edit` or chat
+  `answer` always repeats its own format. The dialog JSON always prints. In Claude sessions a
   pass report is accepted only after an observed run of that pass since its
   last report (the console's `pass` record, or a model Skill call). A report
   applies whole: a refused one, at any step, changes nothing, lists every error
@@ -565,11 +643,11 @@ A round:
   it reads the tool): `autopilot` means away, `solo` means back. At Ask while away
   there is no batch, dialog or print; the text asks for `settle` (stdin
   `{"settle": {"q1": "act", "q2": "park"}}`, an entry for every question waiting to be
-  settled) by the classes of unattended.md, and names `session-lead-mode activate
+  settled) by the classes of unattended.md, and names `session activate
   solo` for a person who is back. `act` takes the recommendation as the answer
   (origin `away`, which no verb accepts from a caller, so no person origin can pass as
   it): Record then asks `reversal` beside the rationale and rule owner, writes a
-  `## Reversal` section, runs `board record … --status needs_ratification`, and the
+  `## Reversal` section, runs `board ruling record … --status needs_ratification`, and the
   record's source line reads `Away round (autopilot took the recommendation; no
   person answered), <date>: "<option>"`. `park` leaves the question an open, unassigned
   decision on the board: an existing item is unclaimed and gets the question's parts
@@ -593,7 +671,7 @@ A round:
   new record keeps the old Question and Alternatives (agents r11-q42). The text read
   first is kept on the question, so a rerun after a partial write sees the same.
 - Record is safe to run again: each record it creates carries the external ref
-  `protocol:<session>:<round>:<question>` (also through `board revise --external-ref`),
+  `protocol:<session>:<round>:<question>` (also through `board ruling revise --external-ref`),
   looked up and reused before a create, and the round is saved after each question. A
   cut Record (the console's time limit) reports again with the same report: the
   questions already recorded are skipped, the rest continue. Unknown or unanswered
@@ -604,7 +682,17 @@ A round:
   a circle, abandoning keeps no held question, and the board owns what a later
   round asks. A question still held on an outside result (`waitsFor`, below) at
   Record is deferred with that text as its reason (logged `deferred`), and the
-  questions whose `waitsOn` reaches it with it; the Record step lists them. A
+  questions whose `waitsOn` reaches it with it; the Record step lists them.
+  `protocol defer` (stdin `{"question", "quote", "until"?}`; where `edit` applies, the quote
+  checked the same way) defers a question the person asked to put off and the questions
+  waiting on it, through chains (an answer already given to one goes; a batch holding one
+  comes back without it; `until` is a date or duration `bd` reads). Record has no `defer`
+  input (a report with one is refused) and files every deferral through one writer: on a board
+  the question's item (a decision created for a draft, never a revision) is unclaimed and
+  `board bd defer <id> --reason <the quote> [--until <date>]`d, outside waits too (no date);
+  `recorded` is set only after the defer succeeds, so a rerun creates nothing twice. A round
+  without a board files nothing: the history (`deferred`) and the Closed text note it. `protocol
+  restart` of a deferred question takes it back, with the questions deferred with it. A
   round that closes while the session holds decided board records closes naming
   the release.
 
@@ -626,7 +714,7 @@ session's records`), one run per session, on a board only:
   record from the set (its reason shows at the next round's Stage); spreads
   stops the run (nothing releases, the records stay decided and held, the
   close names the round for them). Contained + own keeps the record
-  `revised`: the engine runs `board record <id> <file>` (a failure refuses
+  `revised`: the engine runs `board ruling record <id> <file>` (a failure refuses
   the report), a conditional approval lapses, and before the approval one
   scoped `step-back` then one scoped `ground` pass run on the revised ids
   whose `## Decision` text changed (a correction leaving it alone still asks)
@@ -649,7 +737,7 @@ session's records`), one run per session, on a board only:
   board root, absolute and `~` as written; installed files as rendered),
   Markdown anchors match a GitHub heading slug or an explicit anchor, pending
   items are open, and the record's `## Rule owner` names each written path.
-- Release runs `board release` with the answered closes, then the other
+- Release runs `board ruling release` with the answered closes, then the other
   supersedes; it reads statuses first and reruns only what remains after a
   failure.
 
@@ -671,7 +759,7 @@ it is asked. `restart`
 takes answered dependents along, through chains, and names them. Questions go out
 in listed order, four at a time; a new question goes last, or ahead of the one
 its `before` names, and existing questions stay put. `show <ids>` prints
-questions whole, and a record carries the question's premises as `## Premises`.
+questions whole, and a record carries the question's premises as `## Premises` and its root as `## Root`.
 The quote check of `edit` and chat answers also accepts a dialog note.
 
 `protocol next` prints the top 5 seed questions of the next round (open
@@ -689,7 +777,7 @@ was just read first, to recommend the other next step when no question round lea
 and how to start a row. `protocol next --set` (stdin `{"rounds": [{"title",
 "summary", "estimate": {"questions", "unblocks"}, "why", "fresh", "ids"?}]}`)
 stores the model's proposal while no round is open: at most 3 rows. `title`
-(75 characters) and `summary` (one sentence, 240) are plain words: a question id
+(about 60 characters, refused over 75; a title in between is stored with a warning line) and `summary` (one sentence, 240) are plain words: a question id
 (`q12`) or a board item in them is refused (a hyphenated word is an item only
 when the board shows it). `estimate` holds the model's whole-number estimates:
 questions settled, board items waiting on the answers. `ids` optionally names
@@ -720,8 +808,8 @@ each part of the user's words", then a one-line pointer, r13-q79) and, beside th
 question rows last printed (`state['rows']`, r13-q66): a check pass prints only the rows that
 differ from the last output, then `N questions, K listed above as new or changed (protocol
 show lists them)`. A pass always gets the skill's full text; the engine cuts nothing. A
-compaction prints everything again. A `checked` line is one line of about 120 characters; the
-engine refuses one over 150 (strong reasons are still re-sent each challenge run).
+compaction prints everything again. A `checked` line is one line of about 120 characters (the pass format and each pass's scope line say so);
+one over 120 and within 250 is accepted with a warning line, one over 250 is refused (strong reasons are still re-sent each challenge run).
 
 Every step's output opens with a headline: the call's events in the Log's
 words, then the next step (`r1 · related resolved · next: the next batch`); the
@@ -789,6 +877,8 @@ relays the person's chat messages, presses and a typed or pressed
 compaction. Its round features act for lead, solo and autopilot. A `protocol` call reads as two rows in the chat: its arguments and
 the engine's headline. Every call may run up to ten minutes (`$.process.run`'s maximum); one that fails or is cut answers the model
 with the error and that it may have run in part (read `protocol show` before running it again; a Record step runs again safely).
+A press only claims its run: its engine, board, git and VS Code work runs after the press returns, since the host cuts a
+press hook off after 10 s and a call can wait that long on an embedded board or on the session lock a Record step holds.
 Esc at a turn end stops the pass loop; a successful compaction right after reruns the stopped pass once (not a skipped or precompute
 one; a pass given up as stuck is never rerun). `/console-continue` (r7-q24) runs the turn-end decision on demand: it queues the pending pass (a stopped, asked-for or noted
 run of it included) unless a run of it is queued already (a run the host refused counts as none), reopens the issued batch past the
@@ -797,7 +887,7 @@ repeat guard, else wakes the model at the open step with `protocol status --line
 (counts, the ready items for you (id, type, title; 3 show, the rest fold behind `+N more`), sessions with runtime and pull initials, `auto` for autopilot,
 this session's items under `this session holds`, stale holds, live workers; the counts split by who acts, `you` (for you, to accept, to ratify,
 decided, questions) then `agents` (to plan, to design, to implement, to review), zeros dim; in a project without a board, a dim `no board` beside the title and nothing else, while a failing board keeps its error), Change requests
-(only the requests waiting for you and those in work (being built or under agent review), in the accept-queue order (board-coordination.md#change-request-queue; in-work rows by created); the banner counts `N to accept · N in work · N wait on your answers · N queued` (zero parts left out; waiting on your answers: queued requests whose work unit waits on an unreleased decision), the queued ones listed nowhere in the pane; two lines per request: id and title with the buttons Walk through (a design or a result view) or Open (code, in VS Code's review tree), Accept, Return, Refresh, then the stage in color (on a request waiting for you, what you look at: design, code or result), `unblocks N` (open work, designs, questions and requests waiting on it directly or through others; milestones and epics not counted) when N > 0, the effective priority dim (the hover names what raised it), the milestone it is work of, check state, new-failure count, problem marks (setup failed, review stale, land blocked); 3 show, the rest and the to-ratify list fold behind `+N more`; ids show without the board's own prefix, while presses and prompts keep the full id (`board` resolves a bare id to the board prefix); the opened summary adds the accept stage, look, view, the
+(only the requests waiting for you and those in work (being built or under agent review), in the accept-queue order (board-coordination.md#change-request-queue; in-work rows by created); the banner counts `N to accept · N in work · N wait on your answers · N queued` (zero parts left out; waiting on your answers: queued requests whose work unit waits on an unreleased decision), the queued ones listed nowhere in the pane; two lines per request: id and title with the buttons Walk through (a design or a result view) or Open (code, in VS Code's review tree), Accept, Return, Refresh, then the stage in color (on a request waiting for you, what you look at: design, code or result), `unblocks N` (open work, designs, questions and requests waiting on it directly or through others; milestones and epics not counted) when N > 0, the effective priority dim (the hover names what raised it), the milestone it is work of, check state, new-failure count, problem marks (setup failed, review stale, land blocked); a to-ratify row with a landed range has an Open that shows that range in the review tree (r10-q50); 3 show, the rest and the to-ratify list fold behind `+N more`; ids show without the board's own prefix, while presses and prompts keep the full id (`board` resolves a bare id to the board prefix); the opened summary adds the accept stage, look, view, the
 failure counts, the quiet marks (lands with, in review tree) and each new failure as a `vscode://file` link), Round: while no run is open and the engine's `next`
 offers something, the banner reads `the next step, proposed` over the proposals (one row per proposed round: `[ Start ] <title> · ~N questions ·
 unblocks ~M items`, plus `· compacts first` for a
@@ -842,17 +932,19 @@ recommended suggestion (the row's first line `·` with Start, `M records
 decided ·` with Release Round, or Compact), nothing while a dialog is
 open or nothing is offered. Start runs `/start-round <n>` (bare: row 1) without a
 stamp: the press is the go-ahead, not an approval like `/release-round`. A row
-that compacts first stores the command and runs `/compact` with no focus text;
-the compaction hook keeps the proposal's title in the summary and runs the
-command once the compaction succeeded (a skipped or failed compaction drops it
-with a notice naming the command; so do your next typed prompt and a round
-start).
+that compacts first compacts (keeping the proposal's title in the summary), then
+starts, whether pressed or typed (a `/start-round` hook answers the typed command
+and compacts on a later tick: the host refuses a compaction inside the hook); a
+skipped or failed compaction starts nothing and says so with a notice naming the
+command.
 `/console` prints a line per proposal below the board (`<n>. <first line> ·
 <summary> · type /start-round <n>`); the idle-agent notification goes out
 once per idle episode across consoles, and so does the accept notification for
 a request that newly reaches to-accept (not those waiting when the console
 starts; an agent session gets none; its marker goes when the request leaves
-to-accept). It idles without a registered role or a
+to-accept). The model's `protocol` tool reads as one transcript row: the engine's headline, or on a
+failed call its reason (`refused: <engine message>` on exit 1, `usage error: <argparse message>` on exit 2);
+the model receives the whole result, opening `protocol exited N.`. It idles without a registered role or a
 drawing surface and fails open except for recovery. Test it with `claude
 plugin test home/patrick/agents/claude/mods/console`.
 
@@ -894,7 +986,7 @@ Sessions name triggers in their protocols; the skill owns how its result is
 reused.
 
 The `architect` skill coordinates the architecture specialist without
-requiring a role. The agent owns design and review; `second-opinion` independently
+requiring a role. The agent owns design, `review` assesses it; `second-opinion` independently
 challenges decisions. The lead selects each for a concrete question. `plan`
 decomposes an agreed design into implementation work when decomposition or
 integration needs specialist judgment; leads can write pattern-determined plans
@@ -926,8 +1018,16 @@ machine's links from the same lists, so a shipped hook or tool is added in one
 place; hook registrations come from `../claude/settings.json` and
 `../codex/hooks.json`, so only this setup's hooks belong in them.
 
-`setup/install.sh` (its use: `setup/README.md`) runs on stock macOS bash 3.2; the
-validator's hooks group holds the shipped shell to that and runs the installer in
-a fake home. It refuses symlinked targets, so it never runs over this machine's
-home-manager links. The `~/.agents/setup-state.json` it writes lists what it
+`setup/install.py` (its use: `setup/README.md`) is stdlib-only Python that stays parseable
+by macOS's 3.9, so its version message (or its re-run under a newer `python3.N`) reaches the user;
+the validator's hooks group runs it in a fake home. It refuses symlinked targets, so it never runs
+over this machine's home-manager links. The `~/.agents/setup-state.json` it writes lists what it
 installed, which is how an upgrade or `--uninstall` finds what to remove.
+
+The installer pins each top-level Python tool in `~/.agents/bin` to the `python3` it ran under; the
+nix build pins this machine's copies (`pinnedBin`, linked by `../agents.nix`) to `agentPackage.python` and the bundle ships
+`#!/usr/bin/env python3`. It also grants the write roots listed in `GRANT_ROOTS` in `install.py`
+(the folders `bin/scratch` and `protocol_engine/cli.py` write; the validator checks them against
+those tools): an `Edit(<root>/**)` rule per root in Claude's `permissions.allow` (tracked in the
+state file) and a marked block in `~/.codex/config.toml` (found again by its marker). This machine's
+`../claude/settings.json` and `../codex/config.toml` carry their own copies, not generated from the list.

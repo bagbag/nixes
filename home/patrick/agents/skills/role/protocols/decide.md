@@ -30,12 +30,12 @@ Never decide these alone.
   shared board, that is the person of the question's queue
   ([Routing](../../shared/board-core.md#routing)): ask only your person's
   questions; another person challenges a ruling with a new question. Write
-  decision records, rule owners, your own artifacts, `/tmp` probes and inline
+  decision records, rule owners, your own artifacts, probes and inline
   changes under the global instructions' Orchestration; leave other
   implementation to work items. Run a spike a
   round question waits on yourself when one probe run likely settles it, as a
-  script that prints the deciding facts and keeps its full output in a scratch
-  file you read only on surprise; a script failing twice goes to a `build`
+  script that prints the deciding facts and keeps its full output in your scratch
+  folder, read only on surprise; a script failing twice goes to a `build`
   worker. Leave experiments needing
   several passes or variants to a spike item.
 - Decide board bookkeeping yourself (comments, relations, blocks, follow-up
@@ -91,7 +91,7 @@ Run the round through `protocol` (`$HOME/.agents/bin/protocol`; in Claude the
 console's `protocol` tool): `start round` (stdin `{"points": [...]}` for
 pasted points), then `step` with each step's report; resume an open round from
 `protocol show`. Add `--discussion` for a round of the discussion's points
-alone and `--no-board <dir>` for a topic outside this repository's board, or a
+alone and `--no-board [<dir>]` for a topic outside this repository's board, or a
 repository without one; `--proposal <n>` starts row n of the stored proposal;
 `--subject <id|text>` names the artifact the round judges.
 Follow the engine's output; the steps below add the judgment it leaves to you.
@@ -104,10 +104,7 @@ Follow the engine's output; the steps below add the judgment it leaves to you.
    Output: the pass report.
 2. **Collect.** The engine lists the points and classes.
 3. **Select.** Prerequisites before their dependents.
-4. **Related.** Extend an open item or decided record on the same decision, in
-   place, instead of adding one. Relate a record the answer changes by one
-   clause; the release's Re-check corrects it.
-5. **Ground.** Run the decision protocol from Top-down through Premises
+4. **Ground.** Run the decision protocol from Top-down through Premises
    read-only across the round. Ground questions headed into a detailed
    walkthrough yourself. Treat item and doc text as claims and re-verify them
    in current source. Use `explore-options` or `second-opinion` when warranted
@@ -116,10 +113,15 @@ Follow the engine's output; the steps below add the judgment it leaves to you.
    first, then spot-check decisive claims.
    Output: one line per question: its deciding premises in plain words,
    premises still to ask; sources go in the pass reports and the record.
-6. **Ask** under [Asking the user](../../shared/asking.md#asking-the-user),
+5. **Stage.** Frame each question from what Ground found, its `root` (cause
+   and end state) included.
+6. **Related.** Extend an open item or decided record on the same decision, in
+   place, instead of adding one. Relate a record the answer changes by one
+   clause; the release's Re-check corrects it.
+7. **Ask** under [Asking the user](../../shared/asking.md#asking-the-user),
    from its Check step.
    Output: the questions.
-7. **Record.** Give each answered decision its record under
+8. **Record.** Give each answered decision its record under
    [Rulings](../../shared/board-coordination.md#rulings); when the user asks
    for the overall picture first, record the round after the walkthrough.
    Record user-stated constraints and principles as rulings, and in the
@@ -129,7 +131,10 @@ Follow the engine's output; the steps below add the judgment it leaves to you.
    as new records.
 
 Apply a change the user asks for to the round's questions through
-`protocol edit` with their words as the quote, not through a pass.
+`protocol edit` with their words as the quote, not through a pass. Defer a
+question (with the questions waiting on it) at the user's request through
+`protocol defer` with their words as the quote and `until` when they name a
+date.
 
 **Stop:** an answer states a criterion, or a later step changes the premise:
 restart the affected questions under the decision protocol's
@@ -145,7 +150,7 @@ at Record while it waits on an outside result.
 
 Run the release through `protocol` like a round: `start release [<ids>]`. Follow
 the engine's output; only the person approves. The steps below add the judgment it leaves to
-you. Without a board, `start release --no-board <dir> [<ids>]` takes the round's
+you. Without a board, `start release [<ids>] --no-board [<dir>]` takes the round's
 record files, skips the board check and appends the Released line; name their
 owners by absolute or `$HOME` paths, and leave owner writes uncommitted for the
 user.
@@ -194,7 +199,8 @@ is in order, bases first
    [Evidence and gates](../../shared/acceptance.md#evidence-and-gates). For a
    code CR the stored check and review must be `current` for the tip you review:
    wait for the refresh a review session took, or run it yourself under the
-   review protocol's [Refresh](review.md#refresh) steps 2-3 when none did.
+   review protocol's [Refresh](review.md#refresh) steps 2-3 when none did
+   (one open in the user's review tree: you refresh it once claimed).
    Note the tip the walkthrough starts on; for a user design checkpoint, the
    `design hash` the claim printed.
    Output: one line per gate: command, result; check state and tip, or the
@@ -209,9 +215,17 @@ is in order, bases first
    the CR meanwhile, show the range-diff before continuing.
    Output: the walkthrough; for a design, the round's answers.
 4. **Land or return.**
-   - **Accept:** `board land <cr> --tip <tip>` (the tip the user reviewed).
+   - **Accept:** `board cr land <cr> --tip <tip>` (the tip the user reviewed).
+     **Accept with edits** (the prompt names the review tree and the `board cr
+     edits` line): run that line and read the edits like a reviewer. On a likely
+     mistake (a missed rename, a broken reference) stop and ask the user before
+     landing; never change the edits. Pick the gate by stakes: none for docs
+     (`--no-gate`), a targeted command (`--gate`), or the project's checks
+     (`--checks`). Commit with that line plus `--commit -m "<msg>" <gate>`, then
+     `board cr land <cr> --tip <new tip>`. A failing gate lands nothing: tell
+     the user what `board` printed; the CR stays theirs.
    - **Design checkpoint:** name the outcome the round's answers entail for
-     one confirmation. Nothing changes the design: `board land <cr>
+     one confirmation. Nothing changes the design: `board cr land <cr>
      --checkpoint --design <hash>` (the hash from step 2). Otherwise block the
      CR on each round record that changes it (`board block <cr> --on <record>
      --reason "<what changes>"`, one call per record) and
@@ -219,11 +233,16 @@ is in order, bases first
      design once they are released.
    - **Changes wanted:** talk the root fix through with the user, then
      `board return <cr> "<findings>"`; add follow-up items to the CR.
-   - **Rejected:** `board reject <cr> "<reason>"`; delete branch `cr/<id>` and its worktree only on the user's
+     **Return with edits:** `board cr edits <cr> --from <tree> --tip <tip>
+     --commit -m "<msg>"` (no gate), then `board return <cr> "<findings>"`.
+   - **Rejected:** `board cr reject <cr> "<reason>"`; delete branch `cr/<id>` and its worktree only on the user's
      confirmation (they hold the only copy).
    - **Ratification:** close the item with the user's answer
      (`board bd close <id> --reason "<verdict>"`); on "no" ask what the user
-     wants (fix or revert) and file it as a follow-up CR.
+     wants (fix or revert) and file it as a follow-up CR. Edits the user made
+     in the review tree: `board cr edits <id> --from <tree> --tip <landed tip>
+     --commit -m "<msg>"` creates that follow-up CR with the edit as its first
+     commit (read the edits first, as for an Accept).
    - **Epic, milestone:** close on the user's acceptance
      (`board bd close <id> --reason "<verdict>"`). Otherwise for an epic, create
      the findings as items under it; for a milestone, as members, and unclaim
@@ -235,7 +254,7 @@ is in order, bases first
 
 **Stop:** the user rejects the CR or result: return it, reject it, file the
 findings under the epic, or add them to the milestone. A required gate cannot
-run: return it naming the unestablished claim. `land` refuses: report the
+run: return it naming the unestablished claim. `board cr land` refuses: report the
 refusal, then refresh or wait.
 
 **Exit:** the item is closed, landed or returned, or the milestone has new

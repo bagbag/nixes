@@ -105,13 +105,13 @@ A standalone review of decided records or a contract draft, before release.
 ## Refresh
 
 Refresh work: [Change-request queue](../../shared/board-coordination.md#change-request-queue);
-its command: the `board refresh` row of
+its command: the `board cr refresh` row of
 [Change requests](../../shared/change-requests.md#change-requests).
 
 1. **Claim.** `board claim` (kind `refresh`), or `board claim <cr>` for the
    request a prompt names.
    Output: `claimed <cr> (refresh)`.
-2. **Refresh.** `board refresh <cr>`; resolve a conflict in the worktree and
+2. **Refresh.** `board cr refresh <cr>`; resolve a conflict in the worktree and
    rerun.
    Output: check state, range-diff size, incoming file count.
 3. **Triage.** Dispatch the `cr-refresh` agent with the CR id, its worktree
@@ -120,7 +120,7 @@ its command: the `board refresh` row of
    - A confirmed flag: `board handover <cr> "<confirmed flags>"` sends the CR
      back to `in_review`. Hand over the same way after a resolved conflict
      (the commits changed).
-   - None: `board refresh <cr> --review-holds`. When it refuses on a base
+   - None: `board cr refresh <cr> --review-holds`. When it refuses on a base
      that moved after your triage, triage the new incoming files and rerun.
    Output: flags with verdicts.
 4. **Release.** `board unclaim <cr>`.

@@ -23,14 +23,14 @@ export async function home($: $): Promise<string> {
 }
 
 async function registry($: $, args: readonly string[]): Promise<Ran> {
-  const ran = await $.process.run(['bash', binary(await home($), 'session-lead-mode'), ...args], { timeoutMs: 10_000 })
+  const ran = await $.process.run(['bash', binary(await home($), 'session'), ...args], { timeoutMs: 10_000 })
   return { exitCode: ran.exitCode, stdout: ran.stdout, stderr: ran.stderr }
 }
 
-/** The registry's state dir (`session-lead-mode state-dir`, its owner); console-notified markers live there. */
+/** The registry's state dir (`session state-dir`, its owner); console-notified markers live there. */
 export async function stateDir($: $): Promise<string> {
   const ran = await registry($, ['state-dir'])
-  if (ran.exitCode !== 0 || ran.stdout.trim() === '') throw new EngineError(`session-lead-mode state-dir: exit ${ran.exitCode}: ${ran.stderr.trim()}`)
+  if (ran.exitCode !== 0 || ran.stdout.trim() === '') throw new EngineError(`session state-dir: exit ${ran.exitCode}: ${ran.stderr.trim()}`)
   return ran.stdout.trim()
 }
 const binary = (homeDir: string, name: string): string => `${homeDir}/.agents/bin/${name}`
@@ -208,15 +208,27 @@ export async function boardViews($: $, session: string): Promise<ConsoleBoard> {
       return empty
     }
   }
-  const [view, agents] = await Promise.all([
+  const [view, agents, scratch] = await Promise.all([
     attempt(async () => record(await boardJson($, session, ['console'])), null),
     attempt(async () => (await $.agent.list()).filter(agent => agent.parentId === undefined).map(parseAgent), [] as ConsoleAgent[]),
+    scratchLine($),
   ])
-  return { ...parseBoardConsole(view), agents, error: errors.length === 0 ? null : errors.join('; ') }
+  return { ...parseBoardConsole(view), agents, scratch, error: errors.length === 0 ? null : errors.join('; ') }
+}
+
+/** The repository's scratch line (`scratch status --line`) for the pane; null when there is none, and when scratch fails or is missing: the line is a courtesy, never an error row. */
+export async function scratchLine($: $): Promise<string | null> {
+  try {
+    const ran = await $.process.run([binary(await home($), 'scratch'), 'status', '--line'], { timeoutMs: 10_000 })
+    const line = ran.exitCode === 0 ? ran.stdout.trim() : ''
+    return line === '' ? null : line
+  } catch {
+    return null
+  }
 }
 
 /** `board console`'s JSON as the console reads it; null (a failed read) reads as an empty board. */
-export function parseBoardConsole(raw: unknown): Omit<ConsoleBoard, 'agents' | 'error'> {
+export function parseBoardConsole(raw: unknown): Omit<ConsoleBoard, 'agents' | 'scratch' | 'error'> {
   const view = raw === null ? null : record(raw)
   return {
     isMissing: view !== null && view.noBoard === true,
@@ -235,19 +247,19 @@ export function parseBoardConsole(raw: unknown): Omit<ConsoleBoard, 'agents' | '
   }
 }
 
-/** The registry entry (`session-lead-mode show`, its owner), or null while the session has no registered role. */
+/** The registry entry (`session show`, its owner), or null while the session has no registered role. */
 export async function readRole($: $, session: string): Promise<ConsoleRole | null> {
   const ran = await registry($, ['show', session])
-  if (ran.exitCode !== 0) throw new EngineError(`session-lead-mode show: exit ${ran.exitCode}: ${ran.stderr.trim()}`)
+  if (ran.exitCode !== 0) throw new EngineError(`session show: exit ${ran.exitCode}: ${ran.stderr.trim()}`)
   const raw = record(JSON.parse(ran.stdout))
   const role = text(raw.role)
   return role === '' ? null : { session, role, actor: text(raw.actor), tool: text(raw.tool) }
 }
 
-/** Sets a named session's worker count, this session's or another's (`session-lead-mode set-workers`). */
+/** Sets a named session's worker count, this session's or another's (`session set-workers`). */
 export async function setWorkers($: $, session: string, workers: string): Promise<void> {
   const ran = await registry($, ['set-workers', session, '--workers', workers])
-  if (ran.exitCode !== 0) throw new EngineError(`session-lead-mode set-workers: exit ${ran.exitCode}: ${ran.stderr.trim()}`)
+  if (ran.exitCode !== 0) throw new EngineError(`session set-workers: exit ${ran.exitCode}: ${ran.stderr.trim()}`)
 }
 
 // Parsing: the engine owns the shape; a missing field reads as empty, a wrong version fails.
@@ -409,6 +421,7 @@ function parseCr(value: unknown): ConsoleCr {
     check: {
       state: oneOf(check.state, CHECK_STATES as readonly ConsoleCheckState[]) ?? 'unchecked', tip: nullableText(check.tip), baseTip: nullableText(check.baseTip),
       at: nullableText(check.at), result: oneOf(check.result, ['pass', 'fail']),
+      kind: oneOf(check.kind, ['full', 'targeted', 'none']) ?? 'full', command: nullableText(check.command), reason: nullableText(check.reason),
       newFailures: Array.isArray(check.newFailures) ? list(check.newFailures).map(text).filter(one => one !== '') : null,
       baseCount: typeof check.baseCount === 'number' ? check.baseCount : null, tipCount: typeof check.tipCount === 'number' ? check.tipCount : null,
     },
@@ -418,13 +431,13 @@ function parseCr(value: unknown): ConsoleCr {
     after: nullableText(raw.after), setupFailed: raw.setupFailed === true,
     priority: typeof raw.priority === 'number' ? raw.priority : 9, ownPriority: typeof raw.ownPriority === 'number' ? raw.ownPriority : 9,
     raisedBy: raw.raisedBy === null || raw.raisedBy === undefined || text(record(raw.raisedBy).id) === '' ? null : { id: text(record(raw.raisedBy).id), isItem: record(raw.raisedBy).isItem === true },
-    reviewState: oneOf(raw.reviewState, ['current', 'stale']), refreshWork: raw.refreshWork === true,
+    reviewState: oneOf(raw.reviewState, ['current', 'stale']), refreshWork: raw.refreshWork === true, heldByReviewTree: raw.heldByReviewTree === true,
   }
 }
 
 function parseRatification(value: unknown): ConsoleRatification {
   const raw = record(value)
-  return { id: text(raw.id), cr: text(raw.cr), title: text(raw.title) }
+  return { id: text(raw.id), cr: text(raw.cr), title: text(raw.title), tip: nullableText(raw.tip), baseTip: nullableText(raw.baseTip) }
 }
 
 function parseHeld(value: unknown): ConsoleHeld {

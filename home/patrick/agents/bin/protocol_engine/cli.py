@@ -22,11 +22,13 @@ import contextlib
 import copy
 import json
 import os
+import re
+import subprocess
 import sys
 from collections.abc import Mapping
 from pathlib import Path
 
-from .base import CHECK_CAP, Call, PASSES, ProtocolError, VERB_ORIGINS, _call, lines, utcnow
+from .base import BIN, CHECK_CAP, Call, PASSES, ProtocolError, VERBS, VERB_ORIGINS, _call, lines, utcnow
 from .session import resolve_session
 from .store import Store, next_id
 from .boards import Board, board_root
@@ -43,7 +45,7 @@ from .seeds import next_text, proposal_row, set_proposal
 from .views import (
     headline, history_events, history_text, instructions, show_json, show_markdown, show_questions, status_line
 )
-from .verbs import answer, answered_line, decline, drop_report, edit_round, nudge_report, prune, require_origin, restart
+from .verbs import answer, answered_line, decline, defer_round, drop_report, edit_round, nudge_report, prune, require_origin, restart
 
 
 # CLI
@@ -60,6 +62,22 @@ def read_stdin() -> dict:
     if not isinstance(value, dict):
         fail('stdin must be a JSON object')
     return value
+
+
+DEFAULT_RECORDS = Path('<default records folder>')  # `--no-board` without a folder (r15-q73)
+
+
+def default_records() -> Path:
+    """The private folder of a repository's board-less decision records, named as bin/scratch names the repository (r15-q71)."""
+    call = _call.get()
+    result = subprocess.run([sys.executable, str(BIN / 'scratch'), '__repo'], capture_output=True, text=True, env=call.env, cwd=call.cwd,
+                            stdin=subprocess.DEVNULL)
+    if result.returncode != 0 or not result.stdout.strip():
+        fail(f"--no-board without a folder needs the repository's name from `scratch __repo`: {result.stderr.strip() or 'it printed nothing'}")
+    data = call.env.get('XDG_DATA_HOME', '')
+    if not data.startswith('/'):  # the XDG spec: a relative value is invalid and ignored
+        data = str(Path(call.env.get('HOME') or Path.home()) / '.local' / 'share')
+    return Path(data) / 'agents' / 'decisions' / result.stdout.strip()
 
 
 def start(ctx: Context, name: str, report: dict, scope: str = 'board', records: Path | None = None,
@@ -136,6 +154,44 @@ class Parser(argparse.ArgumentParser):
         raise Exit(2, self.format_usage() + f'{self.prog}: error: {message}\n')
 
 
+# One example per verb for `protocol help` (a verb without one fails the help test).
+EXAMPLES = {
+    'start': 'protocol start round',
+    'step': 'protocol step < report.json',
+    'answer': 'protocol answer --origin chat < {"question","answer","quote"}',
+    'decline': 'protocol decline --origin model-reported < {"marker"}',
+    'pass': 'protocol pass --origin model < {"command":"ground","args":"","pending":null}',
+    'edit': 'protocol edit < {"updates":[...],"quote":"..."}',
+    'defer': 'protocol defer < {"question":"q3","quote":"..."}',
+    'say': 'protocol say --origin composer < {"text":"..."}',
+    'dropped': 'protocol dropped --origin plugin < {"kind":"pass","id":"p7"}',
+    'nudged': 'protocol nudged --origin plugin < {"pass":"p7"}',
+    'scope': 'protocol scope --origin plugin < {"command":"ground"}',
+    'restart': 'protocol restart q2 --reason "criterion changed"',
+    'next': 'protocol next',
+    'compacted': 'protocol compacted',
+    'resume': 'protocol resume',
+    'abandon': 'protocol abandon',
+    'show': 'protocol show --json',
+    'pending': 'protocol pending',
+    'status': 'protocol status --line',
+    'history': 'protocol history --all',
+    'help': 'protocol help',
+}
+ORIGIN_MARK = ' *'
+
+
+def help_text(commands) -> str:
+    """Every verb with one example: the verbs sessions run first (`*`: the accepted --origin depends on the caller), then the
+    console's. The sections are base.VERBS's audiences."""
+    def section(audiences: tuple[str, ...]) -> list[str]:
+        return [f"  {EXAMPLES[name]}{ORIGIN_MARK if VERBS.get(name, ('session',))[0] == 'origin' else ''}\n      {re.split(r'\s*[;(]', sub.description)[0]}"
+                for name, sub in commands.choices.items() if VERBS.get(name, ('session',))[0] in audiences]
+    return '\n'.join(['usage: protocol <verb> [args]; reports are JSON on stdin (`<` below)', '', *section(('session', 'origin')), '',
+                      '* origin-dependent: the accepted --origin differs by caller (protocol <verb> -h)', '', 'console only:',
+                      *section(('console',))])
+
+
 def main(argv: list[str] | None = None) -> int:
     code, out, err = run_cli(sys.argv[1:] if argv is None else argv, os.environ, Path.cwd(), sys.stdin)
     sys.stdout.write(out)
@@ -170,7 +226,7 @@ def cli(argv: list[str]) -> int:
     commands = parser.add_subparsers(dest='command', required=True)
 
     def verb(name: str, text: str):
-        return commands.add_parser(name, help=text, parents=[origin], allow_abbrev=False)
+        return commands.add_parser(name, help=text, description=text, parents=[origin], allow_abbrev=False)
 
     sub = verb('start', 'open a protocol run; stdin {"points": [...]} adds pasted points')
     sub.add_argument('name', choices=sorted(PROTOCOLS))
@@ -183,8 +239,9 @@ def cli(argv: list[str]) -> int:
                                                           "its pre-pass presents it with a verdict and findings, which become the points; not with --proposal")
     sub.add_argument('--discussion', action='store_true',
                      help="the pasted points alone (question-me): no board list at Collect; board items join through Related")
-    sub.add_argument('--no-board', metavar='DIR', type=Path,
-                     help="a topic outside this repository's board: no board reads or writes; records go to DIR (a release takes the record files in DIR)")
+    sub.add_argument('--no-board', metavar='DIR', type=Path, nargs='?', const=DEFAULT_RECORDS,
+                     help="a topic outside this repository's board: no board reads or writes; records go to DIR (a release takes the record files in DIR); "
+                          "without DIR: ${XDG_DATA_HOME:-~/.local/share}/agents/decisions/<repo key of bin/scratch> (put ids before a bare option)")
     verb('step', "submit the current step's report (stdin JSON); prints the next step")
     verb('answer', 'record answers (stdin JSON); prints show --json with a note')
     verb('decline', 'a declined batch returns to ready (stdin JSON); prints show --json')
@@ -192,6 +249,8 @@ def cli(argv: list[str]) -> int:
                  'show --json')
     verb('edit', "apply the user's requested change to the questions (stdin {\"updates\", \"quote\"}); no pass for wording, options "
                  "or a mark lowered to lean; a new question or changed recommendation gets the scoped check, a raise to strong one challenge")
+    verb('defer', "defer a question and the questions waiting on it at the user's request (stdin {\"question\", \"quote\", \"until\"?}); "
+                  "Record files each on the board (bd defer), a round without a board only notes it")
     verb('say', "store the person's message for the chat quote check (stdin {\"text\"})")
     verb('dropped', 'the console dropped a stale action (stdin {"kind": "pass", "id"} or {"kind": "batch", "marker"})')
     verb('nudged', 'the person asked the console to continue (stdin: what it did, {"pass"?, "batch"?} or {"step"}; {} for none of these)')
@@ -215,7 +274,11 @@ def cli(argv: list[str]) -> int:
     sub = verb('history', 'passes by origin, answers, declines, restarts per round')
     sub.add_argument('--all', action='store_true', help='every session in the state dir')
     sub.add_argument('--json', action='store_true', help='the raw events')
-    args = parser.parse_args(argv)
+    verb('help', 'every verb with an example (a call with no arguments prints it too)')
+    args = parser.parse_args(argv or ['help'])
+    if args.command == 'help':
+        _call.get().stdout.append(help_text(commands) + '\n')
+        return 0
     args.origin = args.origin or args.global_origin
     if args.command in VERB_ORIGINS and not args.origin:
         parser.error(f'{args.command} needs --origin')
@@ -235,6 +298,8 @@ def cli(argv: list[str]) -> int:
                 repo = str(board_root(_call.get().cwd)) if board_root(_call.get().cwd) else None
             board = Board(repo, entry.get('actor') or session[-8:]) if repo else None
             ctx = Context(store, state, entry, board)
+            if args.command == 'start' and args.no_board == DEFAULT_RECORDS:
+                args.no_board = default_records()
             require_origin(ctx, args.command, args.origin)
             output = run(ctx, args)
             if write:
@@ -328,6 +393,12 @@ def run(ctx: Context, args) -> str:
             ctx.go(edit_round(ctx, report))
         except ProtocolError as error:
             raise ProtocolError(str(error), formats=words.EDIT_FORMAT) from None
+        return instructions(ctx)
+    if command == 'defer':
+        try:
+            ctx.go(defer_round(ctx, report))
+        except ProtocolError as error:
+            raise ProtocolError(str(error), formats=words.DEFER_FORMAT) from None
         return instructions(ctx)
     if command == 'say':
         if not isinstance(report.get('text'), str) or not report['text'].strip():

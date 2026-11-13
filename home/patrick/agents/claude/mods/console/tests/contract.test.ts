@@ -90,6 +90,13 @@ test('a check without a comparison reads as none ran', () => {
   expect(check).toMatchObject({ newFailures: null, baseCount: null, tipCount: null })
 })
 
+test('the check kind is read; a missing or unknown one is a full check', () => {
+  const kinds = parseBoardConsole({ crs: [{ id: 'a', check: { state: 'current', kind: 'targeted', command: 'pnpm test a' } }, { id: 'b', check: { state: 'current', kind: 'none', reason: 'docs' } }, { id: 'c', check: { kind: 'weird' } }, { id: 'd' }] }).crs
+  expect(kinds.map(one => one.check.kind)).toEqual(['targeted', 'none', 'full', 'full'])
+  expect(kinds[0]?.check.command).toBe('pnpm test a')
+  expect(kinds[1]?.check.reason).toBe('docs')
+})
+
 test('the priority fields, the answers count and the prefix are read', () => {
   const board = parseBoardConsole({ waitingOnYou: 5, prefix: 'p', crs: [{ id: 'x', priority: 1, ownPriority: 2, raisedBy: { id: 'p-i', isItem: true } }, { id: 'y' }] })
   expect(board).toMatchObject({ waitingOnYou: 5, prefix: 'p' })

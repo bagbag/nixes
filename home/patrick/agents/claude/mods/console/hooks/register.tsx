@@ -3,20 +3,19 @@
 // registered role or a drawing surface. Round features act for lead, solo and autopilot.
 import type { EngineInterface, Register } from 'claude-code'
 
-import type { ConsoleStart } from '../types'
 
 import {
-  afterTurn, context, continueLater, continueTyped, CONTINUE_COMMAND, dropIfStale, failOpen, message, notice, PANE, placeholderMarker, pressRun, pressSubmit, recordPass, refreshAll, refreshBoard, refreshLater,
+  afterTurn, compactThenStart, context, continueLater, continueTyped, CONTINUE_COMMAND, dropIfStale, failOpen, message, notice, PANE, placeholderMarker, pressRun, pressSubmit, recordPass, refreshAll, refreshBoard, refreshLater,
   refreshRole, refreshRound, releaseRun, rerunStoppedPass, resetSession, deliverDialogOutcome, dialogSwapped, stampReleaseRun, withContext,
   midTurnBuiltin, modelStartedPass, notePersonRun, placeQuestions, questionList, showQuestions, staleDelivery, startedPass, withStartScope,
 } from './core'
-import { answer, boardShow, decline, isRoundOpen, pass, pending as readPending, protocol, RELEASE_COMMAND, say, statusLine, toolArgv } from './engine'
+import { answer, boardShow, decline, isRoundOpen, pass, pending as readPending, protocol, RELEASE_COMMAND, say, START_COMMAND, statusLine, toolArgv } from './engine'
 import { capture, judgeDialog } from './gate'
 import type { DialogInput } from './gate'
 import { drawBand, drawPane, drawPlaced, PANE_MIN_COLUMNS, suggestions } from './pane'
-import { addGate, deferCommand, getBoard, getGate, getPass, getPrinted, getPersonOrigin, getReviewing, getRole, getRound, getStart, releaseRefresh, setAskSent, setPaneDismissed, setPersonOrigin, setPrinted, setRound, setStart, setTurnRunning, takeDeferred } from './state'
+import { addGate, deferCommand, getBoard, getGate, getPass, getPrinted, getPersonOrigin, getReviewTree, getRole, getRound, releaseRefresh, setAskSent, setPaneDismissed, setPersonOrigin, setPrinted, setRound, setTurnRunning, takeDeferred } from './state'
 import {
-  compactedNote, consoleText, DECLINED_TEXT, declinedNote, keepRoundText, NO_QUESTION_TEXT, keepStartText, protocolCallText, protocolResultText, STALE_PASS_TEXT, startAbandonedText, toolFailedText, TOOL_IDLE_TEXT, unsavedNote,
+  compactedNote, consoleText, DECLINED_TEXT, declinedNote, keepRoundText, NO_QUESTION_TEXT, protocolCallText, protocolResultText, STALE_PASS_TEXT, toolFailedText, TOOL_IDLE_TEXT, unsavedNote,
 } from './words'
 
 const PROTOCOL_TOOL = 'mcp__console__protocol'
@@ -49,19 +48,6 @@ async function settleContext<T extends { skip?: string }>($: EngineInterface, co
   const round = await getRound($)
   if (compacted.skip === undefined && trigger !== 'precompute' && round !== null) await setRound($, { ...round, isContextLarge: false })
   return compacted
-}
-
-/** The stored start goes with the compaction that was to precede it: run once that succeeded, dropped with a notice when it was skipped (a precompute installs nothing and keeps it). */
-async function settleStart($: EngineInterface, start: ConsoleStart, compacted: { skip?: string }, trigger: string): Promise<void> {
-  if (trigger === 'precompute') return
-  if (compacted.skip !== undefined) return abandonStart($, start, `compaction skipped: ${compacted.skip}`)
-  await setStart($, null)
-  $.clock.after(0, () => pressRun($, start.command, start.args).catch(failOpen($, 'starting the next round')))
-}
-
-async function abandonStart($: EngineInterface, start: ConsoleStart, why: string): Promise<void> {
-  await setStart($, null)
-  $.clock.after(0, () => notice($, startAbandonedText(why, start)).catch(() => undefined))
 }
 
 export const register: Register = on => {
@@ -226,7 +212,6 @@ export const register: Register = on => {
     }
     if (isPerson) {
       await setPersonOrigin($, origin)
-      await setStart($, null)  // the person's own prompt: a stored start is moot
       await setAskSent($, null)  // and the dialog message may go again for the batch still out
     }
     if (isPerson && e.command === undefined) {
@@ -267,16 +252,10 @@ export const register: Register = on => {
     if (!ctx.isRoundRole || e.agentId !== undefined) return next(e)
     const round = await refreshRound($, ctx.session)
     const isOpen = round !== null && isRoundOpen(round)
-    // No round is open: a stored start (a suggestion that compacts first) is kept through the compaction and sent after it.
-    const start = isOpen ? null : await getStart($)
-    if (!isOpen && start === null) return settleContext($, await next(e), e.trigger)
-    const keep = isOpen
-      ? keepRoundText(round.round, round.step)
-      : keepStartText(start?.title)
-    const compacted = await next({ ...e, instructions: [e.instructions, keep].filter(Boolean).join('\n\n') })
+    if (!isOpen) return settleContext($, await next(e), e.trigger)
+    const compacted = await next({ ...e, instructions: [e.instructions, keepRoundText(round.round, round.step)].filter(Boolean).join('\n\n') })
     await settleContext($, compacted, e.trigger)
-    if (start !== null) await settleStart($, start, compacted, e.trigger)
-    if (compacted.skip !== undefined || e.trigger === 'precompute' || !isOpen) return compacted
+    if (compacted.skip !== undefined || e.trigger === 'precompute') return compacted
     $.clock.after(0, () => rerunStoppedPass($, ctx.session).catch(failOpen($, 'rerunning the stopped pass')))
     try {
       const line = await statusLine($, ctx.session)
@@ -289,17 +268,20 @@ export const register: Register = on => {
   }).catch(async ($, e, next) => {
     // Recovery is not fail-open: say so where the person sees it, and compact without the round's instructions.
     $.clock.after(0, () => notice($, 'the round could not be kept through this compaction; run protocol status --line').catch(() => undefined))
-    const start = await getStart($).catch(() => null)
-    if (start === null || e.trigger === 'precompute') return next(e)
-    try {
-      const compacted = await next(e)
-      await settleStart($, start, compacted, e.trigger)
-      return compacted
-    } catch (error) {
-      await abandonStart($, start, `compaction failed: ${message(error)}`)
-      throw error
-    }
+    return next(e)
   })
+
+  // A typed start that compacts first (r9-q48): answered with nothing here (the host refuses a compaction inside this
+  // hook); a later tick compacts, then starts. A press does the same through pressStart.
+  on('command.run', { command: START_COMMAND }, async ($, e, next) => {
+    const args = e.args.trim() || '1'  // bare /start-round is row 1
+    const ctx = await context($)
+    const round = ctx.isRoundRole ? await refreshRound($, ctx.session) : null
+    const row = suggestions(round).find(one => one.kind === 'round' && String(one.number) === args)
+    if (row === undefined || row.kind !== 'round' || !row.isCompacting) return next(e)
+    $.clock.after(0, () => compactThenStart($, args, row.title).catch(failOpen($, 'starting the next round')))
+    return { text: '' }
+  }).catch(($, e, next) => next(e))
 
   on('command.run', { command: 'console' }, async ($, e) => {
     const ctx = await refreshRole($)
@@ -314,7 +296,7 @@ export const register: Register = on => {
     if (ctx.isRoundRole) await refreshRound($, ctx.session)
     const board = ctx.isActive ? await refreshBoard($, ctx) : await getBoard($)
     const round = await getRound($)
-    return { text: consoleText(role, board, round, ctx.isRoundRole, role.role === 'autopilot' ? [] : suggestions(round), await getReviewing($)) }
+    return { text: consoleText(role, board, round, ctx.isRoundRole, role.role === 'autopilot' ? [] : suggestions(round), await getReviewTree($)) }
   })
 
   on('command.run', { command: 'console-item' }, async ($, e) => {

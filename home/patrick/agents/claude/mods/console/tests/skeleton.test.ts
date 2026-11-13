@@ -89,6 +89,11 @@ describe('tool', () => {
     expect(w.verbs().filter(verb => !verb.startsWith('show'))).toEqual([])
   })
 
+  test('the description leaves origins to the engine and the tool: the tool stamps --session and --origin (r15-q88)', () => {
+    expect(PROTOCOL_TOOL_DESCRIPTION).not.toMatch(/--session|--origin|Leave/)
+    expect(PROTOCOL_TOOL_DESCRIPTION).toContain('["help"]')
+  })
+
   test('refuses `pending` with its own reason and does not list it: the console runs the next pass (r8-q28)', async ($, on) => {
     const { w } = world(on, { round: roundJson({ pending: { id: 'p7', command: 'ground', args: '' } }) })
     await start($)
@@ -96,6 +101,7 @@ describe('tool', () => {
     expect(String(ran.result)).toBe(`Refused: ${PENDING_REFUSAL}.`)
     expect(w.verbs().filter(verb => verb.startsWith('pending'))).toEqual([])
     expect(PROTOCOL_TOOL_DESCRIPTION).not.toContain('pending')
+    expect(PROTOCOL_TOOL_DESCRIPTION).toContain('["defer"]')  // the verb the model learns here (review F8)
     expect(PROTOCOL_ARGS_DESCRIPTION).not.toContain('pending')
   })
 

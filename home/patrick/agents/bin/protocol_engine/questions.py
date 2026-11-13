@@ -4,8 +4,8 @@ from __future__ import annotations
 import re
 
 from .base import (
-    CONTENT, DESCRIPTION_LIMIT, HEADER_MAX, KINDS, LEAN_CAUSES, MAY_NOT_APPLY, PRESENTATION, ProtocolError, SCHEDULING, STAGED_KINDS, STRENGTHS,
-    STRONG_CRITERIA, SUMMARY_MAX, TEXT_LIMIT, TITLE_LIMIT
+    CONTENT, DESCRIPTION_LIMIT, DESCRIPTION_MAX, HEADER_MAX, KINDS, LEAN_CAUSES, MAY_NOT_APPLY, PRESENTATION, ProtocolError, SCHEDULING, STAGED_KINDS, STRENGTHS,
+    STRONG_CRITERIA, SUMMARY_MAX, TEXT_LIMIT, TEXT_MAX, TITLE_LIMIT, TITLE_MAX, band_warning
 )
 from .store import next_id
 from .boards import claim_items, split_holds
@@ -15,7 +15,7 @@ from .engine import Context, by_id, fail, premise_status, questions, touch
 # Validation of question content (AskUserQuestion's limits).
 
 OPTIONAL_PARTS = ('cases', 'premises', 'note')  # text parts printed only when present
-PARTS = ('problem', 'cases', 'premises', 'options', 'rulings')
+PARTS = ('problem', 'root', 'cases', 'premises', 'options', 'rulings')  # `root` is record-only: required, never printed
 
 
 def part_errors(q: dict, where: str, fields: tuple[str, ...] = PARTS) -> list[str]:
@@ -25,6 +25,8 @@ def part_errors(q: dict, where: str, fields: tuple[str, ...] = PARTS) -> list[st
     errors = []
     if 'problem' in fields and not (isinstance(q.get('problem'), str) and q['problem'].strip()):
         errors.append(f'{where}: `problem` must be a non-empty string (what is decided and why now)')
+    if 'root' in fields and not (isinstance(q.get('root'), str) and q['root'].strip()):
+        errors.append(f'{where}: `root` must be a non-empty string: "<cause>; <end state>", or "does not apply: <why>" (a preference or naming question)')
     errors += [f'{where}: `{field}` must be a string or left out' for field in OPTIONAL_PARTS
                if (field in fields or field == 'note') and q.get(field) is not None and not isinstance(q[field], str)]
     if 'options' in fields and isinstance(q.get('options'), list):
@@ -142,6 +144,19 @@ def check_question(q: dict, where: str, marks: bool = True, parts: tuple[str, ..
     refuse_all(question_errors(q, where, marks, parts))
 
 
+def question_warnings(q: dict, fields) -> list[str]:
+    """Warnings for the `fields` a call sets that run over their target and within their limit (question_errors' limits): a new
+    question sets all of them, an update the ones it carries, so an untouched field is not warned again. Call after the checks pass."""
+    warnings = []
+    for field, target, limit in (('title', TITLE_MAX, TITLE_LIMIT), ('text', TEXT_MAX, TEXT_LIMIT)):
+        if field in fields and isinstance(q.get(field), str):
+            warnings += band_warning(f"{q['id']}: {field}", len(q[field]), target, limit)
+    if 'options' in fields and isinstance(q.get('options'), list):
+        for o in q['options']:
+            warnings += band_warning(f"{q['id']}: the description of option {o['label']!r}", len(o.get('description', '')), DESCRIPTION_MAX, DESCRIPTION_LIMIT)
+    return warnings
+
+
 def new_question(ctx: Context, raw: dict, where: str) -> dict:
     unknown = set(raw) - set(CONTENT) - {'key'}
     errors = [unknown_fields(where, unknown)] if unknown else []
@@ -154,9 +169,10 @@ def new_question(ctx: Context, raw: dict, where: str) -> dict:
         errors.append(f"{where}: `kind` must be one of {', '.join(STAGED_KINDS)}: a ruling of yours is an ordinary question with a recommendation "
                       'and a mark, and only the release approval is confirm-own-rulings, which the engine asks')
     refuse_all(errors + question_errors(q, where, parts=PARTS))
+    ctx.messages += question_warnings(q, CONTENT)
     q['options'] = [{'label': o['label'], 'description': o.get('description', ''), 'for': o['for'].strip(), 'against': o['against'].strip(),
                      **({'example': o['example']} if 'example' in o else {})} for o in q['options']]
-    for field in ('problem', 'cases', 'note', 'waitsFor'):
+    for field in ('problem', 'root', 'cases', 'note', 'waitsFor'):
         if isinstance(q.get(field), str):
             q[field] = q[field].strip()
     return q
@@ -365,6 +381,7 @@ def apply_update(ctx: Context, update, where: str, keys: dict) -> tuple[int, str
     merged = {**q, **{k: v for k, v in update.items() if k in CONTENT}}
     check_question(merged, f"{where} ({q['id']})", marks=any(k in update for k in MARK_FIELDS),
                    parts=tuple(k for k in PARTS if k in update))
+    ctx.messages += question_warnings(merged, update)
     if isinstance(merged.get('waitsFor'), str):
         merged['waitsFor'] = merged['waitsFor'].strip()
     if not any(merged.get(k) != q.get(k) for k in CONTENT):
@@ -403,6 +420,8 @@ def describe(ctx: Context, raw, where: str, required: bool) -> None:
         ctx.round.update(title=raw['title'].strip(), summary=raw['summary'].strip())
         if raw.get('overview') is not None:
             ctx.round['overview'] = raw['overview'].strip()
+        ctx.messages += band_warning('round title', len(ctx.round['title']), TITLE_MAX, TITLE_LIMIT)
+        ctx.messages += band_warning('round overview', len(ctx.round.get('overview', '')), TEXT_MAX, TEXT_LIMIT) if raw.get('overview') is not None else []
 
 
 DISCLOSURE = ('ruling', 'why', 'alternative', 'fails', 'evidence')  # asking.md Walk through: own rulings; `why`: the ruling meets the goals without a material trade-off

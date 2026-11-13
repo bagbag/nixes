@@ -28,33 +28,39 @@ prune_days=7
 lock_file=$state_dir/.lock
 lock_wait=10  # seconds a registration write waits for the lock
 
-usage() {
-  cat >&2 <<'EOF'
-usage: session-lead-mode activate <lead|agent|solo|autopilot> [--pulls plan,design,implement,review] [--workers <n>]
-       session-lead-mode set-workers <id> --workers <n>
-       session-lead-mode actor
-       session-lead-mode get <id>
-       session-lead-mode show <id>
-       session-lead-mode list
-       session-lead-mode ended
-       session-lead-mode state-dir
-       session-lead-mode alive
-       session-lead-mode session-active
-       session-lead-mode worker-started <agent-id>
-       session-lead-mode worker-active <agent-id>
-       session-lead-mode worker-ended <agent-id>
+help_text() {
+  cat <<'EOF'
+usage: session <verb> [args]
+  session activate lead --pulls plan,implement --workers 3   register this session's role (lead|agent|solo|autopilot)
+  session set-workers <id> --workers 2                       change a session's worker cap
+  session actor                                              this session's actor name
+  session get <id>                                           a session's role
+  session show <id>                                          a session's registration as JSON
+  session list                                               every registration, one JSON line each
+  session ended                                              actors of pruned registrations
+  session state-dir                                          the registry folder
+  session alive                                              record this Claude Code process (hook)
+  session session-active                                     touch the session's activity mark (hook)
+  session worker-started <agent-id>                          mark a worker running (hook)
+  session worker-active <agent-id>                           touch a worker's mark (hook)
+  session worker-ended <agent-id>                            remove a worker's mark (hook)
+  session help                                               this list; a call with no arguments prints it too
 `--pulls` adds pulls to any role's preset; agent has no preset and needs at least one.
 `--workers` sets the session's worker cap; without it, activate keeps the one set.
 EOF
+}
+
+usage() {
+  help_text >&2
   exit 2
 }
 
 fail() {
-  echo "session-lead-mode: $1" >&2
+  echo "session: $1" >&2
   exit 2
 }
 
-[[ $# -gt 0 ]] || usage
+[[ $# -gt 0 && $1 != help ]] || { help_text; exit 0; }
 original=("$@")
 command=$1
 shift
@@ -132,7 +138,7 @@ entry_json() {
     '{role, pulls, actor, tool, session, registered_at, pid, pid_started, project, worker_cap,
       active_at: (if $active_at == "" then null else $active_at end),
       workers: ([range(0; $ARGS.positional | length; 2) as $i | {($ARGS.positional[$i]): $ARGS.positional[$i + 1]}] | add // {})}' \
-    "${times[@]}" <"$1"
+    ${times[@]+"${times[@]}"} <"$1"  # bash 3.2: an empty array is unbound under set -u
 }
 
 ps_command=$(command -v ps || echo /bin/ps)

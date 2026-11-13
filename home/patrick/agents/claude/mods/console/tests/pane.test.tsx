@@ -1227,6 +1227,18 @@ describe('long lists', () => {
     expect(protocolResultText(JSON.stringify({ version: 1, note: 'r1 · answered q1 (chat) · next: record the answers\nRecorded.' })))
       .toBe('r1 · answered q1 (chat) · next: record the answers')
   })
+
+  test('a refused or malformed protocol call shows the engine\'s reason, not the exit code', () => {
+    const refusal = 'protocol exited 1.\n\nstderr:\nprotocol: checked.q62: 260 characters; one line of about 120 (the finding itself goes in an update or `summary`)\nAfter the pass, report each change as a per-question update'
+    expect(protocolResultText(refusal))
+      .toBe('refused: checked.q62: 260 characters; one line of about 120 (the finding itself goes in an update or `summary`)')
+    expect(protocolResultText({ result: refusal })).toBe(protocolResultText(refusal))
+    const usage = 'protocol exited 2.\n\nstderr:\nusage: protocol [-h] [--session SESSION]\n                {start,step}\nprotocol: error: unrecognized arguments: --bogus'
+    expect(protocolResultText(usage)).toBe('usage error: unrecognized arguments: --bogus')
+    expect(protocolResultText('protocol exited 2.\n\nstderr:\nsomething odd')).toBe('usage error: something odd')
+    expect(protocolResultText('protocol exited 3.\n\nstderr:\nboom')).toBe('protocol exited 3.')  // no reading for other codes
+    expect(protocolResultText('r1 · ground: q1 changed\nstderr:\nprotocol: not a failure')).toBe('r1 · ground: q1 changed')
+  })
 })
 
 describe('suggestions', () => {
@@ -1362,6 +1374,22 @@ describe('suggestions', () => {
     await ui.unmount()
   })
 
+  test('a press returns before its engine call: a slow release stamp runs after it, then the command (the press budget)', async ($, on) => {
+    const { w, clock } = world(on, { round: closed({ release: { count: 3 } }) })
+    await ready($, clock)
+    const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+    let release = () => {}
+    w.hold = { verb: 'pass', until: new Promise<void>(resolve => { release = resolve }) }
+    await ui.press({ key: 'sg-release-start' })  // resolves while the stamp is held
+    await clock.settle()
+    expect(w.verbs()).toContain('pass --origin press')
+    expect(w.commands).toEqual([])
+    release()
+    await clock.settle()
+    expect(w.commands).toEqual([{ command: 'release-round', args: '' }])
+    await ui.unmount()
+  })
+
   test('the band shows the recommended suggestion; its Start runs /start-round for it', async ($, on) => {
     const { w, clock } = world(on, { round: closed(PROPOSED) })
     await ready($, clock)
@@ -1414,9 +1442,10 @@ describe('suggestions', () => {
       const found = world(on, { round: closed(PROPOSED) })
       found.w.tokens = tokens
       const compaction = { answer: { messages: [{ role: 'user', text: 'summary', toolUses: [] }] } as unknown }
-      on('session.compact', () => compaction.answer)
+      const ranBefore: number[] = []  // how many commands had run when each compaction began
+      on('session.compact', () => { ranBefore.push(found.w.commands.length); return compaction.answer })
       await ready($, found.clock)
-      return { ...found, compaction, ui: await $.ui.mount({ ...PANE, surface: 'terminal' }) }
+      return { ...found, compaction, ranBefore, ui: await $.ui.mount({ ...PANE, surface: 'terminal' }) }
     }
 
     for (const [name, tokens] of [['a fresh session (no reading yet)', undefined], ['just under the limit', 149_999], ['a failing reading', 'fails']] as const) {
@@ -1433,13 +1462,14 @@ describe('suggestions', () => {
     }
 
     test('at the limit the row says it and its Start compacts first; a row the model did not mark never does', async ($, on) => {
-      const { w, clock, ui } = await mounted($, on, 150_000)
+      const { w, clock, ui, ranBefore } = await mounted($, on, 150_000)
       expect(await texts(ui)).toContain(`${FIRST} · compacts first`)
       expect(await texts(ui)).toContain('Cache questions · ~3 questions · unblocks ~8 items')
       expect(await texts(ui)).not.toContain('Cache questions · ~3 questions · unblocks ~8 items · compacts first')
       await ui.press({ key: 'sg-round-1-start' })
       await clock.settle()
-      expect(w.commands).toEqual([{ command: 'compact', args: '' }])
+      expect(ranBefore).toEqual([0])  // r9-q48: the /start-round hook compacts first, then the command runs
+      expect(w.commands).toEqual([START_1])
       await ui.unmount()
     })
 
@@ -1479,95 +1509,89 @@ describe('suggestions', () => {
     })
   })
 
-  describe('a Start on a round that compacts first', () => {
-    const START = START_1
+  describe('/start-round on a row that compacts first (r9-q48), typed or pressed', () => {
     const messages = [{ role: 'user' as const, text: 'hi', toolUses: [] }]
-    const compact = ($: any) => $.session.compact({ trigger: 'manual', messages })
 
-    /** The press: stores the start message and runs /compact without focus text. */
-    async function pressed($: any, on: any, answer: (instructions: string) => unknown = () => ({ messages: [{ role: 'user', text: 'summary', toolUses: [] }] })) {
+    async function started($: any, on: any, answer: (instructions: string) => unknown = () => ({ messages })) {
       const found = world(on, { round: closed(PROPOSED) })
-      const seen: string[] = []
-      on('session.compact', (_: unknown, e: { instructions?: string }) => { seen.push(e.instructions ?? ''); return answer(e.instructions ?? '') })
+      found.w.tokens = 500_000
+      const compactions: { instructions: string; ran: number }[] = []
+      on('session.compact', (_: unknown, e: { instructions?: string }) => { compactions.push({ instructions: e.instructions ?? '', ran: found.w.commands.length }); return answer(e.instructions ?? '') })
       await ready($, found.clock)
+      return { ...found, compactions }
+    }
+    const typed = async ($: any, clock: { settle: () => Promise<void> }, args = '2') => {
+      await $.command.run({ command: 'start-round', args, origin: { kind: 'composer' }, presentation: { isFullscreen: true, columns: 160 } })
+      await clock.settle()
+    }
+
+    test('a press compacts once with the proposal kept, then runs the command; nothing runs before the compaction', async ($, on) => {
+      const { w, clock, compactions } = await started($, on)
       const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
       await ui.press({ key: 'sg-round-1-start' })
-      await found.clock.settle()
-      await ui.unmount()
-      return { ...found, seen }
-    }
-
-    test('stores the command and runs /compact with no text; the compaction hook keeps the proposal and runs the command once compaction succeeded', async ($, on) => {
-      const { w, clock, seen } = await pressed($, on)
-      expect(w.commands).toEqual([{ command: 'compact', args: '' }])  // nothing else runs before the compaction
-      await compact($)
-      expect(seen[0]).toBe('Keep the proposed next round, which starts right after this compaction: Queue retry.')  // only the real Start
       await clock.settle()
-      expect(w.commands).toEqual([{ command: 'compact', args: '' }, START])
+      expect(compactions).toEqual([{ instructions: 'Keep the proposed next round, which starts right after this compaction: Queue retry.', ran: 0 }])
+      expect(w.commands).toEqual([START_1])
       expect(w.prompts).toEqual([])
-      await compact($)  // cleared: the next compaction runs nothing
-      await clock.settle()
-      expect(w.commands).toEqual([{ command: 'compact', args: '' }, START])
+      await ui.unmount()
     })
 
-    test('a precompute installs nothing: the stored message waits for the compaction itself', async ($, on) => {
-      const { w, clock } = await pressed($, on)
-      await $.session.compact({ trigger: 'precompute', messages })
-      await clock.settle()
-      expect(w.commands).toEqual([{ command: 'compact', args: '' }])
-      await compact($)
-      await clock.settle()
-      expect(w.commands).toEqual([{ command: 'compact', args: '' }, START])
+    test('the typed command does the same', async ($, on) => {
+      const { w, clock, compactions } = await started($, on)
+      await typed($, clock)
+      expect(compactions.map(one => one.ran)).toEqual([0])
+      expect(w.commands).toEqual([START_1])
     })
 
-    test('a skipped compaction clears it and says so', async ($, on) => {
-      const { w, clock, session } = await pressed($, on, () => ({ skip: 'vetoed by a hook' }))
-      await compact($)
+    test('a bare /start-round is row 1 and compacts when row 1 does', async ($, on) => {
+      const found = world(on, { round: closed({ rounds: [{ ids: [], title: 'Only row', premise: 'p', why: 'w', fresh: true }] }) })
+      found.w.tokens = 500_000
+      const ran: number[] = []
+      on('session.compact', () => { ran.push(found.w.commands.length); return { messages } })
+      await ready($, found.clock)
+      await typed($, found.clock, '')
+      expect(ran).toEqual([0])
+      expect(found.w.commands).toEqual([{ command: 'start-round', args: '1' }])
+    })
+
+    test('after a skipped compaction the Start button works again', async ($, on) => {
+      let calls = 0
+      const { w, clock } = await started($, on, () => (++calls === 1 ? { skip: 'vetoed' } : { messages }))
+      const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+      await ui.press({ key: 'sg-round-1-start' })
       await clock.settle()
-      expect(w.commands).toEqual([{ command: 'compact', args: '' }])
+      expect(w.commands).toEqual([])
+      await ui.press({ key: 'sg-round-1-start' })
+      await clock.settle()
+      expect(w.toasts).not.toContain('/start-round 2 is already queued')
+      expect(w.commands).toEqual([START_1])
+      await ui.unmount()
+    })
+
+    test('a row that does not compact (not marked fresh) or a small context only starts', async ($, on) => {
+      const { w, clock, compactions } = await started($, on)
+      await typed($, clock, '1')
+      expect(compactions).toEqual([])
+      expect(w.commands).toEqual([START_0])
+      w.tokens = 1_000
+      await $.turn.complete({ answer: '', durationMs: 1, isAborted: false, turnId: 't', reason: 'answer' } as never)
+      await typed($, clock)
+      expect(compactions).toEqual([])
+      expect(w.commands).toEqual([START_0, START_1])
+    })
+
+    test('a skipped compaction starts nothing and says so', async ($, on) => {
+      const { w, clock, session } = await started($, on, () => ({ skip: 'vetoed by a hook' }))
+      await typed($, clock)
+      expect(w.commands).toEqual([])
       expect(notices(session).some(one => one.includes('the next round was not started (compaction skipped: vetoed by a hook)') && one.includes('Queue retry') && one.includes('type /start-round 2'))).toBe(true)
-      await $.session.compact({ trigger: 'manual', messages })
-      await clock.settle()
-      expect(w.commands).toEqual([{ command: 'compact', args: '' }])
     })
 
-    test('a failing compaction clears it and says so', async ($, on) => {
-      const { w, clock, session } = await pressed($, on, () => { throw new Error('summarizer down') })
-      await compact($).catch(() => undefined)
-      await clock.settle()
-      expect(w.commands).toEqual([{ command: 'compact', args: '' }])
-      expect(notices(session).some(one => one.includes('the next round was not started (compaction failed') && one.includes('Queue retry') && one.includes('type /start-round 2'))).toBe(true)
-    })
-
-    test("a plugin's prompt or a hidden one does not clear it", async ($, on) => {
-      const { w, clock } = await pressed($, on)
-      await $.prompt.submit({ text: 'from a plugin', origin: { kind: 'plugin', name: 'x' }, wait: false } as never)
-      await $.prompt.submit({ text: 'hidden', origin: { kind: 'composer' }, isMeta: true, wait: false } as never)
-      await compact($)
-      await clock.settle()
-      expect(w.prompts).toEqual(['from a plugin', 'hidden'])
-      expect(w.commands).toEqual([{ command: 'compact', args: '' }, START])
-    })
-
-    for (const kind of ['composer', 'bridge'] as const) {
-      test(`a prompt the person types (${kind}) drops it`, async ($, on) => {
-        const { w, clock } = await pressed($, on)
-        await $.prompt.submit({ text: 'use flow, not protocol', origin: { kind }, wait: false } as never)
-        await compact($)
-        await clock.settle()
-        expect(w.prompts).toEqual(['use flow, not protocol'])
-        expect(w.commands).toEqual([{ command: 'compact', args: '' }])
-      })
-    }
-
-    test('a round start drops it', async ($, on) => {
-      const { w, clock } = await pressed($, on)
-      w.round = roundJson()
-      await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
-      await clock.settle()
-      await compact($)
-      await clock.settle()
-      expect(w.commands).toEqual([{ command: 'compact', args: '' }])
+    test('a failing compaction starts nothing and says so', async ($, on) => {
+      const { w, clock, session } = await started($, on, () => { throw new Error('summarizer down') })
+      await typed($, clock)
+      expect(w.commands).toEqual([])
+      expect(notices(session).some(one => one.includes('the next round was not started (compaction failed') && one.includes('Queue retry'))).toBe(true)
     })
   })
 

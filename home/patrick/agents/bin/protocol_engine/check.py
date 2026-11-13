@@ -5,7 +5,7 @@ import contextlib
 
 from .base import (
     ALL_LENSES, CHECKED_LIMIT, CHECKED_MAX, CAP_CHOICES, CHECK_CAP, EXPLORED_VERDICTS, LEAN_LENSES, OPTIONS_LENSES, PASSES, PATH_LENSES,
-    REFINE_LENSES, ProtocolError
+    REFINE_LENSES, ProtocolError, band_warning
 )
 from . import words
 from .engine import Context, Step, by_id, fail, questions, touch, unresolved
@@ -219,8 +219,10 @@ def challenge_report_format(ctx: Context) -> str:
 
 
 def refused_formats(ctx: Context, step: Step, report: dict, before: dict) -> str:
-    """The report formats a refused report repeats: the step's text rebuilt on the state before the refused call, which
-    keeps every format it offers whether or not it printed them, and a pass report's own."""
+    """The report formats a refused report repeats that the session was not told since its last compaction: the step's text
+    rebuilt on the state before the refused call, which keeps every format it offers whether or not it printed them, and a
+    pass report's own. One line points at `protocol show` when a told format is left out."""
+    told = set(before.get('told') or [])  # before the rebuild: step.text records its keys into `before`
     ctx.state, ctx.formats = before, {}
     with contextlib.suppress(Exception):
         step.text(ctx)
@@ -228,7 +230,8 @@ def refused_formats(ctx: Context, step: Step, report: dict, before: dict) -> str
         ctx.formats.setdefault('pass', words.pass_format(report['pass']))
     if report.get('pass') == 'challenge-rulings':
         ctx.formats.setdefault('challenge', words.challenge_format())
-    return '\n'.join(ctx.formats.values())
+    new = [text for kind, text in ctx.formats.items() if f'format:{kind}' not in told]
+    return '\n'.join([*new, *([words.FORMAT_AGAIN] if len(new) < len(ctx.formats) else [])])
 
 
 def settles(ctx: Context, command: str) -> bool:
@@ -326,7 +329,7 @@ def scope_ids(ctx: Context, command: str, settled: bool | None) -> tuple[list[st
 
 def scope_text(ctx: Context, command: str) -> str:
     """The pending pass's scope as the step names it: the ids to cover and, for challenge-rulings, the strong ones."""
-    return words.pass_scope(*scope_ids(ctx, command, settled=True))
+    return words.pass_scope(*scope_ids(ctx, command, settled=True), command)
 
 
 SCOPE_STEPS = ('check', 'ask')  # the steps that take a pass report (check_accept, ask_accept)
@@ -349,7 +352,7 @@ def start_scope(ctx: Context, report: dict) -> dict:
     settled = stamp_settles(ctx, command, stamp) if 'pending' in report else None
     ids, strong = scope_ids(ctx, command, settled)
     due = options_due(ctx, command, settled)
-    text = words.start_scope(ids, strong, due or []) if ids or due else ''
+    text = words.start_scope(ids, strong, due or [], command) if ids or due else ''
     return {'covers': ids, 'explored': due, 'text': text}
 
 
@@ -426,6 +429,7 @@ def record_pass(ctx: Context, report: dict) -> tuple[str, int, str]:
     if command == 'challenge-rulings':
         errors += challenge_errors(ctx, report, scope, updates)
     refuse_all(errors)
+    ctx.messages += [w for name, value in checked.items() for w in band_warning(f'checked.{name}', len(value), CHECKED_MAX, CHECKED_LIMIT)]
     if key:
         mark_covered(ctx, key, [*scope, *ctx.applied, *ctx.added])
     for qid, found in explored.items():

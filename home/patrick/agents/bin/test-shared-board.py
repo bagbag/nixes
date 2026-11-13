@@ -40,7 +40,7 @@ parser.add_argument('--serial', action='store_true', help='run the groups one af
 parser.add_argument('--idle', action='store_true', help='internal (the cleanup test): start up, then wait for a signal')
 options = parser.parse_args()
 BOARD = str(Path(options.board).resolve())
-REGISTRY = str(Path(BOARD).parent / 'session-lead-mode')
+REGISTRY = str(Path(BOARD).parent / 'session')
 ROOT = Path(tempfile.mkdtemp(prefix='shared-board.', dir='/tmp'))
 RUNNER_PID = 'runner.pid'  # in the run's folder: tells a later run whether this one is still alive
 (ROOT / RUNNER_PID).write_text(str(os.getpid()))
@@ -790,12 +790,12 @@ def t_cr() -> None:
           'cr: hand-over stores the (tip, base tip) check and the review stage', meta_of(a))
     rc, out, err = review_pass(a)
     check(rc == 0 and items('a')[a]['status'] == 'needs_acceptance', 'cr: look before stays at accept after the agent review', err + out)
-    rc, _, err, _ = run('a', 'land', a, role='agent')
+    rc, _, err, _ = run('a', 'cr', 'land', a, role='agent')
     check(rc == 1 and 'only a lead or solo' in err, 'cr: an agent session cannot land', err)
     tip = git('rev-parse', 'HEAD', cwd=wt(a)).strip()
-    rc, _, err, _ = run('a', 'land', a, '--tip', 'deadbee')
+    rc, _, err, _ = run('a', 'cr', 'land', a, '--tip', 'deadbee')
     check(rc == 1 and 'branch moved' in err and git('rev-parse', target, cwd=side).strip() == main_tip, 'cr: land --tip refuses a moved branch', err)
-    rc, out, err, _ = run('a', 'land', a, '--tip', tip[:9])
+    rc, out, err, _ = run('a', 'cr', 'land', a, '--tip', tip[:9])
     check(rc == 0 and git('rev-parse', target, cwd=side).strip() == tip and items('a')[a]['status'] == 'closed' and not wt(a).exists()
           and not git('branch', '--list', f'cr/{a}', cwd=side).strip(), 'cr: land fast-forwards the target, closes the CR and removes worktree and branch', err + out)
 
@@ -830,14 +830,14 @@ def t_cr() -> None:
     worker_pass(child_cr, c1, 'c.txt')
     to_review(child_cr)
     review_pass(child_cr)
-    rc, _, err, _ = run('a', 'land', child_cr)
+    rc, _, err, _ = run('a', 'cr', 'land', child_cr)
     check(rc == 1 and 'has not landed' in err, 'cr: a CR with a CR base never lands before its base', err)
     base_tip = git('rev-parse', 'HEAD', cwd=wt(base_cr)).strip()
-    rc, out, err, _ = run('a', 'land', base_cr, '--tip', base_tip[:9])
+    rc, out, err, _ = run('a', 'cr', 'land', base_cr, '--tip', base_tip[:9])
     check(rc == 0 and meta_of(child_cr).get('base') == target and items('a')[base_cr]['status'] == 'closed',
           'cr: landing the base resets the CRs stacked on it to the target', err + out)
     child_tip = git('rev-parse', 'HEAD', cwd=wt(child_cr)).strip()
-    rc, out, err, _ = run('a', 'land', child_cr, '--tip', child_tip[:9])
+    rc, out, err, _ = run('a', 'cr', 'land', child_cr, '--tip', child_tip[:9])
     check(rc == 0 and git('rev-parse', target, cwd=side).strip() == child_tip and subprocess.run(['git', 'merge-base', '--is-ancestor', base_tip, target], cwd=side).returncode == 0,
           'cr: the child lands once its base has', err + out)
 
@@ -861,7 +861,7 @@ def t_cr() -> None:
     row = items('a')[e]
     check(rc == 0 and row['status'] == 'open' and not row.get('assignee') and wt(e).is_dir() and git('branch', '--list', f'cr/{e}', cwd=side).strip(),
           'cr: return leaves the CR open and unassigned, its worktree and branch kept', err)
-    rc, out, err, _ = run('a', 'reject', e, 'the approach fails')
+    rc, out, err, _ = run('a', 'cr', 'reject', e, 'the approach fails')
     check(rc == 0 and items('a')[e]['status'] == 'closed' and git('branch', '--list', f'cr/{e}', cwd=side).strip() and wt(e).is_dir(),
           'cr: reject closes it unlanded, the branch and worktree stay until confirmed', err + out)
 

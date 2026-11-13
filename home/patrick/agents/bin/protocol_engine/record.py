@@ -10,29 +10,35 @@ from . import words
 from .boards import held_decided, read_counts, split_holds, statuses
 from .engine import Context, by_id, fail, questions
 from .questions import board_keys
+from .render import question_parts
 from .told import report_hint
 
 
-# Record: the engine writes each record and runs board record (which lints it).
+# Record: the engine writes each record and runs board ruling record (which lints it).
 
 def note_of(q: dict) -> bool:
     return isinstance(q.get('annotations'), dict) and bool(str(q['annotations'].get('notes') or '').strip())
 
 
-def waiting_outside(ctx: Context) -> dict[str, str]:
-    """The held questions still waiting on an outside result at Record (r8-q31), by id with the reason they are deferred:
-    the `waitsFor` text, and for a question whose `waitsOn` reaches one, that chain (deferred with it, r11-q42)."""
+def deferrals(ctx: Context) -> dict[str, dict]:
+    """Every question Record defers (r9-q40), by id: those the person deferred with `protocol defer` (and the questions deferred
+    with them), the held ones still waiting on an outside result (r8-q31), and the held ones whose `waitsOn` reaches one of
+    these (r11-q42). Each holds `reason`, `until` (a date bd reads, or None), `kind` (person, outside, chain) and for a question
+    deferred with another `with`."""
     held = {q['id']: q for q in questions(ctx, 'held') if not q.get('recorded')}
-    reasons = {qid: q['waitsFor'] for qid, q in held.items() if q.get('waitsFor')}
+    found = {q['id']: {'reason': q['deferral']['reason'], 'until': q['deferral']['until'], 'kind': 'person', 'with': q['deferral'].get('with')}
+             for q in questions(ctx, 'deferred') if not q.get('recorded')}
+    found.update({qid: {'reason': q['waitsFor'], 'until': None, 'kind': 'outside'} for qid, q in held.items() if q.get('waitsFor')})
     grew = True
     while grew:
         grew = False
         for qid, q in held.items():
-            premise = next((other for other in q.get('waitsOn') or [] if other in reasons), None)
-            if qid not in reasons and premise:
-                reasons[qid] = words.waits_on_deferred(premise, reasons[premise], bool(held[premise].get('waitsFor')))
+            premise = next((other for other in q.get('waitsOn') or [] if other in found), None)
+            if qid not in found and premise:
+                found[qid] = {'reason': words.waits_on_deferred(premise, found[premise]['reason'], found[premise]['kind']),
+                              'until': found[premise]['until'], 'kind': 'chain'}
                 grew = True
-    return reasons
+    return found
 
 
 def record_target(q: dict) -> str | None:
@@ -68,7 +74,7 @@ def record_text(ctx: Context) -> str:
     return lines(
         words.record_intro(ctx.round['id']),
         *rows,
-        *(words.record_deferred(qid, reason, bool(by_id(ctx, qid).get('waitsFor'))) for qid, reason in waiting_outside(ctx).items()),
+        *(words.record_deferred(qid, found) for qid, found in deferrals(ctx).items()),
         words.RECORD_GIVE,
         report_hint(ctx, 'record', words.record_example(todo[:1])),
     )
@@ -90,6 +96,7 @@ def record_file(q: dict, fields: dict) -> str:
     return (f"## Question\n{question}\n\n## Alternatives Considered\n{alternatives or '- none offered'}\n\n"
             f"## Decision\n{fields.get('decision') or chosen}\n\n## Rationale\n{fields['rationale'].strip()}\n\n{quoted}\n\n"
             + (f"## Premises\n{q['premises'].strip()}\n\n" if (q.get('premises') or '').strip() else '')
+            + (f"## Root\n{q['root'].strip()}\n\n" if (q.get('root') or '').strip() else '')
             + ('## Own rulings\n' + '\n'.join(f'- {words.ruling_line(x)}' for x in q['rulings']) + '\n\n' if q.get('rulings') else '')
             + ('## Earlier rulings\n' + '\n'.join(f"- {x['ruling'].strip()}: {x['verdict']}. {x['why'].strip()}" for x in q['priorRulings']) + '\n\n' if q.get('priorRulings') else '')
             + f"## Rule owner\n{fields['ruleOwner'].strip()}\n"
@@ -109,12 +116,16 @@ def tagged_item(ctx: Context, tag: str) -> str | None:
     return min(rows, key=lambda row: (row.get('created_at') or '', row['id']))['id'] if rows else None
 
 
-def board_item(ctx: Context, q: dict, path: Path, body: str | None = None) -> str:
+def board_item(ctx: Context, q: dict, path: Path, body: str | None = None, plain: bool = False) -> str:
     """The board id the record goes to: the question's item, else the draft created (or opened as a revision); `body`: the
-    new item's text (a parked question's parts), else the question and its options."""
+    new item's text (a parked question's parts), else the question and its options; `plain`: a new decision item, never a revision
+    of a record (a deferred question closes nothing and takes over only an open item)."""
     if q['board']:
         return q['board']
     takeover = next((h['id'] for h in q['overlaps'] if h['outcome'] in ('duplicate', 'extend')), None)
+    if takeover and plain:  # a deferral never moves a decided, released or closed record: only an open item is taken over
+        status = (ctx.board.json('show', takeover, '--json', '--field', 'status').get(takeover) or {}).get('status')
+        takeover = takeover if status in ('open', 'in_progress') else None
     if takeover:
         q['board'] = takeover
         return takeover
@@ -127,9 +138,9 @@ def board_item(ctx: Context, q: dict, path: Path, body: str | None = None) -> st
                       + f"\n\nStaged in round {ctx.round['id']}.\n", encoding='utf-8')
     # The released record it revises, else the first record it closes: the new question is linked to it (parent and topic
     # labels come from it) until Record closes it; link_record links the other records it closes the same way.
-    revised = q.get('revises') or next(iter(q.get('replaces') or []), None)
+    revised = None if plain else q.get('revises') or next(iter(q.get('replaces') or []), None)
     if revised:
-        new = ctx.board.checked('revise', revised, '--title', q['title'], '--body-file', str(packet), '--external-ref', tag).strip()
+        new = ctx.board.checked('ruling', 'revise', revised, '--title', q['title'], '--body-file', str(packet), '--external-ref', tag).strip()
     else:
         created = json.loads(ctx.board.checked('bd', 'create', '--type', 'decision', '--title', q['title'],
                                                '--body-file', str(packet), '--external-ref', tag, '--json') or '{}')
@@ -171,7 +182,7 @@ def link_record(ctx: Context, q: dict) -> None:
         taken = {frozenset(op.split()[2:4]) for op in blocks}
         relate = [h['id'] for h in q['overlaps'] if h['outcome'] == 'relate' and frozenset((q['board'], h['id'])) not in taken]
         # A record the question closes stays linked (as a revision) until Record closes it: a Record that stops before the
-        # close leaves a link `board release` refuses to pass, not two unrelated decided records.
+        # close leaves a link `board ruling release` refuses to pass, not two unrelated decided records.
         linked_now = q.get('revises') or next(iter(q.get('replaces') or []), None)
         pending = [old for old in q.get('replaces') or [] if old != linked_now]
         operations = [*(f"dep add {q['board']} {hit} relates-to" for hit in relate), *blocks,
@@ -202,7 +213,7 @@ def move_settled(ctx: Context, item: str, keys: list[str]) -> None:
 
 
 def close_replaced(ctx: Context, q: dict, item: str) -> None:
-    """Closes each decided record the recorded question replaces: `board supersede <old> --with <item>` once `item` is
+    """Closes each decided record the recorded question replaces: `board ruling supersede <old> --with <item>` once `item` is
     written and decided (it closes the old record and blocks the items waiting on it on the new one; a pending revision
     of the old record moves to the new one). The items the old record settles move to the new record, or they stay
     claimed with no release to close them. Repeatable: a record closed already is done. A hold of a gone session is
@@ -224,14 +235,37 @@ def close_replaced(ctx: Context, q: dict, item: str) -> None:
         else:
             if old in held[1]:
                 ctx.board.checked('take', old)
-            result = ctx.board.run('supersede', old, '--with', item)
+            result = ctx.board.run('ruling', 'supersede', old, '--with', item)
             after = (ctx.board.json('show', old, '--json', '--field', 'status').get(old) or {}).get('status')
             if after != 'closed':  # a failure before bd closed it; a later failure (blocks) leaves it closed
-                fail(f"`board supersede {old} --with {item}` exited {result.returncode}: {(result.stderr or result.stdout).strip()}")
+                fail(f"`board ruling supersede {old} --with {item}` exited {result.returncode}: {(result.stderr or result.stdout).strip()}")
             if result.returncode != 0:
                 ctx.messages.append(words.supersede_exited(old, item, result.returncode, (result.stderr or result.stdout).strip()))
         move_settled(ctx, item, ctx.state.get('settles', {}).pop(old, []))
         q['closed'].append(old)
+
+
+def deferred_text(ctx: Context, q: dict, found: dict) -> str:
+    """What a deferred question's new board item carries: the question with its parts, and why it was deferred."""
+    parts = '\n\n'.join(words.part_block(name, text) for name, text in question_parts(ctx, q).items())
+    return (f"## Question\n{q['text']}\n\n{parts}\n\nDeferred in round {ctx.round['id']}: {found['reason']}"
+            + (f" (until {found['until']})" if found['until'] else '') + '\n')
+
+
+def file_deferral(ctx: Context, q: dict, found: dict, folder: Path) -> None:
+    """The one writer of a deferral (r9-q40): on a board the question's item (a decision created for a draft) is unclaimed and
+    `bd defer`red with the reason and `until`; without one (r9-q41) nothing is filed and the history and Closed text note it.
+    A rerun after a failure repeats only what is left: the item is found by its tag, and `recorded` follows the defer."""
+    if ctx.board:
+        item = board_item(ctx, q, folder / f"{ctx.round['id']}-{q['id']}.md", deferred_text(ctx, q, found), plain=True)
+        claimed = ctx.round.get('claimed', [])
+        if item in claimed:
+            ctx.board.checked('unclaim', item)
+            claimed.remove(item)
+        ctx.board.checked('bd', 'defer', item, '--reason', found['reason'], *(['--until', found['until']] if found['until'] else []))
+        q['deferralItem'] = item
+    q['recorded'] = 'deferred'
+    ctx.log('deferred', question=q['id'], reason=found['reason'], until=found['until'], board=q.get('deferralItem'))
 
 
 def checkpoint(ctx: Context) -> None:
@@ -242,36 +276,33 @@ def checkpoint(ctx: Context) -> None:
 
 
 def record_accept(ctx: Context, report: dict) -> str:
-    records, deferred = report.get('records') or {}, report.get('defer') or {}
-    if not isinstance(records, dict) or not isinstance(deferred, dict):
-        fail('`records` and `defer` map question ids to objects and reasons')
-    outside = waiting_outside(ctx)
+    if 'defer' in report:
+        fail('Record takes no `defer`: a deferral is `protocol defer` (stdin {"question", "quote", "until"?}), which Record then files')
+    records = report.get('records') or {}
+    if not isinstance(records, dict):
+        fail('`records` maps question ids to objects')
+    found = deferrals(ctx)
     waiting = [f"{q['id']} on {', '.join(q['waitsOn'])}" for q in questions(ctx, 'held')
-               if q['id'] not in outside and not q.get('recorded')]
+               if q['id'] not in found and not q.get('recorded')]
     if waiting:  # waitsOn refuses a circle and an unknown id, and an answer releases its dependents: nothing should reach this
         fail(f"questions still wait at Record: {'; '.join(waiting)}. A question waits only within its round: `protocol abandon`")
     todo = [q for q in questions(ctx, 'answered') if not q.get('recorded')]
     done = {q['id'] for q in questions(ctx, 'answered') if q.get('recorded')}  # a rerun of the same report skips them
-    for qid in [*records, *deferred]:
+    for qid in records:
         if qid not in {q['id'] for q in todo} | done:
             fail(f'{qid}: not an answered question awaiting its record')
-    missing = [q['id'] for q in todo if q['id'] not in records and q['id'] not in deferred]
+    missing = [q['id'] for q in todo if q['id'] not in records]
     if missing:
         fail(f"records missing for {', '.join(missing)}")
     for qid, fields in records.items():
-        if not isinstance(fields, dict) or not all(str(fields.get(k) or '').strip() for k in ('rationale', 'ruleOwner')):
-            fail(f'records.{qid}: needs rationale and ruleOwner')
+        if not isinstance(fields, dict) or not all(isinstance(fields.get(k), str) and fields[k].strip() for k in ('rationale', 'ruleOwner')):
+            fail(f'records.{qid}: needs rationale and ruleOwner, each a non-empty string')
+        if any(fields.get(k) is not None and not isinstance(fields[k], str) for k in ('reversal', 'decision')):
+            fail(f'records.{qid}: `reversal` and `decision` are text')
         if by_id(ctx, qid)['origin'] == AWAY and not str(fields.get('reversal') or '').strip():
             fail(f'records.{qid}: an away answer needs a `reversal` (the steps that undo it, executable without remembered context)')
         if prior_record(ctx, by_id(ctx, qid)) and not str(fields.get('decision') or '').strip():
             fail(words.revise_needs_decision(qid, record_target(by_id(ctx, qid))))
-    # A question asked once its premise was answered rests on that answer: when the premise is deferred instead (the
-    # engine learns of a deferral only here), the dependent's answer has no settled premise: it is deferred or restarted too (r11-q42).
-    put_off = set(deferred) | set(outside) | {q['id'] for q in ctx.round['questions'] if q.get('recorded') == 'deferred'}
-    resting = [f"{qid} rests on deferred {', '.join(w for w in q['waitsOn'] if w in put_off)}"
-               for q in todo if (qid := q['id']) in records and any(w in put_off for w in q['waitsOn'])]
-    if resting:
-        fail('; '.join(resting) + ': defer it too, or restart it (`protocol restart <id>`) to ask it on a settled premise')
     unnamed = []
     for q in todo:  # a rule question's record names each item it settles (the release closes them by it)
         if q['id'] in records:
@@ -289,16 +320,7 @@ def record_accept(ctx: Context, report: dict) -> str:
     folder = Path(ctx.round['records']) if ctx.round.get('records') else ctx.store.dir / 'records'
     folder.mkdir(parents=True, exist_ok=True)
     errors = []
-    for qid, reason in outside.items():  # still waiting on an outside result: deferred with its reason, nothing asked again
-        by_id(ctx, qid)['recorded'] = 'deferred'
-        ctx.log('deferred', question=qid, reason=reason)
-        checkpoint(ctx)
     for q in todo:
-        if q['id'] in deferred:
-            q['recorded'] = 'deferred'
-            ctx.log('deferred', question=q['id'], reason=deferred[q['id']])
-            checkpoint(ctx)
-            continue
         path = folder / f"{ctx.round['id']}-{q['id']}.md"
         path.write_text(record_file(q, records[q['id']]), encoding='utf-8')
         q['recordFile'] = str(path)
@@ -311,7 +333,7 @@ def record_accept(ctx: Context, report: dict) -> str:
             item = board_item(ctx, q, path)
             link_record(ctx, q)
             ctx.board.checked('claim', item)
-            ctx.board.checked('record', item, str(path), *(['--status', 'needs_ratification'] if q['origin'] == AWAY else []))
+            ctx.board.checked('ruling', 'record', item, str(path), *(['--status', 'needs_ratification'] if q['origin'] == AWAY else []))
             if q['origin'] == AWAY:
                 close_settled_away(ctx, q, item)
             elif board_keys(q.get('settles')):
@@ -326,6 +348,13 @@ def record_accept(ctx: Context, report: dict) -> str:
             q['reported'].append(old)
             ctx.log('superseded', question=q['id'], old=old, new=q['board'], partial=None)
         checkpoint(ctx)
+    for q in ctx.round['questions']:  # in listed order; a failure leaves the rest to the rerun
+        if q['id'] in found and not q.get('recorded'):
+            try:
+                file_deferral(ctx, q, found[q['id']], folder)
+            except ProtocolError as error:
+                errors.append(f"{q['id']}: {error}")
+            checkpoint(ctx)
     if errors:
         ctx.messages.append(words.not_recorded(errors))
         return 'record'

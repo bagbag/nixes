@@ -19,7 +19,7 @@ Give each step's output as one line when it passes; add detail only for
 findings or stops.
 
 1. **Position.** Run `board queue` and
-   `board position`; read the checkpoint file
+   `board position`; read your session's checkpoint
    ([Arc state](../../shared/project-memory.md#arc-state)).
    Output: ready CRs and items, rulings to plan, idle holds, questions holding work.
 2. **Released rulings.** Plan each under [Released rulings](#released-rulings).
@@ -120,7 +120,7 @@ Establish the outcome's contribution to its milestone:
   on settled items.
 - Use `explore-options` for a broader choice set or when options share a
   consequential untested assumption. Use `second-opinion` for decision
-  challenges and a fresh architect in REVIEW for architecture assessment.
+  challenges and `review` for architecture assessment.
   Keep authors and reviewers separate.
 
 ## Cut work
@@ -141,12 +141,15 @@ Establish the outcome's contribution to its milestone:
   (items waiting on an open decision or design stay ungrouped until it is
   answered).
 - Set each CR's `look` and `view` only to override the project defaults;
-  name the reason on the CR. Order CRs by
+  name the reason on the CR,
+  in a line that mentions the setting. Order CRs by
   dependencies: independent CRs run in parallel, overlapping work gets a
   dependency edge (the later CR stacks on, or waits for, the earlier).
 - Write each item's expected behavior as short examples (input → result) in
   its `--design`, and the tests worth writing (global instructions' Tests) in
   its `--acceptance`.
+- Item text states acceptance, not reviewer or review depth
+  ([Review policy](../../shared/acceptance.md#review-policy)).
 - State each agent checkpoint the CR needs in the CR.
 - Place each new CR in or out of the open milestone under
   [Milestones](../../shared/board-coordination.md#milestones).
@@ -245,7 +248,7 @@ Establish the outcome's contribution to its milestone:
   that would anchor an independent assessor, pass only the granted paths and
   fields, preparing a filtered view when needed; never the mixed source with
   instructions to filter it.
-- Give the goal epic id. Link a `.scratch/` file for a substantial brief.
+- Give the goal epic id; put a substantial brief into the item.
 - Relay project-specific rules, excluding generic role discipline. Add
   anti-regression STOPs for reversed decisions still encoded in old sources.
 - References grant reading, not writing; the item ids grant board writes on

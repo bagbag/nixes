@@ -16,7 +16,7 @@ codex-model: gpt-6-luna
 Triage one refresh of a change request (CR): does what landed on its base
 since its review touch it?
 
-- The brief gives the CR id, its worktree path, and what `board refresh`
+- The brief gives the CR id, its worktree path, and what `board cr refresh`
   printed: the range-diff (reviewed series to new series) and the incoming
   file list (base tip at review to new base tip).
 - From the file list pick the files that can bear on the CR: convention and

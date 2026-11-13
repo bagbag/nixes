@@ -122,10 +122,22 @@ Write brief progress notes and findings as you work. Everything the user needs t
   `$HOME/.agents/skills/shared/project-memory.md` Durable owners; reuse
   suitable existing owners.
 - **Working and transient artifacts** (working plans, review drafts,
-  inventories, evidence, notes, intermediate reports and dumps) go under
-  `.scratch/<topic-slug>/<arc-slug>/` unless their conclusions are promoted
-  under the durable-doc convention. Keep `.scratch/` gitignored, free of
-  secrets, and never commit it.
+  inventories, evidence, notes, intermediate reports, dumps, throwaway probes
+  and one-off tests) go in a scratch folder outside the repository unless
+  their conclusions are promoted under the durable-doc convention:
+  `$HOME/.agents/bin/scratch dir` prints the session's folder (`--for <item
+  id>`: an item's; `--shared <name>`: a shared one). Data a later session may
+  need goes in an item's or a shared folder; your session folder is yours alone. Scratch
+  code names the checkout it runs against by absolute path. Keep scratch free
+  of secrets.
+- **Scratch is dated working evidence, never authority.** Take premises from
+  the board, tracked docs and source; open scratch only by a path you were
+  given and check its claims against source. Open work and handovers go on
+  the board (without one, to the user), never in scratch; only a session's own
+  checkpoint (project-memory Arc state) holds its next steps there.
+- **Removing scratch:** entries expire on their own (`scratch help`);
+  `$HOME/.agents/bin/scratch trash <path>` anything you are sure is no longer
+  needed.
 
 ## Tests verify behavior — write them first when possible
 
@@ -139,7 +151,7 @@ Write brief progress notes and findings as you work. Everything the user needs t
 When a change alters what a doc describes, update the doc in the **same pass**, complete enough for a future session to orient from the docs alone. Examples:
 
 - **README** — when code changes the public surface, the conventions, or the patterns it shows.
-- **Backlog** — the board when the project has one, else a TODO doc — write down anything that surfaces and needs doing later.
+- **Backlog** — the board — write down anything that surfaces and needs doing later; without a board, report it to the user with an offer to set one up.
 - **Design / review / decision records** — capture open review threads, decisions, and the rationale behind contested choices.
 
 Update status/version references everywhere they appear, headlines and body alike. Touch only the docs the project uses; add new files or folder structures only where the project has that convention. Ask if in doubt.
@@ -188,8 +200,8 @@ Configure named agents where the tool supports them; otherwise put the role,
 constraints, and expected report and its length directly in the brief. Model bindings belong
 in native agent configuration, never in plans or worker briefs.
 
-For artifact-producing assignments, assign output paths under
-`.scratch/<topic-slug>/<arc-slug>/`, named after subject and kind
+For artifact-producing assignments, assign output paths in a scratch folder
+(`scratch dir`, `--for <item id>` for an item's work), named after subject and kind
 (`union-dispatch-review.md`), unless the assignment names the artifact's
 canonical owner (`docs/`, a skill, source); instruct the specialist to write
 those files directly. Provide the required permissions and

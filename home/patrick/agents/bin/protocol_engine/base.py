@@ -10,18 +10,19 @@ from pathlib import Path
 
 VERSION = 1  # the show --json contract and the state file schema
 BIN = Path(__file__).resolve().parent.parent  # the bin folder: this package's parent
-REGISTRY = BIN / 'session-lead-mode'
+REGISTRY = BIN / 'session'
 BOARD = BIN / 'board'
 CHECK_CAP = 10  # check cycles before the machine asks the user how to go on
 BATCH = 4  # AskUserQuestion takes 1-4 questions
 HEADER_MAX = 12  # AskUserQuestion's header chip
 # Lengths: the Stage text states the targets; a report is refused only above the limit, since a model cannot count exactly and
-# a few characters over cost nothing to read (r23-q95). The pane truncates titles.
+# a few characters over cost nothing to read (r23-q95); above the target and within the limit it is accepted with a warning
+# line (`band_warning`). The pane truncates titles.
 TITLE_MAX, TITLE_LIMIT = 60, 75  # question and round titles: one pane row
 SUMMARY_MAX = 240  # the round summary: about two pane rows
 TEXT_MAX, TEXT_LIMIT = 160, 240  # a question's text: the dialog question
 DESCRIPTION_MAX, DESCRIPTION_LIMIT = 150, 200  # an option's model-written description (the engine's "Unverified: …" prefix is not counted)
-CHECKED_MAX, CHECKED_LIMIT = 120, 150  # a pass report's `checked` line, each entry (r13-q66)
+CHECKED_MAX, CHECKED_LIMIT = 120, 250  # a pass report's `checked` line, each entry (r13-q66; warn band: decision 2026-11-12 protocol-refusals)
 OVERLAP_LIMIT = 5  # related hits per new draft
 SEEDS = 5  # `protocol next` lists this many seed questions
 PROPOSAL_ROUNDS = 3  # rounds in a stored proposal
@@ -39,25 +40,30 @@ AWAY = 'away'  # the origin of an answer an away round took from the recommendat
 SETTLES = ('act', 'park')
 DROP_KINDS = ('pass', 'batch')  # what a dropped console action was: a pass run or prompt, a batch's dialog
 EXPLORED_VERDICTS = ('kept', 'dropped')
-VERB_ORIGINS = {
-    'answer': ('dialog', 'chat', 'model-reported'),  # model-reported: Codex sessions only
-    'decline': ('dialog', 'model-reported'),
-    'pass': PASS_ORIGINS,
-    'say': ('composer', 'bridge'),  # the person's own messages, stored for the chat quote check
-    'dropped': ('plugin',),  # a stale console action the console did not deliver (r3-q10)
-    'nudged': ('plugin',),  # the person's /console-continue or Continue press, with what the console did (r7-q24)
-    'scope': ('plugin',),  # what the pass the console sees start must cover, named in its expanded text (r9-q36)
+# The verbs with a restricted audience, each with the origins it accepts; a verb not listed here is a session's, with no
+# origin check. `console`: only the console runs it; `origin`: sessions and the console both, the origin saying which.
+# `help` (cli.py) and the origin check (verbs.require_origin) both read this table.
+VERBS = {
+    'answer': ('origin', ('dialog', 'chat', 'model-reported')),  # model-reported: Codex sessions only
+    'decline': ('origin', ('dialog', 'model-reported')),
+    'pass': ('origin', PASS_ORIGINS),
+    'say': ('console', ('composer', 'bridge')),  # the person's own messages, stored for the chat quote check
+    'dropped': ('console', ('plugin',)),  # a stale console action the console did not deliver (r3-q10)
+    'nudged': ('console', ('plugin',)),  # the person's /console-continue or Continue press, with what the console did (r7-q24)
+    'scope': ('console', ('plugin',)),  # what the pass the console sees start must cover, named in its expanded text (r9-q36)
+    'pending': ('console', ()),  # the console's read of the pending pass: no origin
 }
+VERB_ORIGINS = {verb: origins for verb, (_, origins) in VERBS.items() if origins}
 NUDGE_KEYS = ('pass', 'batch', 'step')  # what a continue did: queued the pending pass, reopened the batch, woke the model at the step
 COLLECT_VIEWS = 'decided,questions,ratification,accept,review,user'
 LIST_COMMAND = f'board health --items {COLLECT_VIEWS}'  # lists the open items Collect offers, but for the ready milestones and finished epics `board position` lists
 # Question fields a pass can change; a change to any of them counts (asking.md Check: premise, ruling, option or
 # question set).
 CONTENT = ('text', 'title', 'header', 'options', 'multiSelect', 'kind', 'board', 'waitsOn', 'waitsFor', 'for', 'settles',
-           'premises', 'problem', 'cases', 'rulings', 'note', 'recommendation', 'strength', 'leanBecause', 'strongBecause', 'priorRulings')
+           'premises', 'problem', 'root', 'cases', 'rulings', 'note', 'recommendation', 'strength', 'leanBecause', 'strongBecause', 'priorRulings')
 # How a question is shown and backed, not what it asks (asking.md Check counts premise, ruling, option and question
 # set): an edit to these alone re-issues the batch without rerunning the check loop.
-PRESENTATION = ('title', 'header', 'note', 'strength', 'leanBecause', 'strongBecause')  # plus an option's `example` (see substantive)
+PRESENTATION = ('title', 'header', 'note', 'root', 'strength', 'leanBecause', 'strongBecause')  # plus an option's `example` (see substantive)
 # When a question goes out, not what it asks (r9-q33): setting a hold alone reruns no check; freeing one re-checks the question.
 SCHEDULING = ('waitsFor',)
 CAP_CHOICES = ('Continue', 'Ask now', 'Pause')
@@ -93,6 +99,13 @@ def recommended_suffix(q: dict) -> str:
     """The mark on the recommended option's label in the dialog: ` (recommended, lean)`. A release approval has none: the
     engine asks it on every release, so a mark would say nothing about this one (r15 q58)."""
     return f" (recommended, {q['strength']})" if q.get('strength') else ''
+
+
+def band_warning(what: str, length: int, target: int, limit: int) -> list[str]:
+    """One warning line for a field over its target and within its limit (an empty list otherwise; over the limit it is refused)."""
+    if not target < length <= limit:
+        return []
+    return [f'{what} is {length} characters; keep it to about {target} (refused over {limit})']
 
 
 class ProtocolError(Exception):

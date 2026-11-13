@@ -18,11 +18,11 @@ case "$source" in
   *) exit 0 ;;
 esac
 
-session_lead=${AGENT_SESSION_LEAD_COMMAND:-$HOME/.agents/bin/session-lead-mode}
+session_cmd=${AGENT_SESSION_COMMAND:-$HOME/.agents/bin/session}
 session_id=$(jq -r '.session_id // empty' <<<"$input")
 registration='{}'
 if [[ -n "$session_id" ]]; then
-  registration=$(bash "$session_lead" show "$session_id" 2>/dev/null || true)
+  registration=$(bash "$session_cmd" show "$session_id" 2>/dev/null || true)
   [[ -n "$registration" ]] || registration='{}'
 fi
 role=$(jq -r '.role // ""' <<<"$registration")

@@ -5,10 +5,10 @@ import type { EngineInterface, RenderPropsOf } from 'claude-code'
 
 import type { ConsoleBoard, ConsoleCr, ConsoleItem, ConsoleQuestion, ConsoleRecord, ConsoleRole, ConsoleRound, ConsoleSection, ConsoleSession, ConsoleSuggestion } from '../types'
 
-import { pressAcceptCr, pressContinue, pressOpenCr, pressOpenItem, pressOpenOverlaps, pressOpenSettles, pressOpenSuggestion, pressRefreshCr, pressReturnCr, pressRole, pressRun, pressStart, pressView, pressWorkers } from './core'
+import { pressAcceptCr, pressContinue, pressOpenCr, pressOpenItem, pressOpenOverlaps, pressOpenRatification, pressOpenSettles, pressOpenSuggestion, pressRefreshCr, pressReturnCr, pressRole, pressRun, pressStart, pressView, pressWorkers } from './core'
 import { isRoundOpen, RELEASE_COMMAND, ROUND_ROLES } from './engine'
-import { getBoard, getExpanded, getLenses, getOpened, getPass, getPlaced, getReviewing, getRole, getRound, getRoundError, getTurnRunning, toggleExpanded, updateLenses } from './state'
-import { answerText, canRefreshCr, COUNT_GROUPS, countText, crCheckText, crDetailsText, crFailureParts, crFileHref, crMarks, crNewCountText, crPriorityHint, crPriorityText, crRows, crRowStageText, crSummaryText, crUnblocksHint, crUnblocksText, displayId, displayIds, fitText, isCrAccepting, isWalkCr, GROUND, GROUND_BASE, lensArgs, LENS_SETS, plural, pullsText, recommendationMark, recommendationText, roleText, roundWords, runNoun, staleHolds, staleSessions, startHint, STEP_BACK_BASE, suggestionText, WHAT, WHERE } from './words'
+import { getBoard, getExpanded, getLenses, getOpened, getPass, getPlaced, getReviewTree, getRole, getRound, getRoundError, getTurnRunning, toggleExpanded, updateLenses } from './state'
+import { answerText, canRefreshCr, COUNT_GROUPS, countText, crCheckText, crDetailsText, crFailureParts, crFileHref, crHeldText, crMarks, crNewCountText, crPriorityHint, crPriorityText, crRows, crRowStageText, crSummaryText, crUnblocksHint, crUnblocksText, displayId, displayIds, fitText, isCrAccepting, isWalkCr, GROUND, GROUND_BASE, lensArgs, LENS_SETS, plural, pullsText, recommendationMark, recommendationText, roleText, roundWords, runNoun, staleHolds, staleSessions, startHint, STEP_BACK_BASE, suggestionText, WHAT, WHERE } from './words'
 import type { Lens, LensCommand } from './words'
 
 type $ = EngineInterface
@@ -79,7 +79,7 @@ export async function drawPane($: $, e: { surface: string; props: RenderPropsOf[
   const opened = await getOpened($)
   const roundError = await getRoundError($)
   const passRun = await getPass($)
-  const reviewing = await getReviewing($)
+  const reviewing = await getReviewTree($)
   const isTurnRunning = await getTurnRunning($)
   const hint = hints()
   const boardPrefix = board?.prefix ?? null
@@ -293,6 +293,7 @@ export async function drawPane($: $, e: { surface: string; props: RenderPropsOf[
     }
     if (view.sync !== null) rows.push(<Box key="board-sync" marginTop={1}><Text color="warning">{view.sync}</Text></Box>)
     if (view.queues !== null) rows.push(<Box key="board-queues" marginTop={1}><Text color="inactive">{view.queues}</Text></Box>)
+    if (view.scratch !== null) rows.push(<Box key="board-scratch" marginTop={1}><Text color="inactive">{view.scratch}</Text></Box>)
     if (view.forYou.length > 0) rows.push(itemList('board-foryou', 'foryou', 'forYou', view.forYou, CR_ROWS_SHOWN, item => ({ text: item.type, color: 'inactive' }), 'items for you'))
     if (view.sessions.length > 0) {
       const rank = (one: ConsoleSession) => SESSION_ORDER[one.state] ?? 2
@@ -717,6 +718,7 @@ export async function drawPane($: $, e: { surface: string; props: RenderPropsOf[
             const check = crCheckText(cr)
             const count = crNewCountText(cr)
             const marks = crMarks(cr).filter(mark => mark.isProblem)  // the quiet ones are the summary's
+            const held = crHeldText(cr)
             const buttons = buttonsOf(cr)
             const stage = crRowStageText(cr)
             const unblocks = crUnblocksText(cr)
@@ -732,6 +734,7 @@ export async function drawPane($: $, e: { surface: string; props: RenderPropsOf[
               ...(check === null ? [] : [{ key: 'check', text: check, color: CHECK_COLOR[cr.check.state] }]),
               ...(count === null ? [] : [{ key: 'new', text: count, color: cr.check.newFailures !== null && cr.check.newFailures.length > 0 ? 'error' : 'inactive' }]),
               ...marks.map(mark => ({ key: `mark-${mark.text}`, text: mark.text, color: mark.isProblem ? 'error' : 'inactive' })),
+              ...(held === null ? [] : [{ key: 'held', text: held, color: 'warning' }]),
             ]
             const actions = [
               ...(buttons.accepting ? [
@@ -793,6 +796,9 @@ export async function drawPane($: $, e: { surface: string; props: RenderPropsOf[
                     <Button key={`ratify-${one.id}-show`} plain onPress={() => pressOpenItem($, one.id)}>{dimId(one.id)}</Button>
                   </Box>
                   <Box flexGrow={1} flexShrink={1}><Text wrap="truncate-end">{one.title}</Text></Box>
+                  {one.tip !== null && one.baseTip !== null && (
+                    <Box marginLeft={1} flexShrink={0}>{act(`ratify-${one.id}-open`, 'Open', () => pressOpenRatification($, one.id), 'Sets the review tree to the range this request landed and opens it in VS Code')}</Box>
+                  )}
                 </Box>
                 {slot(one.id)}
               </Box>

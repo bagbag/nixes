@@ -69,22 +69,22 @@ milestones, recorded rulings and deferrals. The board model is
 
 ### Rulings
 
-- At decision time, write the record with `board record <id> <file>`, which
+- At decision time, write the record with `board ruling record <id> <file>`, which
   replaces the packet and sets status `decided`
   (autopilot: `--status needs_ratification`). The file holds these `##`
-  sections, which `board record` checks: `Question`,
+  sections, which `board ruling record` checks: `Question`,
   `Alternatives Considered`, `Decision`, `Rationale` (with provenance: user or
   the ruling session's role, and date) and `Rule owner`.
 - Record each ruling you make as "ruling — rejected: <alternative>, fails
   <cleanliness test, principle or correctness property>". For a consequential
   ruling without a question, create and answer one at once.
 - Open a revision with
-  `board revise <old> --title "<question>" --body-file <packet>`; for one rule
+  `board ruling revise <old> --title "<question>" --body-file <packet>`; for one rule
   of a record add `--partial "<rule>"`, and the rest stays in force. Its
-  record restates the rule in full. `board release` supersedes a released old
+  record restates the rule in full. `board ruling release` supersedes a released old
   record. A decided old record closes when its replacement is recorded
-  (`board supersede <old> --with <new>`; autopilot runs it too), and
-  `board release` refuses a decided record a live revision names. A
+  (`board ruling supersede <old> --with <new>`; autopilot runs it too), and
+  `board ruling release` refuses a decided record a live revision names. A
   revision question blocks only the work items whose part it would change.
 - On the user's ratification, the claiming deciding session closes a
   `needs_ratification` record with the ratification as reason; a reversal

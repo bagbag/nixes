@@ -94,11 +94,11 @@ ITEM_FIELDS = {*TEXT_FIELDS, 'comments', 'assignee', 'metadata', 'closed_at', 's
 # so board checks the headings itself.
 RECORD_SECTIONS = ('Question', 'Alternatives Considered', 'Decision', 'Rationale', 'Rule owner')
 # A pending revision is a `tracks` edge from the new decision to the record it revises: bd 1.3.1 rejects custom
-# dependency types, `tracks` never blocks, no other board use exists, and `supersede` replaces the pair's edge, so the
+# dependency types, `tracks` never blocks, no other board use exists, and `board ruling supersede` replaces the pair's edge, so the
 # link lives exactly until release. The partial rule's name sits in the new record's metadata.
 REVISES = 'tracks'
 REVISES_RULE = 'board.revises_rule'
-REGISTRY = Path(__file__).resolve().parent / 'session-lead-mode'
+REGISTRY = Path(__file__).resolve().parent / 'session'
 SYNC_SECONDS = float(os.environ.get('AGENT_BOARD_SYNC_SECONDS') or 60)  # the send window and the pull interval; tests shorten it
 PULL_TIMEOUT = 5  # a pull a command waits for gives up after this
 SYNC_TIMEOUT = 300  # a sync running longer counts as stuck
@@ -619,7 +619,7 @@ def bd_show(ids: list[str], *flags: str, comments: bool = True) -> list[dict]:
 
 
 def registrations() -> tuple[list[dict], set[str]]:
-    """(readable registrations, actors of the files that cannot be read): one `session-lead-mode list` call. An unreadable
+    """(readable registrations, actors of the files that cannot be read): one `session list` call. An unreadable
     file's session counts as unregistered; the person is told once."""
     result = subprocess.run(['bash', str(REGISTRY), 'list'], capture_output=True, text=True)
     if result.returncode != 0:
@@ -627,7 +627,7 @@ def registrations() -> tuple[list[dict], set[str]]:
     rows = [json.loads(line) for line in result.stdout.splitlines() if line.strip()]
     skipped = [row['unreadable'] for row in rows if 'unreadable' in row]
     for file in skipped:
-        print(f'session-lead-mode: skipped unreadable registration {file}', file=sys.stderr)
+        print(f'session: skipped unreadable registration {file}', file=sys.stderr)
     return [row for row in rows if 'unreadable' not in row], {Path(file).stem[-8:] for file in skipped}
 
 
@@ -657,7 +657,7 @@ def board_id(raw: str) -> str:
 
 def board_project() -> str | None:
     """The resolved folder holding this board: the parent of the first line of `bd where` (a worktree names the main
-    checkout's .beads); None when the lookup fails. The registry records the same value (session-lead-mode project)."""
+    checkout's .beads); None when the lookup fails. The registry records the same value (session project)."""
     result = bd('where')
     first = result.stdout.splitlines()[0].strip() if result.returncode == 0 and result.stdout.strip() else ''
     return str(Path(first).parent.resolve()) if first.startswith('/') else None
@@ -756,7 +756,7 @@ def worker_cap(entry: dict) -> int:
 
 
 def process_started(pid: int) -> str | None:
-    """The process's start time as `ps -o lstart=` prints it in UTC (whitespace-normalized; session-lead-mode
+    """The process's start time as `ps -o lstart=` prints it in UTC (whitespace-normalized; session
     stores the same form), or None when ps fails for any reason."""
     try:
         result = subprocess.run([shutil.which('ps') or '/bin/ps', '-o', 'lstart=', '-p', str(pid)], capture_output=True,
@@ -893,7 +893,7 @@ class Board:
         return self._unreadable
 
     def ended(self) -> set[str]:
-        """Actors of the sessions whose registration was pruned (session-lead-mode `ended`), read on first use."""
+        """Actors of the sessions whose registration was pruned (session `ended`), read on first use."""
         if self._ended is None:
             result = subprocess.run(['bash', str(REGISTRY), 'ended'], capture_output=True, text=True)
             self._ended = set(result.stdout.split()) if result.returncode == 0 else set()
@@ -1714,10 +1714,10 @@ def holders(board: Board, args) -> None:
 # Conformance with skills/shared/board-core.md and board-coordination.md: mechanical classes only.
 ACTOR = re.compile(r'[0-9a-f]{8}(/.+)?')
 TITLE_PREFIXES = ('[Design]', '[Gate]', '[Checkpoint]', '[Review]')
-RETIRED_TYPES = ('feature', 'chore', 'check')
+ITEM_TYPES = ('task', 'bug', 'spike', 'design', 'decision', 'change-request', 'epic', 'milestone', 'gate')  # board-core.md Kinds: the one list
 CHECK_CLASSES = {  # class -> board-core anchor
     'holder': 'actors-and-holds',
-    'retired-type': 'kinds',
+    'unknown-type': 'kinds',
     'title-prefix': 'kinds',
     'release-gate': 'kinds',
     'label-status': 'statuses-and-labels',
@@ -1759,8 +1759,8 @@ def deviations(board: Board, root: str | None) -> list[tuple[str, str, str]]:
         holder = issue.get('assignee')
         if holder and holder != 'user' and not ACTOR.fullmatch(holder):
             found.append((item_id, 'holder', f'held by {holder}'))
-        if kind in RETIRED_TYPES:
-            found.append((item_id, 'retired-type', f'type {kind}'))
+        if kind and kind not in ITEM_TYPES:
+            found.append((item_id, 'unknown-type', f'type {kind}'))
         prefix = next((p for p in TITLE_PREFIXES if title.startswith(p)), None)
         if prefix:
             found.append((item_id, 'title-prefix', f'title starts with {prefix}'))
@@ -1773,7 +1773,7 @@ def deviations(board: Board, root: str | None) -> list[tuple[str, str, str]]:
         if foreign:
             found.append((item_id, 'ruling-blocked', f"released ruling waits on {', '.join(foreign)}, work and not planning: "
                                                      f"{'; '.join(dep_fix(item_id, blocker) for blocker in foreign)}"))
-        if is_work_hold(issue) and board.cr_of(item_id) is None and issue['status'] != 'in_review':
+        if is_work_hold(issue) and board.cr_of(item_id) is None and issue['status'] != 'in_review' and not is_no_code(issue):
             found.append((item_id, 'no-cr', f'work item outside any change request: board bd update {item_id} --parent <change request>'))
     return found + cr_deviations(board, root)
 
@@ -1817,7 +1817,7 @@ def unlinked_revision_rows(board: Board, root: str | None) -> list[dict]:
 
 def unlinked_revisions(board: Board, root: str | None) -> list[tuple[str, str]]:
     """(id, detail) per row of unlinked_revision_rows."""
-    return [(row['id'], f"{row['word']} {row['other']} without a supersedes or revise link: board supersede "
+    return [(row['id'], f"{row['word']} {row['other']} without a supersedes or revise link: board ruling supersede "
                         f"{row['old']} --with {row['new']} [--partial \"<rule>\"]")
             for row in unlinked_revision_rows(board, root)]
 
@@ -2052,7 +2052,7 @@ def queue(board: Board, args) -> None:
     live = [i for i in accepting + [i for i in live_crs(board) if i not in accepting]
             if i['id'] in shown and i['status'] != 'open']  # open ones are in their pull's section above
     section('change requests (stage, check state, stack base)',
-            [line(i, cr_stage(i) or '', f"check {cr_info(board, i)['state']}", f"base {meta(i).get('base') or '-'}",
+            [line(i, cr_stage(i) or '', f"check {check_label(i, cr_info(board, i)['state'])}", f"base {meta(i).get('base') or '-'}",
                   *([f"land blocked: {', '.join(cr_info(board, i)['blocked'])}"] if cr_info(board, i)['blocked'] else []),
                   *([f"after {after_base(board, i)}"] if after_base(board, i) else []), i.get('assignee') or '') for i in live], args.limit)
     queue_rows(board, args.root, 'queue')
@@ -2329,6 +2329,13 @@ def authorship(board: Board, issue: dict) -> tuple[str | None, str | None]:
 def author_label(board: Board, issue: dict) -> str:
     actor, legacy = authorship(board, issue)
     return f'author {actor}' if actor else f'author unknown ({legacy})' if legacy else 'standalone'
+
+
+NO_CODE = 'no_code'  # metadata of a work item that by design changes no code (a check, a baseline run): set when it is created, claimed outside any CR
+
+
+def is_no_code(issue: dict) -> bool:
+    return meta(issue).get(NO_CODE) == '1'
 
 
 def is_work_hold(issue: dict) -> bool:
@@ -2651,10 +2658,10 @@ def claim(board: Board, args) -> int:
         counts_as = f"; P{issue.get('priority', 9)}, counts as P{inherited[0]}: {'its item' if inherited[2] else 'blocks'} {inherited[1]}" if inherited[1] else ''
         print(f"claimed {issue['id']} ({kind}{by}{counts_as}): {issue.get('title', '')}")
         if kind == 'refresh':
-            print(f"  refresh work: board refresh {issue['id']}, then board unclaim {issue['id']}")
+            print(f"  refresh work: board cr refresh {issue['id']}, then board unclaim {issue['id']}")
         if kind == 'accept' and meta(issue).get('checkpoint') == 'user':
             pin, designs = design_pin(board, issue)
-            print(f"  design hash {pin} ({', '.join(designs) or 'no design item'}); accept it with board land {issue['id']} --checkpoint --design {pin}")
+            print(f"  design hash {pin} ({', '.join(designs) or 'no design item'}); accept it with board cr land {issue['id']} --checkpoint --design {pin}")
         for blocker in board.foreign_waits(issue):  # a released ruling waits for planning only (r21-q139): the plan session removes it
             print(f"  fix: {issue['id']} waits on {blocker}, which is work and not planning; check what the ruling changes there, "
                   f"then {dep_fix(issue['id'], blocker)}")
@@ -2692,8 +2699,8 @@ def work_item_refusal(board: Board, issue: dict, actor: str) -> str | None:
         return None
     item_id = issue['id']
     cr_id = board.cr_of(item_id)
-    if cr_id is None and issue['status'] == 'in_review':
-        return None  # a standalone review
+    if cr_id is None and (issue['status'] == 'in_review' or is_no_code(issue)):
+        return None  # a standalone review, or work that changes no code (r10-q50)
     if cr_id is None:
         return f'{item_id}: outside any change request; put it in one: board bd update {item_id} --parent <change request>'
     cr = board.by_id[cr_id]
@@ -2784,16 +2791,17 @@ def held(board: Board, item_id: str, actor: str, status: str | None = None) -> d
     return issue
 
 
-def git(root: Path, *args: str, env: dict[str, str] | None = None, check: bool = True) -> subprocess.CompletedProcess:
+def git(root: Path, *args: str, env: dict[str, str] | None = None, check: bool = True, input: str | None = None) -> subprocess.CompletedProcess:
     """git in the repository root, output as bytes; a failure raises with git's message unless `check` is off."""
-    result = subprocess.run(['git', '-C', str(root), *args], capture_output=True, env={**os.environ, **(env or {})})
+    result = subprocess.run(['git', '-C', str(root), *args], capture_output=True, env={**os.environ, **(env or {})},
+                            input=input.encode() if input is not None else None)
     if check and result.returncode != 0:
         raise BoardError(f"git {' '.join(args[:2])}: {result.stderr.decode('utf-8', 'replace').strip() or 'exit ' + str(result.returncode)}")
     return result
 
 
-def git_text(root: Path, *args: str, env: dict[str, str] | None = None) -> str:
-    return git(root, *args, env=env).stdout.decode('utf-8', 'surrogateescape')
+def git_text(root: Path, *args: str, env: dict[str, str] | None = None, input: str | None = None) -> str:
+    return git(root, *args, env=env, input=input).stdout.decode('utf-8', 'surrogateescape')
 
 
 # Change requests (r24, r25). The CR is the only unit claimed for work; its items are children claimed by the workers of the
@@ -3057,7 +3065,17 @@ def check_pair(cr: dict) -> dict | None:
     if not m.get('check_tip'):
         return None
     return {'tip': m.get('check_tip'), 'baseTip': m.get('check_base_tip'), 'result': m.get('check_result'),
-            'at': m.get('check_at'), 'output': m.get('check_output') or ''}
+            'at': m.get('check_at'), 'output': m.get('check_output') or '', 'kind': m.get('check_kind') or 'full',
+            'command': m.get('check_command') or None, 'reason': m.get('check_reason') or None}
+
+
+def check_label(cr: dict, state: str) -> str:
+    """The check state as shown: a targeted or no-gate result says what it was, never a full pass (r15-q78)."""
+    pair = check_pair(cr)
+    if pair is None or pair['kind'] == 'full' or state in ('unchecked', 'failed'):
+        return state
+    detail = f"targeted: {pair['command']}" if pair['kind'] == 'targeted' else f"no check: {pair['reason']}"
+    return f'{state} ({detail})'
 
 
 def check_state(main: Path, cr: dict, tip: str | None, base_tip: str | None) -> str:
@@ -3201,12 +3219,34 @@ def needs_refresh(board: Board, cr: dict) -> bool:
     return info['state'] != 'current' or not review_current(cr, info)
 
 
+REVIEW_END_REF = 'refs/worktree/console-review-end'  # the review tree's marker: the tip the console set it to, or the commit `cr edits` made of its files (review.ts)
+
+
+def review_tree_end(main: Path) -> str | None:
+    """The console review tree's marker (`<main>-review`, review.ts `reviewTreeOf`): what the user has open there; None without one."""
+    tree = Path(f'{main}-review')
+    return rev(tree, REVIEW_END_REF) if tree.is_dir() else None
+
+
+def held_by_review_tree(board: Board, cr: dict) -> bool:
+    """The user has this CR, waiting for their Accept, open at its current tip in the review tree: no refresh moves it under them; it
+    refreshes once a deciding session claims it."""
+    if cr['status'] != ACCEPT:
+        return False
+    info = cr_info(board, cr)
+    if info['main'] is None or info['tip'] is None:
+        return False
+    if '_review_end' not in board.__dict__:
+        board._review_end = review_tree_end(info['main'])
+    return board._review_end == info['tip']
+
+
 def cr_claimable(board: Board, cr: dict, kind: str) -> str | None:
     if board.cr_waits(cr)[0]:
         return None  # includes a review whose base was returned (q206)
     if kind == 'accept':
         head = queue_head(board)
-        if head and head['id'] == cr['id'] and needs_refresh(board, cr):
+        if head and head['id'] == cr['id'] and needs_refresh(board, cr) and not held_by_review_tree(board, cr):
             return 'refresh'  # the head of the queue gets the refresh before its Accept
     return kind
 
@@ -3227,18 +3267,67 @@ def cr_stage(cr: dict) -> str | None:
     return None
 
 
+def edit_entries(cr: dict) -> list[dict]:
+    """The commits `board cr edits --commit` made from the user's review edits, recorded in the CR's metadata `review_edits` (JSON list
+    of {commit}): the user's own edits, which keep the review (`edit_commits`)."""
+    try:
+        found = json.loads(meta(cr).get('review_edits') or '[]')
+    except ValueError:
+        return []
+    return [one for one in found if isinstance(one, dict) and one.get('commit')] if isinstance(found, list) else []
+
+
+def is_replay(root: Path, recorded: str, commit: str) -> bool:
+    """`commit` is the recorded edit commit or a faithful replay of it: replaying the recorded change onto `commit`'s parent (a 3-way
+    merge from the recorded parent) gives exactly `commit`'s tree. Exact in content and place, unlike a patch-id (r16 N5)."""
+    if commit == recorded:
+        return True
+    parents = git_text(root, 'rev-list', '--parents', '-n', '1', commit).split() if rev(root, commit) else []
+    if len(parents) != 2 or rev(root, recorded) is None:
+        return False
+    merged = git(root, 'merge-tree', '--write-tree', f'--merge-base={recorded}^', parents[1], recorded, check=False)
+    return merged.returncode == 0 and merged.stdout.decode().split()[:1] == [git_text(root, 'rev-parse', f'{commit}^{{tree}}').strip()]
+
+
+def edit_commits(root: Path, cr: dict, base: str, tip: str) -> list[bool]:
+    """For each commit in base..tip, oldest first: whether it is one of the recorded edit commits (or its replay), each recorded
+    commit matched at most once."""
+    left = [one['commit'] for one in edit_entries(cr)]
+    out = []
+    for commit in git_text(root, 'rev-list', '--reverse', f'{base}..{tip}').split():
+        match = next((one for one in left if is_replay(root, one, commit)), None)
+        if match is not None:
+            left.remove(match)
+        out.append(match is not None)
+    return out
+
+
+def edits_only(main: Path | None, cr: dict, reviewed: str, tip: str) -> bool:
+    """Every commit after the reviewed tip, up to `tip`, is one of the recorded edit commits or its replay after a rebase: the user's
+    own edits need no agent review. A copied message, or the same change at another place, does not count."""
+    if main is None or not is_ancestor(main, reviewed, tip):
+        return False
+    found = edit_commits(main, cr, reviewed, tip)
+    return bool(found) and all(found)
+
+
 def review_current(cr: dict, info: dict) -> bool:
-    """The review verdict holds for the (tip, base tip) pair now (q236)."""
+    """The review verdict holds for the (tip, base tip) pair now (q236), also past the reviewed tip while every later commit is
+    one of the user's recorded review edits (r15-q77); `info['main']` lets it read them."""
     m = meta(cr)
-    return bool(m.get('review_tip')) and m.get('review_tip') == info['tip'] and m.get('review_base_tip') == info['baseTip']
+    reviewed = m.get('review_tip')
+    if not reviewed or m.get('review_base_tip') != info['baseTip']:
+        return False
+    return reviewed == info['tip'] or edits_only(info.get('main'), cr, reviewed, info['tip'])
 
 
 def after_base(board: Board, cr: dict) -> str | None:
-    """The base a look-after CR waits for in stage accept (A1): it lands when that base has."""
+    """The base a look-after CR (or one with no commits of its own) waits for in stage accept (A1): it lands when that base has."""
     base = live_parent(board, cr)
-    if cr['status'] == 'in_review' and meta(cr).get('review_tip') and base and review_current(cr, cr_info(board, cr)):
-        try:
-            return base if cr_look(board, cr) == 'after' else None
+    info = cr_info(board, cr) if cr['status'] == 'in_review' else None
+    if info and meta(cr).get('review_tip') and base and review_current(cr, info):
+        try:  # a CR with nothing to merge waits for its base in either look (r10-q50)
+            return base if cr_look(board, cr) == 'after' or (info['main'] and no_own_commits(info['main'], cr, info['tip'])) else None
         except BoardError:
             return None
     return None
@@ -3287,7 +3376,7 @@ def cr_json(board: Board, cr: dict, children: dict[str, list[str]], refresh_id: 
             'base': base or board.settings.get('target') or None, 'branch': info['branch'],
             'worktree': info['worktree'], 'tip': info['tip'], 'baseTip': info['baseTip'],
             'check': {'state': info['state'], 'tip': pair.get('tip'), 'baseTip': pair.get('baseTip'), 'at': pair.get('at'),
-                      'result': pair.get('result'),
+                      'result': pair.get('result'), 'kind': pair.get('kind', 'full'), 'command': pair.get('command'), 'reason': pair.get('reason'),
                       'newFailures': ([] if m.get('check_new') == '-' else m['check_new'].splitlines()) if m.get('check_new') else None,
                       'baseCount': int(m['check_base_count']) if m.get('check_base_count') is not None else None,
                       'tipCount': int(m['check_tip_count']) if m.get('check_tip_count') is not None else None},
@@ -3295,6 +3384,7 @@ def cr_json(board: Board, cr: dict, children: dict[str, list[str]], refresh_id: 
             'children': children.get(cr['id'], []), 'baseSha': m.get('base_sha') or None, 'landBlocked': info['blocked'] or None,
             'reviewState': ('current' if review_current(cr, info) else 'stale') if m.get('review_tip') else None,
             'refreshWork': cr['id'] == refresh_id,  # the console offers Refresh there alone (r27-q252)
+            'heldByReviewTree': held_by_review_tree(board, cr),
             'after': after_base(board, cr),
             'setupFailed': cr['status'] == 'in_progress' and bool(m.get('base_sha')) and m.get('setup_sha') != m.get('base_sha'),
             'unblocks': unblocks, 'unblocksDirect': direct, 'milestone': cr_milestone(board, cr['id']),
@@ -3333,13 +3423,22 @@ def crs_json(board: Board, listed: list[dict], queue: list[dict]) -> list[dict]:
         if base:
             children.setdefault(base, []).append(issue['id'])
     head = queue_head(board, queue)
-    refresh_id = head['id'] if head and needs_refresh(board, head) else None
+    refresh_id = head['id'] if head and needs_refresh(board, head) and not held_by_review_tree(board, head) else None
     return [cr_json(board, issue, children, refresh_id) for issue in listed]
 
 
 def ratifications_json(board: Board) -> list[dict]:
-    return [{'id': i['id'], 'cr': (board.parents.get(i['id']) or [''])[0], 'title': i.get('title', '')}
-            for i in board.issues if i['status'] == 'needs_ratification' and i.get('issue_type') in WORK_TYPES]
+    """The ratification rows: id, CR, title and the range the CR landed (`tip`: its `landing`, else the checked tip; `baseTip`: the
+    base tip of its check), which the console's Open shows; null when the CR is gone or recorded none. One read for the CRs."""
+    rows = [i for i in board.issues if i['status'] == 'needs_ratification' and i.get('issue_type') in WORK_TYPES]
+    crs = {i['id']: i for i in bd_show(sorted({(board.parents.get(r['id']) or [''])[0] for r in rows} - {''}), comments=False)} if rows else {}
+    out = []
+    for i in rows:
+        cr_id = (board.parents.get(i['id']) or [''])[0]
+        m = meta(crs.get(cr_id) or {})
+        tip, base = m.get('landing') or m.get('check_tip'), m.get('check_base_tip')
+        out.append({'id': i['id'], 'cr': cr_id, 'title': i.get('title', ''), 'tip': tip if tip and base else None, 'baseTip': base if tip and base else None})
+    return out
 
 
 def cr_deviations(board: Board, root: str | None) -> list[tuple[str, str, str]]:
@@ -3362,9 +3461,10 @@ def cr_deviations(board: Board, root: str | None) -> list[tuple[str, str, str]]:
     return found
 
 
-def open_worktree(board: Board, cr: dict, main: Path) -> tuple[bool, str | None]:
+def open_worktree(board: Board, cr: dict, main: Path, start: str | None = None) -> tuple[bool, str | None]:
     """Makes sure the CR's worktree exists, creating it from its branch (a returned or moved CR) or from its base tip
-    (a new one, recording the fork point, A3). (worktree created here, the tip a branch created here started at)."""
+    (a new one, recording the fork point, A3). `start`: a new branch forks there, on the target (a follow-up to a landed range
+    forks at that range's tip; the next refresh rebases it). (worktree created here, the tip a branch created here started at)."""
     cid = cr['id']
     path, branch = cr_worktree(main, cid), cr_branch(cid)
     exclude_worktrees(main)
@@ -3376,14 +3476,13 @@ def open_worktree(board: Board, cr: dict, main: Path) -> tuple[bool, str | None]
     if rev(main, f'refs/heads/{branch}'):
         git(main, 'worktree', 'add', str(path), branch)
         return True, None
-    waits, bases = board.cr_waits(cr)
-    base = bases[0] if bases else None
+    base = None if start else next(iter(board.cr_waits(cr)[1]), None)
     if base:
         base_value, ref = base, f'refs/heads/{cr_branch(base)}'
     else:
         base_value = target_branch(board, main)
         ref = f'refs/heads/{base_value}'
-    tip = rev(main, ref)
+    tip = start or rev(main, ref)
     if tip is None:
         raise BoardError(f'{cid}: base {base_value} has no branch')
     git(main, 'worktree', 'add', '-b', branch, str(path), tip)
@@ -3455,7 +3554,7 @@ def sync_branch(board: Board, cr: dict, main: Path, wt: Path) -> dict:
                          f'{tree_problem(wt) or "HEAD moved from " + head[:12] + " to " + tip[:12]}')
     put_meta(cr, check_tip=tip, check_base_tip=base_tip, check_result='pass' if passed else 'fail', check_at=stamp(), check_output=out or None,
              check_new=('\n'.join(detail['new']) or '-') if detail else None, check_base_count=detail['base'] if detail else None,
-             check_tip_count=detail['tip'] if detail else None)
+             check_tip_count=detail['tip'] if detail else None, check_kind=None, check_command=None, check_reason=None)
     board._cr.pop(cid, None)
     return {'oldTip': old_tip, 'oldBase': fork, 'moved': moved is not None, 'baseTip': base_tip, 'tip': tip, 'code': code, 'output': out}
 
@@ -3509,13 +3608,23 @@ class LandedError(BoardError):
     """The target already holds the tip: only the work after the fast-forward failed."""
 
 
+def no_own_commits(main: Path, cr: dict, tip: str) -> bool:
+    """The CR's branch holds no commit of its own: nothing between its fork point and its tip (r10-q50). An unknown fork point
+    counts as commits, so a CR the board cannot judge goes the normal way."""
+    fork = meta(cr).get('base_sha')
+    if not fork or not tip:
+        return False
+    counted = git(main, 'rev-list', '--count', f'{fork}..{tip}', check=False)
+    return counted.returncode == 0 and counted.stdout.decode().strip() == '0'
+
+
 def finish_landing(board: Board, cr: dict, tip: str, name: str, main: Path) -> list[str]:
     """What follows the target holding the CR's tip, idempotent (ff and close are two writes, A6): the ratification of a
     look-after CR, the close (forced: the git fact is authoritative), the CRs stacked on it re-based to the target, the worktree
     and branch gone (the branch only if it still is at the landed tip)."""
     cid, notes = cr['id'], []
     look = cr_look(board, cr)
-    if look == 'after':
+    if look == 'after' and not no_own_commits(main, cr, tip):  # nothing landed, nothing to ratify (r10-q50)
         made = cr_ratification(board, cr, f"Ratify: {cr.get('title', '')}")
         notes += [f'ratification {made}'] if made else []
     if cr['status'] != 'closed':
@@ -3571,7 +3680,7 @@ def land_core(board: Board, cr: dict, main: Path, tip: str | None = None) -> lis
     cid = cr['id']
     base, _ = cr_base(board, cr, main)
     if board.is_cr(base):
-        raise BoardError(f'{cid}: stacked on {base}, which has not landed: land {base} first (it then lands this one when its check is current)')
+        raise BoardError(f'{cid}: stacked on {base}, which has not landed: board cr land {base} first (it then lands this one when its check is current)')
     refusal = open_item_refusal(board, cr)
     if refusal:
         raise BoardError(refusal)
@@ -3581,14 +3690,14 @@ def land_core(board: Board, cr: dict, main: Path, tip: str | None = None) -> lis
     if branch_tip is None:
         raise BoardError(f'{cid}: no branch {cr_branch(cid)}')
     if tip and rev(main, tip) != branch_tip:
-        raise BoardError(f'{cid}: the branch moved since {tip}: now {branch_tip[:12]}; look at the change again (board refresh, then re-show the range)')
+        raise BoardError(f'{cid}: the branch moved since {tip}: now {branch_tip[:12]}; look at the change again (board cr refresh, then re-show the range)')
     pair = check_pair(cr)
     if pair is None or pair['result'] != 'pass' or pair['tip'] != branch_tip or pair['baseTip'] != old:
         state = check_state(main, cr, branch_tip, old)
-        raise BoardError(f'{cid}: not landed, its check is {state} (it must pass for tip {branch_tip[:12]} on {name} {old[:12]}): board refresh {cid}')
-    if not review_current(cr, {'tip': branch_tip, 'baseTip': old}):
+        raise BoardError(f'{cid}: not landed, its check is {state} (it must pass for tip {branch_tip[:12]} on {name} {old[:12]}): board cr refresh {cid}')
+    if not review_current(cr, {'tip': branch_tip, 'baseTip': old, 'main': main}):
         raise BoardError(f'{cid}: not landed, its review is of another (tip, base tip) than {branch_tip[:12]} on {name} {old[:12]}: '
-                         f'board refresh {cid} --review-holds if the review still holds, else board handover {cid} "<flag>" sends it back to review')
+                         f'board cr refresh {cid} --review-holds if the review still holds, else board handover {cid} "<flag>" sends it back to review')
     where, rebasing = checked_out_at(main, ref)
     if rebasing:
         raise BoardError(f'{cid}: not landed, {rebasing}')
@@ -3699,7 +3808,8 @@ def handover(board: Board, args) -> None:
         print(f'passed the checkpoint of {args.id}: open for planning' + (f'; ratification {made}' if made else ''))
         return
     base = cr_base(board, cr, main)[0]
-    if look == 'after' and not board.is_cr(base):
+    empty = no_own_commits(main, cr, result['tip'])  # nothing to merge: lands on its passed review, in either look, unseen (r10-q50)
+    if (look == 'after' or empty) and not board.is_cr(base):
         bd_checked('update', args.id, '--assignee', '', *expect, '--json')
         try:
             notes = land_core(board, cr, main)
@@ -3713,7 +3823,7 @@ def handover(board: Board, args) -> None:
         print('\n'.join(notes))
         print(f'passed and landed {args.id}')
         return
-    if look == 'after' and board.is_cr(base):  # lands with its parent when the check and this review still match (q219)
+    if (look == 'after' or empty) and board.is_cr(base):  # lands with its parent when the check and this review still match (q219)
         bd_checked('update', args.id, '--assignee', '', *expect, '--json')
         print(f'passed {args.id}: stays in review, marked after {base}; it lands with {base} when its check and review still match')
         return
@@ -3745,7 +3855,7 @@ DESIGN_FIELDS = ('description', 'design', 'acceptance_criteria', 'notes')
 
 def design_pin(board: Board, cr: dict) -> tuple[str, list[str]]:
     """(hash, ids) of a design checkpoint's design items (its children of type design, closed ones included): the text the user
-    is walked through. `land --checkpoint --design <hash>` accepts only that text."""
+    is walked through. `board cr land --checkpoint --design <hash>` accepts only that text."""
     designs = sorted((i for i in cr_closed_items(board, cr['id']) if i.get('issue_type') == 'design'), key=lambda i: i['id'])
     text = json.dumps([[i['id'], *(i.get(field) or '' for field in DESIGN_FIELDS)] for i in designs])
     return hashlib.sha256(text.encode()).hexdigest()[:12], [i['id'] for i in designs]
@@ -3773,11 +3883,11 @@ def land(board: Board, args) -> int:
             raise BoardError(f'{args.id}: the design changed since the claim (hash {pin}, not {args.design}); walk through it again, then land with --design {pin}')
         put_meta(cr, checkpoint=None, since=None)
         bd_checked('update', args.id, '--status', 'open', '--assignee', '', '--json')
-        comment(args.id, f'board land --checkpoint: {caller_actor} accepted the design; nothing landed, the planner adds the items.')
+        comment(args.id, f'board cr land --checkpoint: {caller_actor} accepted the design; nothing landed, the planner adds the items.')
         print(f'accepted the design checkpoint of {args.id}: open for planning')
         return 0
     if m.get('checkpoint') == 'user':
-        raise BoardError(f'{args.id}: a design checkpoint is pending: board land {args.id} --checkpoint')
+        raise BoardError(f'{args.id}: a design checkpoint is pending: board cr land {args.id} --checkpoint')
     for note in land_core(board, cr, main, args.tip):
         print(note)
     print(f"landed {args.id} on {board_setting(board, 'target')}")
@@ -3789,13 +3899,13 @@ def reject(board: Board, args) -> int:
     cr = cr_arg(board, args.id, 'reject')
     if not may_move(board):
         raise BoardError('only a lead or solo session, or a person, rejects a change request')
-    refuse_long_comment(f'board reject: {args.reason}')
-    comment(args.id, f'board reject: {actor}: {args.reason}')
+    refuse_long_comment(f'board cr reject: {args.reason}')
+    comment(args.id, f'board cr reject: {actor}: {args.reason}')
     reopened = [c for c in cr_closed_items(board, args.id) if c['status'] == 'closed' and not meta(c).get('ratification')
                 and not c.get('title', '').startswith('Ratify')]  # a ratification is no work to redo
     for child in reopened:
         bd_checked('update', child['id'], '--status', 'open', '--assignee', '', '--json')
-        comment(child['id'], f'board reject: {args.id} was rejected ({args.reason}); the work is not landed.')
+        comment(child['id'], f'board cr reject: {args.id} was rejected ({args.reason}); the work is not landed.')
     bd_checked('close', args.id, '--reason', f"rejected: {args.reason}"[:300].ljust(20, '.'), '--force')  # open items stay open for replanning
     cr['status'] = 'closed'
     target = board_setting(board, 'target')
@@ -3804,7 +3914,7 @@ def reject(board: Board, args) -> int:
         if meta(other).get('base') == args.id:
             put_meta(other, base=target, replan=args.reason[:200], since=None)
             bd_checked('update', other['id'], '--status', 'open', '--assignee', '', '--json')
-            comment(other['id'], f"board reject: {args.id}, which this stacked on, was rejected ({args.reason}); back to planning with the base reset to the target.")
+            comment(other['id'], f"board cr reject: {args.id}, which this stacked on, was rejected ({args.reason}); back to planning with the base reset to the target.")
             back.append(other['id'])
     print(f"rejected {args.id}; reopened {len(reopened)} items" + (f"; back to planning: {', '.join(back)}" if back else '')
           + f"; branch {cr_branch(args.id)} and its worktree stay until you confirm deleting them")
@@ -3813,8 +3923,8 @@ def reject(board: Board, args) -> int:
 
 def patch_ids(wt: Path, base: str, tip: str) -> list[str]:
     """The patch-id of each commit in base..tip, oldest first: equal lists mean the same changes, however they were rebased."""
-    log = git(wt, 'log', '--reverse', '-p', '--no-color', f'{base}..{tip}', check=False).stdout
-    out = subprocess.run(['git', 'patch-id', '--stable'], cwd=wt, input=log, capture_output=True).stdout.decode()
+    log = git(wt, 'log', '--reverse', '-p', '--binary', '--no-color', f'{base}..{tip}', check=False).stdout
+    out = subprocess.run(['git', 'patch-id', '--verbatim'], cwd=wt, input=log, capture_output=True).stdout.decode()
     return [row.split()[0] for row in out.splitlines() if row.strip()]
 
 
@@ -3827,6 +3937,8 @@ def refresh(board: Board, args) -> int:
         raise BoardError(f"{args.id}: {cr['status']}, no worktree in use to refresh")
     if args.review_holds and cr['status'] != ACCEPT:
         raise BoardError(f'{args.id}: --review-holds re-stamps the review of a change request waiting for its Accept')
+    if not holds_cr(cr, actor) and held_by_review_tree(board, cr):
+        raise BoardError(f'{args.id} is open in your review tree; it refreshes once a deciding session claims it')
     main = main_root()
     wt = cr_worktree(main, args.id)
     if not wt.is_dir():
@@ -3839,7 +3951,7 @@ def refresh(board: Board, args) -> int:
     reviewed, reviewed_base = meta(cr).get('review_tip'), meta(cr).get('review_base_tip')
     # What a waiting-for-Accept CR's triage asks is what changed since the review, not since the last fork (q236).
     since_review = cr['status'] == ACCEPT and bool(reviewed and reviewed_base and rev(wt, reviewed) and rev(wt, reviewed_base)) \
-        and not review_current(cr, {'tip': result['tip'], 'baseTip': result['baseTip']})
+        and not review_current(cr, {'tip': result['tip'], 'baseTip': result['baseTip'], 'main': main})
     from_base, from_tip = (reviewed_base, reviewed) if since_review else (old_base, old_tip)
     if since_review or result['moved'] or result['tip'] != old_tip:
         ranges = git(wt, 'range-diff', f'{from_base}..{from_tip}', f"{result['baseTip']}..{result['tip']}", check=False).stdout.decode('utf-8', 'replace')
@@ -3847,26 +3959,224 @@ def refresh(board: Board, args) -> int:
     incoming = git_text(wt, 'diff', '--name-only', from_base, result['baseTip']).splitlines() if from_base != result['baseTip'] else []
     print(f'incoming files ({from_base[:12]}..{result["baseTip"][:12]}{", since the review" if since_review else ""}): {len(incoming)}' + ''.join(f'\n  {path}' for path in incoming))
     if cr['status'] == ACCEPT:
-        info = {'tip': result['tip'], 'baseTip': result['baseTip']}
+        info = {'tip': result['tip'], 'baseTip': result['baseTip'], 'main': main}
         triaged = (meta(cr).get('triaged_tip'), meta(cr).get('triaged_base_tip'))
         put_meta(cr, triaged_tip=result['tip'], triaged_base_tip=result['baseTip'])  # what this output asked the triage about
         if not review_current(cr, info) and not args.review_holds:
             print(f'{args.id}: its review was of another (tip, base tip); if the incoming change touches it: board handover {args.id} "<flag>" '
-                  f'sends it back to agent review; if the review still holds: board refresh {args.id} --review-holds, then board unclaim {args.id}')
+                  f'sends it back to agent review; if the review still holds: board cr refresh {args.id} --review-holds, then board unclaim {args.id}')
         if args.review_holds:  # the triage verdict "the review still holds" is recorded explicitly (F1)
             if result['code']:
                 raise BoardError(f'{args.id}: the check is not passing, so the review cannot be kept; board handover {args.id} "<why>" sends it back to review')
             if not reviewed or not reviewed_base or rev(wt, reviewed) is None or rev(wt, reviewed_base) is None:
                 raise BoardError(f'{args.id}: no reviewed range is recorded; board handover {args.id} "<why>" sends it back to review')
-            if patch_ids(wt, reviewed_base, reviewed) != patch_ids(wt, result['baseTip'], result['tip']):
+            held = patch_ids(wt, reviewed_base, reviewed)  # edit commits the reviewed range already holds stay in the comparison
+            new = zip(patch_ids(wt, result['baseTip'], result['tip']), edit_commits(wt, cr, result['baseTip'], result['tip']))
+            if held != [one for one, is_edit in new if not is_edit or one in held]:  # a changed edit commit is no recorded one
                 raise BoardError(f'{args.id}: its commits are no longer the reviewed changes (a conflict resolution, or new commits); '
                                  f'board handover {args.id} "<why>" sends it back to review')
             if triaged != (result['tip'], result['baseTip']):  # the base or the tip moved after the triage: that change is untriaged
                 raise BoardError(f'{args.id}: the base or the tip moved since the last refresh, so the incoming list above is new and untriaged; '
-                                 f'triage it, then run board refresh {args.id} --review-holds again (or board handover {args.id} "<flag>")')
+                                 f'triage it, then run board cr refresh {args.id} --review-holds again (or board handover {args.id} "<flag>")')
             put_meta(cr, review_tip=result['tip'], review_base_tip=result['baseTip'])
             print(f'{args.id}: the review holds for tip {result["tip"][:12]} on base {result["baseTip"][:12]}; board unclaim {args.id}')
     return 0
+
+
+def review_edits_tree(main: Path, tree: Path, tip: str) -> str:
+    """The tree object holding the review tree's files: tracked and new (not ignored) as they are on disk. Built in a throwaway
+    index, so the review tree's own index and files are never touched. The console's clean check (review.ts `snapshotTree`) is the
+    same recipe; the test proves both give one tree."""
+    if not tree.is_dir() or git(tree, 'rev-parse', '--git-dir', check=False).returncode != 0:
+        raise BoardError(f'{tree} is not a git worktree')
+    common = lambda root: Path(git_text(root, 'rev-parse', '--path-format=absolute', '--git-common-dir').strip()).resolve()
+    if common(tree) != common(main):
+        raise BoardError(f'{tree} is a worktree of another repository')
+    marked = rev(tree, REVIEW_END_REF)
+    if not marked:
+        raise BoardError(f'{tree} has no review-end marker: it is not the console review tree, so its files are not your edits')
+    if marked != tip:
+        raise BoardError(f'the review tree {tree} was set to {marked[:12]}, not {tip[:12]}: its edits are against another tip')
+    with tempfile.TemporaryDirectory() as scratch:
+        env = {'GIT_INDEX_FILE': str(Path(scratch) / 'index')}
+        git(tree, 'read-tree', tip, env=env)
+        git(tree, 'add', '-A', env=env)
+        return git_text(tree, 'write-tree', env=env).strip()
+
+
+def mark_reviewed(tree: Path, tip: str, commit: str) -> bool:
+    """Moves the review tree's marker from the tip its edits were against to the commit that holds them, only if it still names that
+    tip: the tree's files then equal the marker's tree, which the console reads as clean (review.ts `readReviewTree`)."""
+    return git(tree, 'update-ref', REVIEW_END_REF, commit, tip, check=False).returncode == 0
+
+
+def user_identity(main: Path) -> dict[str, str]:
+    """Author environment of the user's commit: git's user.name and user.email of the repository."""
+    who = {key: git(main, 'config', key, check=False).stdout.decode().strip() for key in ('user.name', 'user.email')}
+    if not all(who.values()):
+        raise BoardError('git user.name and user.email are not set: the review edits are committed as yours')
+    return {'GIT_AUTHOR_NAME': who['user.name'], 'GIT_AUTHOR_EMAIL': who['user.email']}
+
+
+def edits_commit(main: Path, tree: Path, tip: str, edits: str, message: str) -> str:
+    """The commit of the edits' exact tree on `tip`: author the user, committer the session, no trailer; the board records it."""
+    actor = derived_actor()
+    author = user_identity(main)
+    committer = {'GIT_COMMITTER_NAME': actor, 'GIT_COMMITTER_EMAIL': f'{actor}@board.invalid'} if actor else \
+        {'GIT_COMMITTER_NAME': author['GIT_AUTHOR_NAME'], 'GIT_COMMITTER_EMAIL': author['GIT_AUTHOR_EMAIL']}
+    return git_text(main, 'commit-tree', edits, '-p', tip, '-m', message.rstrip() + '\n', env={**author, **committer}).strip()
+
+
+def edits_target(board: Board, args) -> tuple[dict, dict | None, str]:
+    """(the item, the landed change request or None, the tip the edits are against): a change request waiting for its Accept, or the
+    ratification of a landed one."""
+    issue = require_open(board, [args.id])[0]
+    if board.is_cr(args.id):
+        if issue['status'] != ACCEPT:
+            raise BoardError(f"{args.id}: {issue['status']}; board cr edits works on a change request waiting for its Accept, or a ratification")
+        return issue, None, rev(main_root(), f'refs/heads/{cr_branch(args.id)}') or ''
+    if issue['status'] != 'needs_ratification' or not meta(issue).get('ratification'):
+        raise BoardError(f"{args.id}: board cr edits works on a change request waiting for its Accept, or a ratification" +
+                         (f"; its change request is {board.cr_of(args.id)}" if board.cr_of(args.id) else ''))
+    parent = (board.parents.get(args.id) or [''])[0]
+    landed = bd_show([parent], comments=False) if parent else []
+    if not landed:
+        raise BoardError(f'{args.id}: its change request {parent or "-"} is gone: no landed range to take edits against')
+    m = meta(landed[0])
+    return issue, landed[0], m.get('landing') or m.get('check_tip') or ''
+
+
+def record_edits(cr: dict, commit: str) -> None:
+    """Appends the commit to the CR's `review_edits`, so it keeps the review (`edits_only`)."""
+    put_meta(cr, review_edits=json.dumps([*edit_entries(cr), {'commit': commit}]))
+
+
+def store_gate(cr: dict, tip: str, base_tip: str, gate: str | None, reason: str | None, passed: bool, output: str) -> None:
+    """The check of an edit commit, stored as what it was: a targeted run (command, output) or no check (the reason). Never a full pass."""
+    put_meta(cr, check_tip=tip, check_base_tip=base_tip, check_result='pass' if passed else 'fail', check_at=stamp(),
+             check_output=tail(output) or None, check_kind='targeted' if gate else 'none', check_command=gate, check_reason=reason,
+             check_new=None, check_base_count=None, check_tip_count=None)
+
+
+def cr_edits(board: Board, args) -> int:
+    main = main_root()
+    issue, landed, branch_tip = edits_target(board, args)
+    tree, expect = Path(args.tree).resolve(), rev(main, args.tip)
+    if expect is None:
+        raise BoardError(f'{args.tip} is not a commit here')
+    what = landed['id'] if landed else args.id
+    if branch_tip != expect:
+        raise BoardError(f"{what}: {'landed at' if landed else 'its branch tip is'} {branch_tip[:12] or 'none'}, not {expect[:12]}: the edits are against a tip it no longer has; look at the change again")
+    edits = review_edits_tree(main, tree, expect)
+    if edits == git_text(main, 'rev-parse', f'{expect}^{{tree}}').strip():
+        raise BoardError(f'{args.id}: the review tree {tree} holds no edits against {expect[:12]}')
+    if not args.commit:
+        shown = git_text(main, 'diff', '--binary', '--no-color', expect, edits)
+        names = git_text(main, 'diff', '--name-status', expect, edits).splitlines()
+        print(f'edits in {tree} against {expect[:12]} ({len(names)} files):' + ''.join(f'\n  {row}' for row in names) + f'\n\n{shown}', end='')
+        return 0
+    if not may_move(board):
+        raise BoardError('only a lead or solo session, or a person, commits the review edits')
+    if landed is None and issue.get('assignee') and not holds_cr(issue, derived_actor() or ''):
+        raise BoardError(f"{args.id}: held by {issue['assignee']}: commit the edits once that session releases it")
+    if landed is not None and (args.gate or args.no_gate or args.checks):
+        raise BoardError(f'{args.id}: a ratification edit starts a follow-up change request, whose own checks run at its hand-over: drop --gate, --no-gate and --checks')
+    commit = edits_commit(main, tree, expect, edits, args.message)
+    if landed is not None:
+        return follow_up(board, issue, landed, expect, commit, tree)
+    cr, wt = issue, cr_worktree(main, args.id)
+    if not wt.is_dir():
+        raise BoardError(f'{args.id}: no worktree {wt}: git worktree add {wt} {cr_branch(args.id)}')
+    if rev(wt, 'HEAD') != expect or tree_problem(wt):
+        raise BoardError(f"{args.id}: {tree_problem(wt) or 'its worktree is not at ' + expect[:12]}")
+    base_tip = rev(main, cr_base(board, cr, main)[1])
+    if (args.gate or args.no_gate) and not is_ancestor(main, base_tip, expect):  # --checks rebases itself
+        raise BoardError(f'{args.id}: its base moved ({base_tip[:12]}): board cr refresh {args.id} first, then look again; a check of the edit would name a base the branch is not on')
+    git(wt, 'merge', '--ff-only', commit)
+    if not mark_reviewed(tree, expect, commit):
+        git(wt, 'reset', '-q', '--keep', expect)
+        raise BoardError(f'{args.id}: the review tree {tree} was set to another range meanwhile; nothing committed')
+    record_edits(cr, commit)
+    print(f'committed the edits of {tree} on {cr_branch(args.id)} as {commit[:12]} (author {git(main, "log", "-1", "--format=%an", commit).stdout.decode().strip()})')
+    comment(args.id, f'board cr edits: the review edits of {tree}@{expect[:12]} committed as {commit[:12]}.')
+    if args.checks:  # the handover/refresh runner: rebase, setup, the project checks, no-new-failures, stored as a full check
+        result = sync_branch(board, cr, main, wt)
+        board._cr.pop(args.id, None)
+        if result['code']:
+            rebased = f"; the branch was rebased to {result['tip'][:12]}: Open {args.id} again before editing" if result['tip'] != commit else ''
+            print(f"checks failed (exit {result['code']}):\n{result['output']}\n"
+                  f"nothing lands; the edit commit stays on {cr_branch(args.id)} and {args.id} waits for the user: fix it{rebased}, or board return {args.id} \"<findings>\" sends it to a worker")
+            return 1
+        if not review_current(cr, {'tip': result['tip'], 'baseTip': result['baseTip'], 'main': main}):  # the rebase moved its base
+            print(f"stored: full check passed for {result['tip'][:12]}; the review is of the old base: board cr refresh {args.id} shows what came in; "
+                  f"if the review still holds, board cr refresh {args.id} --review-holds, then board cr land {args.id} --tip {result['tip'][:12]}")
+            return 0
+        print(f"stored: full check passed for {result['tip'][:12]}; land with board cr land {args.id} --tip {result['tip'][:12]}")
+        return 0
+    if not (args.gate or args.no_gate):
+        print('no check stored for it')
+        return 0
+    passed, output = True, ''
+    if args.gate:
+        code, output = run_shell_full(wt, args.gate)
+        passed = code == 0
+    if rev(wt, 'HEAD') != commit or tree_problem(wt):
+        raise BoardError(f"{args.id}: the gate changed the worktree ({tree_problem(wt) or 'HEAD moved'}); nothing was recorded")
+    store_gate(cr, commit, base_tip, args.gate, args.no_gate, passed, output)
+    board._cr.pop(args.id, None)
+    if not passed:
+        print(f'gate failed (exit {code}): {args.gate}\n{tail(output)}\n'
+              f'nothing lands; the edit commit stays on {cr_branch(args.id)} and {args.id} waits for the user: fix it, or board return {args.id} "<findings>" sends it to a worker')
+        return 1
+    print(f"stored: {'targeted check passed: ' + args.gate if args.gate else 'no check: ' + args.no_gate} (for {commit[:12]} only; it never counts as a full check); land with board cr land {args.id} --tip {commit[:12]}")
+    return 0
+
+
+def follow_up(board: Board, ratification: dict, landed: dict, tip: str, commit: str, tree: Path) -> int:
+    """A ratification edit: a new change request whose first commit is the edit, forked at the landed tip (the target may have moved on;
+    a refresh rebases it), linked to the ratification."""
+    main = main_root()
+    if not is_ancestor(main, tip, f'refs/heads/{target_branch(board, main)}'):
+        raise BoardError(f'{landed["id"]}: its landed tip {tip[:12]} is not on {target_branch(board, main)}')
+    title = f"Follow-up to {landed.get('title', '')}: review edits"
+    command = rewritten_create('create', ['--type', CR_TYPE, '--title', title, '--priority', str(ratification.get('priority', 2)),
+                                          '--description', f"The user's edits to {landed.get('title', '')} ({landed['id']}), made in the review tree at its landed range "
+                                          f"and committed as this branch's first commit (ratification {ratification['id']}). Plan what follows.",
+                                          '--deps', f"discovered-from:{ratification['id']}", '--silent'], board)
+    made = bd_checked(*command).strip().splitlines()[-1]
+    found = bd_show([made], comments=False)
+    if not found:
+        raise BoardError(f'{made}: created, but not readable; nothing committed')
+    cr = found[0]
+    created, made_tip = open_worktree(board, cr, main, start=tip)
+    try:
+        git(cr_worktree(main, made), 'merge', '--ff-only', commit)
+        if not mark_reviewed(tree, tip, commit):
+            raise BoardError(f'{ratification["id"]}: the review tree {tree} was set to another range meanwhile; nothing committed')
+    except BoardError as error:
+        branch = f'refs/heads/{cr_branch(made)}'
+        removed = git(main, 'worktree', 'remove', '--force', str(cr_worktree(main, made)), check=False).returncode == 0
+        now = rev(main, branch)  # the fork point, or the edit commit once the merge ran
+        dropped = removed and made_tip is not None and now in (made_tip, commit) \
+            and git(main, 'update-ref', '-d', branch, now, check=False).returncode == 0
+        bd_checked('close', made, '--reason', 'the edit did not commit; nothing made', '--force')
+        if made_tip and now and not dropped:
+            raise BoardError(f'{error}; the rollback left branch {cr_branch(made)} at {now[:12]}: git branch -D {cr_branch(made)}') from None
+        raise
+    record_edits(cr, commit)
+    comment(ratification['id'], f'board cr edits: the review edits of {tree}@{tip[:12]} started follow-up {made} (commit {commit[:12]} on {cr_branch(made)}).')
+    print(f'follow-up {made} created: the edits of {tree} are its first commit {commit[:12]} on {cr_branch(made)} (forked at {tip[:12]}); plan it and close {ratification["id"]} with the user\'s answer')
+    return 0
+
+
+def edits_cmd(board: Board, args) -> int:
+    if args.commit and not args.message:
+        raise BoardError('--commit needs -m <message>')
+    if (args.gate or args.no_gate or args.checks) and not args.commit:
+        raise BoardError('--gate, --no-gate and --checks go with --commit')
+    if sum(bool(one) for one in (args.gate, args.no_gate, args.checks)) > 1:
+        raise BoardError('--gate, --no-gate and --checks exclude each other')
+    return cr_edits(board, args)
 
 
 SHOW_PASSTHROUGH = ('--refs', '--children', '--as-of', '--long', '--watch', '--current', '--thread', '-w', '-h', '--help')
@@ -3881,6 +4191,38 @@ def board_read(argv: list[str]) -> list[str] | None:
             or any(arg.startswith('-') for arg in argv[1:]):
         return None
     return ['show', *argv[1:], *(['--comments'] if argv[0] == 'comments' else [])]
+
+
+def type_refusal(command: str, rest: list[str]) -> str | None:
+    """A creation or retyping with a type outside ITEM_TYPES (r9-q42): `create`, `q`, `create --for`, `create --graph` nodes and `update --type`."""
+    types = flag_values(rest, '-t', '--type')
+    graph = next(iter(flag_values(rest, '--graph')), None)
+    if graph:
+        types += [str(node.get('type')) for node in graph_plan(graph).get('nodes') or [] if isinstance(node, dict) and node.get('type')]
+    bad = sorted({kind for kind in types if kind not in ITEM_TYPES})
+    return (f"type {', '.join(bad)} is not a board type ({', '.join(ITEM_TYPES)}; board-core.md Kinds); "
+            'a check others wait on is a task, a question is a decision') if bad else None
+
+
+def default_look_refusal(rest: list[str]) -> str | None:
+    """A change request's own `look` or `view` equal to the project default (r10-q52): metadata overrides the default, so a copy
+    would hide a later switch. Checks `update --set-metadata` and the `metadata` of `create --graph` nodes; the default is read
+    only when one is given, and an unreadable default lets bd answer."""
+    given = [tuple(pair.partition('=')[::2]) for pair in flag_values(rest, '--set-metadata')]
+    graph = next(iter(flag_values(rest, '--graph')), None)
+    if graph:
+        given += [(key, str(value)) for node in graph_plan(graph).get('nodes') or [] if isinstance(node, dict)
+                  for key, value in (node.get('metadata') if isinstance(node.get('metadata'), dict) else {}).items()]
+    given = [(key, value) for key, value in given if key in ('look', 'view')]
+    for key, value in given:
+        try:
+            default = current_setting(SETTINGS[key])
+        except BoardError:
+            return None
+        if value == default:
+            return (f'{key} {value} is the project default: set a change request\'s {key} only to override it '
+                    f'(board setup --{key} changes the default; plan.md and change-requests.md)')
+    return None
 
 
 def question_type(rest: list[str]) -> list[str]:
@@ -4028,13 +4370,20 @@ def passthrough(argv: list[str]) -> int:
         ids = positionals(rest)
         crs = [issue['id'] for issue in bd_show(ids, comments=False) if issue.get('issue_type') == CR_TYPE] if ids else []
         if crs:
-            print(f"board: {', '.join(crs)} is a change request: board land <cr> closes it landed, board reject <cr> \"<reason>\" closes it unlanded", file=sys.stderr)
+            print(f"board: {', '.join(crs)} is a change request: board cr land <cr> closes it landed, board cr reject <cr> \"<reason>\" closes it unlanded", file=sys.stderr)
             return 2
-    if command in ('list', 'create', 'query'):
+    if command in ('list', 'create', 'query', 'update', 'q'):
         meant = question_type(rest)
         if meant != rest:
             print('board: questions are type decision; ran it with type decision', file=sys.stderr)
             rest = meant
+    if command == 'update' and any(pair.partition('=')[0] == NO_CODE for pair in flag_values(rest, '--set-metadata')):
+        print(f'board: {NO_CODE} marks work that changes no code when the item is created (create --graph node metadata or '
+              'create --metadata); an existing item is not marked later (board-core.md Work items)', file=sys.stderr)
+        return 2
+    if command in ('create', 'new', 'update', 'q') and (refusal := type_refusal(command, rest) or default_look_refusal(rest)):
+        print(f'board: {refusal}', file=sys.stderr)
+        return 2
     if command == 'dolt' and rest[:2] == ['remote', 'add']:
         print('board: a Dolt remote alone shares nothing; board share shares the board (queues, sync, config)', file=sys.stderr)
     directory = next((argv[i + 1] for i, arg in enumerate(argv[:-1]) if arg in ('-C', '--directory')),
@@ -4241,7 +4590,7 @@ def record(board: Board, args) -> None:
     if issue.get('issue_type') != 'decision':
         raise BoardError(f'{args.id}: {issue.get("issue_type")}, not a decision')
     if issue['status'] not in ('open', 'in_progress', 'decided', 'needs_ratification'):
-        raise BoardError(f"{args.id}: {issue['status']}; a released record changes through board revise")
+        raise BoardError(f"{args.id}: {issue['status']}; a released record changes through board ruling revise")
     try:
         text = Path(args.file).read_text(encoding='utf-8')
     except (OSError, UnicodeDecodeError) as error:
@@ -4366,11 +4715,11 @@ def release(board: Board, args) -> int:
             named = ', '.join(f"{b} ({board.by_id.get(b, {}).get('status', 'not found')})" for b in blocking)
             problems.append(f"{issue['id']}: waits on {named}")
         # A decided record a live question revises is about to be replaced: releasing it puts it in force first
-        # (a board revise opened outside a round; Record closes the replaced record).
+        # (a board ruling revise opened outside a round; Record closes the replaced record).
         live = [other for other in board.revised_by(issue['id']) if board.is_open(other) and other not in args.ids]
         if live and issue['status'] == 'decided':
             problems.append(f"{issue['id']}: revised by {', '.join(live)}, not closed or released with it; close the "
-                            'revision (board supersede), or release them together')
+                            'revision (board ruling supersede), or release them together')
     closes = []
     for question, records in args.closes:
         issue = board.by_id.get(question)
@@ -4399,7 +4748,7 @@ def release(board: Board, args) -> int:
             raise BoardError('release refused, record text fails bd lint (write the record first):\n  ' + '\n  '.join(unlinted))
         # A released ruling keeps blocking the items it changes; planning closes it and unblocks them.
         operations = [f"update {issue['id']} status=released assignee=\"\"" for issue in pending]
-        bd_checked('batch', '-m', f"board release {' '.join(issue['id'] for issue in pending)}", '--json',
+        bd_checked('batch', '-m', f"board ruling release {' '.join(issue['id'] for issue in pending)}", '--json',
                    stdin='\n'.join(operations) + '\n')
     returned, failed = [], []
     for issue in rulings:
@@ -4458,7 +4807,7 @@ def supersede_chain(board: Board, old: str, new: str, rule: str | None, actor: s
     try:
         returned, failed = supersede_pair(board, old, new, rule, actor)
     except BoardError as error:
-        print(f"{old}: not superseded by {new}: {error}; finish with board supersede {old} --with {new}"
+        print(f"{old}: not superseded by {new}: {error}; finish with board ruling supersede {old} --with {new}"
               + (f' --partial {shlex.quote(rule)}' if rule is not None else ''), file=sys.stderr)
         return [], [old]
     if rule is not None:
@@ -4502,10 +4851,10 @@ def supersede_pair(board: Board, old: str, new: str, rule: str | None, actor: st
         operations.append(f'dep add {old} {new} supersedes')
     operations += carried
     if operations:
-        bd_checked('batch', '-m', f'board supersede {old} --with {new}', '--json', stdin='\n'.join(operations) + '\n')
+        bd_checked('batch', '-m', f'board ruling supersede {old} --with {new}', '--json', stdin='\n'.join(operations) + '\n')
     if rule is not None:
         if rule:
-            comment(old, f'board supersede: rule "{rule}" superseded by {new}.')
+            comment(old, f'board ruling supersede: rule "{rule}" superseded by {new}.')
         print(f"{old}: one rule{f' ({rule})' if rule else ''} superseded by {new}")
         return [], []
     # The new record restates the whole rule: the old record's open items wait for its planning.
@@ -4699,6 +5048,27 @@ def project_pairs(args) -> list[tuple[str, str]]:
     return pairs
 
 
+def own_value_lines(name: str, default: str) -> list[str]:
+    """After a switch of the project's `look` or `view` (r10-q52): the open change requests that keep their own value, each with
+    the line of its text that gives the reason (the first one naming the setting), for the person to clear the ones they
+    disagree with. Best effort: the setting is set either way."""
+    try:
+        crs = [i for i in Board.load('status').issues if i.get('issue_type') == CR_TYPE and meta(i).get(name)]
+    except (BoardError, ValueError, subprocess.SubprocessError):
+        return [f'(the change requests keeping their own {name} could not be listed: board bd list --json)']
+    if not crs:
+        return []
+    word = re.compile(rf'\b{name}\b', re.IGNORECASE)
+
+    def reason(issue: dict) -> str:
+        text = '\n'.join(str(issue.get(field) or '') for field in ('description', 'design', 'notes'))
+        found = next((line.strip() for line in re.split(r'(?<=[.!?])\s+|\n', text) if word.search(line)), None)
+        return found[:160] if found else 'no reason in its text'
+
+    return [f'  {len(crs)} open change request(s) keep their own {name}; clear one you disagree with: board bd update <id> --unset-metadata {name}',
+            *(f"    {i['id']}  {meta(i)[name]}{' (equals the new default)' if meta(i)[name] == default else ''}: {reason(i)}" for i in sorted(crs, key=lambda i: i['id']))]
+
+
 def setup(args) -> int:
     """Safe to repeat (r38-q218, server default): no board → `bd init --server --stealth` (--embedded opts out), then the
     settings. An existing board is never re-created: `--server` converts an embedded one in place (`to_server`), a missing
@@ -4736,6 +5106,9 @@ def setup(args) -> int:
             bd_checked('config', 'set', key, value)
             changed.append(key)
             print(f"{key}: {old or '(unset)'} -> {value}", flush=True)  # printed as applied: a later failure leaves it said
+            if key in (SETTINGS['look'], SETTINGS['view']):
+                for line in own_value_lines(key.rsplit('.', 1)[1], value):
+                    print(line, flush=True)
     if changed:
         committed = bd('dolt', 'commit', '-m', 'board setup')  # in server mode an uncommitted status.custom stops the first sync
         output = committed.stdout + committed.stderr
@@ -5033,6 +5406,8 @@ def create_for(argv: list[str]) -> int:
             skip = True
         elif not arg.startswith('--for='):
             rest.append(arg)
+    if refusal := type_refusal('create', rest):
+        raise BoardError(refusal)
     if shared is None:
         raise BoardError('board create --for files for another person on a shared board; this board is not shared')
     if len(targets) != 1 or not PERSON_NAME.fullmatch(targets[0]):
@@ -5072,14 +5447,17 @@ EXAMPLES = {
     'console': 'board console',
     'show': 'board show <id> --section Decision',
     'claim': 'board claim [<id>] [--force "waits on the cache ruling"]',
-    'record': 'board record <id> .scratch/<topic>/<arc>/record.md',
+    'ruling record': 'board ruling record <id> record.md',
     'block': 'board block <item> <item> --on <blocker> --reason "waits for the cache ruling"',
-    'land': 'board land <cr> --tip <sha>',
-    'refresh': 'board refresh <cr> [--review-holds]',
-    'reject': 'board reject <cr> "approach X fails because Y"',
-    'revise': 'board revise <old> --title "May X replace Y?" --body-file packet.md --partial "Rule 2"',
-    'release': 'board release <id> <id> --closes <question>=<id>',
-    'supersede': 'board supersede <old> --with <new> --partial "Rule 2"',
+    'cr land': 'board cr land <cr> --tip <sha>',
+    'cr refresh': 'board cr refresh <cr> [--review-holds]',
+    'cr reject': 'board cr reject <cr> "approach X fails because Y"',
+    'cr edits': 'board cr edits <cr> --from ../repo-review --tip <sha> [--commit -m "fix typo" (--no-gate "docs only" | --gate "<cmd>" | --checks)]',
+    'ruling revise': 'board ruling revise <old> --title "May X replace Y?" --body-file packet.md --partial "Rule 2"',
+    'ruling release': 'board ruling release <id> <id> --closes <question>=<id>',
+    'ruling supersede': 'board ruling supersede <old> --with <new> --partial "Rule 2"',
+    'cr': 'board cr land <cr> --tip <sha>',
+    'ruling': 'board ruling record <id> record.md',
     'bd': 'board bd list --status open --json',
     'handover': 'board handover <id> "pnpm test: exit 0, 412 passed; typecheck exit 0"',
     'return': 'board return <id> "test x fails: <finding>"',
@@ -5116,7 +5494,7 @@ def writes(argv: list[str]) -> bool:
 
 def main(argv: list[str] | None = None) -> int:
     global shared
-    argv = sys.argv[1:] if argv is None else argv
+    argv = (sys.argv[1:] if argv is None else argv) or ['help']  # a bare call prints the help (r15-q88)
     if argv[:1] == ['_sync-wait']:
         shared = find_shared()
         return shared.wait() if shared else 0
@@ -5133,7 +5511,7 @@ def main(argv: list[str] | None = None) -> int:
             print(f'board: sync step skipped: {error}', file=sys.stderr)
 
     word = bd_word(argv) if argv[:1] == ['bd'] else (argv[0] if argv else '')
-    bare = bool({'-h', '--help'} & set(argv))
+    bare = bool({'-h', '--help'} & set(argv)) or argv in (['cr'], ['ruling'])  # a bare group only lists its verbs
     if not bare and word not in (BD_NO_PULL if argv[:1] == ['bd'] else NO_PULL):
         quietly(shared.before)
     if not bare and shared.moved() and (writes(argv) or argv[:1] in (['share'], ['move'])):
@@ -5147,7 +5525,22 @@ def main(argv: list[str] | None = None) -> int:
         quietly(shared.report)
 
 
-CR_AWARE = {'claim', 'handover', 'return', 'unclaim', 'take', 'land', 'reject', 'refresh', 'queue', 'health', 'position', 'console', 'check', 'mine', 'block'}
+def pointer_for(word: str, rest: list[str], groups: dict) -> str | None:
+    """The command to run instead of an unknown top-level verb (r15-q88, q90): the group verb of that name, else `board bd` when the
+    installed bd knows the word (`bd <word> --help` exits 0; bd's command set changes with its version, so board keeps no list).
+    Nothing runs. None: argparse's own error."""
+    tail = ''.join(f' {shlex.quote(arg)}' for arg in rest)
+    for group, verbs in groups.items():
+        if word in verbs.choices:
+            return f'board {group} {word}{tail}'
+    try:
+        known = bd(word, '--help').returncode == 0
+    except OSError:  # no bd installed
+        known = False
+    return f'board bd {word}{tail}' if known else None
+
+
+CR_AWARE = {'claim', 'handover', 'return', 'unclaim', 'take', 'cr land', 'cr reject', 'cr refresh', 'cr edits', 'queue', 'health', 'position', 'console', 'check', 'mine', 'block'}
 
 
 def run_command(argv: list[str]) -> int:
@@ -5171,11 +5564,19 @@ def run_command(argv: list[str]) -> int:
                        f'stays within {READ_BUDGET} characters')
     commands = parser.add_subparsers(dest='command', required=True)
 
-    def add(name: str, text: str, run, parents=()):
-        sub = commands.add_parser(name, help=text, description=text, parents=list(parents), epilog=f'example: {EXAMPLES[name]}',
-                                  formatter_class=argparse.RawDescriptionHelpFormatter)
+    def add(name: str, text: str, run, parents=(), group: str | None = None):
+        """A top-level command, or with `group` a verb of that kind group (`board cr land`)."""
+        sub = (groups[group] if group else commands).add_parser(
+            name, help=text, description=text, parents=list(parents), epilog=f'example: {EXAMPLES[f"{group} {name}" if group else name]}',
+            formatter_class=argparse.RawDescriptionHelpFormatter)
         sub.set_defaults(run=run)
         return sub
+
+    # Kind groups (r15-q80): verbs that act on one kind of item; a bare group prints its verbs.
+    groups = {}
+    for group, text in (('cr', 'change request verbs: land, refresh, edits, reject'), ('ruling', 'ruling verbs: record, revise, release, supersede')):
+        sub = add(group, text, None)
+        groups[group] = sub.add_subparsers(dest='verb', metavar='VERB')
 
     def nonempty(value: str) -> str:
         if not value.strip():
@@ -5235,7 +5636,7 @@ def run_command(argv: list[str]) -> int:
     sub.add_argument('ids', nargs='*', type=board_id)
     sub.add_argument('--force', metavar='REASON', type=nonempty,
                      help="hold a work item past your worker cap, flagged with this reason in position and check")
-    sub = add('record', 'write the decision record you hold from a file and set it decided', record)
+    sub = add('record', 'write the decision record you hold from a file and set it decided', record, group='ruling')
     sub.add_argument('id', type=board_id)
     sub.add_argument('file')
     sub.add_argument('--status', choices=('decided', 'needs_ratification'), default='decided',
@@ -5244,18 +5645,27 @@ def run_command(argv: list[str]) -> int:
     sub.add_argument('ids', nargs='+', metavar='item', type=board_id)
     sub.add_argument('--on', dest='blocker', required=True, type=board_id)
     sub.add_argument('--reason', required=True, type=nonempty)
-    sub = add('land', "fast-forward the target to a change request's tip (its Accept), or pass its design checkpoint with --checkpoint", land)
+    sub = add('land', "fast-forward the target to a change request's tip (its Accept), or pass its design checkpoint with --checkpoint", land, group='cr')
     sub.add_argument('id', type=board_id)
     sub.add_argument('--tip', metavar='SHA', help='the tip you reviewed: refused when the branch moved since')
     sub.add_argument('--checkpoint', action='store_true', help="accept a user design checkpoint: the change request returns to planning, nothing lands")
     sub.add_argument('--design', metavar='HASH', help='required with --checkpoint: the design hash `board claim` printed; refused when the design text changed since')
-    sub = add('refresh', "rebase a change request onto its base in its worktree, set up, check, and print the range-diff and the incoming files", refresh)
+    sub = add('refresh', "rebase a change request onto its base in its worktree, set up, check, and print the range-diff and the incoming files", refresh, group='cr')
     sub.add_argument('id', type=board_id)
     sub.add_argument('--review-holds', action='store_true', help='the triage found the incoming change does not touch it: keep its review for the new (tip, base tip); refused unless the check passes and its commits are the reviewed changes')
-    sub = add('reject', 'close a change request unlanded: its items reopen, change requests stacked on it go back to planning', reject)
+    sub = add('edits', "show the user's review-tree edits against the tip they were made on, or with --commit commit them (as the user's) on the change request", edits_cmd, group='cr')
+    sub.add_argument('id', type=board_id)
+    sub.add_argument('--from', dest='tree', required=True, metavar='TREE', help="the review tree holding the user's edits")
+    sub.add_argument('--tip', required=True, metavar='SHA', help='the tip the edits are against: refused when the branch (a ratification: the landed range) is no longer there')
+    sub.add_argument('--commit', action='store_true', help="commit exactly those edits: author the user, committer this session, recorded on the request; a ratification starts a follow-up change request")
+    sub.add_argument('-m', '--message', type=nonempty, help='with --commit: the commit message')
+    sub.add_argument('--gate', metavar='CMD', type=nonempty, help='with --commit: run this command in the worktree on the new tip and store it as a targeted check for that tip only')
+    sub.add_argument('--checks', action='store_true', help="with --commit: run the project's setup and checks as handover does (no new failures against the base) and store a normal check for the new tip")
+    sub.add_argument('--no-gate', metavar='REASON', type=nonempty, help='with --commit: store "no check" with this reason for the new tip (a Markdown edit)')
+    sub = add('reject', 'close a change request unlanded: its items reopen, change requests stacked on it go back to planning', reject, group='cr')
     sub.add_argument('id', type=board_id)
     sub.add_argument('reason', type=nonempty)
-    sub = add('revise', 'open a revision question linked to the record it revises; prints its id', revise)
+    sub = add('revise', 'open a revision question linked to the record it revises; prints its id', revise, group='ruling')
     sub.add_argument('old', type=board_id)
     sub.add_argument('--title', required=True, type=nonempty)
     sub.add_argument('--body-file', required=True)
@@ -5265,7 +5675,7 @@ def run_command(argv: list[str]) -> int:
     sub.add_argument('-l', '--labels', action='append', default=[], help="default: the old record's topic: labels")
     sub.add_argument('--external-ref', metavar='REF', help='tag the new question with an external reference')
     sub = add('release', 'release decided rulings in one bd batch; supersedes the records they revise, then closes '
-              'the questions they answer', release)
+              'the questions they answer', release, group='ruling')
     sub.add_argument('ids', nargs='+', type=board_id)
 
     def answered(value: str) -> tuple[str, list[str]]:
@@ -5278,7 +5688,7 @@ def run_command(argv: list[str]) -> int:
     sub.add_argument('--closes', nargs='+', type=answered, default=[], metavar='QUESTION=RECORD[,RECORD]',
                      help='close each question as answered by the named released rulings, in dependency order; '
                           'forces only past blockers released or closed in this call')
-    sub = add('supersede', "supersede a ruling; a full replacement blocks the old record's open items", supersede)
+    sub = add('supersede', "supersede a ruling; a full replacement blocks the old record's open items", supersede, group='ruling')
     sub.add_argument('old', type=board_id)
     sub.add_argument('--with', dest='new', required=True, type=board_id)
     sub.add_argument('--partial', metavar='RULE', nargs='?', const='', help='one rule of the old record: add the edge only')
@@ -5325,17 +5735,27 @@ def run_command(argv: list[str]) -> int:
     sub.add_argument('url')
     add('help', 'every command with an example', None)
 
+    word = argv[0] if argv else ''
+    if word and not word.startswith('-') and word not in commands.choices:
+        pointer = pointer_for(word, argv[1:], groups)
+        if pointer:
+            print(f'board: no verb {word!r}; run: {pointer}', file=sys.stderr)
+            return 2
+
     args, extra = parser.parse_known_args(argv)
+    name = f'{args.command} {args.verb}' if args.command in groups and getattr(args, 'verb', None) else args.command
     if args.command == 'related' and not args.terms and args.like is None:
         commands.choices['related'].error('give terms, --like <draft>, or both')
     if extra:
         hint = next((word for word in extra if word in HEALTH_VIEWS), None)
-        commands.choices[args.command].error(f"unrecognized arguments: {' '.join(extra)}"
+        (groups[args.command].choices[args.verb] if name != args.command else commands.choices[args.command]).error(f"unrecognized arguments: {' '.join(extra)}"
                                              + (f'; for that list run board health --items {hint}' if hint else ''))
     if args.run is None:
-        print(parser.format_usage().strip() + '\n')
-        for name, sub in commands.choices.items():
-            print(sub.format_usage().strip() + f'\n  {sub.description or ""}'.rstrip() + f'\n  example: {EXAMPLES[name]}')
+        shown = groups[args.command].choices if args.command in groups else commands.choices
+        print((commands.choices[args.command] if args.command in groups else parser).format_usage().strip() + '\n')
+        for key, sub in shown.items():
+            example = EXAMPLES[f'{args.command} {key}' if args.command in groups else key]
+            print(sub.format_usage().strip() + f'\n  {sub.description or ""}'.rstrip() + f'\n  example: {example}')
         return 0
     args.root = getattr(args, 'root', None)
     if args.run in (setup, share, join, move):
@@ -5358,7 +5778,7 @@ def run_command(argv: list[str]) -> int:
         board = Board.load(scope, args.ids if scope == 'ids' else None)
         if args.run is console:  # reads only: one read of the repository serves every change request, settle_landed's included
             read_git_view(board)
-        if scope != 'ids' and args.command in CR_AWARE and settle_landed(board):
+        if scope != 'ids' and name in CR_AWARE and settle_landed(board):
             global settled
             settled = True
         chosen = getattr(args, 'queue', None)

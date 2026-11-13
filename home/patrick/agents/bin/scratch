@@ -1,0 +1,907 @@
+#!/usr/bin/env python3
+"""scratch: the per-repository scratch folders outside the checkout (r15-q66..q87).
+
+Layout under ${XDG_STATE_HOME:-~/.local/state}/agents/scratch/:
+  <repo folder>/.repo               the repository path this folder belongs to
+  <repo folder>/sessions/<actor>/   a session's folder (its workers share it)
+  <repo folder>/items/<id>/         a board item's folder
+  <repo folder>/shared/<name>/      data shared across sessions or items
+  .trash/<repo folder>/<name>[-N]/{origin,trashed,size,data}
+  .cache/<repo folder>/{cache.json,scan.lock/}   .cache/.scanned.json: when the root was last scanned
+
+Entries expire on their own: the hourly scan (started by dir and status, one per scratch root; `scratch sweep` runs it
+now) goes over every repository folder, each under its own lock, and trashes every top-level entry unchanged (mtime and
+ctime of everything in it) for IDLE_DAYS, and removes owner folders left empty that long; migrate scans its own repository.
+The trash deletes after TRASH_DAYS; a trashed entry is restored from inside its repository.
+
+Test and tooling hooks: AGENT_SESSION_COMMAND, AGENT_BOARD_COMMAND (default: the files beside this one),
+SCRATCH_NO_BACKGROUND=1 (no detached scan; the trash purge deletes in the foreground), SCRATCH_NOW=<epoch> (the clock).
+"""
+from __future__ import annotations
+
+import argparse
+import itertools
+import math
+import json
+import os
+import re
+import shutil
+import stat
+import subprocess
+import sys
+import time
+from datetime import datetime, timezone
+from pathlib import Path
+
+IDLE_DAYS = 14  # an entry not written for this long is ready (q72)
+TRASH_DAYS = 7  # trash entries older than this are purged
+SCAN_SECONDS = 3600  # at most one background scan per scratch root and hour
+LOCK_STALE_SECONDS = 3600  # a scan lock older than this belongs to a dead scan
+PURGE_STALL_SECONDS = 600  # a .purging-* entry untouched this long lost its deleter
+NAME = re.compile(r'[A-Za-z0-9][A-Za-z0-9._-]*')  # one path component, never hidden
+
+HELP = """scratch: scratch folders outside the checkout (one tree per repository; idle ones go to the trash on their own)
+
+  scratch dir [--for <id> | --shared <name>]   print (and create) a folder; default: this session's folder
+      scratch dir                      /Users/me/.local/state/agents/scratch/-repo/sessions/<actor>
+      scratch dir --for tstdl-1ab      the board item's folder (needs the repo's board and an existing id)
+      scratch dir --shared fixtures    a named folder for work spanning sessions or items (data, never handovers)
+  scratch trash <path>...              move paths inside this repo's scratch folder to the trash (restorable 7 days)
+      scratch trash "$(scratch dir)/dump"
+  scratch restore [<name | path>]      list the trash, or move one entry back: by trash name, or by the path it was trashed
+                                       from (the newest wins when it was trashed more than once)
+      scratch restore dump
+      scratch restore ~/.local/state/agents/scratch/-repo/sessions/<actor>/dump
+  scratch list [--all] [--json]        entries (owner, size, last change, idle days when the next scan trashes it); --all: every repo folder
+      scratch list --json
+  scratch status [--line]              totals; --line: what the trash holds (empty when nothing)
+      scratch status --line
+  scratch sweep                        run the expiry scan now over every repository (14-day rule) and print what it trashed
+      scratch sweep
+  scratch migrate                      one-time move of every .scratch folder's entries (any depth) into shared/<name>/, then the expiry scan
+      scratch migrate
+  scratch help                         this text
+"""
+
+
+class ScratchError(Exception):
+    pass
+
+
+def now() -> float:
+    return float(os.environ.get('SCRATCH_NOW') or time.time())  # SCRATCH_NOW: test clock
+
+
+def run(args: list[str], cwd: str | None = None) -> subprocess.CompletedProcess:
+    try:
+        return subprocess.run(args, capture_output=True, text=True, cwd=cwd, stdin=subprocess.DEVNULL)
+    except OSError as error:
+        return subprocess.CompletedProcess(args, 127, '', str(error))
+
+
+def sibling(name: str, variable: str) -> str:
+    return os.environ.get(variable) or str(Path(__file__).resolve().parent / name)
+
+
+def background_off() -> bool:
+    return bool(os.environ.get('SCRATCH_NO_BACKGROUND'))
+
+
+def iso(moment: float) -> str:
+    return datetime.fromtimestamp(moment, timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+
+
+def human(size: int) -> str:
+    value = float(size)
+    for unit in ('B', 'KB', 'MB', 'GB'):
+        if value < 1000:
+            return f'{int(value)} B' if unit == 'B' else f'{value:.1f} {unit}'
+        value /= 1000
+    return f'{value:.1f} TB'
+
+
+# Locations
+
+def root() -> Path:
+    state = os.environ.get('XDG_STATE_HOME', '')
+    if not state.startswith('/'):  # the XDG spec: a relative value is invalid and ignored
+        state = os.path.join(os.path.expanduser('~'), '.local', 'state')
+    return Path(os.path.realpath(os.path.join(state, 'agents', 'scratch')))
+
+
+def repo_path() -> str:
+    """The resolved repository (git's common dir from any worktree or subfolder), else the resolved current folder."""
+    cwd = os.path.realpath(os.getcwd())
+    top = root()
+    if cwd.startswith(f'{top}/'):  # inside a scratch folder: its own repo
+        held = load_text(top / cwd[len(f'{top}/'):].split('/', 1)[0] / '.repo')
+        if held:
+            return held
+    result = run(['git', 'rev-parse', '--path-format=absolute', '--git-common-dir'], cwd)
+    if result.returncode == 0 and result.stdout.strip():
+        common = os.path.realpath(result.stdout.strip())
+        return os.path.dirname(common) if os.path.basename(common) == '.git' else common
+    return cwd
+
+
+def repo_folder(create: bool = False) -> Path | None:
+    """This repo's folder: the path with / as -, suffixed -2, -3... when an existing .repo names another path.
+    Without create, None when the repo has none yet."""
+    path = repo_path()
+    base = str(root() / path.replace('/', '-'))
+    number = 1
+    while True:
+        folder = Path(base if number == 1 else f'{base}-{number}')
+        held = load_text(folder / '.repo')
+        if held == path:
+            return folder
+        if held is not None or (folder.exists() and not create):
+            number += 1  # another repository's folder
+        elif not create:
+            return None
+        elif folder.exists():  # a folder without .repo: take it over
+            (folder / '.repo').write_text(path + '\n', encoding='utf-8')
+        else:
+            staging = Path(f'{folder}.new-{os.getpid()}')
+            staging.mkdir(parents=True, exist_ok=True)
+            (staging / '.repo').write_text(path + '\n', encoding='utf-8')
+            try:
+                os.rename(staging, folder)
+            except OSError:  # a concurrent creator won: look again
+                pass
+            shutil.rmtree(staging, ignore_errors=True)
+
+
+def state_dir(folder: Path) -> Path:
+    return root() / '.cache' / folder.name
+
+
+def trash_dir(folder: Path) -> Path:
+    return root() / '.trash' / folder.name
+
+
+def component(value: str, what: str) -> str:
+    if not NAME.fullmatch(value):
+        raise ScratchError(f'{what} {value!r} must be one plain name (letters, digits, . _ -; not starting with . or -)')
+    return value
+
+
+# Session and board (identity as bin/board's derived_actor)
+
+def session_actor() -> str | None:
+    """BEADS_ACTOR (bd-guard sets it for Claude workers), else the registry's actor; a worker's
+    <session>/<agent> uses the session part."""
+    actor = os.environ.get('BEADS_ACTOR', '').strip()
+    if not actor:
+        result = run(['bash', sibling('session', 'AGENT_SESSION_COMMAND'), 'actor'])
+        actor = result.stdout.strip() if result.returncode == 0 else ''
+    return actor.split('/', 1)[0] or None
+
+
+def board(*args: str) -> subprocess.CompletedProcess:
+    return run([sibling('board', 'AGENT_BOARD_COMMAND'), *args], repo_path())
+
+
+def has_board() -> bool:
+    named = os.environ.get('BEADS_DIR')
+    if named and (Path(named) / 'metadata.json').is_file():
+        return True
+    start = Path(os.path.realpath(os.getcwd()))
+    candidates = [d / '.beads' for d in (start, *start.parents)] + [Path(repo_path()) / '.beads']
+    return any((c / 'metadata.json').is_file() for c in candidates)
+
+
+def board_item(item: str) -> str:
+    """The board's full id for the item, or a refusal."""
+    refusal = (f'cannot give a folder for item {item!r}: use scratch dir --shared <name> for work without a board item')
+    if not has_board():
+        raise ScratchError(f'this repo has no board (.beads); {refusal}')
+    result = board('show', item, '--json', '--field', 'status')
+    if result.returncode != 0:
+        raise ScratchError(f'the board does not know {item!r}; {refusal}')
+    try:
+        found = json.loads(result.stdout)
+        (full,) = found
+    except (ValueError, TypeError):
+        raise ScratchError(f'the board gave no id for {item!r}; {refusal}') from None
+    return component(str(full), 'board id')
+
+
+# Walking (never follows symlinks)
+
+def survey(path: str, renamed: bool = False) -> tuple[int, float]:
+    """(allocated bytes, newest change) of the path and everything below it, symlinks counted as links. A change is
+    max(mtime, ctime): data copied in with its old mtimes (cp -a, tar, rsync -a) and a restored entry still count as
+    new. `renamed`: the path was just renamed by us, which moves its own ctime only, so that ctime is ignored."""
+    try:
+        info = os.lstat(path)
+    except OSError:
+        return 0, 0.0
+    size, newest = info.st_blocks * 512, info.st_mtime if renamed else max(info.st_mtime, info.st_ctime)
+    stack = [path] if stat.S_ISDIR(info.st_mode) else []
+    while stack:
+        try:
+            with os.scandir(stack.pop()) as entries:
+                for entry in entries:
+                    try:
+                        info = entry.stat(follow_symlinks=False)
+                    except OSError:
+                        continue
+                    size += info.st_blocks * 512
+                    newest = max(newest, info.st_mtime, info.st_ctime)
+                    if stat.S_ISDIR(info.st_mode):
+                        stack.append(entry.path)
+        except OSError:
+            continue
+    return size, newest
+
+
+def real_dirs(parent: Path) -> list[Path]:
+    try:
+        names = sorted(os.listdir(parent))
+    except OSError:
+        return []
+    return [parent / n for n in names if not os.path.islink(parent / n) and os.path.isdir(parent / n)]
+
+
+def collect(folder: Path, renamed: tuple[str, ...] = ()) -> list[dict]:
+    """The folder's entries: top-level entries of each session and item folder, each shared/<name> as one. Ready =
+    nothing changed for IDLE_DAYS, whoever owns it."""
+    found = []
+    moment = now()
+
+    def add(path: Path, owner: str) -> None:
+        size, newest = survey(str(path), str(path) in renamed)
+        reason = f'idle {int((moment - newest) // 86400)} days' if moment - newest > IDLE_DAYS * 86400 else None
+        found.append({'path': str(path), 'owner': owner, 'size': size, 'mtime': newest, 'ready': reason})
+
+    for kind in ('sessions', 'items'):
+        for owner in real_dirs(folder / kind):
+            try:
+                names = sorted(os.listdir(owner))
+            except OSError as error:
+                print(f'scratch: cannot read {owner}, skipped: {error.strerror}', file=sys.stderr)
+                continue
+            for name in names:
+                add(owner / name, f"{'session' if kind == 'sessions' else 'item'} {owner.name}")
+    for named in real_dirs(folder / 'shared'):
+        add(named, f'shared {named.name}')
+    return found
+
+
+def expire_owners(folder: Path, emptied: set[str]) -> None:
+    """Remove owner folders (sessions/<actor>, items/<id>) left empty and unchanged for IDLE_DAYS; rmdir only. One
+    this scan just emptied has changed: it waits for the next 14 days."""
+    for kind in ('sessions', 'items'):
+        for owner in real_dirs(folder / kind):
+            if str(owner) in emptied:
+                continue
+            try:
+                info = os.lstat(owner)
+                if moment_idle(max(info.st_mtime, info.st_ctime)) and not os.listdir(owner):
+                    os.rmdir(owner)
+            except OSError:
+                continue
+
+
+def moment_idle(newest: float) -> bool:
+    return now() - newest > IDLE_DAYS * 86400
+
+
+# Scan and cache
+
+def cache_file(folder: Path) -> Path:
+    return state_dir(folder) / 'cache.json'
+
+
+def load_json(path: Path) -> dict | None:
+    try:
+        data = json.loads(path.read_text(encoding='utf-8'))
+    except (OSError, ValueError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def write_json(path: Path, data: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(f'.{path.name}.{os.getpid()}')
+    temporary.write_text(json.dumps(data), encoding='utf-8')
+    os.replace(temporary, path)
+
+
+def lock_scan(folder: Path) -> Path | None:
+    lock = state_dir(folder) / 'scan.lock'
+    lock.parent.mkdir(parents=True, exist_ok=True)
+    for _ in range(2):
+        try:
+            os.mkdir(lock)
+            (lock / 'pid').write_text(str(os.getpid()), encoding='utf-8')
+            return lock
+        except FileExistsError:
+            try:
+                stale = now() - os.lstat(lock).st_mtime > LOCK_STALE_SECONDS
+            except OSError:
+                continue
+            if not stale:
+                return None
+            gone = lock.with_name(f'scan.lock.stale-{os.getpid()}')
+            try:
+                os.rename(lock, gone)  # one reclaimer wins
+            except OSError:
+                return None
+            shutil.rmtree(gone, ignore_errors=True)
+    return None
+
+
+def scan(folder: Path, renamed: tuple[str, ...] = ()) -> list[dict] | None:
+    """Trash every ready entry, then publish the cache atomically, all under the scan lock. The trashed entries
+    ({'entry', 'path', 'size', 'idle'}), or None when another scan holds the lock."""
+    lock = lock_scan(folder)
+    if lock is None:
+        return None
+    trashed = []
+    try:
+        found = collect(folder, renamed)
+        moment = now()
+        for r in found:
+            if not r['ready']:
+                continue
+            try:
+                entry = move_to_trash(folder, locate(r['path'], folder), r['size'])
+            except ScratchError:
+                continue  # stays; the next scan tries again
+            trashed.append({'entry': entry.name, 'path': r['path'], 'size': r['size'],
+                            'idle': int((moment - r['mtime']) // 86400)})
+        expire_owners(folder, {os.path.dirname(t['path']) for t in trashed})
+        kept = [e for e in found if not any(e['path'] == t['path'] for t in trashed)]
+        write_json(cache_file(folder), {'scanned_at': now(), 'repo': folder.name, 'total_entries': len(kept),
+                                        'total_size': sum(e['size'] for e in kept)})
+    finally:
+        shutil.rmtree(lock, ignore_errors=True)
+    return trashed
+
+
+def scanned_marker() -> Path:
+    return root() / '.cache' / '.scanned.json'
+
+
+def repo_folders() -> list[Path]:
+    try:
+        names = sorted(n for n in os.listdir(root()) if not n.startswith('.'))
+    except OSError:
+        return []
+    return [root() / n for n in names if (root() / n).is_dir() and not (root() / n).is_symlink()]
+
+
+def scan_all() -> list[tuple[Path, list[dict] | None]]:
+    """The scan over every repository folder, each under its own lock (None: held by another scan, skipped), then the
+    root's hourly marker."""
+    done = [(folder, scan(folder)) for folder in repo_folders()]
+    if root().is_dir():
+        write_json(scanned_marker(), {'scanned_at': now()})
+    return done
+
+
+def maybe_scan(folder: Path) -> None:
+    """Start a detached scan of the root unless one ran within the hour or this repository's is running."""
+    if background_off():
+        return
+    marked = load_json(scanned_marker())
+    if marked and now() - marked.get('scanned_at', 0) < SCAN_SECONDS:
+        return
+    lock = state_dir(folder) / 'scan.lock'
+    try:
+        if now() - os.lstat(lock).st_mtime < LOCK_STALE_SECONDS:
+            return
+    except OSError:
+        pass
+    spawn([sys.executable, str(Path(__file__).resolve()), '__scan'])
+
+
+def spawn(args: list[str]) -> None:
+    try:
+        subprocess.Popen(args, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                         start_new_session=True, cwd=os.getcwd())
+    except OSError:
+        pass
+
+
+# Trash
+
+def locate(path: str, folder: Path | None) -> str:
+    """The absolute path inside the repo's folder, resolved up to its last component (a symlink stays itself)."""
+    if folder is None:
+        raise ScratchError(f'{path}: this repo has no scratch folder')
+    text = (path if os.path.isabs(path) else os.path.join(os.getcwd(), path)).rstrip('/') or '/'
+    if os.path.islink(text):
+        target = os.path.join(os.path.realpath(os.path.dirname(text)), os.path.basename(text))
+    else:
+        target = os.path.realpath(text)
+    inside = os.path.realpath(folder)
+    if not target.startswith(inside + '/') or target == os.path.join(inside, '.repo'):
+        raise ScratchError(f'{path}: not inside this repo\'s scratch folder {inside} (the folder itself and .repo stay)')
+    if not os.path.lexists(target):
+        raise ScratchError(f'{path}: does not exist')
+    return target
+
+
+def move_to_trash(folder: Path, target: str, size: int | None = None) -> Path:
+    parent = trash_dir(folder)
+    parent.mkdir(parents=True, exist_ok=True)
+    # Entries starting with . are skipped by restore and purge, so the name drops its leading dots (origin keeps them).
+    base = os.path.basename(target).lstrip('.') or 'entry'
+    for number in itertools.count(1):
+        entry = parent / (base if number == 1 else f'{base}-{number}')
+        try:
+            os.mkdir(entry)
+            break
+        except FileExistsError:
+            continue
+        except OSError as error:  # e.g. a name too long
+            raise ScratchError(f'{target}: cannot move to the trash: {error.strerror}') from None
+    try:
+        (entry / 'origin').write_text(target + '\n', encoding='utf-8')
+        (entry / 'trashed').write_text(f'{now():.6f}\n', encoding='utf-8')
+        (entry / 'size').write_text(str(survey(target)[0] if size is None else size) + '\n', encoding='utf-8')
+        os.rename(target, entry / 'data')  # same volume: a rename, never a copy
+    except OSError as error:
+        shutil.rmtree(entry, ignore_errors=True)
+        raise ScratchError(f'{target}: cannot move to the trash: {error}') from None
+    return entry
+
+
+def trashed_at(entry: Path) -> float:
+    """When the entry was trashed: the time stored in it (the wrapper's own mtime moves with anything written in it), else
+    the wrapper's mtime."""
+    held = load_text(entry / 'trashed')
+    try:
+        return float(held)
+    except (TypeError, ValueError):
+        return os.lstat(entry).st_mtime
+
+
+def trash_entries(folder: Path | None) -> list[Path]:
+    if folder is None:
+        return []
+    try:
+        names = sorted(n for n in os.listdir(trash_dir(folder)) if not n.startswith('.'))
+    except OSError:
+        return []
+    return [trash_dir(folder) / n for n in names]
+
+
+def entry_size(entry: Path) -> int:
+    held = load_text(entry / 'size')
+    return int(held) if held and held.isdigit() else survey(str(entry / 'data'))[0]
+
+
+def trash_size() -> tuple[int, int]:
+    folder = repo_folder()
+    entries = trash_entries(folder)
+    return len(entries), sum(entry_size(e) for e in entries)
+
+
+def purge_trash() -> None:
+    """Rename entries older than TRASH_DAYS to .purging-<name> and delete them in the background."""
+    top = root() / '.trash'
+    doomed = []
+    moment = now()
+    try:
+        repos = [top / n for n in os.listdir(top)]
+    except OSError:
+        return
+    for repo in repos:
+        try:
+            names = os.listdir(repo)
+        except OSError:
+            continue
+        for name in names:
+            path = repo / name
+            try:
+                info = os.lstat(path)
+            except OSError:
+                continue
+            if name.startswith('.purging-'):
+                if moment - info.st_ctime > PURGE_STALL_SECONDS:
+                    doomed.append(path)  # its deleter died
+            elif not name.startswith('.') and moment - trashed_at(path) > TRASH_DAYS * 86400:
+                renamed = repo / f'.purging-{name}'
+                try:
+                    if os.path.lexists(renamed):
+                        continue
+                    os.rename(path, renamed)
+                except OSError:
+                    continue  # another command took it
+                doomed.append(renamed)
+    if doomed:
+        command = ['rm', '-rf', '--', *map(str, doomed)]
+        if background_off():
+            run(command)
+        else:
+            spawn(command)
+
+
+# Verbs
+
+def cmd_repo(args) -> int:
+    """The repo folder's name, created so the name stays this repository's (decision records use it: r15-q71)."""
+    print(repo_folder(create=True).name)
+    return 0
+
+
+def cmd_dir(args) -> int:
+    if args.for_item is not None and args.shared is not None:
+        raise ScratchError('--for and --shared are alternatives')
+    if args.for_item is not None:
+        owner = Path('items') / board_item(args.for_item)
+    elif args.shared is not None:
+        owner = Path('shared') / component(args.shared, '--shared name')
+    else:
+        actor = session_actor()
+        if actor is None:
+            raise ScratchError('no agent session here: name a folder with --for <item id> or --shared <name>')
+        owner = Path('sessions') / component(actor, 'session actor')
+    folder = repo_folder(create=True)
+    path = folder / owner
+    path.mkdir(parents=True, exist_ok=True)
+    maybe_scan(folder)
+    print(path)
+    return 0
+
+
+def cmd_trash(args) -> int:
+    folder = repo_folder()
+    targets = [locate(p, folder) for p in args.paths]  # all checked before anything moves
+    for target in targets:
+        print(move_to_trash(folder, target))
+    return 0
+
+
+def read_origin(entry: Path) -> str | None:
+    try:
+        return (entry / 'origin').read_text(encoding='utf-8').strip() or None
+    except OSError:
+        return None
+
+
+def trash_number(entry: Path) -> int:
+    found = re.search(r'-(\d+)$', entry.name)
+    return int(found.group(1)) if found else 1
+
+
+def pick_entry(name: str, entries: list[Path]) -> tuple[Path, str | None]:
+    """The entry for a restore argument: a trash name, else the path an entry came from (~, absolute or relative to
+    the cwd; the newest of several wins, and the note says so), else a name that is the last component of an origin (.venv)."""
+    for entry in entries:
+        if entry.name == name:
+            return entry, None
+    path = os.path.expanduser(name)
+    path = os.path.join(os.path.realpath(os.path.dirname(path)), os.path.basename(path.rstrip('/')))
+    same = [e for e in entries if read_origin(e) == path]
+    if same:
+        newest = max(same, key=lambda e: (trashed_at(e), trash_number(e)))  # equal times: the later number
+        return newest, (f'the newest of {len(same)} entries trashed from {path}: {newest.name}' if len(same) > 1 else None)
+    named = [e for e in entries if '/' not in name and os.path.basename(read_origin(e) or '') == name]
+    if named:  # e.g. .venv: its entry is called venv, and a different venv may sit beside it
+        newest = max(named, key=lambda e: (trashed_at(e), trash_number(e)))
+        return newest, (f'the newest of {len(named)} entries trashed from a path named {name}: {newest.name}' if len(named) > 1 else None)
+    raise ScratchError(f'{name!r}: no such trash entry or trashed path')
+
+
+def cmd_restore(args) -> int:
+    folder = repo_folder()
+    entries = trash_entries(folder)
+    if args.name is None:
+        moment = now()
+        for entry in entries:
+            try:
+                left = TRASH_DAYS - (moment - trashed_at(entry)) / 86400
+            except OSError:  # purged meanwhile
+                continue
+            print(f'{entry.name}\t{read_origin(entry) or "?"}\t{max(left, 0):.1f} days left')
+        return 0
+    entry, note = pick_entry(args.name, entries)
+    origin = read_origin(entry)
+    if origin is None or not (entry / 'data').is_symlink() and not (entry / 'data').exists():
+        raise ScratchError(f'{entry.name}: the trash entry is incomplete')
+    origin = locate_origin(origin, folder)
+    if os.path.isdir(origin) and not os.path.islink(origin):
+        try:
+            os.rmdir(origin)  # an empty folder (scratch dir recreated it) gives way; a full one is refused below
+        except OSError:
+            pass
+    if os.path.lexists(origin):
+        raise ScratchError(f'{origin} is occupied; move it away first (the entry stays in the trash)')
+    try:
+        os.makedirs(os.path.dirname(origin), exist_ok=True)
+        os.rename(entry / 'data', origin)
+    except OSError as error:  # a purge took the entry, or the origin's parent is not a folder
+        raise ScratchError(f'{entry.name}: cannot restore to {origin}: {error.strerror}') from None
+    shutil.rmtree(entry, ignore_errors=True)
+    if note:
+        print(f'scratch: restored {note}', file=sys.stderr)
+    print(origin)
+    return 0
+
+
+def locate_origin(origin: str, folder: Path) -> str:
+    inside = os.path.realpath(folder)
+    if not origin.startswith(inside + '/') or '/../' in origin + '/':
+        raise ScratchError(f'{origin}: outside this repo\'s scratch folder; not restored')
+    return origin
+
+
+def entry_rows(rows: list[dict], as_json: bool) -> None:
+    if as_json:
+        print(json.dumps([{'path': r['path'], 'owner': r['owner'], 'size': r['size'], 'modified': iso(r['mtime']),
+                           'ready': r['ready']} for r in rows], indent=2))
+        return
+    for r in rows:
+        print('\t'.join((r['path'], r['owner'], human(r['size']), iso(r['mtime']), r['ready'] or '-')))
+
+
+def cmd_list(args) -> int:
+    if args.all:
+        rows = []
+        try:
+            names = sorted(n for n in os.listdir(root()) if not n.startswith('.'))
+        except OSError:
+            names = []
+        for name in names:
+            path = root() / name
+            if not path.is_dir() or path.is_symlink():
+                continue
+            repo = (load_text(path / '.repo'))
+            rows.append({'path': str(path), 'repo': repo, 'size': survey(str(path))[0],
+                         'gone': bool(repo) and not os.path.exists(repo)})
+        if args.json:
+            print(json.dumps(rows, indent=2))
+        else:
+            for r in rows:
+                print('\t'.join((r['path'], r['repo'] or '?', human(r['size']), 'repo gone' if r['gone'] else '-')))
+        return 0
+    folder = repo_folder()
+    rows = collect(folder) if folder else []
+    entry_rows(rows, args.json)
+    return 0
+
+
+def load_text(path: Path) -> str | None:
+    try:
+        return path.read_text(encoding='utf-8').strip() or None
+    except OSError:
+        return None
+
+
+def cmd_status(args) -> int:
+    folder = repo_folder()
+    if folder:
+        maybe_scan(folder)
+    if args.line:
+        entries = trash_entries(folder)
+        if entries:
+            oldest = min(trashed_at(e) for e in entries)
+            days = max(math.ceil(TRASH_DAYS - (now() - oldest) / 86400), 1)
+            print(f'scratch: {len(entries)} trashed ({human(sum(entry_size(e) for e in entries))}), '
+                  f"the first is deleted within {days} day{'' if days == 1 else 's'} (scratch restore)")
+        return 0
+    if folder is None:
+        print(f'scratch: no scratch folder yet for {repo_path()}')
+        return 0
+    cached = load_json(cache_file(folder))
+    print(f'folder: {folder}')
+    if cached:
+        print(f"entries: {cached['total_entries']}, {human(cached['total_size'])} (scanned {iso(cached['scanned_at'])})")
+    else:
+        print('entries: not scanned yet (a background scan was started)')
+    count, size = trash_size()
+    print(f'trash: {count} entries, {human(size)}')
+    return 0
+
+
+def worktrees(top: str) -> list[str]:
+    result = run(['git', 'worktree', 'list', '--porcelain'], top)
+    listed = [line[len('worktree '):] for line in result.stdout.splitlines() if line.startswith('worktree ')]
+    return [os.path.realpath(p) for p in listed] if result.returncode == 0 else []
+
+
+def inside(path: str, top: str) -> bool:
+    return path == top or path.startswith(top + '/')
+
+
+def link_report(top: str, scratch: str, moving: list[str]) -> tuple[list, list, list]:
+    """Symlinks below top (a folder of .scratch): (relative ones leaving .scratch, absolute ones pointing into a
+    .scratch being moved, folders that could not be read), each link as (path relative to top, target)."""
+    leaving, absolute, unread = [], [], []
+    stack = [top]
+    while stack:
+        here = stack.pop()
+        try:
+            with os.scandir(here) as entries:
+                for entry in entries:
+                    if entry.is_symlink():
+                        try:
+                            target = os.readlink(entry.path)
+                        except OSError:
+                            continue
+                        link = (os.path.relpath(entry.path, top), target)
+                        if not target.startswith('/'):
+                            if not inside(os.path.normpath(os.path.join(os.path.dirname(entry.path), target)), scratch):
+                                leaving.append(link)
+                        else:
+                            real = os.path.join(os.path.realpath(os.path.dirname(target)), os.path.basename(target))
+                            if any(inside(real, s) for s in moving):
+                                absolute.append((*link, real))
+                    elif entry.is_dir(follow_symlinks=False):
+                        stack.append(entry.path)
+        except OSError:
+            unread.append(os.path.relpath(here, top))
+    return leaving, absolute, unread
+
+
+SKIP_WALK = ('.git', 'node_modules')
+
+
+def find_scratch(tree: str, visited: set[str]) -> list[str]:
+    """Every folder named .scratch at any depth below tree (a symlink of that name too, reported as it is), never
+    descending into one, into .git or node_modules, or through symlinks. `visited` (real paths) keeps a tree reached
+    twice (a worktree inside the main tree) from counting twice. Shallowest first."""
+    found = []
+    stack = [os.path.realpath(tree)]
+    while stack:
+        here = stack.pop()
+        if here in visited:
+            continue
+        visited.add(here)
+        try:
+            with os.scandir(here) as entries:
+                for entry in entries:
+                    if entry.name == '.scratch':
+                        found.append(os.path.join(here, '.scratch'))
+                    elif entry.name not in SKIP_WALK and entry.is_dir(follow_symlinks=False):
+                        stack.append(os.path.join(here, entry.name))
+        except OSError:
+            continue
+    return sorted(found, key=lambda f: (f.count('/'), f))
+
+
+def cmd_migrate(args) -> int:
+    top = repo_path()
+    trees = [top, *(t for t in worktrees(top) if t != top)]
+    seen, sources = set(), []
+    for tree in trees:
+        for found in find_scratch(tree, seen):
+            sources.append(found)
+    moved = skipped = 0
+    folder = repo_folder(create=True)
+    moving = [s for s in sources if not os.path.islink(s) and os.path.isdir(s)]
+    absolute_links, moved_paths, landed = [], [], []
+    for source in sources:
+        if os.path.islink(source) or not os.path.isdir(source):
+            print(f'skipped (not a plain folder, not followed): {source}')
+            skipped += 1
+            continue
+        try:
+            names = sorted(os.listdir(source))
+        except OSError as error:
+            print(f'skipped (cannot read: {error.strerror}): {source}')
+            skipped += 1
+            continue
+        for name in names:
+            path = os.path.join(source, name)
+            if os.path.islink(path) or not os.path.isdir(path):
+                print(f'skipped (loose top-level file, move it yourself): {path}')
+                skipped += 1
+                continue
+            if not NAME.fullmatch(name):
+                print(f'skipped (name not valid for shared/): {path}')
+                skipped += 1
+                continue
+            destination = folder / 'shared' / name
+            if os.path.lexists(destination):
+                print(f'skipped (name clash with {destination}): {path}')
+                skipped += 1
+                continue
+            links, absolute, unread = link_report(path, source, moving)
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            try:
+                os.rename(path, destination)
+            except OSError as error:
+                print(f'skipped (cannot rename: {error}): {path}')
+                skipped += 1
+                continue
+            moved += 1
+            moved_paths.append(path)
+            landed.append(str(destination))
+            print(f'moved {path} -> {destination}')
+            for relative, target in links:
+                print(f'broken by the move (relative link leaving .scratch): {destination / relative} -> {target}')
+            for relative in unread:
+                print(f'links not checked (cannot read): {destination / relative}')
+            absolute_links += [(destination / relative, target, real) for relative, target, real in absolute]
+        try:
+            os.rmdir(source)  # only when empty
+        except OSError:
+            pass
+    for link, target, real in absolute_links:
+        if any(inside(real, m) for m in moved_paths) and not os.path.exists(link):  # its target's folder moved
+            print(f'broken by the move (absolute link into the old .scratch): {link} -> {target}')
+    trashed = scan(folder, tuple(landed))  # now, whatever the hourly limit says: folders idle since before the move expire at once
+    if trashed is None:
+        print('scratch: another scan is running; expiry waits for the next one')
+    for t in trashed or []:
+        print(f"trashed {t['entry']}\t{human(t['size'])}\tidle {t['idle']} days\t{t['path']}")
+    if trashed:
+        print(f'to bring one back: scratch restore <name or original path> (within {TRASH_DAYS} days)')
+    print(f'scratch: {moved} moved, {skipped} skipped', file=sys.stderr)
+    return 0
+
+
+def cmd_scan(args) -> int:
+    scan_all()
+    return 0
+
+
+def cmd_sweep(args) -> int:
+    swept = 0
+    for folder, trashed in scan_all():
+        if trashed is None:
+            print(f'scratch: {folder.name} is being scanned; skipped', file=sys.stderr)
+        for t in trashed or []:
+            swept += 1
+            print(f"{folder.name}\t{t['path']}\t{human(t['size'])}\tidle {t['idle']} days")
+    print(f'to bring one back, inside its repository: scratch restore <original path> (within {TRASH_DAYS} days)' if swept
+          else 'nothing to sweep')
+    return 0
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(prog='scratch', add_help=False)
+    sub = parser.add_subparsers(dest='verb')
+    d = sub.add_parser('dir', add_help=False)
+    d.add_argument('--for', dest='for_item')
+    d.add_argument('--shared')
+    t = sub.add_parser('trash', add_help=False)
+    t.add_argument('paths', nargs='+')
+    r = sub.add_parser('restore', add_help=False)
+    r.add_argument('name', nargs='?')
+    ls = sub.add_parser('list', add_help=False)
+    ls.add_argument('--all', action='store_true')
+    ls.add_argument('--json', action='store_true')
+    st = sub.add_parser('status', add_help=False)
+    st.add_argument('--line', action='store_true')
+    sub.add_parser('sweep', add_help=False)
+    sub.add_parser('migrate', add_help=False)
+    sub.add_parser('__repo', add_help=False)
+    sub.add_parser('help', add_help=False)
+    sub.add_parser('__scan', add_help=False)
+    return parser
+
+
+VERBS = {'__repo': cmd_repo, 'dir': cmd_dir, 'trash': cmd_trash, 'restore': cmd_restore, 'list': cmd_list,
+         'status': cmd_status, 'sweep': cmd_sweep, 'migrate': cmd_migrate, '__scan': cmd_scan}
+
+
+def main(argv: list[str]) -> int:
+    if not argv or argv[0] in ('help', '-h', '--help'):
+        print(HELP, end='')
+        return 0
+    parser = build_parser()
+    try:
+        args = parser.parse_args(argv)
+    except SystemExit:
+        print(HELP, end='', file=sys.stderr)
+        return 2
+    try:
+        purge_trash()
+        return VERBS[args.verb](args)
+    except ScratchError as error:
+        print(f'scratch: {error}', file=sys.stderr)
+        return 2
+    except OSError as error:  # a vanished or unreadable path or an over-long name: refuse, never a traceback
+        print(f'scratch: {error.strerror or error}: {error.filename or ""}', file=sys.stderr)
+        return 2
+
+
+if __name__ == '__main__':
+    sys.exit(main(sys.argv[1:]))

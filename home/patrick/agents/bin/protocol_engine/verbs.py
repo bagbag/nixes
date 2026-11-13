@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import re
 import shutil
 from datetime import datetime, timedelta, timezone
 
@@ -122,6 +123,12 @@ def mark_unchecked(ctx: Context, before: dict[str, tuple]) -> None:
         q.update(status='draft', unchecked=kind)
 
 
+def quote_check(ctx: Context, verb: str, quote: str) -> None:
+    """The quote must appear in a message the console relayed in this round (Codex has no relay: its quote is not checked)."""
+    if not ctx.codex and not any(normalized(quote) in normalized(message['text']) for message in ctx.round['messages']):
+        fail(f'{verb}: quote check failed: the quote appears in no message the user sent in this round')
+
+
 def edit_round(ctx: Context, report: dict) -> str:
     """The user's requested change to the questions: the quote must appear in a message the console relayed (or a typed
     dialog text) in this round, also one sent before the questions went out (Codex has no relay: its quote is not checked).
@@ -138,8 +145,7 @@ def edit_round(ctx: Context, report: dict) -> str:
     updates, quote = report.get('updates'), report.get('quote')
     if not isinstance(updates, list) or not updates or not isinstance(quote, str) or not quote.strip():
         fail('edit: stdin needs "updates" (per-question updates as in a pass report) and "quote" (the user\'s exact words asking for it)')
-    if not ctx.codex and not any(normalized(quote) in normalized(message['text']) for message in r['messages']):
-        fail('edit: quote check failed: the quote appears in no message the user sent in this round')
+    quote_check(ctx, 'edit', quote)
     if r['batch'] and not all(isinstance(u, dict) and 'id' not in u for u in updates):
         ctx.log('batch-withdrawn', marker=r['batch']['marker'], reason='edit')
         batch_back(ctx)
@@ -164,6 +170,61 @@ def edit_round(ctx: Context, report: dict) -> str:
     if r['step'] == 'record' and unchecked(ctx):
         r['check']['challenged'] = False
         return hand_over(ctx)
+    if r['step'] == 'check' and nothing_to_check(ctx):
+        return leave_check(ctx)
+    return r['step']
+
+
+DEFERRABLE = ('draft', 'held', 'ready', 'asked', 'answered')
+
+
+# The forms of bd's `defer --until` (bd defer/create --help): checked up front, a bad one cannot be corrected after Record.
+DEFER_UNTIL = re.compile(r'\d{4}-\d{2}-\d{2}|\+\d+[hdwm]|tomorrow')
+
+
+def defer_round(ctx: Context, report: dict) -> str:
+    """The person's deferral of a question (r9-q40): it and every question waiting on it, through chains, leave the round with
+    status `deferred`, the person's words as the reason; an answer already given to one goes (its premise is deferred). A batch
+    holding one of them comes back without it. Record files each deferral on the board (r9-q41: with no board it only notes it).
+    Applies where `edit` does; the quote is checked the same way."""
+    r = ctx.round
+    if r['protocol'] != 'round' or r['step'] not in RESTART_STEPS:
+        fail('defer applies to a round between Related and Record')
+    if r['batch'] and r['batch']['cap']:
+        fail('answer the cap question first')
+    qid, quote, until = report.get('question'), report.get('quote'), report.get('until')
+    if not (isinstance(qid, str) and qid and isinstance(quote, str) and quote.strip()):
+        fail('defer: stdin needs "question" and "quote" (the user\'s exact words asking for it); "until" is optional')
+    if until is not None and not (isinstance(until, str) and DEFER_UNTIL.fullmatch(until.strip())):
+        fail('defer: `until` is a date (2026-12-01), an offset (+36h, +3d, +2w) or tomorrow, as bd reads it; left out for no date')
+    quote_check(ctx, 'defer', quote)
+    target = by_id(ctx, qid)
+    if target.get('recorded') or target['status'] not in DEFERRABLE:
+        fail(f"defer: {qid} is {target.get('recorded') or target['status']}; only an open or an answered, unrecorded question defers")
+    group = {qid: None}  # id -> the question it was deferred with
+    grew = True
+    while grew:
+        grew = False
+        for other in r['questions']:
+            if other['id'] not in group and other['status'] in DEFERRABLE and not other.get('recorded') \
+                    and any(w in group for w in other.get('waitsOn') or []):
+                group[other['id']] = qid
+                grew = True
+    if r['batch'] and set(group) & set(r['batch']['ids']):
+        ctx.log('batch-withdrawn', marker=r['batch']['marker'], reason='defer')
+        batch_back(ctx)
+    quote, until = quote.strip(), until.strip() if until else None
+    for other_id, with_ in group.items():
+        q = by_id(ctx, other_id)
+        ctx.state['answers'].pop(other_id, None)
+        for key in ('typed', 'quote', 'annotations', 'unchecked'):
+            q.pop(key, None)
+        q.update(answer=None, status='deferred', deferral={
+            'reason': quote if with_ is None else words.waits_on_deferred(qid, quote, 'person'), 'until': until, 'with': with_})
+    r.pop('reading', None)
+    for q in questions(ctx, 'draft', 'held', 'ready'):
+        q['status'] = premise_status(ctx, q)
+    ctx.log('defer', questions=list(group), quote=quote, until=until)
     if r['step'] == 'check' and nothing_to_check(ctx):
         return leave_check(ctx)
     return r['step']
@@ -348,6 +409,9 @@ def restart(ctx: Context, ids: list[str], reason: str | None) -> None:
     targets = [by_id(ctx, qid) for qid in ids]
     # Answers resting on a restarted premise go with it, through chains (r23-q92): their options assumed the old answer.
     resting = []
+    for q in list(targets):
+        targets += [other for other in r['questions'] if other['status'] == 'deferred' and (other.get('deferral') or {}).get('with') == q['id']
+                    and other not in targets]  # a deferral withdrawn takes the questions deferred with it
     for q in targets:
         for other in r['questions']:
             if q['id'] in other.get('waitsOn', []) and other not in targets and other['answer'] is not None:
@@ -358,11 +422,12 @@ def restart(ctx: Context, ids: list[str], reason: str | None) -> None:
         batch_back(ctx)
     for q in targets:
         if q.get('recorded'):
-            fail(f"{q['id']} is recorded; a later change is a new question (board revise)")
+            fail(f"{q['id']} is recorded; a later change is a new question (board ruling revise)")
         if q['answer'] is not None:
             ctx.state['answers'].pop(q['id'], None)
         q.pop('typed', None)
         q.pop('parked', None)
+        q.pop('deferral', None)
         q.pop('quote', None)  # the answer's own words go with it: a later answer's record must not quote them
         q.pop('annotations', None)
         q.update(answer=None, status='draft')

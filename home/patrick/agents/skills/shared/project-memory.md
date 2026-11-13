@@ -11,7 +11,7 @@
 | Agent operating rule | Project instructions (`AGENTS.md`). |
 | Current consumer-visible behavior | Module README, skill or `docs/`, shipped with the change that makes it true; the topic's design-target doc holds it until then. |
 | Release notes | Changelog. |
-| Outstanding work, decisions and their rationale | With a board: deferred items and decision records; `TODO.md` and `REVIEW.md` retire through `/board-migrate`. Without a board: `TODO.md`; decisions under `docs/<topic-slug>/`. |
+| Outstanding work, decisions and their rationale | The board: deferred items and decision records; `TODO.md` and `REVIEW.md` retire through `/board-migrate`. Without a board, decision rounds keep their records in the private records folder (`protocol start round --no-board`). |
 
 - Reuse suitable owners; organize by product or technical boundary. Use one
   document for small projects or topics. Each level adds specificity and links
@@ -64,16 +64,17 @@
 
 - `$HOME/.agents/bin/board position` computes the position; epics hold no status
   (board-coordination [Epics](../shared/board-coordination.md#epics)).
-- The planning session keeps a plain-prose checkpoint file,
-  `.scratch/<topic-slug>/<arc-slug>/checkpoint.md`, replaced in place. It holds
-  only what changes the next session's action: verified position, next
-  authorized work and return boundary, blockers by board id, pending choices,
-  parallel tracks, and pointers to records. Drop each line once its work is
+- Each session keeps one plain-prose checkpoint, `checkpoint.md` in its own
+  scratch folder (`$HOME/.agents/bin/scratch dir`), replaced in place. It holds only what
+  recovers this session's next action: verified position, next authorized
+  work and return boundary, blockers by board id, pending choices, parallel
+  tracks, and pointers to records. State a later session needs lives on the
+  board. Drop each line once its work is
   recorded elsewhere; finished work and history stay out. Distinguish executed
   evidence from author reports and intent. It holds no operating rules.
-- Arcs may run in parallel. Each arc has its own outcome epic and
-  `.scratch/<topic-slug>/<arc-slug>/` for plans, drafts, reviews, `evidence/`
-  and `history/`.
+- Arcs may run in parallel. Each arc has its own outcome epic; its plans,
+  drafts, reviews and evidence go in a scratch folder
+  (`scratch dir --for <epic id>`).
 - Use lowercase kebab-case slugs.
 
 ## Synchronization
@@ -96,7 +97,7 @@ context; keep contracts complete without them.
   user instructions. Recover holds, the approved checkpoint, next authorized
   work, deferrals, return boundary and authority from
   `$HOME/.agents/bin/board mine`, `$HOME/.agents/bin/board position` and the
-  checkpoint file, then from the canonical project goal and the applicable
+  session's checkpoint (`scratch dir`), then from the canonical project goal and the applicable
   topic goal and milestone; reconcile the next action with those commitments
   and existing authority.
 - Re-read from tracking each item a summary names as pending or next before

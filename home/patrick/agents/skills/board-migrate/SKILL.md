@@ -100,7 +100,7 @@ Give each step's output compactly; detail only findings and stops.
 2. **Gap plan.** Triage live items first: list moot ones for closing with
    their reason. Map every remaining entry and deviation to its target owner or
    to history, with source path or id. Write it to
-   `.scratch/<topic-slug>/<arc-slug>/board-migrate-plan.md`, with the rule
+   `board-migrate-plan.md` in `$HOME/.agents/bin/scratch dir --shared board-migrate`, with the rule
    findings and the order of changes. Write every command with its full text
    into one change-set file beside it. Have an independent `verify`
    sample retained, archived and merged entries and each class of generated
@@ -184,9 +184,15 @@ step goes in a change set and runs on the user's confirmation.
    CR under its topic: the design its child, `checkpoint` `user`, status
    `needs_acceptance`. `board check --all` clean but for user-accepted
    deviations; one `board claim` of a CR works end to end. Open items stay
-   ungrouped: the plan protocol groups them into CRs when they become due. Tell the user
-   pulls may start.
+   ungrouped: the plan protocol groups them into CRs when they become due.
    Output: check result.
+6. **Scratch.** With every session paused, move decision-record folders to
+   `~/.local/share/agents/decisions/<scratch's repo folder name>/` (another
+   topic's records: a folder of its own beside it), run
+   `$HOME/.agents/bin/scratch migrate` and settle each case it lists. Rewrite
+   `.scratch/` links in live items to the moved path in `~/` form. Tell the
+   user pulls may start.
+   Output: moved and listed counts, rewritten item ids.
 
 ## Tool facts (bd 1.3.1)
 

@@ -13,7 +13,8 @@ run the command it prints before relying on the missing part.
 - Keep the work content in the item: what to do, packets, designs, findings,
   evidence summaries, verdicts, block reasons. Reference rulings, rule owners
   and items by id and anchor instead of restating their text.
-- Keep working drafts and data files in `.scratch/`; move a draft's result
+- Keep working drafts and data files in the item's scratch folder
+  (`$HOME/.agents/bin/scratch dir --for <id>`); move a draft's result
   into the item before hand-over or closure.
 - Name each data file the work consumes or produces (dumps, diagnostics, logs,
   fixtures, generated output) in the item with path, size or hash, and how to
@@ -62,7 +63,7 @@ shared board, the user an unshared one (`bd dolt push`/`pull`).
 
 | Type | Kind |
 |---|---|
-| `task`, `bug`, `spike` | Work item; lives in a CR. |
+| `task`, `bug`, `spike` | Work item; lives in a CR, unless marked no-code ([Work items](#work-items)). |
 | `design` | Design item: architecture, package graph and needed decisions for a slice. |
 | `decision` | Question, later the ruling's record ([Questions and rulings](#questions-and-rulings)). |
 | `change-request` | The claimed, reviewed and landed unit ([Change requests](../shared/change-requests.md#change-requests)). |
@@ -70,8 +71,8 @@ shared board, the user an unshared one (`bd dolt push`/`pull`).
 | `milestone` | Release checkpoint ([Milestones](../shared/board-coordination.md#milestones)). |
 | `gate` | Upstream wait or the user's go ([Dependencies](#dependencies)). |
 
-Titles carry no prefixes; `feature`, `chore` and `check` stay unused (a check
-others wait on is a task, [Work items](#work-items)). Review is a status, not
+Titles carry no prefixes; use only these types (`board` refuses others; a
+check others wait on is a task, [Work items](#work-items)). Review is a status, not
 a kind: create a findings-only review (outside any CR) as an
 unassigned task directly in review,
 `board bd create … -t task --status in_review`.
@@ -88,8 +89,8 @@ no role; follow these rules yourself:
   ([queue](../shared/board-coordination.md#change-request-queue)).
 - A work item is claimed by id only inside a CR your session holds; outside
   any CR it is refused with the fix (`--parent <cr>`). Decision, plan and
-  milestone kinds and findings-only reviews and challenges (no code change)
-  need no CR.
+  milestone kinds, findings-only reviews and challenges, and work items marked
+  no-code need no CR.
 - Pull `plan` also claims the board restructuring tasks it creates itself,
   and an `open` CR with no open items or marked for replanning (returned from
   an agent checkpoint, or a child of a rejected CR).
@@ -129,8 +130,11 @@ item sits in a person's queue (the person's sessions work it):
   in one item (atomic rename, contract plus its only caller).
   Move a part with a different blocker or dependent to its own item in another
   CR (planning decides); items do not split inside a CR.
-  Cut a check others wait on (whole typecheck, fresh build) as a task; its
-  acceptance is the recorded passing run.
+  Cut a check others wait on (whole typecheck, fresh build), or other work
+  that by design changes no code, as a task marked no-code when created
+  (metadata `no_code=1` on `create` or a `create --graph` node). It sits outside any
+  CR, runs against the target, and its acceptance is the recorded passing
+  run; a defect it finds becomes a code item in a CR.
 - Fields: description (outcome and reason), `--design` (contract, files,
   checks, ruling ids with owner anchors), `--acceptance` (done criteria),
   `--spec-id` (specification reference), `blocks` edges.
@@ -205,7 +209,7 @@ with `blocks`.
 ### Dependencies
 
 Use the first matching row. Beads allows one edge kind per pair:
-`board block` and `board supersede` replace an existing link; before adding
+`board block` and `board ruling supersede` replace an existing link; before adding
 another edge by hand, remove the pair's `relates-to` edge. When order and
 context coincide, keep `blocks`.
 
@@ -215,7 +219,7 @@ context coincide, keep `blocks`.
 | B is part of outcome A | `--parent A` |
 | B found while working on A | `discovered-from`: `board bd create … --deps discovered-from:A` |
 | Shared context, alternatives, a ruling's context-only item | `relates-to`: `board bd dep relate A B` |
-| B revises ruling A | `board revise A` links B at creation; release supersedes A ([Rulings](../shared/board-coordination.md#rulings)) |
+| B revises ruling A | `board ruling revise A` links B at creation; release supersedes A ([Rulings](../shared/board-coordination.md#rulings)) |
 | B waits on the user's go (no open decision) | On the user's instruction only; raise your own caution as a question. `board bd gate create --type=human --blocks B --title "user <date>: '<words>'"`; more items: `board bd dep add <item> <gate>`; lift on the user's word or a covering released ruling: `board bd gate resolve <gate>`. |
 | External wait on another project's delivery | gate; read `$HOME/.agents/skills/shared/upstream-waits.md` first |
 
@@ -274,7 +278,7 @@ dispatch, `board bd dep cycles`.
 - On a server-mode board, every `board` command needs elevated sandbox
   permissions (global Sandbox and permissions); `board` starts a stopped
   server. On every board, each CR verb that writes `.git` (claim, handover,
-  refresh, land) and every commit in a CR worktree needs
+  cr refresh, cr land) and every commit in a CR worktree needs
   elevation under Codex (its sandbox keeps `.git` read-only), embedded boards
   included.
 - On an embedded board, run `board` commands one at a time and never

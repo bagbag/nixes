@@ -71,6 +71,8 @@ export type ConsoleCr = {
   look: 'before' | 'after' | null; view: 'code' | 'result' | null; checkpoint: 'agent' | 'user' | null
   base: string; branch: string; worktree: string | null; tip: string | null; baseTip: string | null
   check: { state: ConsoleCheckState; tip: string | null; baseTip: string | null; at: string | null; result: 'pass' | 'fail' | null
+    /** What ran: the project's full check, a `targeted` command (`command`), or `none` (`reason`) for an edit of yours the session committed unchecked: never a full pass (r15-q78). */
+    kind: 'full' | 'targeted' | 'none'; command: string | null; reason: string | null
     /** No-new-failures: the `file code` lines whose count rose from base to tip; null while no comparison ran. `baseCount`, `tipCount`: failures at the base and at the tip. */
     newFailures: string[] | null; baseCount: number | null; tipCount: number | null }
   parent: string | null; children: string[]
@@ -85,6 +87,8 @@ export type ConsoleCr = {
   reviewState: 'current' | 'stale' | null
   /** The board's refresh work: the first non-waiting request of the accept queue whose check or review is not current (r24-q196). */
   refreshWork: boolean
+  /** Waiting for you and open at its current tip in the review tree: no refresh moves it until a deciding session claims it. */
+  heldByReviewTree: boolean
   /** Uncommitted paths in the target's checkout that the landing would touch (`land` refuses); null when none. */
   landBlocked: string[] | null
   /** Look-after child that passed review and lands with this base; null otherwise. */
@@ -94,10 +98,13 @@ export type ConsoleCr = {
 }
 
 /** A look-after landing's ratification item (`board console` `ratifications`): it waits for your look and blocks nothing. */
-export type ConsoleRatification = { id: string; cr: string; title: string }
+export type ConsoleRatification = { id: string; cr: string; title: string; tip: string | null; baseTip: string | null }  // the range its request landed: Open shows it
 
-/** What the review tree holds: the change request and the (base tip, tip) pair it was set to. */
-export type ConsoleReviewing = { cr: string; tip: string; baseTip: string }
+/** The change request the review tree was last set to; what it holds is the tree's own marker (`ConsoleReviewTree`). */
+export type ConsoleReviewing = { cr: string }
+
+/** The review tree as the pane shows it: its change request and its marker (`refs/worktree/console-review-end`), read at each refresh. */
+export type ConsoleReviewTree = { cr: string; end: string | null }
 
 /** Where the round stands inside its step: Collect's items, points and classes, Select's candidates, the selection. */
 export type ConsoleProgress = { items: number; points: number; classified: number; candidates: number | null; selected: string[] }
@@ -202,6 +209,8 @@ export type ConsoleBoard = {
   prefix: string | null
   ratifications: ConsoleRatification[]
   agents: ConsoleAgent[]
+  /** The repository's scratch line (`scratch status --line`): what the trash holds (informational, no button); null when empty or scratch fails. Every session's console shows it; no model context gets it. */
+  scratch: string | null
   /** A shared board's stopped or failing sync, or its store warning, with the fix; null otherwise. */
   sync: string | null
   /** A shared board's other queues as counts, unrouted items and other people's items blocking yours; null otherwise. */
@@ -209,7 +218,7 @@ export type ConsoleBoard = {
   error: string | null
 }
 
-/** The registry entry (`session-lead-mode show`). */
+/** The registry entry (`session show`). */
 export type ConsoleRole = { session: string; role: string; actor: string; tool: string }
 
 /** The machine-run pass this console started, by pending id (R-B4). `noted`: given up (stuck or stale); `stopped`: an Esc ended its turn, which a compaction may rerun. */
@@ -237,7 +246,6 @@ export type ConsoleOpened =
   | { kind: 'suggestion'; key: string; leads: { id: string; title: string }[] }
 
 /** The command a compacting suggestion runs once its compaction succeeded (`title`: the proposal's, for the summary and the notice); it goes with the next compaction, typed prompt or round start. */
-export type ConsoleStart = { command: string; args: string; title: string; at: number }
 
 /** A built-in command the person sent during a turn, run when that turn ends. */
 export type ConsoleDeferred = { command: string; args: string }
@@ -262,15 +270,16 @@ declare module 'claude-code' {
       /** The marker of the last batch the console sent the open-the-dialog message for: one message per marker until the person sends a message; null before the first. */
       askSent: string | null
       board: Shaped<ConsoleBoard | null>
-      /** What the review tree was last set to (a change request's base tip and tip); null while none is open. */
+      /** The change request the review tree was last set to; null while none is open. */
       reviewing: Shaped<ConsoleReviewing | null>
+      /** The review tree's marker as the last refresh read it (null without one); the pane's "in review tree" compares it with the tip. */
+      reviewEnd: string | null
       pass: Shaped<ConsolePassRun | null>
       queued: Shaped<ConsoleQueued>
       gate: Shaped<string[]>
       lenses: Shaped<ConsoleLenses>
       expanded: Shaped<ConsoleSection[]>
       opened: Shaped<ConsoleOpened | null>
-      start: Shaped<ConsoleStart | null>
       /** Built-in commands the person sent during the running turn, in order: its end runs them, ahead of anything the console starts. */
       deferred: Shaped<ConsoleDeferred[]>
       refresh: Shaped<ConsoleRefresh>

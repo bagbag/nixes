@@ -8,12 +8,13 @@ Claude Code console mod (round and board pane) and the `board` / `protocol` comm
 
     tar -xzf claude-codex-setup-<version>.tar.gz
     cd claude-codex-setup-<version>
-    ./install.sh --dry-run     # shows what would change
-    ./install.sh               # add --no-mod to skip the console mod
+    ./install.py --dry-run     # shows what would change
+    ./install.py               # add --no-mod to skip the console mod
 
-Requires `bash`, `python3` 3.11 or newer, `jq` and `bd` (beads, tested with 1.3.1). The installer
-stops before changing anything when one is missing, or when a target is a symlink or a settings
-file isn't valid JSON. Then restart Claude Code and Codex. Codex asks you to trust the changed hooks.
+Requires `python3` 3.11 or newer and `bd` (beads, tested with 1.3.1). Under an older `python3`
+(macOS ships 3.9) the installer continues with the newest `python3.N` on `PATH` that starts, else stops. It stops
+before changing anything when `bd` is missing, when a target is a symlink, or when a settings file
+isn't valid JSON or `config.toml` isn't valid TOML. Then restart Claude Code and Codex. Codex asks you to trust the changed hooks.
 
 The installer:
 1. Backs up everything it replaces or removes to `~/.agent-config-backup/<timestamp>/`.
@@ -27,12 +28,21 @@ The installer:
    your other hooks and settings. It creates either file when missing.
 6. Sets `env.CLAUDE_CODE_PLUGIN_DIRS` to the console mod. If it already holds a value, the installer
    prints a note and you add the mod path yourself.
-
-7. At a terminal, asks for your name for shared boards when `git config --global agents.person`
+7. Pins the Python tools in `~/.agents/bin` (`board`, `protocol`, `scratch`, ...) to the `python3` on
+   `PATH` that runs the installer (an unversioned `python3` is preferred to a `python3.N`, which gets a
+   note), so a session started with a different `PATH` (Dock, IDE) does not pick macOS's 3.9. Rerun
+   the installer after switching or removing that Python; it prints the pinned path.
+8. Grants the agents their write folders outside repositories (`agents/scratch` under
+   `$XDG_STATE_HOME` or `~/.local/state`, `agents/decisions` under `$XDG_DATA_HOME` or
+   `~/.local/share`): an `Edit(<folder>/**)` rule each in Claude's `permissions.allow`, and a marked
+   `[sandbox_workspace_write]` block in `~/.codex/config.toml`. If that file already has the table, or is a symlink, the installer
+   prints the folders to add to `writable_roots` and leaves it alone. A rule you had before the
+   first install stays yours on upgrade and uninstall.
+9. At a terminal, asks for your name for shared boards when `git config --global agents.person`
    is unset. Leave it blank to skip; set it per repository with `git config agents.person <name>`.
 
-Nothing else in `settings.json` or `config.toml` is touched. Models, plugins, permissions and
-`env` stay yours. The `settings/` folder holds the unmerged hook templates for reference.
+Nothing else in `settings.json` or `config.toml` is touched. Models, plugins, your other
+permissions and `env` stay yours. The `settings/` folder holds the unmerged hook templates for reference.
 
 ## Boards
 
@@ -65,9 +75,11 @@ a fresh repository and the others rejoin with `board join <url>`.
 
 ## Uninstall
 
-    ./install.sh --uninstall
+    ./install.py --uninstall
 
-Removes everything the install recorded and its hook registrations. Your earlier instructions stay
+Removes everything the install recorded, its hook registrations, the permission rules it added and
+its `config.toml` block (a block you edited, or in a symlinked file, is left with a note; a `config.toml` the
+installer created is deleted when nothing else is in it). Your earlier instructions stay
 in the backup folder; restore them by hand.
 
 ## Console mod

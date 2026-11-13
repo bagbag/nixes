@@ -51,7 +51,8 @@ current evidence. Seek counterexamples and report what the checks establish.
 Write only what the brief assigns: the verdict to the assigned path with
 file-editing tools, returning its path with a concise summary; without a path,
 return the verdict in your response. Write temporary probes and test scripts
-under the active arc's `.scratch/` or the system temp directory, and list them
+in the scratch folder the brief names, else a folder in your session's
+(`$HOME/.agents/bin/scratch dir`) named after your task, and list them
 in your report. Unless the brief forbids fixes, apply a fix when certain it is
 the only realistic, clean option within the reviewed files; report each with its
 finding for the invoker's acceptance.

@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import ast
 import hashlib
 import importlib.machinery
 import itertools
@@ -167,11 +168,10 @@ def validate_skills(root: Path) -> None:
     path_contracts = {
         root / "AGENTS.md": (
             "$HOME/.agents/skills/shared/project-memory.md",
-            ".scratch/<topic-slug>/<arc-slug>/",
+            "$HOME/.agents/bin/scratch dir",
         ),
         skills_dir / "shared" / "project-memory.md": (
-            ".scratch/<topic-slug>/<arc-slug>/",
-            "<topic-slug>/<arc-slug>",
+            "`scratch dir`",
             "history/",
             "docs/<topic-slug>/",
             "docs/goals.md",
@@ -713,7 +713,7 @@ def fake_board(base: Path, name: str = "proj", printed: Path | None = None) -> t
 
 
 def validate_session_registry(root: Path) -> None:
-    script = root / "bin" / "session-lead-mode"
+    script = root / "bin" / "session"
 
     def run(*args: str, env: dict[str, str]) -> subprocess.CompletedProcess:
         return subprocess.run(["bash", str(script), *args], text=True, capture_output=True,
@@ -723,22 +723,43 @@ def validate_session_registry(root: Path) -> None:
         env = session_env(state_dir)
         run("activate", "lead", env={**env, **as_session(SESSION)}).check_returncode()
         if run("get", SESSION, env=env).stdout.strip() != "lead":
-            raise ValueError("session-lead-mode lost a registered lead")
+            raise ValueError("session lost a registered lead")
         shown = json.loads(run("show", SESSION, env=env).stdout)
         if (shown["role"], shown["pulls"], shown["actor"], shown["tool"]) != ("lead", [], SESSION_ACTOR, "claude"):
-            raise ValueError(f"session-lead-mode show: {shown}")
+            raise ValueError(f"session show: {shown}")
+
+        # The bundle runs on macOS's bash 3.2, where an empty array under `set -u` is an unbound variable: the verbs
+        # hooks call must work there for a session without pulls or workers (skipped where no bash 3.2 exists).
+        old_bash = "/bin/bash"
+        if os.path.exists(old_bash) and subprocess.run([old_bash, "-c", "((BASH_VERSINFO[0] < 4))"]).returncode == 0:
+            with tempfile.TemporaryDirectory() as old_dir:
+                old_env = {**os.environ, **session_env(old_dir), **as_session(SESSION)}
+                for args in (("activate", "lead"), ("get", SESSION), ("show", SESSION), ("list",), ("actor",), ("alive",),
+                             ("ended",), ("state-dir",)):
+                    done = subprocess.run([old_bash, str(script), *args], text=True, capture_output=True, env=old_env)
+                    if done.returncode or done.stderr:
+                        raise ValueError(f"session {' '.join(args)} fails on bash 3.2: {done.returncode} {done.stderr}")
+
+        # r15-q88: `help` lists every verb with an example; a bare call prints the same and exits 0.
+        helped, bare = run("help", env=env), run(env=env)
+        if helped.returncode or bare.returncode or helped.stdout != bare.stdout or helped.stderr:
+            raise ValueError(f"session help and a bare call must print the same on stdout and exit 0: {helped} {bare}")
+        for verb in ("activate", "set-workers", "actor", "get", "show", "list", "ended", "state-dir", "alive", "session-active",
+                     "worker-started", "worker-active", "worker-ended", "help"):
+            if not re.search(rf"^\s*session {verb}\b", helped.stdout, re.M):
+                raise ValueError(f"session help lacks {verb}:\n{helped.stdout}")
 
         other = "0a1b2c3d-0000-4000-8000-00000000beef"
         run("activate", "agent", "--pulls", "review,plan", env={**env, **as_session(other, "codex")}).check_returncode()
         if (json.loads(run("show", other, env=env).stdout)["pulls"], json.loads(run("show", other, env=env).stdout)["tool"]) \
                 != (["plan", "review"], "codex"):
-            raise ValueError("session-lead-mode did not store the Codex agent's pulls in canonical order")
+            raise ValueError("session did not store the Codex agent's pulls in canonical order")
 
         # Every role takes pulls (presets add to them); a preset role registers none unless given.
         for role, given, stored in (("lead", "implement,plan", ["plan", "implement"]), ("solo", "review", ["review"]), ("autopilot", "design", ["design"])):
             run("activate", role, "--pulls", given, env={**env, **as_session(other)}).check_returncode()
             if json.loads(run("show", other, env=env).stdout)["pulls"] != stored:
-                raise ValueError(f"session-lead-mode did not store {role}'s pulls {given}")
+                raise ValueError(f"session did not store {role}'s pulls {given}")
         run("activate", "solo", env={**env, **as_session(SESSION)}).check_returncode()
         changed = json.loads(run("show", SESSION, env=env).stdout)
         if changed["role"] != "solo" or changed["actor"] != SESSION_ACTOR:
@@ -758,21 +779,21 @@ def validate_session_registry(root: Path) -> None:
         )
         for args, identity in rejected:
             if run(*args, env={**env, **identity}).returncode == 0:
-                raise ValueError(f"session-lead-mode accepted {args} as {identity}")
+                raise ValueError(f"session accepted {args} as {identity}")
 
         # actor: the session's, plus a Codex worker's own thread; Codex wins when both are set.
         for identity, expected in ((as_session(SESSION), SESSION_ACTOR),
                                    ({**as_session(SESSION, "codex"), "CODEX_THREAD_ID": other}, f"{SESSION_ACTOR}/{other[-8:]}"),
                                    ({**as_session(SESSION, "codex"), "CLAUDE_CODE_SESSION_ID": other}, SESSION_ACTOR)):
             if run("actor", env={**env, **identity}).stdout.strip() != expected:
-                raise ValueError(f"session-lead-mode actor for {identity}: expected {expected}")
+                raise ValueError(f"session actor for {identity}: expected {expected}")
         if run("actor", env=env).returncode == 0:
-            raise ValueError("session-lead-mode actor invented an actor outside an agent session")
+            raise ValueError("session actor invented an actor outside an agent session")
         if sorted(path.name for path in Path(state_dir).iterdir() if path.name != ".lock") != sorted([f"{SESSION}.json", f"{other}.json"]):
             raise ValueError("a rejected activation wrote the registry")
 
         if run("get", "abcdefgh-unknown", env=env).stdout.strip():
-            raise ValueError("session-lead-mode invented a role")
+            raise ValueError("session invented a role")
         unknown = json.loads(run("show", "abcdefgh-unknown", env=env).stdout)
         if unknown["role"] is not None or unknown["actor"] != "-unknown"[-8:]:
             raise ValueError(f"show of an unregistered session: {unknown}")
@@ -780,7 +801,7 @@ def validate_session_registry(root: Path) -> None:
             raise ValueError("get must not take the session id from the environment")
         listed = [json.loads(line) for line in run("list", env=env).stdout.splitlines()]
         if sorted(entry["actor"] for entry in listed) != sorted([SESSION_ACTOR, other[-8:]]):
-            raise ValueError(f"session-lead-mode list: {listed}")
+            raise ValueError(f"session list: {listed}")
 
     # list is one jq over all registrations: each line must equal what `show` (one registration, entry_json) prints, whatever the
     # number of files, a state dir with spaces, activity files and worker markers; an unparseable file is skipped alone.
@@ -795,7 +816,7 @@ def validate_session_registry(root: Path) -> None:
                                       stdin=pipe_read, timeout=30)
 
             if listing().returncode != 0 or listing().stdout != "":
-                raise ValueError("session-lead-mode list of a state dir without registrations must print nothing")
+                raise ValueError("session list of a state dir without registrations must print nothing")
             sessions = [f"sess{n:02d}-abcdef" for n in range(12)]
             for n, session in enumerate(sessions):
                 Path(state_dir, f"{session}.json").write_text(json.dumps({
@@ -813,7 +834,7 @@ def validate_session_registry(root: Path) -> None:
             listed = listing()
             if listed.returncode != 0 or listed.stdout.splitlines() != [line for text in shown for line in text.splitlines()] \
                     or len(shown) != 12 or '"workers":{"w0-spaced name"' not in listed.stdout or '"active_at":"2023-11-14' not in listed.stdout:
-                raise ValueError(f"session-lead-mode list differs from show per registration: {listed.stdout!r} {listed.stderr!r}")
+                raise ValueError(f"session list differs from show per registration: {listed.stdout!r} {listed.stderr!r}")
             Path(state_dir, "sess05-abcdef.json").write_text('{"session": "sess05-abc', encoding="utf-8")  # half-written
             Path(state_dir, "sess06-abcdef.json").write_text("", encoding="utf-8")
             Path(state_dir, "sess07-abcdef.json").write_text("[1]", encoding="utf-8")
@@ -821,7 +842,7 @@ def validate_session_registry(root: Path) -> None:
             rows = [json.loads(row) for row in listed.stdout.splitlines()]
             if listed.returncode != 0 or listed.stderr or len([r for r in rows if "unreadable" not in r]) != 9 \
                     or [Path(r["unreadable"]).name for r in rows if "unreadable" in r] != ["sess05-abcdef.json", "sess07-abcdef.json"]:
-                raise ValueError(f"session-lead-mode list must skip an unparseable registration alone: {listed.stdout!r} {listed.stderr!r}")
+                raise ValueError(f"session list must skip an unparseable registration alone: {listed.stdout!r} {listed.stderr!r}")
             if os.geteuid() != 0:  # a file jq cannot open is skipped alone too
                 denied = Path(state_dir, "sess04-abcdef.json")
                 denied.chmod(0)
@@ -832,7 +853,7 @@ def validate_session_registry(root: Path) -> None:
                 rows = [json.loads(row) for row in listed.stdout.splitlines()]
                 if listed.returncode != 0 or listed.stderr or len([r for r in rows if "unreadable" not in r]) != 8 \
                         or "sess04-abcdef.json" not in [Path(r["unreadable"]).name for r in rows if "unreadable" in r]:
-                    raise ValueError(f"session-lead-mode list must skip an unreadable file alone: {listed.stdout!r} {listed.stderr!r}")
+                    raise ValueError(f"session list must skip an unreadable file alone: {listed.stdout!r} {listed.stderr!r}")
         finally:
             os.close(pipe_read)
             os.close(pipe_write)
@@ -864,9 +885,9 @@ def validate_session_registry(root: Path) -> None:
         for command in (("alive",), ("session-active",), ("worker-started", "a43f14ee58a40ea36"),
                         ("worker-active", "a43f14ee58a40ea36"), ("worker-ended", "a43f14ee58a40ea36")):
             if under_claude(*command)[1].returncode != 0 or any(Path(state_dir).iterdir()):
-                raise ValueError(f"session-lead-mode {command[0]} must be a silent no-op for an unregistered session")
+                raise ValueError(f"session {command[0]} must be a silent no-op for an unregistered session")
             if run(*command, env=env).returncode != 0 or any(Path(state_dir).iterdir()):
-                raise ValueError(f"session-lead-mode {command[0]} must be a silent no-op outside an agent session")
+                raise ValueError(f"session {command[0]} must be a silent no-op outside an agent session")
         pid, activated = under_claude("activate", "lead")
         entry = json.loads(entry_file.read_text(encoding="utf-8"))
         if entry.get("pid") != pid or entry.get("pid_started") != " ".join(activated.stdout.split()) \
@@ -928,7 +949,7 @@ def validate_session_registry(root: Path) -> None:
         if not together("worker-ended", parallel) or sorted(shown_entry()["workers"]) != ["b53ded8a"]:
             raise ValueError("worker-ended lost or kept markers of workers stopping together")
         if any(path.name.startswith(".") for path in Path(state_dir).iterdir() if path.name not in (f"{SESSION}.json", ".lock")):
-            raise ValueError("session-lead-mode left temporary files")
+            raise ValueError("session left temporary files")
         # session-active: the session's own last tool call.
         run("session-active", env={**env, **as_session(SESSION)}).check_returncode()
         if shown_entry()["active_at"] != utc(Path(state_dir) / f"{SESSION}.active"):
@@ -959,7 +980,7 @@ def validate_session_registry(root: Path) -> None:
             raise ValueError(f"a Codex session recorded a process identity: {shown}")
         listed = json.loads(run("list", env=env).stdout)
         if not {"pid", "pid_started", "active_at", "workers"} <= listed.keys() or {"ended_workers", "active_workers"} & listed.keys():
-            raise ValueError(f"session-lead-mode list lacks the liveness and activity fields: {listed}")
+            raise ValueError(f"session list lacks the liveness and activity fields: {listed}")
         unregistered = json.loads(run("show", "abcdefgh-unknown", env=env).stdout)
         if (unregistered["active_at"], unregistered["workers"]) != (None, {}):
             raise ValueError(f"show of an unregistered session: {unregistered}")
@@ -967,7 +988,7 @@ def validate_session_registry(root: Path) -> None:
         # session-activity hook: SubagentStart and a worker's tool call (agent_id) create or touch the worker's
         # marker, SubagentStop deletes it, the session's own tool call touches its activity file; it never fails.
         hook = root / "hooks" / "session-activity.sh"
-        hook_env = {**env, "AGENT_SESSION_LEAD_COMMAND": str(script)}
+        hook_env = {**env, "AGENT_SESSION_COMMAND": str(script)}
         start = {"hook_event_name": "SubagentStart", "session_id": SESSION, "agent_id": "a1b2c3d4e5f60718",
                  "agent_type": "build"}
         tool_call = {"hook_event_name": "PreToolUse", "session_id": SESSION, "tool_name": "Read", "tool_input": {}}
@@ -982,7 +1003,7 @@ def validate_session_registry(root: Path) -> None:
                         {**start, "agent_id": "otherevent-0000dddd", "hook_event_name": "Stop"}):
             run_hook(hook, payload, {**hook_env, **as_session(SESSION)})
         run_hook(hook, {**start, "agent_id": "nocommand-0000cccc"},
-                 {**hook_env, "AGENT_SESSION_LEAD_COMMAND": str(Path(bin_dir) / "missing")})
+                 {**hook_env, "AGENT_SESSION_COMMAND": str(Path(bin_dir) / "missing")})
         for raw in ("", "not json", "[]"):
             if subprocess.run(["bash", str(hook)], input=raw, text=True, capture_output=True,
                               env={**os.environ, **hook_env}).returncode != 0:
@@ -1048,7 +1069,7 @@ def validate_session_registry(root: Path) -> None:
             raise ValueError(f"alive must correct a stale project: {project_of()!r}")
         listed = [json.loads(line) for line in registry_run("list", extra={}).stdout.splitlines()]
         if [entry["project"] for entry in listed] != [str(main)]:
-            raise ValueError(f"session-lead-mode list lacks the project: {listed}")
+            raise ValueError(f"session list lacks the project: {listed}")
         # Outside a board (bd where fails), activation still succeeds and records no project.
         registry_run("activate", "solo", extra=broken_env).check_returncode()
         if project_of() is not None or "project" in json.loads(entry_file.read_text(encoding="utf-8")):
@@ -1068,7 +1089,7 @@ def validate_session_registry(root: Path) -> None:
             named = subprocess.run(["bash", str(script), "state-dir"], capture_output=True, text=True, check=True,
                                    env={**env, **extra}).stdout.strip()
             if named != expected:
-                raise ValueError(f"session-lead-mode state-dir printed {named!r}, expected {expected!r}")
+                raise ValueError(f"session state-dir printed {named!r}, expected {expected!r}")
 
 
 def pre_tool_use(command: object, **payload: object) -> dict[str, object]:
@@ -1099,22 +1120,22 @@ def rewritten(result: dict[str, object] | None, codex: bool) -> str | None:
 def validate_session_register(root: Path) -> None:
     hook = root / "hooks" / "session-register.sh"
     worker = {"agent_id": "a43f14ee58a40ea36", "agent_type": "build"}
-    for command in ("session-lead-mode activate lead", "~/.agents/bin/session-lead-mode activate agent --pulls plan",
-                    'bash "$HOME/.agents/bin/session-lead-mode" activate solo', "cd x && session-lead-mode activate lead"):
+    for command in ("session activate lead", "~/.agents/bin/session activate agent --pulls plan",
+                    'bash "$HOME/.agents/bin/session" activate solo', "cd x && session activate lead"):
         for extra in (worker, {**worker, "turn_id": "t"}):
             result = run_hook(hook, pre_tool_use(command, session_id=SESSION, **extra))
             if not result or result["hookSpecificOutput"].get("permissionDecision") != "deny":
                 raise ValueError(f"session-register let a worker register: {command!r}")
         if run_hook(hook, pre_tool_use(command, session_id=SESSION)) is not None:
             raise ValueError(f"session-register touched a session's {command!r}")
-    for command in ("session-lead-mode show", "rg 'session-lead-mode activate' skills", "echo session-lead-mode activate"):
+    for command in ("session show", "rg 'session activate' skills", "echo session activate", "mysession activate lead"):
         if run_hook(hook, pre_tool_use(command, session_id=SESSION, **worker)) is not None:
             raise ValueError(f"session-register denied {command!r}")
 
 
 def validate_compact_reorient(root: Path) -> None:
     hook = root / "hooks" / "compact-reorient.sh"
-    env_base = {"AGENT_SESSION_LEAD_COMMAND": str(root / "bin" / "session-lead-mode")}
+    env_base = {"AGENT_SESSION_COMMAND": str(root / "bin" / "session")}
     pointer = "Recover under `$HOME/.agents/skills/shared/project-memory.md` Recovery."
     # The pointer's target must keep the recovery obligations the hook used to restate.
     memory = (root / "skills" / "shared" / "project-memory.md").read_text(encoding="utf-8")
@@ -1125,7 +1146,7 @@ def validate_compact_reorient(root: Path) -> None:
         "deferrals, return boundary and authority",
         "`$HOME/.agents/bin/board mine`",
         "`$HOME/.agents/bin/board position`",
-        "checkpoint file",
+        "session's checkpoint",
         "canonical project goal",
         "topic goal and milestone",
         "existing authority",
@@ -1147,7 +1168,7 @@ def validate_compact_reorient(root: Path) -> None:
                                         no_memory))
         if pointer not in context:
             raise ValueError(f"recovery without the installed project-memory.md must name the file: {context}")
-        subprocess.run(["bash", str(root / "bin" / "session-lead-mode"), "activate", "agent", "--pulls",
+        subprocess.run(["bash", str(root / "bin" / "session"), "activate", "agent", "--pulls",
                         "implement,review"], check=True, env={**os.environ, **env, **as_session(SESSION)})
         for source in ("compact", "resume"):
             for session, registered in ((SESSION, True), ("abcdefgh-unregistered", False)):
@@ -1174,7 +1195,7 @@ def validate_compact_reorient(root: Path) -> None:
                         '[[ "$1 $3 $4" == "--session status --line" ]] && echo "protocol: round r2 · check 1/3"\nexit 0\n')
         fake.chmod(0o755)
         codex = "cdx-recovery-0001"
-        subprocess.run(["bash", str(root / "bin" / "session-lead-mode"), "activate", "lead"], check=True,
+        subprocess.run(["bash", str(root / "bin" / "session"), "activate", "lead"], check=True,
                        env={**os.environ, **env, **as_session(codex, "codex")})
         for session, expected in ((codex, True), (SESSION, False)):
             context = hook_context(run_hook(hook, {"hook_event_name": "SessionStart", "source": "compact",
@@ -1259,7 +1280,7 @@ def validate_bd_guard(root: Path) -> None:
     worker_actor = f"{SESSION_ACTOR}/8a40ea36"
     worker_prefix = f"export BEADS_ACTOR={worker_actor}; "
     injected = ["board bd close x", "cd repo && board bd close x", "$HOME/.agents/bin/board claim",
-                'bash "$HOME/.agents/bin/board" claim x', "~/.agents/bin/board release a b",
+                'bash "$HOME/.agents/bin/board" claim x', "~/.agents/bin/board ruling release a b",
                 "xargs -I{} sh -c 'board bd show {}' < ids", f"board bd update x --actor {worker_actor}",
                 'board bd comments add x "drop the --actor goal-agent habit and BEADS_ACTOR=goal-lead"',
                 'cd x && "${B}" bd ready', "sh -c '$B bd show x'"]
@@ -1322,7 +1343,7 @@ SETUP_BASH4 = re.compile(r"\$\{[^}]*(?:,,|\^\^)[^}]*\}|\$\{\w+@[QEPAa]\}|\b(?:ma
 def validate_setup_portable(root: Path) -> None:
     """The bundle's shell runs on the bash 3.2 macOS ships. The Claude-only hooks sit beside the agents root (absent
     from the store copy the build checks)."""
-    shipped = [root / "setup" / "install.sh", root / "bin" / "session-lead-mode", *sorted((root / "hooks").glob("*.sh")),
+    shipped = [root / "bin" / "session", *sorted((root / "hooks").glob("*.sh")),
                *sorted((root.parent / "claude" / "hooks").glob("*.sh"))]
     for path in shipped:
         for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
@@ -1364,16 +1385,20 @@ def validate_shebang_modes(root: Path) -> None:
 
 
 def validate_setup_installer(root: Path) -> None:
-    """setup/install.sh in a fake home: keeps the user's files, upgrades by its own state, stops before any change."""
-    installer = root / "setup" / "install.sh"
+    """setup/install.py in a fake home: keeps the user's files, upgrades by its own state, stops before any change."""
+    installer = root / "setup" / "install.py"
     board_version = re.search(r"\(bd (\d+\.\d+\.\d+)\)", (root / "bin" / "board").read_text(encoding="utf-8"))
-    if board_version is None or f"bd_tested={board_version.group(1)}\n" not in installer.read_text(encoding="utf-8"):
-        raise ValueError("setup/install.sh bd_tested differs from the bd version bin/board names")
+    source = installer.read_text(encoding="utf-8")
+    if board_version is None or f'BD_TESTED = "{board_version.group(1)}"\n' not in source:
+        raise ValueError("setup/install.py BD_TESTED differs from the bd version bin/board names")
+    # macOS ships python3 3.9: the installer must parse there for its version message to reach the user.
+    ast.parse(source, feature_version=(3, 9))
 
     def hook(command: str) -> dict:
         return {"hooks": {"PreToolUse": [{"matcher": "Bash", "hooks": [{"type": "command", "command": command}]}]}}
 
-    def bundle(base: Path, name: str, version: str, shipped: dict[str, str], claude: str, codex: str) -> Path:
+    def bundle(base: Path, name: str, version: str, shipped: dict[str, str], claude: str, codex: str,
+               grant_entries: str | None = None) -> Path:
         folder = base / name
         for rel, text in shipped.items():
             target = folder / "files" / rel
@@ -1383,7 +1408,10 @@ def validate_setup_installer(root: Path) -> None:
         (folder / "settings" / "claude-hooks.json").write_text(json.dumps(hook(claude)), encoding="utf-8")
         (folder / "settings" / "codex-hooks.json").write_text(json.dumps(hook(codex)), encoding="utf-8")
         (folder / "VERSION").write_text(f"{version}\n", encoding="utf-8")
-        shutil.copy2(installer, folder / "install.sh")
+        shutil.copy2(installer, folder / "install.py")
+        if grant_entries is not None:
+            edited = re.sub(r"GRANT_ROOTS = \(.*?\n\)\n", lambda _: f"GRANT_ROOTS = ({grant_entries})\n", source, count=1, flags=re.S)
+            (folder / "install.py").write_text(edited, encoding="utf-8")
         return folder
 
     def tree(base: Path) -> dict[str, str]:
@@ -1393,12 +1421,7 @@ def validate_setup_installer(root: Path) -> None:
         base = Path(directory)
         tools = base / "tools"
         tools.mkdir()
-        for name in ("bash", "env", "jq", "python3", "cat", "cmp", "comm", "cp", "date", "dirname", "find", "grep", "head", "mkdir",
-                     "mktemp", "mv", "rm", "rmdir", "sed", "sort"):
-            located = shutil.which(name)
-            if located is None:
-                raise ValueError(f"the installer test needs {name} on PATH")
-            (tools / name).symlink_to(located)
+        (tools / "python3").symlink_to(sys.executable)
         fake_bd = tools / "bd"
         fake_bd.write_text(f"#!/bin/sh\necho 'bd version {board_version.group(1)} (test)'\n", encoding="utf-8")
         fake_bd.chmod(0o755)
@@ -1406,25 +1429,29 @@ def validate_setup_installer(root: Path) -> None:
         home.mkdir()
 
         def run(folder: Path, *flags: str, path: Path = tools):
-            return subprocess.run([str(tools / "bash"), str(folder / "install.sh"), *flags], capture_output=True, text=True, check=False,
+            return subprocess.run([sys.executable, str(folder / "install.py"), *flags], capture_output=True, text=True, check=False,
                                   stdin=subprocess.DEVNULL, env={"HOME": str(home), "PATH": str(path)})
 
         def ok(folder: Path, *flags: str):
             result = run(folder, *flags)
             if result.returncode != 0:
-                raise ValueError(f"install.sh {flags} failed: {result.stdout}{result.stderr}")
+                raise ValueError(f"install.py {flags} failed: {result.stdout}{result.stderr}")
             return result
 
         def refuses(what: str, folder: Path, fragment: str, path: Path = tools) -> None:
             before = tree(home)
             result = run(folder, path=path)
             if result.returncode == 0 or fragment not in result.stderr or tree(home) != before:
-                raise ValueError(f"install.sh must stop on {what} before any change: {result.returncode} {result.stderr} {result.stdout}")
+                raise ValueError(f"install.py must stop on {what} before any change: {result.returncode} {result.stderr} {result.stdout}")
 
         def commands(rel: str) -> list[str]:
             config = json.loads((home / rel).read_text(encoding="utf-8"))
             return [entry["command"] for groups in config.get("hooks", {}).values() for group in groups for entry in group["hooks"]]
 
+        scratch_root, records_root, extra_root = "~/.local/state/agents/scratch", "~/.local/share/agents/decisions", "~/.config/agents/extra"
+        rule = lambda root_: f"Edit({root_}/**)"
+        entries = {"scratch": '("XDG_STATE_HOME", ".local/state", "agents/scratch"),', "records": '("XDG_DATA_HOME", ".local/share", "agents/decisions"),',
+                   "extra": '("XDG_CONFIG_HOME", ".config", "agents/extra"),'}
         v1 = bundle(base, "v1", "one", {
             ".claude/CLAUDE.md": "setup rules\n",
             ".codex/AGENTS.md": "setup rules\n",
@@ -1432,6 +1459,8 @@ def validate_setup_installer(root: Path) -> None:
             ".claude/skills/kept/dropped.md": "dropped\n",
             ".claude/skills/gone/SKILL.md": "gone\n",
             ".agents/bin/tool": "#!/bin/sh\n",
+            ".agents/bin/pytool": "#!/usr/bin/env python3\nprint(1)\n",
+            ".agents/bin/lib/module.py": "#!/usr/bin/env python3\n",
             ".claude/mods/console/.claude-plugin/plugin.json": "{}\n",
         }, 'bash "$HOME/.claude/hooks/one.sh"', 'bash "$HOME/.codex/hooks/one.sh"')
         (v1 / "files" / ".agents" / "bin" / "tool").chmod(0o755)
@@ -1441,33 +1470,50 @@ def validate_setup_installer(root: Path) -> None:
         (home / ".claude" / "skills" / "mine" / "SKILL.md").write_text("mine\n", encoding="utf-8")
         (home / ".claude" / "CLAUDE.md").write_text("my rules\n", encoding="utf-8")
         settings = home / ".claude" / "settings.json"
-        settings.write_text(json.dumps({"model": "mine", "env": {"KEEP": "1"}, "hooks": {"PreToolUse": [own_hook]}}), encoding="utf-8")
+        # The user already holds the Edit rule for one granted root: it stays through upgrade and uninstall.
+        settings.write_text(json.dumps({"model": "mine", "env": {"KEEP": "1"}, "hooks": {"PreToolUse": [own_hook]}, "note": "caf\u00e9",
+                                        "permissions": {"allow": ["Bash(ls)", rule(scratch_root)]}}, ensure_ascii=False), encoding="utf-8")
         settings.chmod(0o640)
 
         # Stops before any change.
         without_bd = base / "without-bd"
         without_bd.mkdir()
-        for tool in tools.iterdir():
-            if tool.name != "bd":
-                (without_bd / tool.name).symlink_to(tool.resolve())
         refuses("a missing bd", v1, "missing required tool: bd", without_bd)
-        old_python = base / "old-python"
-        old_python.mkdir()
-        for tool in tools.iterdir():
-            if tool.name != "python3":
-                (old_python / tool.name).symlink_to(tool.resolve())
-        fake_python = old_python / "python3"
-        fake_python.write_text("#!/bin/sh\n[ \"$1\" = --version ] && echo 'Python 3.9.6'\nexit 1\n", encoding="utf-8")
-        fake_python.chmod(0o755)
-        refuses("an old python3", v1, "Python 3.9.6", old_python)
+        spoofed = "import runpy, sys; sys.version_info = (3, 9, 6, 'final', 0); sys.argv = sys.argv[1:]; runpy.run_path(sys.argv[0], run_name='__main__')"
+
+        def as_old_python(path: Path, **extra: str):
+            return subprocess.run([sys.executable, "-c", spoofed, str(v1 / "install.py")], capture_output=True, text=True, check=False,
+                                  stdin=subprocess.DEVNULL, env={"HOME": str(home), "PATH": str(path), **extra})
+
+        old_python = as_old_python(tools)
+        if old_python.returncode == 0 or "python3 is 3.9.6; 3.11 or newer" not in old_python.stderr:
+            raise ValueError(f"install.py must name an old python3 before anything else: {old_python.stderr}")
+        # With a newer python3.N on PATH it continues there instead.
+        newer = base / "newer"
+        newer.mkdir()
+        (newer / "python3.12").write_text("#!/bin/sh\necho \"reexec $*\"\n", encoding="utf-8")
+        (newer / "python3.12").chmod(0o755)
+        (newer / "python3.13").write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")  # a shim of an unselected version
+        (newer / "python3.13").chmod(0o755)
+        moved = as_old_python(newer)
+        if moved.returncode != 0 or f"continuing with {newer}/python3.12" not in moved.stderr or f"reexec {v1}/install.py" not in moved.stdout:
+            raise ValueError(f"install.py must re-run itself under the newest python3.N that starts: {moved.stdout}{moved.stderr}")
+        looped = as_old_python(newer, CLAUDE_CODEX_SETUP_REEXEC="1")
+        if looped.returncode == 0 or "python3 is 3.9.6; 3.11 or newer" not in looped.stderr or "reexec" in looped.stdout:
+            raise ValueError(f"a re-run that is still too old must stop, not loop: {looped.stdout}{looped.stderr}")
         (home / ".codex").mkdir()
         (home / ".codex" / "hooks.json").write_text("{broken", encoding="utf-8")
         refuses("broken settings", v1, ".codex/hooks.json is not a JSON object", tools)
         (home / ".codex" / "hooks.json").unlink()
+        config = home / ".codex" / "config.toml"
+        config.write_text("model = [", encoding="utf-8")
+        refuses("broken TOML", v1, ".codex/config.toml is not valid TOML", tools)
+        user_config = 'model = "mine"\n'
+        config.write_text(user_config, encoding="utf-8")
         # A JSON object whose hooks the merge can't read stops before the payload is replaced (install review, 2026-11-05).
         kept_settings = settings.read_text(encoding="utf-8")
         settings.write_text(json.dumps({"hooks": {"PreToolUse": "invalid"}}), encoding="utf-8")
-        refuses("unmergeable hooks", v1, ".claude/settings.json has hooks the installer cannot merge", tools)
+        refuses("unmergeable hooks", v1, ".claude/settings.json has hooks or permissions the installer cannot merge", tools)
         settings.write_text(kept_settings, encoding="utf-8")
         (home / ".agents").mkdir()
         (base / "elsewhere").mkdir()
@@ -1478,46 +1524,110 @@ def validate_setup_installer(root: Path) -> None:
 
         before = tree(home)
         dry = ok(v1, "--dry-run")
-        if tree(home) != before or "install .claude/CLAUDE.md" not in dry.stdout:
-            raise ValueError(f"install.sh --dry-run changed files or said nothing: {dry.stdout}")
+        if tree(home) != before or "install .claude/CLAUDE.md" not in dry.stdout or "merge   .codex/config.toml" not in dry.stdout:
+            raise ValueError(f"install.py --dry-run changed files or said nothing: {dry.stdout}")
 
         # First install: instructions replaced with a backup, the user's files and settings kept.
         first = ok(v1)
         backups = sorted((home / ".agent-config-backup").iterdir())
         if len(backups) != 1 or (backups[0] / ".claude" / "CLAUDE.md").read_text(encoding="utf-8") != "my rules\n":
-            raise ValueError(f"install.sh must back up replaced instructions: {first.stdout}")
+            raise ValueError(f"install.py must back up replaced instructions: {first.stdout}")
         if (home / ".claude" / "CLAUDE.md").read_text(encoding="utf-8") != "setup rules\n":
-            raise ValueError("install.sh must replace the global instructions")
+            raise ValueError("install.py must replace the global instructions")
         if not (home / ".claude" / "skills" / "mine" / "SKILL.md").is_file():
-            raise ValueError("install.sh removed the user's own skill")
+            raise ValueError("install.py removed the user's own skill")
         if not os.access(home / ".agents" / "bin" / "tool", os.X_OK):
-            raise ValueError("install.sh lost a tool's executable bit")
+            raise ValueError("install.py lost a tool's executable bit")
+        if "caf\u00e9" not in settings.read_text(encoding="utf-8"):
+            raise ValueError("install.py must keep the user's UTF-8 text unescaped in settings.json")
         merged = json.loads(settings.read_text(encoding="utf-8"))
         if merged["model"] != "mine" or merged["env"] != {"KEEP": "1", "CLAUDE_CODE_PLUGIN_DIRS": "~/.claude/mods/console"}:
-            raise ValueError(f"install.sh mangled settings: {merged}")
+            raise ValueError(f"install.py mangled settings: {merged}")
         if commands(".claude/settings.json") != ["mine.sh", 'bash "$HOME/.claude/hooks/one.sh"']:
-            raise ValueError(f"install.sh merged hooks wrongly: {commands('.claude/settings.json')}")
+            raise ValueError(f"install.py merged hooks wrongly: {commands('.claude/settings.json')}")
         if commands(".codex/hooks.json") != ['bash "$HOME/.codex/hooks/one.sh"']:
-            raise ValueError("install.sh must create the Codex hooks file")
+            raise ValueError("install.py must create the Codex hooks file")
         if settings.stat().st_mode & 0o777 != 0o640:
-            raise ValueError("install.sh changed the settings file's mode")
+            raise ValueError("install.py changed the settings file's mode")
+
+        def grants() -> tuple[list[str], list[str]]:
+            allow = json.loads(settings.read_text(encoding="utf-8")).get("permissions", {}).get("allow", [])
+            toml = tomllib.loads(config.read_text(encoding="utf-8"))
+            return sorted(allow), toml.get("sandbox_workspace_write", {}).get("writable_roots", [])
+
+        both = (sorted(["Bash(ls)", rule(scratch_root), rule(records_root)]), [scratch_root, records_root])
+        if grants() != both or \
+                tomllib.loads(config.read_text(encoding="utf-8"))["model"] != "mine" or "claude-codex-setup" not in config.read_text(encoding="utf-8"):
+            raise ValueError(f"install.py must add the write grants and keep the user's settings: {grants()} {config.read_text(encoding='utf-8')}")
 
         # A rerun of the same bundle changes nothing, not even a backup.
+        # A state file from the shell installer has no grants; it reads as none owned.
+        state_file = home / ".agents" / "setup-state.json"
+        recorded = state_file.read_text(encoding="utf-8")
+        state_file.write_text(json.dumps({k: v for k, v in json.loads(recorded).items() if k != "grants"}), encoding="utf-8")
         again = ok(v1)
+        state_file.write_text(recorded, encoding="utf-8")
         if "already up to date (one)" not in again.stdout or len(list((home / ".agent-config-backup").iterdir())) != 1:
             raise ValueError(f"a rerun of the same bundle must change nothing: {again.stdout}")
-        if commands(".claude/settings.json").count('bash "$HOME/.claude/hooks/one.sh"') != 1:
-            raise ValueError("a rerun duplicated a hook registration")
+        if commands(".claude/settings.json").count('bash "$HOME/.claude/hooks/one.sh"') != 1 or grants() != both:
+            raise ValueError("a rerun duplicated a hook registration or a grant")
+
+        # Python tools name the interpreter the installer ran under (the PATH entry, not its realpath) and nothing else.
+        pytool, module = home / ".agents" / "bin" / "pytool", home / ".agents" / "bin" / "lib" / "module.py"
+        if pytool.read_text(encoding="utf-8") != f"#!{tools}/python3\nprint(1)\n" or module.read_text(encoding="utf-8") != "#!/usr/bin/env python3\n":
+            raise ValueError(f"install.py must pin the top-level python tools only: {pytool.read_text(encoding='utf-8')!r}")
+        other = base / "other"
+        other.mkdir()
+        (other / "python3").symlink_to(sys.executable)
+        (other / "bd").symlink_to(fake_bd)
+        repinned = run(v1, path=other)
+        if repinned.returncode != 0 or "install .agents/bin/pytool" not in repinned.stdout or \
+                pytool.read_text(encoding="utf-8") != f"#!{other}/python3\nprint(1)\n":
+            raise ValueError(f"a rerun under another python must re-pin: {repinned.stdout}{repinned.stderr}")
+        unlisted = base / "unlisted"
+        unlisted.mkdir()
+        (unlisted / "bd").symlink_to(fake_bd)
+        fallback = run(v1, path=unlisted)
+        if f"pinned to {sys.executable}" not in fallback.stderr or pytool.read_text(encoding="utf-8") != f"#!{sys.executable}\nprint(1)\n":
+            raise ValueError(f"without a PATH entry the pin falls back to the running python with a note: {fallback.stderr}")
+        ok(v1)
+        if pytool.read_text(encoding="utf-8") != f"#!{tools}/python3\nprint(1)\n":
+            raise ValueError("a rerun under the first python must pin it again")
+        # An unversioned python3 anywhere on PATH is pinned before a python3.N; a lone python3.N is pinned with a note.
+        minor = f"python3.{sys.version_info[1]}"
+        versioned, plain, only = base / "versioned", base / "plain", base / "only"
+        for folder in (versioned, plain, only):
+            folder.mkdir()
+            (folder / "bd").symlink_to(fake_bd)
+        (versioned / minor).symlink_to(sys.executable)
+        (plain / "python3").symlink_to(sys.executable)
+        (only / minor).symlink_to(sys.executable)
+        preferred = run(v1, path=f"{versioned}:{plain}")
+        if preferred.returncode != 0 or pytool.read_text(encoding="utf-8") != f"#!{plain}/python3\nprint(1)\n" or "versioned" in preferred.stderr:
+            raise ValueError(f"an unversioned python3 later on PATH beats a python3.N: {preferred.stderr}")
+        lone = run(v1, path=only)
+        if pytool.read_text(encoding="utf-8") != f"#!{only}/{minor}\nprint(1)\n" or f"versioned {only}/{minor}" not in lone.stderr:
+            raise ValueError(f"a lone python3.N is pinned with a note: {lone.stderr}")
+        spaced = base / "with space"
+        spaced.mkdir()
+        (spaced / "python3").symlink_to(sys.executable)
+        (spaced / "bd").symlink_to(fake_bd)
+        refuses("a python3 path with a space", v1, "holds a space", spaced)
+        ok(v1)
 
         # Upgrade: what the last install shipped and this one doesn't goes; the user's additions stay.
         (home / ".claude" / "skills" / "kept" / "note.md").write_text("my note\n", encoding="utf-8")
-        v2 = bundle(base, "v2", "two", {
+        v2_files = {
+            ".agents/bin/pytool": "#!/usr/bin/env python3\nprint(1)\n",
+            ".agents/bin/lib/module.py": "#!/usr/bin/env python3\n",
             ".claude/CLAUDE.md": "new rules\n",
             ".codex/AGENTS.md": "new rules\n",
             ".claude/skills/kept/SKILL.md": "kept\n",
             ".agents/bin/tool": "#!/bin/sh\n",
             ".claude/mods/console/.claude-plugin/plugin.json": "{}\n",
-        }, 'bash "$HOME/.claude/hooks/two.sh"', 'bash "$HOME/.codex/hooks/two.sh"')
+        }
+        v2 = bundle(base, "v2", "two", v2_files, 'bash "$HOME/.claude/hooks/two.sh"', 'bash "$HOME/.codex/hooks/two.sh"',
+                    grant_entries="".join(entries[k] for k in ("scratch", "records", "extra")))
         # A leftover or planted `<file>.new` never redirects the settings or state write (install review, 2026-11-05).
         outside = base / "outside"
         outside.write_text("keep\n", encoding="utf-8")
@@ -1526,7 +1636,7 @@ def validate_setup_installer(root: Path) -> None:
             link.symlink_to(outside)
         ok(v2)
         if outside.read_text(encoding="utf-8") != "keep\n" or settings.is_symlink() or (home / ".agents" / "setup-state.json").is_symlink():
-            raise ValueError("install.sh must write settings and state through files of its own, not a planted .new")
+            raise ValueError("install.py must write settings and state through files of its own, not a planted .new")
         for link in planted:
             link.unlink()
         if (home / ".claude" / "skills" / "kept" / "dropped.md").exists() or (home / ".claude" / "skills" / "gone").exists():
@@ -1537,6 +1647,18 @@ def validate_setup_installer(root: Path) -> None:
             raise ValueError(f"an upgrade must swap the setup's hooks: {commands('.claude/settings.json')}")
         if commands(".codex/hooks.json") != ['bash "$HOME/.codex/hooks/two.sh"']:
             raise ValueError("an upgrade must swap the Codex hooks")
+        grown = (sorted(["Bash(ls)", *map(rule, (scratch_root, records_root, extra_root))]), [scratch_root, records_root, extra_root])
+        if grants() != grown:
+            raise ValueError(f"an upgrade whose list adds a root must apply it: {grants()}")
+        # A list that drops a root removes its grant and keeps the user's own rule; the next list adds it back.
+        v3 = bundle(base, "v3", "three", v2_files, 'bash "$HOME/.claude/hooks/two.sh"', 'bash "$HOME/.codex/hooks/two.sh"',
+                    grant_entries=entries["scratch"] + entries["extra"])
+        ok(v3)
+        if grants() != (sorted(["Bash(ls)", rule(scratch_root), rule(extra_root)]), [scratch_root, extra_root]):
+            raise ValueError(f"an upgrade whose list drops a root must remove its grant: {grants()}")
+        ok(v2)
+        if grants() != grown:
+            raise ValueError(f"an upgrade must add a dropped root back: {grants()}")
         removed = [path for backup in (home / ".agent-config-backup").iterdir() for path in backup.rglob("dropped.md")]
         if not removed:
             raise ValueError("an upgrade must back up what it removes")
@@ -1559,7 +1681,7 @@ def validate_setup_installer(root: Path) -> None:
         note = ok(v2)
         if "add ~/.claude/mods/console to it by hand" not in note.stderr or \
                 json.loads(settings.read_text(encoding="utf-8"))["env"]["CLAUDE_CODE_PLUGIN_DIRS"] != "~/other":
-            raise ValueError(f"install.sh must leave another plugin folder setting alone: {note.stderr}")
+            raise ValueError(f"install.py must leave another plugin folder setting alone: {note.stderr}")
         current["env"]["CLAUDE_CODE_PLUGIN_DIRS"] = "~/.claude/mods/console"
         settings.write_text(json.dumps(current), encoding="utf-8")
 
@@ -1574,12 +1696,26 @@ def validate_setup_installer(root: Path) -> None:
         state.write_text(intact, encoding="utf-8")
         victim.unlink()
 
+        # A target that is no regular file stops the plan, dry-run included, before anything is installed.
+        state.write_text(json.dumps({**json.loads(intact), "files": [".claude/skills"]}), encoding="utf-8")
+        refuses("a state entry naming a folder", v2, "~/.claude/skills is not a regular file", tools)
+        state.write_text(intact, encoding="utf-8")
+        shipped_file = home / ".claude" / "CLAUDE.md"
+        shipped_file.rename(shipped_file.with_name("CLAUDE.md.away"))
+        shipped_file.mkdir()
+        refuses("a shipped file that exists as a folder", v2, "~/.claude/CLAUDE.md is not a regular file", tools)
+        dry_run = run(v2, "--dry-run")
+        if dry_run.returncode == 0:
+            raise ValueError("--dry-run must refuse what the real run refuses")
+        shipped_file.rmdir()
+        shipped_file.with_name("CLAUDE.md.away").rename(shipped_file)
+
         # An unusable HOME stops at once.
         for value in ("", "/", "//", "/.", "relative", str(base / "no-such-home")):
-            result = subprocess.run([str(tools / "bash"), str(v2 / "install.sh"), "--dry-run"], capture_output=True, text=True, check=False,
+            result = subprocess.run([sys.executable, str(v2 / "install.py"), "--dry-run"], capture_output=True, text=True, check=False,
                                     stdin=subprocess.DEVNULL, env={"HOME": value, "PATH": str(tools)})
             if result.returncode == 0 or "HOME is" not in result.stderr:
-                raise ValueError(f"install.sh must stop on HOME={value!r}: {result.returncode} {result.stderr}")
+                raise ValueError(f"install.py must stop on HOME={value!r}: {result.returncode} {result.stderr}")
 
         # A file target that is a symlink stays, and nothing changes.
         rules = home / ".claude" / "CLAUDE.md"
@@ -1605,6 +1741,60 @@ def validate_setup_installer(root: Path) -> None:
             raise ValueError(f"--uninstall must leave only the user's settings: {final}")
         if commands(".codex/hooks.json"):
             raise ValueError("--uninstall left Codex hooks")
+        if grants() != (sorted(["Bash(ls)", rule(scratch_root)]), []) or config.read_text(encoding="utf-8") != user_config:
+            raise ValueError(f"--uninstall must remove the grants it added and keep the user's: {grants()} {config.read_text(encoding='utf-8')!r}")
+
+        # A Codex table of the user's own is never edited: the installer names the roots to add.
+        own_table = 'model = "mine"\n\n[sandbox_workspace_write]\nwritable_roots = ["' + scratch_root + '"]\n'
+        config.write_text(own_table, encoding="utf-8")
+        noted = ok(v2)
+        if f"add {records_root}, {extra_root} to sandbox_workspace_write.writable_roots" not in noted.stderr or config.read_text(encoding="utf-8") != own_table:
+            raise ValueError(f"install.py must leave the user's sandbox_workspace_write alone and say what to add: {noted.stderr}")
+
+        # A symlinked config.toml is the user's too.
+        linked = base / "elsewhere" / "config.toml"
+        linked.write_text(user_config, encoding="utf-8")
+        config.unlink()
+        config.symlink_to(linked)
+        noted = ok(v2)
+        if "(it is a symlink)" not in noted.stderr or linked.read_text(encoding="utf-8") != user_config:
+            raise ValueError(f"install.py must not edit a symlinked config.toml: {noted.stderr}")
+
+        # A CRLF file keeps its line endings through the merge and the removal.
+        crlf = b'model = "mine"\r\n'
+        config.unlink()
+        config.write_bytes(crlf)
+        ok(v2)
+        merged_bytes = config.read_bytes()
+        if b"claude-codex-setup" not in merged_bytes or merged_bytes.count(b"\n") != merged_bytes.count(b"\r\n"):
+            raise ValueError(f"install.py must keep CRLF line endings: {merged_bytes!r}")
+        # Our block in a file that became a symlink, or edited by the user, is named for removal, never touched.
+        linked.write_bytes(merged_bytes)
+        config.unlink()
+        config.symlink_to(linked)
+        left = ok(v2, "--uninstall")
+        if "remove the claude-codex-setup block" not in left.stderr or "it is a symlink" not in left.stderr or linked.read_bytes() != merged_bytes:
+            raise ValueError(f"--uninstall must name our block in a symlinked config.toml: {left.stderr}")
+        config.unlink()
+        config.write_bytes(merged_bytes + b"extra = 1\r\n")
+        left = ok(v2, "--uninstall")
+        if "it was edited" not in left.stderr or config.read_bytes() != merged_bytes + b"extra = 1\r\n":
+            raise ValueError(f"--uninstall must name an edited block and leave it: {left.stderr}")
+        config.write_bytes(crlf)
+        ok(v2)
+        ok(v2, "--uninstall")
+        if config.read_bytes() != crlf:
+            raise ValueError(f"--uninstall must restore the user's config.toml byte for byte: {config.read_bytes()!r}")
+        # A config.toml the installer created goes with its block; an empty permissions object of the user's stays.
+        config.unlink()
+        ok(v2)
+        ok(v2, "--uninstall")
+        if config.exists():
+            raise ValueError("--uninstall must remove a config.toml the installer created")
+        settings.write_text('{"permissions": {}}\n', encoding="utf-8")
+        ok(v2, "--uninstall")
+        if settings.read_text(encoding="utf-8") != '{"permissions": {}}\n':
+            raise ValueError(f"--uninstall must not touch what it never added: {settings.read_text(encoding='utf-8')}")
 
 
 def validate_hook_registrations(root: Path) -> None:
@@ -1629,9 +1819,45 @@ def validate_hook_registrations(root: Path) -> None:
                         raise ValueError(f"{path} runs hooks/{name}, which does not exist")
 
 
+def validate_agent_grants(root: Path) -> None:
+    """The installer's grant list names the folders the tools write outside repositories: bin/scratch's root and the
+    board-less decision records of protocol_engine/cli.py, both under their own agents/ folder. (This machine's own
+    settings.json and config.toml are not compared with it.)"""
+    spec = importlib.util.spec_from_file_location("setup_install", root / "setup" / "install.py")
+    installer = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(installer)
+    with tempfile.TemporaryDirectory() as directory:
+        home = os.path.realpath(directory)
+        roots = installer.grant_roots(home, {})
+        if roots != ["~/.local/state/agents/scratch", "~/.local/share/agents/decisions"]:
+            raise ValueError(f"install.py grants resolve to {roots}")
+        moved = installer.grant_roots(home, {"XDG_STATE_HOME": home + "/s", "XDG_DATA_HOME": "/srv/d"})
+        if moved != ["~/s/agents/scratch", "/srv/d/agents/decisions"] or installer.edit_rule(moved[1]) != "Edit(//srv/d/agents/decisions/**)":
+            raise ValueError(f"install.py must follow XDG_STATE_HOME and XDG_DATA_HOME: {moved}")
+        loader = importlib.machinery.SourceFileLoader("scratch_grants", str(root / "bin" / "scratch"))
+        scratch = importlib.util.module_from_spec(importlib.util.spec_from_loader(loader.name, loader))
+        loader.exec_module(scratch)
+        saved = {key: os.environ.pop(key, None) for key in ("XDG_STATE_HOME", "XDG_DATA_HOME")}
+        os.environ["HOME"], previous = home, os.environ.get("HOME")
+        try:
+            tool_scratch = str(scratch.root())
+        finally:
+            os.environ["HOME"] = previous
+            os.environ.update({key: value for key, value in saved.items() if value is not None})
+        if tool_scratch != roots[0].replace("~", home, 1):
+            raise ValueError(f"bin/scratch writes to {tool_scratch}, not the granted {roots[0]}")
+    records = (root / "bin" / "protocol_engine" / "cli.py").read_text(encoding="utf-8")
+    if "call.env.get('XDG_DATA_HOME', '')" not in records or "/ '.local' / 'share'" not in records or \
+            "Path(data) / 'agents' / 'decisions'" not in records:
+        raise ValueError("protocol_engine/cli.py default_records moved: update GRANT_ROOTS in setup/install.py")
+    if any(root_.split("/")[-2] != "agents" for root_ in roots):
+        raise ValueError(f"every grant belongs under an agents/ folder: {roots}")
+
+
 def validate_hooks(root: Path) -> None:
     hooks = root / "hooks"
     validate_hook_registrations(root)
+    validate_agent_grants(root)
     validate_setup_portable(root)
     validate_setup_installer(root)
     validate_session_registry(root)
@@ -1979,6 +2205,7 @@ def validate_board(root: Path) -> None:
             self.history, self.files = history or {}, {}
             self.settings = {"custom.board.target": "main", "custom.board.setup": "true", "custom.board.checks": "true", "custom.board.look": "before", "custom.board.view": "code"}
 
+        not_bd = ("nonsense",)  # words `bd <word> --help` rejects
         project = None  # the folder `bd where` names (its .beads); None: not in a board
 
         def __call__(self, command, **kwargs):
@@ -1988,6 +2215,8 @@ def validate_board(root: Path) -> None:
                 return subprocess.CompletedProcess(command, *((0, f"{self.project}/.beads\n  database: x\n", "") if self.project
                                                               else (1, "", "No active beads workspace found.")))
             self.calls.append((command[1:], kwargs.get("input")))
+            if command[2:] == ["--help"]:  # `bd <verb> --help`: exit 0 is a bd command
+                return subprocess.CompletedProcess(command, 1 if command[1] in self.not_bd else 0, "", "")
             # board hands long text over in temporary files: keep their content for the assertions.
             for flag, path in zip(command, command[1:]):
                 if flag in ("--design-file", "--body-file", "-f") and Path(path).is_file():
@@ -2090,9 +2319,9 @@ def validate_board(root: Path) -> None:
         if argv[0] == "show":
             # a second show only fetches the metadata of a pending revision's new record
             expected = fake.reads() if fake.reads() in (["show"], ["show", "show"]) else ["show"]
-        elif argv[0] in ("related", "check", "block", "revise", "release", "supersede"):
+        elif argv[0] in ("related", "check", "block") or argv[:2] in (["ruling", "revise"], ["ruling", "release"], ["ruling", "supersede"]):
             expected = ["export"]
-        elif argv[0] == "record":
+        elif argv[:2] == ["ruling", "record"]:
             expected = ["list"]
         elif argv[0] in ("claim", "take") and fake.reads()[:1] == ["list"] and set(fake.reads()[1:]) <= {"show", "list"}:
             # claim reads hand-over comments of in_review items, the comments of the session's other holds (staleness), and the
@@ -2102,6 +2331,11 @@ def validate_board(root: Path) -> None:
             expected = ["list", "show"]
         else:
             expected = ["list"]
+        if argv[0] == "console" and any(i["status"] == "needs_ratification" and i.get("issue_type") in ("task", "bug", "spike") for i in live):
+            expected = [*expected, "show"]  # the ratification rows read their landed CRs (closed, so not in the list) once
+        if argv[:2] == ["cr", "edits"] and any(i["status"] == "needs_ratification" and i["id"] == argv[2] for i in live):
+            # a ratification edit reads its landed CR (closed, so not in the list), and with --commit the follow-up it created
+            expected = fake.reads() if fake.reads()[:1] == ["list"] and set(fake.reads()[1:]) <= {"show"} else [*expected, "show"]
         # A change request whose items wait on a blocker outside the status snapshot reads it once (lifting the edge to its CR).
         everyone = {issue["id"] for issue in fake.issues}
         lifting = any(d["type"] == "blocks" and d["depends_on_id"] not in everyone and not d["depends_on_id"].startswith("external:")
@@ -2129,7 +2363,7 @@ def validate_board(root: Path) -> None:
     os.chdir(scratch_repo.name)
     os.environ.update(GIT_CONFIG_GLOBAL="/dev/null", GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t@e", GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t@e")
     with tempfile.TemporaryDirectory() as state_dir, tempfile.TemporaryDirectory() as raw_base:
-        registry = root / "bin" / "session-lead-mode"
+        registry = root / "bin" / "session"
         project, project_env = fake_board(Path(raw_base).resolve())
         Fake.project = str(project)
         for args, identity in ((("agent", "--pulls", "implement,review"), as_session("0000-aaaa1111", "codex")),
@@ -2299,17 +2533,21 @@ def validate_board(root: Path) -> None:
             if f"  {gate}  label-status" in scoped_check or f"  {cid['Legacy holder']}  holder" not in scoped_check:
                 raise ValueError("board check ignored --root")
 
-            # feature and chore are retired: live ones are flagged and never routed.
+            # feature and chore sit outside the Kinds table: live ones are flagged and never routed.
             retired = [{**issue, "issue_type": "feature"} if issue["title"] == "Clean task"
                        else {**issue, "issue_type": "chore"} if issue["title"] == "Waits on ruling" else issue
                        for issue in checked]
             report = invoke(["check"], Fake(retired))[1]
-            if f"  {cid['Clean task']}  retired-type" not in report or f"  {cid['Waits on ruling']}  retired-type" not in report:
+            if f"  {cid['Clean task']}  unknown-type" not in report or f"  {cid['Waits on ruling']}  unknown-type" not in report:
                 raise ValueError(f"board check did not flag live feature and chore items:\n{report}")
+            other = [{**issue, "issue_type": "molecule"} if issue["title"] == "Clean task" else issue for issue in checked]
+            if f"  {cid['Clean task']}  unknown-type  type molecule" not in invoke(["check"], Fake(other))[1] \
+                    and f"  {cid['Clean task']}  unknown-type" not in invoke(["check"], Fake(other))[1]:
+                raise ValueError("board check must flag any live type outside the Kinds table")
             checks = [{**issue, "issue_type": "check"} if issue["title"] in ("Clean task", "Closed waiter") else issue
                       for issue in checked]
             report = invoke(["check"], Fake(checks))[1]
-            if f"  {cid['Clean task']}  retired-type" not in report or f"  {cid['Closed waiter']}  retired-type" in report:
+            if f"  {cid['Clean task']}  unknown-type" not in report or f"  {cid['Closed waiter']}  unknown-type" in report:
                 raise ValueError(f"board check misjudged check items (live flagged, closed skipped):\n{report}")
             chore = variant(**{"Ready task": {"issue_type": "chore"}, "Spike perf": {"issue_type": "check"}})
             if "Ready task" in invoke(["queue"], Fake(chore))[1] or "Spike perf" in invoke(["queue"], Fake(chore))[1]:
@@ -2443,7 +2681,7 @@ def validate_board(root: Path) -> None:
                     raise ValueError(f"{session}'s bare claim took the queue head that needs its refresh: {fake.writes()}")
             fake = Fake(variant(**{"CR ready": waiting_cr, **no_rulings, "Handed task": {"status": "closed"}}))
             _, claimed, _ = invoke(["claim"], fake, "aaaa1111/build-87654321")
-            if "claimed fx-ovo.c1 (refresh)" not in claimed or "board refresh fx-ovo.c1, then board unclaim fx-ovo.c1" not in claimed \
+            if "claimed fx-ovo.c1 (refresh)" not in claimed or "board cr refresh fx-ovo.c1, then board unclaim fx-ovo.c1" not in claimed \
                     or fake.plain_writes()[:1] != [["update", "fx-ovo.c1", "--assignee", "aaaa1111/build-87654321", "--if-assignee", "", "--json"]]:
                 raise ValueError(f"a review pull did not take the queue head's refresh:\n{claimed}\n{fake.writes()}")
             # The console's Refresh follows the same mark: the stale queue head only (r27-q252).
@@ -2458,6 +2696,17 @@ def validate_board(root: Path) -> None:
             if fake.plain_writes() != [["update", "fx-ovo.c1", "--assignee", "lead0001", "--if-assignee", "", "--json"]]:
                 raise ValueError(f"a lead did not claim the named change request waiting for its Accept: {fake.writes()}")
 
+            # r10-q50: a ratification row carries the landed range of its CR (tip: landing, else the checked tip; baseTip: the check's base tip).
+            landed = [{**fixture[0], "id": "rt-cr", "title": "Landed CR", "issue_type": "change-request", "status": "closed", "dependencies": [],
+                       "metadata": {"landing": "a" * 40, "check_tip": "a" * 40, "check_base_tip": "b" * 40}},
+                      {**fixture[0], "id": "rt-1", "title": "Ratify: Landed CR", "issue_type": "task", "status": "needs_ratification", "assignee": None,
+                       "dependencies": [{"issue_id": "rt-1", "depends_on_id": "rt-cr", "type": "parent-child"}]},
+                      {**fixture[0], "id": "rt-2", "title": "Ratify: unknown range", "issue_type": "task", "status": "needs_ratification", "assignee": None,
+                       "dependencies": []}]
+            rows = json.loads(invoke(["console"], Fake([*fixture, *landed]), "aaaa1111")[1])["ratifications"]
+            if rows != [{"id": "rt-1", "cr": "rt-cr", "title": "Ratify: Landed CR", "tip": "a" * 40, "baseTip": "b" * 40},
+                        {"id": "rt-2", "cr": "", "title": "Ratify: unknown range", "tip": None, "baseTip": None}]:
+                raise ValueError(f"board console ratifications carry the landed range of their CR: {rows}")
             # A work item is claimed by id inside a change request its session holds (a worker of it); outside one it is refused.
             fake = Fake(fixture)
             code, _, errors = invoke(["claim", ids["Ready task"]], fake, "lead0001")
@@ -2467,6 +2716,14 @@ def validate_board(root: Path) -> None:
             code, _, errors = invoke(["claim", ids["Loose item"]], fake, "lead0001")
             if code != 1 or fake.writes() or "outside any change request" not in errors or "--parent" not in errors:
                 raise ValueError(f"board claim took a work item outside any change request: {code} {fake.writes()} {errors}")
+            # r10-q50: work marked no-code at creation (metadata no_code=1) is claimed outside any CR and is no `no-cr` deviation.
+            no_code = variant(**{"Loose item": {"metadata": {"no_code": "1"}}})
+            fake = Fake(no_code)
+            code, _, errors = invoke(["claim", ids["Loose item"]], fake, "lead0001")
+            if code or not any(w[:2] == ["update", ids["Loose item"]] and "--claim" in w or "lead0001" in w for w in fake.writes()):
+                raise ValueError(f"board claim refused a no-code work item outside any change request: {code} {errors} {fake.writes()}")
+            if f"{ids['Loose item']}  no-cr" in invoke(["check"], Fake(no_code))[1] or f"{ids['Loose item']}  no-cr" not in invoke(["check"], Fake(fixture))[1]:
+                raise ValueError("board check must flag a work item outside any CR, but not a no-code one")
             held_cr = variant(**{"CR ready": {"status": "in_progress", "assignee": "lead0001"}})
             fake = Fake(held_cr)
             code, _, _ = invoke(["claim", ids["Ready task"]], fake, "lead0001/build-00000001")
@@ -2895,7 +3152,7 @@ def validate_board(root: Path) -> None:
                 registry_reads = 0
 
                 def __call__(self, command, **kwargs):
-                    if command[0] == "bash" and command[-1] in ("list", "unreadable") and Path(command[-2]).name == "session-lead-mode":
+                    if command[0] == "bash" and command[-1] in ("list", "unreadable") and Path(command[-2]).name == "session":
                         self.registry_reads += 1
                     return super().__call__(command, **kwargs)
 
@@ -2966,7 +3223,7 @@ def validate_board(root: Path) -> None:
                 raise ValueError(f"board console counts: health's, with design and implement as position counts them: {console_counts}")
             if [c["id"] for c in crs_view] != ["fx-ovo.c2"] or ratifications_view != [] \
                     or set(crs_view[0]) != {"id", "title", "status", "stage", "holder", "look", "view", "checkpoint", "base", "branch", "worktree", "tip",
-                                            "baseTip", "check", "parent", "children", "baseSha", "landBlocked", "reviewState", "refreshWork", "after",
+                                            "baseTip", "check", "parent", "children", "baseSha", "landBlocked", "reviewState", "refreshWork", "heldByReviewTree", "after",
                                             "setupFailed", "unblocks", "unblocksDirect", "milestone", "priority", "ownPriority", "raisedBy"}:
                 raise ValueError(f"board console crs: {crs_view}")
             # The console's stub contract (tests/board-console-contract.ts) declares the CR row it reads: every key it declares must exist.
@@ -3043,24 +3300,24 @@ def validate_board(root: Path) -> None:
 
             store = ids["Store choice"]
             fake = Fake(fixture, lint={"results": [{"id": store, "missing": ["## Rule owner"]}]})
-            code, _, errors = invoke(["release", store], fake, "lead0001")
+            code, _, errors = invoke(["ruling", "release", store], fake, "lead0001")
             if code == 0 or "## Rule owner" not in errors or fake.writes():
-                raise ValueError("board release accepted a record failing bd lint")
+                raise ValueError("board ruling release accepted a record failing bd lint")
             fake = Fake(fixture)
-            if invoke(["release", ids["Ready task"]], fake, "lead0001")[0] == 0 or fake.writes():
-                raise ValueError("board release accepted a task")
+            if invoke(["ruling", "release", ids["Ready task"]], fake, "lead0001")[0] == 0 or fake.writes():
+                raise ValueError("board ruling release accepted a task")
             # Resumable: an already released ruling is done, nothing is written again.
             fake = Fake(fixture)
-            code, output, _ = invoke(["release", ids["Released ruling"]], fake, "lead0001")
+            code, output, _ = invoke(["ruling", "release", ids["Released ruling"]], fake, "lead0001")
             if code or fake.writes() or f"already released {ids['Released ruling']}" not in output:
-                raise ValueError(f"board release must take an already released ruling as done: {fake.calls}\n{output}")
+                raise ValueError(f"board ruling release must take an already released ruling as done: {fake.calls}\n{output}")
             fake = Fake(variant(**{"Store choice": {"dependencies": [
                 *next(i for i in fixture if i["id"] == store)["dependencies"],
                 {"issue_id": store, "depends_on_id": ids["Ready task"], "type": "blocks"}]}}))
-            if invoke(["release", store], fake, "lead0001")[0] == 0 or fake.writes():
-                raise ValueError("board release accepted a ruling with an open blocker")
+            if invoke(["ruling", "release", store], fake, "lead0001")[0] == 0 or fake.writes():
+                raise ValueError("board ruling release accepted a ruling with an open blocker")
             # A released ruling is a settled premise: it holds no decided record resting on it (health's blockedBy, which the
-            # release's drop step reads, and board release agree), an unsettled blocker is refused with its real status, and an
+            # release's drop step reads, and board ruling release agree), an unsettled blocker is refused with its real status, and an
             # open question or work item stays held by it until it is planned.
             released_ruling, ready_task = ids["Released ruling"], ids["Ready task"]
 
@@ -3074,11 +3331,11 @@ def validate_board(root: Path) -> None:
                 return next(i["blockedBy"] for i in json.loads(output)["items"]["decided"] if i["id"] == store)
 
             fake = Fake(with_blockers(released_ruling))
-            code, _, errors = invoke(["release", store], fake, "lead0001")
+            code, _, errors = invoke(["ruling", "release", store], fake, "lead0001")
             if code or not fake.writes() or decided_blocked(with_blockers(released_ruling)):
                 raise ValueError(f"a released blocker must not hold a decided record: {errors}")
             fake = Fake(with_blockers(released_ruling, ready_task))
-            code, _, errors = invoke(["release", store], fake, "lead0001")
+            code, _, errors = invoke(["ruling", "release", store], fake, "lead0001")
             if code == 0 or fake.writes() or f"{store}: waits on {ready_task} (open)" not in errors \
                     or released_ruling in errors or decided_blocked(with_blockers(released_ruling, ready_task)) != [ready_task]:
                 raise ValueError(f"an unsettled blocker refuses with its status, the released one unnamed: {errors}")
@@ -3090,18 +3347,18 @@ def validate_board(root: Path) -> None:
                 raise ValueError(f"a released ruling must keep holding an open question: {output}")
             for status in ("open", "in_progress", "needs_ratification"):
                 fake = Fake(variant(**{"Store choice": {"status": status}}))
-                code, _, errors = invoke(["release", store], fake, "lead0001")
+                code, _, errors = invoke(["ruling", "release", store], fake, "lead0001")
                 if code == 0 or f"{status}, not decided" not in errors or fake.writes():
-                    raise ValueError(f"board release accepted a {status} record")
+                    raise ValueError(f"board ruling release accepted a {status} record")
             fake = Fake(variant(**{"Open cache question": {"status": "decided"}}))
-            code, _, _ = invoke(["release", store, ids["Open cache question"]], fake, "lead0001")
+            code, _, _ = invoke(["ruling", "release", store, ids["Open cache question"]], fake, "lead0001")
             batch = [(args, stdin) for args, stdin in fake.calls if args[0] == "batch"]
             question = ids["Open cache question"]
             # A released ruling keeps blocking the items it changes: release only sets the status.
             expected_ops = [f'update {store} status=released assignee=""',
                             f'update {question} status=released assignee=""']
             if code or len(batch) != 1 or len(fake.writes()) != 1 or batch[0][1].splitlines() != expected_ops:
-                raise ValueError(f"board release must write one batch of status updates: {fake.calls}")
+                raise ValueError(f"board ruling release must write one batch of status updates: {fake.calls}")
 
             # --closes: answered questions close after the release in dependency order, forced only past rulings of
             # this release and questions closed before them here (the gjfh4 case); another open blocker leaves one open.
@@ -3114,39 +3371,39 @@ def validate_board(root: Path) -> None:
                                    "Spike perf": {"issue_type": "decision", "dependencies": blocks(spike, cache, store)},
                                    "Loose item": {"issue_type": "decision", "dependencies": blocks(loose, ready)}})
             fake = Fake(answering)
-            code, output, errors = invoke(["release", store, "--closes", f"{spike}={store}", f"{cache}={store}", f"{loose}={store}"],
+            code, output, errors = invoke(["ruling", "release", store, "--closes", f"{spike}={store}", f"{cache}={store}", f"{loose}={store}"],
                                           fake, "lead0001")
             closes = [args for args in fake.writes() if args[0] == "close"]
             if code != 1 or closes != [["close", cache, "--reason", f"Answered by released {store}", "--force"],
                                        ["close", spike, "--reason", f"Answered by released {store}", "--force"]] \
                     or fake.writes()[0][0] != "batch" or f"{loose}: left open, blocked by {ready}" not in errors \
                     or f"closed {cache}: answered by released {store}" not in output:
-                raise ValueError(f"board release --closes: {fake.writes()}\n{output}\n{errors}")
+                raise ValueError(f"board ruling release --closes: {fake.writes()}\n{output}\n{errors}")
             # A released ruling outside the release does not leave the answered question open; bd still needs the force.
             fake = Fake(variant(**{"Open cache question": {"dependencies": blocks(cache, store, ids["Released ruling"])}}))
-            code, _, errors = invoke(["release", store, "--closes", f"{cache}={store}"], fake, "lead0001")
+            code, _, errors = invoke(["ruling", "release", store, "--closes", f"{cache}={store}"], fake, "lead0001")
             if code or [args for args in fake.writes() if args[0] == "close"] != [["close", cache, "--reason", f"Answered by released {store}", "--force"]]:
                 raise ValueError(f"a released blocker must not leave an answered question open: {fake.writes()}\n{errors}")
             # A bare id (no board prefix) is taken in --closes, both sides of the pair.
             fake = Fake(answering)
             fake.settings["issue_prefix"] = "fx"
             board._prefix.clear()
-            code, _, errors = invoke(["release", store.removeprefix("fx-"), "--closes", f"{cache.removeprefix('fx-')}={store.removeprefix('fx-')}"], fake, "lead0001")
+            code, _, errors = invoke(["ruling", "release", store.removeprefix("fx-"), "--closes", f"{cache.removeprefix('fx-')}={store.removeprefix('fx-')}"], fake, "lead0001")
             if code or [args for args in fake.writes() if args[0] == "close"] != [["close", cache, "--reason", f"Answered by released {store}", "--force"]]:
-                raise ValueError(f"board release --closes with bare ids: {code} {fake.writes()}\n{errors}")
+                raise ValueError(f"board ruling release --closes with bare ids: {code} {fake.writes()}\n{errors}")
             board._prefix.clear()
             # Refused before any write: a question another session holds, a record the call does not release.
             for closes_arg, needle in ((f"{ids['Held task']}={store}", "not an open question"),
                                        (f"{cache}={ids['Old store ruling']}", "which this call does not release")):
                 fake = Fake(answering)
-                code, _, errors = invoke(["release", store, "--closes", closes_arg], fake, "lead0001")
+                code, _, errors = invoke(["ruling", "release", store, "--closes", closes_arg], fake, "lead0001")
                 if code != 1 or needle not in errors or fake.writes():
-                    raise ValueError(f"board release --closes {closes_arg}: {errors}")
+                    raise ValueError(f"board ruling release --closes {closes_arg}: {errors}")
             held_question = variant(**{"Open cache question": {"assignee": "solo0001"}})
             fake = Fake(held_question)
-            code, _, errors = invoke(["release", store, "--closes", f"{cache}={store}"], fake, "lead0001")
+            code, _, errors = invoke(["ruling", "release", store, "--closes", f"{cache}={store}"], fake, "lead0001")
             if code != 1 or "hand it off" not in errors or fake.writes():
-                raise ValueError(f"board release must not close a question another session holds: {errors}")
+                raise ValueError(f"board ruling release must not close a question another session holds: {errors}")
 
             # A full supersede blocks the old record's open items on the new one until it is planned,
             # skipping closed and already linked items; --partial only adds the edge. Both drop the pair's existing link first.
@@ -3156,7 +3413,7 @@ def validate_board(root: Path) -> None:
                 {"issue_id": old, "depends_on_id": ids[title], "type": "relates-to"}
                 for title in ("Ready task", "Closed waiter", "Implement store A"))]}})
             fake = Fake(linked)
-            code, output, _ = invoke(["supersede", old, "--with", new], fake, "lead0001")
+            code, output, _ = invoke(["ruling", "supersede", old, "--with", new], fake, "lead0001")
             ready = ids["Ready task"]
             reason = f"Blocked by {new}: supersedes {old}; replan against it (the whole item waits)"
             batches = [stdin for args, stdin in fake.calls if args[0] == "batch"]
@@ -3165,20 +3422,20 @@ def validate_board(root: Path) -> None:
                     or batches != [f"dep remove {new} {old}\n", f"dep add {ready} {new} blocks\n"] \
                     or fake.writes()[2] != ["comments", "add", ready, reason] \
                     or f"blocked {ready} on {new}" not in output:
-                raise ValueError(f"board supersede must block the old record's open items through board block: "
+                raise ValueError(f"board ruling supersede must block the old record's open items through board block: "
                                  f"{fake.calls}\n{output}")
             fake = Fake(fixture)
-            code, _, _ = invoke(["supersede", old, "--with", new, "--partial"], fake, "lead0001")
-            if code or fake.writes() != [["batch", "-m", f"board supersede {old} --with {new}", "--json"]] \
+            code, _, _ = invoke(["ruling", "supersede", old, "--with", new, "--partial"], fake, "lead0001")
+            if code or fake.writes() != [["batch", "-m", f"board ruling supersede {old} --with {new}", "--json"]] \
                     or fake.calls[-1][1] != f"dep remove {new} {old}\ndep add {old} {new} supersedes\n":
-                raise ValueError(f"board supersede --partial: {fake.writes()}")
+                raise ValueError(f"board ruling supersede --partial: {fake.writes()}")
 
             # supersede --partial "<rule>" names the rule on the old record.
             fake = Fake(fixture)
-            code, output, _ = invoke(["supersede", old, "--with", new, "--partial", "Rule 2"], fake, "lead0001")
-            if code or fake.writes()[-1] != ["comments", "add", old, f'board supersede: rule "Rule 2" superseded by {new}.'] \
+            code, output, _ = invoke(["ruling", "supersede", old, "--with", new, "--partial", "Rule 2"], fake, "lead0001")
+            if code or fake.writes()[-1] != ["comments", "add", old, f'board ruling supersede: rule "Rule 2" superseded by {new}.'] \
                     or "one rule (Rule 2) superseded" not in output:
-                raise ValueError(f"board supersede --partial <rule>: {fake.writes()}\n{output}")
+                raise ValueError(f"board ruling supersede --partial <rule>: {fake.writes()}\n{output}")
 
             # board show: rendered from the snapshot within READ_BUDGET; cut sections name the command for the rest.
             big = "## Question\nWhich cache?\n\n## Alternatives Considered\n" + "word " * 9000 + "\n### Detail\nfine print\n" \
@@ -3246,51 +3503,51 @@ def validate_board(root: Path) -> None:
             if "more chars" in invoke(["show", new, old, "--full"], Fake(shown))[1]:
                 raise ValueError("board show --full must not cut")
 
-            # board record: refuses a file missing a record section; writes the record without comments.
+            # board ruling record: refuses a file missing a record section; writes the record without comments.
             question = ids["Open cache question"]
             with tempfile.TemporaryDirectory() as directory:
                 draft = Path(directory, "record.md")
                 draft.write_text("## Question\nq\n## Decision\nd\n## Rationale\nr (user, 2026-10-31)\n", encoding="utf-8")
                 fake = Fake(fixture)
-                code, _, errors = invoke(["record", question, str(draft)], fake, "lead0001")
+                code, _, errors = invoke(["ruling", "record", question, str(draft)], fake, "lead0001")
                 if code != 1 or "## Alternatives Considered" not in errors or "## Rule owner" not in errors or fake.writes():
-                    raise ValueError(f"board record accepted a file missing sections: {errors}")
+                    raise ValueError(f"board ruling record accepted a file missing sections: {errors}")
                 draft.write_text("## Question\nq\n## Alternatives Considered\n- b: rejected\n## Decision\nd\n"
                                  "## Rationale\nr (user, 2026-10-31)\n## Rule owner\ndocs/x.md\n", encoding="utf-8")
                 fake = Fake(fixture)
-                code, output, _ = invoke(["record", question, str(draft)], fake, "lead0001", now="2026-10-31T10:00:00+00:00")
+                code, output, _ = invoke(["ruling", "record", question, str(draft)], fake, "lead0001", now="2026-10-31T10:00:00+00:00")
                 if code or [w[:2] for w in fake.writes()] != [["update", question]] \
                         or fake.writes()[0][4:] != ["--status", "decided", "--json"] \
                         or not any(args[:2] == ["lint", question] for args, _ in fake.calls) \
                         or output != f"recorded {question} (decided): Open cache question\n":
-                    raise ValueError(f"board record: {fake.calls}\n{output}")
+                    raise ValueError(f"board ruling record: {fake.calls}\n{output}")
                 # The board's history keeps earlier versions (r16-q95): a record writes no packet or previous-Decision comment,
                 # whether it replaces a packet description or rewrites a Decision; lint failures are loud.
                 recorded = variant(**{"Open cache question": {"status": "decided", "description": draft.read_text(encoding="utf-8")}})
                 fake = Fake(recorded, lint={"results": [{"id": question, "missing": ["## Extra"]}]})
-                code, _, errors = invoke(["record", question, str(draft)], fake, "lead0001")
+                code, _, errors = invoke(["ruling", "record", question, str(draft)], fake, "lead0001")
                 if code != 1 or "## Extra" not in errors or [w[0] for w in fake.writes()] != ["update"]:
-                    raise ValueError(f"board record revised in place wrongly: {fake.writes()} {errors}")
+                    raise ValueError(f"board ruling record revised in place wrongly: {fake.writes()} {errors}")
                 rewrite = Path(directory, "rewrite.md")
                 rewrite.write_text(draft.read_text(encoding="utf-8").replace("## Decision\nd\n", "## Decision\nnew decision\n"), encoding="utf-8")
                 fake = Fake(recorded)
-                code, output, _ = invoke(["record", question, str(rewrite)], fake, "lead0001", now="2026-10-31T10:00:00+00:00")
+                code, output, _ = invoke(["ruling", "record", question, str(rewrite)], fake, "lead0001", now="2026-10-31T10:00:00+00:00")
                 if code or [w[0] for w in fake.writes()] != ["update"] or "Decision kept" in output:
-                    raise ValueError(f"board record must not copy a replaced Decision into a comment: {fake.writes()} {output}")
+                    raise ValueError(f"board ruling record must not copy a replaced Decision into a comment: {fake.writes()} {output}")
                 for refused, actor in ((ids["Ready task"], "lead0001"), (question, "aaaa1111")):
                     fake = Fake(fixture)
-                    if invoke(["record", refused, str(draft)], fake, actor)[0] != 1 or fake.writes():
-                        raise ValueError(f"board record wrote {refused} for {actor}")
+                    if invoke(["ruling", "record", refused, str(draft)], fake, actor)[0] != 1 or fake.writes():
+                        raise ValueError(f"board ruling record wrote {refused} for {actor}")
                 # Autopilot: needs_ratification requires ## Reversal and frees the hold.
                 fake = Fake(fixture)
-                if invoke(["record", question, str(draft), "--status", "needs_ratification"], fake, "lead0001")[0] != 1 \
+                if invoke(["ruling", "record", question, str(draft), "--status", "needs_ratification"], fake, "lead0001")[0] != 1 \
                         or fake.writes():
-                    raise ValueError("board record --status needs_ratification accepted a record without ## Reversal")
+                    raise ValueError("board ruling record --status needs_ratification accepted a record without ## Reversal")
                 draft.write_text(draft.read_text(encoding="utf-8") + "## Reversal\nrevert x\n", encoding="utf-8")
                 fake = Fake(fixture)
-                code, _, _ = invoke(["record", question, str(draft), "--status", "needs_ratification"], fake, "lead0001")
+                code, _, _ = invoke(["ruling", "record", question, str(draft), "--status", "needs_ratification"], fake, "lead0001")
                 if code or fake.writes()[-1][4:] != ["--status", "needs_ratification", "--assignee", "", "--json"]:
-                    raise ValueError(f"board record --status needs_ratification: {fake.writes()}")
+                    raise ValueError(f"board ruling record --status needs_ratification: {fake.writes()}")
 
             # board block: relates-to gives way, the reason is a comment (no field rewrite); a review is not returned (an item has none).
             handed = ids["Handed task"]
@@ -3522,55 +3779,55 @@ def validate_board(root: Path) -> None:
             if ["comments", "add", ready, f"Blocked by {question}: waits (the whole item waits)"] not in whole.writes():
                 raise ValueError("a block must say the whole item waits")
 
-            # board revise: a linked open decision, parent and topic labels from the old record; prints the new id.
+            # board ruling revise: a linked open decision, parent and topic labels from the old record; prints the new id.
             topical = variant(**{"Released ruling": {"labels": ["topic:store", "area"]}})
             fake = Fake(topical)
-            code, output, _ = invoke(["revise", ids["Released ruling"], "--title", "May B replace A?", "--body-file", "p.md",
+            code, output, _ = invoke(["ruling", "revise", ids["Released ruling"], "--title", "May B replace A?", "--body-file", "p.md",
                                       "--partial", "Rule 2"], fake, "lead0001")
             if code or output != "fx-new\n" or fake.writes() != [[
                     "create", "--type", "decision", "--title", "May B replace A?", "--body-file", "p.md", "--priority", "2",
                     "--deps", f"tracks:{ids['Released ruling']}", "--labels", "topic:store",
                     "--metadata", '{"board.revises_rule": "Rule 2"}', "--deps", "parent-child:fx-ovo", "--json"]]:
-                raise ValueError(f"board revise: {fake.writes()}\n{output}")
+                raise ValueError(f"board ruling revise: {fake.writes()}\n{output}")
             fake = Fake(topical)
-            invoke(["revise", ids["Released ruling"], "--title", "t", "--body-file", "p.md", "-p", "1", "--parent", goal,
+            invoke(["ruling", "revise", ids["Released ruling"], "--title", "t", "--body-file", "p.md", "-p", "1", "--parent", goal,
                     "-l", "topic:a,topic:b"], fake, "lead0001")
             if fake.writes()[0][8:] != ["1", "--deps", f"tracks:{ids['Released ruling']}", "--labels",
                                         "topic:a,topic:b", "--deps", f"parent-child:{goal}", "--json"]:
-                raise ValueError(f"board revise ignored -p/--parent/-l or set metadata without --partial: {fake.writes()}")
+                raise ValueError(f"board ruling revise ignored -p/--parent/-l or set metadata without --partial: {fake.writes()}")
             fake = Fake(topical)
             fake.settings["issue_prefix"] = "fx"
             board._prefix.clear()
-            invoke(["revise", ids["Released ruling"], "--title", "t", "--body-file", "p.md", "--parent", goal.removeprefix("fx-")], fake, "lead0001")
+            invoke(["ruling", "revise", ids["Released ruling"], "--title", "t", "--body-file", "p.md", "--parent", goal.removeprefix("fx-")], fake, "lead0001")
             if not fake.writes() or fake.writes()[0][-2:] != [f"parent-child:{goal}", "--json"]:
-                raise ValueError(f"board revise --parent takes a bare id: {fake.writes()}")
+                raise ValueError(f"board ruling revise --parent takes a bare id: {fake.writes()}")
             board._prefix.clear()
             fake = Fake(topical)
-            invoke(["revise", ids["Released ruling"], "--title", "t", "--body-file", "p.md", "--external-ref", "protocol:s1:r2:q3"], fake, "lead0001")
+            invoke(["ruling", "revise", ids["Released ruling"], "--title", "t", "--body-file", "p.md", "--external-ref", "protocol:s1:r2:q3"], fake, "lead0001")
             written = fake.writes()[0] if fake.writes() else []
             if "--external-ref" not in written or written[written.index("--external-ref") + 1] != "protocol:s1:r2:q3":
-                raise ValueError(f"board revise must pass --external-ref to bd create: {fake.writes()}")
+                raise ValueError(f"board ruling revise must pass --external-ref to bd create: {fake.writes()}")
             for refused in (question, ready):
                 fake = Fake(fixture)
-                if invoke(["revise", refused, "--title", "t", "--body-file", "p.md"], fake, "lead0001")[0] != 1 or fake.writes():
-                    raise ValueError(f"board revise accepted {refused}")
+                if invoke(["ruling", "revise", refused, "--title", "t", "--body-file", "p.md"], fake, "lead0001")[0] != 1 or fake.writes():
+                    raise ValueError(f"board ruling revise accepted {refused}")
 
-            # board release supersedes the records its rulings revise and lists the reviews that went back.
+            # board ruling release supersedes the records its rulings revise and lists the reviews that went back.
             revising = variant(**{"Store choice": {"dependencies": [{"issue_id": new, "depends_on_id": old, "type": "tracks"}]},
                                   "Handed task": {"dependencies": [{"issue_id": handed, "depends_on_id": old, "type": "relates-to"}]}})
             fake = Fake(revising)
-            code, output, _ = invoke(["release", new], fake, "lead0001")
+            code, output, _ = invoke(["ruling", "release", new], fake, "lead0001")
             batches = [stdin for args, stdin in fake.calls if args[0] == "batch"]
             if code or batches[:2] != [f'update {new} status=released assignee=""\n', f"dep remove {new} {old}\n"] \
                     or ["supersede", old, "--with", new] not in fake.writes() \
                     or f"superseded {old} by {new}" not in output or "returned from review" in output:
-                raise ValueError(f"board release must supersede revised records: {fake.calls}\n{output}")
+                raise ValueError(f"board ruling release must supersede revised records: {fake.calls}\n{output}")
             partial = [{**issue, "metadata": {"board.revises_rule": "Rule 2"}} if issue["id"] == new else issue for issue in revising]
             fake = Fake(partial)
-            code, output, _ = invoke(["release", new], fake, "lead0001")
+            code, output, _ = invoke(["ruling", "release", new], fake, "lead0001")
             if code or [stdin for args, stdin in fake.calls if args[0] == "batch"][1] != f"dep remove {new} {old}\ndep add {old} {new} supersedes\n" \
                     or any(args[0] == "supersede" for args in fake.writes()) or "one rule (Rule 2)" not in output:
-                raise ValueError(f"board release of a partial revision: {fake.calls}\n{output}")
+                raise ValueError(f"board ruling release of a partial revision: {fake.calls}\n{output}")
 
             # Replaced records (r12-q44): a decided record a live question revises is not released alone; a chain of
             # revisions is followed to the first released record; supersede carries a pending revision to its replacement.
@@ -3581,40 +3838,40 @@ def validate_board(root: Path) -> None:
             chain = [record("fx-a", "released"), record("fx-b", "decided", ("fx-a", "tracks")),
                      record("fx-c", "decided", ("fx-b", "tracks"))]
             fake = Fake(chain)
-            code, output, errors = invoke(["release", "fx-c"], fake, "lead0001")
+            code, output, errors = invoke(["ruling", "release", "fx-c"], fake, "lead0001")
             if code or [args for args in fake.writes() if args[0] == "supersede"] != [["supersede", "fx-b", "--with", "fx-c"],
                                                                                    ["supersede", "fx-a", "--with", "fx-c"]] \
                     or "superseded fx-a by fx-c" not in output:
-                raise ValueError(f"board release must follow a chain of revisions to the first released record: {fake.writes()}\n{output}{errors}")
+                raise ValueError(f"board ruling release must follow a chain of revisions to the first released record: {fake.writes()}\n{output}{errors}")
             partly = [{**issue, "metadata": {"board.revises_rule": "Rule 2"}} if issue["id"] == "fx-b" else issue for issue in chain]
             fake = Fake(partly)
-            code, output, _ = invoke(["release", "fx-c"], fake, "lead0001")
+            code, output, _ = invoke(["ruling", "release", "fx-c"], fake, "lead0001")
             if code or [args for args in fake.writes() if args[0] == "supersede"] != [["supersede", "fx-b", "--with", "fx-c"]] \
                     or "dep add fx-a fx-c supersedes\n" not in [stdin for args, stdin in fake.calls if args[0] == "batch"] or "fx-a: one rule (Rule 2)" not in output:
                 raise ValueError(f"a chain carries the replaced record's own rule: {fake.writes()}\n{output}")
             fake = Fake(chain)
-            code, _, errors = invoke(["release", "fx-b"], fake, "lead0001")
+            code, _, errors = invoke(["ruling", "release", "fx-b"], fake, "lead0001")
             if code != 1 or "fx-b: revised by fx-c" not in errors or fake.writes():
-                raise ValueError(f"board release must refuse a decided record a live question revises: {errors}\n{fake.writes()}")
+                raise ValueError(f"board ruling release must refuse a decided record a live question revises: {errors}\n{fake.writes()}")
             for allowed, args in ((chain, ["fx-b", "fx-c"]), ([*chain[:2], {**chain[2], "status": "closed"}], ["fx-b"])):
                 fake = Fake(allowed)
-                if invoke(["release", *args], fake, "lead0001")[0] or not fake.writes():
-                    raise ValueError(f"board release {args}: a revision released together or closed is no refusal")
+                if invoke(["ruling", "release", *args], fake, "lead0001")[0] or not fake.writes():
+                    raise ValueError(f"board ruling release {args}: a revision released together or closed is no refusal")
             # supersede carries the revision the old record still has pending, with its rule, to the new one.
             carried = [record("fx-a", "released"), record("fx-b", "decided", ("fx-a", "tracks"), metadata={"board.revises_rule": "Rule 2"}),
                        record("fx-d", "decided", ("fx-b", "tracks"))]
             fake = Fake(carried)
-            code, output, _ = invoke(["supersede", "fx-b", "--with", "fx-d"], fake, "lead0001")
+            code, output, _ = invoke(["ruling", "supersede", "fx-b", "--with", "fx-d"], fake, "lead0001")
             if code or fake.writes() != [["update", "fx-d", "--set-metadata", "board.revises_rule=Rule 2", "--json"],
-                                         ["batch", "-m", "board supersede fx-b --with fx-d", "--json"], ["supersede", "fx-b", "--with", "fx-d"]] \
+                                         ["batch", "-m", "board ruling supersede fx-b --with fx-d", "--json"], ["supersede", "fx-b", "--with", "fx-d"]] \
                     or [stdin for args, stdin in fake.calls if args[0] == "batch"] != ["dep remove fx-d fx-b\ndep remove fx-b fx-a\ndep add fx-d fx-a tracks\n"] \
                     or "revision of fx-a now pending on fx-d" not in output:
-                raise ValueError(f"board supersede must move the pending revision and its rule: {fake.writes()}\n{output}")
+                raise ValueError(f"board ruling supersede must move the pending revision and its rule: {fake.writes()}\n{output}")
             busy = [*carried[:2], record("fx-d", "decided", ("fx-b", "tracks"), ("fx-z", "tracks")), record("fx-z", "released")]
             fake = Fake(busy)
-            code, _, errors = invoke(["supersede", "fx-b", "--with", "fx-d"], fake, "lead0001")
+            code, _, errors = invoke(["ruling", "supersede", "fx-b", "--with", "fx-d"], fake, "lead0001")
             if code != 1 or "keeps one revision rule" not in errors or fake.writes():
-                raise ValueError(f"board supersede must refuse a carry onto a record that revises another: {errors}\n{fake.writes()}")
+                raise ValueError(f"board ruling supersede must refuse a carry onto a record that revises another: {errors}\n{fake.writes()}")
             # board check --json: the rows a Release Board check reads (no text parsing).
             unlinked = [record("fx-a", "released"), record("fx-b", "decided", notes="This revises fx-a for the cache.")]
             code, text, _ = invoke(["check", "--json"], Fake(unlinked))
@@ -3633,15 +3890,15 @@ def validate_board(root: Path) -> None:
             for notes, expected in ((f"## Alternatives Considered\n- Rejected: this revises {old}.\n## Decision\nx", None),
                                     (f"(Revised by the superseding rulings: per {old} the cache stays.)",
                                      f"  {new}  unlinked-revision  revised by {old} without a supersedes or revise link: "
-                                     f"board supersede {new} --with {old}")):
+                                     f"board ruling supersede {new} --with {old}")):
                 report = invoke(["check"], Fake(variant(**{"Store choice": {"notes": notes}})))[1]
                 if ("unlinked-revision" in report) if expected is None else (expected not in report):
                     raise ValueError(f"board check misread {notes!r}:\n{report}")
             # A partial supersede by a closed record still adds the edge; a full one needs an open record.
             closed_new = variant(**{"Store choice": {"status": "closed"}})
-            if invoke(["supersede", old, "--with", new, "--partial", "Rule 2"], Fake(closed_new), "lead0001")[0] \
-                    or invoke(["supersede", old, "--with", new], Fake(closed_new), "lead0001")[0] != 1:
-                raise ValueError("board supersede must take a closed new record for --partial only")
+            if invoke(["ruling", "supersede", old, "--with", new, "--partial", "Rule 2"], Fake(closed_new), "lead0001")[0] \
+                    or invoke(["ruling", "supersede", old, "--with", new], Fake(closed_new), "lead0001")[0] != 1:
+                raise ValueError("board ruling supersede must take a closed new record for --partial only")
             # A wait named only in a comment (board block's reason) is named.
             wire, cache = ids["Wire caller"], ids["Open cache question"]
             if f"  {wire}  unnamed-blocker" not in invoke(["check"], Fake(fixture))[1] or f"  {wire}  unnamed-blocker" in invoke(
@@ -3716,7 +3973,7 @@ def validate_board(root: Path) -> None:
             help_output = io.StringIO()
             with contextlib.redirect_stdout(help_output):
                 board.main(["help"])
-            for name in ("show", "record", "block", "revise", "related", "release", "supersede", "handover"):
+            for name in ("show", "cr", "ruling", "block", "related", "handover"):
                 if f"usage: board {name}" not in help_output.getvalue() or board.EXAMPLES[name] not in help_output.getvalue():
                     raise ValueError(f"board help lacks {name} or its example")
             with contextlib.redirect_stdout(io.StringIO()) as sub_help:
@@ -3726,6 +3983,54 @@ def validate_board(root: Path) -> None:
                     pass
             if not sub_help.getvalue().rstrip().endswith(f"example: {board.EXAMPLES['block']}"):
                 raise ValueError(f"board block --help must end with its example:\n{sub_help.getvalue()}")
+
+            # r15-q80/q90: the old flat names are unknown verbs; board names the group command, asking bd nothing. A verb bd knows
+            # points to `board bd`; one bd rejects keeps argparse's error. Nothing is forwarded or run either way.
+            def refusal(argv):
+                asked = Fake(fixture)
+                with patch.object(board.subprocess, "run", asked), contextlib.redirect_stdout(io.StringIO()), \
+                        contextlib.redirect_stderr(io.StringIO()) as refused:
+                    try:
+                        code = board.main(argv)
+                    except SystemExit as stop:
+                        code = stop.code
+                return code, refused.getvalue(), [call[0] for call in asked.calls]
+
+            for old, group in (("land", "cr"), ("refresh", "cr"), ("reject", "cr"), ("record", "ruling"), ("revise", "ruling"),
+                               ("release", "ruling"), ("supersede", "ruling")):
+                result = refusal([old, "x-1", "two words"])
+                if result != (2, f"board: no verb '{old}'; run: board {group} {old} x-1 'two words'\n", []):
+                    raise ValueError(f"board {old} refusal: {result}")
+            for argv, message in ((["comment", "fx-1", "a note", "-m"], "board: no verb 'comment'; run: board bd comment fx-1 'a note' -m\n"),
+                                  (["comment"], "board: no verb 'comment'; run: board bd comment\n")):
+                result = refusal(argv)
+                if result != (2, message, [["comment", "--help"]]):
+                    raise ValueError(f"board {argv} refusal: {result}")
+            code, message, asked = refusal(["nonsense", "x"])
+            if code != 2 or "invalid choice: 'nonsense'" not in message or "run:" in message or asked != [["nonsense", "--help"]]:
+                raise ValueError(f"board must keep argparse's error for a verb bd rejects: {code} {message} {asked}")
+            # a bare call prints the help and exits 0, reading nothing
+            bare_fake, bare_output = Fake(fixture), io.StringIO()
+            with patch.object(board.subprocess, "run", bare_fake), contextlib.redirect_stdout(bare_output):
+                bare_code = board.main([])
+            if bare_code != 0 or bare_output.getvalue() != help_output.getvalue() or bare_fake.calls:
+                raise ValueError(f"bare board must print the help and exit 0:\n{bare_output.getvalue()}")
+            with contextlib.redirect_stdout(io.StringIO()) as land_help:
+                try:
+                    board.main(["cr", "land", "--help"])
+                except SystemExit as stop:
+                    if stop.code:
+                        raise ValueError(f"board cr land --help: {stop.code}") from None
+            if "usage: board cr land" not in land_help.getvalue() or not land_help.getvalue().rstrip().endswith(f"example: {board.EXAMPLES['cr land']}"):
+                raise ValueError(f"board cr land must parse and end its help with its example:\n{land_help.getvalue()}")
+            for group, verbs in (("cr", ("land", "refresh", "reject")), ("ruling", ("record", "revise", "release", "supersede"))):
+                with contextlib.redirect_stdout(io.StringIO()) as listing:
+                    code = board.main([group])
+                for verb in verbs:
+                    if code or f"usage: board {group} {verb}" not in listing.getvalue() or board.EXAMPLES[f"{group} {verb}"] not in listing.getvalue():
+                        raise ValueError(f"board {group} must list {verb} with its example:\n{listing.getvalue()}")
+            if "board cr" not in help_output.getvalue() or "board ruling" not in help_output.getvalue():
+                raise ValueError("board help must list the groups cr and ruling")
 
             fake = Fake(fixture)
             invoke(["take", ids["Held task"]], fake, "lead0001")
@@ -3951,17 +4256,17 @@ def validate_board(root: Path) -> None:
                 issues, tip, wt = make_cr("land1")
                 old = at_main()
                 fake = Fake(issues)
-                code, output, errors = invoke(["land", "land1", "--tip", tip[:8]], fake, "lead0001")
+                code, output, errors = invoke(["cr", "land", "land1", "--tip", tip[:8]], fake, "lead0001")
                 if code or at_main() != tip or Path(repo_root, "c.txt").read_text() != "c\n" or wt.exists() or git("branch", "--list", "cr/land1") \
                         or not any(w[:2] == ["close", "land1"] for w in fake.writes()) or "landed land1 on main" not in output:
-                    raise ValueError(f"board land must fast-forward main, close the CR and remove its worktree and branch: {code} {errors} {fake.writes()}")
+                    raise ValueError(f"board cr land must fast-forward main, close the CR and remove its worktree and branch: {code} {errors} {fake.writes()}")
                 git("checkout", "-q", "-b", "elsewhere")
                 issues, tip, wt = make_cr("land2", "d.txt", "d\n")
                 before = git("rev-parse", "HEAD")
-                code, output, errors = invoke(["land", "land2"], Fake(issues), "lead0001")
+                code, output, errors = invoke(["cr", "land", "land2"], Fake(issues), "lead0001")
                 if code or at_main() != tip or git("rev-parse", "HEAD") != before or git("symbolic-ref", "HEAD") != "refs/heads/elsewhere" \
                         or Path(repo_root, "d.txt").exists():
-                    raise ValueError(f"board land must advance the target ref by update-ref where another branch is checked out: {code} {errors}")
+                    raise ValueError(f"board cr land must advance the target ref by update-ref where another branch is checked out: {code} {errors}")
                 git("checkout", "-q", "main")
                 # Refusals change nothing: a CR on a CR, an open item, a moved branch, a stale or failed check, an Accept not yet reached,
                 # a caller who may not land, edits in the target's worktree that the landing would overwrite.
@@ -3977,20 +4282,20 @@ def validate_board(root: Path) -> None:
                          ("an unreached Accept", [{**issues[0], "status": "in_review"}, issues[1]], "refused", "lead0001", [], "waiting for its Accept"))
                 for what, rows, target, actor, extra, needle in cases:
                     fake = Fake(rows)
-                    code, _, errors = invoke(["land", target, *extra], fake, actor)
+                    code, _, errors = invoke(["cr", "land", target, *extra], fake, actor)
                     if code != 1 or needle not in errors or at_main() != other_main or any(w[0] == "close" for w in fake.writes()):
-                        raise ValueError(f"board land accepted {what}: {code} {errors}")
+                        raise ValueError(f"board cr land accepted {what}: {code} {errors}")
                 # A landing with a current check but edits in the target's worktree on a file the CR changes is blocked, not forced.
                 git("worktree", "remove", "--force", str(wt))
                 git("branch", "-D", "cr/refused")
                 issues, tip, wt = make_cr("blocked", "a.txt", "1\n2\nchanged\n")
                 Path(repo_root, "a.txt").write_text("1\nlocal edit\n3\n", encoding="utf-8")
                 fake = Fake(issues)
-                code, _, errors = invoke(["land", "blocked"], fake, "lead0001")
+                code, _, errors = invoke(["cr", "land", "blocked"], fake, "lead0001")
                 _, queued, _ = invoke(["queue"], Fake(issues), "lead0001")
                 if code != 1 or "land blocked" not in errors or "a.txt" not in errors or at_main() != other_main \
                         or "land blocked: a.txt" not in queued:
-                    raise ValueError(f"board land over uncommitted edits must refuse and the queue must say so: {code} {errors}\n{queued}")
+                    raise ValueError(f"board cr land over uncommitted edits must refuse and the queue must say so: {code} {errors}\n{queued}")
                 git("checkout", "-q", "--", "a.txt")
 
                 # Check state: current, stale (base or branch moved), conflict (dry-run merge fails), failed, unchecked.
@@ -4069,37 +4374,37 @@ def validate_board(root: Path) -> None:
                 new_base = git("rev-parse", "HEAD", cwd=base_wt)
                 child_issues[0]["status"] = "in_review"
                 fake = Fake([base_issues[0], *base_issues[1:], *child_issues])
-                code, output, errors = invoke(["refresh", "pchild"], fake, "lead0001")
+                code, output, errors = invoke(["cr", "refresh", "pchild"], fake, "lead0001")
                 rebased = git("log", "--format=%s", "-3", cwd=child_wt).split("\n")
                 if code or rebased != ["pchild: pass", "pbase: reworked", "main moves"] and rebased[:2] != ["pchild: pass", "pbase: reworked"] \
                         or git("merge-base", "--is-ancestor", new_base, "HEAD", cwd=child_wt) is None \
                         or f"base_sha={new_base}" not in " ".join(" ".join(w) for w in fake.writes()) \
                         or "range-diff old..new" not in output or "incoming files" not in output:
-                    raise ValueError(f"board refresh must follow a rewritten base with --onto the recorded fork point: {code} {errors} {rebased}\n{output}")
+                    raise ValueError(f"board cr refresh must follow a rewritten base with --onto the recorded fork point: {code} {errors} {rebased}\n{output}")
                 # A conflict stops the rebase in the worktree and says how to go on; a refresh refuses while another session holds the CR.
                 commit(base_wt, "q.txt", "clash\n", "pbase: clash with the child")
                 child_issues[0]["metadata"]["base_sha"] = new_base
-                code, _, errors = invoke(["refresh", "pchild"], Fake([base_issues[0], *base_issues[1:], *child_issues]), "lead0001")
+                code, _, errors = invoke(["cr", "refresh", "pchild"], Fake([base_issues[0], *base_issues[1:], *child_issues]), "lead0001")
                 if code != 1 or "stopped on a conflict" not in errors or not Path(git("rev-parse", "--path-format=absolute", "--git-path", "rebase-merge", cwd=child_wt)).exists():
-                    raise ValueError(f"board refresh must stop on a conflict, leaving the rebase to resolve: {code} {errors}")
+                    raise ValueError(f"board cr refresh must stop on a conflict, leaving the rebase to resolve: {code} {errors}")
                 git("rebase", "--abort", cwd=child_wt)
                 held_elsewhere = [{**child_issues[0], "assignee": "bbbb2222"}, child_issues[1], base_issues[0], *base_issues[1:]]
-                code, _, errors = invoke(["refresh", "pchild"], Fake(held_elsewhere), "lead0001")
+                code, _, errors = invoke(["cr", "refresh", "pchild"], Fake(held_elsewhere), "lead0001")
                 if code != 1 or "held by bbbb2222" not in errors:
-                    raise ValueError(f"board refresh took a CR another session holds: {errors}")
+                    raise ValueError(f"board cr refresh took a CR another session holds: {errors}")
 
                 # Reject: the CR closes unlanded, its closed items reopen, a CR stacked on it returns to planning on the target.
                 rejected = [cr_issue("rej", "needs_acceptance", look="before"), cr_item("rej.i", "rej", "closed"),
                             cr_issue("kid", "in_progress", assignee="aaaa1111", base="rej", base_sha="0" * 40)]
                 fake = Fake(rejected)
-                code, output, errors = invoke(["reject", "rej", "the approach cannot work"], fake, "lead0001")
+                code, output, errors = invoke(["cr", "reject", "rej", "the approach cannot work"], fake, "lead0001")
                 written = fake.writes()
                 if code or ["update", "rej.i", "--status", "open", "--assignee", "", "--json"] not in written \
                         or not any(w[:2] == ["close", "rej"] and "--force" in w for w in written) \
                         or not any(w[:2] == ["update", "kid"] and "base=main" in w and any(a.startswith("replan=") for a in w) for w in written) \
                         or ["update", "kid", "--status", "open", "--assignee", "", "--json"] not in written or "back to planning: kid" not in output:
-                    raise ValueError(f"board reject: {code} {errors}\n{written}\n{output}")
-                if invoke(["reject", "rej", "x"], Fake(rejected), "aaaa1111")[0] != 1:
+                    raise ValueError(f"board cr reject: {code} {errors}\n{written}\n{output}")
+                if invoke(["cr", "reject", "rej", "x"], Fake(rejected), "aaaa1111")[0] != 1:
                     raise ValueError("an agent session rejected a change request")
 
                 # A landed base lands the look-after CR waiting on it when its check is current (A1), and opens its ratification.
@@ -4108,7 +4413,7 @@ def validate_board(root: Path) -> None:
                 y_issues[0].update(status="in_review")  # passed review, waiting for its parent (q219)
                 y_issues[0]["metadata"].update(look="after", review_tip=y_tip, review_base_tip=x_tip)
                 fake = Fake([*x_issues, *y_issues])
-                code, output, errors = invoke(["land", "lx", "--tip", x_tip[:8]], fake, "lead0001")
+                code, output, errors = invoke(["cr", "land", "lx", "--tip", x_tip[:8]], fake, "lead0001")
                 if code or at_main() != y_tip or not any(w[:2] == ["close", "ly"] for w in fake.writes()) or y_wt.exists() \
                         or not any(w[0] == "create" and "Ratify: CR ly" in w for w in fake.writes()) or "(after lx)" not in output:
                     raise ValueError(f"landing a base must land the look-after CR waiting for it: {code} {errors}\n{output}\n{fake.writes()}")
@@ -4118,7 +4423,7 @@ def validate_board(root: Path) -> None:
                 y_issues[0].update(status="in_review")
                 y_issues[0]["metadata"].update(look="after", check_base_tip="f" * 40, review_tip=y_tip, review_base_tip=x_tip)
                 fake = Fake([*x_issues, *y_issues])
-                code, output, errors = invoke(["land", "lx2", "--tip", x_tip[:8]], fake, "lead0001")
+                code, output, errors = invoke(["cr", "land", "lx2", "--tip", x_tip[:8]], fake, "lead0001")
                 if code or at_main() != x_tip or any(w[:2] == ["close", "ly2"] for w in fake.writes()) or "left as refresh work" not in output:
                     raise ValueError(f"a look-after CR with a stale check must be left as refresh work: {code} {errors}\n{output}")
 
@@ -4141,7 +4446,7 @@ def validate_board(root: Path) -> None:
                 y_issues[0].update(status="in_review")
                 y_issues[0]["metadata"].update(look="after", review_tip=y_tip, review_base_tip="e" * 40)
                 fake = Fake([*x_issues, *y_issues])
-                code, output, errors = invoke(["land", "lx3", "--tip", x_tip[:8]], fake, "lead0001")
+                code, output, errors = invoke(["cr", "land", "lx3", "--tip", x_tip[:8]], fake, "lead0001")
                 if code or at_main() != x_tip or any(w[:2] == ["close", "ly3"] for w in fake.writes()) or "(after lx3)" in output:
                     raise ValueError(f"a look-after CR whose review no longer matches must stay behind (a review pull again): {code} {errors}\n{output}")
 
@@ -4159,6 +4464,45 @@ def validate_board(root: Path) -> None:
                             or not any(w[:2] == ["update", f"cp{look}"] and "checkpoint" in w for w in written) \
                             or any(w[0] == "create" and f"Ratify design: CR cp{look}" in w for w in written) != ratified or "passed the checkpoint" not in output:
                         raise ValueError(f"the agent's checkpoint pass in a look-{look} project: {code} {errors}\n{written}\n{output}")
+                # r10-q50: a CR whose branch has no commits of its own lands when its review passes (nothing to merge), in either look,
+                # without a ratification and without the Accept; a design checkpoint is the exception.
+                def make_empty_cr(name, look, status="in_review", **extra):
+                    base_tip = git("rev-parse", "main")
+                    wt = Path(repo_root, ".worktrees", name)
+                    git("worktree", "add", "-q", "-b", f"cr/{name}", str(wt), base_tip)
+                    metadata = {"look": look, "base": "main", "base_sha": base_tip, "setup_sha": base_tip, "reviewing_tip": base_tip, **extra}
+                    return [cr_issue(name, status, **({"assignee": "bbbb2222"} if status == "in_review" else {}), **metadata), cr_item(f"{name}.i", name, "closed")], base_tip, wt
+
+                for look in ("before", "after"):
+                    issues, tip, wt = make_empty_cr(f"emp{look}", look)
+                    fake = Fake(issues)
+                    code, output, errors = invoke(["handover", f"emp{look}", "reviewed: verified the baseline"], fake, "bbbb2222")
+                    written = fake.writes()
+                    if code or not any(w[:2] == ["close", f"emp{look}"] for w in written) or any(w[0] == "create" for w in written) \
+                            or any(w[:4] == ["update", f"emp{look}", "--status", "needs_acceptance"] for w in written) \
+                            or f"passed and landed emp{look}" not in output or at_main() != tip or wt.exists():
+                        raise ValueError(f"a CR with no commits of its own lands on its passed review in a look-{look} project, with no ratification: {code} {errors}\n{written}\n{output}")
+                issues, tip, wt = make_empty_cr("empcp", "before", checkpoint="agent")
+                fake = Fake(issues)
+                code, output, errors = invoke(["handover", "empcp", "design reads well"], fake, "bbbb2222")
+                if code or any(w[:2] == ["close", "empcp"] for w in fake.writes()) or "passed the checkpoint" not in output:
+                    raise ValueError(f"an empty design checkpoint still goes to planning: {code} {errors}\n{fake.writes()}\n{output}")
+                issues, tip, wt = make_empty_cr("emplate", "after", status="needs_acceptance", check_tip=git("rev-parse", "main"), check_base_tip=git("rev-parse", "main"),
+                                                check_result="pass", check_at="2026-10-22T15:00:00Z", review_tip=git("rev-parse", "main"), review_base_tip=git("rev-parse", "main"))
+                fake = Fake(issues)
+                code, output, errors = invoke(["cr", "land", "emplate"], fake, "lead0001")
+                if code or not any(w[:2] == ["close", "emplate"] for w in fake.writes()) or any(w[0] == "create" for w in fake.writes()):
+                    raise ValueError(f"landing an empty CR from the Accept queue opens no ratification: {code} {errors}\n{fake.writes()}")
+                # A stacked CR with nothing to merge, passed in a look-before project, lands with its base (review F5).
+                p_issues, p_tip, _ = make_cr("ep", "ep.txt", "x\n")
+                c_wt = Path(repo_root, ".worktrees", "ec")
+                git("worktree", "add", "-q", "-b", "cr/ec", str(c_wt), "cr/ep")
+                c_issues = [cr_issue("ec", "in_review", look="before", base="ep", base_sha=p_tip, setup_sha=p_tip, review_tip=p_tip, review_base_tip=p_tip,
+                                       check_tip=p_tip, check_base_tip=p_tip, check_result="pass", check_at="2026-10-22T15:00:00Z"), cr_item("ec.i", "ec", "closed")]
+                fake = Fake([*p_issues, *c_issues])
+                code, output, errors = invoke(["cr", "land", "ep", "--tip", p_tip[:8]], fake, "lead0001")
+                if code or not any(w[:2] == ["close", "ec"] for w in fake.writes()):
+                    raise ValueError(f"an empty stacked look-before CR must land with its base: {code} {errors}\n{output}\n{fake.writes()}")
                 def design_hash(rows):
                     """The pin of the design items in rows, worked out from the spec: sha256[:12] of their id, description, design, acceptance and notes."""
                     designs = sorted((r for r in rows if r.get("issue_type") == "design"), key=lambda r: r["id"])
@@ -4168,18 +4512,18 @@ def validate_board(root: Path) -> None:
                 issues, tip, wt = make_cr("cpuser", "cpuser.txt", "d\n")
                 issues[0]["metadata"].update(checkpoint="user")
                 before = at_main()
-                code, _, errors = invoke(["land", "cpuser"], Fake(issues), "lead0001")
+                code, _, errors = invoke(["cr", "land", "cpuser"], Fake(issues), "lead0001")
                 if code != 1 or "--checkpoint" not in errors or at_main() != before:
-                    raise ValueError(f"board land without --checkpoint must refuse a pending design checkpoint: {errors}")
+                    raise ValueError(f"board cr land without --checkpoint must refuse a pending design checkpoint: {errors}")
                 fake = Fake(issues)
-                code, _, errors = invoke(["land", "cpuser", "--checkpoint"], fake, "lead0001")
+                code, _, errors = invoke(["cr", "land", "cpuser", "--checkpoint"], fake, "lead0001")
                 if code != 1 or "--design" not in errors or "board claim cpuser" not in errors or fake.writes():
-                    raise ValueError(f"board land --checkpoint without --design must refuse and name board claim: {code} {errors} {fake.writes()}")
+                    raise ValueError(f"board cr land --checkpoint without --design must refuse and name board claim: {code} {errors} {fake.writes()}")
                 fake = Fake(issues)
-                code, output, errors = invoke(["land", "cpuser", "--checkpoint", "--design", design_hash(issues)], fake, "lead0001")
+                code, output, errors = invoke(["cr", "land", "cpuser", "--checkpoint", "--design", design_hash(issues)], fake, "lead0001")
                 if code or at_main() != before or not any(w[:2] == ["update", "cpuser"] and "checkpoint" in w for w in fake.writes()) \
                         or ["update", "cpuser", "--status", "open", "--assignee", "", "--json"] not in fake.writes() or not wt.exists():
-                    raise ValueError(f"board land --checkpoint must open the CR for planning and land nothing: {code} {errors} {fake.writes()}")
+                    raise ValueError(f"board cr land --checkpoint must open the CR for planning and land nothing: {code} {errors} {fake.writes()}")
                 # The design pin: the claim prints a hash of the design item's text; `--design <hash>` accepts only that text.
                 design = {**cr_item("cpuser.d", "cpuser", "closed", kind="design"), "design": "the design", "acceptance_criteria": "ac", "notes": "n"}
                 pinned = [*issues, design]
@@ -4192,25 +4536,25 @@ def validate_board(root: Path) -> None:
                     raise ValueError(f"the claim's design hash differs from the spec's: {pin} vs {design_hash(pinned)}")
                 for edit in ({"design": "the design, changed"}, {"notes": "n2"}, {"description": "d2"}, {"acceptance_criteria": "ac2"}):
                     fake = Fake([*issues, {**design, **edit}])
-                    code, _, errors = invoke(["land", "cpuser", "--checkpoint", "--design", pin], fake, "lead0001")
+                    code, _, errors = invoke(["cr", "land", "cpuser", "--checkpoint", "--design", pin], fake, "lead0001")
                     if code != 1 or "design changed" not in errors or fake.writes():
-                        raise ValueError(f"board land --checkpoint --design must refuse a changed design ({edit}): {code} {errors} {fake.writes()}")
+                        raise ValueError(f"board cr land --checkpoint --design must refuse a changed design ({edit}): {code} {errors} {fake.writes()}")
                 fake = Fake(pinned)
-                code, output, errors = invoke(["land", "cpuser", "--checkpoint", "--design", pin], fake, "lead0001")
+                code, output, errors = invoke(["cr", "land", "cpuser", "--checkpoint", "--design", pin], fake, "lead0001")
                 if code or ["update", "cpuser", "--status", "open", "--assignee", "", "--json"] not in fake.writes():
-                    raise ValueError(f"board land --checkpoint --design with the claimed hash must accept: {code} {errors} {fake.writes()}")
-                code, _, errors = invoke(["land", "cpuser", "--design", pin], Fake(pinned), "lead0001")
+                    raise ValueError(f"board cr land --checkpoint --design with the claimed hash must accept: {code} {errors} {fake.writes()}")
+                code, _, errors = invoke(["cr", "land", "cpuser", "--design", pin], Fake(pinned), "lead0001")
                 if code != 1 or "--checkpoint" not in errors:
                     raise ValueError(f"--design without --checkpoint must refuse: {code} {errors}")
                 # A CR made around an existing design item (waiting in review under the old model) is accepted like a native one.
                 legacy = cr_issue("legacycp", "needs_acceptance", checkpoint="user", since="2026-10-22T15:00:00Z")
                 legacy_design = cr_item("legacycp.d", "legacycp", "in_review", kind="design")
                 fake = Fake([legacy, legacy_design])
-                code, output, errors = invoke(["land", "legacycp", "--checkpoint", "--design", design_hash([legacy, legacy_design])], fake, "lead0001")
+                code, output, errors = invoke(["cr", "land", "legacycp", "--checkpoint", "--design", design_hash([legacy, legacy_design])], fake, "lead0001")
                 if code or ["update", "legacycp", "--status", "open", "--assignee", "", "--json"] not in fake.writes() or "accepted the design checkpoint" not in output:
                     raise ValueError(f"land --checkpoint of a CR around a legacy design item: {code} {errors} {fake.writes()}")
-                if invoke(["land", "lx2", "--checkpoint", "--design", "0" * 12], Fake([*x_issues]), "lead0001")[0] != 1:
-                    raise ValueError("board land --checkpoint without a pending user checkpoint must refuse")
+                if invoke(["cr", "land", "lx2", "--checkpoint", "--design", "0" * 12], Fake([*x_issues]), "lead0001")[0] != 1:
+                    raise ValueError("board cr land --checkpoint without a pending user checkpoint must refuse")
 
                 # r26: checks pass when no (file, code) failure count rises from the base to the tip (q241); the base is run once per base commit.
                 commit(repo_root, "failures.txt", "a.ts E1\nb.ts E2\n", "baseline failures")
@@ -4221,7 +4565,7 @@ def validate_board(root: Path) -> None:
                     issues, tip, wt = make_cr(name, "failures.txt", text)
                     fake = Fake(issues)
                     fake.settings["custom.board.checks"] = checks_cmd
-                    code, output, errors = invoke(["refresh", name], fake, "lead0001")
+                    code, output, errors = invoke(["cr", "refresh", name], fake, "lead0001")
                     flat = " ".join(" ".join(w) for w in fake.writes())
                     if code or (f"check_result={'pass' if passes else 'fail'}" not in flat) \
                             or (not passes and ("new failures" not in output or ("c.ts E3" if name == "nf-new" else "a.ts E1") not in output)) \
@@ -4266,7 +4610,7 @@ def validate_board(root: Path) -> None:
                 issues, tip, wt = make_cr("nf-silent", "silent.txt", "x\n")
                 fake = Fake(issues)
                 fake.settings["custom.board.checks"] = "echo oops; false"
-                code, output, errors = invoke(["refresh", "nf-silent"], fake, "lead0001")
+                code, output, errors = invoke(["cr", "refresh", "nf-silent"], fake, "lead0001")
                 if "check_result=fail" not in " ".join(" ".join(w) for w in fake.writes()):
                     raise ValueError(f"a failing check that names no failure must fail: {fake.writes()}")
                 # The console row carries the comparison (newFailures, baseCount, tipCount) once it ran.
@@ -4284,13 +4628,40 @@ def validate_board(root: Path) -> None:
                     if code != 1 or needle not in errors or fake.writes():
                         raise ValueError(f"board setup {flags} must be refused before changing anything: {code} {errors} {fake.writes()}")
 
+                # r10-q52: after a switch of the project's look or view, setup lists the open CRs that keep their own, with their reason line.
+                own = [{**cr_issue("own-a", look="after"), "description": "Needs care.\nThe look is after because the work is internal."},
+                       cr_issue("own-b", look="before", view="result"), cr_issue("plain-c"), cr_issue("done-d", "closed", look="after")]
+                with patch.object(board.subprocess, "run", Fake(own)):
+                    look_lines, view_lines = board.own_value_lines("look", "before"), board.own_value_lines("view", "code")
+                if look_lines[1:] != ["    own-a  after: The look is after because the work is internal.", "    own-b  before (equals the new default): no reason in its text"] \
+                        or "2 open change request(s) keep their own look" not in look_lines[0] or "--unset-metadata look" not in look_lines[0] \
+                        or len(view_lines) != 2 or "own-b  result" not in view_lines[1]:
+                    raise ValueError(f"board setup lists the open CRs keeping their own look or view: {look_lines} {view_lines}")
+                with patch.object(board.subprocess, "run", Fake([cr_issue("plain-c")])):
+                    if board.own_value_lines("look", "after"):
+                        raise ValueError("board setup lists nothing when no CR keeps its own value")
+                beads = Path(repo_root, ".beads")
+                beads.mkdir(exist_ok=True)
+                (beads / "metadata.json").write_text(json.dumps({"dolt_mode": "server"}), encoding="utf-8")
+                out = io.StringIO()
+                with patch.object(board.subprocess, "run", Fake(own)), patch.object(board, "beads_dir", lambda *a: beads), patch.object(board, "has_board", lambda: True), \
+                        patch.dict(os.environ, {"BEADS_ACTOR": "lead0001"}), contextlib.redirect_stdout(out):
+                    previous = Path.cwd()
+                    try:
+                        code = board.main(["setup", "--look", "after"])
+                    finally:
+                        os.chdir(previous)
+                said = out.getvalue()
+                if code or "custom.board.look: before -> after\n  2 open change request(s) keep their own look" not in said or "own-a  after (equals the new default): The look is after" not in said \
+                        or "keep their own view" in said:
+                    raise ValueError(f"board setup prints the CRs keeping their own look right under the switch of look (not of nothing else): {code}\n{said}")
                 # The review verdict is tied to (tip, base tip): a pass records it; a refresh that finds it stale says so; the refreshing
                 # session sends it back with a handover, which clears the verdict (q236).
                 issues, tip, wt = make_cr("rv", "rv.txt", "x\n")
                 issues[0]["metadata"].update(review_tip=tip, review_base_tip="e" * 40, since="2026-10-22T15:00:00Z")
                 issues[0]["assignee"] = "bbbb2222"
                 fake = Fake(issues)
-                code, output, errors = invoke(["refresh", "rv"], fake, "bbbb2222")
+                code, output, errors = invoke(["cr", "refresh", "rv"], fake, "bbbb2222")
                 if code or "its review was of another (tip, base tip)" not in output:
                     raise ValueError(f"a refresh must say when the review no longer matches: {code} {errors}\n{output}")
                 fake = Fake(issues)
@@ -4321,25 +4692,25 @@ def validate_board(root: Path) -> None:
                 issues, tip, wt = make_cr("f1stale", "f1.txt", "x\n")
                 issues[0]["metadata"]["review_base_tip"] = "e" * 40
                 fake = Fake(issues)
-                code, _, errors = invoke(["land", "f1stale"], fake, "lead0001")
+                code, _, errors = invoke(["cr", "land", "f1stale"], fake, "lead0001")
                 if code != 1 or "its review is of another" not in errors or "--review-holds" not in errors or any(w[0] == "close" for w in fake.writes()):
                     raise ValueError(f"F1: land must refuse a CR whose review is of another (tip, base tip): {code} {errors}")
                 commit(repo_root, "f1-main.txt", "m\n", "f1: main moves")
                 issues, tip, wt = make_cr("f1hold", "f1h.txt", "x\n")
                 old_base_tip = issues[0]["metadata"]["review_base_tip"]
                 commit(repo_root, "f1-main2.txt", "m2\n", "f1: main moves again")
-                invoke(["refresh", "f1hold"], Fake(issues), "lead0001")  # the triage input: what the refresh showed
+                invoke(["cr", "refresh", "f1hold"], Fake(issues), "lead0001")  # the triage input: what the refresh showed
                 new_tip = git("rev-parse", "HEAD", cwd=wt)
                 # Verdict after a base that moved again since that refresh: refused, untriaged.
                 issues[0]["metadata"].update(triaged_tip=new_tip, triaged_base_tip=at_main(), base_sha=at_main())
                 commit(repo_root, "f1-main3.txt", "m3\n", "f1: main moves after the triage")
-                code, output, errors = invoke(["refresh", "f1hold", "--review-holds"], Fake(issues), "lead0001")
+                code, output, errors = invoke(["cr", "refresh", "f1hold", "--review-holds"], Fake(issues), "lead0001")
                 if code != 1 or "untriaged" not in errors or "f1-main3.txt" not in output:
                     raise ValueError(f"the base moved after the triage: --review-holds must refuse and show the new incoming list: {code} {errors}\n{output}")
                 new_tip = git("rev-parse", "HEAD", cwd=wt)
                 issues[0]["metadata"].update(triaged_tip=new_tip, triaged_base_tip=at_main(), base_sha=at_main())
                 fake = Fake(issues)
-                code, output, errors = invoke(["refresh", "f1hold", "--review-holds"], fake, "lead0001")
+                code, output, errors = invoke(["cr", "refresh", "f1hold", "--review-holds"], fake, "lead0001")
                 flat = " ".join(" ".join(w) for w in fake.writes())
                 if code or f"review_tip={new_tip}" not in flat or f"review_base_tip={at_main()}" not in flat or "the review holds" not in output:
                     raise ValueError(f"F1: refresh --review-holds must re-stamp the review of the same changes: {code} {errors}\n{output}\n{fake.writes()}")
@@ -4347,27 +4718,27 @@ def validate_board(root: Path) -> None:
                 issues, tip, wt = make_cr("tri", "tri.txt", "x\n")
                 commit(repo_root, "tri-b2.txt", "b2\n", "tri: base change one")
                 first_fake = Fake(issues)
-                invoke(["refresh", "tri"], first_fake, "lead0001")
+                invoke(["cr", "refresh", "tri"], first_fake, "lead0001")
                 flat_first = " ".join(" ".join(w) for w in first_fake.writes())
                 if "triaged_tip=" not in flat_first or f"triaged_base_tip={at_main()}" not in flat_first:
                     raise ValueError(f"a refresh must record what it asked the triage about: {first_fake.writes()}")
                 issues[0]["metadata"].update(base_sha=at_main())  # the first refresh moved the fork point to B2
                 commit(repo_root, "tri-b3.txt", "b3\n", "tri: base change two")
-                _, output, _ = invoke(["refresh", "tri"], Fake(issues), "lead0001")
+                _, output, _ = invoke(["cr", "refresh", "tri"], Fake(issues), "lead0001")
                 if "tri-b2.txt" not in output or "tri-b3.txt" not in output or "since the review" not in output or "range-diff review..new" not in output:
                     raise ValueError(f"a stale review's refresh must show what changed since the review:\n{output}")
                 issues, tip, wt = make_cr("f1new", "f1n.txt", "x\n")
                 commit(wt, "f1n2.txt", "unreviewed\n", "f1: unreviewed commit")
-                code, _, errors = invoke(["refresh", "f1new", "--review-holds"], Fake(issues), "lead0001")
+                code, _, errors = invoke(["cr", "refresh", "f1new", "--review-holds"], Fake(issues), "lead0001")
                 if code != 1 or "no longer the reviewed changes" not in errors:
                     raise ValueError(f"F1: --review-holds must refuse commits that were not reviewed: {code} {errors}")
                 issues, tip, wt = make_cr("f1red", "f1r.txt", "x\n")
                 fake = Fake(issues)
                 fake.settings["custom.board.checks"] = "false"
-                code, _, errors = invoke(["refresh", "f1red", "--review-holds"], fake, "lead0001")
+                code, _, errors = invoke(["cr", "refresh", "f1red", "--review-holds"], fake, "lead0001")
                 if code != 1 or "check is not passing" not in errors:
                     raise ValueError(f"F1: --review-holds must refuse while the check fails: {code} {errors}")
-                if invoke(["refresh", "f1red", "--review-holds"], Fake([cr_issue("f1red", "in_review")]), "lead0001")[0] != 1:
+                if invoke(["cr", "refresh", "f1red", "--review-holds"], Fake([cr_issue("f1red", "in_review")]), "lead0001")[0] != 1:
                     raise ValueError("F1: --review-holds is for a CR waiting for its Accept")
 
                 # F2: the reviewer's pass records only a tip the reviewer saw.
@@ -4407,7 +4778,7 @@ def validate_board(root: Path) -> None:
                 c_issues[0]["metadata"].update(base_sha=p_one)
                 c_issues[0].update(status="in_review")
                 p_issues[0]["status"] = "needs_acceptance"
-                code, output, errors = invoke(["refresh", "f4c"], Fake([*p_issues, *c_issues]), "lead0001")
+                code, output, errors = invoke(["cr", "refresh", "f4c"], Fake([*p_issues, *c_issues]), "lead0001")
                 if code or p_one in git("log", "--format=%H", cwd=c_wt).split():
                     raise ValueError(f"F4: a commit the base dropped must not become the child's own: {code} {errors}\n{output}")
                 # F5: a conflict stops the rebase and leaves a marker; after the hand resolution and a further move of the base, the
@@ -4421,7 +4792,7 @@ def validate_board(root: Path) -> None:
                 b_issues[0]["status"] = "needs_acceptance"
                 k_issues[0].update(status="in_review")
                 fake = Fake([*b_issues, *k_issues])
-                code, _, errors = invoke(["refresh", "f5k"], fake, "lead0001")
+                code, _, errors = invoke(["cr", "refresh", "f5k"], fake, "lead0001")
                 marker = next((a.split("=", 1)[1] for w in fake.writes() for a in w if a.startswith("rebase_onto=") and a != "rebase_onto="), None)
                 if code != 1 or "stopped on a conflict" not in errors or marker != git("rev-parse", "cr/f5b") \
                         or not any(a.startswith("rebase_from=") for w in fake.writes() for a in w):
@@ -4434,7 +4805,7 @@ def validate_board(root: Path) -> None:
                 git("commit", "-q", "--amend", "-m", "f5b: rewritten", cwd=b_wt)
                 k_issues[0]["metadata"].update(rebase_onto=marker)
                 fake = Fake([*b_issues, *k_issues])
-                code, output, errors = invoke(["refresh", "f5k"], fake, "lead0001")
+                code, output, errors = invoke(["cr", "refresh", "f5k"], fake, "lead0001")
                 if not any(f"base_sha={marker}" in " ".join(w) for w in fake.writes()):
                     raise ValueError(f"F5: a rebase completed by hand must move the fork point to its target before the next rebase: {fake.writes()}")
                 subjects = git("log", "--format=%s", cwd=k_wt).split("\n")
@@ -4464,12 +4835,12 @@ def validate_board(root: Path) -> None:
                 gitdir = Path(git("rev-parse", "--absolute-git-dir"))
                 (gitdir / "rebase-merge").mkdir()
                 (gitdir / "rebase-merge" / "head-name").write_text("refs/heads/main\n", encoding="utf-8")
-                code, _, errors = invoke(["land", "f7"], Fake(issues), "lead0001")
+                code, _, errors = invoke(["cr", "land", "f7"], Fake(issues), "lead0001")
                 refused_f7 = code == 1 and "is rebasing main" in errors and at_main() == before
                 (gitdir / "rebase-merge" / "head-name").unlink()
                 (gitdir / "rebase-merge").rmdir()
                 (gitdir / "BISECT_START").write_text("main\n", encoding="utf-8")
-                code, _, errors = invoke(["land", "f7"], Fake(issues), "lead0001")
+                code, _, errors = invoke(["cr", "land", "f7"], Fake(issues), "lead0001")
                 refused_f7 = refused_f7 and code == 1 and "is bisecting main" in errors and at_main() == before
                 (gitdir / "BISECT_START").unlink()
                 git("checkout", "-q", "main")
@@ -4481,7 +4852,7 @@ def validate_board(root: Path) -> None:
                     issues, tip, wt = make_cr("f8" + what[:6].strip().replace(" ", ""), "f8.txt", "x\n")
                     fake = Fake(issues)
                     fake.settings["custom.board.checks"] = command
-                    code, _, errors = invoke(["refresh", issues[0]["id"]], fake, "lead0001")
+                    code, _, errors = invoke(["cr", "refresh", issues[0]["id"]], fake, "lead0001")
                     if code != 1 or "changed the worktree" not in errors or any("check_result" in " ".join(w) for w in fake.writes()):
                         raise ValueError(f"F8: {what} must record nothing: {code} {errors} {fake.writes()}")
 
@@ -4494,7 +4865,7 @@ def validate_board(root: Path) -> None:
                 rej = [cr_issue("rej10", "needs_acceptance"), cr_item("rej10.i", "rej10", "closed"),
                        {**cr_item("rej10.r", "rej10", "closed"), "title": "Ratify design: CR rej10", "metadata": {"ratification": "1"}}]
                 fake = Fake(rej)
-                invoke(["reject", "rej10", "no"], fake, "lead0001")
+                invoke(["cr", "reject", "rej10", "no"], fake, "lead0001")
                 reopened = [w[1] for w in fake.writes() if w[:1] == ["update"] and "--status" in w and "open" in w]
                 if reopened != ["rej10.i"]:
                     raise ValueError(f"F10: reject reopened {reopened}")
@@ -4510,7 +4881,7 @@ def validate_board(root: Path) -> None:
                     raise ValueError(f"risk: the branch is deleted only if it still is at the landed tip: {notes}")
                 issues, tip, wt = make_cr("r2", "r2.txt", "x\n")
                 with patch.object(board, "finish_landing", lambda *a, **k: (_ for _ in ()).throw(board.BoardError("close failed"))):
-                    code, _, errors = invoke(["land", "r2"], Fake(issues), "lead0001")
+                    code, _, errors = invoke(["cr", "land", "r2"], Fake(issues), "lead0001")
                 if code != 1 or "now holds" not in errors or "not landed" in errors or at_main() != tip:
                     raise ValueError(f"risk: after a fast-forward whose close failed the message must say the target holds the tip: {code} {errors}")
                 git("worktree", "remove", "--force", str(wt))
@@ -4524,7 +4895,7 @@ def validate_board(root: Path) -> None:
                 tip = git("rev-parse", "HEAD", cwd=wt)
                 issues[0]["metadata"].update(check_tip=tip, review_tip=tip)
                 Path(repo_root, "ren_src.txt").write_text("1\n2\nlocal\n", encoding="utf-8")
-                code, _, errors = invoke(["land", "r3"], Fake(issues), "lead0001")
+                code, _, errors = invoke(["cr", "land", "r3"], Fake(issues), "lead0001")
                 git("checkout", "-q", "--", "ren_src.txt")
                 if code != 1 or "land blocked" not in errors or "ren_src.txt" not in errors:
                     raise ValueError(f"risk: land_blocked must list the old path of a renamed file: {code} {errors}")
@@ -4539,7 +4910,7 @@ def validate_board(root: Path) -> None:
                     errors = io.StringIO()
                     with contextlib.redirect_stderr(errors), patch.object(board.subprocess, "run", Fake([cr_issue("closing", "needs_acceptance")])):
                         code = board.main(["bd", "close", "closing", "--reason", "closing a change request by hand is refused"])
-                if code != 2 or "board land" not in errors.getvalue():
+                if code != 2 or "board cr land" not in errors.getvalue():
                     raise ValueError(f"risk: a raw bd close of a change request must be refused: {code} {errors.getvalue()}")
                 low_i, _, _ = make_cr("rl", "rl.txt", "x\n")
                 up_i, _, _ = make_cr("ru", "ru.txt", "y\n", base="rl")
@@ -4558,7 +4929,7 @@ def validate_board(root: Path) -> None:
                     fake = Fake(issues)
                     fake.settings["custom.board.checks"] = command
                     fake.settings["custom.board.setup"] = "true"
-                    invoke(["refresh", "ex" + name], fake, "lead0001")
+                    invoke(["cr", "refresh", "ex" + name], fake, "lead0001")
                     flat = " ".join(" ".join(w) for w in fake.writes())
                     if result not in flat and not (name in ("x0", "x1") and "check_result=fail" in flat):
                         raise ValueError(f"check exit contract {name}: {flat}")
@@ -4577,7 +4948,7 @@ def validate_board(root: Path) -> None:
                 c_issues[0]["metadata"].update(base_sha=p_one, rebase_onto=p_tip0, rebase_from=c_tip)  # a refresh stopped, then was aborted
                 c_issues[0]["status"] = "in_review"
                 p_issues[0]["status"] = "needs_acceptance"
-                code, output, errors = invoke(["refresh", "n1c"], Fake([*p_issues, *c_issues]), "lead0001")
+                code, output, errors = invoke(["cr", "refresh", "n1c"], Fake([*p_issues, *c_issues]), "lead0001")
                 if code or p_one in git("log", "--format=%H", cwd=c_wt).split():
                     raise ValueError(f"N1: an aborted rebase must not count as completed, the dropped commit must leave the child: {code} {errors}\n{output}")
 
@@ -4585,7 +4956,7 @@ def validate_board(root: Path) -> None:
                 gone_issues, _, gone_wt = make_cr("n2gone", "n2g.txt", "y\n")
                 shutil.rmtree(gone_wt)  # git lists this worktree as prunable
                 git("checkout", "-q", "-b", "n2-elsewhere")
-                code, _, errors = invoke(["land", "n2"], Fake(issues), "lead0001")
+                code, _, errors = invoke(["cr", "land", "n2"], Fake(issues), "lead0001")
                 git("checkout", "-q", "main")
                 git("worktree", "prune")
                 if code or at_main() != tip:
@@ -4662,6 +5033,35 @@ def validate_board(root: Path) -> None:
                 if (accept_kind, stale_kind) != ("accept", "refresh"):
                     raise ValueError(f"a queued CR with a current check and review waits for its Accept; with a stale review it is refresh work: {accept_kind} {stale_kind}")
 
+                # A CR open in the console's review tree (`<main>-review`, its marker at the CR's tip) is not moved under the user: no
+                # refresh work, a non-holder's refresh is skipped; the holder's refresh runs, and a tree set to another CR holds nothing.
+                issues_rt, tip_rt, wt_rt = make_cr("rt", "rt.txt", "x\n")
+                issues_rt2, tip_rt2, wt_rt2 = make_cr("rt2", "rt2.txt", "x\n")
+                commit(repo_root, "rt-base.txt", "b\n", "main moves under rt")
+                review_main = Path(f"{repo_root}-review")
+                git("worktree", "add", "-q", "--detach", str(review_main), tip_rt)
+                try:
+                    git("update-ref", "refs/worktree/console-review-end", tip_rt, cwd=review_main)
+                    with patch.object(board, "current_setting", lambda key: "main" if key.endswith("target") else "x"):
+                        held_kind = board.Board([*issues_rt], complete=False).claimable(issues_rt[0])
+                    rows_rt = {c["id"]: c for c in json.loads(invoke(["console"], Fake([*issues_rt, *issues_rt2]), "lead0001")[1])["crs"]}
+                    if held_kind != "accept" or not rows_rt["rt"]["heldByReviewTree"] or rows_rt["rt"]["refreshWork"] or rows_rt["rt2"]["heldByReviewTree"]:
+                        raise ValueError(f"a CR open in the review tree is no refresh work and is marked held: {held_kind} {rows_rt['rt']} {rows_rt['rt2']}")
+                    in_work = json.loads(invoke(["console"], Fake([{**issues_rt[0], "status": "in_progress", "assignee": "aaaa1111"}, issues_rt[1]]), "lead0001")[1])["crs"]
+                    if any(c["heldByReviewTree"] for c in in_work if c["id"] == "rt"):
+                        raise ValueError(f"only a CR waiting for the user is held by the review tree, not one in work at the marker's tip: {in_work}")
+                    code, output, errors = invoke(["cr", "refresh", "rt"], Fake(issues_rt), "aaaa1111")
+                    if not code or "rt is open in your review tree; it refreshes once a deciding session claims it" not in output + errors or git("rev-parse", "cr/rt") != tip_rt:
+                        raise ValueError(f"a refresh by a session not holding the CR must refuse it while the review tree holds it: {code} {output} {errors}")
+                    code, output, errors = invoke(["cr", "refresh", "rt"], Fake([{**issues_rt[0], "assignee": "lead0001"}, issues_rt[1]]), "lead0001")
+                    if code or git("rev-parse", "cr/rt") == tip_rt:
+                        raise ValueError(f"the holder's refresh must run though the review tree holds the CR: {code} {output} {errors}")
+                    code, output, errors = invoke(["cr", "refresh", "rt2"], Fake(issues_rt2), "aaaa1111")
+                    if code or git("rev-parse", "cr/rt2") == tip_rt2:
+                        raise ValueError(f"a review tree set to another CR must not hold this one: {code} {output} {errors}")
+                finally:
+                    git("worktree", "remove", "--force", str(review_main))
+
                 issues, tip, wt = make_cr("cas", "cas.txt", "unlanded work\n")
                 issues[0].update(status="open")
                 git("worktree", "remove", "--force", str(wt))
@@ -4720,6 +5120,360 @@ def validate_board(root: Path) -> None:
                         raise ValueError(f"board check lacks {needle!r}:\n{report}")
                 if "freshcr  cr-" in report:
                     raise ValueError(f"board check flagged a change request with its worktree:\n{report}")
+
+                # Review edits (r15-q75..q79): `board cr edits` shows the review tree's edits against the tip, commits exactly them as
+                # the user's, moves the review tree's marker to that commit, stores a targeted or no-gate result for that tip only; the review
+                # survives only the commits the board recorded (or their exact replays).
+                git("config", "user.name", "Pat User")
+                git("config", "user.email", "pat@example.com")
+
+                def review_tree(name, tip, edit=True):
+                    tree = Path(repo_root, ".worktrees", f"{name}-review")
+                    git("worktree", "add", "-q", "--detach", str(tree), tip)
+                    git("update-ref", "refs/worktree/console-review-end", tip, cwd=tree)
+                    if edit:
+                        Path(tree, "e.txt").write_text("edited\n", encoding="utf-8")
+                        Path(tree, "new.txt").write_text("new file\n", encoding="utf-8")
+                    return tree
+
+                def flat(fake):
+                    return [arg for w in fake.writes() for arg in w]
+
+                def edits(cr_id, tree, tip, *extra, issues, actor="lead0001"):
+                    fake = Fake(issues)
+                    code, output, errors = invoke(["cr", "edits", cr_id, "--from", str(tree), "--tip", tip, *extra], fake, actor)
+                    return code, output, errors, fake
+
+                issues, tip, wt = make_cr("ed1", "e.txt", "e\n")
+                tree = review_tree("ed1", tip)
+                before_files = (Path(tree, "e.txt").read_text(), Path(tree, "new.txt").read_text())
+                code, output, errors, fake = edits("ed1", tree, tip, issues=issues)
+                if code or "+edited" not in output or "new.txt" not in output or "+new file" not in output or fake.writes() or git("rev-parse", "HEAD", cwd=wt) != tip:
+                    raise ValueError(f"board cr edits must print tracked and new-file edits and change nothing: {code} {errors}\n{output}")
+                code, _, errors, fake = edits("ed1", tree, "0" * 40, issues=issues)
+                git("update-ref", "refs/worktree/console-review-end", at_main(), cwd=tree)  # the tree agrees with the asked tip: only the branch differs
+                code_moved, _, errors_moved, _ = edits("ed1", tree, at_main(), issues=issues)
+                git("update-ref", "refs/worktree/console-review-end", tip, cwd=tree)
+                if code != 1 or code_moved != 1 or "its branch tip is" not in errors_moved or tip[:12] not in errors_moved or at_main()[:12] not in errors_moved:
+                    raise ValueError(f"board cr edits must refuse a tip the branch no longer has, naming both: {code_moved} {errors_moved}")
+                git("update-ref", "refs/worktree/console-review-end", at_main(), cwd=tree)
+                code, _, errors, _ = edits("ed1", tree, tip, issues=issues)
+                git("update-ref", "refs/worktree/console-review-end", tip, cwd=tree)
+                if code != 1 or "was set to" not in errors:
+                    raise ValueError(f"board cr edits must refuse a review tree set to another tip: {code} {errors}")
+                clean = review_tree("ed1c", tip, edit=False)
+                code, _, errors, _ = edits("ed1", clean, tip, issues=issues)
+                if code != 1 or "holds no edits" not in errors:
+                    raise ValueError(f"board cr edits must refuse a tree without edits: {code} {errors}")
+                code, _, errors, fake = edits("ed1", tree, tip, "--commit", issues=issues)
+                if code == 0 or fake.writes():
+                    raise ValueError(f"board cr edits --commit needs a message: {code} {errors}")
+                code, _, errors, fake = edits("ed1", tree, tip, "--commit", "-m", "Fix e", issues=issues, actor="aaaa1111")
+                if code != 1 or "only a lead or solo" not in errors or git("rev-parse", "HEAD", cwd=wt) != tip:
+                    raise ValueError(f"board cr edits --commit by an agent session must refuse: {code} {errors}")
+                # --commit --no-gate: exactly the tree on disk, author the user, committer the session, no trailer, recorded on the CR, no-check result for the new tip.
+                code, output, errors, fake = edits("ed1", tree, tip, "--commit", "-m", "Fix e", "--no-gate", "docs only", issues=issues)
+                new = git("rev-parse", "HEAD", cwd=wt)
+                tree_tracked = git("rev-parse", f"{new}^{{tree}}")
+                fields = git("log", "-1", "--format=%an|%ae|%cn|%P", new).split("|")
+                recorded = [json.loads(a.partition("=")[2]) for a in flat(fake) if a.startswith("review_edits=")]
+                if code or new == tip or fields[:1] != ["Pat User"] or fields[2] != "lead0001" or fields[3] != tip \
+                        or git("show", f"{new}:e.txt") != "edited" or git("show", f"{new}:new.txt") != "new file" \
+                        or git("log", "-1", "--format=%B", new) != "Fix e" or git("rev-parse", "refs/heads/cr/ed1") != new \
+                        or len(recorded) != 1 or len(recorded[0]) != 1 \
+                        or recorded[0] != [{"commit": new}]:
+                    raise ValueError(f"board cr edits --commit must commit exactly the edits as the user and record the commit: {code} {errors} {fields} {recorded}")
+                if (Path(tree, "e.txt").read_text(), Path(tree, "new.txt").read_text()) != before_files or git("rev-parse", "HEAD", cwd=tree) != tip:
+                    raise ValueError("board cr edits must not alter the review tree's files")
+                if git("rev-parse", "refs/worktree/console-review-end", cwd=tree) != new or board.review_edits_tree(Path(repo_root), tree, new) != tree_tracked:
+                    raise ValueError("board cr edits --commit must move the review tree's marker to the edit commit, whose tree the files then equal")
+                # One recipe: the console's clean check (review.ts `snapshotTree`, on real git) builds the board's snapshot tree: modified,
+                # deleted, new and tracked-but-ignored files count, an ignored new file does not, and the tree's own index stays as it was.
+                issues16, tip16, wt16 = make_cr("ed16", ".gitignore", "*.log\n")
+                Path(wt16, "kept.log").write_text("k\n", encoding="utf-8")
+                Path(wt16, "gone.txt").write_text("g\n", encoding="utf-8")
+                git("add", "-f", "kept.log", "gone.txt", cwd=wt16)
+                git("commit", "-q", "-m", "more", cwd=wt16)
+                tip16 = git("rev-parse", "HEAD", cwd=wt16)
+                tree16 = review_tree("ed16", tip16, edit=False)
+                Path(tree16, "kept.log").write_text("k changed\n", encoding="utf-8")
+                Path(tree16, "gone.txt").unlink()
+                Path(tree16, "new.txt").write_text("n\n", encoding="utf-8")
+                Path(tree16, "junk.log").write_text("j\n", encoding="utf-8")
+                own_index = Path(git("rev-parse", "--path-format=absolute", "--git-path", "index", cwd=tree16))
+                index_before = own_index.read_bytes()
+                runtime = shutil.which("bun") or shutil.which("node")
+                if runtime is None:
+                    raise ValueError("bun or node is needed to run the console's clean check on real git")
+                with tempfile.TemporaryDirectory() as driver_dir:
+                    driver = Path(driver_dir, "snapshot.mts")
+                    review_ts = root / "claude" / "mods" / "console" / "hooks" / "review.ts"
+                    driver.write_text(
+                        "import { spawnSync } from 'node:child_process'\n"
+                        f"import {{ snapshotTree }} from {json.dumps(str(review_ts))}\n"
+                        "const run = async (argv, env) => { const p = spawnSync(argv[0], argv.slice(1), { env: { ...process.env, ...(env ?? {}) }, encoding: 'utf8' })\n"
+                        "  return { exitCode: p.status ?? 1, stdout: p.stdout ?? '', stderr: p.stderr ?? '' } }\n"
+                        "console.log(JSON.stringify(await snapshotTree(run, process.argv[2], process.argv[3])))\n", encoding="utf-8")
+                    ran = subprocess.run([runtime, str(driver), str(tree16), tip16], capture_output=True, text=True)
+                console16 = json.loads(ran.stdout or "null") if ran.returncode == 0 else ran.stderr
+                board16 = board.review_edits_tree(Path(repo_root), tree16, tip16)
+                listed16 = set(git("ls-tree", "-r", "--name-only", board16).split())
+                if console16 != {"ok": True, "tree": board16} or listed16 != set(git("ls-tree", "-r", "--name-only", tip16).split()) - {"gone.txt"} | {"new.txt"} \
+                        or git("show", f"{board16}:kept.log") != "k changed" or own_index.read_bytes() != index_before:
+                    raise ValueError(f"the console's clean check must build the board's snapshot tree, leaving the tree's index alone: {console16} {board16} {sorted(listed16)}")
+                written = flat(fake)
+                if not {"check_kind=none", "check_reason=docs only", "check_result=pass", f"check_tip={new}"} <= set(written) or "--status" in written:
+                    raise ValueError(f"--no-gate must store a no-check pass for the new tip and move nothing: {fake.writes()}")
+                # The stored result shows as what it is and lands for that tip only; the review survives the recorded commit.
+                stored = {**issues[0]["metadata"], "check_tip": new, "check_result": "pass", "check_kind": "none", "check_reason": "docs only",
+                          "review_edits": json.dumps(recorded[0])}
+                landing = [{**issues[0], "metadata": stored}, issues[1]]
+                crow = next(c for c in json.loads(invoke(["console"], Fake(landing), "lead0001")[1])["crs"] if c["id"] == "ed1")
+                _, queued, _ = invoke(["queue"], Fake(landing), "lead0001")
+                if crow["check"]["kind"] != "none" or crow["check"]["reason"] != "docs only" or crow["check"]["state"] != "current" \
+                        or crow["reviewState"] != "current" or "no check: docs only" not in queued:
+                    raise ValueError(f"a no-gate result must show as no check, with the review current: {crow['check']} {crow['reviewState']}\n{queued}")
+                code, out, errors = invoke(["cr", "land", "ed1", "--tip", tip[:8]], Fake(landing), "lead0001")
+                if code != 1 or "branch moved" not in errors:
+                    raise ValueError(f"landing must still refuse a tip other than the branch's: {code} {errors}")
+                code, out, errors = invoke(["cr", "land", "ed1", "--tip", new[:8]], Fake(landing), "lead0001")
+                if code or at_main() != new:
+                    raise ValueError(f"board cr land must accept a no-gate result for exactly that tip, the review kept by the recorded commit: {code} {errors}")
+                # A new commit that is not recorded after the reviewed tip is still refused, whatever its message says; so is a result for another tip.
+                issues2, tip2, wt2 = make_cr("ed2", "e2.txt", "e\n")
+                other = commit(wt2, "late.txt", "x\n", "late worker commit\n\nReview-edits: copied@trailer")
+                stored2 = {**issues2[0]["metadata"], "check_tip": other, "check_result": "pass", "check_kind": "none", "check_reason": "r",
+                           "review_edits": json.dumps(recorded[0])}
+                code, _, errors = invoke(["cr", "land", "ed2"], Fake([{**issues2[0], "metadata": stored2}, issues2[1]]), "lead0001")
+                if code != 1 or "its review is of another" not in errors or at_main() != new:
+                    raise ValueError(f"a commit that is not recorded (a copied trailer included) must void the review: {code} {errors}")
+                forged = {**issues2[0]["metadata"], "check_tip": tip2, "check_result": "pass", "check_kind": "none", "check_reason": "r"}
+                code, _, errors = invoke(["cr", "land", "ed2"], Fake([{**issues2[0], "metadata": forged}, issues2[1]]), "lead0001")
+                if code != 1 or "check is" not in errors:
+                    raise ValueError(f"a no-gate result for another tip must not land this tip: {code} {errors}")
+                # --gate: a targeted pass stores its command and output; a failing gate keeps the commit, stores the failure, moves nothing.
+                issues3, tip3, wt3 = make_cr("ed3", "e.txt", "e\n")
+                tree3 = review_tree("ed3", tip3)
+                code, output, errors, fake = edits("ed3", tree3, tip3, "--commit", "-m", "Fix", "--gate", "echo targeted-ok", issues=issues3)
+                new3 = git("rev-parse", "HEAD", cwd=wt3)
+                written = flat(fake)
+                if code or new3 == tip3 or not {"check_kind=targeted", "check_command=echo targeted-ok", "check_result=pass", "check_output=targeted-ok", f"check_tip={new3}"} <= set(written):
+                    raise ValueError(f"--gate must store a targeted pass with its command and output: {code} {errors} {fake.writes()}")
+                crow = next(c for c in json.loads(invoke(["console"], Fake([{**issues3[0], "metadata": {**issues3[0]["metadata"], "check_tip": new3, "check_kind": "targeted",
+                                                                                                    "check_command": "echo targeted-ok"}}, issues3[1]]), "lead0001")[1])["crs"] if c["id"] == "ed3")
+                if crow["check"]["kind"] != "targeted" or crow["check"]["command"] != "echo targeted-ok":
+                    raise ValueError(f"a targeted result must show as targeted: {crow['check']}")
+                git("reset", "-q", "--hard", tip3, cwd=wt3)
+                tree3b = review_tree("ed3b", tip3)
+                code, output, errors, fake = edits("ed3", tree3b, tip3, "--commit", "-m", "Fix", "--gate", "echo broken; exit 3", issues=issues3)
+                written = flat(fake)
+                if code != 1 or "nothing lands" not in output or "waits for the user" not in output or git("rev-parse", "HEAD", cwd=wt3) == tip3 \
+                        or "check_result=fail" not in written or "check_kind=targeted" not in written or "--status" in written:
+                    raise ValueError(f"a failing gate must keep the edit commit, store the failure and leave the CR waiting: {code} {output} {errors} {fake.writes()}")
+                git("reset", "-q", "--hard", tip3, cwd=wt3)
+                tree3c = review_tree("ed3c", tip3)
+                code, _, errors, fake = edits("ed3", tree3c, tip3, "--commit", "-m", "Fix", "--gate", "touch stray.txt", issues=issues3)
+                if code != 1 or "changed the worktree" not in errors or "check_result=pass" in flat(fake):
+                    raise ValueError(f"a gate that leaves files behind must record nothing: {code} {errors} {fake.writes()}")
+                Path(wt3, "stray.txt").unlink()
+                git("reset", "-q", "--hard", tip3, cwd=wt3)
+                # Return: commit only, no check stored.
+                tree3d = review_tree("ed3d", tip3)
+                code, output, errors, fake = edits("ed3", tree3d, tip3, "--commit", "-m", "Edit", issues=issues3)
+                if code or git("rev-parse", "HEAD", cwd=wt3) == tip3 or any("check_" in a for a in flat(fake)):
+                    raise ValueError(f"board cr edits --commit without a gate must store no check: {code} {errors} {fake.writes()}")
+                # A full check clears a targeted label.
+                issues4, tip4, wt4 = make_cr("ed4", "e4.txt", "e\n")
+                issues4[0]["metadata"].update(check_kind="targeted", check_command="x")
+                fake = Fake(issues4)
+                invoke(["cr", "refresh", "ed4"], fake, "lead0001")
+                if "check_kind" not in flat(fake) or "--unset-metadata" not in flat(fake):
+                    raise ValueError(f"a full check must clear the targeted label: {fake.writes()}")
+                # --checks: the project's checks as handover runs them, stored as a normal full check for the new tip; a failure keeps the commit.
+                for ok, check_cmd in ((True, "true"), (False, "grep -q changed e9.txt && { echo 'e9.txt X1'; exit 1; }; exit 0")):
+                    nm = "ed9" if ok else "ed9f"
+                    issues9, tip9, wt9 = make_cr(nm, "e9.txt", "e\n")
+                    tree9 = review_tree(nm, tip9)
+                    Path(tree9, "e9.txt").write_text("changed\n", encoding="utf-8")
+                    fake = Fake(issues9)
+                    fake.settings["custom.board.checks"] = check_cmd
+                    # fails only with the edit, so it is a new failure against the base
+                    code, output, errors = invoke(["cr", "edits", nm, "--from", str(tree9), "--tip", tip9, "--commit", "-m", "Fix", "--checks"], fake, "lead0001")
+                    written, new9 = flat(fake), git("rev-parse", "HEAD", cwd=wt9)
+                    if new9 == tip9 or "--status" in written or ok != (code == 0) \
+                            or (ok and not {"check_result=pass", f"check_tip={new9}"} <= set(written) or any(a.startswith("check_kind=") for a in written)) \
+                            or (not ok and ("check_result=fail" not in written or "waits for the user" not in output)):
+                        raise ValueError(f"--checks must store a full check for the new tip, or keep the commit and wait: {ok} {code} {output} {errors} {fake.writes()}")
+                # --checks that rebased and failed: the marker stays at the edit commit the tree holds, and the session is told to Open again.
+                issues17, tip17, wt17 = make_cr("ed17", "e17.txt", "e\n")
+                commit(repo_root, "ed17-base.txt", "b\n", "main moves under ed17")
+                tree17 = review_tree("ed17", tip17, edit=False)
+                Path(tree17, "e17.txt").write_text("changed\n", encoding="utf-8")
+                fake = Fake(issues17)
+                fake.settings["custom.board.checks"] = "grep -q changed e17.txt && { echo 'e17.txt X1'; exit 1; }; exit 0"
+                code, output, errors = invoke(["cr", "edits", "ed17", "--from", str(tree17), "--tip", tip17, "--commit", "-m", "Fix", "--checks"], fake, "lead0001")
+                marker17, head17 = git("rev-parse", "refs/worktree/console-review-end", cwd=tree17), git("rev-parse", "HEAD", cwd=wt17)
+                if code != 1 or "Open ed17 again before editing" not in output or marker17 == head17 or git("rev-parse", f"{marker17}^") != tip17 \
+                        or git("rev-parse", f"{marker17}^{{tree}}") != board.review_edits_tree(Path(repo_root), tree17, marker17):
+                    raise ValueError(f"a failed --checks that rebased must leave the marker at the edit commit and say Open again: {code} {output} {errors}")
+                # --checks that rebased onto a moved base and passed: the review is of the old base, so it names the triage, not a landing.
+                issues18, tip18, wt18 = make_cr("ed18", "e18.txt", "e\n")
+                commit(repo_root, "ed18-base.txt", "b\n", "main moves under ed18")
+                tree18 = review_tree("ed18", tip18, edit=False)
+                Path(tree18, "e18.txt").write_text("changed\n", encoding="utf-8")
+                fake = Fake(issues18)
+                fake.settings["custom.board.checks"] = "true"
+                code, output, errors = invoke(["cr", "edits", "ed18", "--from", str(tree18), "--tip", tip18, "--commit", "-m", "Fix", "--checks"], fake, "lead0001")
+                if code or "board cr refresh ed18 --review-holds" not in output or "; land with" in output:
+                    raise ValueError(f"a passing --checks that moved the base must name the review triage, not the landing: {code} {output} {errors}")
+                # refresh --review-holds compares by patch-id: the reviewed commits plus the recorded edit commits keep the review; a changed
+                # edit commit (an amend, a conflict fix) or any other commit stales it.
+                issues8, tip8, wt8 = make_cr("ed8", "e8.txt", "e\n")
+                edit8 = commit(wt8, "e8.txt", "edited\n", "edit")
+                entry8 = json.dumps([{"commit": edit8}])
+                triaged = {**issues8[0]["metadata"], "triaged_tip": edit8, "triaged_base_tip": issues8[0]["metadata"]["base_sha"], "review_edits": entry8}
+                fake = Fake([{**issues8[0], "metadata": triaged}, issues8[1]])
+                code, output, errors = invoke(["cr", "refresh", "ed8", "--review-holds"], fake, "lead0001")
+                if code or f"review_tip={edit8}" not in flat(fake) or "the review holds" not in output:
+                    raise ValueError(f"--review-holds must keep a review past a recorded edit commit: {code} {output} {errors} {fake.writes()}")
+                git("commit", "-q", "--amend", "-m", "edit changed", cwd=wt8)
+                Path(wt8, "e8.txt").write_text("edited differently\n", encoding="utf-8")
+                git("commit", "-q", "-a", "--amend", "--no-edit", cwd=wt8)
+                amended8 = git("rev-parse", "HEAD", cwd=wt8)
+                fake = Fake([{**issues8[0], "metadata": {**triaged, "triaged_tip": amended8}}, issues8[1]])
+                code, _, errors = invoke(["cr", "refresh", "ed8", "--review-holds"], fake, "lead0001")
+                if code != 1 or "no longer the reviewed changes" not in errors:
+                    raise ValueError(f"--review-holds must stale the review when a recorded edit commit was changed: {code} {errors}")
+                git("reset", "-q", "--hard", edit8, cwd=wt8)
+                other8 = commit(wt8, "e8b.txt", "x\n", "late worker commit")
+                fake = Fake([{**issues8[0], "metadata": {**triaged, "triaged_tip": other8}}, issues8[1]])
+                code, _, errors = invoke(["cr", "refresh", "ed8", "--review-holds"], fake, "lead0001")
+                if code != 1 or "no longer the reviewed changes" not in errors:
+                    raise ValueError(f"--review-holds must refuse a commit that is not a recorded edit: {code} {errors}")
+                # A rebased copy of the recorded edit commit keeps the review; a changed commit is not the recorded one.
+                issues10, tip10, wt10 = make_cr("ed10", "e10.txt", "e\n")
+                tree10 = review_tree("ed10", tip10)
+                Path(tree10, "e10.txt").write_text("edited\n", encoding="utf-8")
+                fake = Fake(issues10)
+                code, _, errors = invoke(["cr", "edits", "ed10", "--from", str(tree10), "--tip", tip10, "--commit", "-m", "Fix"], fake, "lead0001")
+                rec10 = next(a for a in flat(fake) if a.startswith("review_edits=")).partition("=")[2]
+                cr10 = {"metadata": {"review_edits": rec10}}
+                commit(repo_root, "ed10-base.txt", "b\n", "main moves under ed10")
+                git("rebase", "-q", "main", cwd=wt10)
+                edit10, reviewed10 = git("rev-parse", "HEAD", cwd=wt10), git("rev-parse", "HEAD~1", cwd=wt10)
+                if code or not board.edits_only(Path(repo_root), cr10, reviewed10, edit10):
+                    raise ValueError(f"a recorded edit commit must keep the review after a rebase: {code} {errors}")
+                Path(wt10, "e10.txt").write_text("edited and fixed\n", encoding="utf-8")
+                git("commit", "-q", "-a", "--amend", "--no-edit", cwd=wt10)
+                if board.edits_only(Path(repo_root), cr10, reviewed10, git("rev-parse", "HEAD", cwd=wt10)):
+                    raise ValueError("a changed edit commit must not keep the review")
+                # F4: a whitespace-only change of a recorded edit commit is not the recorded one.
+                issues11, tip11, wt11 = make_cr("ed11", "e11.txt", "e\n")
+                tree11 = review_tree("ed11", tip11)
+                Path(tree11, "e11.txt").write_text("alpha beta\n", encoding="utf-8")
+                fake = Fake(issues11)
+                invoke(["cr", "edits", "ed11", "--from", str(tree11), "--tip", tip11, "--commit", "-m", "Fix"], fake, "lead0001")
+                cr11 = {"metadata": {"review_edits": next(a for a in flat(fake) if a.startswith("review_edits=")).partition("=")[2]}}
+                edit11 = git("rev-parse", "HEAD", cwd=wt11)
+                if not board.edits_only(Path(repo_root), cr11, tip11, edit11):
+                    raise ValueError("a recorded edit commit must keep the review")
+                Path(wt11, "e11.txt").write_text("alpha  beta\n", encoding="utf-8")
+                git("commit", "-q", "-a", "--amend", "--no-edit", cwd=wt11)
+                if board.edits_only(Path(repo_root), cr11, tip11, git("rev-parse", "HEAD", cwd=wt11)):
+                    raise ValueError("a whitespace-only change of an edit commit must not keep the review")
+                # N5: the same insert at another place (repeated context, so the patch-id is equal) is not the recorded commit.
+                issues14, tip14, wt14 = make_cr("ed14", "e14.txt", "0\n1\n2\n3\n4\n5\n6\n9\n1\n2\n3\n4\n5\n6\n9\n")
+                tree14 = review_tree("ed14", tip14, edit=False)
+                Path(tree14, "e14.txt").write_text("0\n1\n2\n3\nNEW\n4\n5\n6\n9\n1\n2\n3\n4\n5\n6\n9\n", encoding="utf-8")
+                fake = Fake(issues14)
+                invoke(["cr", "edits", "ed14", "--from", str(tree14), "--tip", tip14, "--commit", "-m", "Fix"], fake, "lead0001")
+                cr14 = {"metadata": {"review_edits": next(a for a in flat(fake) if a.startswith("review_edits=")).partition("=")[2]}}
+                edit14 = git("rev-parse", "HEAD", cwd=wt14)
+                git("reset", "-q", "--hard", tip14, cwd=wt14)
+                Path(wt14, "e14.txt").write_text("0\n1\n2\n3\n4\n5\n6\n9\n1\n2\n3\nNEW\n4\n5\n6\n9\n", encoding="utf-8")
+                git("commit", "-q", "-a", "-m", "Fix", cwd=wt14)
+                moved14 = git("rev-parse", "HEAD", cwd=wt14)
+                if board.patch_ids(wt14, tip14, edit14) != board.patch_ids(wt14, tip14, moved14) or not board.edits_only(Path(repo_root), cr14, tip14, edit14) \
+                        or board.edits_only(Path(repo_root), cr14, tip14, moved14):
+                    raise ValueError("the recorded change at another place (same patch-id) must not keep the review")
+                # The review tree's marker moves by compare-and-swap: a tree set to another range meanwhile commits nothing.
+                issues15, tip15, wt15 = make_cr("ed15", "e15.txt", "e\n")
+                tree15 = review_tree("ed15", tip15, edit=False)
+                Path(tree15, "e15.txt").write_text("edited\n", encoding="utf-8")
+                real_commit = board.edits_commit
+                def racing_commit(*a, **k):
+                    git("update-ref", "refs/worktree/console-review-end", at_main(), cwd=tree15)  # the console opens another range
+                    return real_commit(*a, **k)
+                with patch.object(board, "edits_commit", racing_commit):
+                    code, _, errors, fake = edits("ed15", tree15, tip15, "--commit", "-m", "Fix", issues=issues15)
+                if code != 1 or "meanwhile" not in errors or git("rev-parse", "HEAD", cwd=wt15) != tip15 or fake.writes() \
+                        or git("rev-parse", "refs/worktree/console-review-end", cwd=tree15) != at_main():
+                    raise ValueError(f"a review tree set to another range during the commit must leave the branch, marker and metadata as they were: {code} {errors} {fake.writes()}")
+                # F7: only the console's review tree, set to --tip, is read for edits.
+                issues12, tip12, wt12 = make_cr("ed12", "e12.txt", "e\n")
+                loose = Path(repo_root, ".worktrees", "ed12-loose")
+                git("worktree", "add", "-q", "--detach", str(loose), tip12)
+                Path(loose, "e12.txt").write_text("loose edit\n", encoding="utf-8")
+                code, _, errors, fake = edits("ed12", loose, tip12, "--commit", "-m", "Fix", issues=issues12)
+                if code != 1 or "review-end marker" not in errors or git("rev-parse", "HEAD", cwd=wt12) != tip12 or fake.writes():
+                    raise ValueError(f"a worktree without the review-end marker must not be committed as the user's edits: {code} {errors} {fake.writes()}")
+                # F6: a re-reviewed CR whose reviewed range already holds an edit commit keeps its review through a refresh.
+                issues13, tip13, wt13 = make_cr("ed13", "e13.txt", "e\n")
+                edit13 = commit(wt13, "e13.txt", "edited\n", "edit")
+                entry13 = json.dumps([{"commit": edit13}])
+                base13 = issues13[0]["metadata"]["base_sha"]
+                m13 = {**issues13[0]["metadata"], "review_tip": edit13, "review_base_tip": base13, "triaged_tip": edit13, "triaged_base_tip": base13, "review_edits": entry13}
+                fake = Fake([{**issues13[0], "metadata": m13}, issues13[1]])
+                code, output, errors = invoke(["cr", "refresh", "ed13", "--review-holds"], fake, "lead0001")
+                if code or "the review holds" not in output:
+                    raise ValueError(f"a reviewed range holding a recorded edit commit must keep its review: {code} {output} {errors}")
+                # A moved base refuses a checked edit (the stored pair would name a base the branch is not on); the plain commit still works.
+                issues7, tip7, wt7 = make_cr("ed7", "e7.txt", "e\n")
+                commit(repo_root, "base-moves.txt", "b\n", "main moves under ed7")
+                tree7 = review_tree("ed7", tip7)
+                Path(tree7, "e7.txt").write_text("changed\n", encoding="utf-8")
+                code, _, errors, fake = edits("ed7", tree7, tip7, "--commit", "-m", "Fix", "--no-gate", "docs", issues=issues7)
+                if code != 1 or "its base moved" not in errors or git("rev-parse", "HEAD", cwd=wt7) != tip7 or fake.writes():
+                    raise ValueError(f"a gate on a branch behind its base must be refused before committing anything: {code} {errors} {fake.writes()}")
+                # Ratification: the CR landed; the edit starts a follow-up CR forked at the landed tip, linked to the ratification.
+                issues5, tip5, wt5 = make_cr("ed5", "r.txt", "r\n")
+                code, _, errors = invoke(["cr", "land", "ed5"], Fake(issues5), "lead0001")
+                moved = commit(repo_root, "after.txt", "later\n", "main moves on")
+                tree5 = review_tree("ed5", tip5)
+                Path(tree5, "r.txt").write_text("ratified edit\n", encoding="utf-8")
+                landed = {**issues5[0], "status": "closed", "metadata": {**issues5[0]["metadata"], "landing": tip5}}
+                rat = {**cr_item("rat5", "ed5", "needs_ratification"), "metadata": {"ratification": "1"}}
+                rows = [landed, rat, cr_issue("fx-new", "open")]
+                code, output, errors, fake = edits("rat5", tree5, tip5, issues=rows)
+                if code or "+ratified edit" not in output:
+                    raise ValueError(f"board cr edits on a ratification must show the edits against the landed tip: {code} {errors}")
+                code, _, errors, fake = edits("rat5", tree5, moved, issues=rows)
+                if code != 1 or tip5[:12] not in errors or moved[:12] not in errors:
+                    raise ValueError(f"a ratification edit against another tip must be refused, naming both: {code} {errors}")
+                code, _, errors, fake = edits("rat5", tree5, tip5, "--commit", "-m", "Ratify fix", "--gate", "true", issues=rows)
+                if code != 1 or "--gate" not in errors or fake.writes():
+                    raise ValueError(f"a ratification edit takes no gate: {code} {errors}")
+                # The marker's compare-and-swap fails (the tree was set to another range meanwhile): the follow-up is rolled back whole.
+                real_commit5 = board.edits_commit
+                def racing_commit5(*a, **k):
+                    git("update-ref", "refs/worktree/console-review-end", moved, cwd=tree5)
+                    return real_commit5(*a, **k)
+                with patch.object(board, "edits_commit", racing_commit5):
+                    code, _, errors, fake = edits("rat5", tree5, tip5, "--commit", "-m", "Ratify fix", issues=rows)
+                left5 = subprocess.run(["git", "rev-parse", "-q", "--verify", "refs/heads/cr/fx-new"], cwd=repo_root, capture_output=True).returncode == 0
+                if code != 1 or "meanwhile" not in errors or left5 or Path(repo_root, ".worktrees", "fx-new").exists() \
+                        or not any(w[:2] == ["close", "fx-new"] for w in fake.writes()):
+                    raise ValueError(f"a failed marker swap must roll the follow-up back: no branch, no worktree, the CR closed: {code} {errors} {left5} {fake.writes()}")
+                git("update-ref", "refs/worktree/console-review-end", tip5, cwd=tree5)
+                code, output, errors, fake = edits("rat5", tree5, tip5, "--commit", "-m", "Ratify fix", issues=rows)
+                created = [w for w in fake.writes() if w[0] == "create"]
+                follow = git("rev-parse", "refs/heads/cr/fx-new")
+                if code or at_main() != moved or git("rev-parse", f"{follow}^") != tip5 or git("show", f"{follow}:r.txt") != "ratified edit" \
+                        or len(created) != 1 or "change-request" not in created[0] or "discovered-from:rat5" not in created[0] \
+                        or not Path(repo_root, ".worktrees", "fx-new").is_dir() or "base_sha=" + tip5 not in flat(fake):
+                    raise ValueError(f"a ratification edit must start a follow-up CR forked at the landed tip, target untouched: {code} {errors} {fake.writes()}")
+                if git("rev-parse", "refs/worktree/console-review-end", cwd=tree5) != follow:
+                    raise ValueError("a ratification edit must move the review tree's marker to the follow-up's commit")
             finally:
                 os.chdir(crs_cwd)
                 subprocess.run(["git", "worktree", "prune"], capture_output=True)
@@ -4868,7 +5622,7 @@ def validate_board(root: Path) -> None:
                                     "AGENT_CODEX_SYSTEM_CONFIG": str(Path(codex_home, "system.toml"))}):
         # Markers carry real mtimes: judge them at the real time.
         real_now = datetime.now(timezone.utc).isoformat()
-        registry = root / "bin" / "session-lead-mode"
+        registry = root / "bin" / "session"
         capacity_project, capacity_env = fake_board(Path(codex_home).resolve())
         Fake.project = str(capacity_project)
         for args, session, tool in ((("solo",), "0000-solo0001", "claude"), (("lead",), "0000-lead0001", "claude"),
@@ -4993,13 +5747,13 @@ def validate_board(root: Path) -> None:
         for bad in (("set-workers", "0000-dflt0001"), ("set-workers", "--workers", "4"), ("set-workers", "0000-dflt0001", "--workers", "x"),
                     ("set-workers", "0000-gone0001", "--workers", "4")):
             if registry_call("0000-dflt0001", *bad).returncode == 0:
-                raise ValueError(f"session-lead-mode accepted {bad}")
+                raise ValueError(f"session accepted {bad}")
         registry_call("0000-none0001", "set-workers", "0000-dflt0001", "--workers", "5").check_returncode()
         for bad in (("activate", "solo", "--workers"), ("activate", "solo", "--workers", "many"),
                     ("activate", "solo", "--workers", "-1"), ("activate", "solo", "--workers", "03"),
                     ("activate", "solo", "--workers", "1.5"), ("alive", "--workers", "4")):
             if registry_call("0000-dflt0001", *bad).returncode == 0:
-                raise ValueError(f"session-lead-mode accepted {bad}")
+                raise ValueError(f"session accepted {bad}")
         if not (capacity_of(["queue"], "dflt0001") or "").startswith("capacity: 3 of 5 "):
             raise ValueError("a refused workers call changed the session's worker cap")
         # Writes: the line follows them, without the items the command named or claimed (the snapshot predates them).
@@ -5030,7 +5784,9 @@ def validate_board(root: Path) -> None:
     with tempfile.TemporaryDirectory() as repo:
         fake_bin, calls = Path(repo) / "bin", Path(repo) / "calls"
         fake_bin.mkdir()
-        (fake_bin / "bd").write_text(f'#!/bin/sh\necho "$BEADS_ACTOR $*" >> {calls}\nexit 7\n', encoding="utf-8")
+        (fake_bin / "bd").write_text(f'#!/bin/sh\necho "$BEADS_ACTOR $*" >> {calls}\n'
+                                     'case "$*" in *"config get"*custom.board.look*) echo \'{"value": "before"}\'; exit 0;; '
+                                     '*"config get"*custom.board.view*) echo \'{"value": "code"}\'; exit 0;; esac\nexit 7\n', encoding="utf-8")
         (fake_bin / "bd").chmod(0o755)
         env = {k: v for k, v in os.environ.items() if not k.startswith(("CODEX_", "CLAUDE_CODE_SESSION")) and k != "BEADS_ACTOR"}
         env.update(PATH=f"{fake_bin}:{env['PATH']}", CLAUDE_CODE_SESSION_ID="c-9999aaaa")
@@ -5066,6 +5822,49 @@ def validate_board(root: Path) -> None:
             result, seen = run_board("bd", *args)
             if "questions are type decision; ran it with type decision" not in result.stderr or meant not in seen or "question" in seen:
                 raise ValueError(f"board bd {args} must run with type decision: {result.returncode} {seen!r} {result.stderr!r}")
+        # r9-q42: create, create --graph and update --type refuse a type outside board-core.md's Kinds table; `question` stays an alias.
+        bad_graph, good_graph = Path(repo) / "bad-graph.json", Path(repo) / "good-graph.json"
+        bad_graph.write_text(json.dumps({"nodes": [{"key": "a", "title": "a", "type": "task"}, {"key": "b", "title": "b", "type": "feature"}]}), encoding="utf-8")
+        good_graph.write_text(json.dumps({"nodes": [{"key": "a", "title": "a", "type": "task"}, {"key": "b", "title": "b", "type": "decision"}]}), encoding="utf-8")
+        for args in (("create", "--type", "feature", "--title", "x"), ("create", "-t=chore", "--title", "x"), ("update", "x", "--type", "molecule"),
+                     ("q", "x", "-t", "feature"), ("create", "--graph", str(bad_graph)), ("create", "--graph", "/nonexistent/plan.json", "-t", "check")):
+            result, seen = run_board("bd", *args)
+            if result.returncode != 2 or seen or "is not a board type" not in result.stderr or "board-core.md" not in result.stderr:
+                raise ValueError(f"board bd {args} must refuse a type outside the Kinds table: {result.returncode} {seen!r} {result.stderr!r}")
+        result, seen = run_board("create", "--for", "ben", "-t", "feature", "x")  # review F6: create --for calls bd create itself
+        if result.returncode == 0 or seen or "is not a board type" not in result.stderr:
+            raise ValueError(f"board create --for must refuse a type outside the Kinds table: {result.returncode} {seen!r} {result.stderr!r}")
+        for args, meant in ((("create", "--type", "task", "--title", "x"), "--type task"), (("update", "x", "--type", "design"), "--type design"),
+                            (("update", "x", "-t", "question"), "-t decision"), (("create", "--graph", str(good_graph)), "--graph"),
+                            (("list", "--type", "feature"), "--type feature")):  # a filter is not a creation
+            result, seen = run_board("bd", *args)
+            if result.returncode != 7 or meant not in seen:
+                raise ValueError(f"board bd {args} must pass a Kinds type: {result.returncode} {seen!r} {result.stderr!r}")
+        # r10-q50: the no-code marker is set when the item is created; an existing item is not marked later.
+        for args in (("update", "x", "--set-metadata", "no_code=1"),):
+            result, seen = run_board("bd", *args)
+            if result.returncode != 2 or seen or "when the item is created" not in result.stderr:
+                raise ValueError(f"board bd {args} must refuse marking an existing item no-code: {result.returncode} {seen!r} {result.stderr!r}")
+        result, seen = run_board("bd", "create", "--title", "t", "--metadata", '{"no_code": "1"}')
+        if result.returncode != 7 or "no_code" not in seen:
+            raise ValueError(f"board bd create must pass the no-code marker: {result.returncode} {seen!r}")
+        # r10-q52: a CR's own look or view equal to the project default is refused (update --set-metadata, create --graph nodes).
+        default_graph, own_graph = Path(repo) / "default-look.json", Path(repo) / "own-look.json"
+        default_graph.write_text(json.dumps({"nodes": [{"key": "a", "title": "a", "type": "change-request", "metadata": {"look": "before"}}]}), encoding="utf-8")
+        own_graph.write_text(json.dumps({"nodes": [{"key": "a", "title": "a", "type": "change-request", "metadata": {"look": "after", "view": "result"}}]}), encoding="utf-8")
+        for args, word in ((("update", "x", "--set-metadata", "look=before"), "look before"), (("update", "x", "--set-metadata", "view=code", "--set-metadata", "other=1"), "view code"),
+                           (("create", "--graph", str(default_graph)), "look before")):
+            result, seen = run_board("bd", *args)
+            if result.returncode != 2 or word not in result.stderr or "project default" not in result.stderr or any(not line.endswith(("config get --json custom.board.look", "config get --json custom.board.view")) for line in seen.splitlines()):
+                raise ValueError(f"board bd {args} must refuse a look or view equal to the default: {result.returncode} {seen!r} {result.stderr!r}")
+        for args in (("update", "x", "--set-metadata", "look=after"), ("update", "x", "--set-metadata", "view=result"), ("create", "--graph", str(own_graph)), ("update", "x", "--set-metadata", "other=before")):
+            result, seen = run_board("bd", *args)
+            if result.returncode != 7 or not seen.splitlines()[-1].endswith(" ".join(args)):
+                raise ValueError(f"board bd {args} must pass a look or view that overrides the default: {result.returncode} {seen!r} {result.stderr!r}")
+        kinds_table = (root / "skills" / "shared" / "board-core.md").read_text(encoding="utf-8").split("### Kinds", 1)[1].split("\n\n", 2)[1]
+        table_types = [name for row in kinds_table.splitlines()[2:] for name in re.findall(r"`([a-z-]+)`", row.split("|")[1])]
+        if sorted(table_types) != sorted(board.ITEM_TYPES):
+            raise ValueError(f"bin/board ITEM_TYPES and board-core.md's Kinds table must list the same types: {sorted(board.ITEM_TYPES)} vs {sorted(table_types)}")
         # bd edit blocks on an editor and --readonly is not for agents: the board refuses both and names the way on.
         for args, needle in ((("edit", "x"), "board bd update --title/--description/--design/--acceptance"), (("-C", repo, "edit", "x", "--title"), "bd update"),
                              (("--readonly", "list"), "without it"), (("list", "--readonly"), "without it"), (("list", "--readonly=true"), "without it")):
@@ -5096,6 +5895,18 @@ def validate_board(root: Path) -> None:
     scratch_repo.cleanup()
 
 
+def engine_verb(call: dict) -> str:
+    """The board verb of a logged call, past its kind group (`ruling record` -> `record`)."""
+    args = call["args"]
+    return args[1] if args[0] in ("ruling", "cr") else args[0]
+
+
+def engine_head(call: dict) -> list:
+    """The first words of a logged call: a kind group keeps its verb and first argument."""
+    args = call["args"]
+    return args[:3] if args[0] in ("ruling", "cr") else args[:2]
+
+
 FAKE_BOARD = r'''#!/usr/bin/env python3
 import json, os, sys
 config = json.load(open(os.environ["FAKE_BOARD_CONFIG"]))
@@ -5103,6 +5914,8 @@ args = sys.argv[1:]
 stdin = "" if sys.stdin.isatty() else sys.stdin.read()
 with open(config["log"], "a") as log:
     log.write(json.dumps({"args": args, "stdin": stdin, "actor": os.environ.get("BEADS_ACTOR"), "cwd": os.getcwd()}) + "\n")
+if args[:1] == ["ruling"]:
+    args = args[1:]  # logged whole; dispatched on the verb
 def new_id(default):
     """config "newIds": the ids the next creations print, in order."""
     ids = config.get("newIds") or []
@@ -5249,7 +6062,7 @@ def console_contract_states(root: Path) -> dict:
         run("step", stdin={"pass": "step-back", "summary": "The design holds.", "verdict": "Sound.", "points": [{"id": "pt1", "first": True}]})
         run("step", stdin={"classes": {"pt1": "user"}})
         run("step", stdin={"select": ["pt1"]})
-        run("step", stdin={**ROUND_INFO, "questions": [{"text": "Which cache?", "title": "Cache", "header": "Cache", "for": "pt1", "problem": "Which cache.", "cases": "Reads; writes.", "premises": "Both read the cache.", "rulings": [], "options": [
+        run("step", stdin={**ROUND_INFO, "questions": [{"text": "Which cache?", "title": "Cache", "header": "Cache", "for": "pt1", "problem": "Which cache.", "root": "The cause lies in the fixture; the end state is one kept option.", "cases": "Reads; writes.", "premises": "Both read the cache.", "rulings": [], "options": [
             {"label": "Keep", "description": "keep it", "for": "for it", "against": "against it"}, {"label": "Drop", "description": "drop it", "for": "for it", "against": "against it"}],
             "recommendation": "Keep", "strength": "lean", "leanBecause": {"cause": "preference", "detail": "taste", "flipsIf": "a different taste"}}]})
         states["check"] = show()
@@ -5277,7 +6090,7 @@ def console_contract_states(root: Path) -> dict:
         run("start", "round", cwd=repo)
         run("step", stdin={"classes": {"fx-q": "user"}}, cwd=repo)
         run("step", stdin={"select": ["fx-q"]}, cwd=repo)
-        run("step", stdin={**ROUND_INFO, "questions": [{"text": "Which store?", "title": "Store", "header": "Store", "board": "fx-q", "problem": "Which store.", "cases": "Reads; writes.", "premises": "Both read the store.", "rulings": [], "options": [
+        run("step", stdin={**ROUND_INFO, "questions": [{"text": "Which store?", "title": "Store", "header": "Store", "board": "fx-q", "problem": "Which store.", "root": "The cause lies in the fixture; the end state is one kept option.", "cases": "Reads; writes.", "premises": "Both read the store.", "rulings": [], "options": [
             {"label": "Keep", "description": "keep it", "for": "for it", "against": "against it"}, {"label": "Drop", "description": "drop it", "for": "for it", "against": "against it"}],
             "recommendation": "Keep", "strength": "lean", "leanBecause": {"cause": "preference", "detail": "taste", "flipsIf": "a different taste"}}]}, cwd=repo)
         while (waiting := json.loads(run("show", "--json", cwd=repo)))["pending"] is not None:
@@ -5312,14 +6125,14 @@ def console_contract_states(root: Path) -> dict:
         run("next", "--set", stdin={"rounds": []}, cwd=repo)
         states["compactOnly"] = show(cwd=repo)
         # An away round (the session's role is autopilot): the question the model parked.
-        subprocess.run(["bash", str(root / "bin" / "session-lead-mode"), "activate", "autopilot"], check=True,
+        subprocess.run(["bash", str(root / "bin" / "session"), "activate", "autopilot"], check=True,
                        env={**env, **as_session("0000-contract")})
         config.write_text(json.dumps({"log": str(Path(tmp) / "calls.jsonl"), "health": {"counts": {}, "items": {"questions": [
             {"id": "fx-q", "status": "open", "type": "decision", "title": "Store?", "priority": 1, "blockedBy": []}]}}, "items": {}}))
         run("start", "round", cwd=repo)
         run("step", stdin={"classes": {"fx-q": "user"}}, cwd=repo)
         run("step", stdin={"select": ["fx-q"]}, cwd=repo)
-        run("step", stdin={**ROUND_INFO, "questions": [{"text": "Which store?", "title": "Store", "header": "Store", "board": "fx-q", "problem": "Which store.", "options": [
+        run("step", stdin={**ROUND_INFO, "questions": [{"text": "Which store?", "title": "Store", "header": "Store", "board": "fx-q", "problem": "Which store.", "root": "The cause lies in the fixture; the end state is one kept option.", "options": [
             {"label": "Keep", "description": "keep it", "for": "for it", "against": "against it"}, {"label": "Drop", "description": "drop it", "for": "for it", "against": "against it"}],
             "recommendation": "Keep", "strength": "lean", "leanBecause": {"cause": "preference", "detail": "taste", "flipsIf": "a different taste"}}]}, cwd=repo)
         while (waiting := json.loads(run("show", "--json", cwd=repo)))["pending"] is not None:
@@ -5328,6 +6141,58 @@ def console_contract_states(root: Path) -> dict:
         run("step", stdin={"settle": {json.loads(run("show", "--json", cwd=repo))["questions"][0]["id"]: "park"}}, cwd=repo)
         states["parked"] = show(cwd=repo)
     return states
+
+
+def validate_default_records(root: Path) -> None:
+    """r15-q73: `start --no-board` without a folder keeps the records under ${XDG_DATA_HOME:-~/.local/share}/agents/decisions/<repo
+    folder name of bin/scratch>, the same from a worktree; an explicit folder is used as given."""
+    engine = load_engine(root / "bin")
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp = Path(tmp).resolve()
+        data, state = tmp / "data", tmp / "state"
+        env = {**os.environ, "AGENT_SESSION_STATE_DIR": str(tmp / "sessions"), "CODEX_THREAD_ID": "", "CODEX_SESSION_ID": "", "HOME": str(tmp / "home"),
+               "XDG_DATA_HOME": str(data), "XDG_STATE_HOME": str(state)}
+        repo, worktree, plain = tmp / "proj", tmp / "proj-wt", tmp / "plain"
+        plain.mkdir()
+        for cmd in (["init", "-q", str(repo)], ["-C", str(repo), "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "x"],
+                    ["-C", str(repo), "worktree", "add", "-q", "-b", "wt", str(worktree)]):
+            subprocess.run(["git", *cmd], check=True, capture_output=True, env=env)
+        name = str(repo).replace("/", "-")
+        folder = data / "agents" / "decisions" / name
+        record = "## Question\n{q}\n\n## Decision\nKeep it\n\n## Rule owner\ndocs/x.md#a\n"
+
+        def release(*args, cwd):
+            code, out, err = engine.cli.run_cli(["--session", "0000-defaultrec", "start", "release", *args], env, cwd, "")
+            if code == 0:
+                engine.cli.run_cli(["--session", "0000-defaultrec", "abandon"], env, cwd, "")
+            return code, out, err
+
+        code, out, err = release("--no-board", cwd=repo)
+        if code == 0 or f"{folder} is no folder of records" not in err:
+            raise ValueError(f"a bare --no-board names the data folder of the repo (exit {code}, want {folder}): {out}{err}")
+        folder.mkdir(parents=True)
+        (folder / "r1-q1.md").write_text(record.format(q="Default one?"), encoding="utf-8")
+        for cwd in (repo, worktree):  # a worktree resolves to the same repository
+            code, out, err = release("--no-board", cwd=cwd)
+            if code != 0 or "Default one?" not in out:
+                raise ValueError(f"a bare --no-board in {cwd} takes the default folder's records (exit {code}): {out}{err}")
+        explicit = tmp / "explicit"
+        explicit.mkdir()
+        (explicit / "r2-q1.md").write_text(record.format(q="Explicit one?"), encoding="utf-8")
+        code, out, err = release("--no-board", str(explicit), cwd=repo)
+        if code != 0 or "Explicit one?" not in out or "Default one?" in out:
+            raise ValueError(f"an explicit --no-board folder is used as given (exit {code}): {out}{err}")
+        # ids before the bare option still name records; outside git the resolved folder names the repository
+        code, out, err = release("q1", "--no-board", cwd=repo)
+        if code != 0 or "Default one?" not in out:
+            raise ValueError(f"ids before a bare --no-board name records of the default folder (exit {code}): {out}{err}")
+        code, out, err = release("--no-board", cwd=plain)
+        if f"{data / 'agents' / 'decisions' / str(plain).replace('/', '-')} is no folder of records" not in err:
+            raise ValueError(f"outside git the default folder is named by the resolved current folder: {out}{err}")
+        # A relative XDG_DATA_HOME is invalid by the XDG spec: the default under HOME is used.
+        code, out, err = engine.cli.run_cli(["--session", "0000-defaultrec", "start", "release", "--no-board"], {**env, "XDG_DATA_HOME": "relative"}, repo, "")
+        if f"{tmp / 'home' / '.local' / 'share' / 'agents' / 'decisions' / name} is no folder of records" not in err:
+            raise ValueError(f"a relative XDG_DATA_HOME must be ignored: {out}{err}")
 
 
 def validate_prepass(root: Path) -> None:
@@ -5544,7 +6409,7 @@ def validate_session_prune(root: Path) -> None:
     recording their actors in `ended`, under one registry lock, re-reading each before removal; the board shows the holds of an
     ended actor without a registration as gone, shared boards included."""
     from unittest.mock import patch
-    registry = root / "bin" / "session-lead-mode"
+    registry = root / "bin" / "session"
     live_started = " ".join(subprocess.run(["ps", "-o", "lstart=", "-p", str(os.getpid())], capture_output=True, text=True,
                                            env={**os.environ, "LC_ALL": "C", "TZ": "UTC0"}).stdout.split())
     with tempfile.TemporaryDirectory() as state:
@@ -5577,13 +6442,13 @@ def validate_session_prune(root: Path) -> None:
         env["CLAUDE_CODE_SESSION_ID"] = "bbbb0000-first001"
         listed = run("list")
         if len(listed.stdout.splitlines()) != 9 or run("ended").stdout:
-            raise ValueError(f"session-lead-mode list is a pure read: {listed.stdout!r} {run('ended').stdout!r}")
+            raise ValueError(f"session list is a pure read: {listed.stdout!r} {run('ended').stdout!r}")
         if run("activate", "solo").returncode != 0:
             raise ValueError("activate failed")
         kept = sorted(json.loads(row)["actor"] for row in run("list").stdout.splitlines() if json.loads(row)["actor"] != "first001")
         if kept != ["actv0004", "cdxa0008", "cdxr0007", "cdxw0009", "live0005", "rcnt0003"] \
                 or sorted(run("ended").stdout.split()) != ["cdx00006", "gone0001", "reus0002"]:
-            raise ValueError(f"session-lead-mode activate must drop the idle ended registrations only: kept {kept}, ended {run('ended').stdout!r}")
+            raise ValueError(f"session activate must drop the idle ended registrations only: kept {kept}, ended {run('ended').stdout!r}")
         if any(Path(state, f"aaaa0000-{name}.json").exists() for name in ("gone0001", "reus0002")):
             raise ValueError("a pruned registration's file must be removed")
         Path(state, "aaaa0000-actv0004.active").unlink()
@@ -5991,7 +6856,7 @@ def validate_copied_install(root: Path) -> None:
     source and installed names agree."""
     with tempfile.TemporaryDirectory() as directory:
         installed = Path(directory)
-        for name in ("board", "protocol", "session-lead-mode"):
+        for name in ("board", "protocol", "session"):
             shutil.copy2(root / "bin" / name, installed / name)
         shutil.copytree(root / "bin" / "protocol_engine", installed / "protocol_engine", ignore=shutil.ignore_patterns("__pycache__"))
         loader = importlib.machinery.SourceFileLoader("copied_board", str(installed / "board"))
@@ -6067,7 +6932,7 @@ def validate_protocol(root: Path, part: str) -> None:
         fake = tmp / "board"
         fake.write_text(FAKE_BOARD, encoding="utf-8")
         fake.chmod(0o755)
-        registry = root / "bin" / "session-lead-mode"
+        registry = root / "bin" / "session"
         for args, session, tool in ((("lead",), "0000-lead0001", "claude"), (("solo",), "0000-cdx00001", "codex")):
             subprocess.run(["bash", str(registry), "activate", *args], check=True,
                            env={**os.environ, **session_env(str(state)), **as_session(session, tool)})
@@ -6129,7 +6994,7 @@ def validate_protocol(root: Path, part: str) -> None:
                     args_run = waiting.get("args", "") if waiting.get("command") == stdin["pass"] else ""
                     proto("pass", "--origin", "model", stdin={"command": stdin["pass"], "args": args_run, "pending": stamp}, cwd=cwd,
                           session=session, ok=None, env=env, process=process, observe=False)
-            if observe and args[:1] == ("step",) and isinstance(stdin, dict) and ({"records", "defer"} & set(stdin)):
+            if observe and args[:1] == ("step",) and isinstance(stdin, dict) and "records" in stdin:
                 # The pass after the last answer (r13 q49) comes before Record: tests not about it run it without a change.
                 saved = state / f"{session}.protocol" / "state.json"
                 current = (json.loads(saved.read_text(encoding="utf-8")).get("round") or {}) if saved.is_file() else {}
@@ -6162,7 +7027,7 @@ def validate_protocol(root: Path, part: str) -> None:
 
         def question(text, **extra):
             """A staged question."""
-            return {"text": text, "title": text.rstrip("?"), "header": "Q", "problem": "Which one, and why now.", "cases": "A caller who keeps it; one who drops it.", "premises": "Read in the fixture.", "rulings": [], "options": [
+            return {"text": text, "title": text.rstrip("?"), "header": "Q", "problem": "Which one, and why now.", "root": "The cause lies in the fixture; the end state is one kept option.", "cases": "A caller who keeps it; one who drops it.", "premises": "Read in the fixture.", "rulings": [], "options": [
                 {"label": "Keep", "description": "keep it", "for": "for it", "against": "against it"}, {"label": "Drop", "description": "drop it", "for": "for it", "against": "against it"}],
                 "recommendation": "Keep", "strength": "lean", "leanBecause": {"cause": "preference", "detail": "taste", "flipsIf": "a different taste"}, **extra}
 
@@ -6296,6 +7161,9 @@ def validate_protocol(root: Path, part: str) -> None:
             bare = question("Which cache?", **{"for": "pt1"})
             refused("step", stdin={**ROUND_INFO, "questions": [{k: v for k, v in bare.items() if k != "problem"}]},
                     needle="`problem` must be a non-empty string (what is decided and why now)")
+            # r9-q44: Stage requires a record-only `root` (cause; end state, or "does not apply: <why>").
+            refused("step", stdin={**ROUND_INFO, "questions": [{k: v for k, v in bare.items() if k != "root"}]}, needle="`root` must be a non-empty string")
+            refused("step", stdin={**ROUND_INFO, "questions": [{**bare, "root": ["cause"]}]}, needle="`root` must be a non-empty string")
             for part, value, needle in (("cases", 3, "`cases` must be a string or left out"), ("premises", ["x"], "`premises` must be a string or left out"),
                                         ("note", 3, "`note` must be a string or left out"), ("rulings", "none", "`rulings`, when given, lists your own rulings")):
                 refused("step", stdin={**ROUND_INFO, "questions": [{**bare, part: value}]}, needle=needle)
@@ -6436,8 +7304,12 @@ def validate_protocol(root: Path, part: str) -> None:
             if "challenge-rulings (after answers): no change" not in out.splitlines()[0] or shown()["step"] != "record":
                 raise ValueError(f"a challenge after the last answer that changes nothing goes to Record:\n{out}")
             refused("step", stdin={"records": {}}, needle="records missing for q1")
+            # r9-q47: a `ruleOwner` that is not a string (a JSON list) is a usage error, not a crash.
+            refused("step", stdin={"records": {"q1": {"rationale": "Simpler.", "ruleOwner": ["docs/cache.md#cache"]}}}, needle="rationale and ruleOwner, each a non-empty string")
             out = proto("step", stdin={"records": {"q1": {"rationale": "Simpler.", "ruleOwner": "docs/cache.md#cache"}}}).stdout
             record = (notes / "r1-q1.md").read_text(encoding="utf-8")
+            if "## Root\nThe cause lies in the fixture; the end state is one kept option.\n" not in record:
+                raise ValueError(f"a record keeps the question's root: {record}")
             if "Round r1 closed." not in out or "Board:" in out or calls() \
                     or "## Alternatives Considered\n- Drop: drop it\n\n## Decision\nKeep\n" not in record \
                     or 'User (dialog), ' not in record or "## Rule owner\ndocs/cache.md#cache" not in record:
@@ -6711,9 +7583,9 @@ def validate_protocol(root: Path, part: str) -> None:
                 draft_q["id"]: {"rationale": "P rationale.", "ruleOwner": "docs/p.md#p", "decision": "Keep the point."}}}).stdout
             board_calls = calls()
             records = Path(str(log) + ".records").read_text(encoding="utf-8")
-            expected = [["claim", "fx-a"], ["record", "fx-a"], ["claim", "fx-b"], ["record", "fx-b"],
-                        ["bd", "list", "--external-ref"], ["revise", "fx-old", "--title", "Pasted point", "--body-file"],
-                        ["bd", "batch", "-m", "protocol: link fx-rev1", "--json"], ["claim", "fx-rev1"], ["record", "fx-rev1"],
+            expected = [["claim", "fx-a"], ["ruling", "record", "fx-a"], ["claim", "fx-b"], ["ruling", "record", "fx-b"],
+                        ["bd", "list", "--external-ref"], ["ruling", "revise", "fx-old", "--title", "Pasted point", "--body-file"],
+                        ["bd", "batch", "-m", "protocol: link fx-rev1", "--json"], ["claim", "fx-rev1"], ["ruling", "record", "fx-rev1"],
                         ["health", "--json", "--items", "decided"]]  # one Record writes all three
             if [c["args"][:len(want)] for c, want in zip(board_calls, expected)] != expected or len(board_calls) != len(expected) \
                     or board_calls[6]["stdin"] != "dep add fx-rev1 fx-rel relates-to\n" \
@@ -6830,8 +7702,8 @@ def validate_protocol(root: Path, part: str) -> None:
             tags = json.loads(config.read_text(encoding="utf-8"))["tags"]
             if tags != {f"protocol:0000-lead0001:{round_id}:{qid}": [f"fx-m{n}"] for n, qid in enumerate(ids, 1)} \
                     or [c["args"][:2] for c in first + second].count(["bd", "create"]) != 3 \
-                    or any(c["args"][:2] in (["claim", "fx-m1"], ["record", "fx-m1"]) for c in second) \
-                    or ["record", "fx-m2"] not in [c["args"][:2] for c in second] or ["record", "fx-m3"] not in [c["args"][:2] for c in second] \
+                    or any(engine_head(c) in (["claim", "fx-m1"], ["ruling", "record", "fx-m1"]) for c in second) \
+                    or ["ruling", "record", "fx-m2"] not in [engine_head(c) for c in second] or ["ruling", "record", "fx-m3"] not in [engine_head(c) for c in second] \
                     or f"Round {round_id} closed." not in out or shown(cwd=repo)["round"] is not None:
                 raise ValueError(f"protocol Record rerun must reuse the tagged record and skip the recorded one: {tags}\n{[c['args'] for c in first + second]}\n{out}")
             configure()
@@ -6843,17 +7715,17 @@ def validate_protocol(root: Path, part: str) -> None:
                 raise ValueError("the dialog must name the record the question closes")
             calls()
             refused("step", stdin={"records": {qid: {"rationale": "R.", "ruleOwner": "o"}}}, needle="recording closes fx-u1; name each", cwd=repo)
-            if [c for c in calls() if c["args"][0] in ("revise", "claim", "supersede")] or shown(cwd=repo)["step"] != "record":
+            if [c for c in calls() if engine_verb(c) in ("revise", "claim", "supersede")] or shown(cwd=repo)["step"] != "record":
                 raise ValueError("a record that does not name the closed record must be refused before any board write")
             out = proto("step", stdin={"records": {qid: {"rationale": "Replaces fx-u1: the same store, now with a TTL.", "ruleOwner": "o"}}},
                         cwd=repo).stdout
             rows = calls()
-            made = [c["args"][:2] for c in rows if c["args"][0] in ("revise", "claim", "record", "supersede")]
-            revise_args = next(c["args"] for c in rows if c["args"][0] == "revise")
+            made = [engine_head(c) for c in rows if engine_verb(c) in ("revise", "claim", "record", "supersede")]
+            revise_args = next(c["args"] for c in rows if engine_verb(c) == "revise")
             if not re.fullmatch(rf"protocol:0000-lead0001:r\d+:{qid}", revise_args[revise_args.index("--external-ref") + 1] if "--external-ref" in revise_args else ""):
                 raise ValueError(f"Record must tag a revision with its session, round and question: {revise_args}")
             history = [json.loads(row) for row in (session_dir / "history.jsonl").read_text().splitlines()]
-            if made != [["revise", "fx-u1"], ["claim", "fx-n1"], ["record", "fx-n1"], ["supersede", "fx-u1"]] \
+            if made != [["ruling", "revise", "fx-u1"], ["claim", "fx-n1"], ["ruling", "record", "fx-n1"], ["ruling", "supersede", "fx-u1"]] \
                     or item_status("fx-u1") != "closed" or "- " + qid + " → fx-n1, closed fx-u1" not in out \
                     or "recorded " + qid + " · superseded fx-u1 by fx-n1 · round closed" not in out.splitlines()[0] \
                     or not any(e["event"] == "superseded" and (e["question"], e["old"], e["new"]) == (qid, "fx-u1", "fx-n1") for e in history):
@@ -6862,9 +7734,33 @@ def validate_protocol(root: Path, part: str) -> None:
             qid = replacing("Beta point", ["fx-u2"], {"fx-u2": "supersedes"}, items={"fx-u2": decided})
             answered()
             calls()
-            proto("step", stdin={"records": {}, "defer": {qid: "later"}}, cwd=repo)
-            if [c for c in calls() if c["args"][0] in ("revise", "claim", "record", "supersede")] or item_status("fx-u2") != "decided":
+            proto("say", "--origin", "composer", stdin={"text": "put the beta point off"}, cwd=repo)
+            proto("defer", stdin={"question": qid, "quote": "put the beta point off"}, cwd=repo)
+            proto("step", stdin={"records": {}}, cwd=repo)
+            if [c for c in calls() if engine_verb(c) in ("revise", "claim", "record", "supersede")] or item_status("fx-u2") != "decided":
                 raise ValueError("a deferred question must close nothing")
+            # Beta2 (review F1): a deferred question that would take over a decided record (extend) defers a new item, never the record.
+            qid = replacing("Betatwo point", ["fx-u5"], {"fx-u5": "extend"}, items={"fx-u5": decided}, newIds=["fx-n5"])
+            answered()
+            calls()
+            proto("say", "--origin", "composer", stdin={"text": "put the betatwo point off"}, cwd=repo)
+            proto("defer", stdin={"question": qid, "quote": "put the betatwo point off"}, cwd=repo)
+            proto("step", stdin={"records": {}}, cwd=repo)
+            rows = [c["args"] for c in calls()]
+            if any(a[:2] == ["bd", "defer"] and a[2] == "fx-u5" for a in rows) or ["bd", "defer", "fx-n5"] != next((a[:3] for a in rows if a[:2] == ["bd", "defer"]), None) \
+                    or item_status("fx-u5") != "decided":
+                raise ValueError(f"a deferred question must defer a new item, not the decided record it would extend: {rows}")
+            # Beta3 (review round 2): the same for a released record, which a deferral must not move either.
+            qid = replacing("Betathree point", ["fx-u12"], {"fx-u12": "extend"}, items={"fx-u12": released_record}, newIds=["fx-n12"])
+            answered()
+            calls()
+            proto("say", "--origin", "composer", stdin={"text": "put the betathree point off"}, cwd=repo)
+            proto("defer", stdin={"question": qid, "quote": "put the betathree point off"}, cwd=repo)
+            proto("step", stdin={"records": {}}, cwd=repo)
+            rows = [c["args"] for c in calls()]
+            if any(a[:2] == ["bd", "defer"] and a[2] == "fx-u12" for a in rows) or ["bd", "defer", "fx-n12"] != next((a[:3] for a in rows if a[:2] == ["bd", "defer"]), None) \
+                    or item_status("fx-u12") != "released":
+                raise ValueError(f"a deferred question must defer a new item, not the released record it would extend: {rows}")
             # Gamma: several records close; the first is revised (parent and labels), the others stay linked until closed; the
             # items a closed record settles move to the new record.
             qid = replacing("Gamma point", ["fx-u3", "fx-u4"], {"fx-u3": "supersedes", "fx-u4": "supersedes"},
@@ -6876,7 +7772,7 @@ def validate_protocol(root: Path, part: str) -> None:
             proto("step", stdin={"records": {qid: {"rationale": "Replaces fx-u3 and fx-u4.", "ruleOwner": "o"}}}, cwd=repo)
             rows = calls()
             settles = json.loads((session_dir / "state.json").read_text())["settles"]
-            if [c["args"][:2] for c in rows if c["args"][0] in ("revise", "supersede")] != [["revise", "fx-u3"], ["supersede", "fx-u3"], ["supersede", "fx-u4"]] \
+            if [engine_head(c) for c in rows if engine_verb(c) in ("revise", "supersede")] != [["ruling", "revise", "fx-u3"], ["ruling", "supersede", "fx-u3"], ["ruling", "supersede", "fx-u4"]] \
                     or [c["stdin"] for c in rows if c["args"][:2] == ["bd", "batch"]] != ["dep add fx-n3 fx-u4 tracks\n"] \
                     or item_status("fx-u3") != "closed" or item_status("fx-u4") != "closed" \
                     or settles.get("fx-n3") != ["fx-set1"] or "fx-u4" in settles:
@@ -6889,7 +7785,7 @@ def validate_protocol(root: Path, part: str) -> None:
             calls()
             proto("step", stdin={"records": {qid: {"rationale": "Replaces fx-u5.", "ruleOwner": "o"}}}, cwd=repo)
             rows = calls()
-            if [c["args"][:2] for c in rows if c["args"][0] in ("revise", "supersede")] != [["revise", "fx-r0"], ["supersede", "fx-u5"]] \
+            if [engine_head(c) for c in rows if engine_verb(c) in ("revise", "supersede")] != [["ruling", "revise", "fx-r0"], ["ruling", "supersede", "fx-u5"]] \
                     or [c["stdin"] for c in rows if c["args"][:2] == ["bd", "batch"]] != ["dep add fx-n4 fx-u5 tracks\n"] \
                     or item_status("fx-r0") != "released":
                 raise ValueError(f"a released record is revised and a decided one closed: {rows}")
@@ -6901,7 +7797,7 @@ def validate_protocol(root: Path, part: str) -> None:
                 qid = replacing("Epsilon point", hits, None, items=items)
                 refused("step", stdin={"outcomes": {qid: {hit: "supersedes" for hit in hits}}}, needle=needle, cwd=repo)
                 proto("abandon", cwd=repo)
-            # Zeta: a record another live session holds is refused at Related (board supersede has no holder check); a gone
+            # Zeta: a record another live session holds is refused at Related (board ruling supersede has no holder check); a gone
             # session's hold is taken at Record, just before the close.
             held = {"position": {"held": [{"id": "fx-live", "holder": "other001", "mark": "idle"}, {"id": "fx-gone", "holder": "gone0001", "mark": "gone"}]}}
             qid = replacing("Zeta point", ["fx-live"], None, items={"fx-live": {**decided, "assignee": "other001"}}, **held)
@@ -6911,8 +7807,8 @@ def validate_protocol(root: Path, part: str) -> None:
             answered()
             calls()
             proto("step", stdin={"records": {qid: {"rationale": "Replaces fx-gone.", "ruleOwner": "o"}}}, cwd=repo)
-            made = [c["args"][:2] for c in calls() if c["args"][0] in ("take", "supersede")]
-            if made != [["take", "fx-gone"], ["supersede", "fx-gone"]]:
+            made = [engine_head(c) for c in calls() if engine_verb(c) in ("take", "supersede")]
+            if made != [["take", "fx-gone"], ["ruling", "supersede", "fx-gone"]]:
                 raise ValueError(f"a gone session's hold must be taken before the close: {made}")
             # A hold taken by another live session after Related is refused at Record too.
             qid = replacing("Eta point", ["fx-u8"], {"fx-u8": "supersedes"}, items={"fx-u8": decided}, newIds=["fx-n6"], **held)
@@ -6942,8 +7838,8 @@ def validate_protocol(root: Path, part: str) -> None:
                 raise ValueError("the dialog must name the missed record by title")
             calls()
             proto("step", stdin={"records": {qid: {"rationale": "Replaces fx-u11.", "ruleOwner": "o"}}}, cwd=repo)
-            made = [c["args"][:2] for c in calls() if c["args"][0] in ("revise", "claim", "record", "supersede")]
-            if made != [["revise", "fx-u11"], ["claim", "fx-n11"], ["record", "fx-n11"], ["supersede", "fx-u11"]] or item_status("fx-u11") != "closed":
+            made = [engine_head(c) for c in calls() if engine_verb(c) in ("revise", "claim", "record", "supersede")]
+            if made != [["ruling", "revise", "fx-u11"], ["claim", "fx-n11"], ["ruling", "record", "fx-n11"], ["ruling", "supersede", "fx-u11"]] or item_status("fx-u11") != "closed":
                 raise ValueError(f"Record must close the missed record: {made}")
             configure()
             # Theta: a close that failed is retried on the rerun without a second record; a close that bd made before it
@@ -6953,12 +7849,12 @@ def validate_protocol(root: Path, part: str) -> None:
             calls()
             report = {"records": {qid: {"rationale": "Replaces fx-u9.", "ruleOwner": "o"}}}
             out = proto("step", stdin=report, cwd=repo).stdout
-            if "Not recorded" not in out or "board supersede fx-u9 --with fx-n7" not in out or shown(cwd=repo)["step"] != "record" or item_status("fx-u9") != "decided":
+            if "Not recorded" not in out or "board ruling supersede fx-u9 --with fx-n7" not in out or shown(cwd=repo)["step"] != "record" or item_status("fx-u9") != "decided":
                 raise ValueError(f"a failed close must leave the question unrecorded:\n{out}")
             patch_config(fail=[])
             out = proto("step", stdin=report, cwd=repo).stdout
-            made = [c["args"][:2] for c in calls() if c["args"][0] in ("revise", "supersede")]
-            if made != [["revise", "fx-u9"], ["supersede", "fx-u9"], ["supersede", "fx-u9"]] or item_status("fx-u9") != "closed" or "Round r" not in out or shown(cwd=repo)["round"] is not None:
+            made = [engine_head(c) for c in calls() if engine_verb(c) in ("revise", "supersede")]
+            if made != [["ruling", "revise", "fx-u9"], ["ruling", "supersede", "fx-u9"], ["ruling", "supersede", "fx-u9"]] or item_status("fx-u9") != "closed" or "Round r" not in out or shown(cwd=repo)["round"] is not None:
                 raise ValueError(f"a failed close must be retried on the rerun without a second record: {made}\n{out}")
             qid = replacing("Iota point", ["fx-u10"], {"fx-u10": "supersedes"}, items={"fx-u10": decided}, newIds=["fx-n8"], supersedeFail=["fx-u10"])
             answered()
@@ -7193,6 +8089,12 @@ def validate_protocol(root: Path, part: str) -> None:
             proto("next", "--set", stdin={"rounds": [{**good["rounds"][0], "title": "The step-back follow-up", "summary": "A follow-up on the step-back pass."}]}, cwd=repo)
             refused("next", "--set", stdin={"rounds": [{**good["rounds"][1], "ids": ["fx-n1", "fx-gone"]}]}, needle="rounds[0]: `ids` names fx-gone, which the board does not know", cwd=repo)
             refused("next", "--set", stdin={"rounds": [{**good["rounds"][1], "ids": ["fx-n1"]}]}, needle="`ids` need a board", cwd=plain)
+            # A title above 60 and within 75 is stored with one warning line for its row; at 60 it gets none.
+            band = proto("next", "--set", stdin={"rounds": [{**good["rounds"][0], "title": "t" * 61}, good["rounds"][1]]}, cwd=repo).stdout
+            if band.count("keep it to about") != 1 or "rounds[0]: title is 61 characters; keep it to about 60 (refused over 75)" not in band:
+                raise ValueError(f"a proposal title in the band is stored with one warning:\n{band}")
+            if "keep it to about" in proto("next", "--set", stdin={"rounds": [{**good["rounds"][0], "title": "t" * 60}]}, cwd=repo).stdout:
+                raise ValueError("a proposal title at the target gets no warning")
             proto("next", "--set", stdin={"rounds": [good["rounds"][0]]}, cwd=repo)
             proto("next", "--set", stdin=good, cwd=repo)
             out = proto("next", cwd=repo).stdout
@@ -7354,9 +8256,9 @@ def validate_protocol(root: Path, part: str) -> None:
             after_answers(cwd=repo)
             if shown(cwd=repo)["step"] != "record":
                 raise ValueError(f"protocol chain: Record follows once the last released question is answered: {shown(cwd=repo)}")
-            # A premise deferred at Record leaves its dependents without a settled premise: they cannot be recorded as decided.
-            refused("step", cwd=repo, needle=f"{chain[1]} rests on deferred {chain[0]}", stdin={
-                "records": {qid: {"rationale": "R.", "ruleOwner": "docs/c.md#c"} for qid in chain[1:]}, "defer": {chain[0]: "later"}})
+            # Record takes no `defer` (r9-q40): a deferral is the verb, which takes the dependents along.
+            refused("step", cwd=repo, needle="Record takes no `defer`", stdin={
+                "records": {qid: {"rationale": "R.", "ruleOwner": "docs/c.md#c"} for qid in chain}, "defer": {chain[0]: "later"}})
             out = proto("step", cwd=repo, stdin={"records": {qid: {"rationale": "R.", "ruleOwner": "docs/c.md#c"} for qid in chain}}).stdout
             round_events = [e["event"] for e in (json.loads(row) for row in (state / "0000-lead0001.protocol" / "history.jsonl").read_text().splitlines())
                             if e.get("round") == out.split()[0]]
@@ -7405,7 +8307,7 @@ def validate_protocol(root: Path, part: str) -> None:
                     needle="fx-p already holds a decision record, which this one revises in place: give `decision`", cwd=repo)
             calls()
             proto("step", stdin={"records": {qid: {"decision": "Accept, six choices; ratified.", "rationale": "Ratified.", "ruleOwner": "docs/x.md"}}}, cwd=repo)
-            written = next(Path(c["args"][2]).read_text() for c in calls() if c["args"][:2] == ["record", "fx-p"])
+            written = next(Path(c["args"][3]).read_text() for c in calls() if c["args"][:3] == ["ruling", "record", "fx-p"])
             if not written.startswith("## Question\nAccept the grid design with six choices?\n\n## Alternatives Considered\n- Hold it\n\n"
                                       "## Decision\nAccept, six choices; ratified.\n"):
                 raise ValueError(f"a record revised in place keeps the old Question and Alternatives:\n{written}")
@@ -7418,6 +8320,7 @@ def validate_protocol(root: Path, part: str) -> None:
             (docs / "x.md").write_text("# X\n\n## Approved dependencies, settlement and retry — implementation pending\n\n"
                                        "```\n## Not a heading\n```\n<a id=\"explicit-one\"></a>\n", encoding="utf-8")
             (docs / "y.md").write_text("# Y\n", encoding="utf-8")
+            (docs / "flat.md").write_text("Plain text, no headings.\n", encoding="utf-8")
             anchor = "approved-dependencies-settlement-and-retry--implementation-pending"
             # A session holding no decided record has no default set; a cwd without a board refuses a release outright.
             refused("start", "release", needle="a release needs a board", cwd=plain)
@@ -7513,7 +8416,7 @@ def validate_protocol(root: Path, part: str) -> None:
             board_check = {"checks": {"fx-r1": {**nones, "revises": [{"item": "fx-old", "action": "supersede rule 2"}],
                                                 "answers": [{"item": "fx-q1", "action": "answered: close"}]}},
                            "supersedes": [{"old": "fx-old", "new": "fx-r1", "partial": "Rule 2"}], "closes": {"fx-q1": ["fx-r1"]}}
-            # A close board release would refuse is refused here, while the report can change (not after the approval).
+            # A close board ruling release would refuse is refused here, while the report can change (not after the approval).
             refused("step", stdin={**board_check, "checks": {"fx-r1": {**board_check["checks"]["fx-r1"], "answers": [
                 {"item": "fx-q1", "action": "close"}, {"item": "fx-hq", "action": "close"}]}}, "closes": {"fx-q1": ["fx-r1"], "fx-hq": ["fx-r1"]}},
                     needle="closes.fx-hq: held by other001", cwd=repo)
@@ -7540,7 +8443,8 @@ def validate_protocol(root: Path, part: str) -> None:
             for entry, needle in (({"written": {"path": "docs/missing.md"}}, "docs/missing.md does not exist"),
                                   ({"written": {"path": "docs/x.md", "anchor": "not-a-heading"}}, "has no heading or anchor #not-a-heading"),
                                   ({"written": {"path": "docs/x.md", "anchor": "x"}, "none": {"reason": "r"}}, "one of"),
-                                  ({"written": {"path": "docs/y.md"}}, "does not name docs/y.md; fix the record text and run `board record fx-r1 <file>`"),
+                                  ({"written": {"path": "docs/flat.md", "anchor": "a"}}, "docs/flat.md has no headings: give the path without an anchor"),
+                                  ({"written": {"path": "docs/y.md"}}, "does not name docs/y.md; fix the record text and run `board ruling record fx-r1 <file>`"),
                                   ({"pending": {"item": "fx-done"}}, "pending item fx-done is closed, not open")):
                 refused("step", stdin={"owners": {"fx-r1": [entry]}}, needle=needle, cwd=repo)
             # Owner paths git ignores are refused; untracked (docs/x.md below) and installed paths are not.
@@ -7550,28 +8454,28 @@ def validate_protocol(root: Path, part: str) -> None:
             (repo / ".scratch" / "rule.md").write_text("# Rule\n", encoding="utf-8")
             refused("step", stdin={"owners": {"fx-r1": [{"written": {"path": ".scratch/rule.md"}}]}},
                     needle=".scratch/rule.md is ignored by git (e.g. .scratch): write the rule into a tracked or trackable owner", cwd=repo)
-            # The release: board release runs with the answered closes; it exits 1 (a revise supersede failed) and the other
+            # The release: board ruling release runs with the answered closes; it exits 1 (a revise supersede failed) and the other
             # supersede fails: the step stays and reruns only what remains.
             patch_config(releaseFail=["fx-r1"], supersedeFail=["fx-old"])
             calls()
             out = proto("step", stdin={"owners": {"fx-r1": [{"written": {"path": "docs/x.md", "anchor": anchor}},
                                                             {"written": {"path": "docs/x.md", "anchor": "explicit-one"}},
                                                             {"pending": {"item": "fx-pend"}}]}}, cwd=repo).stdout
-            made = [c["args"] for c in calls() if c["args"][0] in ("release", "supersede")]
-            if made != [["release", "fx-r1", "--closes", "fx-q1=fx-r1"], ["supersede", "fx-old", "--with", "fx-r1", "--partial", "Rule 2"]] \
+            made = [c["args"] for c in calls() if engine_verb(c) in ("release", "supersede")]
+            if made != [["ruling", "release", "fx-r1", "--closes", "fx-q1=fx-r1"], ["ruling", "supersede", "fx-old", "--with", "fx-r1", "--partial", "Rule 2"]] \
                     or shown(cwd=repo)["step"] != "release" or "exited 1" not in out or "reruns only what remains" not in out \
-                    or "board release fx-r1 closing fx-q1: exit 1" not in out.splitlines()[0]:
+                    or "board ruling release fx-r1 closing fx-q1: exit 1" not in out.splitlines()[0]:
                 raise ValueError(f"protocol release must report a partial failure and stay: {made}\n{out}")
             patch_config(releaseFail=[], supersedeFail=[])
             out = proto("step", stdin={}, cwd=repo).stdout
-            made = [c["args"] for c in calls() if c["args"][0] in ("release", "supersede")]
-            if made != [["release", "fx-r1"], ["supersede", "fx-old", "--with", "fx-r1", "--partial", "Rule 2"]] \
+            made = [c["args"] for c in calls() if engine_verb(c) in ("release", "supersede")]
+            if made != [["ruling", "release", "fx-r1"], ["ruling", "supersede", "fx-old", "--with", "fx-r1", "--partial", "Rule 2"]] \
                     or not re.match(r"r\d+ release · the session's records · .*superseded fx-old by fx-r1 · released fx-r1", out) \
                     or "- released fx-r1: R1" not in out or "- closed fx-q1: answered by released fx-r1" not in out \
                     or "- superseded fx-old by fx-r1 (rule: Rule 2)" not in out or "- dropped fx-r2" not in out \
                     or "decide.md Release 7" not in out or "`protocol next`" not in out or '"fresh": false' in out \
                     or shown(cwd=repo)["round"] is not None \
-                    or "board release" in out.splitlines()[0]:
+                    or "board ruling release" in out.splitlines()[0]:
                 raise ValueError(f"protocol release rerun: {made}\n{out}")
             if "fresh false" not in proto("next", cwd=repo).stdout:
                 raise ValueError("`protocol next` prints the proposal's format, which the release's close text leaves to it")
@@ -7584,14 +8488,14 @@ def validate_protocol(root: Path, part: str) -> None:
             proto("start", "release", "fx-s1", cwd=repo)
             calls()
             out = proto("step", stdin={"records": {"fx-s1": {"change": "the premise moved", "reach": "spreads"}}}, cwd=repo).stdout
-            if any(c["args"][0] in ("release", "supersede", "unclaim") for c in calls()) \
+            if any(engine_verb(c) in ("release", "supersede", "unclaim") for c in calls()) \
                     or "Nothing released; fx-s1 stay decided and held" not in out or "opens with step-back" not in out \
                     or not out.splitlines()[0].endswith("next: a round on fx-s1") \
                     or shown(cwd=repo)["stopped"] != {"run": shown(cwd=repo)["stopped"]["run"], "reason": "fx-s1 changed: the premise moved", "ids": ["fx-s1"]}:
                 raise ValueError(f"a spreading change must stop the release:\n{out}")
             # A typed /release-round on an open release approves it without a dialog when every ruling is sure and the set
             # is unchanged; during an open round it is refused.
-            # A record waiting on an open item outside the set leaves it at the board check (board release would refuse).
+            # A record waiting on an open item outside the set leaves it at the board check (board ruling release would refuse).
             patch_config(items={**json.loads(config.read_text())["items"],
                                 "fx-s2": {"status": "decided", "issue_type": "decision", "title": "S2", "assignee": "lead0001"},
                                 "fx-open": {"status": "in_review", "issue_type": "task", "title": "Open"}},
@@ -7612,7 +8516,7 @@ def validate_protocol(root: Path, part: str) -> None:
                     or not any(line["text"] == "approved (press, /release-round)" for line in approved["log"]):
                 raise ValueError(f"a pressed /release-round with sure rulings must approve without a dialog: {approved}")
             proto("abandon", cwd=repo)
-            # Own contained change (r8-q36): the record stays, revised, with its corrected text written by board record; a
+            # Own contained change (r8-q36): the record stays, revised, with its corrected text written by board ruling record; a
             # typed /release-round lapses; the scoped step-back then ground run on it before the approval, which names it.
             patch_config(items={**json.loads(config.read_text())["items"],
                                 "fx-s3": {"status": "decided", "issue_type": "decision", "title": "S3"}},
@@ -7640,13 +8544,13 @@ def validate_protocol(root: Path, part: str) -> None:
             refused("step", stdin={"records": {"fx-s1": "unchanged", "fx-s2": {**own, "file": None}}}, needle="gives `file`", cwd=repo)
             calls()
             refused("step", stdin={"records": {"fx-s1": "unchanged", "fx-s2": {**own, "file": "missing-s2.md"}}},
-                    needle="`board record fx-s2 missing-s2.md` exited", cwd=repo)
+                    needle="`board ruling record fx-s2 missing-s2.md` exited", cwd=repo)
             if shown(cwd=repo)["step"] != "recheck":
-                raise ValueError("a failed board record must leave the re-check where it was")
+                raise ValueError("a failed board ruling record must leave the re-check where it was")
             calls()
             proto("step", stdin={"records": {"fx-s1": "unchanged", "fx-s2": own}}, cwd=repo)
             view = shown(cwd=repo)
-            if ["record", "fx-s2", "fixed-s2.md"] not in [c["args"] for c in calls()] \
+            if ["ruling", "record", "fx-s2", "fixed-s2.md"] not in [c["args"] for c in calls()] \
                     or {r["id"]: r["state"] for r in view["records"]} != {"fx-s1": "set", "fx-s2": "revised"} \
                     or view["records"][1]["reason"] != f"changed (contained, own): {own['change']}" \
                     or not any(line["text"].startswith("revised fx-s2:") for line in view["log"]):
@@ -7946,7 +8850,7 @@ def validate_protocol(root: Path, part: str) -> None:
             calls()
             out = proto("step", stdin={"records": {"fx-d1": "unchanged"}}, cwd=repo).stdout
             if ["check", "--json"] not in [c["args"] for c in calls()] \
-                    or "fx-d1 revises fx-old: `board supersede fx-old --with fx-d1`" not in out or "fx-elsewhere" in out:
+                    or "fx-d1 revises fx-old: `board ruling supersede fx-old --with fx-d1`" not in out or "fx-elsewhere" in out:
                 raise ValueError(f"the Board check must list the set's unlinked revisions:\n{out}")
             proto("abandon", cwd=repo)
             patch_config(check={})
@@ -8045,7 +8949,10 @@ def validate_protocol(root: Path, part: str) -> None:
                 converge(cwd=repo)
                 solo_note = json.loads(proto("answer", "--origin", "dialog", cwd=repo, stdin={
                     "marker": shown(cwd=repo)["batch"]["marker"], "answers": {"Solo?": "Keep (recommended, lean)"}, **extra}).stdout)["note"]
-                routes = "a change to the questions → `protocol edit` (updates + the quote)" in solo_note and "call a pass's skill on it, then report that pass" in solo_note
+                routes = "a change to the questions → `protocol edit` (updates + the quote)" in solo_note and "call a pass's skill on it, then report that pass" in solo_note \
+                    and "a deferral of a question → `protocol defer` (question, the quote, until?)" in solo_note \
+                    and "another request (explain, step back, ground, …) → run it (a pass: its skill with the Skill tool, then its report); a reply" in solo_note \
+                    and "a question → answer it as this turn's last text, correcting a wrong premise; restart only for a criterion that still holds after the answer" in solo_note  # r10-q51
                 pointer = "by the routes you were given" in solo_note
                 if routes != full or pointer == full:
                     raise ValueError(f"the routes of the person's own words go out in full once per compaction window, then as a pointer (full={full}): {solo_note}")
@@ -8325,6 +9232,30 @@ def validate_protocol(root: Path, part: str) -> None:
                 raise ValueError(f"protocol Related through board related --json: {overlaps}")
 
         if part == "texts":
+            # r15-q88: `help` and a bare call print every verb with an example; the engine's audience table (base.VERBS) owns the
+            # sections, the origin check reads the same table. No session is needed.
+            helped = proto("help", session=None)
+            bare = engine_module.cli.run_cli([], base, Path(plain), "")
+            if helped.stderr or bare != (0, helped.stdout, ""):
+                raise ValueError(f"protocol help and a bare call must print the same and exit 0: {helped} {bare}")
+            head, _, console_part = helped.stdout.partition("console only:")
+            if not console_part:
+                raise ValueError(f"protocol help lacks the console only section:\n{helped.stdout}")
+            table = engine_module.base.VERBS
+            listed = lambda part: re.findall(r"^  protocol ([a-z]+)\b", part, re.M)
+            console_only = sorted(verb for verb, (audience, _) in table.items() if audience == "console")
+            if console_only != ["dropped", "nudged", "pending", "say", "scope"] or sorted(listed(console_part)) != console_only:
+                raise ValueError(f"help's console only section must be the table's console verbs: {listed(console_part)} {console_only}")
+            if set(listed(head)) & set(console_only) or not {"start", "step", "show", "next", "help", "defer", "edit"} <= set(listed(head)):
+                raise ValueError(f"help's session verbs: {listed(head)}")
+            marked = sorted(re.findall(r"^  protocol ([a-z]+)\b.*\*\s*$", head, re.M))
+            if marked != sorted(verb for verb, (audience, _) in table.items() if audience == "origin") or marked != ["answer", "decline", "pass"] \
+                    or "* origin-dependent" not in head:
+                raise ValueError(f"help marks answer, decline and pass as origin-dependent: {marked}\n{head}")
+            # the origin check reads the table: a verb the table keeps console-only refuses a model origin, one with origins lists them
+            for verb, (audience, origins) in table.items():
+                if origins:
+                    refused(verb, "--origin", "model-nowhere", stdin={}, needle=f"accepted: {', '.join(origins)}")
             # F: round texts: every error at once, the limits, examples, the report format once, hand-offs, the release dialog.
             texts = {"session": "0000-texts001"}
             proto("start", "round", "--no-board", str(notes), stdin={"points": ["Limits?"]}, **texts)
@@ -8334,6 +9265,10 @@ def validate_protocol(root: Path, part: str) -> None:
             if "on every option of a code, API, naming or shape choice, an `example`" not in stage_text \
                     or "'<code under A>'" not in stage_text.replace('"', "'") or "'<code under B>'" not in stage_text.replace('"', "'") or "preview" in stage_text:
                 raise ValueError(f"the Stage text asks for an example on every option of a code choice: {stage_text}")
+            if "`overview` 160" not in stage_text:  # r9-q47: the Stage text states the overview target
+                raise ValueError(f"the Stage text states the overview length: {stage_text}")
+            if "`root` (record-only, never printed:" not in stage_text or '"root": "<cause>; <end state>"' not in stage_text.replace("'", '"'):
+                raise ValueError(f"the Stage text asks for the record-only root, with it in the sample: {stage_text}")
             long_round = {"round": {"title": "t" * 76, "summary": "s" * 241}}
             result = proto("step", ok=False, **texts, stdin={**long_round, "questions": [
                 question("Limits?", title="x" * 76, header="Much too long", **{"for": "pt1"}),
@@ -8349,10 +9284,9 @@ def validate_protocol(root: Path, part: str) -> None:
             # r10-q37: a preview is refused with a pointer to example, multi-select or not.
             refused("step", **texts, stdin={"pass": "step-back", "updates": [question("Multi?", multiSelect=True, options=[
                 {"label": "Keep", "description": "", "for": "for it", "against": "against it", "preview": "x"}, {"label": "B", "description": "", "for": "for it", "against": "against it"}])]}, needle="rename `preview` to `example`")
-            # A refused pass report repeats the report format; the first pass of a round carries it, later passes do not.
-            refused("step", **texts, stdin={"pass": "nope"}, needle="After the pass, report each change")
-            refused("step", **texts, stdin={}, needle="Report with `protocol step`")
-            refused("step", **texts, stdin={"pass": "step-back", "updates": []}, needle="After the pass, report each change")
+            # A refused pass report points at `protocol show` for the report format this session was told (the check step printed it).
+            for stdin in ({"pass": "nope"}, {}, {"pass": "step-back", "updates": []}):
+                refused("step", **texts, stdin=stdin, needle="The report format: `protocol show` prints it again.")
             out = proto("step", **texts, stdin={"pass": "step-back", "updates": [], "checked": ["q1"]}).stdout
             if "After the pass" in out or "Report with `protocol step`" in out:
                 raise ValueError(f"the report format goes out with the first pass only: {out}")
@@ -8362,6 +9296,8 @@ def validate_protocol(root: Path, part: str) -> None:
                 proto("step", **texts, stdin={"pass": command, "updates": [], "checked": ["q1"]})
             converge(**texts)
             batch = shown(**texts)["batch"]
+            if "end state is one kept option" in json.dumps(batch):
+                raise ValueError(f"the root is record-only: the dialog and its notice do not carry it: {batch}")
             if [q["question"] for q in batch["questions"]] != ["1. " + "y" * 160, "2. Second?"] \
                     or any(key in option for q in batch["questions"] for option in q["options"] for key in ("example", "preview")) \
                     or "- Against: against it\n````\nx = 1  # ```\n````" not in batch["notice"] or "```\ny = 2\n```" not in batch["notice"] \
@@ -8479,7 +9415,7 @@ def validate_protocol(root: Path, part: str) -> None:
             # r5-q17: the refusal names the pending pass with its arguments; a report of another command ends the turn.
             refused("step", **texts, observe=False, stdin=unobserved, needle="run `/step-back goal foundations` with the Skill tool")
             refused("step", **texts, observe=False, stdin={**unobserved, "pass": "ground"}, needle="no /ground ran since its last report: end your turn")
-            refused("step", **texts, observe=False, stdin=unobserved, needle="Report with `protocol step`")
+            refused("step", **texts, observe=False, stdin=unobserved, needle="The report format: `protocol show` prints it again.")
             proto("pass", "--origin", "plugin", stdin={"command": "step-back", "args": "", "pending": None}, **texts)
             # A refused report changes nothing and lists every error (r23-q95); the run stays open for the resend.
             partly = {"pass": "step-back", "updates": [{"id": qid, "title": "Moved"}, {"id": "q99", "premises": "x"}, {"id": qid, "header": "Much too long"}]}
@@ -9303,7 +10239,7 @@ def validate_protocol(root: Path, part: str) -> None:
             refused("step", stdin={"records": {**unnamed["records"], rule_q["id"]: {"rationale": "fx-a and fx-b2 follow the rule.",
                                                                                      "ruleOwner": "docs/x.md"}}},
                     needle="settles fx-b;", **rules)  # a longer id is no mention of fx-b
-            if any(c["args"][0] in ("claim", "record", "revise") or c["args"][:2] == ["bd", "create"] for c in calls()):
+            if any(engine_verb(c) in ("claim", "record", "revise") or c["args"][:2] == ["bd", "create"] for c in calls()):
                 raise ValueError("a refused Record must write nothing")
             named = {"records": {**unnamed["records"], rule_q["id"]: {"rationale": "Both stores close: fx-a (the old store) and fx-b (the "
                                                                                   "cache) follow the rule.", "ruleOwner": "docs/x.md"}}}
@@ -9312,7 +10248,7 @@ def validate_protocol(root: Path, part: str) -> None:
             made = calls()
             recorded = Path(str(log) + ".records").read_text(encoding="utf-8")
             link = next((c for c in made if c["args"][:2] == ["bd", "batch"]), None)
-            if [c["args"][0] for c in made if c["args"][0] != "bd" and c["args"][0] != "show"] != ["claim", "record", "claim", "record", "health"] \
+            if [engine_verb(c) for c in made if c["args"][0] != "bd" and c["args"][0] != "show"] != ["claim", "record", "claim", "record", "health"] \
                     or link is None or link["args"][3] != "protocol: link fx-new1" \
                     or link["stdin"] != "dep add fx-new1 fx-rel relates-to\ndep add fx-w fx-new1 blocks\ndep add fx-new1 fx-y blocks\n" \
                     or ["show", "fx-a", "fx-b", "fx-new1", "--json", "--field", "dependencies"] not in [c["args"] for c in made] \
@@ -9333,8 +10269,8 @@ def validate_protocol(root: Path, part: str) -> None:
                 raise ValueError("a press approval opens no dialog, so nothing is printed")
             calls()
             out = proto("step", stdin={"owners": {"fx-new1": [{"none": {"reason": "covered by the rule"}}]}}, **rules).stdout
-            made = [c["args"] for c in calls() if c["args"][0] == "release"]
-            if made != [["release", "fx-new1", "--closes", "fx-a=fx-new1", "fx-b=fx-new1"]] \
+            made = [c["args"] for c in calls() if engine_verb(c) == "release"]
+            if made != [["ruling", "release", "fx-new1", "--closes", "fx-a=fx-new1", "fx-b=fx-new1"]] \
                     or "- closed fx-a: answered by released fx-new1" not in out or "- closed fx-b: answered by released fx-new1" not in out \
                     or "run `protocol next`" not in out:
                 raise ValueError(f"the release closes the settled items by the rule record: {made}\n{out}")
@@ -9348,7 +10284,9 @@ def validate_protocol(root: Path, part: str) -> None:
             batch = shown(**rules)["batch"]
             proto("answer", "--origin", "dialog", stdin={"marker": batch["marker"], "answers": {batch["questions"][0]["question"]: "Keep"}}, **rules)
             calls()
-            proto("step", stdin={"records": {}, "defer": {shown(**rules)["questions"][0]["id"]: "not yet"}}, **rules)
+            proto("say", "--origin", "composer", stdin={"text": "not yet"}, **rules)
+            proto("defer", stdin={"question": shown(**rules)["questions"][0]["id"], "quote": "not yet"}, **rules)
+            proto("step", stdin={"records": {}}, **rules)
             if ["unclaim", "fx-a", "fx-b"] not in [c["args"] for c in calls()]:
                 raise ValueError("a deferred rule question must release its settled items")
             # A no-board round names the settled points in the record file and closes nothing.
@@ -9413,6 +10351,90 @@ def validate_protocol(root: Path, part: str) -> None:
             # r33-q154: a confirmation may settle several items too.
             proto("step", stdin=stage(question("Rule: confirm?", settles=["fx-a", "fx-b"]), store("c")), **rules)
             proto("abandon", **rules)
+
+            # r9-q40, q41: `protocol defer` defers a question and the questions waiting on it; Record files every deferral on the board
+            # through one writer (an outside wait too), and in a round without a board only notes it.
+            spike_wait = "the cache spike, in .scratch/cache/spike.md"
+            configure(**rule_config, newIds=["fx-d1", "fx-d2", "fx-d3"])
+            out = proto("start", "round", stdin={"points": ["Defer one?", "Defer two?", "Wait on a spike?"]}, **rules).stdout
+            points = re.findall(r"(pt\d+) \[pasted\]", out)
+            proto("step", stdin={"classes": {**{p: "user" for p in points}, "fx-c": "user"}}, **rules)
+            proto("step", stdin={"select": [*points, "fx-c"]}, **rules)
+            proto("step", stdin=stage(question("Defer one?", key="one", **{"for": points[0]}), question("Defer two?", waitsOn=["one"], **{"for": points[1]}),
+                                      question("Wait on a spike?", waitsFor=spike_wait, **{"for": points[2]}), question("Old store?", board="fx-c")), **rules)
+            ids = [q["id"] for q in shown(**rules)["questions"]]
+            refused("defer", stdin={"question": ids[0], "quote": "later please"}, needle="quote check failed", **rules)
+            proto("say", "--origin", "composer", stdin={"text": "defer the first one to December; the old store can wait"}, **rules)
+            refused("defer", stdin={"question": "q99", "quote": "defer the first one"}, needle="unknown question q99", **rules)
+            refused("defer", stdin={"question": ids[0]}, needle='needs "question" and "quote"', **rules)
+            refused("defer", stdin={"question": ids[0], "quote": "defer the first one", "until": " "}, needle="`until`", **rules)
+            refused("defer", stdin={"question": ids[0], "quote": "defer the first one", "until": "in a few weeks"}, needle="2026-12-01", **rules)
+            proto("defer", stdin={"question": ids[0], "quote": "defer the first one", "until": "2026-12-01"}, **rules)
+            proto("defer", stdin={"question": ids[3], "quote": "the old store can wait"}, **rules)
+            states = [q["status"] for q in shown(**rules)["questions"]]
+            if states != ["deferred", "deferred", "held", "deferred"]:
+                raise ValueError(f"protocol defer: the question and its dependent are deferred, the spike hold stays: {states}")
+            converge(**rules)
+            record_view = proto("show", **rules).stdout
+            if shown(**rules)["step"] != "record" or f'- {ids[0]}: deferred (until 2026-12-01): "defer the first one"' not in record_view \
+                    or f"- {ids[1]}: deferred with {ids[0]}" not in record_view or f"- {ids[2]}: deferred at Record, it waits for {spike_wait}" not in record_view \
+                    or f'- {ids[3]}: deferred: "the old store can wait"' not in record_view:
+                raise ValueError(f"protocol defer: Record names every deferral:\n{record_view}")
+            refused("step", stdin={"records": {}, "defer": {ids[0]: "later"}}, needle="Record takes no `defer`", **rules)
+            calls()
+            patch_config(fail=["bd defer"])
+            out = proto("step", stdin={"records": {}}, **rules).stdout
+            made = calls()
+            patch_config(fail=[])
+            if "Not recorded" not in out or shown(**rules)["step"] != "record" or sum(c["args"][:2] == ["bd", "create"] for c in made) != 3:
+                raise ValueError(f"protocol defer: a failing bd defer leaves Record open after the creates:\n{out}\n{made}")
+            out = proto("step", stdin={"records": {}}, **rules).stdout
+            rerun = calls()
+            made += rerun
+            if "round closed" not in out.splitlines()[0] or shown(**rules)["round"] is not None:
+                raise ValueError(f"protocol defer: the rerun closes the round:\n{out}")
+            if sum(c["args"][:2] == ["bd", "create"] for c in made) != 3:
+                raise ValueError(f"protocol defer: a rerun after a failed bd defer creates nothing twice: {[c['args'] for c in made]}")
+            ok_defers = [c["args"] for c in rerun if c["args"][:2] == ["bd", "defer"]]
+            if ok_defers != [["bd", "defer", "fx-d1", "--reason", "defer the first one", "--until", "2026-12-01"],
+                             ["bd", "defer", "fx-d2", "--reason", f"waits on {ids[0]}, which was deferred: defer the first one", "--until", "2026-12-01"],
+                             ["bd", "defer", "fx-d3", "--reason", spike_wait],
+                             ["bd", "defer", "fx-c", "--reason", "the old store can wait"]]:
+                raise ValueError(f"protocol defer: Record files each deferral with its reason, a date only where given: {ok_defers}")
+            sequence = [c["args"] for c in made if c["args"] in (["unclaim", "fx-c"], ["bd", "defer", "fx-c", "--reason", "the old store can wait"])]
+            if sequence[:2] != [["unclaim", "fx-c"], ["bd", "defer", "fx-c", "--reason", "the old store can wait"]]:
+                raise ValueError(f"protocol defer: a deferred item the round claimed is unclaimed before it is deferred: {sequence}")
+            # q41: without a board nothing is filed; the deferral is noted in the history and the Closed text, and the
+            # batch that was out comes back without the deferred questions.
+            configure(**rule_config)
+            out = proto("start", "round", "--no-board", str(notes), stdin={"points": ["Nb A?", "Nb B?", "Nb C?"]}, **rules).stdout
+            points = re.findall(r"(pt\d+) \[pasted\]", out)
+            proto("step", stdin={"classes": {p: "user" for p in points}}, **rules)
+            proto("step", stdin={"select": points}, **rules)
+            proto("step", stdin=stage(question("Nb A?", key="a", **{"for": points[0]}), question("Nb B?", waitsOn=["a"], **{"for": points[1]}),
+                                      question("Nb C?", **{"for": points[2]})), **rules)
+            ids = [q["id"] for q in shown(**rules)["questions"]]
+            converge(**rules)
+            if [q["question"] for q in shown(**rules)["batch"]["questions"]] != ["1. Nb A?", "2. Nb C?"]:
+                raise ValueError(f"protocol defer: the batch before the deferral: {shown(**rules)['batch']}")
+            proto("say", "--origin", "composer", stdin={"text": "skip A for now"}, **rules)
+            proto("defer", stdin={"question": ids[0], "quote": "skip A for now"}, **rules)
+            if [q["question"] for q in shown(**rules)["batch"]["questions"]] != ["Nb C?"] or [q["status"] for q in shown(**rules)["questions"]] != ["deferred", "deferred", "asked"]:
+                raise ValueError(f"protocol defer: a batch holding a deferred question comes back without it: {shown(**rules)}")
+            proto("restart", ids[0], **rules)  # withdrawing a deferral takes back the questions deferred with it
+            if [q["status"] for q in shown(**rules)["questions"]][:2] != ["draft", "held"]:
+                raise ValueError(f"protocol restart of a deferred question revives the questions deferred with it: {shown(**rules)['questions']}")
+            proto("defer", stdin={"question": ids[0], "quote": "skip A for now"}, **rules)
+            converge(**rules)
+            proto("answer", "--origin", "dialog", stdin={"marker": shown(**rules)["batch"]["marker"], "answers": {"Nb C?": "Keep"}}, **rules)
+            after_answers(**rules)
+            calls()
+            out = proto("step", stdin={"records": {ids[2]: {"rationale": "R.", "ruleOwner": "o"}}}, **rules).stdout
+            events = [e for e in (json.loads(row) for row in (state / "0000-rules001.protocol" / "history.jsonl").read_text().splitlines()) if e.get("round") == out.split()[0]]
+            reasons = {e["question"]: e["reason"] for e in events if e["event"] == "deferred"}
+            if calls() or reasons != {ids[0]: "skip A for now", ids[1]: f"waits on {ids[0]}, which was deferred: skip A for now"} \
+                    or f"- {ids[0]} deferred (no board: noted here only)" not in out or f"- {ids[1]} deferred (no board: noted here only)" not in out:
+                raise ValueError(f"protocol defer: a boardless deferral is noted and files nothing:\n{out}\n{reasons}")
 
         if part == "context":
             # r17/r18: what a session was told is one record (`state['told']`), cleared by `protocol compacted`: the question list of a check pass once per check cycle, the open-item list once, the report formats once per
@@ -9518,13 +10540,71 @@ def validate_protocol(root: Path, part: str) -> None:
                     run_pass(**kwargs)
                 return found
 
-            # r13-q66: a `checked` line is one line of about 120 characters; the engine refuses one over 150 (the limit) and takes 150.
+            # r13-q66: a `checked` line is one line of about 120 characters; above that and within 250 (the limit) the report is accepted with
+            # one warning line per entry, over 250 it is refused, and a refused report prints no warning.
             to_check("Wordy?", **home)
             qid = staged["q"]
-            wordy = {"pass": "step-back", "updates": [], "checked": {qid: "x" * 151, "round": "short"}}
-            refused("step", stdin=wordy, needle="checked." + qid + ": 151 characters", **home)
-            proto("step", stdin={**wordy, "checked": {qid: "x" * 150, "round": "short"}}, **home)
+            wordy = {"pass": "step-back", "updates": [], "checked": {qid: "x" * 251, "round": "short"}}
+            refused("step", stdin=wordy, needle="checked." + qid + ": 251 characters", **home)
+            if "keep it to about" in proto("step", stdin=wordy, ok=False, **home).stderr:
+                raise ValueError("a refused report prints no warnings")
+            out = proto("step", stdin={**wordy, "checked": {qid: "x" * 250, "round": "y" * 121}}, **home).stdout
+            for needle in (f"checked.{qid} is 250 characters; keep it to about 120 (refused over 250)", "checked.round is 121 characters; keep it to about 120 (refused over 250)"):
+                if needle not in out:
+                    raise ValueError(f"a checked line in the band is accepted with a warning ({needle!r} missing):\n{out}")
+            if "keep it to about" in proto("step", stdin={**wordy, "checked": {qid: "x" * 120, "round": "short"}}, **home).stdout:
+                raise ValueError("a checked line at the target gets no warning")
+
+            # An update warns only for the fields it carries: an untouched long field is not warned again.
+            def update_out(**fields):
+                return proto("step", stdin={"pass": "step-back", "updates": [{"id": qid, **fields}], "checked": {"round": "short"}}, **home).stdout
+
+            def warned(out):
+                return [re.sub(r"^q\d+: ", "", line) for line in out.splitlines() if "keep it to about" in line]
+
+            long_options = [{"label": "Keep", "description": "d" * 151, "for": "for it", "against": "against it"}, {"label": "Drop", "description": "drop it", "for": "for it", "against": "against it"}]
+            got = warned(update_out(title="t" * 61, text="x" * 161, options=long_options))
+            if got != ["title is 61 characters; keep it to about 60 (refused over 75)", "text is 161 characters; keep it to about 160 (refused over 240)",
+                       "the description of option 'Keep' is 151 characters; keep it to about 150 (refused over 200)"]:
+                raise ValueError(f"an update in the band warns once per field it sets: {got}")
+            if warned(update_out(premises="Another premise.")):
+                raise ValueError("an update that leaves the long fields alone must not warn about them again")
+            if len(warned(update_out(title="t" * 62))) != 1:
+                raise ValueError("an update warns only for the field it sets")
+            # r9-q44: the goal check updates the root; it is presentation (the batch stays, no loop reruns).
+            update_out(root="A deeper cause; the end state without the guard.")
+            now = shown(**home)
+            stored = next(q for q in json.loads((session_dir / "state.json").read_text(encoding="utf-8"))["round"]["questions"] if q["id"] == qid)
+            if stored["root"] != "A deeper cause; the end state without the guard." or now["check"]["last"]["step-back"]["changes"] != 0:
+                raise ValueError(f"a pass may update a question's root, which counts no change: {now}")
+            refused("step", stdin={"pass": "step-back", "updates": [{"id": qid, "root": " "}], "checked": {"round": "short"}}, needle="`root` must be a non-empty string", **home)
             proto("abandon", **home)
+
+            # Above the target and within the limit a new question (Stage) is accepted with one warning line per field; at the target it gets none.
+            point = re.search(r"(pt\d+) \[pasted\]", proto("start", "round", "--no-board", str(ctx_notes), stdin={"points": ["Banded?"]}, **home).stdout).group(1)
+            proto("step", stdin={"classes": {point: "user"}}, **home)
+            proto("step", stdin={"select": [point]}, **home)
+            banded = proto("step", stdin={**ROUND_INFO, "questions": [question("y" * 161, title="t" * 61, options=[
+                {"label": "Keep", "description": "d" * 151, "for": "for it", "against": "against it"}, {"label": "B", "description": "d" * 150, "for": "for it", "against": "against it"}], **{"for": point})]}, **home).stdout
+            got = [re.sub(r"^q\d+: ", "", line) for line in banded.splitlines() if "keep it to about" in line]
+            if got != ["title is 61 characters; keep it to about 60 (refused over 75)", "text is 161 characters; keep it to about 160 (refused over 240)",
+                       "the description of option 'Keep' is 151 characters; keep it to about 150 (refused over 200)"]:
+                raise ValueError(f"a staged question in the band gets one warning per field, none at the target:\n{banded}")
+            proto("abandon", **home)
+
+            # r9-q47: the round's title warns over 60 and its overview over 160 (refused over 75 and 240), like a question's fields.
+            def round_band(title, overview):
+                point = re.search(r"(pt\d+) \[pasted\]", proto("start", "round", "--no-board", str(ctx_notes), stdin={"points": ["Banded?"]}, **home).stdout).group(1)
+                proto("step", stdin={"classes": {point: "user"}}, **home)
+                proto("step", stdin={"select": [point]}, **home)
+                out = proto("step", stdin={"round": {**ROUND_INFO["round"], "title": title, "overview": overview}, "questions": [question("Rounded?", **{"for": point})]}, **home).stdout
+                proto("abandon", **home)
+                return [line for line in out.splitlines() if line.startswith("round ") and "keep it to about" in line]
+
+            if round_band("t" * 61, "o" * 161) != ["round title is 61 characters; keep it to about 60 (refused over 75)", "round overview is 161 characters; keep it to about 160 (refused over 240)"]:
+                raise ValueError("a staged round in the band warns on its title and overview")
+            if round_band("t" * 60, "o" * 160):
+                raise ValueError("a round title and overview at the target get no warning")
 
             # r18-q120: every question gets the full set; the `stakes` field is gone.
             to_check("Full?", **home)
@@ -9643,30 +10723,38 @@ def validate_protocol(root: Path, part: str) -> None:
             refused("start", "round", "fx-a", "--no-board", str(ctx_notes), needle="not with --discussion or --no-board", **listing_session)
             configure()
 
-            # H: report formats once per step kind between compactions; a refused report repeats its format. The ask instructions
+            # H: report formats once per step kind between compactions; a refused report reprints only the formats the session was not told since its last compaction,
+            # and points at `protocol show` for the rest. The ask instructions
             # once; the dialog itself always.
             fmt = {"session": "0000-ctxfmt001", **home}
+            again = "The report format: `protocol show` prints it again."
+
+            def refused_told(stdin):
+                err = proto("step", stdin=stdin, ok=False, **fmt).stderr
+                if again not in err or "Report with `protocol step`" in err:
+                    raise ValueError(f"a refused report for a format the session was told points at `protocol show` and reprints nothing:\n{err}")
+
             first = proto("start", "round", "--no-board", str(ctx_notes), stdin={"points": ["Formats?"]}, **fmt).stdout
             if "Report with `protocol step`" not in first or '"classes"' not in first:
                 raise ValueError(f"the first Collect carries its report format:\n{first}")
-            refused("step", stdin={"classes": {"nope": "user"}}, needle='Report with `protocol step` (stdin JSON), e.g. {"classes"', **fmt)
+            refused_told(stdin={"classes": {"nope": "user"}})
             proto("abandon", **fmt)
             second = proto("start", "round", "--no-board", str(ctx_notes), stdin={"points": ["Again?"]}, **fmt).stdout
             if "Report with" in second:
                 raise ValueError(f"the report format of a step kind prints once between compactions:\n{second}")
-            refused("step", stdin={"classes": {"nope": "user"}}, needle='Report with `protocol step` (stdin JSON), e.g. {"classes"', **fmt)
+            refused_told(stdin={"classes": {"nope": "user"}})
             proto("step", stdin={"classes": {"pt2": "user"}}, **fmt)
-            refused("step", stdin={"select": ["pt9"]}, needle='Report with `protocol step` (stdin JSON), e.g. {"select"', **fmt)
+            refused_told(stdin={"select": ["pt9"]})
             proto("step", stdin={"select": ["pt2"]}, **fmt)
-            refused("step", stdin={"questions": []}, needle='Report with `protocol step` (stdin JSON), e.g. {"round"', **fmt)
+            refused_told(stdin={"questions": []})
             proto("step", stdin={**ROUND_INFO, "questions": [question("Again?", **{"for": "pt2"})]}, **fmt)
-            refused("step", stdin={"pass": "step-back", "updates": []}, needle="After the pass, report each change", **fmt)
+            refused_told(stdin={"pass": "step-back", "updates": []})
             ask = converge(**fmt)
             if "Record an answer the user types in chat" not in ask or "open the dialog" not in ask:
                 raise ValueError(f"the first ask prints the instructions and the dialog:\n{ask}")
             proto("answer", "--origin", "dialog", stdin={"marker": "round:r2:1", "answers": {"Again?": "Keep"}}, **fmt)
             proto("step", stdin={"pass": "challenge-rulings", "updates": [], "checked": ["the answer"]}, **fmt)
-            refused("step", stdin={"records": {}}, needle='Report with `protocol step` (stdin JSON), e.g. {"records"', **fmt)
+            refused_told(stdin={"records": {}})
             proto("step", stdin={"records": {"q1": {"rationale": "R.", "ruleOwner": "o"}}}, **fmt)
             to_check("Third?", **fmt)
             ask = converge(**fmt)
@@ -9679,6 +10767,10 @@ def validate_protocol(root: Path, part: str) -> None:
             proto("compacted", **fmt)
             if "Report with" not in proto("start", "round", "--no-board", str(ctx_notes), stdin={"points": ["After?"]}, **fmt).stdout:
                 raise ValueError("a compaction brings the report formats back")
+            proto("compacted", **fmt)
+            err = proto("step", stdin={"classes": {"nope": "user"}}, ok=False, **fmt).stderr
+            if 'Report with `protocol step` (stdin JSON), e.g. {"classes"' not in err or again in err:
+                raise ValueError(f"after a compaction a refused report reprints the format and does not point at `protocol show`:\n{err}")
             proto("abandon", **fmt)
             # Codex: the ask instructions once; later batches say how to answer in a clause with the marker.
             cdx = {"session": None, "env": {"CODEX_THREAD_ID": "0000-cdx00001", "CODEX_SESSION_ID": "0000-cdx00001", "HOME": str(installed)}}
@@ -9761,7 +10853,8 @@ def validate_protocol(root: Path, part: str) -> None:
                 return result.stdout
 
             def expect_scope(label, out, ids):
-                line = "This pass covers " + " ".join(ids) + ":" if ids else "Nothing changed since this pass last ran"
+                line = ("This pass covers " + " ".join(ids) + ": a `checked` entry (what you examined in it this run, one line of about 120 characters)"
+                        if ids else "Nothing changed since this pass last ran")  # the scope line names the target length
                 if line not in out:
                     label_fail(label, f"step text lacks {line!r}: {out[-600:]}")
 
@@ -9779,8 +10872,10 @@ def validate_protocol(root: Path, part: str) -> None:
                 got = start_scope(command, pending(**kwargs).get("id") if stamp is ... else stamp, **kwargs)
                 if got["covers"] != ids or got["explored"] != explored:
                     label_fail(label, f"scope verb: {got}, expected covers {ids} explored {explored}")
-                if ids and f"This pass covers {' '.join(ids)}:" not in got["text"] or explored and f"Give `explored` an entry for each of {' '.join(explored)} and no other." not in got["text"]:
+                if ids and f"This pass covers {' '.join(ids)}: a `checked` entry (what you examined in it this run, one line of about 120 characters)" not in got["text"] or explored and f"Give `explored` an entry for each of {' '.join(explored)} and no other." not in got["text"]:
                     label_fail(label, f"scope verb text: {got['text']!r}")
+                if ids and ("`root`" in got["text"]) != (command == "step-back"):
+                    label_fail(label, f"scope verb text: only a step-back pass names the `root` check: {got['text']!r}")
                 if stamp is ... and ids and explored is None:  # the pending pass's run (stamped as the console does): its report is checked against the same ids
                     expect_refused(f"{label}: the report check", report(command, {"round": "x"}), f"covers {' '.join(ids)}: no `checked` entry or update for {' '.join(ids)}", **kwargs)
                 return got
@@ -9989,11 +11084,11 @@ def validate_protocol(root: Path, part: str) -> None:
             ask = proto("step", stdin={}, **away).stdout
             if view["step"] != "ask" or view["batch"] is not None or view["pending"] is not None \
                     or "no dialog opens, nothing prints and the person is not asked" not in ask or "AskUserQuestion" in ask \
-                    or "run `session-lead-mode activate solo` first" not in ask \
+                    or "run `session activate solo` first" not in ask \
                     or f"- {q1}: fx-a? Recommendation: Keep (lean)" not in ask or "Text to show first" in ask:
                 raise ValueError(f"an away Ask opens no batch and asks for act or park per question:\n{ask}\n{view}")
             refused("step", stdin={"settle": {}}, needle=f"settle: no entry for {q1}", **away)
-            refused("step", stdin={"settle": {}}, needle='Report with `protocol step` (stdin JSON), e.g. {"settle": {"q1": "act", "<id>": "park"}}', **away)
+            refused("step", stdin={"settle": {}}, needle="The report format: `protocol show` prints it again.", **away)  # the ask text just printed the format
             refused("step", stdin={"settle": {q1: "act", q2: "later"}}, needle=f'settle.{q2}: "act" or "park"', **away)
             refused("step", stdin={"settle": {q1: "act", q2: "park", "q9": "act"}}, needle="settle: q9 is not waiting to be settled", **away)
             refused("answer", "--origin", "away", stdin={"marker": "round:r1:1", "answers": {}}, needle="origin 'away' is not accepted", **away)
@@ -10018,11 +11113,12 @@ def validate_protocol(root: Path, part: str) -> None:
             if "answer (away): Keep" not in asking or "away answer: the record also needs `reversal`" not in asking:
                 raise ValueError(f"Record asks the reversal of an away answer:\n{asking}")
             refused("step", stdin={"records": {q1: {"rationale": "Took fx-a.", "ruleOwner": "docs/x.md"}}}, needle="an away answer needs a `reversal`", **away)
+            refused("step", stdin={"records": {q1: {"rationale": "Took fx-a.", "ruleOwner": "docs/x.md", "reversal": ["undo it"]}}}, needle="`reversal` and `decision` are text", **away)
             calls()
             out = proto("step", stdin={"records": {q1: {"rationale": "Took fx-a.", "ruleOwner": "docs/x.md", "reversal": "board bd reopen fx-a"}}}, **away).stdout
             recorded = records_file.read_text(encoding="utf-8")
             made = [c["args"] for c in calls()]
-            if not any(args[:2] == ["record", "fx-a"] and args[3:] == ["--status", "needs_ratification"] for args in made) \
+            if not any(args[:3] == ["ruling", "record", "fx-a"] and args[4:] == ["--status", "needs_ratification"] for args in made) \
                     or "\n## Reversal\nboard bd reopen fx-a\n" not in recorded or "\nAway round (autopilot took the recommendation; no person answered), " not in recorded \
                     or "User (" in recorded or "Round r" not in out or f"- {q2} parked → fx-b: open and unassigned for the person" not in out:
                 raise ValueError(f"an away answer is recorded as needs_ratification with its reversal, from an away round:\n{recorded}\n{made}\n{out}")
@@ -10121,7 +11217,7 @@ def validate_protocol(root: Path, part: str) -> None:
             for args, needle in ((("start", "release"), "only the person approves a release"),
                                  (("start", "round", "--no-board", str(notes)), "--no-board is refused on autopilot")):
                 result = proto(*args, stdin={"points": ["x"]} if args[1] == "round" else None, ok=False, **away)
-                if needle not in result.stderr or "run `" + "session-lead-mode activate solo` first" not in result.stderr:
+                if needle not in result.stderr or "run `" + "session activate solo` first" not in result.stderr:
                     raise ValueError(f"{args} under autopilot is refused, naming the switch to solo: {result.stderr}")
             refused("pass", "--origin", "composer", stdin={"command": "release-round", "args": "", "pending": None},
                     needle="only the person approves a release", **away)
@@ -10345,6 +11441,7 @@ def run_group(name: str, root: Path) -> None:
         validate_console_contract(root)
     elif name == "prepass":
         validate_prepass(root)
+        validate_default_records(root)
     elif name.startswith("engine-"):
         validate_protocol(root, name.removeprefix("engine-"))
     else:

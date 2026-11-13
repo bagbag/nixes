@@ -1,4 +1,4 @@
-"""The session registry: session-lead-mode resolves sessions and owns the state dir."""
+"""The session registry: session resolves sessions and owns the state dir."""
 from __future__ import annotations
 
 import json
@@ -8,10 +8,10 @@ from pathlib import Path
 from .base import ProtocolError, REGISTRY, _call, env
 
 
-# Session and registry: session-lead-mode owns the resolution.
+# Session and registry: session owns the resolution.
 
 def state_root() -> Path:
-    """The registry's state dir; session-lead-mode owns its location."""
+    """The registry's state dir; session owns its location."""
     call = _call.get()
     if call.state_root is None:
         call.state_root = Path(registry('state-dir').strip())
@@ -22,13 +22,13 @@ def registry(*args: str) -> str:
     call = _call.get()
     result = subprocess.run(['bash', str(REGISTRY), *args], capture_output=True, text=True, env=call.env, cwd=call.cwd)
     if result.returncode != 0:
-        raise ProtocolError((result.stderr or result.stdout).strip() or f'session-lead-mode {args[0]} failed')
+        raise ProtocolError((result.stderr or result.stdout).strip() or f'session {args[0]} failed')
     return result.stdout
 
 
 def resolve_session(flag: str | None) -> tuple[str, dict]:
     """(session id, registry entry): --session, else CODEX_THREAD_ID, else the registered session whose actor
-    session-lead-mode derives from the environment."""
+    session derives from the environment."""
     if flag or env().get('CODEX_THREAD_ID'):
         session = flag or env()['CODEX_THREAD_ID']
         entry = json.loads(registry('show', session))

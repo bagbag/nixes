@@ -31,7 +31,9 @@ in
       home.file =
         storeLinks ".claude/hooks" "hooks/claude" (agentPackage.claudeHooks ++ agentPackage.claudeOwnHooks)
         // storeLinks ".codex/hooks" "hooks/codex" agentPackage.codexHooks
-        // storeLinks ".agents/bin" "bin" agentPackage.tools;
+        // lib.listToAttrs (
+          map (name: lib.nameValuePair ".agents/bin/${name}" { source = "${agentPackage.pinnedBin}/${name}"; }) agentPackage.tools
+        );
     }
   ];
 

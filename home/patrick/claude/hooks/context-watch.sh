@@ -3,7 +3,7 @@
 #
 # Every session gets baseline "compaction is near" warnings. Sessions that opt
 # into a mode get richer, mode-specific guidance. `/role` registers the
-# session's role (solo and autopilot have modes here) in session-lead-mode.
+# session's role (solo and autopilot have modes here) in session.
 #
 #   default:    no opt-in — last-warning rungs only (compaction imminent).
 #   solo: 35 42 50, then +5 up to 80 -> recommend compaction.
@@ -29,7 +29,7 @@ command -v jq >/dev/null 2>&1 || exit 0
 input=$(cat)
 settings="$HOME/.claude/settings.json"
 dir=/tmp/claude-context-watch
-session_lead=${AGENT_SESSION_LEAD_COMMAND:-$HOME/.agents/bin/session-lead-mode}
+session_cmd=${AGENT_SESSION_COMMAND:-$HOME/.agents/bin/session}
 
 # Read a value: env override wins, else settings.json at <jq-path>, else default.
 setting() {  # <jq-path> <env-override> <default>
@@ -45,7 +45,7 @@ event=$(jq -r '.hook_event_name // "PostToolUse"' <<<"$input")
 [[ -n "$session_id" && -n "$transcript" && -f "$transcript" ]] || exit 0
 
 mode=default
-active_mode=$(bash "$session_lead" get "$session_id" 2>/dev/null || true)
+active_mode=$(bash "$session_cmd" get "$session_id" 2>/dev/null || true)
 case "$active_mode" in
   autopilot | solo) mode=$active_mode ;;
 esac

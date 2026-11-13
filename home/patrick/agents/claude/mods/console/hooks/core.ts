@@ -2,18 +2,18 @@
 // declarations throughout: past an import, the engine follows $ only into those.
 import type { EngineInterface, ToolCallResult } from 'claude-code'
 
-import type { ConsoleAction, ConsoleBatch, ConsoleBoard, ConsoleCr, ConsolePassOrigin, ConsolePassRun, ConsolePending, ConsoleQueued, ConsoleRound, ConsoleSuggestion } from '../types'
+import type { ConsoleAction, ConsoleBatch, ConsoleBoard, ConsoleCr, ConsolePassOrigin, ConsolePassRun, ConsolePending, ConsoleQueued, ConsoleReviewing, ConsoleRound, ConsoleSuggestion } from '../types'
 
 import { boardItem, boardViews, decline, dropped, isRoundOpen, nudged, pass, PASS_COMMANDS, pending as readPending, readRole, RELEASE_COMMAND, ROUND_ROLES, setWorkers, show, stampRelease, START_COMMAND, startScope, stateDir, statusLine } from './engine'
 import type { ConsoleNudge } from './engine'
-import { pickRange } from './review'
+import { pickRange, readReviewEnd, readReviewTree } from './review'
 import type { Ran } from './review'
 import {
-  addPlaced, claimRefresh, getAskSent, getBoard, getDrawn, getPaneDismissed, getPass, getQueued, getReviewing, getRole, getRound, getTurnRunning, releaseRefresh, setAskSent, setBoard, setContinueAsked, setDrawn, setPass, setPrinted, setReviewing, setRole,
-  setRound, setRoundError, setStart, takeContinueAsked, takeRefreshAgain, updateOpened, updateQueued,
+  addPlaced, claimRefresh, getAskSent, getBoard, getDrawn, getPaneDismissed, getPass, getQueued, getReviewing, getRole, getRound, getTurnRunning, releaseRefresh, setAskSent, setBoard, setContinueAsked, setDrawn, setPass, setPrinted, setReviewEnd, setReviewing, setRole,
+  setRound, setRoundError, takeContinueAsked, takeRefreshAgain, updateOpened, updateQueued,
 } from './state'
 import {
-  CONTINUE_NO_ROUND, continueInHandText, continueText, declineFailedNote, acceptText, crTipFor, isCrAccepting, isWalkCr, itemSlot, missingReportText, openDialogText, questionListLine, questionListText, PROTOCOL_ARGS_DESCRIPTION, PROTOCOL_STDIN_DESCRIPTION, PROTOCOL_TOOL_DESCRIPTION, refreshText, returnText, STALE_DROP, stuckPassText, walkText,
+  CONTINUE_NO_ROUND, keepStartText, startAbandonedText, continueInHandText, continueText, declineFailedNote, acceptText, isCrAccepting, isWalkCr, itemSlot, missingReportText, openDialogText, questionListLine, questionListText, PROTOCOL_ARGS_DESCRIPTION, PROTOCOL_STDIN_DESCRIPTION, PROTOCOL_TOOL_DESCRIPTION, refreshText, returnText, STALE_DROP, stuckPassText, walkText,
 } from './words'
 
 type $ = EngineInterface
@@ -536,6 +536,8 @@ export async function refreshBoard($: $, ctx: Context): Promise<ConsoleBoard> {
   // The review tree's change request left the queue (landed, rejected): nothing is open any more.
   const reviewing = await getReviewing($)
   if (reviewing !== null && board.error === null && !board.crs.some(one => one.id === reviewing.cr)) await setReviewing($, null)
+  // The pane's "in review tree"/"behind" reads the tree's marker, which `board cr edits` moves as well.
+  await setReviewEnd($, (await getReviewing($)) === null ? null : await readReviewEnd(argv => gitRun($, argv), await $.session.cwd()))
   // Off the caller's path: the claim waits CLAIM_SETTLE_MS.
   $.clock.after(0, () => notifyIdleAgents($, ctx.session, board).catch(failOpen($, 'the idle-agent notification')))
   $.clock.after(0, () => notifyAcceptances($, ctx.session, before, board).catch(failOpen($, 'the accept notification')))
@@ -561,8 +563,8 @@ export async function refreshAll($: $): Promise<void> {
   }
 }
 
-async function gitRun($: $, argv: readonly string[]): Promise<Ran> {
-  const ran = await $.process.run(argv, { timeoutMs: 60_000 })
+async function gitRun($: $, argv: readonly string[], env?: Readonly<Record<string, string>>): Promise<Ran> {
+  const ran = await $.process.run(argv, { timeoutMs: 60_000, ...(env === undefined ? {} : { env: { ...env } }) })
   return { exitCode: ran.exitCode, stdout: ran.stdout, stderr: ran.stderr }
 }
 
@@ -645,7 +647,7 @@ async function registerTool($: $): Promise<void> {
   })
 }
 
-// Presses: await quick writes, start the run unawaited (the queue can pass the 10 s budget).
+// Presses: await quick console-state writes only; engine calls and the run go after the press returns (both can pass the 10 s budget).
 
 const runKey = (command: string, args: string): string => `${command} ${args}`.trim()
 
@@ -837,22 +839,50 @@ export async function stampReleaseRun($: $, ctx: Context, origin: 'composer' | '
   }
 }
 
-/** Runs `/command args` as the person's press; drops a repeat while the same run is queued. `onFailed` follows a run that failed. */
-export async function pressRun($: $, command: string, args: string, onFailed?: () => Promise<void>): Promise<void> {
+/** Runs `/command args` as the person's press; drops a repeat while the same run is queued. `launch` replaces the plain command run. */
+export async function pressRun($: $, command: string, args: string, launch?: () => Promise<unknown>): Promise<void> {
   const key = runKey(command, args)
   if (!(await claimRun($, key))) {
     $.ui.toast(`/${key} is already queued`)
     return
   }
+  // After the press returns: the engine call can wait on the board or the session's lock past the press's 10 s budget.
+  $.clock.after(0, () => startRun($, key, command, args, launch).catch(failOpen($, `starting /${command}`)))
+}
+
+/** pressRun's deferred part: the engine's record or stamp, then the run. */
+async function startRun($: $, key: string, command: string, args: string, launch?: () => Promise<unknown>): Promise<void> {
   if (command === RELEASE_COMMAND) await stampReleaseRun($, await context($), 'press', args)
   else await recordPass($, await context($), 'press', command, args)
   notePersonRun(command)
-  void $.command.run({ command, args }).catch(error => {
+  void (launch?.() ?? $.command.run({ command, args })).then(started => {
+    if (started === false) void releaseRun($, one => one === key)  // abandoned before it ran: the button works again
+  }, error => {
     takePersonRun(command)
     void releaseRun($, one => one === key)
     $.ui.toast(`console: /${command} failed: ${message(error)}`)
-    if (onFailed !== undefined) void onFailed().catch(failOpen($, `clearing the stored start after /${command}`))
   })
+}
+
+/**
+ * Compacts keeping the proposed round, then starts it (r9-q48); a skipped or failed compaction starts nothing, says so and returns false.
+ * The host refuses a compaction inside a command.run hook, so a typed start calls this on a later tick. The start runs through
+ * `$.command.run`, which skips this plugin's own hooks, so it does not come back to the compacting check.
+ */
+export async function compactThenStart($: $, args: string, title: string): Promise<boolean> {
+  const abandon = async (why: string) => {
+    takePersonRun(START_COMMAND)  // the typed or pressed start was noted and will not expand
+    await notice($, startAbandonedText(why, { command: START_COMMAND, args, title }))
+    return false
+  }
+  try {
+    const compacted = await $.session.compact({ instructions: keepStartText(title) })
+    if (compacted.skip !== undefined) return await abandon(`compaction skipped: ${compacted.skip}`)
+  } catch (error) {
+    return await abandon(`compaction failed: ${message(error)}`)
+  }
+  await $.command.run({ command: START_COMMAND, args })
+  return true
 }
 
 /** A session row's worker select: sets that session's count, without a model turn. */
@@ -880,19 +910,13 @@ export async function pressSubmit($: $, text: string, onFailed?: (error: unknown
 
 /**
  * A suggestion's [ Start ]. A round runs `/start-round <row>`, which starts that row of the stored proposal (the press is the
- * go-ahead, so no stamp); one that compacts first stores the command and runs /compact (no focus text), and the compaction hook
- * runs it once the compaction succeeded (register.tsx). Release Round and a compact-only proposal run their commands.
+ * go-ahead, so no stamp); a row that compacts first compacts, then starts (compactThenStart; typed, the command hook in register.tsx does the same). Release Round and a compact-only proposal run their commands.
  */
 export async function pressStart($: $, suggestion: ConsoleSuggestion): Promise<void> {
   if (suggestion.kind === 'release') return pressRun($, RELEASE_COMMAND, '')
   if (suggestion.kind === 'compact') return pressRun($, 'compact', '')
   const args = String(suggestion.number)
-  if (!suggestion.isCompacting) return pressRun($, START_COMMAND, args)
-  await setStart($, { command: START_COMMAND, args, title: suggestion.title, at: await $.clock.now() })
-  await pressRun($, 'compact', '', async () => {
-    await setStart($, null)
-    await notice($, `/compact failed: the next round (${suggestion.title}) was not started`)
-  })
+  return pressRun($, START_COMMAND, args, suggestion.isCompacting ? () => compactThenStart($, args, suggestion.title) : undefined)
 }
 
 /** Opens (or closes) a suggestion's leading questions inline below its row, each with its title; each listed id opens its item. */
@@ -942,14 +966,17 @@ let isReviewBusy = false
 async function crPress($: $, press: () => Promise<string | null>): Promise<void> {
   if (isReviewBusy) return
   isReviewBusy = true
-  try {
-    const said = await press()
-    if (said !== null) $.ui.toast(said)
-  } catch (error) {
-    $.ui.toast(`Change request: ${message(error)}`)
-  } finally {
-    isReviewBusy = false
-  }
+  // After the press returns: the board read, git and VS Code can pass the press's 10 s budget.
+  $.clock.after(0, async () => {
+    try {
+      const said = await press()
+      if (said !== null) $.ui.toast(said)
+    } catch (error) {
+      $.ui.toast(`Change request: ${message(error)}`)
+    } finally {
+      isReviewBusy = false
+    }
+  })
 }
 
 async function fillPrompt($: $, text: string): Promise<string | null> {
@@ -959,11 +986,11 @@ async function fillPrompt($: $, text: string): Promise<string | null> {
 }
 
 /** The change request as the board has it now; a press acts on that, not on the pane's last draw. Null (said) when it is not waiting for you any more. */
-async function waitingCr($: $, id: string): Promise<{ cr: ConsoleCr } | { said: string }> {
+async function waitingCr($: $, id: string): Promise<{ cr: ConsoleCr; board: ConsoleBoard } | { said: string }> {
   const board = await boardViews($, await $.session.id())
   if (board.error !== null) return { said: `Change request: ${board.error}` }
   const cr = board.crs.find(one => one.id === id)
-  return cr === undefined || cr.status !== 'needs_acceptance' ? { said: `Change request: ${id} is not waiting for you any more` } : { cr }
+  return cr === undefined || cr.status !== 'needs_acceptance' ? { said: `Change request: ${id} is not waiting for you any more` } : { cr, board }
 }
 
 /**
@@ -977,33 +1004,68 @@ export async function pressOpenCr($: $, id: string): Promise<void> {
     const { cr } = found
     if (isWalkCr(cr)) return fillPrompt($, walkText(cr))
     if (cr.tip === null || cr.baseTip === null) return `Change request: ${cr.id} has no branch tip to open`
-    const picked = await pickRange(argv => gitRun($, argv), await $.session.cwd(), { tip: cr.tip, baseTip: cr.baseTip })
+    const picked = await pickRange((argv, env) => gitRun($, argv, env), await $.session.cwd(), { tip: cr.tip, baseTip: cr.baseTip })
     if (!picked.ok || picked.open === undefined) return `Change request: ${picked.ok ? 'nothing opened' : picked.why}`
-    await setReviewing($, { cr: cr.id, tip: cr.tip, baseTip: cr.baseTip })
+    await setReviewing($, { cr: cr.id })
+    await setReviewEnd($, cr.tip)
     const opened = await $.process.run(['code', picked.open], { timeoutMs: 30_000 }).catch(error => ({ exitCode: 1, stderr: message(error) }))
     return opened.exitCode === 0 ? null : `Change request: ${cr.id} is set in ${picked.tree}; VS Code did not open it (${opened.stderr.trim()})`
   })
 }
 
-/** Accept: the lead's request, naming the tip you looked at (the review tree's when this request is open there). A design without a branch names none. */
+/** Open on a ratification: the range its request landed (fork point to tip) in the review tree, opened in VS Code. */
+export async function pressOpenRatification($: $, id: string): Promise<void> {
+  await crPress($, async () => {
+    const board = await boardViews($, await $.session.id())
+    if (board.error !== null) return `Ratification: ${board.error}`
+    const one = board.ratifications.find(other => other.id === id)
+    if (one === undefined) return `Ratification: ${id} is not waiting for you any more`
+    if (one.tip === null || one.baseTip === null) return `Ratification: ${id} has no landed range to open`
+    const picked = await pickRange((argv, env) => gitRun($, argv, env), await $.session.cwd(), { tip: one.tip, baseTip: one.baseTip })
+    if (!picked.ok || picked.open === undefined) return `Ratification: ${picked.ok ? 'nothing opened' : picked.why}`
+    await setReviewing($, null)  // the tree now holds a landed range, no request's
+    const opened = await $.process.run(['code', picked.open], { timeoutMs: 30_000 }).catch(error => ({ exitCode: 1, stderr: message(error) }))
+    return opened.exitCode === 0 ? null : `Ratification: ${one.id} is set in ${picked.tree}; VS Code did not open it (${opened.stderr.trim()})`
+  })
+}
+
+/**
+ * The review tree's edits of yours on this request, for Accept and Return (r15-q76): `tip` is the tree's marker, what you looked at
+ * plus the edits the board committed; `edits` while the tree holds edits no commit has yet (the prompt names them and the
+ * `board cr edits` line). Not open there: the request's own tip.
+ */
+async function reviewState($: $, cr: ConsoleCr): Promise<{ said: string } | { tip: string | null; edits: { tree: string; tip: string } | null }> {
+  const reviewing = await getReviewing($)
+  if (reviewing === null || reviewing.cr !== cr.id) return { tip: cr.tip, edits: null }
+  const found = await readReviewTree((argv, env) => gitRun($, argv, env), await $.session.cwd())
+  if (!found.ok) return { said: `Change request: ${found.why}` }
+  const state = found.state
+  if (state === null || state.end === null) return { said: `Change request: the review tree no longer holds ${cr.id}; Open it again` }
+  return { tip: state.end, edits: state.isClean ? null : { tree: state.tree, tip: state.end } }
+}
+
+/** Accept: the lead's request, naming the tip you looked at (the review tree's when this request is open there), and your review-tree edits when it holds any. A design without a branch names none. */
 export async function pressAcceptCr($: $, id: string): Promise<void> {
   await crPress($, async () => {
     const found = await waitingCr($, id)
     if ('said' in found) return found.said
-    const tip = crTipFor(found.cr, await getReviewing($))
-    return tip === null && found.cr.checkpoint !== 'user' ? `Change request: ${id} has no branch tip` : fillPrompt($, acceptText(found.cr, tip))
+    const state = await reviewState($, found.cr)
+    if ('said' in state) return state.said
+    return state.tip === null && found.cr.checkpoint !== 'user' ? `Change request: ${id} has no branch tip` : fillPrompt($, acceptText(found.cr, state.tip, state.edits))
   })
 }
 
-/** Return: the request with room for your changes; the lead takes it from there. */
+/** Return: the request with room for your changes, and your review-tree edits when it holds any; the lead takes it from there. */
 export async function pressReturnCr($: $, id: string): Promise<void> {
   await crPress($, async () => {
     const found = await waitingCr($, id)
-    return 'said' in found ? found.said : fillPrompt($, returnText(found.cr))
+    if ('said' in found) return found.said
+    const state = await reviewState($, found.cr)
+    return 'said' in state ? state.said : fillPrompt($, returnText(found.cr, state.edits))
   })
 }
 
-/** Refresh: the request for a review session; the session runs `board refresh`. */
+/** Refresh: the request for a review session; the session runs `board cr refresh`. */
 export async function pressRefreshCr($: $, id: string): Promise<void> {
   await crPress($, async () => {
     const found = await waitingCr($, id)

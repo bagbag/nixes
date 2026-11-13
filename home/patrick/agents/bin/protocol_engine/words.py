@@ -7,7 +7,7 @@ from __future__ import annotations
 import re
 
 from .base import (
-    ALL_LENSES, AWAY, BATCH, CHECK_CAP, DESCRIPTION_MAX, HEADER_MAX, LIST_COMMAND, PROPOSAL_ROUNDS, SEEDS, STRONG_CRITERIA, SUMMARY_MAX,
+    ALL_LENSES, AWAY, BATCH, CHECK_CAP, CHECKED_MAX, DESCRIPTION_MAX, HEADER_MAX, LIST_COMMAND, PROPOSAL_ROUNDS, SEEDS, STRONG_CRITERIA, SUMMARY_MAX,
     TEXT_LIMIT, TEXT_MAX, THINK_MORE, TITLE_MAX, cut, json_block, lines, plural
 )
 
@@ -116,13 +116,13 @@ def held_detail(q: dict) -> str:
 
 def pass_format(command: str) -> str:
     return lines(
-        'After the pass, report each change as a per-question update: changed fields, a new question (no id; it goes last, '
+        'After the pass, report each change as a per-question update: changed fields, a new question (the Stage fields, `root` included; no id; it goes last, '
         'or ahead of the question its `before` names), or '
         '{"id", "remove": true, "reason"}; report an empty list when nothing changed. Raise a change that would revise a '
         "user's ruling as a new question. "
         f'{WAITS_FOR} Name a hold you set for your own spike or review in `summary`. {MERGE_TEST} A merge is one rule question (`settles`: the keys it settles); split an item out when the rule\'s application to it is open. '
         f'A question that widens the round\'s scope: list the open items with `{LIST_COMMAND}`.',
-        'Key `checked` by question: for each id the step names as this pass\'s scope, what you examined in it this run, one line of about 120 characters (an update '
+        f'Key `checked` by question: for each id the step names as this pass\'s scope, what you examined in it this run, one line of about {CHECKED_MAX} characters (an update '
         'to it covers it too); `round` holds a round-wide note, the only entry an empty scope needs.',
         'Report with `protocol step` (stdin JSON), e.g. ' + json_block({
             'pass': command, 'updates': [{'id': 'q1', 'premises': '<revised premise>'}],
@@ -130,9 +130,15 @@ def pass_format(command: str) -> str:
             'summary': '<one line: what the pass found>'}))
 
 
-def pass_scope(ids: list[str], strong: list[str] | None) -> str:
-    """The pending pass's scope (r4-q15, q16); `strong`: the strong ids a challenge-rulings pass re-derives, None for other passes."""
-    head = (f"This pass covers {' '.join(ids)}: a `checked` entry (what you examined in it this run) or an update for each."
+ROOT_CHECK = (" Goal lens: check each question's `root`; rewrite a question whose cause lies outside its frame, and update its "
+              '`root`.')
+
+
+def pass_scope(ids: list[str], strong: list[str] | None, command: str | None = None) -> str:
+    """The pending pass's scope (r4-q15, q16); `strong`: the strong ids a challenge-rulings pass re-derives, None for other passes;
+    a step-back pass also checks each question's `root`."""
+    head = (f"This pass covers {' '.join(ids)}: a `checked` entry (what you examined in it this run, one line of about {CHECKED_MAX} characters) or an update for each."
+            + (ROOT_CHECK if command == 'step-back' else '')
             if ids else 'Nothing changed since this pass last ran: `checked` needs only a `round` note.')
     if strong is None:
         return head
@@ -141,10 +147,10 @@ def pass_scope(ids: list[str], strong: list[str] | None) -> str:
     return head + verdicts + ' List your own rulings in `rulings` (an empty list when there is none).'
 
 
-def start_scope(ids: list[str], strong: list[str] | None, explored: list[str]) -> str:
+def start_scope(ids: list[str], strong: list[str] | None, explored: list[str], command: str | None = None) -> str:
     """The scope as the pass starts (r9-q36), appended to its expanded skill text: pass_scope's line, which it supersedes, and
     for an options pass the ids `explored` covers."""
-    return (f"Use this scope, not one printed earlier. {pass_scope(ids, strong)}"
+    return (f"Use this scope, not one printed earlier. {pass_scope(ids, strong, command)}"
             + (f" Give `explored` an entry for each of {' '.join(explored)} and no other." if explored else ''))
 
 
@@ -299,7 +305,8 @@ def stage_instructions(round_id: str, selected: list[str], has_board: bool, prop
         'engine prints before its dialog, in your own words. Printed parts say what is decided and what each option means for the person '
         '(what they would see, what it costs), each thing once, in plain words; how it was found (sources, measurements beyond the deciding '
         'number, who said what) and how it gets built go to the record.',
-        '- Required: `problem` (what is decided and why now) and per option `for` and `against`; '
+        '- Required: `problem` (what is decided and why now), `root` (record-only, never printed: "<cause>; <end state>" from the decision protocol\'s '
+        'Root fix and End state, found before you frame the question; "does not apply: <why>" for a preference or naming question) and per option `for` and `against`; '
         'on every option of a code, API, naming or shape choice, an `example`: a few lines of the code as written under that option, printed below it (question-format.md).',
         '- Optional, printed only when present: `cases` (the concrete cases that must and must not work), `premises` (what it rests on), '
         '`rulings` (each ruling of yours with why it meets the goals without a material trade-off, its strongest alternative, what that fails and the evidence, which only the record keeps) and `note` (a term to define, anything else); '
@@ -313,7 +320,7 @@ def stage_instructions(round_id: str, selected: list[str], has_board: bool, prop
         '- `priorRulings` holds one entry per released ruling a recommendation rests on or Related linked: '
         '{"ruling", "verdict": "holds" or "fails", "why"}; judge the options as if no ruling existed first; an answer from this round stays a premise.',
         f'- Order: questions go out in the listed order, {BATCH} at a time.',
-        f'- Lengths in characters and who reads each field: round `summary` {SUMMARY_MAX} (pane header); `title` {TITLE_MAX} (pane row; a question\'s '
+        f'- Lengths in characters and who reads each field: round `summary` {SUMMARY_MAX} (pane header), `overview` {TEXT_MAX} (printed with the first batch); `title` {TITLE_MAX} (pane row; a question\'s '
         f"is also the board item's title); `text` {TEXT_MAX}, without a number (the engine numbers the dialog; it is the dialog "
         f"question and the board item's Question); `header` "
         f'{HEADER_MAX} (dialog chip); option `label`, `description` {DESCRIPTION_MAX}.')
@@ -331,7 +338,8 @@ def stage_example(first_selected: str | None) -> dict:
                            'settles': [], 'text': '<question>?',
                            'title': '<the decision as a short question>', 'header': '<topic noun>',
                            'kind': 'decision',
-                           'problem': '<what is decided and why now>', 'cases': '<optional: the cases that must and must not work>',
+                           'problem': '<what is decided and why now>', 'root': '<cause>; <end state>',
+                           'cases': '<optional: the cases that must and must not work>',
                            'options': [{'label': 'A', 'description': '…', 'for': '<for>', 'against': '<against>',
                                         'example': '<code under A>'},
                                        {'label': 'B', 'description': '…', 'for': '<for>', 'against': '<against>',
@@ -393,7 +401,10 @@ def not_asked(broken: dict[str, str]) -> str:
 EDIT_STDIN = '{"updates": [...], "quote": "<the user\'s exact words>"}'
 CHAT_STDIN = '{"question": "<q id>", "answer": "<the answer>", "quote": "<the user\'s exact words>"}'
 EDIT_WORDS = 'a question the edit adds or whose recommendation it changes is checked before it is asked.'
+FORMAT_AGAIN = 'The report format: `protocol show` prints it again.'  # a refused report left out the formats the session was told
 EDIT_FORMAT = f'Edit format: `protocol edit` with stdin {EDIT_STDIN}.'
+DEFER_STDIN = '{"question": "<id>", "quote": "<the user\'s exact words>", "until": "<optional: a date or duration bd reads, e.g. 2026-12-01 or +2w>"}'
+DEFER_FORMAT = f'Defer format: `protocol defer` with stdin {DEFER_STDIN}.'
 CHAT_FORMAT = f'Chat answer format: stdin {CHAT_STDIN}.'
 
 
@@ -405,7 +416,7 @@ def away_ask_intro(round_id: str) -> str:
     return (f"Round {round_id} · Ask (away: the role is autopilot, so no dialog opens, nothing prints and the person is not asked). "
             'Settle each question by the Authority classes of unattended.md: `act` takes the recommendation as the answer (Record then asks '
             'its rationale, rule owner and reversal), `park` leaves it open and unassigned on the board for the person; a question waiting '
-            'on a parked one parks with it. If the person is back, run `session-lead-mode activate solo` first.')
+            'on a parked one parks with it. If the person is back, run `session activate solo` first.')
 
 
 def settle_example(first: list[str]) -> dict:
@@ -497,14 +508,18 @@ def record_row(q: dict, note: str | None, prior: str | None = None) -> str:
                'written as needs_ratification)' if q['origin'] == AWAY else ''))
 
 
-def waits_on_deferred(premise: str, reason: str, outside: bool) -> str:
-    """Why a question whose premise waits on an outside result is deferred with it at Record (r8-q31)."""
-    return f"waits on {premise}, which " + (f'waits for {reason}' if outside else reason)
+def waits_on_deferred(premise: str, reason: str, kind: str) -> str:
+    """Why a question whose premise is deferred is deferred with it: `kind` is how the premise is deferred (r8-q31, r9-q40):
+    `outside` waits for a result, `person` was deferred by the person's words, `chain` waits on a question that is."""
+    return f"waits on {premise}, which " + {'outside': f'waits for {reason}', 'person': f'was deferred: {reason}', 'chain': reason}[kind]
 
 
-def record_deferred(qid: str, reason: str, outside: bool) -> str:
-    """A question Record defers because it still waits on an outside result (`outside`), or on a question that does."""
-    return f"- {qid}: deferred at Record, it " + (f'waits for {reason}' if outside else reason)
+def record_deferred(qid: str, found: dict) -> str:
+    """A question Record defers (`found` from record.deferrals): by the person's verb, on an outside result, or through a premise."""
+    if found['kind'] == 'person':
+        return (f"- {qid}: deferred with {found['with']}" if found.get('with')
+                else f"- {qid}: deferred{' (until ' + found['until'] + ')' if found['until'] else ''}: \"{found['reason']}\"")
+    return f"- {qid}: deferred at Record, it " + (f"waits for {found['reason']}" if found['kind'] == 'outside' else found['reason'])
 
 
 def revise_needs_decision(qid: str, item: str) -> str:
@@ -518,13 +533,13 @@ def record_intro(round_id: str) -> str:
 
 
 RECORD_GIVE = ('Give each a rationale and its rule owner; decision and alternatives default to the answer and the options '
-               'not chosen. A question the user deferred goes under `defer` with the reason.')
+               'not chosen. Record files the questions the user deferred (`protocol defer`) and those still waiting on an outside result.')
 
 
 def record_example(first: list[dict]) -> dict:
     return {'records': {q['id']: {'rationale': '<why, with provenance>', 'ruleOwner': '<path#anchor>',
                                   **({'reversal': '<the steps that undo it>'} if q['origin'] == AWAY else {})}
-                        for q in first}, 'defer': {}}
+                        for q in first}}
 
 
 def not_recorded(errors: list[str]) -> str:
@@ -540,7 +555,7 @@ def counts_unavailable(error) -> str:
 
 
 def supersede_exited(old: str, item: str, returncode: int, output: str) -> str:
-    return f"`board supersede {old} --with {item}` closed {old} but exited {returncode}: {output}"
+    return f"`board ruling supersede {old} --with {item}` closed {old} but exited {returncode}: {output}"
 
 
 def abandoned_records(kept: list[str]) -> str:
@@ -566,6 +581,8 @@ BOARD_LINE_LABELS = (('questions', 'open questions'), ('decided', 'decided await
 
 
 def closed_done(q: dict) -> str:
+    if q['recorded'] == 'deferred':
+        return f"- {q['id']} deferred" + (f" → {q['deferralItem']}" if q.get('deferralItem') else ' (no board: noted here only)')
     return (f"- {q['id']} → {q['recorded'] if q['recorded'] not in ('file',) else q['recordFile']}"
             + (f", closed {', '.join(q['closed'])}" if q.get('closed') else ''))
 
@@ -642,8 +659,9 @@ def answer_noted(qid: str, pick: str, note: str) -> str:
 
 
 ANSWER_ROUTES = ('Act on each part of the user\'s words above: an option it picks → the ["answer"] call with the option\'s '
-                 'label and that text as quote; a criterion → `protocol restart <ids>`; a change to the questions → '
-                 '`protocol edit` (updates + the quote); another request (explain, step back, ground, …) → run it; a reply that '
+                 'label and that text as quote; a criterion → `protocol restart <ids>`; a question → answer it '
+                 'as this turn\'s last text, correcting a wrong premise; restart only for a criterion that still holds after the answer; a change to the questions → '
+                 '`protocol edit` (updates + the quote); a deferral of a question → `protocol defer` (question, the quote, until?); another request (explain, step back, ground, …) → run it (a pass: its skill with the Skill tool, then its report); a reply that '
                  'changes a question (its recommendation included) → call a pass\'s skill on it, then report that pass. Restate '
                  'a part in one line when it could be read more than one way.')
 ANSWER_ROUTES_AGAIN = "Act on each part of the user's words above by the routes you were given."  # r13-q79; the full note again after a compaction
@@ -731,7 +749,7 @@ def log_text(event: dict) -> str | None:
         'stamped': f"/release-round ({e.get('origin')}): approves if the checks hold",
         'owners-checked': f"owners checked: {plural(e.get('written') or 0, 'written path')}",
         # a clean release without closes is "released <ids>" (release-done) alone
-        'board-release': f"board release {ids('records')}" + (f" closing {ids('closes')}" if e.get('closes') else '') + (f": exit {e.get('exit')}" if e.get('exit') else '')
+        'board-release': f"board ruling release {ids('records')}" + (f" closing {ids('closes')}" if e.get('closes') else '') + (f": exit {e.get('exit')}" if e.get('exit') else '')
         if e.get('exit') or e.get('closes') else None,
         'superseded': f"superseded {e.get('old')} by {e.get('new')}", 'release-done': f"released {ids('records')}", 'selected': f"selected {ids('selected')}", 'staged': f"staged {ids('questions')}",
         'related': f"{e.get('question')}: {len(e.get('hits') or [])} related items",
@@ -742,7 +760,7 @@ def log_text(event: dict) -> str | None:
         'cap': f"cycle cap at {e.get('cycle')}" + (': the questions park' if e.get('away') else ''), 'cap-decision': f"cap: {e.get('choice')}",
         'settled': f"away: acted {ids('acted')}, parked {ids('parked')}", 'parked': f"parked {e.get('question')} → {e.get('board')}",
         'batch-withdrawn': f"batch {batch_number(e.get('marker'))} withdrawn for updates", 'recorded': f"recorded {e.get('question')} → {e.get('board') or 'file'}",
-        'deferred': f"deferred {e.get('question')}", 'released': f"released {ids('items')}",
+        'deferred': f"deferred {e.get('question')}", 'defer': f"deferred {ids('questions')} (your words)", 'released': f"released {ids('items')}",
         'refused': f"refused {e.get('verb')}: {(e.get('error') or '')[:90]}", 'removed': f"removed {e.get('question')}",
         'edited': f"edited {ids('questions')} (your words)",
         'checking': f"{ids('questions')}: " + ('challenge-rulings on the raised strong mark' if e.get('kind') == 'raised'
@@ -919,7 +937,7 @@ def blocker_waits(blockers: list[str], found: dict) -> str:
 
 TOUCHES_HINT = ('touches: "own" (only your own rationale, evidence, a clause the chosen option did not state, or a correction '
                 "that follows a later decision of the user's in the set, which you name: the record stays, revised and shown as revised at "
-                'approval; give `file`, the path of the corrected record text, which the engine writes with `board record`, and '
+                'approval; give `file`, the path of the corrected record text, which the engine writes with `board ruling record`, and '
                 'a scoped step-back and ground pass check it before the approval) or "decision" (what the user decided: '
                 'the record leaves the set for a round); unsure is decision.')
 
@@ -959,7 +977,7 @@ def approval_title(label: str) -> str:
 
 
 APPROVE_HEADER = 'Release'
-APPROVE_DESCRIPTION = 'Owner writes, then board release'
+APPROVE_DESCRIPTION = 'Owner writes, then board ruling release'
 APPROVE_FILES_DESCRIPTION = 'Owner writes stay uncommitted for you, then the Released line goes into each record file'
 HOLD_DESCRIPTION = 'Nothing releases; the records stay decided. Say why: a round takes what you held'
 
@@ -984,7 +1002,7 @@ def board_exited(argv: list[str], returncode: int, output: str) -> str:
 
 
 def supersede_failed(old: str, new: str, returncode: int, output: str) -> str:
-    return f"`board supersede {old} --with {new}` exited {returncode}: " + output
+    return f"`board ruling supersede {old} --with {new}` exited {returncode}: " + output
 
 
 def statuses_unavailable(error) -> str:
@@ -1004,7 +1022,7 @@ def owners_intro(round_id: str, files: bool = False) -> str:
         f"Release {round_id} · Owner writes (decide.md Release 5): write each rule into its one owner, replacing the text it supersedes. "
         "A rule a topic's design-target doc or a project's convention owner (coding style, module authoring) states is written now, not pending; "
         'only READMEs, other skills and source may be pending.',
-        "Name each path, with its anchor, in the record's `## Rule owner` (rewrite the record with `board record <id> <file>`)."
+        "Name each path, with its anchor, in the record's `## Rule owner` (rewrite the record with `board ruling record <id> <file>`)."
         if not files else
         "Name each path, with its anchor, in the record file's `## Rule owner`. Relative paths start at the directory the release "
         'started in. Owner writes stay uncommitted for the user: no commit by the engine or the session. A `pending` item needs a board.',
@@ -1113,7 +1131,7 @@ def hit_class_row(name: str, meaning: str) -> str:
 
 def unlinked_revisions(unlinked: list[dict]) -> str:
     return ("Unlinked revisions the set's texts name (`board check`; a question missed them): "
-            + '; '.join(f"{row['id']} {row['word']} {row['other']}: `board supersede {row['old']} --with {row['new']}`"
+            + '; '.join(f"{row['id']} {row['word']} {row['other']}: `board ruling supersede {row['old']} --with {row['new']}`"
                         for row in unlinked) + '. Treat each as a `revises` hit of the record that replaces the other.')
 
 
@@ -1127,7 +1145,7 @@ def not_closed(rid: str, items: list[str]) -> str:
             'record it changes at Re-check (relate) or replace it (supersedes).')
 
 
-BOARD_CHECK_NAMES = ('Name the supersedes and the answered questions: the engine runs `board supersede` and closes those questions '
+BOARD_CHECK_NAMES = ('Name the supersedes and the answered questions: the engine runs `board ruling supersede` and closes those questions '
                      'after the release ("Answered by released <record>"); every other action is yours. A ruling the check changes '
                      f'goes under `changed` with its reach and, when contained, what it {TOUCHES_HINT}')
 

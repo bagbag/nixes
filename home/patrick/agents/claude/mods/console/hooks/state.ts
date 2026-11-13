@@ -5,7 +5,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface } from 'claude-code'
 
-import type { ConsoleBoard, ConsoleLenses, ConsoleReviewing, ConsoleOpened, ConsolePassRun, ConsolePersonOrigin, ConsolePlaced, ConsoleQueued, ConsoleRefresh, ConsoleRole, ConsoleRound, ConsoleSection, ConsoleStart, ConsoleDeferred } from '../types'
+import type { ConsoleBoard, ConsoleLenses, ConsoleReviewing, ConsoleReviewTree, ConsoleOpened, ConsolePassRun, ConsolePersonOrigin, ConsolePlaced, ConsoleQueued, ConsoleRefresh, ConsoleRole, ConsoleRound, ConsoleSection, ConsoleDeferred } from '../types'
 
 import { isRoundOpen } from './engine'
 
@@ -17,8 +17,9 @@ const roundState = atom({ plugin: 'console', key: 'round' } as const, null, { sh
 const roundErrorState = atom({ plugin: 'console', key: 'roundError' } as const, null)
 const printedState = atom({ plugin: 'console', key: 'printed' } as const, null)
 const askSentState = atom({ plugin: 'console', key: 'askSent' } as const, null)
-const boardState = atom({ plugin: 'console', key: 'board' } as const, null, { shape: 'board-10' })
-const reviewingState = atom({ plugin: 'console', key: 'reviewing' } as const, null, { shape: 'reviewing-2' })
+const boardState = atom({ plugin: 'console', key: 'board' } as const, null, { shape: 'board-11' })
+const reviewingState = atom({ plugin: 'console', key: 'reviewing' } as const, null, { shape: 'reviewing-3' })
+const reviewEndState = atom({ plugin: 'console', key: 'reviewEnd' } as const, null as string | null)
 const passState = atom({ plugin: 'console', key: 'pass' } as const, null, { shape: 'pass-5' })
 const queuedState = atom({ plugin: 'console', key: 'queued' } as const, [], { shape: 'queued-2' })
 const gateState = atom({ plugin: 'console', key: 'gate' } as const, [], { shape: 'gate-1' })
@@ -30,7 +31,6 @@ const continueAskedState = atom({ plugin: 'console', key: 'isContinueAsked' } as
 const expandedState = atom({ plugin: 'console', key: 'expanded' } as const, [] as ConsoleSection[], { shape: 'expanded-1' })
 
 const openedState = atom({ plugin: 'console', key: 'opened' } as const, null, { shape: 'opened-4' })
-const startState = atom({ plugin: 'console', key: 'start' } as const, null, { shape: 'start-2' })
 const deferredState = atom({ plugin: 'console', key: 'deferred' } as const, [] as ConsoleDeferred[], { shape: 'deferred-1' })
 
 const personOriginState = atom({ plugin: 'console', key: 'personOrigin' } as const, null as ConsolePersonOrigin | null)
@@ -58,7 +58,6 @@ export async function setDrawn($: $, value: boolean): Promise<void> { await upda
 export async function getRound($: $): Promise<ConsoleRound | null> { return read($, roundState) }
 export async function setRound($: $, value: ConsoleRound | null): Promise<void> {
   await update($, roundState, () => value)
-  if (isRoundOpen(value)) await setStart($, null)  // a round started: the stored start is moot
 }
 
 export async function getRoundError($: $): Promise<string | null> { return read($, roundErrorState) }
@@ -75,9 +74,18 @@ export async function setAskSent($: $, value: string | null): Promise<void> { aw
 export async function getBoard($: $): Promise<ConsoleBoard | null> { return read($, boardState) }
 export async function setBoard($: $, value: ConsoleBoard | null): Promise<void> { await update($, boardState, () => value) }
 
-/** What the review tree holds, as the person last opened it. */
+/** The change request the person last opened in the review tree. */
 export async function getReviewing($: $): Promise<ConsoleReviewing | null> { return read($, reviewingState) }
 export async function setReviewing($: $, value: ConsoleReviewing | null): Promise<void> { await update($, reviewingState, () => value) }
+
+/** The review tree's marker as last read (a refresh, an Open); the pane's status only, a press reads the tree itself. */
+export async function setReviewEnd($: $, value: string | null): Promise<void> { await update($, reviewEndState, () => value) }
+
+/** The review tree as the pane shows it: its change request and marker; null while none is open. */
+export async function getReviewTree($: $): Promise<ConsoleReviewTree | null> {
+  const reviewing = await read($, reviewingState)
+  return reviewing === null ? null : { cr: reviewing.cr, end: await read($, reviewEndState) }
+}
 
 export async function getPass($: $): Promise<ConsolePassRun | null> { return read($, passState) }
 export async function setPass($: $, value: ConsolePassRun | null): Promise<void> { await update($, passState, () => value) }
@@ -97,8 +105,6 @@ export async function toggleExpanded($: $, section: ConsoleSection): Promise<voi
 }
 
 /** The start message waiting for a compaction (the suggestion's Start with compact); null when none. */
-export async function getStart($: $): Promise<ConsoleStart | null> { return read($, startState) }
-export async function setStart($: $, value: ConsoleStart | null): Promise<void> { await update($, startState, () => value) }
 
 /** Built-in commands the person sent during the running turn; taking them empties the list. */
 export async function deferCommand($: $, command: ConsoleDeferred): Promise<void> { await update($, deferredState, all => [...all, command]) }

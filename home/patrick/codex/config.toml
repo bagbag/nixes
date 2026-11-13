@@ -2,3 +2,9 @@
 max_concurrent_threads_per_session = 8
 # Lets specialists (architect, review, verify) delegate discovery; the default blocks nested spawns.
 max_depth = 2
+
+# Agent scratch folders and board-less decision records live outside the repositories (r15-q71, q73);
+# workspace-write sandboxes refuse them without these roots (probed with codex sandbox: `~` expands, `$HOME` does not;
+# a missing root is fine and can be created inside the sandbox).
+[sandbox_workspace_write]
+writable_roots = ["~/.local/state/agents/scratch", "~/.local/share/agents/decisions"]

@@ -2,7 +2,7 @@
 // description, notes on tool results, compaction instructions). Lens names and focus follow
 // skills/step-back/SKILL.md and skills/ground/SKILL.md, which own them: typed name = label in
 // lowercase with hyphens.
-import type { ConsoleBoard, ConsoleCount, ConsoleCr, ConsoleItemSlot, ConsoleQuestion, ConsoleReviewing, ConsoleRole, ConsoleRound, ConsoleSuggestion } from '../types'
+import type { ConsoleBoard, ConsoleCount, ConsoleCr, ConsoleItemSlot, ConsoleQuestion, ConsoleReviewTree, ConsoleRole, ConsoleRound, ConsoleSuggestion } from '../types'
 
 import { isRoundOpen, START_COMMAND } from './engine'
 
@@ -92,7 +92,20 @@ export function protocolCallText(input: unknown): string {
   return args.join(' ') || 'protocol'
 }
 
-/** The protocol tool's result in one line: the engine's headline, its first line (for answers, the note's). */
+/** A failed call's reason in one line: the result opens `protocol exited N.`, then the engine's stderr (`protocol: <reason>` on a refusal exit 1;
+ * argparse's usage text ending `protocol: error: <what>` on exit 2). Null when the result is not such a failure. */
+function protocolFailureText(text: string): string | null {
+  const failed = /^protocol exited (\d+)\.\n\n/.exec(text)
+  if (failed === null) return null
+  const body = text.slice(failed[0].length).split('\n').map(line => line.trim()).filter(line => line !== '' && line !== 'stderr:')
+  const head = body[0]
+  if (head === undefined) return null
+  if (failed[1] === '1') return `refused: ${head.replace(/^protocol: /, '')}`
+  if (failed[1] === '2') return `usage error: ${(body.find(line => line.startsWith('protocol: error: ')) ?? head).replace(/^protocol: error: /, '')}`
+  return null
+}
+
+/** The protocol tool's result in one line: the engine's headline, its first line (for answers, the note's); a failed call, its reason. */
 export function protocolResultText(output: unknown): string {
   let text = typeof output === 'string' ? output
     : typeof output === 'object' && output !== null && typeof (output as { result?: unknown }).result === 'string' ? (output as { result: string }).result
@@ -103,7 +116,7 @@ export function protocolResultText(output: unknown): string {
   } catch {
     // not JSON: the engine's text
   }
-  return text.split('\n').find(line => line.trim() !== '') ?? ''  // the row truncates at the terminal's width
+  return protocolFailureText(text) ?? text.split('\n').find(line => line.trim() !== '') ?? ''  // the row truncates at the terminal's width
 }
 
 /** A question's recommendation with its backing: `lean (unverified: …): Keep`, `strong: Keep (noAssumptions true: …)`. */
@@ -250,10 +263,10 @@ export const stuckPassText = (command: string, args: string): string => `The rou
 
 export const PROTOCOL_TOOL_DESCRIPTION = [
   "Runs the protocol engine for this session's round (`protocol <args>`): one call per step, per-question updates as JSON on stdin; the output is the next step.",
-  'Read: ["show","--json"], ["show"], ["show","q3"] (that question whole), ["status","--line"], ["history"], ["next"].',
+  'Read: ["show","--json"], ["show"], ["show","q3"] (that question whole), ["status","--line"], ["history"], ["next"], ["help"] (every verb with an example).',
   'Record an answer the user typed in chat: ["answer"] with stdin {"question","answer","quote"}, the quote being the user\'s exact words.',
   'Apply a change the user asked for to the questions: ["edit"] with stdin {"updates","quote"}, the quote being the user\'s exact words.',
-  'Leave --session, --origin and recording dialog answers, declines and pass runs to the console.',
+  'Defer a question the user asked to put off: ["defer"] with stdin {"question","quote","until"?}, the quote being the user\'s exact words; its dependents go with it.',
 ].join(' ')
 export const PROTOCOL_ARGS_DESCRIPTION = 'The verb and its arguments, e.g. ["start","round"], ["step"] or ["show","--json"]'
 export const PROTOCOL_STDIN_DESCRIPTION = 'JSON text for the verb (per-question updates), when it reads stdin'
@@ -370,11 +383,18 @@ export const crRowStageText = (cr: ConsoleCr): string =>
 
 const CHECK_WORDS: Record<ConsoleCr['check']['state'], string> = { current: 'checks current', stale: 'stale', conflict: 'conflict', failed: 'checks failed', unchecked: 'unchecked' }
 
-/** The check state as a word; null while the change request has not reached review and nothing ran, and for a design checkpoint with no check (`board land --checkpoint` ignores checks). */
+/** The check state as a word; null while the change request has not reached review and nothing ran, and for a design checkpoint with no check (`board cr land --checkpoint` ignores checks). A targeted or no-gate result says so (r15-q78). */
 export function crCheckText(cr: ConsoleCr): string | null {
   if (cr.check.state === 'unchecked' && (cr.checkpoint === 'user' || (cr.status !== 'in_review' && cr.status !== 'needs_acceptance'))) return null
-  return CHECK_WORDS[cr.check.state]
+  const word = CHECK_WORDS[cr.check.state]
+  if (cr.check.kind === 'full' || cr.check.state === 'unchecked') return word
+  if (cr.check.kind === 'none') return cr.check.state === 'current' ? 'no check run' : word
+  return cr.check.state === 'current' ? 'targeted check current' : cr.check.state === 'failed' ? 'targeted check failed' : word
 }
+
+/** What the targeted or no-gate result was: the command it ran, or the reason none ran; null for a full check. */
+export const crCheckKindText = (cr: ConsoleCr): string | null =>
+  cr.check.kind === 'targeted' ? `ran: ${cr.check.command ?? '?'}` : cr.check.kind === 'none' ? `no check: ${cr.check.reason ?? '?'}` : null
 
 /** The row's failure word: how many failures are new; null while no comparison ran. */
 export const crNewCountText = (cr: ConsoleCr): string | null => cr.check.newFailures === null ? null : `${cr.check.newFailures.length} new`
@@ -383,13 +403,13 @@ export const crNewCountText = (cr: ConsoleCr): string | null => cr.check.newFail
 export const crQuietMarks = (cr: ConsoleCr, prefix: string | null = null): string[] => crMarks(cr, prefix).filter(mark => !mark.isProblem).map(mark => mark.text)
 
 /** The review tree's state for this request: null while it is not the one open there. */
-export const crTreeText = (cr: ConsoleCr, reviewing: ConsoleReviewing | null): string | null =>
-  reviewing?.cr !== cr.id ? null : reviewing.tip === cr.tip ? 'in review tree' : 'review tree behind'
+export const crTreeText = (cr: ConsoleCr, reviewing: ConsoleReviewTree | null): string | null =>
+  reviewing?.cr !== cr.id ? null : reviewing.end === cr.tip ? 'in review tree' : 'review tree behind'
 
 /** The opened summary's details line for a change request: the accept stage the row leaves out, look, view, failure counts, then the quiet marks and the review tree's state; null when none is known. */
-export function crDetailsText(cr: ConsoleCr, reviewing: ConsoleReviewing | null, prefix: string | null = null): string | null {
+export function crDetailsText(cr: ConsoleCr, reviewing: ConsoleReviewTree | null, prefix: string | null = null): string | null {
   const { baseCount, tipCount } = cr.check
-  const parts = [isCrAccepting(cr) ? crStageText(cr) : null, crLookText(cr), baseCount === null || tipCount === null ? null : `base ${baseCount}, tip ${tipCount}`, ...crQuietMarks(cr, prefix), crTreeText(cr, reviewing)].filter(part => part !== null)
+  const parts = [isCrAccepting(cr) ? crStageText(cr) : null, crLookText(cr), baseCount === null || tipCount === null ? null : `base ${baseCount}, tip ${tipCount}`, crCheckKindText(cr), ...crQuietMarks(cr, prefix), crTreeText(cr, reviewing)].filter(part => part !== null)
   return parts.length === 0 ? null : parts.join(' · ')
 }
 
@@ -412,6 +432,9 @@ export function crFailuresText(cr: ConsoleCr): string | null {
   const named = newFailures.slice(0, 3).join(', ')
   return `${newFailures.length} new: ${named}${newFailures.length > 3 ? ', …' : ''}${counts}`
 }
+
+/** The request's row mark while the review tree holds it (only a deciding session that claims it refreshes it); null otherwise. */
+export const crHeldText = (cr: ConsoleCr): string | null => cr.heldByReviewTree ? 'held by your review tree' : null
 
 /** What holds the request up besides its check, each with its colour: setup failed, review stale (waiting for its Accept), land blocked (paths, first three), lands with its base. */
 export function crMarks(cr: ConsoleCr, prefix: string | null = null): { text: string; isProblem: boolean }[] {
@@ -449,15 +472,20 @@ export const isCrAccepting = (cr: ConsoleCr): boolean => cr.status === 'needs_ac
 /** Refreshing is review work: offered only on the request the board marks as refresh work, in a session that pulls reviews. */
 export const canRefreshCr = (cr: ConsoleCr, pulls: readonly string[]): boolean => cr.refreshWork && pulls.includes('review')
 
-/** The tip a request names: the one in the review tree for this request when it is open, else the board's current tip. */
-export const crTipFor = (cr: ConsoleCr, reviewing: ConsoleReviewing | null): string | null => reviewing?.cr === cr.id ? reviewing.tip : cr.tip
+/** Your review-tree edits a press carries: the tree and the tip they were made against. */
+export type ReviewEditsRef = { tree: string; tip: string }
 
-/** The Accept request for the lead (decide.md Accept), naming the tip it was looked at in so a moved branch is refused. A design without a branch has no tip to name. */
-export function acceptText(cr: ConsoleCr, tip: string | null): string {
+/** The line the session runs to read the edits (and with --commit, to commit them: decide.md step 4). */
+export const editsLine = (cr: ConsoleCr, edits: ReviewEditsRef): string => `board cr edits ${cr.id} --from ${edits.tree} --tip ${edits.tip}`
+
+/** The Accept request for the lead (decide.md Accept), naming the tip it was looked at in so a moved branch is refused, and the edits you made in the review tree. A design without a branch has no tip to name. */
+export function acceptText(cr: ConsoleCr, tip: string | null, edits: ReviewEditsRef | null = null): string {
   if (cr.checkpoint === 'user') return `Accept the design of ${cr.id} (${cr.title})${tip === null ? '' : ` at ${short(tip)}`}: planning continues in the same request, nothing lands.`
-  return `Accept ${cr.id} (${cr.title}) at ${short(tip ?? '')}: land it.`
+  const accept = `Accept ${cr.id} (${cr.title}) at ${short(tip ?? '')}: land it.`
+  return edits === null ? accept : `${accept} I edited it in the review tree ${edits.tree}: read my edits with \`${editsLine(cr, edits)}\`, check and commit them as decide.md says, then land.`
 }
-export const returnText = (cr: ConsoleCr): string => `Return ${cr.id} (${cr.title}): `
+export const returnText = (cr: ConsoleCr, edits: ReviewEditsRef | null = null): string =>
+  edits === null ? `Return ${cr.id} (${cr.title}): ` : `Return ${cr.id} (${cr.title}) with my edits from the review tree ${edits.tree}, which you commit without a check (\`${editsLine(cr, edits)}\`): `
 
 /** Whether the walk-through is the way in: a design (no branch to open) or a result view. Code opens in the review tree. */
 export const isWalkCr = (cr: ConsoleCr): boolean => cr.checkpoint === 'user' || cr.view === 'result'
@@ -481,14 +509,14 @@ export const crPriorityHint = (cr: ConsoleCr, prefix: string | null): string | n
 export const fitText = (value: string, width: number): string => value.length <= width ? value : `${value.slice(0, Math.max(1, width - 1)).trimEnd()}…`
 
 /** One change request as a text line: state only, since a text reader presses nothing. */
-export function crLine(cr: ConsoleCr, depth: number, reviewing: ConsoleReviewing | null, prefix: string | null = null): string {
-  const tree = reviewing?.cr === cr.id ? (reviewing.tip === cr.tip ? 'in review tree' : 'review tree behind') : null
-  const parts = [crStageText(cr), crPriorityText(cr), crUnblocksText(cr), cr.milestone, crCheckText(cr), crFailuresText(cr), crLookText(cr), tree, cr.holder === null ? null : `held by ${cr.holder}`].filter(part => part !== null)
+export function crLine(cr: ConsoleCr, depth: number, reviewing: ConsoleReviewTree | null, prefix: string | null = null): string {
+  const tree = crTreeText(cr, reviewing)
+  const parts = [crStageText(cr), crPriorityText(cr), crUnblocksText(cr), cr.milestone, crCheckText(cr), crFailuresText(cr), crLookText(cr), tree, crHeldText(cr), cr.holder === null ? null : `held by ${cr.holder}`].filter(part => part !== null)
   return `${'  '.repeat(depth + 1)}${displayId(cr.id, prefix)}  ${cr.title} · ${parts.join(' · ')}`
 }
 
 /** `/console` as text: what the pane shows, for a bridge client or a narrow terminal. */
-export function consoleText(role: ConsoleRole, board: ConsoleBoard | null, round: ConsoleRound | null, isRoundRole: boolean, offered: readonly ConsoleSuggestion[], reviewing: ConsoleReviewing | null = null): string {
+export function consoleText(role: ConsoleRole, board: ConsoleBoard | null, round: ConsoleRound | null, isRoundRole: boolean, offered: readonly ConsoleSuggestion[], reviewing: ConsoleReviewTree | null = null): string {
   const prefix = board?.prefix ?? null
   const shown = (id: string) => displayId(id, prefix)
   const lines: string[] = [`Board · ${role.role} ${role.actor}${board?.isMissing === true ? ' · no board' : ''}`]

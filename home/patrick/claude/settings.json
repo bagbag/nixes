@@ -15,7 +15,12 @@
     "sessionUrl": false
   },
   "includeGitInstructions": false,
-  "model": "opus",
+  "permissions": {
+    "allow": [
+      "Edit(~/.local/state/agents/scratch/**)",
+      "Edit(~/.local/share/agents/decisions/**)"
+    ]
+  },
   "disableClaudeAiConnectors": true,
   "hooks": {
     "SessionStart": [
@@ -28,7 +33,7 @@
           },
           {
             "type": "command",
-            "command": "bash \"$HOME/.agents/bin/session-lead-mode\" alive",
+            "command": "bash \"$HOME/.agents/bin/session\" alive",
             "timeout": 10
           }
         ]
@@ -76,7 +81,7 @@
           {
             "type": "command",
             "command": "bash \"$HOME/.claude/hooks/session-register.sh\"",
-            "if": "Bash(*session-lead-mode*)",
+            "if": "Bash(*bin/session*)",
             "timeout": 10
           },
           {

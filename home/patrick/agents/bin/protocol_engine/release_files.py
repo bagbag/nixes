@@ -13,7 +13,7 @@ from .engine import Context, fail
 from .away import SWITCH_TO_SOLO
 
 
-# A no-board release (r27-q243) runs the board release's steps on record files: the board check is skipped, the owner writes
+# A no-board release (r27-q243) runs the board ruling release's steps on record files: the board check is skipped, the owner writes
 # stay uncommitted for the user, and the release appends the Released block to each file. A set entry's id is the file stem
 # (`r27-q242`); `file` holds its path.
 
@@ -129,7 +129,7 @@ def decision_changed_file(ctx: Context, rec: dict, source: str) -> bool:
 
 
 def write_correction(ctx: Context, rec: dict, source: str) -> None:
-    """The file counterpart of `board record`: the corrected text replaces the record file."""
+    """The file counterpart of `board ruling record`: the corrected text replaces the record file."""
     after, _ = read_correction(ctx, rec, source)
     write_atomic(Path(rec['file']), after)
 

@@ -206,8 +206,9 @@ def owners_accept(ctx: Context, report: dict) -> str:
                 problems.append(f'{rid}: {shown} is ignored by git (e.g. .scratch): write the rule into a tracked or trackable owner')
             elif anchor and resolved.suffix.lower() not in ('.md', '.markdown'):
                 problems.append(f'{rid}: {shown}#{anchor}: anchors name Markdown headings; name the section in words')
-            elif anchor and anchor not in anchors_of(resolved.read_text(encoding='utf-8', errors='replace')):
-                problems.append(f'{rid}: {shown} has no heading or anchor #{anchor}')
+            elif anchor and anchor not in (found := anchors_of(resolved.read_text(encoding='utf-8', errors='replace'))):
+                problems.append(f'{rid}: {shown} has no heading or anchor #{anchor}' if found else
+                                f'{rid}: {shown} has no headings: give the path without an anchor')
     if pending and ctx.board is None:
         problems.append('pending items need a board: ' + ', '.join(f'{item} ({", ".join(rids)})' for item, rids in pending.items())
                         + '; write the owner now, or give none {reason}')
@@ -224,7 +225,7 @@ def owners_accept(ctx: Context, report: dict) -> str:
         for rid, paths in written.items():
             section = rule_owner_text(texts[rid])
             problems += [f'{rid}: its ## Rule owner does not name {shown}; fix the record text and run '
-                         + (f'`board record {rid} <file>`' if ctx.board else f'edit {set_record(ctx, rid)["file"]}')
+                         + (f'`board ruling record {rid} <file>`' if ctx.board else f'edit {set_record(ctx, rid)["file"]}')
                          for shown, _ in paths if shown not in section]
     if problems:
         fail('owner writes: ' + '; '.join(problems))
@@ -234,7 +235,7 @@ def owners_accept(ctx: Context, report: dict) -> str:
 
 
 def release_enter(ctx: Context) -> str | None:
-    """Runs board release (with the answered closes), then the other supersedes. Resumable (r4-q19): statuses come
+    """Runs board ruling release (with the answered closes), then the other supersedes. Resumable (r4-q19): statuses come
     first, and released records, closed questions and done supersedes are not run again. Record files: their Released block
     is appended instead."""
     r = ctx.round
@@ -249,7 +250,7 @@ def release_enter(ctx: Context) -> str | None:
         return None
     still = [q for q in r['closes'] if now[q] != 'closed']
     if r['retry'] or still or any(now[rid] == 'decided' for rid in ids):
-        argv = ['release', *ids, *(['--closes', *(f"{q}={','.join(r['closes'][q])}" for q in still)] if still else [])]
+        argv = ['ruling', 'release', *ids, *(['--closes', *(f"{q}={','.join(r['closes'][q])}" for q in still)] if still else [])]
         result = ctx.board.run(*argv)
         r['retry'] = result.returncode != 0
         ctx.log('board-release', records=ids, closes=still, exit=result.returncode)
@@ -260,7 +261,7 @@ def release_enter(ctx: Context) -> str | None:
         if key in r['done'] or (sup['partial'] is None and now.get(sup['old']) == 'closed'):
             continue
         partial = ['--partial', sup['partial']] if sup['partial'] is not None else []
-        result = ctx.board.run('supersede', sup['old'], '--with', sup['new'], *partial)
+        result = ctx.board.run('ruling', 'supersede', sup['old'], '--with', sup['new'], *partial)
         if result.returncode == 0:
             r['done'].append(key)
             ctx.log('superseded', old=sup['old'], new=sup['new'], partial=sup['partial'])

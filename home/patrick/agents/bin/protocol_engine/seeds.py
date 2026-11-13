@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import re
 
-from .base import PROPOSAL_ROUNDS, ProtocolError, SEEDS, SUMMARY_MAX, TEXT_LIMIT, TITLE_LIMIT, lines
+from .base import PROPOSAL_ROUNDS, ProtocolError, SEEDS, SUMMARY_MAX, TEXT_LIMIT, TITLE_LIMIT, TITLE_MAX, band_warning, lines
 from . import words
 from .boards import foreign_holds, view_rows
 from .engine import Context, fail
@@ -165,7 +165,8 @@ def set_proposal(ctx: Context, report: dict) -> str:
                            for index, one in enumerate(report.get('rounds', []))]}
     ctx.state['proposal'] = proposal
     ctx.store.log({'round': None, 'event': 'proposed', 'rounds': [one['title'] for one in proposal['rounds']]})
-    return words.proposal_stored(proposal_rows(proposal))
+    warnings = [w for index, one in enumerate(report['rounds']) for w in band_warning(f'rounds[{index}]: title', len(one['title']), TITLE_MAX, TITLE_LIMIT)]
+    return '\n'.join([words.proposal_stored(proposal_rows(proposal)), *warnings])
 
 
 def proposal_rows(proposal: dict | None) -> list[dict] | None:

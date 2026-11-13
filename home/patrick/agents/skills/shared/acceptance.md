@@ -13,6 +13,8 @@ open), sized to stakes; a role protocol may tighten it.
 | A `review`'s escalation of a hidden-and-costly path, escalation at the retry limit, or the user's request | `deep-review` of the whole item, the escalated path first. |
 | Repair after a return | The reviewer that returned it ([Reviewers](../shared/reviewers.md#reviewers)). |
 
+- A reviewer or depth an item's text names is escalation evidence for this
+  table, not the pick.
 - Reuse a planned later review of the same target (staged or integration
   review) where it replaces a redundant earlier gate.
 - A `review` escalates under review.md

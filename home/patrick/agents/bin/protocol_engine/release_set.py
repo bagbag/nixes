@@ -15,7 +15,7 @@ from . import release_files as files
 
 
 # Release: decide.md Release run like a round (r3-q7): the engine sequences the steps, takes approval only from a
-# person origin, checks the owners, and runs board release, supersede and the answered closes. The reports carry
+# person origin, checks the owners, and runs board ruling release, supersede and the answered closes. The reports carry
 # the judgment. The run uses the round slot (state['round']) with the next run id (r4-q17).
 
 HIT_CLASSES = {
@@ -174,7 +174,7 @@ def stop(ctx: Context, reason: str, ids: list[str], hold: bool = False) -> str:
 def apply_changes(ctx: Context, raw, where: str, every: bool, scope: list[str] | None = None) -> str | None:
     """Per record `unchanged`, or {change, reach, why, touches, file?}: contained (with `why` no other ruling moves)
     either keeps the record revised (touches own: the model's own rationale, evidence or clause; `file` is the corrected
-    record text, which `board record` writes) or drops it (touches decision); spreads stops the run. Returns 'closed'
+    record text, which `board ruling record` writes) or drops it (touches decision); spreads stops the run. Returns 'closed'
     when the run stops."""
     if not isinstance(raw, dict):
         fail(f'{where}: map each record id to "unchanged" or {{"change", "reach", "why", "touches"}}')
@@ -205,7 +205,7 @@ def apply_changes(ctx: Context, raw, where: str, every: bool, scope: list[str] |
     if spreads:
         return stop(ctx, words.spreads_reason(spreads), [rid for rid, _ in spreads])
     # The board writes come first and all-or-nothing for the state: a failure refuses the report, so it is sent again
-    # (board record rewrites the same text).
+    # (board ruling record rewrites the same text).
     if ctx.board is None:  # record files: the corrected text replaces the file
         decisions = {rid: files.decision_changed_file(ctx, set_record(ctx, rid), value['file'].strip())
                      for rid, value in contained if value['touches'] == 'own'}
@@ -216,9 +216,9 @@ def apply_changes(ctx: Context, raw, where: str, every: bool, scope: list[str] |
         decisions = {rid: decision_changed(ctx, rid, value['file'].strip()) for rid, value in contained if value['touches'] == 'own'}
     for rid, value in contained:
         if value['touches'] == 'own' and ctx.board is not None:
-            result = ctx.board.run('record', rid, value['file'].strip())
+            result = ctx.board.run('ruling', 'record', rid, value['file'].strip())
             if result.returncode != 0:
-                fail(f"{where}.{rid}: `board record {rid} {value['file']}` exited {result.returncode}: "
+                fail(f"{where}.{rid}: `board ruling record {rid} {value['file']}` exited {result.returncode}: "
                      + (result.stderr.strip() or result.stdout.strip()) + '; fix the file and report again')
     for rid, value in contained:
         if value['touches'] == 'own':

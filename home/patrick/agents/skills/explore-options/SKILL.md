@@ -12,7 +12,7 @@ description: >-
 
 Own framing, dispatch and the user-facing decision; the `option-explorer` agent
 owns exploration. Use `second-opinion` to challenge a proposal and `architect`
-to develop or assess architecture.
+to design architecture.
 
 ## 1. Frame and dispatch
 

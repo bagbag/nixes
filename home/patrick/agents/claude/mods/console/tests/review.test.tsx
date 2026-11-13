@@ -5,10 +5,10 @@ import type { Mounted } from 'claude-code/testing'
 
 import { BOARD_CONSOLE_CONTRACT, cr } from './board-console-contract'
 import { COUNTS, NO_ROUND, PANE_PROPS, SESSION, world } from './fixture'
-import { git, MAIN_TREE, repo, REVIEW_END_REF, REVIEW_TREE, sha } from './review-world'
+import { git, MAIN_TREE, repo, REVIEW_END_REF, REVIEW_TREE, sha, SNAPSHOT_DIR } from './review-world'
 import type { Repo } from './review-world'
-import { parseRound } from '../hooks/engine'
-import { canRefreshCr, consoleText, countText, crDetailsText, crFailuresText, crMarks, crPriorityHint, crRows, crUnblocksHint, crUnblocksText, fitText } from '../hooks/words'
+import { parseBoardConsole, parseRound } from '../hooks/engine'
+import { canRefreshCr, consoleText, countText, crCheckText, crDetailsText, crFailuresText, crMarks, crPriorityHint, crRows, crUnblocksHint, crUnblocksText, fitText } from '../hooks/words'
 import { parseWorktrees } from '../hooks/review'
 import type { ConsoleBoard, ConsoleCr } from '../types'
 
@@ -34,6 +34,8 @@ async function queued($: any, on: any, crs: Crs, r: Repo = repo(), init: Paramet
 }
 
 const WAITING = (): Crs => [cr({ id: 'p-cr1' })]
+/** `board cr edits --commit` made `commit` of the review tree's files and moved the tree's marker to it. */
+const committed = (r: Repo, commit: string) => { r.end = commit; r.editsAt = commit }
 const short = (n: number) => sha(n).slice(0, 7)
 
 describe('change request queue', () => {
@@ -178,6 +180,24 @@ describe('Open', () => {
     await ui.unmount()
   })
 
+  test('a ratification row opens the range its request landed (fork point to tip), and has no Open without one', async ($, on) => {
+    const r = repo({ workspaces: ['t.code-workspace'], fork: sha(7) })
+    const ratifications = [{ id: 'p-rat1', cr: 'p-cr0', title: 'Ratify: Move the clock', tip: sha(6), baseTip: sha(5) }, { id: 'p-rat2', cr: '', title: 'Ratify: unknown', tip: null, baseTip: null }]
+    const { ui, clock } = await queued($, on, [cr({ id: 'p-cr1' })], r, { ratifications })
+    expect(await ui.find({ key: 'ratify-p-rat2-open' })).toBeUndefined()
+    await ui.press({ key: 'ratify-p-rat1-open' })
+    await clock.settle()
+    expect(r.changes).toEqual([
+      `${MAIN_TREE} worktree add --detach ${REVIEW_TREE} ${sha(6)}`,
+      `${REVIEW_TREE} reset --hard ${sha(6)}`,
+      `${REVIEW_TREE} reset -N ${sha(7)}`,
+      `${REVIEW_TREE} update-ref ${REVIEW_END_REF} ${sha(6)}`,
+    ])
+    expect(r.all).toContain(`${MAIN_TREE} merge-base ${sha(5)} ${sha(6)}`)
+    expect(r.opened).toEqual([`${REVIEW_TREE}/t.code-workspace`])
+    await ui.unmount()
+  })
+
   for (const workspaces of [[], ['a.code-workspace', 'b.code-workspace']]) {
     test(`the review tree opens as its folder with ${workspaces.length} workspace files`, async ($, on) => {
       const r = repo({ workspaces })
@@ -188,6 +208,20 @@ describe('Open', () => {
       await ui.unmount()
     })
   }
+
+  test('a press returns before its board read: a slow read runs after it, then the tree is set (the press budget)', async ($, on) => {
+    const r = repo()
+    const { w, ui, clock } = await queued($, on, WAITING(), r)
+    let release = () => {}
+    w.hold = { verb: 'board console', until: new Promise<void>(resolve => { release = resolve }) }
+    await ui.press({ key: 'cr-open-p-cr1' })  // resolves while the read is held
+    await clock.settle()
+    expect(r.opened).toEqual([])
+    release()
+    await clock.settle()
+    expect(r.opened).toEqual([REVIEW_TREE])
+    await ui.unmount()
+  })
 
   test('the tree sits beside the first worktree git lists, not beside the session\'s folder', async ($, on) => {
     const r = repo()
@@ -302,6 +336,16 @@ describe('Open', () => {
     await ui.unmount()
   })
 
+  test('a request the review tree holds says so on its row and in the /console text; others do not', async ($, on) => {
+    const { ui } = await queued($, on, [cr({ id: 'p-cr1', heldByReviewTree: true }), cr({ id: 'p-cr2' })])
+    const drawn = await texts(ui)
+    expect(drawn.match(/held by your review tree/g)).toHaveLength(1)
+    expect(drawn.indexOf('held by your review tree')).toBeLessThan(drawn.indexOf('p-cr2'))
+    const text = consoleText({ session: 's', role: 'lead', actor: 'a', tool: 'claude' }, { ...parseBoardConsole({ ...BOARD_CONSOLE_CONTRACT, crs: [cr({ id: 'p-cr1', heldByReviewTree: true })] }), agents: [], scratch: null, error: null }, null, false, [])
+    expect(text).toContain('held by your review tree')
+    await ui.unmount()
+  })
+
   test('a tip that moved past the open tree reads "review tree behind"', async ($, on) => {
     const { ui, clock, w } = await queued($, on, WAITING())
     await ui.press({ key: 'cr-open-p-cr1' })
@@ -312,6 +356,42 @@ describe('Open', () => {
     await clock.advance(60_000)
     await clock.settle()
     expect(await texts(ui)).toContain('review tree behind')
+    await ui.unmount()
+  })
+})
+
+describe('scratch line', () => {
+  const LINE = 'scratch: 3 trashed (1.0 GB), the first is deleted within 7 days (scratch restore)'
+  const lineOf = async (init: Parameters<typeof world>[1], $: any, on: any) => {
+    const { ui, clock, w } = await queued($, on, [], repo(), init)
+    return { ui, clock, w, drawn: await texts(ui) }
+  }
+
+  test('the line shows as one line, with no button', async ($, on) => {
+    const { ui, drawn } = await lineOf({ scratch: { line: `${LINE}\n`, exit: 0 } }, $, on)
+    expect(drawn).toContain(LINE)
+    expect(await ui.find({ key: 'scratch-sweep' })).toBeUndefined()
+    await ui.unmount()
+  })
+
+  test('an empty line shows nothing', async ($, on) => {
+    const { ui, drawn } = await lineOf({ scratch: { line: '\n', exit: 0 } }, $, on)
+    expect(drawn).not.toContain('scratch')
+    expect(await ui.find({ key: 'scratch-sweep' })).toBeUndefined()
+    await ui.unmount()
+  })
+
+  test('a failing or missing scratch shows nothing, and no error row', async ($, on) => {
+    const failing = await lineOf({ scratch: { line: LINE, exit: 1 } }, $, on)
+    expect(failing.drawn).not.toContain(LINE)
+    expect(await failing.ui.find({ key: 'scratch-sweep' })).toBeUndefined()
+    expect(failing.drawn).not.toContain('boom')
+    await failing.ui.unmount()
+  })
+
+  test('a missing scratch shows nothing', async ($, on) => {
+    const { ui, drawn } = await lineOf({}, $, on)
+    expect(drawn).not.toContain('scratch')
     await ui.unmount()
   })
 })
@@ -375,6 +455,201 @@ describe('Accept, Return', () => {
     expect(w.box.startsWith('my words\nReturn p-cr1')).toBe(true)
     expect(w.prompts).toEqual([])
     await ui.unmount()
+  })
+
+  test('Accept with edits in the review tree names them and the exact board cr edits line; no new button', async ($, on) => {
+    const r = repo()
+    const { ui, clock, w } = await queued($, on, [cr({ id: 'p-cr1', title: 'Remove X', tip: sha(2) })], r)
+    await ui.press({ key: 'cr-open-p-cr1' })
+    await clock.settle()
+    r.hasEdits = true
+    await ui.press({ key: 'cr-accept-p-cr1' })
+    await clock.settle()
+    expect(w.box).toContain(`Accept p-cr1 (Remove X) at ${short(2)}: land it.`)
+    expect(w.box).toContain(`board cr edits p-cr1 --from ${REVIEW_TREE} --tip ${sha(2)}`)
+    expect(w.prompts).toEqual([])
+    expect(r.changes.filter(one => !one.includes('worktree add') && !one.includes('reset') && !one.includes('update-ref'))).toEqual([])
+    expect(await ui.find({ key: 'cr-done-p-cr1' })).toBeUndefined()
+    await ui.unmount()
+  })
+
+  test('a new file alone counts as edits of yours on Accept', async ($, on) => {
+    const r = repo()
+    const { ui, clock, w } = await queued($, on, [cr({ id: 'p-cr1', tip: sha(2) })], r)
+    await ui.press({ key: 'cr-open-p-cr1' })
+    await clock.settle()
+    r.hasUntracked = true
+    await ui.press({ key: 'cr-accept-p-cr1' })
+    await clock.settle()
+    expect(w.box).toContain('board cr edits p-cr1')
+    await ui.unmount()
+  })
+
+  test('Return with edits says they are committed without a check and gives the line; the words stay yours', async ($, on) => {
+    const r = repo()
+    const { ui, clock, w } = await queued($, on, [cr({ id: 'p-cr1', title: 'Remove X', tip: sha(2) })], r)
+    await ui.press({ key: 'cr-open-p-cr1' })
+    await clock.settle()
+    r.hasEdits = true
+    await ui.press({ key: 'cr-return-p-cr1' })
+    await clock.settle()
+    expect(w.box).toContain(`Return p-cr1 (Remove X) with my edits from the review tree ${REVIEW_TREE}`)
+    expect(w.box).toContain(`board cr edits p-cr1 --from ${REVIEW_TREE} --tip ${sha(2)}`)
+    expect(w.box.endsWith(': ')).toBe(true)
+    await ui.unmount()
+  })
+
+  test('edits the board committed are not pending: Accept names the edit commit and no edits', async ($, on) => {
+    const r = repo()
+    const { ui, clock, w } = await queued($, on, [cr({ id: 'p-cr1', tip: sha(2) })], r)
+    await ui.press({ key: 'cr-open-p-cr1' })
+    await clock.settle()
+    r.hasEdits = true
+    committed(r, sha(9))
+    w.crs = [cr({ id: 'p-cr1', tip: sha(9) })]
+    await ui.press({ key: 'cr-accept-p-cr1' })
+    await clock.settle()
+    expect(w.box).toBe(`Accept p-cr1 (Title of p-cr1) at ${short(9)}: land it.`)
+    await ui.unmount()
+  })
+
+  test('a branch that moved past the edit commit (a worker built on it) is not what you looked at: Accept names the edit commit, so the board refuses', async ($, on) => {
+    const r = repo()
+    const { ui, clock, w } = await queued($, on, [cr({ id: 'p-cr1', tip: sha(2) })], r)
+    await ui.press({ key: 'cr-open-p-cr1' })
+    await clock.settle()
+    r.hasEdits = true
+    committed(r, sha(9))
+    w.crs = [cr({ id: 'p-cr1', tip: sha(12) })]
+    await ui.press({ key: 'cr-accept-p-cr1' })
+    await clock.settle()
+    expect(w.box).toBe(`Accept p-cr1 (Title of p-cr1) at ${short(9)}: land it.`)
+    await ui.unmount()
+  })
+
+  test('edits made on top of an edit commit (after a failed check) are pending against it: the line names the edit commit', async ($, on) => {
+    const r = repo()
+    const { ui, clock, w } = await queued($, on, [cr({ id: 'p-cr1', tip: sha(2) })], r)
+    await ui.press({ key: 'cr-open-p-cr1' })
+    await clock.settle()
+    r.hasEdits = true
+    committed(r, sha(9))
+    r.editsAt = null  // more edits since: the files are no commit's tree
+    w.crs = [cr({ id: 'p-cr1', tip: sha(12) })]  // the failed check rebased the branch: the edits are still against the edit commit
+    await ui.press({ key: 'cr-accept-p-cr1' })
+    await clock.settle()
+    expect(w.box).toContain(`at ${short(9)}: land it.`)
+    expect(w.box).toContain(`board cr edits p-cr1 --from ${REVIEW_TREE} --tip ${sha(9)}`)
+    await ui.unmount()
+  })
+
+  test('the pane reads the tree\'s marker: after the edit commit the request is in the review tree again', async ($, on) => {
+    const r = repo()
+    const { ui, clock, w } = await queued($, on, WAITING(), r)
+    await ui.press({ key: 'cr-open-p-cr1' })
+    await clock.settle()
+    await ui.press({ key: 'cr-p-cr1-show' })
+    await clock.settle()
+    r.hasEdits = true
+    committed(r, sha(9))
+    w.crs = [cr({ id: 'p-cr1', tip: sha(9) })]
+    await clock.advance(60_000)
+    await clock.settle()
+    expect(await texts(ui)).toContain('in review tree')
+    expect(await texts(ui)).not.toContain('review tree behind')
+    await ui.unmount()
+  })
+
+  for (const tip of [9, 12]) {
+    test(`Open moves a tree whose edits the board committed, the request's tip now ${tip === 9 ? 'the edit commit' : 'past it'}`, async ($, on) => {
+      const r = repo()
+      const { ui, clock, w } = await queued($, on, WAITING(), r)
+      await ui.press({ key: 'cr-open-p-cr1' })
+      await clock.settle()
+      r.hasEdits = true
+      committed(r, sha(9))
+      w.crs = [cr({ id: 'p-cr1', tip: sha(tip) })]
+      r.changes.length = 0
+      await ui.press({ key: 'cr-open-p-cr1' })
+      await clock.settle()
+      expect(r.changes[0]).toBe(`${REVIEW_TREE} reset --hard ${sha(tip)}`)
+      await ui.unmount()
+    })
+  }
+
+  test('a ratification edit the board committed (its follow-up request is no row) leaves the tree clean: Open moves it', async ($, on) => {
+    const r = repo({ fork: sha(7) })
+    const ratifications = [{ id: 'p-rat1', cr: 'p-cr0', title: 'Ratify: Move the clock', tip: sha(6), baseTip: sha(5) }]
+    const { ui, clock } = await queued($, on, [cr({ id: 'p-cr1' })], r, { ratifications })
+    await ui.press({ key: 'ratify-p-rat1-open' })
+    await clock.settle()
+    r.hasUntracked = true
+    committed(r, sha(9))  // the follow-up's first commit
+    r.changes.length = 0
+    await ui.press({ key: 'cr-open-p-cr1' })
+    await clock.settle()
+    expect(r.changes[0]).toBe(`${REVIEW_TREE} reset --hard ${sha(2)}`)
+    await ui.unmount()
+  })
+
+  test('opening a ratification ends the request\'s review tree: no status, and Accept names the request\'s tip', async ($, on) => {
+    const r = repo({ fork: sha(7) })
+    const ratifications = [{ id: 'p-rat1', cr: 'p-cr0', title: 'Ratify: Move the clock', tip: sha(6), baseTip: sha(5) }]
+    const { ui, clock, w } = await queued($, on, [cr({ id: 'p-cr1', tip: sha(2) })], r, { ratifications })
+    await ui.press({ key: 'cr-open-p-cr1' })
+    await clock.settle()
+    await ui.press({ key: 'cr-p-cr1-show' })
+    await clock.settle()
+    expect(await texts(ui)).toContain('in review tree')
+    await ui.press({ key: 'ratify-p-rat1-open' })
+    await clock.settle()
+    await clock.advance(60_000)
+    await clock.settle()
+    expect(await texts(ui)).not.toContain('in review tree')
+    expect(await texts(ui)).not.toContain('review tree behind')
+    r.hasEdits = true  // edits on the ratification's range are not this request's
+    await ui.press({ key: 'cr-accept-p-cr1' })
+    await clock.settle()
+    expect(w.box).toBe(`Accept p-cr1 (Title of p-cr1) at ${short(2)}: land it.`)
+    await ui.unmount()
+  })
+
+  test('edits the board committed stay committed after their request landed and left the queue', async ($, on) => {
+    const r = repo()
+    const { ui, clock, w } = await queued($, on, [cr({ id: 'p-cr1' }), cr({ id: 'p-cr2' })], r)
+    await ui.press({ key: 'cr-open-p-cr1' })
+    await clock.settle()
+    r.hasEdits = true
+    committed(r, sha(9))
+    w.crs = [cr({ id: 'p-cr2' })]  // p-cr1 landed
+    await clock.advance(60_000)
+    await clock.settle()
+    r.changes.length = 0
+    await ui.press({ key: 'cr-open-p-cr2' })
+    await clock.settle()
+    expect(r.changes[0]).toBe(`${REVIEW_TREE} reset --hard ${sha(2)}`)
+    await ui.unmount()
+  })
+
+  test('the clean check writes its tree in a throwaway index outside the review tree and removes it; the tree\'s own index is untouched', async ($, on) => {
+    const r = repo({ hasReviewTree: true })
+    const { ui, clock } = await queued($, on, WAITING(), r)
+    await ui.press({ key: 'cr-open-p-cr1' })
+    await clock.settle()
+    expect(r.changes[0]).toBe(`${REVIEW_TREE} reset --hard ${sha(2)}`)  // a snapshot step outside the throwaway index would be a change
+    const snapshot = r.all.slice(r.all.indexOf('mktemp -d'))
+    expect(snapshot.slice(0, 5)).toEqual(['mktemp -d', `${REVIEW_TREE} read-tree ${sha(2)}`, `${REVIEW_TREE} add -A`, `${REVIEW_TREE} write-tree`, `rm -rf ${SNAPSHOT_DIR}`])
+    await ui.unmount()
+  })
+
+  test('a targeted or no-gate result reads as what it was, never as a full check', () => {
+    const checked = (over: Record<string, unknown>) => cr({ id: 'p-cr1', check: { state: 'current', tip: sha(2), baseTip: sha(1), at: null, result: 'pass', newFailures: null, baseCount: null, tipCount: null, ...over } }) as unknown as ConsoleCr
+    expect(crCheckText(checked({ kind: 'targeted', command: 'pnpm test a' }))).toBe('targeted check current')
+    expect(crCheckText(checked({ kind: 'targeted', command: 'pnpm test a', state: 'failed', result: 'fail' }))).toBe('targeted check failed')
+    expect(crCheckText(checked({ kind: 'none', reason: 'docs only' }))).toBe('no check run')
+    expect(crCheckText(checked({ kind: 'full' }))).toBe('checks current')
+    expect(crDetailsText(checked({ kind: 'targeted', command: 'pnpm test a' }), null)).toContain('ran: pnpm test a')
+    expect(crDetailsText(checked({ kind: 'none', reason: 'docs only' }), null)).toContain('no check: docs only')
   })
 
   test('without a prompt box the press says so', async ($, on) => {
@@ -458,7 +733,7 @@ describe('counts', () => {
   })
 
   test('the /console text prints the same labels', () => {
-    const text = consoleText({ session: 's', role: 'lead', actor: 'a', tool: 'claude' }, { isMissing: false, counts: { ...COUNTS, toDesign: { ready: 6, held: 1, waiting: 0 }, toImplement: { ready: 90, held: 1, waiting: 1 } }, forYou: [], items: [], sessions: [], held: [], crs: [], queued: 0, waitingOnYou: 0, prefix: null, ratifications: [], agents: [], sync: null, queues: null, error: null }, null, false, [])
+    const text = consoleText({ session: 's', role: 'lead', actor: 'a', tool: 'claude' }, { isMissing: false, counts: { ...COUNTS, toDesign: { ready: 6, held: 1, waiting: 0 }, toImplement: { ready: 90, held: 1, waiting: 1 } }, forYou: [], items: [], sessions: [], held: [], crs: [], queued: 0, waitingOnYou: 0, prefix: null, ratifications: [], agents: [], scratch: null, sync: null, queues: null, error: null }, null, false, [])
     expect(text).toContain('you: for you 3 · to accept 13 (1 wait) · to ratify 1 · decided 0 · questions 186 (2 held)')
     expect(text).toContain('agents: to plan 0 (57 wait) · to design 6 (1 held) · to implement 90 (1 held, 1 wait) · to review 0')
   })

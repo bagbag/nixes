@@ -61,7 +61,7 @@ def settled_in_set(ctx: Context) -> dict[str, list[str]]:
 
 def prefill_settled(ctx: Context, checks: dict, closes: dict) -> tuple[dict, dict]:
     """Adds, for each settled item of a rule record in the set, the answers row `answered: close` and the close by that
-    record, so `board release --closes` closes it. The report's own rows and closes stay."""
+    record, so `board ruling release --closes` closes it. The report's own rows and closes stay."""
     checks, closes = copy.deepcopy(checks), copy.deepcopy(closes)
     for rid, settled in settled_in_set(ctx).items():
         classes = checks.get(rid)
@@ -145,7 +145,7 @@ def board_check_accept(ctx: Context, report: dict) -> str:
         waiting = sorted(hit_items(checks, rid, 'premise'))
         if waiting:
             drop(ctx, rid, words.premise_waits(waiting))
-    # board release refuses a record waiting on an unsettled item outside the set: it leaves the set now, while the
+    # board ruling release refuses a record waiting on an unsettled item outside the set: it leaves the set now, while the
     # report can still change, not after the approval (a blocker dropped here can drop its dependents in turn).
     blocked = {item['id']: item.get('blockedBy') or []
                for item in view_rows(ctx.board.json('health', '--json', '--items', 'decided'), 'decided')}
@@ -164,7 +164,7 @@ def board_check_accept(ctx: Context, report: dict) -> str:
 
 def board_targets(ctx: Context, closes: list[str], olds: list[str]) -> list[str]:
     """The answered closes and supersedes must exist, and each close be an open question this session may close: the
-    conditions under which `board release --closes` refuses, checked while the report can still change."""
+    conditions under which `board ruling release --closes` refuses, checked while the report can still change."""
     try:
         found = ctx.board.json('show', *dict.fromkeys([*closes, *olds]), '--json', '--field', 'status', '--field',
                                'issue_type', '--field', 'assignee')

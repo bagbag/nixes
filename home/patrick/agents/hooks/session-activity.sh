@@ -37,15 +37,15 @@ else
   [[ -n "$agent_id" && -n "$agent_type" && "$agent_type" != - ]] || exit 0
 fi
 
-session_lead=${AGENT_SESSION_LEAD_COMMAND:-$HOME/.agents/bin/session-lead-mode}
+session_cmd=${AGENT_SESSION_COMMAND:-$HOME/.agents/bin/session}
 arguments=("$command")
 [[ "$command" == session-active ]] || arguments+=("$agent_id")
 if [[ -n "$session_id" ]]; then
   # The payload names the session; the inherited environment can name an
   # outer one (a Claude session started from Codex keeps CODEX_SESSION_ID).
   CODEX_SESSION_ID='' CODEX_THREAD_ID='' CLAUDE_CODE_SESSION_ID=$session_id \
-    bash "$session_lead" "${arguments[@]}" >/dev/null 2>&1
+    bash "$session_cmd" "${arguments[@]}" >/dev/null 2>&1
 else
-  bash "$session_lead" "${arguments[@]}" >/dev/null 2>&1
+  bash "$session_cmd" "${arguments[@]}" >/dev/null 2>&1
 fi
 exit 0
