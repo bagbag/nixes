@@ -377,9 +377,16 @@ export function crStageText(cr: ConsoleCr): string {
   return cr.status === 'in_progress' ? 'in work' : cr.status.replace(/_/g, ' ')
 }
 
-/** The row's stage: for a request waiting on you, what you look at (its buttons and color already say it waits); else the stage. */
-export const crRowStageText = (cr: ConsoleCr): string =>
-  !isCrAccepting(cr) ? crStageText(cr) : cr.checkpoint === 'user' ? 'design' : cr.view === 'result' ? 'result' : 'code'
+export type CrKind = 'design' | 'code' | 'result' | 'in work'
+
+/** What a request is to the person: a design or code or result to look at, or in work with the agents (built or under agent review). */
+export const crKind = (cr: ConsoleCr): CrKind => !isCrAccepting(cr) ? 'in work' : cr.checkpoint === 'user' ? 'design' : cr.view === 'result' ? 'result' : 'code'
+
+/** The stage the bar's hover names: for a request waiting on you, what you look at; else the stage. */
+export const crRowStageText = (cr: ConsoleCr): string => {
+  const kind = crKind(cr)
+  return kind === 'in work' ? crStageText(cr) : kind
+}
 
 const CHECK_WORDS: Record<ConsoleCr['check']['state'], string> = { current: 'checks current', stale: 'stale', conflict: 'conflict', failed: 'checks failed', unchecked: 'unchecked' }
 
@@ -396,8 +403,14 @@ export function crCheckText(cr: ConsoleCr): string | null {
 export const crCheckKindText = (cr: ConsoleCr): string | null =>
   cr.check.kind === 'targeted' ? `ran: ${cr.check.command ?? '?'}` : cr.check.kind === 'none' ? `no check: ${cr.check.reason ?? '?'}` : null
 
-/** The row's failure word: how many failures are new; null while no comparison ran. */
-export const crNewCountText = (cr: ConsoleCr): string | null => cr.check.newFailures === null ? null : `${cr.check.newFailures.length} new`
+/** The row's check word: the plain `checks current` is the normal state and stays out; every other state shows. */
+export const crRowCheckText = (cr: ConsoleCr): string | null => {
+  const text = crCheckText(cr)
+  return text === CHECK_WORDS.current ? null : text
+}
+
+/** The row's failure word: how many failures are new; null while no comparison ran and when none are new (the details say `0 new`). */
+export const crNewCountText = (cr: ConsoleCr): string | null => cr.check.newFailures === null || cr.check.newFailures.length === 0 ? null : `${cr.check.newFailures.length} new`
 
 /** What the row leaves out: marks that are no problem (lands with <id>). */
 export const crQuietMarks = (cr: ConsoleCr, prefix: string | null = null): string[] => crMarks(cr, prefix).filter(mark => !mark.isProblem).map(mark => mark.text)

@@ -8,8 +8,8 @@ import type { ConsoleBoard, ConsoleCr, ConsoleItem, ConsoleQuestion, ConsoleReco
 import { pressAcceptCr, pressContinue, pressOpenCr, pressOpenItem, pressOpenOverlaps, pressOpenRatification, pressOpenSettles, pressOpenSuggestion, pressRefreshCr, pressReturnCr, pressRole, pressRun, pressStart, pressView, pressWorkers } from './core'
 import { isRoundOpen, RELEASE_COMMAND, ROUND_ROLES } from './engine'
 import { getBoard, getExpanded, getLenses, getOpened, getPass, getPlaced, getReviewTree, getRole, getRound, getRoundError, getTurnRunning, toggleExpanded, updateLenses } from './state'
-import { answerText, canRefreshCr, COUNT_GROUPS, countText, crCheckText, crDetailsText, crFailureParts, crFileHref, crHeldText, crMarks, crNewCountText, crPriorityHint, crPriorityText, crRows, crRowStageText, crSummaryText, crUnblocksHint, crUnblocksText, displayId, displayIds, fitText, isCrAccepting, isWalkCr, GROUND, GROUND_BASE, lensArgs, LENS_SETS, plural, pullsText, recommendationMark, recommendationText, roleText, roundWords, runNoun, staleHolds, staleSessions, startHint, STEP_BACK_BASE, suggestionText, WHAT, WHERE } from './words'
-import type { Lens, LensCommand } from './words'
+import { answerText, canRefreshCr, COUNT_GROUPS, countText, crDetailsText, crFailureParts, crFileHref, crHeldText, crMarks, crNewCountText, crKind, crPriorityHint, crPriorityText, crRowCheckText, crRows, crRowStageText, crSummaryText, crUnblocksHint, crUnblocksText, displayId, displayIds, fitText, isCrAccepting, isWalkCr, GROUND, GROUND_BASE, lensArgs, LENS_SETS, plural, pullsText, recommendationMark, recommendationText, roleText, roundWords, runNoun, staleHolds, staleSessions, startHint, STEP_BACK_BASE, suggestionText, WHAT, WHERE } from './words'
+import type { CrKind, Lens, LensCommand } from './words'
 
 type $ = EngineInterface
 
@@ -22,10 +22,14 @@ const CR_ROWS_SHOWN = 3  // change requests, ratifications and items for you: th
 const CR_INDENT = 2  // cells a stacked request steps in
 const ID_GAP = 2  // cells between an id column and what follows
 const MILESTONE_MIN = 8  // cells the milestone title keeps however narrow the pane
-const BUTTON_FRAME = 4  // `[ label ]`
-const CR_BUTTONS = { walk: 'Walk through', accept: 'Accept', return: 'Return', refresh: 'Refresh' } as const
-/** The cells a row of buttons takes (frames and one gap between): the slot sized to the widest row lines Accept and Return up on every row. */
-const buttonsWidth = (labels: readonly string[]): number => labels.reduce((sum, label) => sum + label.length + BUTTON_FRAME + 1, -1)
+const BUTTON_SEP = ' • '  // between a row's buttons, as in Decide and Actions
+const STRIPE = 'rgb(50,50,50)'  // a fixed color a little darker than the dark theme's own message background (no theme key is darker); behind every second request
+const PART_GAP = 2  // cells between the parts of line two
+const KIND_COLOR: Record<CrKind, string> = { design: 'planMode', code: 'claude', result: 'ide', 'in work': 'success' }  // the bar's color per kind; the legend reads the same map
+const BAR = '▌'  // the first cell of a request's title line: marks where it starts and shows the kind
+const CR_BUTTONS = { walk: 'Walk through', open: 'Open', accept: 'Accept', return: 'Return', refresh: 'Refresh' } as const
+/** The cells a row of plain buttons takes (labels and the separators between): they sit at the right edge, so Return lines up on every row. */
+const buttonsWidth = (labels: readonly string[]): number => labels.reduce((sum, label) => sum + label.length, 0) + BUTTON_SEP.length * Math.max(0, labels.length - 1)
 const SESSION_ORDER: Record<string, number> = { active: 0, idle: 1, gone: 3 }
 const LIVE_AGENT: readonly string[] = ['pending', 'running', 'waiting', 'idle']
 const LABEL = 11
@@ -669,11 +673,11 @@ export async function drawPane($: $, e: { surface: string; props: RenderPropsOf[
 
   // Change requests (r25): the board's queue, children under their parent. The presses put requests in the prompt; the console never lands.
   const CHECK_COLOR = { current: 'success', stale: 'warning', conflict: 'error', failed: 'error', unchecked: 'inactive' } as const
-  const act = (key: string, label: string, onPress: () => Promise<void>, hintText: string, color?: string) => {
+  const act = (key: string, label: string, onPress: () => Promise<void>, hintText: string, color?: string, isDim = false) => {
     hint.add(key, hintText)
     return (
       <Box key={`${key}-box`} hover={{ scope: key }}>
-        <Button key={key} onPress={onPress}>{color === undefined ? label : <Text color={color}>{label}</Text>}</Button>
+        <Button key={key} plain onPress={onPress} dimColor={isDim}>{color === undefined ? label : <Text color={color}>{label}</Text>}</Button>
       </Box>
     )
   }
@@ -701,7 +705,7 @@ export async function drawPane($: $, e: { surface: string; props: RenderPropsOf[
     if (view.crs.length > 0) {
       const queue = capped('crs', crRows(view.crs), CR_ROWS_SHOWN)
       const buttonsOf = (cr: ConsoleCr) => {
-        const walkLabel = isWalkCr(cr) ? CR_BUTTONS.walk : 'Open'
+        const walkLabel = isWalkCr(cr) ? CR_BUTTONS.walk : CR_BUTTONS.open
         const accepting = isCrAccepting(cr)
         const refreshing = canRefreshCr(cr, pulls)
         return {
@@ -709,68 +713,91 @@ export async function drawPane($: $, e: { surface: string; props: RenderPropsOf[
           walkLabel, walkHint: isWalkCr(cr) ? 'Sends the walk-through request' : `Opens ${shown(cr.id)} in the review tree (its diff unstaged against where it forked)`,
         }
       }
-      const slotWidth = Math.max(0, ...queue.shown.map(one => buttonsOf(one.cr).width))
       const crIdWidth = idWidth(queue.shown.map(one => one.cr.id))
+      // The priority and `unblocks N` stand in columns as wide as the widest shown row, so the parts after them start at one place.
+      const columnWidth = (text: (cr: ConsoleCr) => string | null) => Math.max(0, ...queue.shown.map(one => (text(one.cr) ?? '').length))
+      const widths = { priority: columnWidth(crPriorityText), unblocks: columnWidth(crUnblocksText) }
+      const alignedWidth = Object.values(widths).reduce((sum, width) => sum + (width > 0 ? width + PART_GAP + 1 : 0), 0)  // the text, the gap between parts and a flex gap
       rows.push(
         <Box key="cr-rows" flexDirection="column" marginTop={1}>
-          {queue.shown.map(({ cr, depth }) => {
+          <Box key="cr-legend" flexDirection="row" columnGap={2} marginBottom={1}>
+            {(Object.keys(KIND_COLOR) as CrKind[]).filter(kind => view.crs.some(one => crKind(one) === kind)).map(kind => (
+              <Box key={`cr-legend-${kind}`} flexDirection="row"><Text color={KIND_COLOR[kind]}>{BAR}</Text><Text color="inactive"> {kind}</Text></Box>
+            ))}
+          </Box>
+          {queue.shown.map(({ cr, depth }, index) => {
             hint.add(`item-${cr.id}`, `${shown(cr.id)}: open its summary here`)
-            const check = crCheckText(cr)
+            const check = crRowCheckText(cr)
             const count = crNewCountText(cr)
             const marks = crMarks(cr).filter(mark => mark.isProblem)  // the quiet ones are the summary's
             const held = crHeldText(cr)
             const buttons = buttonsOf(cr)
-            const stage = crRowStageText(cr)
+            hint.add(`bar-${cr.id}`, crRowStageText(cr))
             const unblocks = crUnblocksText(cr)
             if (unblocks !== null) hint.add(`unblocks-${cr.id}`, crUnblocksHint(cr, boardPrefix))
             const raised = crPriorityHint(cr, boardPrefix)
             if (raised !== null) hint.add(`priority-${cr.id}`, raised)
-            const facts: { key: string; text: string; color: string; hover?: string }[] = [
-              { key: 'stage', text: stage, color: buttons.accepting ? 'warning' : 'inactive' },
+            const columns: { key: keyof typeof widths; text: string; color: string; hover?: string }[] = [
               { key: 'priority', text: crPriorityText(cr), color: 'inactive', ...(raised === null ? {} : { hover: `priority-${cr.id}` }) },
-              ...(unblocks === null ? [] : [{ key: 'unblocks', text: unblocks, color: 'inactive', hover: `unblocks-${cr.id}` }]),
+              { key: 'unblocks', text: unblocks ?? '', color: 'inactive', ...(unblocks === null ? {} : { hover: `unblocks-${cr.id}` }) },
             ]
+            // the right group, flush against the right edge, in this order: the marks, the held word, the new-failure count and the check state
             const rest: { key: string; text: string; color: string }[] = [
-              ...(check === null ? [] : [{ key: 'check', text: check, color: CHECK_COLOR[cr.check.state] }]),
-              ...(count === null ? [] : [{ key: 'new', text: count, color: cr.check.newFailures !== null && cr.check.newFailures.length > 0 ? 'error' : 'inactive' }]),
-              ...marks.map(mark => ({ key: `mark-${mark.text}`, text: mark.text, color: mark.isProblem ? 'error' : 'inactive' })),
+              ...marks.map(mark => ({ key: `mark-${mark.text}`, text: mark.text, color: 'error' })),
               ...(held === null ? [] : [{ key: 'held', text: held, color: 'warning' }]),
+              ...(count === null ? [] : [{ key: 'new', text: count, color: 'error' }]),
+              ...(check === null ? [] : [{ key: 'check', text: check, color: CHECK_COLOR[cr.check.state] }]),
             ]
+            const rightWidth = rest.reduce((sum, one) => sum + one.text.length, 0) + PART_GAP * Math.max(0, rest.length - 1)
             const actions = [
               ...(buttons.accepting ? [
-                act(`cr-open-${cr.id}`, buttons.walkLabel, () => pressOpenCr($, cr.id), buttons.walkHint),
-                act(`cr-accept-${cr.id}`, 'Accept', () => pressAcceptCr($, cr.id), 'Sends the accept request; your session lands it', 'success'),
-                act(`cr-return-${cr.id}`, 'Return', () => pressReturnCr($, cr.id), 'Puts the return request in your prompt, ready for your changes'),
+                act(`cr-open-${cr.id}`, buttons.walkLabel, () => pressOpenCr($, cr.id), buttons.walkHint, 'suggestion'),
+                act(`cr-accept-${cr.id}`, CR_BUTTONS.accept, () => pressAcceptCr($, cr.id), 'Sends the accept request; your session lands it', 'success', true),
+                act(`cr-return-${cr.id}`, CR_BUTTONS.return, () => pressReturnCr($, cr.id), 'Puts the return request in your prompt, ready for your changes', undefined, true),
               ] : []),
-              ...(buttons.refreshing ? [act(`cr-refresh-${cr.id}`, 'Refresh', () => pressRefreshCr($, cr.id), 'Sends the refresh request: rebase, checks and the range-diff', 'suggestion')] : []),
+              ...(buttons.refreshing ? [act(`cr-refresh-${cr.id}`, CR_BUTTONS.refresh, () => pressRefreshCr($, cr.id), 'Sends the refresh request: rebase, checks and the range-diff', 'suggestion')] : []),
             ]
-            // line two: the milestone shrinks first, down to MILESTONE_MIN; what still does not fit wraps to a next line of the facts
-            const fixedWidth = [...facts, ...rest].reduce((sum, one) => sum + one.text.length + 1, 0)
-            const room = e.props.bodyColumns - CR_INDENT * depth - crIdWidth - fixedWidth - 1
+            // line two: the milestone shrinks first, down to MILESTONE_MIN; what still does not fit wraps to a next line
+            const room = e.props.bodyColumns - 1 - CR_INDENT * depth - crIdWidth - alignedWidth - (rest.length === 0 ? 0 : rightWidth + 1) - 1  // the bar, the id column, the columns, the right group with its gap and a spare cell
+            const barColor = KIND_COLOR[crKind(cr)]
             const milestone = cr.milestone === null ? null : fitText(cr.milestone, Math.max(MILESTONE_MIN, room))
             if (cr.milestone !== null && milestone !== cr.milestone) hint.add(`milestone-${cr.id}`, `${shown(cr.id)} belongs to: ${cr.milestone}`)
             const fact = (one: { key: string; text: string; color: string; hover?: string }) => {
               const text = <Text key={`cr-${cr.id}-${one.key}`} color={one.color}>{one.text}</Text>
               return one.hover === undefined ? text : <Box key={`cr-${cr.id}-${one.key}-box`} flexShrink={0} hover={{ scope: one.hover }}>{text}</Box>
             }
+            // a column without a part for this request keeps its place, blank
+            const cells = columns.filter(one => widths[one.key] > 0).map(one => (
+              <Box key={`cr-${cr.id}-col-${one.key}`} width={widths[one.key] + PART_GAP} flexShrink={0}>
+                {one.text === '' ? <Text> </Text> : fact(one)}
+              </Box>
+            ))
+            const milestoneCell = milestone === null ? null : milestone === cr.milestone
+              ? <Text key={`cr-${cr.id}-milestone`} dimColor>{milestone}</Text>
+              : <Box key={`cr-${cr.id}-milestone-box`} flexShrink={0} hover={{ scope: `milestone-${cr.id}` }}><Text key={`cr-${cr.id}-milestone`} dimColor>{milestone}</Text></Box>
+            const rightParts = rest.map(fact)
             return (
               <Box key={`cr-${cr.id}`} flexDirection="column">
-                <Box key={`cr-${cr.id}-line1`} flexDirection="row">
-                  <Box width={CR_INDENT * depth} flexShrink={0}><Text> </Text></Box>
-                  <Box key={`cr-${cr.id}-idbox`} width={crIdWidth} flexShrink={0} hover={{ scope: `item-${cr.id}` }}>
-                    <Button key={`cr-${cr.id}-show`} plain onPress={() => pressOpenItem($, cr.id)}>{dimId(cr.id)}</Button>
+                <Box key={`cr-${cr.id}-lines`} flexDirection="column" {...(index % 2 === 1 ? { backgroundColor: STRIPE } : {})}>
+                  <Box key={`cr-${cr.id}-line1`} flexDirection="row">
+                    <Box key={`cr-${cr.id}-bar1`} width={1} flexShrink={0} hover={{ scope: `bar-${cr.id}` }}><Text color={barColor}>{BAR}</Text></Box>
+                    <Box width={CR_INDENT * depth} flexShrink={0}><Text> </Text></Box>
+                    <Box key={`cr-${cr.id}-title`} flexGrow={1} flexShrink={1} minWidth={0}><Text bold wrap="truncate-end">{cr.title}</Text></Box>
+                    {actions.length > 0 && <Box key={`cr-${cr.id}-buttons`} width={buttons.width} marginLeft={1} flexShrink={0} flexDirection="row">{actions.flatMap((one, i) => i === 0 ? [one] : [<Text key={`cr-${cr.id}-sep-${i}`} color="inactive">{BUTTON_SEP}</Text>, one])}</Box>}
                   </Box>
-                  <Box key={`cr-${cr.id}-title`} flexGrow={1} flexShrink={1} minWidth={0}><Text wrap="truncate-end">{cr.title}</Text></Box>
-                  {slotWidth > 0 && <Box key={`cr-${cr.id}-buttons`} width={slotWidth} marginLeft={1} flexShrink={0} flexDirection="row" columnGap={1} justifyContent="flex-end">{actions}</Box>}
-                </Box>
-                <Box key={`cr-${cr.id}-line2`} flexDirection="row">
-                  <Box width={CR_INDENT * depth + crIdWidth} flexShrink={0}><Text> </Text></Box>
-                  <Box key={`cr-${cr.id}-facts`} flexDirection="row" flexWrap="wrap" columnGap={1} flexGrow={1} flexShrink={1} minWidth={0}>
-                    {facts.map(fact)}
-                    {milestone !== null && (milestone === cr.milestone
-                      ? <Text key={`cr-${cr.id}-milestone`}>{milestone}</Text>
-                      : <Box key={`cr-${cr.id}-milestone-box`} flexShrink={0} hover={{ scope: `milestone-${cr.id}` }}><Text key={`cr-${cr.id}-milestone`}>{milestone}</Text></Box>)}
-                    {rest.map(fact)}
+                  <Box key={`cr-${cr.id}-line2`} flexDirection="row">
+                    <Box key={`cr-${cr.id}-bar2`} width={1} flexShrink={0}><Text> </Text></Box>
+                    <Box width={CR_INDENT * depth} flexShrink={0}><Text> </Text></Box>
+                    <Box key={`cr-${cr.id}-idbox`} width={crIdWidth} flexShrink={0} hover={{ scope: `item-${cr.id}` }}>
+                      <Button key={`cr-${cr.id}-show`} plain onPress={() => pressOpenItem($, cr.id)}>{dimId(cr.id)}</Button>
+                    </Box>
+                    <Box key={`cr-${cr.id}-facts`} flexDirection="row" flexWrap="wrap" columnGap={1} flexGrow={1} flexShrink={1} minWidth={0}>
+                      {cells}
+                      <Box key={`cr-${cr.id}-milestone-fill`} flexGrow={1} flexShrink={1} minWidth={0}>{milestoneCell}</Box>
+                      {rest.length > 0 && <Box key={`cr-${cr.id}-right`} flexDirection="row" flexShrink={0}>
+                        {rightParts.flatMap((part, i) => i === 0 ? [part] : [<Text key={`cr-${cr.id}-right-sep-${i}`}>{' '.repeat(PART_GAP)}</Text>, part])}
+                      </Box>}
+                    </Box>
                   </Box>
                 </Box>
                 {slot(cr.id)}

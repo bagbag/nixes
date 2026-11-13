@@ -49,9 +49,11 @@ describe('change request queue', () => {
   test('a stack: the child stands under its parent with stage, check state and look', async ($, on) => {
     const { ui } = await queued($, on, [...BOARD_CONSOLE_CONTRACT.crs] as unknown as Crs, repo(), { ratifications: [...BOARD_CONSOLE_CONTRACT.ratifications] })
     const drawn = await texts(ui)
-    for (const part of ['Change requests', 'Remove the legacy cache', 'Drop the cache config', 'code', 'checks current', '0 new', '2 new', 'checkpoint review', 'stale', 'to ratify', 'Ratify: Move the clock']) {
+    for (const part of ['Change requests', 'Remove the legacy cache', 'Drop the cache config', 'code', '2 new', 'checkpoint review', 'stale', 'to ratify', 'Ratify: Move the clock']) {
       expect(drawn, part).toContain(part)
     }
+    expect(drawn).not.toContain('checks current')  // the normal state stays off the row
+    expect(drawn).not.toContain('0 new')  // a zero count stays in the opened summary
     // The row holds the short status; counts, names, look and view wait in the opened summary.
     for (const part of ['base 3012', 'src/a.ts', 'look before', 'look after']) expect(drawn, part).not.toContain(part)
     expect(drawn.indexOf('Remove the legacy cache')).toBeLessThan(drawn.indexOf('Drop the cache config'))
@@ -132,11 +134,10 @@ describe('no new failures', () => {
 
   test('a request for you names what you look at on its row; its opened summary says it waits to accept', async ($, on) => {
     const { ui, clock } = await queued($, on, [cr({ id: 'p-cr1', checkpoint: 'user' }), cr({ id: 'p-cr2', view: 'result' }), cr({ id: 'p-cr3' })])
-    for (const [id, kind] of [['p-cr1', 'design'], ['p-cr2', 'result'], ['p-cr3', 'code']]) {
-      const row = (await ui.find({ key: `cr-${id}` }))?.text ?? ''
-      expect(row, id).toContain(kind)
-      expect(row, id).not.toContain('to accept')
-    }
+    const legend = (await ui.find({ key: 'cr-legend' }))?.text ?? ''  // the kinds as words, above the rows
+    for (const kind of ['design', 'result', 'code']) expect(legend, kind).toContain(kind)
+    expect(legend).not.toContain('in work')  // no request of that kind shows
+    for (const id of ['p-cr1', 'p-cr2', 'p-cr3']) expect((await ui.find({ key: `cr-${id}` }))?.text ?? '', id).not.toContain('to accept')
     await ui.press({ key: 'cr-p-cr1-show' })
     await clock.settle()
     expect((await ui.find({ key: 'cr-p-cr1-details' }))?.text).toContain('to accept (design)')
@@ -801,27 +802,27 @@ describe('request rows', () => {
   const children = (found: { children: unknown[] } | undefined) => JSON.stringify(found?.children)
   const ui_line2 = async (ui: Mounted, id: string) => (await ui.find({ key: `cr-${id}-line2` }))?.text ?? ''
 
-  test('two lines: id, title and the buttons in a fixed right-aligned slot so Accept and Return line up, then the stage and the facts', async ($, on) => {
+  test('two lines: the title and the buttons at the right edge so Accept and Return line up, then the id and the facts', async ($, on) => {
     const { ui } = await mounted($, on, [cr({ id: 'p-cr1', unblocks: 14, unblocksDirect: 7, milestone: '1.0-beta scope' }), cr({ id: 'p-cr2', view: 'result' })], WIDE)
     for (const id of ['p-cr1', 'p-cr2']) {
       const first = (await ui.find({ key: `cr-${id}-line1` }))?.text ?? ''
       expect(first, id).toContain(`Title of ${id}`)
-      for (const part of ['checks current', 'code', 'result']) expect(first, `${id} line one ${part}`).not.toContain(part)
-      expect(first, id).toContain('Accept')
+      expect(first, `${id} line one`).not.toContain('checks current')
+      expect(children(await ui.find({ key: `cr-${id}-line1` })), id).toContain(`cr-accept-${id}`)
       const line = (await ui.find({ key: `cr-${id}-line2` }))?.text ?? ''
       const at = (part: string) => line.indexOf(part)
-      const places = [id === 'p-cr1' ? 'code' : 'result', ...(id === 'p-cr1' ? ['unblocks 14', '1.0-beta scope'] : []), 'checks current', '0 new'].map(at)
+      expect(children(await ui.find({ key: `cr-${id}-line2` })), id).not.toContain(`cr-accept-${id}`)
+      const places = [id, ...(id === 'p-cr1' ? ['unblocks 14', '1.0-beta scope'] : [])].map(at)
       expect(places.every(place => place >= 0), id).toBe(true)
       expect(places, id).toEqual([...places].sort((a, b) => a - b))
-      expect(line, id).not.toContain('Accept')
-      expect((await ui.find({ key: `cr-${id}-buttons` }))?.props, id).toMatchObject({ width: 38, justifyContent: 'flex-end', flexShrink: 0 })
+      expect((await ui.find({ key: `cr-${id}-buttons` }))?.props, id).toMatchObject({ width: id === 'p-cr1' ? 22 : 30, flexShrink: 0 })  // Open • Accept • Return; Walk through • Accept • Return
     }
     await ui.unmount()
   })
 
-  test('the buttons slot is as wide as the widest row needs: code-only rows reserve no Walk through', async ($, on) => {
+  test('the buttons are as wide as their labels and sit at the right edge', async ($, on) => {
     const code = await mounted($, on, [cr({ id: 'p-cr1' })], WIDE)
-    expect((await code.ui.find({ key: 'cr-p-cr1-buttons' }))?.props.width).toBe(30)
+    expect((await code.ui.find({ key: 'cr-p-cr1-buttons' }))?.props.width).toBe(22)
     await code.ui.unmount()
   })
 
@@ -830,6 +831,45 @@ describe('request rows', () => {
     expect((await ui.find({ key: 'cr-p-cr1-title' }))?.props).toMatchObject({ flexShrink: 1, flexGrow: 1 })
     expect(children(await ui.find({ key: 'cr-p-cr1-line1' }))).toContain('cr-accept-p-cr1')
     expect(children(await ui.find({ key: 'cr-p-cr1-line2' }))).not.toContain('cr-accept-p-cr1')
+    await ui.unmount()
+  })
+
+  test('a bar in the first cell of the title line marks each request and shows its kind: design, code, or in work', async ($, on) => {
+    const { ui } = await mounted($, on, [cr({ id: 'p-cr1' }), cr({ id: 'p-cr2', checkpoint: 'user', tip: null, baseTip: null }), cr({ id: 'p-cr3', status: 'in_progress' })], WIDE)
+    for (const id of ['p-cr1', 'p-cr2', 'p-cr3']) {
+      expect((await ui.find({ key: `cr-${id}-bar1` }))?.text, id).toBe('▌')
+      expect((await ui.find({ key: `cr-${id}-bar2` }))?.text, `${id} line two`).toBe(' ')  // the second line only keeps the cell
+    }
+    const color = async (id: string) => ((await ui.find({ key: `cr-${id}-bar1` }))?.children?.[0] as { props: { color?: string } } | undefined)?.props.color
+    expect([await color('p-cr1'), await color('p-cr2'), await color('p-cr3')]).toEqual(['claude', 'planMode', 'success'])  // code, design, in work
+    expect(await texts(ui)).toContain('in work')  // the stage the legend's word cannot give, on the bar's hover
+    await ui.unmount()
+  })
+
+  test('the priority and unblocks stand in columns as wide as the widest request, so what follows starts at one cell', async ($, on) => {
+    const { ui } = await mounted($, on, [cr({ id: 'p-cr1' }), cr({ id: 'p-cr2', checkpoint: 'user', tip: null, baseTip: null, unblocks: 14, unblocksDirect: 7 })], WIDE)
+    for (const id of ['p-cr1', 'p-cr2']) {
+      expect((await ui.find({ key: `cr-${id}-col-priority` }))?.props.width, `${id} priority`).toBe('P2'.length + 2)
+      expect((await ui.find({ key: `cr-${id}-col-unblocks` }))?.props.width, `${id} unblocks`).toBe('unblocks 14'.length + 2)  // blank on the request without one
+    }
+    expect(await ui.find({ key: 'cr-p-cr1-unblocks' })).toBeUndefined()
+    expect(await ui.find({ key: 'cr-p-cr1-leader' })).toBeUndefined()
+    await ui.unmount()
+  })
+
+  test('the title is bold, the milestone dim, Open is the accent and Accept and Return are dim', async ($, on) => {
+    const { ui } = await mounted($, on, [cr({ id: 'p-cr1', milestone: '1.0-beta' }), cr({ id: 'p-cr2', landBlocked: ['src/a.ts'] })], WIDE)
+    const title = async (id: string) => (await ui.findAll({ type: 'Text' })).find(one => one.text === `Title of ${id}`)?.props
+    for (const id of ['p-cr1', 'p-cr2']) expect((await title(id))?.bold, id).toBe(true)
+    expect((await (await ui.findAll({ type: 'Text' })).find(one => one.text === '1.0-beta'))?.props.dimColor).toBe(true)
+    for (const [key, isDim] of [['cr-open-p-cr1', false], ['cr-return-p-cr1', true], ['cr-accept-p-cr1', true]] as const) expect(!!(await ui.find({ key }))?.props.dimColor, key).toBe(isDim)
+    await ui.unmount()
+  })
+
+  test('the id sits on line two, dim, in front of the facts', async ($, on) => {
+    const { ui } = await mounted($, on, [cr({ id: 'p-cr1' })], WIDE)
+    expect(children(await ui.find({ key: 'cr-p-cr1-line1' }))).not.toContain('cr-p-cr1-idbox')
+    expect(children(await ui.find({ key: 'cr-p-cr1-line2' }))).toContain('cr-p-cr1-idbox')
     await ui.unmount()
   })
 
@@ -850,21 +890,21 @@ describe('request rows', () => {
   })
 
   test('a long milestone title is cut to what the line has left, not wrapped', async ($, on) => {
-    const long = 'A milestone with a title that is far longer than any narrow pane could ever show in one line'
-    const { ui } = await mounted($, on, [cr({ id: 'p-cr1', milestone: long })], { ...PANE_PROPS, bodyColumns: 110 })
-    const shown = (await texts(ui)).split('\n').find(one => one.startsWith('A milestone')) ?? ''
+    const long = 'A-milestone-title-without-spaces-far-longer-than-any-narrow-pane-could-ever-show-in-one-line'  // no space at the cut, which fitText would trim
+    const { ui } = await mounted($, on, [cr({ id: 'p-cr1', milestone: long })], { ...PANE_PROPS, bodyColumns: 90 })
+    const shown = (await texts(ui)).split('\n').find(one => one.startsWith('A-milestone')) ?? ''
     expect(shown.endsWith('…') && shown.length < long.length).toBe(true)
-    expect(shown.length).toBe(110 - 7 - 29 - 1)  // pane minus the id column (p-cr1 and a gap), the facts (code, P2, checks current, 0 new, with gaps; the buttons sit on line one) and a spare cell
+    expect(shown.length).toBe(90 - 1 - 7 - (2 + 3) - 1)  // pane minus the bar, the id column (p-cr1 and a gap), the column (P2 with its divider and gap) and a spare cell; a current check has no right group
     await ui.unmount()
   })
 
   test('line two wraps when its facts do not fit; a cut milestone keeps its full title on hover', async ($, on) => {
     const long = 'A milestone with a title that is far longer than any narrow pane could ever show in one line'
     const { ui } = await mounted($, on, [cr({ id: 'p-cr1', unblocks: 14, unblocksDirect: 7, milestone: long, landBlocked: ['src/aaaa.ts', 'src/bbbb.ts'] }), cr({ id: 'p-cr2', milestone: 'Short' })], { ...PANE_PROPS, bodyColumns: 90 })
-    expect((await ui.find({ key: 'cr-p-cr1-facts' }))?.props).toMatchObject({ flexWrap: 'wrap' })
+    expect((await ui.find({ key: 'cr-p-cr1-facts' }))?.props).toMatchObject({ flexWrap: 'wrap', flexGrow: 1 })
     const line = (await ui.find({ key: 'cr-p-cr1-line2' }))?.text ?? ''
-    for (const part of ['code', 'unblocks 14', 'checks current', '0 new', 'land blocked: src/aaaa.ts, src/bbbb.ts']) expect(line, part).toContain(part)
-    expect((await ui.find({ key: 'cr-p-cr1-line1' }))?.text).toContain('Accept')
+    for (const part of ['unblocks 14', 'land blocked: src/aaaa.ts, src/bbbb.ts']) expect(line, part).toContain(part)
+    expect(children(await ui.find({ key: 'cr-p-cr1-line1' }))).toContain('cr-accept-p-cr1')
     expect(await ui.find({ key: 'cr-p-cr1-milestone-box' })).toBeDefined()
     expect(await texts(ui)).toContain(`p-cr1 belongs to: ${long}`)
     expect(await ui.find({ key: 'cr-p-cr2-milestone-box' })).toBeUndefined()  // a milestone shown whole has no hover
@@ -913,10 +953,16 @@ describe('request rows', () => {
     expect(consoleText({ session: 's', role: 'lead', actor: 'a', tool: 'claude' }, { ...board, crs: [], queued: 0, waitingOnYou: 0 } as unknown as ConsoleBoard, null, false, [])).not.toContain('Change requests')
   })
 
-  test('only problem marks join line two, after the check and the new-failure count', async ($, on) => {
-    const { ui } = await mounted($, on, [cr({ id: 'p-cr1', landBlocked: ['src/a.ts'] })], WIDE)
-    const line = (await ui.find({ key: 'cr-p-cr1-line2' }))?.text ?? ''
-    expect(line.indexOf('land blocked: src/a.ts')).toBeGreaterThan(line.indexOf('0 new'))
+  test('the right edge of line two holds the problem marks, then the new-failure count, then the check state, flush right; a current check is not shown', async ($, on) => {
+    const check = (state: string, over: Record<string, unknown> = {}) => ({ state, kind: 'full', tip: sha(2), baseTip: sha(1), at: null, result: 'fail', newFailures: null, baseCount: null, tipCount: null, ...over })
+    const { ui } = await mounted($, on, [cr({ id: 'p-cr1', landBlocked: ['src/a.ts'], check: check('conflict', { newFailures: ['x TS1'] }) } as never), cr({ id: 'p-cr2', check: check('stale') } as never), cr({ id: 'p-cr3' })], WIDE)
+    const line = async (id: string) => (await ui.find({ key: `cr-${id}-line2` }))?.text ?? ''
+    const [one, two, three] = [await line('p-cr1'), await line('p-cr2'), await line('p-cr3')]
+    expect(one.indexOf('land blocked: src/a.ts')).toBeLessThan(one.indexOf('1 new'))
+    expect(one.indexOf('1 new')).toBeLessThan(one.indexOf('conflict'))
+    expect(await ui.find({ key: 'cr-p-cr3-right' })).toBeUndefined()  // nothing to show, nothing reserved
+    expect((await ui.find({ key: 'cr-p-cr2-right' }))?.props).toMatchObject({ flexShrink: 0 })
+    expect(three).not.toContain('checks current')
     await ui.unmount()
   })
 
@@ -938,12 +984,12 @@ describe('request rows', () => {
     expect(second).not.toContain('unblocks')
   })
 
-  test('the stage is colored text without a background: warning while it waits for you', async ($, on) => {
-    const { ui } = await mounted($, on, [cr({ id: 'p-cr1' }), cr({ id: 'p-cr2', status: 'in_review' })], WIDE)
-    const stage = async (text: string) => (await ui.findAll({ type: 'Text' })).find(one => one.text === text)?.props
-    expect(await stage('code')).toMatchObject({ color: 'warning' })
-    expect(await stage('in review')).toMatchObject({ color: 'inactive' })
-    expect((await stage('code'))?.inverse).toBeUndefined()
+  test('every second request has a stripe behind its two lines; the first and the third have none', async ($, on) => {
+    const { ui } = await mounted($, on, [1, 2, 3].map(n => cr({ id: `p-cr${n}` })), WIDE)
+    const lines = async (n: number) => (await ui.find({ key: `cr-p-cr${n}-lines` }))?.props
+    expect((await lines(1))?.backgroundColor).toBeUndefined()
+    expect((await lines(2))?.backgroundColor).toBe('rgb(50,50,50)')
+    expect((await lines(3))?.backgroundColor).toBeUndefined()
     await ui.unmount()
   })
 
