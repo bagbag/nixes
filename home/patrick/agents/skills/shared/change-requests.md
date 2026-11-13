@@ -28,8 +28,8 @@ queue order and refresh work: [Board coordination](board-coordination.md).
   CR takes the defaults; its own `look` or `view` only overrides them (clear
   the ones a changing `board setup` lists); a bad or missing
   value fails closed where used; `board check` lists them. The `checks` exit
-  status is a contract: 0 = ran, the printed `file code` lines are the
-  failures; 1 = ran with failures, at least one line printed; any other
+  status is a contract: 0 = ran, the `file code` lines on stdout are the
+  failures; 1 = ran with failures, at least one such line; any other
   status, or 1 with no line, is a broken check and fails closed.
 - **Worktree** `<main>/.worktrees/<cr-id>` on `cr/<cr-id>` (`<main>`: first
   entry of `git worktree list`; `board` excludes `.worktrees/` in

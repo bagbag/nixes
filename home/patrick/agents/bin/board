@@ -2989,10 +2989,16 @@ def run_shell(cwd: Path, command: str) -> tuple[int, str]:
     return code, tail(out)
 
 
-def failure_counts(output: str) -> dict[tuple[str, str], int]:
-    """The check command prints one `file code` line per failure (q241); anything else it prints is not a failure."""
+def run_check(cwd: Path, command: str) -> tuple[int, str, str]:
+    """The project check's exit status, its stdout (where the failure lines go, q241) and stdout plus stderr for display."""
+    result = subprocess.run(['/bin/sh', '-c', command], cwd=cwd, capture_output=True, text=True)
+    return result.returncode, result.stdout, result.stdout + result.stderr
+
+
+def failure_counts(stdout: str) -> dict[tuple[str, str], int]:
+    """One `file code` line per failure on the check's stdout (q241); its other lines and all of stderr are not failures."""
     found: dict[tuple[str, str], int] = {}
-    for row in output.splitlines():
+    for row in stdout.splitlines():
         parts = row.split()
         if len(parts) == 2:
             found[(parts[0], parts[1])] = found.get((parts[0], parts[1]), 0) + 1
@@ -3031,12 +3037,12 @@ def base_failures(board: Board, cr: dict, main: Path, base_tip: str) -> dict[tup
             code, out = run_shell(path, setup)
             if code:
                 raise BoardError(f'{cr["id"]}: setup failed at the base commit {base_tip[:12]}, so its failures are unknown:\n{out}')
-            base_code, full = run_shell_full(path, checks)
-            if base_code not in (0, 1) or (base_code == 1 and not failure_counts(full)):
+            base_code, stdout, full = run_check(path, checks)
+            if base_code not in (0, 1) or (base_code == 1 and not failure_counts(stdout)):
                 raise BoardError(f'{cr["id"]}: the check is broken at the base commit {base_tip[:12]} (exit {base_code}), so its failures are unknown:\n{tail(full)}')
         finally:
             git(main, 'worktree', 'remove', '--force', str(path), check=False)
-        found = failure_counts(full)
+        found = failure_counts(stdout)
         scratch = folder / f'{key}.{os.getpid()}.tmp'
         scratch.write_text(''.join(f'{f} {c} {n}\n' for (f, c), n in sorted(found.items())), encoding='utf-8')
         os.replace(scratch, result)  # atomic: a reader never sees half a result
@@ -3045,12 +3051,12 @@ def base_failures(board: Board, cr: dict, main: Path, base_tip: str) -> dict[tup
 
 def check_verdict(board: Board, cr: dict, main: Path, wt: Path, base_tip: str) -> tuple[bool, str, dict | None]:
     """Runs the project check at the tip; passes when no (file, code) failure count rises from the base to the tip (q241)."""
-    code, full = run_shell_full(wt, board_setting(board, 'checks'))
-    at_tip = failure_counts(full)
-    # Exit status contract: 0 = ran, the printed lines are the failures; 1 = ran with failures, at least one line printed;
-    # anything else, or 1 with no line, is a broken check and fails closed.
+    code, stdout, full = run_check(wt, board_setting(board, 'checks'))
+    at_tip = failure_counts(stdout)
+    # Exit status contract: 0 = ran, the `file code` lines on stdout are the failures; 1 = ran with failures, at least one such
+    # line; anything else, or 1 with no line, is a broken check and fails closed.
     if code not in (0, 1) or (code == 1 and not at_tip):
-        return False, f'check broken (exit {code}' + (', no failure line printed' if code == 1 else '') + f'):\n{tail(full)}', None
+        return False, f'check broken (exit {code}' + (', no failure line on stdout' if code == 1 else '') + f'):\n{tail(full)}', None
     if not at_tip:
         return True, '', None  # no comparison ran
     base = base_failures(board, cr, main, base_tip)
@@ -5721,7 +5727,7 @@ def run_command(argv: list[str]) -> int:
     modes.add_argument('--embedded', action='store_true', help='a new board in embedded mode: one writer at a time, never shared')
     sub.add_argument('--prefix', help="a new board's id prefix (default: the origin repository's name, else the folder's)")
     for name, text in (('target', 'the branch change requests land on'), ('setup', 'the command that sets a worktree up (project script)'),
-                       ('checks', 'the check command: one `file code` line per failure; no (file, code) count may rise from base to tip'),
+                       ('checks', 'the check command: one `file code` line per failure on stdout; no (file, code) count may rise from base to tip'),
                        ('look', 'before: you look before it lands; after: it lands after agent review'), ('view', 'code: a review tree; result: the result')):
         sub.add_argument(f'--{name}', metavar=name.upper(), help=f'project setting {SETTINGS[name]}: {text}')
     sub = add('share', "share this board: without --yes, say what goes out and stop; with it: remote (default: the project's "

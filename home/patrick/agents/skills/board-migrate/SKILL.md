@@ -1,33 +1,42 @@
 ---
 name: board-migrate
 description: >-
-  Move a project's TODO/REVIEW files, trackers or older board onto the
-  current board (mode tracker), or bring a board to the current model (mode
-  upgrade).
-argument-hint: "[tracker|upgrade] [project or arc]"
+  Bring a project onto the current model: trackers and TODO/REVIEW files onto
+  the board, an older board to change requests, in-repo `.scratch` folders
+  out of the repository.
+argument-hint: "[project or arc] [focus, e.g. scratch]"
 disable-model-invocation: true
 ---
 
 # Board migrate
 
 Migrate the project or arc the user names; derive the work from the gap
-between what exists and the target.
+between what exists and the target. Give each step's output compactly; detail
+only findings and stops.
 
-## Modes
+## Start
 
-Take the mode from the argument; ask when the project has both trackers and an
-older board.
+Parts: **Tracker** (Target through Exit), [Upgrade](#upgrade) and
+[Scratch](#scratch). A one-time switch-over lives only here, not in protocols
+or other skills.
 
-- **tracker:** trackers, backlog files or an older board onto the current
-  board: Target, Invariants, Steps, Stop, Exit and Tool facts below.
-- **upgrade:** a current-format board onto the current model:
-  [Upgrade mode](#upgrade-mode). A one-time switch-over lives only here, not in
-  protocols or other skills.
+1. **Scan.** Read-only, a few commands:
+   - trackers: `TODO.md`, `REVIEW.md`, Markdown boards, `docs/` backlogs;
+   - board: `.beads/`, `board check --all` classes with counts, `board
+     holders`, stored settings (`board bd config list`);
+   - scratch: in-repo `.scratch` folders (count, size);
+   - dirty main-tree paths.
+   Output: one line per part: open work found, done, or not applicable.
+2. **Ask.** One dialog: a question per part with open work, with its scan
+   line and a recommendation (the argument's focus recommended), plus each
+   finding that changes a part's scope (an unclassifiable file, a running
+   hold). Run only the picked parts, in the order Tracker, Upgrade, Scratch.
+   Output: the picks, quoted.
 
 ## Target
 
-- Board model: [Board core](#board-core-beads) and
-  [Board coordination](#board-coordination-beads), included below.
+- Board model: [Board core](#board-core-beads) below; read
+  `$HOME/.agents/skills/shared/board-coordination.md`.
 - Owners of knowledge, outstanding work, arc state and history:
   `$HOME/.agents/skills/shared/project-memory.md`.
 - Sessions enter through `/role`; read `$HOME/.agents/skills/role/SKILL.md` for
@@ -70,9 +79,7 @@ older board.
   past decision time as written; Live or history and text rewrites skip them.
   State missing provenance, dates and reasons as "not recorded".
 
-## Steps
-
-Give each step's output compactly; detail only findings and stops.
+## Tracker
 
 1. **Discover.**
    - Where a board exists, run `board check --all` for its mechanical
@@ -88,7 +95,7 @@ Give each step's output compactly; detail only findings and stops.
      a deliberate priority (rank under [Priority](#priority)); user stops
      stated in comments or deferral reasons (convert those in force under
      [Dependencies](#dependencies) or
-     [Deferrals and environment facts](#deferrals-and-environment-facts),
+     [Deferrals and environment facts](../shared/board-coordination.md#deferrals-and-environment-facts),
      drop lifted ones); `board bd memories` past their removal condition (to
      the user).
    - Classify every doc under `docs/` as current owner, proposal (to the
@@ -112,8 +119,7 @@ Give each step's output compactly; detail only findings and stops.
 4. **Apply.** Before the first write, ask the user to pause sessions that
    write the board or the sources; re-check every source hash and diff a
    fresh `board bd export` against `board-baseline.jsonl` (no board: hashes
-   only), and stop on drift. Report when the paused
-   sessions may resume. Run `$HOME/.agents/bin/board setup`, which creates or
+   only), and stop on drift; report when they may resume. Run `$HOME/.agents/bin/board setup`, which creates or
    updates the board, and act on the exclude lines it reports
    (`$HOME/.agents/skills/shared/beads-setup.md`).
    Apply only from the change set, directly, or for large boards through
@@ -130,8 +136,7 @@ Give each step's output compactly; detail only findings and stops.
 6. **Retire.** With counts reconciled, `git mv` replaced trackers to
    `history/` with a one-line banner naming their new owner; replace migrated
    backlog sections with the board view that lists them; update project
-   instructions and docs that named the retired trackers. Write the position
-   into the checkpoint file under project-memory Arc state.
+   instructions and docs that named the retired trackers.
    Output: moved files, final counts, epic ids.
 
 ## Stop
@@ -149,34 +154,32 @@ The target holds every live entry, history holds the rest, counts reconcile,
 replaced trackers sit in `history/`, and sessions are told to enter with
 `/role`.
 
-## Upgrade mode
+## Upgrade
 
 Per project (model:
 [Change requests](../shared/change-requests.md#change-requests)); every git
 step goes in a change set and runs on the user's confirmation.
 
 1. **Inspect.** `board check --all`, `board holders`, items in review, dirty
-   main-tree paths. A project whose tests share one database (tstdl) needs the
-   per-checkout test database landed first.
+   main-tree paths. A project whose tests share one database needs
+   per-checkout test databases landed first.
    Output: holds by holder, in-review items, dirty path count.
 2. **Drain.** The user stops starting pull sessions; holds and agent reviews
    of in-review tasks finish (`board mine` per session); after the board
    switched, such a review closes as a standalone review (review.md step 7).
-   Stop no holder: half-done work must not enter the start. Designs waiting for the user's
+   Stop no holder. Designs waiting for the user's
    accept stay; step 5 wraps them. Holds left from before the board switched
    (no drain first) cannot hand over: their edits stay in the main tree for
    the start, their holders `board unclaim` them, and planning cuts them into
    CRs with the rest.
    Output: `no holds`, or the holders still working.
 3. **Start.** The user finishes and commits the main tree; that commit is the
-   start (no baseline CR). Requests land under the no-new-failures rule, so a
-   red project needs no green first.
+   start (no baseline CR); a red project needs no green first.
    Output: the start commit.
 4. **Settings.** Add the project's setup and check scripts under
-   [Change requests](../shared/change-requests.md#change-requests) Settings
-   (vitrass keeps full commands), then
-   `board setup --target … --setup … --checks … --look … --view …` (tstdl:
-   before, code; marchin: after, result; others ask). Make each tool that
+   [Change requests](../shared/change-requests.md#change-requests) Settings,
+   then `board setup --target … --setup … --checks … --look … --view …`
+   (`look` and `view`: ask the user). Make each tool that
    scans from the repository root skip `.worktrees/` (oxlint and oxfmt
    honor `.git/info/exclude`).
    Output: the settings as stored.
@@ -185,14 +188,28 @@ step goes in a change set and runs on the user's confirmation.
    `needs_acceptance`. `board check --all` clean but for user-accepted
    deviations; one `board claim` of a CR works end to end. Open items stay
    ungrouped: the plan protocol groups them into CRs when they become due.
+   Tell the user pulls may start.
    Output: check result.
-6. **Scratch.** With every session paused, move decision-record folders to
-   `~/.local/share/agents/decisions/<scratch's repo folder name>/` (another
-   topic's records: a folder of its own beside it), run
-   `$HOME/.agents/bin/scratch migrate` and settle each case it lists. Rewrite
-   `.scratch/` links in live items to the moved path in `~/` form. Tell the
-   user pulls may start.
-   Output: moved and listed counts, rewritten item ids.
+
+## Scratch
+
+Scripts: `$HOME/.agents/skills/board-migrate/scripts/`; save each output as a
+log in `$HOME/.agents/bin/scratch dir`.
+
+1. **Records.** Ask the user to pause every session of the repository.
+   `python3 <scripts>/move-scratch-records.py`; show the user its dry run,
+   then rerun with `--apply` (the records log). Show the user each skipped
+   record that differs from the file at its target.
+   Output: moved and skipped counts.
+2. **Migrate.** `$HOME/.agents/bin/scratch migrate` (the migrate log); resolve
+   each skipped or broken-link line. Show the user what it trashed and
+   restore what they name.
+   Output: moved, skipped and trashed counts.
+3. **Paths.** `python3 <scripts>/rewrite-scratch-paths.py --moves <records
+   log> --moves <migrate log>`; show the user its dry run, then rerun with
+   `--apply`; rewrite each `ambiguous` path by hand to the one its item means.
+   Tell the user sessions may resume.
+   Output: rewritten item and memory counts, the paths rewritten by hand.
 
 ## Tool facts (bd 1.3.1)
 
@@ -214,4 +231,3 @@ step goes in a change set and runs on the user's confirmation.
 
 <!-- @include shared/board-core.md -->
 
-<!-- @include shared/board-coordination.md -->

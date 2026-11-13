@@ -315,7 +315,8 @@ entry of that path wins, which it says); `list [--all] [--json]` (`--all` flags 
 repositories for removal by hand, r15-q87); `status [--line]` (`--line`: what the trash holds, e.g.
 `scratch: 3 trashed (1.0 GB), the first is deleted within 7 days (scratch restore)`, empty when nothing);
 `sweep` (the expiry scan now, in the foreground, over every repository; prints one line per trashed entry: repo folder, path, size, idle days; r18-q97); `migrate` (the one-time move of the entries of every `.scratch` folder at any depth in the main tree and each worktree, except inside node_modules and .git, then the expiry scan at
-once, listing what it trashed; board-migrate Upgrade step 6). Scratch cleans itself by age: the
+once, listing what it trashed; board-migrate Scratch moves the decision records out before it and rewrites the old
+paths on the board after it, with the scripts in `skills/board-migrate/scripts/`; r20-q99). Scratch cleans itself by age: the
 background scan (hourly for the whole scratch root, marker `.cache/.scanned.json`, started by `dir` and `status`; it goes over every repository folder under that repository's lock folder, skipping a locked one, atomic per-repository cache; r18-q93)
 trashes every ready entry in every repository, restorable from inside its own repository: a top-level entry of a session or item folder, or a whole shared folder,
 unchanged for 14 days whoever owns it (change = the newest mtime or ctime of anything in it, so
@@ -352,7 +353,7 @@ A round:
   scope; `start round --discussion` takes the pasted points alone, and
   `--no-board [<dir>]` (required without a board) writes the records as files
   with no board reads or writes: in `<dir>`, else in the repository's private
-  folder `${XDG_DATA_HOME:-~/.local/share}/agents/decisions/<repo>/` (`<repo>`
+  folder `${XDG_DATA_HOME:-~/.local/share}/agents/decisions/<repo>/`, which `protocol records` prints (`<repo>`
   is the repository's scratch folder name; a release takes the files there too, ids
   before a bare option; a named topic is its own `<dir>`). Items another live session holds
   stay out, named in one line; a gone session's hold is offered, marked.

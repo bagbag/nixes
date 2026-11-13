@@ -11,7 +11,7 @@
 | Agent operating rule | Project instructions (`AGENTS.md`). |
 | Current consumer-visible behavior | Module README, skill or `docs/`, shipped with the change that makes it true; the topic's design-target doc holds it until then. |
 | Release notes | Changelog. |
-| Outstanding work, decisions and their rationale | The board: deferred items and decision records; `TODO.md` and `REVIEW.md` retire through `/board-migrate`. Without a board, decision rounds keep their records in the private records folder (`protocol start round --no-board`). |
+| Outstanding work, decisions and their rationale | The board: deferred items and decision records; `TODO.md` and `REVIEW.md` retire through `/board-migrate`. Without a board, decision rounds keep their records in the private records folder (`protocol start round --no-board`; `protocol records` prints it). |
 
 - Reuse suitable owners; organize by product or technical boundary. Use one
   document for small projects or topics. Each level adds specificity and links

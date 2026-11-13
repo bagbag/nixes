@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Behaviour tests of bin/scratch.
+"""Behaviour tests of bin/scratch and board-migrate's scripts/rewrite-scratch-paths.py.
 
     python3 -B bin/test-scratch.py </dev/null [--only a,b] [--scratch <path to a copy of scratch>]
 
@@ -1112,6 +1112,157 @@ def migrate_lists_absolute_links_into_the_moved_scratch(e: Env):
     check(f'{shared}/topic/into-moved' in out.stdout, f'an absolute link into a moved folder is listed:\n{out.stdout}')
     for name in ('into-staying', 'sibling', 'dangling'):
         check(f'{shared}/topic/{name}' not in out.stdout, f'{name} still works or was already broken:\n{out.stdout}')
+
+
+
+# board-migrate's path rewrite (skills/board-migrate/scripts/rewrite-scratch-paths.py)
+
+REWRITE = HERE.parent / 'skills' / 'board-migrate' / 'scripts' / 'rewrite-scratch-paths.py'
+REWRITE_BOARD = """#!{python}
+import json, os, sys
+args = sys.argv[1:]
+if args[:2] == ['bd', 'export']:
+    print(open(os.environ['FAKE_EXPORT']).read(), end='')
+elif args[:2] == ['bd', 'memories'] and '--json' in args:
+    print(open(os.environ['FAKE_MEMORIES']).read())
+elif args[:2] in (['bd', 'update'], ['bd', 'remember']):
+    with open(os.environ['FAKE_WRITES'], 'a') as f:
+        f.write(json.dumps(args) + '\\n')
+else:
+    sys.exit(2)
+"""
+
+
+@test
+def rewrite_paths_maps_live_items_and_memories(e: Env):
+    home_repo = f'{e.home}/proj'
+    os.makedirs(home_repo)
+    subprocess.run(['git', 'init', '-q', home_repo], check=True, env=e.environ(False))
+    state = f'{e.home}/.local/state'
+    e.make(f'{home_repo}/.scratch', 'overhaul/plan.md')
+    out = e.scratch('migrate', cwd=home_repo, session=False, XDG_STATE_HOME=state)
+    check(out.returncode == 0 and 'moved ' in out.stdout, out.stdout + out.stderr)
+    log = f'{e.tmp}/migrate.log'
+    Path(log).write_text(out.stdout)
+    real = os.path.realpath(home_repo)
+    new = '~/.local/state/agents/scratch/' + real.replace('/', '-') + '/shared/overhaul'
+    records = f'{e.home}/.local/share/agents/decisions/proj'
+    rows = [
+        {'id': 'p-1', 'status': 'open', 'issue_type': 'task', 'title': 't',
+         'description': 'see .scratch/overhaul/plan.md and `' + real + '/.scratch/overhaul`', 'notes': 'keeps .scratch/overhauled/x',
+         'design': '~/proj/.scratch/overhaul/plan.md', 'acceptance_criteria': ''},
+        {'id': 'p-2', 'status': 'closed', 'issue_type': 'task', 'description': '.scratch/overhaul/plan.md'},
+        {'id': 'p-3', 'status': 'decided', 'issue_type': 'decision', 'description': '.scratch/overhaul/plan.md'},
+        {'id': 'p-4', 'status': 'open', 'issue_type': 'decision', 'description': 'record: .scratch/decided/r1.md'},
+        {'_type': 'memory', 'key': 'x', 'value': 'not an issue'},
+    ]
+    Path(f'{e.tmp}/export.jsonl').write_text(''.join(json.dumps(r) + '\n' for r in rows))
+    Path(f'{e.tmp}/memories.json').write_text(json.dumps({'m1': 'evidence in .scratch/overhaul/plan.md', 'm2': 'no path', 'schema_version': 1}))
+    board = f'{e.tmp}/rewrite-board'
+    Path(board).write_text(REWRITE_BOARD.format(python=sys.executable))
+    os.chmod(board, 0o755)
+    writes = f'{e.tmp}/writes.jsonl'
+    env = e.environ(False, AGENT_BOARD_COMMAND=board, FAKE_EXPORT=f'{e.tmp}/export.jsonl',
+                    FAKE_MEMORIES=f'{e.tmp}/memories.json', FAKE_WRITES=writes)
+
+    def run(*args):
+        record_log = f'{e.tmp}/records.log'
+        Path(record_log).write_text(f'moved {real}/.scratch/decided -> {records}\n')
+        return subprocess.run([sys.executable, '-B', str(REWRITE), '--moves', log, '--moves', record_log, *args],
+                              cwd=home_repo, env=env, capture_output=True, text=True, stdin=subprocess.DEVNULL, timeout=60)
+
+    dry = run()
+    check(dry.returncode == 0, dry.stderr)
+    check(not os.path.exists(writes), 'a dry run writes nothing')
+    check('p-1' in dry.stdout and 'p-4' in dry.stdout and 'm1' in dry.stdout, f'the dry run names what it would change:\n{dry.stdout}')
+    check(f'.scratch/overhaul -> {new}' in dry.stdout, f'the dry run shows each old -> new form:\n{dry.stdout}')
+    for kept in ('p-2', 'p-3', 'm2'):
+        check(kept not in dry.stdout, f'{kept} stays as written:\n{dry.stdout}')
+    applied = run('--apply')
+    check(applied.returncode == 0, applied.stderr)
+    done = [json.loads(line) for line in Path(writes).read_text().splitlines()]
+    by = {(w[2] if w[1] == 'update' else w[w.index('--key') + 1]): w for w in done}
+    fields = {k: dict(a[2:].split('=', 1) for a in w[3:]) for k, w in by.items() if w[1] == 'update'}
+    check(sorted(by) == ['m1', 'p-1', 'p-4'], f'writes only the live items and memories with paths: {done}')
+    one = fields['p-1']
+    check(one.get('description') == f'see {new}/plan.md and `{new}`', f'relative and absolute forms, as flag=value: {by["p-1"]}')
+    check(one.get('design') == f'{new}/plan.md', f'the ~ form: {one}')
+    check(sorted(one) == ['description', 'design'], f'unchanged fields are not written (a longer name is no match): {one}')
+    check(fields['p-4'].get('description') == 'record: ~/.local/share/agents/decisions/proj/r1.md', f'a second --moves log maps record moves: {fields["p-4"]}')
+    check(by['m1'][-2:] == ['--', f'evidence in {new}/plan.md'], f'the memory is rewritten under its key, after --: {by["m1"]}')
+
+
+
+@test
+def rewrite_paths_resolves_a_relative_form_of_several_checkouts_by_what_exists(e: Env):
+    repo = e.repo('amb')
+    real = os.path.realpath(repo)
+    tree = f'{real}/.worktrees/w'
+    subprocess.run(['git', 'init', '-q', tree], check=True, env=e.environ(False))
+    main_new, tree_new = f'{e.tmp}/data/main-role', f'{e.tmp}/data/w-role'
+    e.make(main_new, 'only-main.md')
+    e.make(main_new, 'both.md')
+    e.make(tree_new, 'both.md')
+    log = f'{e.tmp}/amb.log'
+    Path(log).write_text(f'moved {real}/.scratch/role -> {main_new}\nmoved {tree}/.scratch/role -> {tree_new}\n')
+    text = f'see .scratch/role/only-main.md, .scratch/role/both.md and {tree}/.scratch/role/y.md'
+    rows = [{'id': 'a-1', 'status': 'open', 'issue_type': 'task', 'description': text}]
+    Path(f'{e.tmp}/amb.jsonl').write_text(''.join(json.dumps(r) + '\n' for r in rows))
+    Path(f'{e.tmp}/amb-mem.json').write_text('{}')
+    board = f'{e.tmp}/amb-board'
+    Path(board).write_text(REWRITE_BOARD.format(python=sys.executable))
+    os.chmod(board, 0o755)
+    writes = f'{e.tmp}/amb-writes.jsonl'
+    env = e.environ(False, AGENT_BOARD_COMMAND=board, FAKE_EXPORT=f'{e.tmp}/amb.jsonl', FAKE_MEMORIES=f'{e.tmp}/amb-mem.json', FAKE_WRITES=writes)
+    run = lambda *a: subprocess.run([sys.executable, '-B', str(REWRITE), '--moves', log, *a], cwd=repo, env=env,
+                                    capture_output=True, text=True, stdin=subprocess.DEVNULL, timeout=60)
+    dry = run()
+    check(dry.returncode == 0 and f'ambiguous .scratch/role/both.md: {main_new} | {tree_new}' in dry.stdout,
+          f'a relative path present in several moved checkouts is named with their targets:\n{dry.stdout}{dry.stderr}')
+    check(run('--apply').returncode == 0, 'apply')
+    done = [json.loads(line) for line in Path(writes).read_text().splitlines()]
+    want = f'see {main_new}/only-main.md, .scratch/role/both.md and {tree_new}/y.md'
+    check(done == [['bd', 'update', 'a-1', f'--description={want}']],
+          f'the path one target holds and the absolute form are rewritten, the ambiguous one left: {done}')
+
+
+MOVE_RECORDS = HERE.parent / 'skills' / 'board-migrate' / 'scripts' / 'move-scratch-records.py'
+RECORD = '## Question\nKeep it?\n\n## Decision\nYes\n'
+
+
+@test
+def move_records_takes_record_files_out_by_shape(e: Env):
+    repo = e.repo('rec')
+    records = f'{e.tmp}/data/agents/decisions/rec'
+    fake = f'{e.tmp}/protocol'
+    Path(fake).write_text(f'#!/bin/sh\n[ "$1" = records ] && echo {records}\n')
+    os.chmod(fake, 0o755)
+    e.make(f'{repo}/.scratch', 'topic/decisions/r1-q1.md', body=RECORD)
+    e.make(f'{repo}/.scratch', 'topic/log.txt')
+    e.make(f'{repo}/.scratch', 'topic/notes.md', body='## Question\nonly a question\n')
+    e.make(f'{repo}/packages/p/.scratch', 'd/r2.md', body=RECORD)
+    env = e.environ(False, AGENT_PROTOCOL_COMMAND=fake)
+
+    def run(*args):
+        return subprocess.run([sys.executable, '-B', str(MOVE_RECORDS), *args], cwd=repo, env=env, capture_output=True,
+                              text=True, stdin=subprocess.DEVNULL, timeout=60)
+
+    real = os.path.realpath(repo)
+    dry = run()
+    check(dry.returncode == 0 and os.path.exists(f'{repo}/.scratch/topic/decisions/r1-q1.md'), f'a dry run moves nothing: {dry.stdout}{dry.stderr}')
+    check(f'would move {real}/.scratch/topic/decisions/r1-q1.md -> {records}/topic/decisions/r1-q1.md' in dry.stdout, dry.stdout)
+    out = run('--apply')
+    check(out.returncode == 0, out.stderr)
+    check(Path(f'{records}/topic/decisions/r1-q1.md').read_text() == RECORD, 'the record moves under its .scratch-relative path')
+    check(Path(f'{records}/packages/p/d/r2.md').is_file(), 'a nested .scratch keeps its place below the checkout')
+    for kept in ('topic/log.txt', 'topic/notes.md'):
+        check(os.path.exists(f'{repo}/.scratch/{kept}'), f'{kept} is no record and stays for scratch migrate')
+    check(f'moved {real}/.scratch/topic/decisions/r1-q1.md -> {records}/topic/decisions/r1-q1.md' in out.stdout, f'moved lines for the path helper:\n{out.stdout}')
+    e.make(f'{repo}/.scratch', 'topic/decisions/r1-q1.md', body=RECORD + 'changed\n')
+    again = run('--apply')
+    check(os.path.exists(f'{repo}/.scratch/topic/decisions/r1-q1.md') and Path(f'{records}/topic/decisions/r1-q1.md').read_text() == RECORD,
+          f'an existing record is never overwritten: {again.stdout}')
+    check('skipped (exists' in again.stdout, again.stdout)
 
 
 def main() -> int:

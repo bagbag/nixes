@@ -176,6 +176,7 @@ EXAMPLES = {
     'pending': 'protocol pending',
     'status': 'protocol status --line',
     'history': 'protocol history --all',
+    'records': 'protocol records',
     'help': 'protocol help',
 }
 ORIGIN_MARK = ' *'
@@ -274,11 +275,19 @@ def cli(argv: list[str]) -> int:
     sub = verb('history', 'passes by origin, answers, declines, restarts per round')
     sub.add_argument('--all', action='store_true', help='every session in the state dir')
     sub.add_argument('--json', action='store_true', help='the raw events')
+    verb('records', "this repository's records folder for rounds without a board (r15-q73, r20-q99); needs no session")
     verb('help', 'every verb with an example (a call with no arguments prints it too)')
     args = parser.parse_args(argv or ['help'])
     if args.command == 'help':
         _call.get().stdout.append(help_text(commands) + '\n')
         return 0
+    if args.command == 'records':
+        try:
+            _call.get().stdout.append(f'{default_records()}\n')
+            return 0
+        except ProtocolError as error:
+            _call.get().stderr.append(f'protocol: {error}\n')
+            return 1
     args.origin = args.origin or args.global_origin
     if args.command in VERB_ORIGINS and not args.origin:
         parser.error(f'{args.command} needs --origin')

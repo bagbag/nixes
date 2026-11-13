@@ -4921,8 +4921,12 @@ def validate_board(root: Path) -> None:
                 refused, _, _ = invoke(["claim", "ru"], Fake([*low_i, *up_i]), "aaaa1111")
                 if code or ["update", "ru", "--assignee", "lead0001", "--if-assignee", "", "--json"] not in fake.writes() or refused == 0:
                     raise ValueError(f"risk: a deciding session takes a passed look-after child by id, an agent session does not: {code} {fake.writes()}")
-                # Check exit status contract: 0 ran, 1 ran with failure lines, anything else is a broken check.
+                # Check exit status contract: 0 ran, 1 ran with failure lines on stdout, anything else is a broken check. stderr is no
+                # failure: a two-word stderr line only at the tip (ex.txt exists there) passes; failure lines on stderr alone with exit 1
+                # are a broken check.
                 for name, command, result in (("x0", "echo 'a.ts E9'; exit 0", "check_result=pass"), ("x1", "echo 'a.ts E9'; exit 1", "check_result=pass"),
+                                              ("xse", "test -f ex.txt && echo 'built 12ms' >&2; exit 0", "check_result=pass"),
+                                              ("xs1", "echo 'a.ts E9' >&2; exit 1", "check_result=fail"),
                                               ("x1n", "echo nothing; exit 1", "check_result=fail"), ("x2", "echo 'a.ts E1'; exit 2", "check_result=fail"),
                                               ("x127", "no-such-command-here", "check_result=fail")):
                     issues, tip, wt = make_cr("ex" + name, "ex.txt", "x\n")
@@ -4933,7 +4937,9 @@ def validate_board(root: Path) -> None:
                     flat = " ".join(" ".join(w) for w in fake.writes())
                     if result not in flat and not (name in ("x0", "x1") and "check_result=fail" in flat):
                         raise ValueError(f"check exit contract {name}: {flat}")
-                    if name in ("x2", "x127", "x1n") and "check_result=fail" not in flat:
+                    if name == "xse" and "check_result=fail" in flat:
+                        raise ValueError(f"check exit contract {name}: stderr lines are no failures: {flat}")
+                    if name in ("x2", "x127", "x1n", "xs1") and "check_result=fail" not in flat:
                         raise ValueError(f"check exit contract {name} must fail closed: {flat}")
 
                 # Round 2. N1: a rebase that was aborted is not a completed one; N2: a prunable worktree does not stop a landing; (a): a pass
@@ -6167,6 +6173,11 @@ def validate_default_records(root: Path) -> None:
                 engine.cli.run_cli(["--session", "0000-defaultrec", "abandon"], env, cwd, "")
             return code, out, err
 
+        # r20-q99: `protocol records` prints the folder, from the repo and a worktree, with no session and no round
+        for cwd in (repo, worktree):
+            code, out, err = engine.cli.run_cli(["records"], {**env, "CLAUDE_CODE_SESSION_ID": ""}, cwd, "")
+            if code != 0 or out.strip() != str(folder):
+                raise ValueError(f"protocol records prints the records folder in {cwd} (exit {code}, want {folder}): {out}{err}")
         code, out, err = release("--no-board", cwd=repo)
         if code == 0 or f"{folder} is no folder of records" not in err:
             raise ValueError(f"a bare --no-board names the data folder of the repo (exit {code}, want {folder}): {out}{err}")
