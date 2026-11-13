@@ -6262,7 +6262,7 @@ def validate_prepass(root: Path) -> None:
         if (shown["step"], shown["subject"]) != ("prepass", "Cache design") or shown["pending"]["command"] != "step-back" \
                 or not shown["pending"]["args"].startswith("goal decisions; pre-pass on Cache design"):
             raise ValueError(f"the round must open at the pre-pass on its subject: {shown}")
-        for needle in ("Pre-pass", "Subject: Cache design", "re-ground it against current source", "verdict", "pt1 [pasted]: Which cache?"):
+        for needle in ("Pre-pass", "Subject: Cache design", "Assess it per decide.md Round 1", "verdict", "pt1 [pasted]: Which cache?"):
             if needle not in out:
                 raise ValueError(f"the pre-pass text lacks {needle!r}:\n{out}")
         refused("the pre-pass is waiting", "step", stdin={"classes": {"pt1": "user"}})

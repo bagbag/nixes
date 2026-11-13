@@ -193,8 +193,7 @@ def prepass_instructions(round_id: str, subject: str | None, codex: bool, args: 
         f"Round {round_id} · Pre-pass (decide.md Round 1): a step-back over the whole point set. "
         + (f'Run the step-back skill now with the argument `{args}` (read its SKILL.md), then report the pass.' if codex else HAND_OVER),
         '- Judge the direction, the points that are off or rest on an unclear premise (asked first), and the cut under question-format.md.',
-        *([f"- Subject: {subject}. Report its verdict and findings (findings are points); for a design, re-ground it against current "
-           'source and make drift its own finding.'] if subject else []),
+        *([f"- Subject: {subject}. Assess it per decide.md Round 1: report its verdict and findings (findings are points)."] if subject else []),
         '- The point set:' if rows else '- The point set: the open items below; a finding or a missing point is a new one.'
         if items_listed else '- The point set is empty: a finding or a missing point is a new one.',
         *rows,

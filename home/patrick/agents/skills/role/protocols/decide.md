@@ -99,8 +99,13 @@ Follow the engine's output; the steps below add the judgment it leaves to you.
 1. **Pre-pass.** Step back over the whole point set: the direction, points
    that are off or rest on an unclear premise (ask those first), and the cut
    under [Question format](../../shared/question-format.md). With `--subject`,
-   present the artifact with a verdict and findings, re-ground it against
-   current source, and make its findings the points.
+   assess it, not only its source claims: a design's reviews and open points
+   first (each unresolved one is a finding), then spec and board agreement,
+   unowned open points and source drift; review anew only without a review or
+   after a change since. The verdict says what was read. Each finding is a
+   point with the change, its cost and its outcomes: fix the design first
+   (Accept step 4 returns the CR), accept with a follow-up (owner, what it
+   blocks), or leave it. Accept is a point only when no finding is.
    Output: the pass report.
 2. **Collect.** The engine lists the points and classes.
 3. **Select.** Prerequisites before their dependents.
@@ -210,7 +215,8 @@ is in order, bases first
    `view`: `code`, the diff `<base>..<tip>` (in the console's review tree, or
    the range-diff of a refresh); `result`, the outcome itself. A user
    checkpoint: a [Round](#round) (`start round --discussion --subject <cr>`);
-   its pre-pass report is the walkthrough. A ratification: the
+   its pre-pass report is the walkthrough (verdict and findings first, then the
+   design). A ratification: the
    landed result, in the review tree or at the result. If the refresh changed
    the CR meanwhile, show the range-diff before continuing.
    Output: the walkthrough; for a design, the round's answers.

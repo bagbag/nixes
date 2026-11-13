@@ -510,9 +510,8 @@ A round:
   (Select leads with it and says "ask first"; Stage names it so dependents wait on it). A board item is not reworded or
   dropped there (unclassified at Collect, or cut at Stage). The pass needs an observed run carrying the pending id, like the
   release's scoped pass. `start round --subject <id|text>` names the artifact the round judges (a design, a result, a
-  proposal); `show --json` carries `subject`. The pre-pass then presents it with a verdict and findings (`verdict` is
-  required and refused without a subject; the findings are added points), and for a design re-grounds it against current
-  source, staging drift as its own question (r1-q1, q2, q6). `--subject` is refused with `--proposal` (the row brings its
+  proposal); `show --json` carries `subject`. The pre-pass then assesses it (decide.md Round 1) and reports a
+  verdict (required with a subject, refused without one); its findings are added points (r1-q1, q2, q6). `--subject` is refused with `--proposal` (the row brings its
   own topic and items) and on `start release`. Stage's text points to the cut in question-format.md and adds its
   mechanics (the first part keeps the item, the others are drafts).
 - Related searches each new draft and needs an outcome per hit.
