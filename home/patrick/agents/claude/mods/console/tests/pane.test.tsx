@@ -204,6 +204,28 @@ describe('pane', () => {
     await ui.unmount()
   })
 
+  test('a pressed command reads starting… on its button until its run starts, queued while a turn works', async ($, on) => {
+    const { clock } = world(on)
+    await ready($, clock)
+    const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+    const commitBox = async () => (await ui.find({ key: 'actions-row-commit-box' }))?.text ?? ''
+    expect(await commitBox()).not.toContain('starting')
+    await ui.press({ key: 'actions-row-commit' })
+    await clock.settle()
+    expect(await commitBox()).toContain('Commit · starting…')
+    expect((await ui.find({ key: 'actions-row-retro-box' }))?.text).not.toContain('starting')  // only the pressed one
+    await $.turn.start({ text: 'busy', turnId: 't1' } as never)
+    await clock.settle()
+    expect(await commitBox()).toContain('Commit · queued')
+    await $.skill.prompt({ skill: 'commit-commands:commit', text: 'Commit…' } as never)
+    await clock.settle()
+    expect(await commitBox()).not.toContain('queued')
+    await ui.press({ key: 'ground-base' })
+    await clock.settle()
+    expect(await texts(ui)).toContain(' · queued')  // the lens head marks its command
+    await ui.unmount()
+  })
+
   test('All runs every lens of the command in list order with the focus, and keeps the selection', async ($, on) => {
     const { w, clock } = world(on)
     await ready($, clock)
@@ -752,14 +774,14 @@ describe('notification', () => {
     // Another console's later claim on the same marker wins: this one stays quiet.
     w.sessions = [{ ...idle, idleSince: '2026-10-31T12:00:00Z' }]
     await clock.advance(56_500)  // the next tick (at 180 s) has written this console's claim and waits
-    w.files.set(`${HOME}/.local/state/agent-sessions/console-notified/s-2`, '2026-10-31T12:00:00Z s-other\n')
+    w.files.set(`${HOME}/.local/state/agents/sessions/console-notified/s-2`, '2026-10-31T12:00:00Z s-other\n')
     await clock.advance(2_000)
     expect(w.notified).toHaveLength(2)
   })
 })
 
 describe('accept notification', () => {
-  const MARKERS = `${HOME}/.local/state/agent-sessions/console-accept-notified`
+  const MARKERS = `${HOME}/.local/state/agents/sessions/console-accept-notified`
   const start = async ($: any, on: any, crs: unknown[], init: Parameters<typeof world>[1] = {}) => {
     const made = world(on, { round: NO_ROUND, crs, ...init })
     await ready($, made.clock)
@@ -1276,10 +1298,9 @@ describe('suggestions', () => {
     expect(suggestions(small({ rounds: [], release: { count: 1 } })).map(one => one.kind)).toEqual(['release'])
   })
 
-  test('suggestions() stays empty while a round is open or a dialog is', () => {
+  test('suggestions() stays empty while a round is open', () => {
     expect(suggestions(parseRound(roundJson()))).toEqual([])
     expect(suggestions(parseRound(roundJson({ next: PROPOSED })))).toEqual([])
-    expect(suggestions(parsed(PROPOSED), true)).toEqual([])
   })
 
   test('the pane lists a row per round with its Start, the recommended one in the suggestion color; a row that names ids opens them inline', async ($, on) => {

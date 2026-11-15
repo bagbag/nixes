@@ -1,2 +1,3 @@
 /.scratch/
 /.installer-host-keys/
+__pycache__/

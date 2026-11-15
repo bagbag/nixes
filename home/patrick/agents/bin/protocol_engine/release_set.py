@@ -4,8 +4,8 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from .base import lines
-from . import words
+from .base import SCOPED_PASSES, lines
+from . import schema, words
 from .store import next_id
 from .boards import held_decided
 from .engine import Context, fail
@@ -27,12 +27,7 @@ HIT_CLASSES = {
     'held': 'item another session holds on the same concepts (comment or hand off)',
     'doc': "doc stating the old rule (a design-target doc: owner write now; a README or skill: owner write, or a task when it changes with the work)",
 }
-REACHES = ('contained', 'spreads')  # no "unsure": unsure is spreads (r4-q14, fails closed)
-
-
-TOUCHES = ('own', 'decision')  # a contained change: only the model's own parts keeps the record; unsure is decision (r8-q36)
 APPROVE, HOLD = 'Release', 'Hold'
-SCOPED_PASSES = ('step-back', 'ground')  # once per release on the revised records, before the approval (r8-q36)
 
 
 def in_set(ctx: Context) -> list[str]:
@@ -189,18 +184,17 @@ def apply_changes(ctx: Context, raw, where: str, every: bool, scope: list[str] |
     for rid, value in raw.items():
         if value == 'unchanged':
             continue
-        if not isinstance(value, dict) or not str(value.get('change') or '').strip():
+        if not isinstance(value, dict) or schema.problems(schema.Change, value, 'change'):
             fail(f'{where}.{rid}: "unchanged", or {{"change": "<what changed>", "reach": "contained" or "spreads"}}')
-        if value.get('reach') not in REACHES:
+        if schema.problems(schema.Change, value, 'reach'):
             fail(f'{where}.{rid}: reach is contained or spreads; unsure is spreads')
         if value['reach'] == 'contained':
-            if not str(value.get('why') or '').strip():
-                fail(f'{where}.{rid}: a contained change names `why` no other ruling of the set or the board moves; '
-                     'otherwise it spreads')
-            if value.get('touches') not in TOUCHES:
+            if bad := schema.problems(schema.Change, value, 'why', due=('why',)):
+                fail(f'{where}.{rid}: {bad[0]}')
+            if schema.problems(schema.Change, value, 'touches', due=('touches',)):
                 fail(f'{where}.{rid}: a contained change says what it ' + words.TOUCHES_HINT)
-            if value['touches'] == 'own' and not (isinstance(value.get('file'), str) and value['file'].strip()):
-                fail(f'{where}.{rid}: an own change gives `file`, the path of the corrected record text')
+            if value['touches'] == 'own' and (bad := schema.problems(schema.Change, value, 'file', due=('file',))):
+                fail(f'{where}.{rid}: {bad[0]}')
         (spreads if value['reach'] == 'spreads' else contained).append((rid, value))
     if spreads:
         return stop(ctx, words.spreads_reason(spreads), [rid for rid, _ in spreads])

@@ -32,13 +32,15 @@ The installer:
    `PATH` that runs the installer (an unversioned `python3` is preferred to a `python3.N`, which gets a
    note), so a session started with a different `PATH` (Dock, IDE) does not pick macOS's 3.9. Rerun
    the installer after switching or removing that Python; it prints the pinned path.
-8. Grants the agents their write folders outside repositories (`agents/scratch` under
+8. Grants the agents their write folders outside repositories (`agents` state, holding scratch and sessions, under
    `$XDG_STATE_HOME` or `~/.local/state`, `agents/decisions` under `$XDG_DATA_HOME` or
    `~/.local/share`): an `Edit(<folder>/**)` rule each in Claude's `permissions.allow`, and a marked
    `[sandbox_workspace_write]` block in `~/.codex/config.toml`. If that file already has the table, or is a symlink, the installer
    prints the folders to add to `writable_roots` and leaves it alone. A rule you had before the
    first install stays yours on upgrade and uninstall.
-9. At a terminal, asks for your name for shared boards when `git config --global agents.person`
+9. Moves an older session registry, `agent-sessions` under the state folder, to `agents/sessions` when the
+   new folder is absent; with both present it leaves both and prints a note (`--dry-run` only reports it).
+10. At a terminal, asks for your name for shared boards when `git config --global agents.person`
    is unset. Leave it blank to skip; set it per repository with `git config agents.person <name>`.
 
 Nothing else in `settings.json` or `config.toml` is touched. Models, plugins, your other

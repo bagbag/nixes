@@ -7,7 +7,7 @@ import subprocess
 from pathlib import Path
 
 from .base import ProtocolError, TITLE_MAX, env, lines, utcnow
-from . import words
+from . import schema, words
 from .store import next_id
 from .boards import statuses
 from .engine import Context, PROTOCOLS, Protocol, Step, fail, questions
@@ -172,10 +172,9 @@ def owners_text(ctx: Context) -> str:
 
 
 def owners_accept(ctx: Context, report: dict) -> str:
-    owners = report.get('owners')
+    schema.require(schema.Owners, report)
+    owners = report['owners']
     current = in_set(ctx)
-    if not isinstance(owners, dict):
-        fail('`owners` maps each record to its owner entries')
     problems = [f'no owners for {rid}' for rid in current if not owners.get(rid)]
     problems += [f'{rid} is not in the set' for rid in owners if rid not in current]
     written, pending = {}, {}
@@ -184,12 +183,11 @@ def owners_accept(ctx: Context, report: dict) -> str:
             where = f'owners.{rid}[{index}]'
             kind = next(iter(entry), None) if isinstance(entry, dict) and len(entry) == 1 else None
             body = entry.get(kind) if kind else None
-            if kind == 'written' and isinstance(body, dict) and isinstance(body.get('path'), str) and body['path'].strip() \
-                    and isinstance(body.get('anchor') or '', str):
+            if kind == 'written' and isinstance(body, dict) and not schema.problems(schema.WrittenOwner, body):
                 written.setdefault(rid, []).append((body['path'].strip(), (body.get('anchor') or '').lstrip('#')))
-            elif kind == 'none' and isinstance(body, dict) and str(body.get('reason') or '').strip():
+            elif kind == 'none' and isinstance(body, dict) and not schema.problems(schema.NoOwner, body):
                 pass
-            elif kind == 'pending' and isinstance(body, dict) and str(body.get('item') or '').strip():
+            elif kind == 'pending' and isinstance(body, dict) and not schema.problems(schema.PendingOwner, body):
                 pending.setdefault(body['item'].strip(), []).append(rid)
             else:
                 problems.append(f'{where}: one of {{"written": {{"path", "anchor"?}}}}, {{"none": {{"reason"}}}}, '

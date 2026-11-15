@@ -92,6 +92,8 @@ export type World = {
   /** What `scratch status --line` answers: its stdout, or an exit code (null: the tool is missing). */
   scratch: { line: string; exit: number } | null
   agents: { id: string; description: string; type: string; status: string }[]
+  /** `agent.list` throws: the board view still reads, with an error beside it. */
+  agentsFail: boolean
   sync?: string | null
   queueLine?: string | null
   protocolExit: number
@@ -107,7 +109,7 @@ export type World = {
   show: { record: Record<string, unknown>; exit: number; bad: boolean }
   /** Called after the stand-in engine answered each verb: a test moves the round on from here, as a queued action's delay does. */
   onVerb: ((verb: string) => void) | null
-  /** A `protocol` verb (or `board console`) whose runs answer only once `until` settles: a slow engine or board call. */
+  /** A `protocol` verb (or `board console`, or `git`: every git run) whose runs answer only once `until` settles: a slow engine or board call. */
   hold: { verb: string; until: Promise<void> } | null
   /** The line `protocol scope` answers (r9-q36): what a report of the pass starting now must cover; '' names nothing. */
   scope: string
@@ -144,6 +146,7 @@ export function world(on: On, init: Partial<Pick<World, 'round' | 'role' | 'surf
     sync: init.sync,
     queueLine: init.queueLine,
     agents: init.agents ?? [],
+    agentsFail: false,
     protocolExit: 0,
     protocolThrows: null,
     failVerbs: [],
@@ -179,7 +182,7 @@ export function world(on: On, init: Partial<Pick<World, 'round' | 'role' | 'surf
   on('fs.list', (_, e) => ({ value: [...w.files.keys()].filter(path => path.startsWith(`${e.path}/`) && !path.slice(e.path.length + 1).includes('/')).map(path => ({ name: path.slice(e.path.length + 1), kind: 'file', size: 0, mtimeMs: 0, isLink: false })) as never }))
   on('fs.read', (_, e) => ({ value: w.files.get(e.path) ?? '' }))
   on('fs.write', (_, e) => { w.files.set(e.path, e.text); return { value: undefined } })
-  on('agent.list', () => ({ value: w.agents as never }))
+  on('agent.list', () => { if (w.agentsFail) throw new Error('agents down'); return { value: w.agents as never } })
   on('command.register', (_, e) => { w.registered.push(e.name); return { value: { command: e.name } } })
   on('command.list', () => ({ value: [{ name: 'compact', description: '', source: 'builtin' }, { name: 'step-back', description: '', source: 'user' }] as never }))
   on('tool.register', (_, e) => { w.tools.push({ name: e.name, isDeferred: e.isDeferred }); return { value: { tool: `mcp__console__${e.name}` } } })
@@ -209,7 +212,7 @@ export function world(on: On, init: Partial<Pick<World, 'round' | 'role' | 'surf
     if (argv[0] === REGISTRY) return { value: { exitCode: 126, stdout: '', stderr: 'Permission denied', isStdoutTruncated: false, isStderrTruncated: false } }
     if (argv[0] === 'bash' && argv[1] === REGISTRY && argv[2] === 'set-workers' && w.activateError !== undefined) return { value: { exitCode: 2, stdout: '', stderr: w.activateError, isStdoutTruncated: false, isStderrTruncated: false } }
     if (argv[0] === 'rm' && argv[1] === '-f') { for (const path of argv.slice(2)) w.files.delete(path); return ok('') }
-    if (argv[0] === 'bash' && argv[1] === REGISTRY && argv[2] === 'state-dir') return ok(`${HOME}/.local/state/agent-sessions\n`)
+    if (argv[0] === 'bash' && argv[1] === REGISTRY && argv[2] === 'state-dir') return ok(`${HOME}/.local/state/agents/sessions\n`)
     if (argv[0] === 'bash' && argv[1] === REGISTRY) return ok({ role: null, ...(w.role ?? {}), session: argv[3] })
     if (argv[0] === PROTOCOL) {
       if (w.protocolThrows !== null) return { deny: w.protocolThrows } as never
@@ -234,7 +237,10 @@ export function world(on: On, init: Partial<Pick<World, 'round' | 'role' | 'surf
     }
     if (w.git !== null && ['git', 'code', 'mktemp', 'rm', 'cat'].includes(argv[0] as string)) {
       const answered = w.git(argv, e.init?.env as Record<string, string> | undefined)
-      if (answered !== undefined) return { value: { exitCode: answered.exitCode, stdout: answered.stdout ?? '', stderr: answered.stderr ?? '', isStdoutTruncated: false, isStderrTruncated: false } }
+      if (answered !== undefined) {
+        const served = { value: { exitCode: answered.exitCode, stdout: answered.stdout ?? '', stderr: answered.stderr ?? '', isStdoutTruncated: false, isStderrTruncated: false } }
+        return w.hold?.verb === 'git' && argv[0] === 'git' ? w.hold.until.then(() => served) : served
+      }
     }
     if (argv[0] === SCRATCH && w.scratch !== null) return { value: { exitCode: w.scratch.exit, stdout: w.scratch.line, stderr: w.scratch.exit === 0 ? '' : 'boom', isStdoutTruncated: false, isStderrTruncated: false } }
     if (argv[0] === BOARD) {

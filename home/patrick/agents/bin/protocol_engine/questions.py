@@ -4,9 +4,11 @@ from __future__ import annotations
 import re
 
 from .base import (
-    CONTENT, DESCRIPTION_LIMIT, DESCRIPTION_MAX, HEADER_MAX, KINDS, LEAN_CAUSES, MAY_NOT_APPLY, PRESENTATION, ProtocolError, SCHEDULING, STAGED_KINDS, STRENGTHS,
+    DESCRIPTION_LIMIT, DESCRIPTION_MAX, HEADER_MAX, KINDS, MAY_NOT_APPLY, ProtocolError, STAGED_KINDS, STRENGTHS,
     STRONG_CRITERIA, SUMMARY_MAX, TEXT_LIMIT, TEXT_MAX, TITLE_LIMIT, TITLE_MAX, band_warning
 )
+from . import schema
+from .schema import CONTENT, PRESENTATION, SCHEDULING
 from .store import next_id
 from .boards import claim_items, split_holds
 from .engine import Context, by_id, fail, premise_status, questions, touch
@@ -22,22 +24,11 @@ def part_errors(q: dict, where: str, fields: tuple[str, ...] = PARTS) -> list[st
     """The parts the engine prints before the dialog (r27-q123): `problem` and per option `for` and `against` are required; `cases`,
     `premises`, `rulings` and `note` are the lead's own words, printed only when present (`rulings`, when given, with the
     DISCLOSURE fields each). `fields` names the parts to check (a new question: all; an update: the ones it touches)."""
-    errors = []
-    if 'problem' in fields and not (isinstance(q.get('problem'), str) and q['problem'].strip()):
-        errors.append(f'{where}: `problem` must be a non-empty string (what is decided and why now)')
-    if 'root' in fields and not (isinstance(q.get('root'), str) and q['root'].strip()):
-        errors.append(f'{where}: `root` must be a non-empty string: "<cause>; <end state>", or "does not apply: <why>" (a preference or naming question)')
-    errors += [f'{where}: `{field}` must be a string or left out' for field in OPTIONAL_PARTS
-               if (field in fields or field == 'note') and q.get(field) is not None and not isinstance(q[field], str)]
+    wanted = [f for f in ('problem', 'root', *OPTIONAL_PARTS, 'rulings') if f in fields or f == 'note']
+    errors = [f'{where}: {text}' for text in schema.problems(schema.Question, q, *wanted)]
     if 'options' in fields and isinstance(q.get('options'), list):
         errors += [f'{where}: option {o.get("label")!r} needs `for` and `against`, each a non-empty string'
-                   for o in q['options'] if isinstance(o, dict)
-                   and not all(isinstance(o.get(side), str) and o[side].strip() for side in ('for', 'against'))]
-    rulings = q.get('rulings')
-    if 'rulings' in fields and rulings is not None:
-        if not isinstance(rulings, list) or not all(isinstance(x, dict) and all(isinstance(x.get(k), str) and x[k].strip() for k in DISCLOSURE)
-                                                    for x in rulings):
-            errors.append(f"{where}: `rulings`, when given, lists your own rulings, each with {', '.join(DISCLOSURE)}")
+                   for o in q['options'] if isinstance(o, dict) and schema.problems(schema.Option, o, 'for', 'against')]
     return errors
 
 
@@ -46,20 +37,17 @@ def question_errors(q: dict, where: str, marks: bool = True, parts: tuple[str, .
     (a complete question: Stage, a new question, asking; an update checks the marks only when it touches them); `parts`
     names the printed parts that must be present (Stage and a new question: all; an update: the ones it touches)."""
     errors = part_errors(q, where, parts) if parts else []
-    for field in ('text', 'title', 'header'):
-        if not isinstance(q.get(field), str) or not q[field].strip():
-            errors.append(f'{where}: `{field}` must be a non-empty string')
+    errors += [f'{where}: {text}' for text in schema.problems(schema.Question, q, 'text', 'title', 'header')]
     for field, limit in (('text', TEXT_LIMIT), ('title', TITLE_LIMIT), ('header', HEADER_MAX)):
         if isinstance(q.get(field), str) and len(q[field]) > limit:
             errors.append(f'{where}: {field} {q[field]!r} is {len(q[field])} characters, over the limit of {limit}')
     if isinstance(q.get('text'), str) and re.match(r'\s*\d+[.)]\s', q['text']):
         errors.append(f'{where}: `text` carries no number (the engine numbers the dialog)')
     options = q.get('options')
-    valid = isinstance(options, list) and 2 <= len(options) <= 4 \
-        and all(isinstance(o, dict) and isinstance(o.get('label'), str) and o['label'].strip()
-                and isinstance(o.get('description', ''), str) and isinstance(o.get('example', ''), str) for o in options)
+    valid = isinstance(options, list) and 2 <= len(options) <= 4 and all(
+        isinstance(o, dict) and not schema.problems(schema.Option, o, 'label', 'description', 'example') for o in options)
     if not valid:
-        errors.append(f'{where}: `options` must be 2-4 objects with a label, a description and optionally an example (text)')
+        errors.append(f"{where}: {schema.text_of(schema.Question, 'options')}")
     else:
         if len({o['label'] for o in options}) != len(options):
             errors.append(f'{where}: option labels must be unique')
@@ -67,19 +55,9 @@ def question_errors(q: dict, where: str, marks: bool = True, parts: tuple[str, .
                    for o in options if len(o.get('description', '')) > DESCRIPTION_LIMIT]
         if any('preview' in o for o in options):  # r10-q37
             errors.append(f'{where}: rename `preview` to `example`')
-    if not isinstance(q.get('multiSelect', False), bool):
-        errors.append(f'{where}: `multiSelect` must be a boolean')
-    if q.get('kind', 'decision') not in KINDS:
-        errors.append(f"{where}: `kind` must be one of {', '.join(KINDS)}")
-    if not isinstance(q.get('waitsOn', []), list) or not all(isinstance(i, str) for i in q.get('waitsOn', [])):
-        errors.append(f'{where}: `waitsOn` must be a list of question ids')
-    if q.get('waitsFor') is not None and not (isinstance(q['waitsFor'], str) and q['waitsFor'].strip()):
-        errors.append(f'{where}: `waitsFor` must be a non-empty string (the outside result it waits for and where it lands) '
-                      'or null (frees it)')
-    if q.get('board') is not None and not isinstance(q['board'], str):
-        errors.append(f'{where}: `board` must be a board id or null')
-    if not isinstance(q.get('settles') or [], list) or not all(isinstance(i, str) and i for i in q.get('settles') or []):
-        errors.append(f'{where}: `settles` must be a list of selected keys (board ids or pasted point ids)')
+    errors += [f'{where}: {text}' for text in schema.problems(schema.Question, q, 'multiSelect', 'waitsOn', 'waitsFor', 'board', 'settles')]
+    if q.get('kind', 'decision') not in KINDS:  # the form lists what a session stages; a stored release approval has the other kind
+        errors.append(f"{where}: {schema.text_of(schema.Question, 'kind')}")
     if not marks:
         return errors
     labels = {o['label'] for o in options} if valid else set()
@@ -88,15 +66,13 @@ def question_errors(q: dict, where: str, marks: bool = True, parts: tuple[str, .
     if q.get('strength') == 'strong':
         errors += strong_errors(q.get('strongBecause'), where)
     because = q.get('leanBecause')
-    if q.get('strength') == 'lean' and not (isinstance(because, dict) and because.get('cause') in LEAN_CAUSES
-                                            and isinstance(because.get('detail'), str) and because['detail'].strip()):
+    if q.get('strength') == 'lean' and not (isinstance(because, dict) and not schema.problems(schema.LeanBecause, because, 'cause', 'detail')):
         errors.append(f'{where}: a lean names its cause: `leanBecause` {{"cause": "preference" (what the choice depends on) or '
                       '"evidence" (the unchecked fact and how to check it), "detail": "…"}')
-    elif q.get('strength') == 'lean' and because['cause'] == 'preference' and not (isinstance(because.get('flipsIf'), str) and because['flipsIf'].strip()):
+    elif q.get('strength') == 'lean' and because['cause'] == 'preference' and (
+            because.get('flipsIf') is None or schema.problems(schema.LeanBecause, because, 'flipsIf')):
         errors.append(f'{where}: a preference lean says what you would have to value to pick another option: `leanBecause.flipsIf`')
-    prior = q.get('priorRulings')
-    if prior is not None and not (isinstance(prior, list) and all(isinstance(x, dict) and x.get('verdict') in ('holds', 'fails') and all(isinstance(x.get(k), str) and x[k].strip() for k in ('ruling', 'why')) for x in prior)):
-        errors.append(f'{where}: `priorRulings` lists {{"ruling", "verdict": "holds" or "fails", "why"}}')
+    errors += [f'{where}: {text}' for text in schema.problems(schema.Question, q, 'priorRulings')]
     return errors
 
 
@@ -359,10 +335,9 @@ def apply_update(ctx: Context, update, where: str, keys: dict) -> tuple[int, str
     """One update; returns (1 for a substantive change, else 0; the question's id)."""
     if not isinstance(update, dict):
         fail(f'{where}: must be an object')
+    if bad := schema.problems(schema.Update, update, 'id', 'remove', 'reason', 'before'):
+        fail(f'{where}: {bad[0]}')
     if 'id' not in update:
-        before = update.get('before')
-        if before is not None and not isinstance(before, str):
-            fail(f'{where}: `before` must be a question id')
         q = new_question(ctx, {k: v for k, v in update.items() if k != 'before'}, where)
         ctx.round['questions'].append(q)
         keys[update.get('key') or q['id']] = q['id']
@@ -378,7 +353,7 @@ def apply_update(ctx: Context, update, where: str, keys: dict) -> tuple[int, str
     unknown = set(update) - set(CONTENT) - {'id', 'reason'}
     if unknown:
         fail(unknown_fields(where, unknown))
-    merged = {**q, **{k: v for k, v in update.items() if k in CONTENT}}
+    merged = {**q, **{k: [] if v is None and k in ('waitsOn', 'settles') else v for k, v in update.items() if k in CONTENT}}  # the lists new_question defaults to []
     check_question(merged, f"{where} ({q['id']})", marks=any(k in update for k in MARK_FIELDS),
                    parts=tuple(k for k in PARTS if k in update))
     ctx.messages += question_warnings(merged, update)
@@ -424,12 +399,12 @@ def describe(ctx: Context, raw, where: str, required: bool) -> None:
         ctx.messages += band_warning('round overview', len(ctx.round.get('overview', '')), TEXT_MAX, TEXT_LIMIT) if raw.get('overview') is not None else []
 
 
-DISCLOSURE = ('ruling', 'why', 'alternative', 'fails', 'evidence')  # asking.md Walk through: own rulings; `why`: the ruling meets the goals without a material trade-off
+DISCLOSURE = schema.names(schema.Disclosure)
 
 
-def disclosure_error(ruling: dict, where: str) -> str | None:
+def disclosure_error(ruling: dict, where: str, form) -> str | None:
     """An own ruling as disclosed for a check (the release's own rulings, a challenge-rulings report): DISCLOSURE and `sure`."""
-    missing = [k for k in DISCLOSURE if not str(ruling.get(k) or '').strip()]
-    if missing or not isinstance(ruling.get('sure'), bool):
+    missing = [k for k in DISCLOSURE if schema.problems(form, ruling, k)]
+    if missing or schema.problems(form, ruling, 'sure', due=('sure',)):
         return f"{where}: needs {', '.join(missing) or 'the fields'} and `sure` true or false"
     return None

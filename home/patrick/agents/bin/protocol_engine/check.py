@@ -7,7 +7,7 @@ from .base import (
     ALL_LENSES, CHECKED_LIMIT, CHECKED_MAX, CAP_CHOICES, CHECK_CAP, EXPLORED_VERDICTS, LEAN_LENSES, OPTIONS_LENSES, PASSES, PATH_LENSES,
     REFINE_LENSES, ProtocolError, band_warning
 )
-from . import words
+from . import schema, words
 from .engine import Context, Step, by_id, fail, questions, touch, unresolved
 from .questions import apply_updates, describe, disclosure_error, refuse_all, strong_errors
 from .told import report_format
@@ -271,8 +271,7 @@ def explored_of(raw, ids: list[str]) -> dict[str, list[dict] | str]:
             continue
         if isinstance(value, str) and value.strip():
             found[qid] = value.strip()
-        elif isinstance(value, list) and value and all(isinstance(x, dict) and all(isinstance(x.get(k), str) and x[k].strip() for k in ('idea', 'why'))
-                                                       and x.get('verdict') in EXPLORED_VERDICTS for x in value):
+        elif isinstance(value, list) and value and all(isinstance(x, dict) and not schema.problems(schema.Idea, x) for x in value):
             found[qid] = [{'idea': x['idea'].strip(), 'verdict': x['verdict'], 'why': x['why'].strip()} for x in value]
         else:
             errors.append(f'explored.{qid}: a non-empty list of {{"idea", "verdict": {" or ".join(EXPLORED_VERDICTS)}, "why"}}, or the reason there is no other way')
@@ -340,12 +339,8 @@ def start_scope(ctx: Context, report: dict) -> dict:
     without a change. The step names the scope a turn earlier and it may change meanwhile, so the console names it again in the
     pass's expanded text. stdin `pending`: the stamp of a run not observed yet (a model Skill call, recorded once it ran); left
     out, the observed run's. `text` is empty when there is nothing to name."""
-    command = report.get('command')
-    if command not in PASSES:
-        fail(f"scope: `command` must be one of {', '.join(PASSES)}")
-    stamp = report.get('pending')
-    if stamp is not None and not isinstance(stamp, str):
-        fail('scope: `pending` is the run\'s stamp, a pending id or null')
+    schema.require(schema.Scope, report)
+    command, stamp = report['command'], report.get('pending')
     r = ctx.round
     if not r or r['step'] not in SCOPE_STEPS or r['protocol'] != 'round':
         return {'covers': [], 'explored': None, 'text': ''}
@@ -357,9 +352,6 @@ def start_scope(ctx: Context, report: dict) -> dict:
 
 
 def checked_of(raw, known: set[str]) -> tuple[dict[str, str], list[str]]:
-    if not isinstance(raw, dict):
-        return {}, ['`checked` is an object: per question id in this pass\'s scope what you examined in it this run, plus an '
-                    'optional `round` note, e.g. {"q2": "the retry premise in task-queue.ts", "round": "<round-wide note>"}']
     errors = [f'checked.{key}: no question of this round (keys: question ids, and `round` for a round-wide note)'
               for key in raw if key != 'round' and key not in known]
     errors += [f'checked.{key}: what you examined, a non-empty string' for key, value in raw.items() if not (isinstance(value, str) and value.strip())]
@@ -373,9 +365,8 @@ def challenge_errors(ctx: Context, report: dict, scope: list[str], updates: list
     to lean or re-sending it) and lists its own rulings in the disclosure shape, keyed by question (`rulings`)."""
     current = {q['id']: q for q in ctx.round['questions']}
     resent = {u['id'] for u in updates if isinstance(u, dict) and 'strongBecause' in u and isinstance(u.get('id'), str)}
-    errors, verdicts = [], report.get('verdicts', {})
-    if not isinstance(verdicts, dict):
-        errors.append('`verdicts` maps each strong question in scope to {"strongBecause": {…}}')
+    errors, verdicts = schema.problems(schema.PassReport, report, 'verdicts'), report.get('verdicts', {})
+    if errors:
         verdicts = {}
     for qid, verdict in verdicts.items():
         if (current.get(qid) or {}).get('strength') != 'strong':
@@ -386,23 +377,21 @@ def challenge_errors(ctx: Context, report: dict, scope: list[str], updates: list
             errors += strong_errors(verdict.get('strongBecause'), f'verdicts.{qid}')
     errors += [f'verdicts.{qid}: re-send the strongBecause of {qid} as re-derived this run, or lower it to lean by an update'
                for qid in strong_ids(ctx, scope) if qid not in verdicts and qid not in resent]
-    rulings = report.get('rulings')
-    if not isinstance(rulings, list):
-        errors.append('`rulings` lists your own rulings in this round, each {"question", "ruling", "why", "alternative", "fails", '
-                      '"evidence", "sure": true or false} (an empty list when there is none)')
-        return errors
+    shape = schema.problems(schema.PassReport, report, 'rulings', due=('rulings',))
+    if shape:
+        return errors + shape
+    rulings = report['rulings']
     for index, ruling in enumerate(rulings):
         if not isinstance(ruling, dict) or ruling.get('question') not in current:
             errors.append(f'rulings[{index}]: `question` names a question of this round')
-        elif error := disclosure_error(ruling, f'rulings[{index}]'):
+        elif error := disclosure_error(ruling, f'rulings[{index}]', schema.ChallengeRuling):
             errors.append(error)
     return errors
 
 
 def record_pass(ctx: Context, report: dict) -> tuple[str, int, str]:
-    command = report.get('pass')
-    if command not in PASSES:
-        fail(f"`pass` must be one of {', '.join(PASSES)}")
+    schema.require(schema.PassReport, report, 'pass', due=('pass',))
+    command = report['pass']
     observed = ctx.round['observed']
     if not ctx.codex and command not in observed:  # Codex has no console to observe its runs
         fail(words.no_run(command, ctx.round['pending']))
@@ -410,7 +399,8 @@ def record_pass(ctx: Context, report: dict) -> tuple[str, int, str]:
     kind, scoped = pass_kind(ctx, command)
     key, scope = pass_scope(ctx, command, kind, scoped)
     describe(ctx, report.get('round'), 'pass report', required=False)
-    checked, errors = checked_of(report.get('checked'), {q['id'] for q in ctx.round['questions']})
+    shape = schema.problems(schema.PassReport, report, 'checked', due=('checked',))
+    checked, errors = ({}, shape) if shape else checked_of(report['checked'], {q['id'] for q in ctx.round['questions']})
     due = options_due(ctx, command)
     raw = report.get('explored')
     explored = explored_of(raw, due if due is not None else [qid for qid in raw if any(q['id'] == qid for q in ctx.round['questions'])] if isinstance(raw, dict) else []) if due is not None or raw is not None else {}

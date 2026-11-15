@@ -48,10 +48,10 @@ from pathlib import Path
 
 BD_TESTED = "1.3.1"
 MOD_VALUE = "~/.claude/mods/console"
-# The agents' write folders outside repositories, as (XDG variable, its default under HOME, subpath): bin/scratch and
-# bin/protocol_engine/cli.py own the subpaths and the suite checks them against these.
+# The agents' write folders outside repositories, as (XDG variable, default under HOME, subpath): the state root
+# (bin/scratch, bin/session) and the decision records (bin/protocol_engine/cli.py); the suite checks them.
 GRANT_ROOTS = (
-    ("XDG_STATE_HOME", ".local/state", "agents/scratch"),
+    ("XDG_STATE_HOME", ".local/state", "agents"),
     ("XDG_DATA_HOME", ".local/share", "agents/decisions"),
 )
 CODEX_MARK = "# claude-codex-setup: agent scratch and records (./install.py --uninstall removes this block)"
@@ -86,6 +86,22 @@ def grant_roots(home: str, env: dict) -> list:
         path = (base if base.startswith("/") else home + "/" + default).rstrip("/") + "/" + sub
         roots.append("~" + path[len(home):] if path.startswith(home + "/") else path)
     return roots
+
+
+def sessions_move(home: Path, env: dict, dry: bool) -> bool:
+    """The session registry moved from agent-sessions to agents/sessions: rename it once, only while the new folder is absent."""
+    state = Path(env.get("XDG_STATE_HOME") or home / ".local" / "state")
+    old, new = state / "agent-sessions", state / "agents" / "sessions"
+    if old.is_symlink() or not old.is_dir():
+        return False
+    if new.exists():
+        note("%s and %s both exist; sessions read the second, merge by hand if the first holds live ones" % (old, new))
+        return False
+    print("move    %s -> %s" % (old, new))
+    if not dry:
+        new.parent.mkdir(parents=True, exist_ok=True)
+        old.rename(new)
+    return True
 
 
 def edit_rule(root: str) -> str:
@@ -466,6 +482,9 @@ def run(uninstall: bool, no_mod: bool, dry: bool) -> int:
                 path.unlink()
             else:
                 replace_file(path, text.encode("utf-8"))
+
+    if not uninstall and sessions_move(home, os.environ, dry):
+        changed = True
 
     # ---- 4. state: what the next run removes ----
     if not dry:

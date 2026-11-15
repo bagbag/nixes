@@ -232,6 +232,9 @@ export type ConsoleQueued = { key: string; at: number; action?: ConsoleAction }[
 
 export type ConsoleLenses = { 'step-back': string[]; ground: string[]; focus: string }
 
+/** The change-request press at work (single flight: git works on one tree at a time): its button, the request, what the label reads while it works, the step it is at, and when it started (a press past the stale bound no longer holds the flight). */
+export type ConsolePressing = { key: string; id: string; verb: string; step: string; since: number }
+
 /** The running refresh (single flight): when it started, and whether a request arrived meanwhile. */
 export type ConsoleRefresh = { since: number | null; again: boolean }
 
@@ -283,6 +286,7 @@ declare module 'claude-code' {
       /** Built-in commands the person sent during the running turn, in order: its end runs them, ahead of anything the console starts. */
       deferred: Shaped<ConsoleDeferred[]>
       refresh: Shaped<ConsoleRefresh>
+      pressing: Shaped<ConsolePressing | null>
       isPaneDismissed: boolean
       /** A main-agent turn runs (turn.start until turn.complete); false while the session is idle. */
       isTurnRunning: boolean

@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from .base import lines
-from . import words
+from . import schema, words
 from .collect import items_text, read_listing
 from .engine import Context, fail
 from .questions import refuse_all
@@ -49,15 +49,14 @@ def prepass_accept(ctx: Context, report: dict) -> str:
             fail(f"/{command} ran without the pre-pass argument (`{pending.get('args')}`)")
     origin = (r['observed'].get(command) or {}).get('origin', 'model')
     errors = []
-    if not isinstance(report.get('summary'), str) or not report['summary'].strip():
-        errors.append('`summary`: one line on what the pre-pass found')
+    errors += schema.problems(schema.Prepass, report, 'summary')
     if r.get('subject') and not (isinstance(report.get('verdict'), str) and report['verdict'].strip()):
         errors.append(f"`verdict`: the subject's verdict in a sentence (the round judges {r['subject']})")
     if not r.get('subject') and report.get('verdict') is not None:
         errors.append('`verdict` belongs to a round with a --subject')
     entries = report.get('points', [])
-    if not isinstance(entries, list):
-        errors.append('`points` is a list of entries')
+    if bad := schema.problems(schema.Prepass, report, 'points'):
+        errors += bad
         entries = []
     pasted = {p['id']: p for p in r['points']}
     items = {i['id'] for i in r['items']}

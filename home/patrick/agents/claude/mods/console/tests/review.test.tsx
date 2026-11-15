@@ -209,17 +209,81 @@ describe('Open', () => {
     })
   }
 
-  test('a press returns before its board read: a slow read runs after it, then the tree is set (the press budget)', async ($, on) => {
+  const boardReads = (w: { calls: { argv: string[] }[] }) => w.calls.filter(one => one.argv[1] === 'console').length
+
+  test('a press acts on the shown board: no board read, whatever the board holds now (r1-q5)', async ($, on) => {
     const r = repo()
     const { w, ui, clock } = await queued($, on, WAITING(), r)
-    let release = () => {}
-    w.hold = { verb: 'board console', until: new Promise<void>(resolve => { release = resolve }) }
-    await ui.press({ key: 'cr-open-p-cr1' })  // resolves while the read is held
+    w.crs = [cr({ id: 'p-cr1', status: 'open' })]  // returned meanwhile; the pane still shows the old board
+    const before = boardReads(w)
+    await ui.press({ key: 'cr-open-p-cr1' })
     await clock.settle()
-    expect(r.opened).toEqual([])
+    expect(boardReads(w)).toBe(before)
+    expect(r.opened).toEqual([REVIEW_TREE])
+    await ui.unmount()
+  })
+
+  test('a press acts on the shown board although a failing agent list put an error on the shown board (r9-q29)', async ($, on) => {
+    const r = repo()
+    const made = world(on, { round: NO_ROUND, crs: WAITING() })
+    made.w.git = git(r)
+    made.w.agentsFail = true
+    await ready($, made.clock)
+    const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+    const before = boardReads(made.w)
+    await ui.press({ key: 'cr-open-p-cr1' })
+    await made.clock.settle()
+    expect(boardReads(made.w)).toBe(before)  // no fresh read: the shown board is used
+    expect(r.opened).toEqual([REVIEW_TREE])
+    await ui.unmount()
+  })
+
+  test('the pressed Open shows at once: inverse, its step in its hover hint (no line added), a second press says it is busy, the end a toast', async ($, on) => {
+    const r = repo()
+    const { w, ui, clock } = await queued($, on, WAITING(), r)
+    const isInverse = async () => ((await ui.findAll({ type: 'Text' })) as { text: string; props?: { inverse?: boolean } }[]).some(one => one.text === 'Open' && one.props?.inverse === true)
+    const rows = async () => ((await ui.find({ key: 'cr-p-cr1-lines' })) as { children?: unknown[] }).children?.length
+    const height = async () => ((await ui.find({ key: 'cr-p-cr1' })) as { children?: unknown[] }).children?.length
+    const calm = { height: await height(), rows: await rows() }
+    let release = () => {}
+    w.hold = { verb: 'git', until: new Promise<void>(resolve => { release = resolve }) }
+    expect(await isInverse()).toBe(false)
+    await ui.press({ key: 'cr-open-p-cr1' })
+    await clock.settle()
+    expect(await texts(ui)).toContain('Open · setting the review tree…')
+    expect({ height: await height(), rows: await rows() }).toEqual(calm)
+    expect(await isInverse()).toBe(true)
+    await ui.press({ key: 'cr-accept-p-cr1' })
+    await clock.settle()
+    expect(w.toasts.at(-1)).toBe('Open p-cr1 is still at work (setting the review tree); press again when it is done')
     release()
+    w.hold = null
     await clock.settle()
     expect(r.opened).toEqual([REVIEW_TREE])
+    expect(w.toasts.at(-1)).toBe(`p-cr1 is opening in VS Code (${REVIEW_TREE})`)
+    expect(await texts(ui)).not.toContain('setting the review tree')
+    expect(await isInverse()).toBe(false)
+    expect(w.prompts).toEqual([])  // the busy Accept sent nothing
+    await ui.unmount()
+  })
+
+  test('a pressed ratification Open shows its step in its hover hint: the row gains nothing', async ($, on) => {
+    const r = repo({ fork: sha(7) })
+    const ratifications = [{ id: 'p-rat1', cr: 'p-cr0', title: 'Ratify: Move the clock', tip: sha(6), baseTip: sha(5) }]
+    const { w, ui, clock } = await queued($, on, [], r, { ratifications })
+    const rowChildren = async () => ((await ui.find({ key: 'ratify-p-rat1' })) as { children?: unknown[] }).children?.length
+    const calm = await rowChildren()
+    let release = () => {}
+    w.hold = { verb: 'git', until: new Promise<void>(resolve => { release = resolve }) }
+    await ui.press({ key: 'ratify-p-rat1-open' })
+    await clock.settle()
+    const drawn = (await texts(ui)).split('\n')
+    expect(drawn).toContain('Open · setting the review tree…')  // the button's hover hint, at the pane's bottom
+    expect(drawn[drawn.indexOf('Ratify: Move the clock') + 1]).not.toContain('setting the review tree')
+    expect(await rowChildren()).toBe(calm)
+    release()
+    w.hold = null
+    await clock.settle()
     await ui.unmount()
   })
 
@@ -304,17 +368,6 @@ describe('Open', () => {
     const { ui } = await queued($, on, [cr({ id: 'p-code' }), cr({ id: 'p-res', view: 'result' })])
     expect((await ui.find({ key: 'cr-open-p-code' }))?.text).toBe('Open')
     expect((await ui.find({ key: 'cr-open-p-res' }))?.text).toBe('Walk through')
-    await ui.unmount()
-  })
-
-  test('a request that left the accept stage since the last draw is refused', async ($, on) => {
-    const r = repo()
-    const { ui, clock, w } = await queued($, on, WAITING(), r)
-    w.crs = [cr({ id: 'p-cr1', status: 'open' })]  // returned meanwhile; the pane still shows the old draw
-    await ui.press({ key: 'cr-open-p-cr1' })
-    await clock.settle()
-    expect(w.toasts.at(-1)).toContain('p-cr1 is not waiting for you any more')
-    expect(r.changes).toEqual([])
     await ui.unmount()
   })
 
@@ -566,6 +619,8 @@ describe('Accept, Return', () => {
       r.hasEdits = true
       committed(r, sha(9))
       w.crs = [cr({ id: 'p-cr1', tip: sha(tip) })]
+      await clock.advance(60_000)  // the board refresh the press acts on
+      await clock.settle()
       r.changes.length = 0
       await ui.press({ key: 'cr-open-p-cr1' })
       await clock.settle()

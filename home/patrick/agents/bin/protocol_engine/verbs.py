@@ -6,8 +6,8 @@ import re
 import shutil
 from datetime import datetime, timedelta, timezone
 
-from .base import CAP_CHOICES, CHECK_CAP, DROP_KINDS, NUDGE_KEYS, PRUNE_DAYS, THINK_MORE, VERB_ORIGINS, recommended_suffix, utcnow
-from . import words
+from .base import CAP_CHOICES, CHECK_CAP, PRUNE_DAYS, THINK_MORE, VERB_ORIGINS, recommended_suffix, utcnow
+from . import schema, words
 from .session import state_root
 from .store import Store
 from .engine import Context, by_id, fail, premise_status, questions, touch
@@ -32,9 +32,8 @@ def require_origin(ctx: Context, verb: str, origin: str | None) -> None:
 def drop_report(ctx: Context, report: dict) -> None:
     """The console dropped a stale pass run or batch dialog: logged, and the pass's observed run goes, but only a run of that
     pass (a newer run of the same command stays)."""
-    kind = report.get('kind')
-    if kind not in DROP_KINDS:
-        fail(f"dropped: `kind` must be one of {', '.join(DROP_KINDS)}")
+    schema.require(schema.Dropped, report, 'kind')
+    kind = report['kind']
     key = 'id' if kind == 'pass' else 'marker'
     ref = report.get(key)
     if not isinstance(ref, str) or not ref:
@@ -51,12 +50,11 @@ def nudge_report(ctx: Context, report: dict) -> None:
     pending pass it queued (`pass`, its id), the batch it reopened (`batch`, its marker), both, the step it woke the model at
     (`step`, alone), or none of these (`{}`: no round open, the pass already queued, a started pass asked for its report, or a step
     with nothing to continue)."""
-    unknown = sorted(set(report) - set(NUDGE_KEYS))
+    accepted = schema.names(schema.Nudged)
+    unknown = sorted(set(report) - set(accepted))
     if unknown:
-        fail(f"nudged: unknown key {', '.join(unknown)} (accepted: {', '.join(NUDGE_KEYS)})")
-    for key, value in report.items():
-        if not isinstance(value, str) or not value:
-            fail(f'nudged: `{key}` must be a non-empty string')
+        fail(f"nudged: unknown key {', '.join(unknown)} (accepted: {', '.join(accepted)})")
+    schema.require(schema.Nudged, report)
     if 'step' in report and len(report) > 1:
         fail('nudged: `step` stands alone (a continue that queued a pass or reopened a batch woke no step)')
     ctx.log('nudged', **report)
@@ -69,9 +67,8 @@ def normalized(text: str) -> str:
 def chat_answer(ctx: Context, report: dict) -> str:
     """An answer the user typed in chat, mapped by the model: accepted only when its quote appears in a message the
     console relayed from the person after the question went out (a short "yes" from earlier must not count)."""
-    qid, text, quote = report.get('question'), report.get('answer'), report.get('quote')
-    if not all(isinstance(v, str) and v.strip() for v in (qid, text, quote)):
-        fail('answer --origin chat: stdin needs "question" (an id), "answer" and "quote" (the user\'s exact words)')
+    schema.require_needs(schema.AnswerChat, report)
+    qid, text, quote = report['question'], report['answer'], report['quote']
     q = by_id(ctx, qid)
     if q['status'] not in ('ready', 'asked'):
         fail(f"answer --origin chat: {qid} is {q['status']}, not ready or asked")
@@ -142,9 +139,8 @@ def edit_round(ctx: Context, report: dict) -> str:
         fail('edit applies to a round between Related and Record')
     if r['batch'] and r['batch']['cap']:
         fail('answer the cap question first')
-    updates, quote = report.get('updates'), report.get('quote')
-    if not isinstance(updates, list) or not updates or not isinstance(quote, str) or not quote.strip():
-        fail('edit: stdin needs "updates" (per-question updates as in a pass report) and "quote" (the user\'s exact words asking for it)')
+    schema.require_needs(schema.Edit, report)
+    updates, quote = report['updates'], report['quote']
     quote_check(ctx, 'edit', quote)
     if r['batch'] and not all(isinstance(u, dict) and 'id' not in u for u in updates):
         ctx.log('batch-withdrawn', marker=r['batch']['marker'], reason='edit')
@@ -192,9 +188,8 @@ def defer_round(ctx: Context, report: dict) -> str:
         fail('defer applies to a round between Related and Record')
     if r['batch'] and r['batch']['cap']:
         fail('answer the cap question first')
-    qid, quote, until = report.get('question'), report.get('quote'), report.get('until')
-    if not (isinstance(qid, str) and qid and isinstance(quote, str) and quote.strip()):
-        fail('defer: stdin needs "question" and "quote" (the user\'s exact words asking for it); "until" is optional')
+    schema.require_needs(schema.Defer, report, 'question', 'quote')
+    qid, quote, until = report['question'], report['quote'], report.get('until')
     if until is not None and not (isinstance(until, str) and DEFER_UNTIL.fullmatch(until.strip())):
         fail('defer: `until` is a date (2026-12-01), an offset (+36h, +3d, +2w) or tomorrow, as bd reads it; left out for no date')
     quote_check(ctx, 'defer', quote)
@@ -243,9 +238,8 @@ def open_batch(ctx: Context, marker) -> dict:
 
 def decline(ctx: Context, report: dict, origin: str, reason: str) -> str:
     batch = open_batch(ctx, report.get('marker'))
+    schema.require(schema.Decline, report, 'partial')
     partial = report.get('partial') or {}
-    if not isinstance(partial, dict):
-        fail('`partial` must map question texts to answers, or be null')
     batch_seen(ctx, batch)
     batch_back(ctx)
     ctx.log('decline', marker=batch['marker'], origin=origin, reason=reason, partial=partial or None)
@@ -319,9 +313,8 @@ def answer(ctx: Context, report: dict, origin: str) -> str:
     if report.get('afkTimeoutMs'):
         return decline(ctx, {'marker': report.get('marker'), 'partial': None}, origin, 'resolved itself (timeout)')
     batch = open_batch(ctx, report.get('marker'))
+    schema.require(schema.Answer, report, 'answers')
     answers = report.get('answers') or {}
-    if not isinstance(answers, dict) or not all(isinstance(v, str) for v in answers.values()):
-        fail('`answers` must map question texts to answer strings')
     texts = {q['question']: (batch['ids'][i] if not batch['cap'] else None) for i, q in enumerate(batch['questions'])}
     unknown = [text for text in answers if text not in texts]
     if unknown:

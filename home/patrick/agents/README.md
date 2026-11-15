@@ -236,6 +236,15 @@ park adds its packet with `--board-packet`, which `board bd` strips before bd (r
 `board show` prints the item's newest 5 comments, each cut at 2000 characters with a pointer to
 `board show <id> --comments`, which prints them whole (r16-q88, q89); it prints item metadata
 `deep_review=<path>`, the failure path a review escalated, as `deep-review: <path>` (r16-q94, r7-q28).
+`board field <id> <field> --export` writes a long field (description, design, acceptance, notes) to a file in
+the session's scratch folder and prints its path; edit that file in place, then `board field <id> <field> --apply`
+writes it back through `bd update` under the same size limit. Apply refuses when the field's own text changed
+since the export (export again), an empty result and a no-op, and removes the file; it replaces rewriting a field
+from memory. Reading stays `board show --field`.
+`board wait [--timeout <s>]` blocks until a bare `board claim` would have a candidate for the session (its pulls, minus its own
+hand-overs; one helper serves both), prints `claimable: <id> (<kind>) <title>` and exits 0 without claiming. It polls every 60 s,
+exits 3 at the timeout and 1 when the session's registration is gone. Run it with the shell tool's background mode, not a
+30-minute monitor; a candidate that `claim` then refuses (a git or worktree failure) is `claim`'s message to act on.
 `board check` encodes the board-core
 conventions mechanically; change both in the same change, so drifted boards
 surface in `board health` and move through `/board-migrate`.
@@ -290,12 +299,21 @@ one item and stops there, which tells a milestone's members apart; `b` counts
 everything downstream. Lists sort by `a`, then `b`; JSON gives `holds` and `holdsAll`.
 `session state-dir` names the state dir; the engine and the console
 ask it instead of restating the location.
+`session find <id>` resolves an id by file names alone (works for ended sessions): the board
+actor is the last 8 characters of the session id, which Claude (`projects/<project>/<id>.jsonl`),
+Codex (`sessions/Y/M/D/rollout-<time>-<id>.jsonl`) and the scratch folder (`sessions/<actor>`)
+carry. Takes 6 or more characters; prints `claude|codex|scratch <path>` per match; exit 1 on a miss.
 
 Every multi-verb tool answers `help` (each verb with one example) and prints
 the same for a bare call, exit 0: `board`, `protocol`, `session` and `scratch` (r15-q88). `protocol help`
 lists the verbs sessions run (`*`: the accepted `--origin` depends on the caller) before
-`console only:`; both sections come from `base.VERBS`, the one table that owns each
-verb's audience and accepted origins and that `require_origin` also reads. An unknown
+`console only:`; `protocol help <verb>` (and `protocol <verb> -h`) prints that verb's arguments,
+example and stdin forms, `help step` every report form by step. Both come from the frozen
+`base.Verb` records (`base.VERBS`: audience, origins, summary, example, names of its stdin
+forms; a record missing a part fails at import), which the parser's registration and
+`require_origin` also read. The stdin forms are the dataclasses of `protocol_engine/schema.py`:
+the one declaration of each form's field names, types and required/optional, read by the checks,
+refusal text and help; prose (`words.py`) and rules across fields stay code. An unknown
 `board` verb that the installed bd knows (`bd <verb> --help` exits 0) fails with exit 2 and
 `board: no verb 'comment'; run: board bd comment <args>`; a verb that moved into a group
 points to `board cr land` or `board ruling release`; nothing runs or forwards, and a word bd
@@ -325,8 +343,8 @@ closed or unknown to the board (r22-q102, revising r18-q95: an item's folder liv
 the folder belongs to; an unreachable board, a failing command or a gone repository keeps the entry, and a repository without `.beads` expires by time alone. Scratch also
 removes an owner folder left empty and unchanged that long, by time alone (r15-q72, revised). Trash entries are deleted
 after 7 days, counted from the time stored in the entry (its wrapper's mtime if that is unreadable). The
-console shows the `status --line` text, nothing more (r15-q83). Codex's `writable_roots` and Claude's `Edit` allow
-rules grant the scratch and records roots. Tests: `bin/test-scratch.py`.
+console shows the `status --line` text, nothing more (r15-q83). Codex's `writable_roots` grant `~/.local/state/agents` (scratch and sessions) and
+`~/.local/share/agents/decisions`; Claude's `Edit` allow rules grant the scratch and records folders (the session tool writes sessions itself). Tests: `bin/test-scratch.py`.
 
 `bin/protocol` (installed as `$HOME/.agents/bin/protocol`) is the protocol
 engine of deciding sessions: it owns each session's protocol state in
@@ -879,8 +897,10 @@ relays the person's chat messages, presses and a typed or pressed
 compaction. Its round features act for lead, solo and autopilot. A `protocol` call reads as two rows in the chat: its arguments and
 the engine's headline. Every call may run up to ten minutes (`$.process.run`'s maximum); one that fails or is cut answers the model
 with the error and that it may have run in part (read `protocol show` before running it again; a Record step runs again safely).
-A press only claims its run: its engine, board, git and VS Code work runs after the press returns, since the host cuts a
-press hook off after 10 s and a call can wait that long on an embedded board or on the session lock a Record step holds.
+A press only claims its run: its engine, board, git and VS Code work runs after the press returns (the host cuts a
+press hook off after 10 s; a call can wait that long on an embedded board or the session lock a Record step holds).
+A change-request or ratification press acts on the request in the row you clicked, with no lookup of its own (land and your session re-check every consequence, and say when it no longer waits; r1-q5, r9-q29).
+The one check command: `claude/mods/console/tests/check.sh` (plugin tests, `tsc --noEmit`, `claude plugin validate`; the tests folder is stripped from the installed mod).
 Esc at a turn end stops the pass loop; a successful compaction right after reruns the stopped pass once (not a skipped or precompute
 one; a pass given up as stuck is never rerun). `/console-continue` (r7-q24) runs the turn-end decision on demand: it queues the pending pass (a stopped, asked-for or noted
 run of it included) unless a run of it is queued already (a run the host refused counts as none), reopens the issued batch past the
@@ -917,7 +937,13 @@ whose Release Round and Compact take the `suggestion` color exactly when the
 proposals offer them, and which hold the role button: Autopilot while solo, Solo while
 autopilot, each running the `/role` command (the host refuses a prompt text starting with `/`);
 a lead or agent session has none; Release Round is hidden while autopilot) and the round's Log, newest first, the last 10
-lines with a `+N more` toggle for the whole round. A click on an item id (board
+lines with a `+N more` toggle for the whole round. Every press shows at once: a
+pressed command (Actions, Decide, Start, the pass and question buttons) reads `· starting…` after its label until
+its skill expands (`· queued` while a turn runs, which the host waits out); a change-request or ratification
+press draws its button inverse and its hover hint reads `<verb> · <step>…` (reading the board,
+setting the review tree, opening VS Code) while it works, so no row gains a line (r7-q26), a press meanwhile toasts that one is at work (single flight: git works on
+one tree at a time; a press older than 3 minutes gives way), and a successful Open toasts `<id> is opening in
+VS Code (<tree>)`, since `code` returns before its window shows. A click on an item id (board
 items, stale holds, release records) opens it inline below the row (`reading…`
 meanwhile, the error in the error color if the read fails): up to 4 lines of
 its `## Decision` (else the description's start, headings dropped), then a
@@ -931,8 +957,7 @@ person closed stays closed until `/console`. The band above the prompt shows
 the round during one (a release run the same way), with Solo beside the passes
 while autopilot (and alone, `Autopilot · away`, with no run open), and with no run open the
 recommended suggestion (the row's first line `·` with Start, `M records
-decided ·` with Release Round, or Compact), nothing while a dialog is
-open or nothing is offered. Start runs `/start-round <n>` (bare: row 1) without a
+decided ·` with Release Round, or Compact), nothing when nothing is offered (an open dialog does not hide it, r2-q10). Start runs `/start-round <n>` (bare: row 1) without a
 stamp: the press is the go-ahead, not an approval like `/release-round`. A row
 that compacts first compacts (keeping the proposal's title in the summary), then
 starts, whether pressed or typed (a `/start-round` hook answers the typed command

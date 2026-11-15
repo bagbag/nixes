@@ -5,9 +5,9 @@ import type { EngineInterface, RenderPropsOf } from 'claude-code'
 
 import type { ConsoleBoard, ConsoleCr, ConsoleItem, ConsoleQuestion, ConsoleRecord, ConsoleRole, ConsoleRound, ConsoleSection, ConsoleSession, ConsoleSuggestion } from '../types'
 
-import { pressAcceptCr, pressContinue, pressOpenCr, pressOpenItem, pressOpenOverlaps, pressOpenRatification, pressOpenSettles, pressOpenSuggestion, pressRefreshCr, pressReturnCr, pressRole, pressRun, pressStart, pressView, pressWorkers } from './core'
-import { isRoundOpen, RELEASE_COMMAND, ROUND_ROLES } from './engine'
-import { getBoard, getExpanded, getLenses, getOpened, getPass, getPlaced, getReviewTree, getRole, getRound, getRoundError, getTurnRunning, toggleExpanded, updateLenses } from './state'
+import { crPressKey, pressAcceptCr, pressContinue, pressOpenCr, pressOpenItem, pressOpenOverlaps, pressOpenRatification, pressOpenSettles, pressOpenSuggestion, pressRefreshCr, pressReturnCr, pressRole, pressRun, pressStart, pressView, pressWorkers, queuedRuns, runKey } from './core'
+import { isRoundOpen, RELEASE_COMMAND, ROUND_ROLES, START_COMMAND } from './engine'
+import { getBoard, getExpanded, getLenses, getOpened, getPass, getPlaced, getPressing, getReviewTree, getRole, getRound, getRoundError, getTurnRunning, toggleExpanded, updateLenses } from './state'
 import { answerText, canRefreshCr, COUNT_GROUPS, countText, crDetailsText, crFailureParts, crFileHref, crHeldText, crMarks, crNewCountText, crKind, crPriorityHint, crPriorityText, crRowCheckText, crRows, crRowStageText, crSummaryText, crUnblocksHint, crUnblocksText, displayId, displayIds, fitText, isCrAccepting, isWalkCr, GROUND, GROUND_BASE, lensArgs, LENS_SETS, plural, pullsText, recommendationMark, recommendationText, roleText, roundWords, runNoun, staleHolds, staleSessions, startHint, STEP_BACK_BASE, suggestionText, WHAT, WHERE } from './words'
 import type { CrKind, Lens, LensCommand } from './words'
 
@@ -39,11 +39,11 @@ const SESSION_COLUMNS = { role: 7, tool: 8, actor: 10, pulls: 9, holds: 9, worke
 /**
  * The steps to offer while no run is open: the model's proposed rounds (the first recommended), then the pending release,
  * then a compact-only proposal (a stored proposal without rounds). Only a large context compacts: the model knows a round reuses nothing, the console knows
- * there is something to drop (r21). Nothing while a run is open or a dialog is (the band's own states); the pane, the band and
+ * there is something to drop (r21). Nothing while a run is open (the band's own state); a dialog does not hide them, a run may start behind it (r2-q10); the pane, the band and
  * the Actions twins all read this one function.
  */
-export function suggestions(round: ConsoleRound | null, isDialogOpen = false): ConsoleSuggestion[] {
-  if (round === null || isRoundOpen(round) || isDialogOpen || round.next === null) return []
+export function suggestions(round: ConsoleRound | null): ConsoleSuggestion[] {
+  if (round === null || isRoundOpen(round) || round.next === null) return []
   const { release, rounds } = round.next
   const isLarge = round.isContextLarge
   const found: ConsoleSuggestion[] = [
@@ -85,12 +85,19 @@ export async function drawPane($: $, e: { surface: string; props: RenderPropsOf[
   const passRun = await getPass($)
   const reviewing = await getReviewTree($)
   const isTurnRunning = await getTurnRunning($)
+  const pressing = await getPressing($)
+  const queued = await queuedRuns($)
   const hint = hints()
   const boardPrefix = board?.prefix ?? null
   const shown = (id: string) => displayId(id, boardPrefix)
   /** The id column: as wide as the widest id shown in it. */
   const idWidth = (ids: readonly string[]) => Math.max(0, ...ids.map(id => shown(id).length)) + ID_GAP
   const dimId = (id: string) => <Text color="inactive">{shown(id)}</Text>
+  // A pressed command until its run starts: the host holds a run while a turn works, so it reads queued then.
+  const queuedWord = isTurnRunning ? 'queued' : 'starting…'
+  const queuedMark = (isQueued: boolean) => isQueued ? <Text color="inactive"> · {queuedWord}</Text> : null
+  const isRunQueued = (command: string, args = '') => queued.includes(runKey(command, args))
+  const isCommandQueued = (command: string) => queued.some(key => key === command || key.startsWith(`${command} `))
   const isRoundRole = role !== null && ROUND_ROLES.includes(role.role)
   const isAutopilot = role?.role === 'autopilot'  // away: nothing is proposed to start, and no release (the engine refuses both)
   const suggested = isRoundRole && !isAutopilot ? suggestions(round) : []
@@ -108,12 +115,13 @@ export async function drawPane($: $, e: { surface: string; props: RenderPropsOf[
     </Box>
   )
   const rightLabel = (word: string) => <Box width={LABEL - 2} justifyContent="flex-end"><Text color="inactive">{word}</Text></Box>
-  const divided = (key: string, entries: { key: string; scope?: string; label: any; onPress: () => Promise<void> }[]) => (
+  const divided = (key: string, entries: { key: string; scope?: string; label: any; onPress: () => Promise<void>; run?: { command: string; args?: string } }[]) => (
     <Box key={key} flexDirection="row" flexWrap="wrap">
       {entries.map((one, i) => (
         <Box key={`${key}-${one.key}-box`} flexDirection="row" hover={one.scope === undefined ? undefined : { scope: one.scope }}>
           {i > 0 && <Text color="inactive"> • </Text>}
           <Button key={`${key}-${one.key}`} plain onPress={one.onPress}>{one.label}</Button>
+          {queuedMark(one.run !== undefined && isRunQueued(one.run.command, one.run.args))}
         </Box>
       ))}
     </Box>
@@ -205,6 +213,7 @@ export async function drawPane($: $, e: { surface: string; props: RenderPropsOf[
                   {one.kind === 'round' && one.ids.length > 0
                     ? <Button key={`sg-${one.key}-row`} plain onPress={() => pressOpenSuggestion($, one.key, one.ids.map(id => ({ id, title: one.idTitles[id] ?? '' })))}><Text color={color} wrap="truncate-end">{what}</Text></Button>
                     : <Text color={color} wrap="truncate-end">{what}</Text>}
+                  {queuedMark(one.kind === 'round' ? isRunQueued(START_COMMAND, String(one.number)) : isRunQueued(one.kind === 'release' ? RELEASE_COMMAND : 'compact'))}
                   {one.kind === 'round' && one.summary !== '' ? <Text color="inactive">{one.summary}</Text> : null}
                 </Box>
               </Box>
@@ -433,10 +442,12 @@ export async function drawPane($: $, e: { surface: string; props: RenderPropsOf[
         <Box key={`q-${question.id}-actions`} flexShrink={0} flexDirection="row" marginLeft={2}>
           <Box key={`q-${question.id}-explain-box`} flexShrink={0} hover={{ scope: `q-${question.id}-explain` }}>
             <Button key={`q-${question.id}-explain`} plain onPress={run('explain', focus)}><Text color="inactive">explain</Text></Button>
+            {queuedMark(isRunQueued('explain', focus))}
           </Box>
           <Box key={`q-${question.id}-bullet`} width={3} flexShrink={0}><Text color="inactive"> • </Text></Box>
           <Box key={`q-${question.id}-sb-box`} flexShrink={0} hover={{ scope: `q-${question.id}-sb` }}>
             <Button key={`q-${question.id}-sb`} plain onPress={run('step-back', focus)}><Text color="inactive">step back</Text></Button>
+            {queuedMark(isRunQueued('step-back', focus))}
           </Box>
         </Box>
       </Box>
@@ -568,6 +579,7 @@ export async function drawPane($: $, e: { surface: string; props: RenderPropsOf[
           </Box>
         )}
         {nextMark(command)}
+        {queuedMark(isCommandQueued(command))}
       </Box>
     ), 1)
   }
@@ -654,13 +666,13 @@ export async function drawPane($: $, e: { surface: string; props: RenderPropsOf[
       lensHead('ground', 'Ground', GROUND_BASE, false),
       labelled('ground-lenses', <Text> </Text>, toggles('ground-row', 'ground', GROUND)),
       labelled('decide', <Text bold>Decide</Text>, divided('decide-row', [
-        { key: 'question-me', scope: 'decide-question-me', label: 'Question Me', onPress: run('question-me') },
-        { key: 'intake', scope: 'decide-intake', label: 'Intake', onPress: run('round-intake') },
+        { key: 'question-me', scope: 'decide-question-me', label: 'Question Me', onPress: run('question-me'), run: { command: 'question-me' } },
+        { key: 'intake', scope: 'decide-intake', label: 'Intake', onPress: run('round-intake'), run: { command: 'round-intake' } },
         ...(round !== null && isRoundOpen(round) ? [{ key: 'continue', scope: 'decide-continue', onPress: () => pressContinue($),
           label: isContinueSuggested ? <Text color="suggestion">Continue</Text> : 'Continue' }] : []),
-        { key: 'challenge-rulings', scope: 'decide-challenge-rulings', onPress: run('challenge-rulings'),
+        { key: 'challenge-rulings', scope: 'decide-challenge-rulings', onPress: run('challenge-rulings'), run: { command: 'challenge-rulings' },
           label: pendingPass === 'challenge-rulings' ? <Text color="claude">Challenge Rulings ◂ {passWord}</Text> : 'Challenge Rulings' },
-        { key: 'explain', scope: 'decide-explain', label: 'Explain', onPress: run('explain') },
+        { key: 'explain', scope: 'decide-explain', label: 'Explain', onPress: run('explain'), run: { command: 'explain' } },
       ]), 1),
     )
     hint.add('decide-question-me', 'Runs /question-me: starts or resumes the round')
@@ -673,11 +685,13 @@ export async function drawPane($: $, e: { surface: string; props: RenderPropsOf[
 
   // Change requests (r25): the board's queue, children under their parent. The presses put requests in the prompt; the console never lands.
   const CHECK_COLOR = { current: 'success', stale: 'warning', conflict: 'error', failed: 'error', unchecked: 'inactive' } as const
+  // The pressed button draws inverse while its press works (same width: Return lines up on every row) and its hover hint reads the step, so no row gains a line or moves (r7-q26).
   const act = (key: string, label: string, onPress: () => Promise<void>, hintText: string, color?: string, isDim = false) => {
-    hint.add(key, hintText)
+    const isPressed = pressing?.key === key
+    hint.add(key, isPressed ? `${pressing.verb} · ${pressing.step}…` : hintText)
     return (
       <Box key={`${key}-box`} hover={{ scope: key }}>
-        <Button key={key} plain onPress={onPress} dimColor={isDim}>{color === undefined ? label : <Text color={color}>{label}</Text>}</Button>
+        <Button key={key} plain onPress={onPress} dimColor={isDim && !isPressed}>{color === undefined && !isPressed ? label : <Text color={color} inverse={isPressed}>{label}</Text>}</Button>
       </Box>
     )
   }
@@ -751,11 +765,11 @@ export async function drawPane($: $, e: { surface: string; props: RenderPropsOf[
             const rightWidth = rest.reduce((sum, one) => sum + one.text.length, 0) + PART_GAP * Math.max(0, rest.length - 1)
             const actions = [
               ...(buttons.accepting ? [
-                act(`cr-open-${cr.id}`, buttons.walkLabel, () => pressOpenCr($, cr.id), buttons.walkHint, 'suggestion'),
-                act(`cr-accept-${cr.id}`, CR_BUTTONS.accept, () => pressAcceptCr($, cr.id), 'Sends the accept request; your session lands it', 'success', true),
-                act(`cr-return-${cr.id}`, CR_BUTTONS.return, () => pressReturnCr($, cr.id), 'Puts the return request in your prompt, ready for your changes', undefined, true),
+                act(crPressKey('open', cr.id), buttons.walkLabel, () => pressOpenCr($, cr, buttons.walkLabel), buttons.walkHint, 'suggestion'),
+                act(crPressKey('accept', cr.id), CR_BUTTONS.accept, () => pressAcceptCr($, cr), 'Sends the accept request; your session lands it', 'success', true),
+                act(crPressKey('return', cr.id), CR_BUTTONS.return, () => pressReturnCr($, cr), 'Puts the return request in your prompt, ready for your changes', undefined, true),
               ] : []),
-              ...(buttons.refreshing ? [act(`cr-refresh-${cr.id}`, CR_BUTTONS.refresh, () => pressRefreshCr($, cr.id), 'Sends the refresh request: rebase, checks and the range-diff', 'suggestion')] : []),
+              ...(buttons.refreshing ? [act(crPressKey('refresh', cr.id), CR_BUTTONS.refresh, () => pressRefreshCr($, cr), 'Sends the refresh request: rebase, checks and the range-diff', 'suggestion')] : []),
             ]
             // line two: the milestone shrinks first, down to MILESTONE_MIN; what still does not fit wraps to a next line
             const room = e.props.bodyColumns - 1 - CR_INDENT * depth - crIdWidth - alignedWidth - (rest.length === 0 ? 0 : rightWidth + 1) - 1  // the bar, the id column, the columns, the right group with its gap and a spare cell
@@ -773,7 +787,7 @@ export async function drawPane($: $, e: { surface: string; props: RenderPropsOf[
               </Box>
             ))
             const milestoneCell = milestone === null ? null : milestone === cr.milestone
-              ? <Text key={`cr-${cr.id}-milestone`} dimColor>{milestone}</Text>
+              ? <Text key={`cr-${cr.id}-milestone`} dimColor wrap="truncate-end">{milestone}</Text>
               : <Box key={`cr-${cr.id}-milestone-box`} flexShrink={0} hover={{ scope: `milestone-${cr.id}` }}><Text key={`cr-${cr.id}-milestone`} dimColor>{milestone}</Text></Box>
             const rightParts = rest.map(fact)
             return (
@@ -822,9 +836,9 @@ export async function drawPane($: $, e: { surface: string; props: RenderPropsOf[
                   <Box key={`ratify-${one.id}-idbox`} width={idWidth(ratify.shown.map(other => other.id))} flexShrink={0} hover={{ scope: `item-${one.id}` }}>
                     <Button key={`ratify-${one.id}-show`} plain onPress={() => pressOpenItem($, one.id)}>{dimId(one.id)}</Button>
                   </Box>
-                  <Box flexGrow={1} flexShrink={1}><Text wrap="truncate-end">{one.title}</Text></Box>
+                  <Box flexGrow={1} flexShrink={1} minWidth={0}><Text wrap="truncate-end">{one.title}</Text></Box>
                   {one.tip !== null && one.baseTip !== null && (
-                    <Box marginLeft={1} flexShrink={0}>{act(`ratify-${one.id}-open`, 'Open', () => pressOpenRatification($, one.id), 'Sets the review tree to the range this request landed and opens it in VS Code')}</Box>
+                    <Box marginLeft={1} flexShrink={0}>{act(crPressKey('ratify', one.id), 'Open', () => pressOpenRatification($, one), 'Sets the review tree to the range this request landed and opens it in VS Code')}</Box>
                   )}
                 </Box>
                 {slot(one.id)}
@@ -843,12 +857,12 @@ export async function drawPane($: $, e: { surface: string; props: RenderPropsOf[
     const twin = (kind: 'release' | 'compact', label: string) =>
       suggested.some(one => one.kind === kind) ? <Text color="suggestion">{label}</Text> : label
     const entries = [
-      { key: 'commit', scope: 'action-commit', label: 'Commit', onPress: run('commit') },
-      ...(isAutopilot ? [{ key: 'role-solo', scope: 'action-role-solo', onPress: () => pressRole($, 'solo'), label: <Text color="suggestion">Solo</Text> }] : []),
-      ...(role?.role === 'solo' ? [{ key: 'role-autopilot', scope: 'action-role-autopilot', onPress: () => pressRole($, 'autopilot'), label: 'Autopilot' }] : []),
-      ...(isRoundRole && !isAutopilot ? [{ key: 'release', scope: 'action-release', onPress: run(RELEASE_COMMAND), label: twin('release', 'Release Round') }] : []),
-      { key: 'retro', scope: 'action-retro', label: 'Retro', onPress: run('retro') },
-      { key: 'compact', scope: 'action-compact', label: twin('compact', 'Compact'), onPress: run('compact') },
+      { key: 'commit', scope: 'action-commit', label: 'Commit', onPress: run('commit'), run: { command: 'commit' } },
+      ...(isAutopilot ? [{ key: 'role-solo', scope: 'action-role-solo', onPress: () => pressRole($, 'solo'), label: <Text color="suggestion">Solo</Text>, run: { command: 'role', args: 'solo' } }] : []),
+      ...(role?.role === 'solo' ? [{ key: 'role-autopilot', scope: 'action-role-autopilot', onPress: () => pressRole($, 'autopilot'), label: 'Autopilot', run: { command: 'role', args: 'autopilot' } }] : []),
+      ...(isRoundRole && !isAutopilot ? [{ key: 'release', scope: 'action-release', onPress: run(RELEASE_COMMAND), label: twin('release', 'Release Round'), run: { command: RELEASE_COMMAND } }] : []),
+      { key: 'retro', scope: 'action-retro', label: 'Retro', onPress: run('retro'), run: { command: 'retro' } },
+      { key: 'compact', scope: 'action-compact', label: twin('compact', 'Compact'), onPress: run('compact'), run: { command: 'compact' } },
     ]
     hint.add('action-commit', 'Runs /commit')
     if (isAutopilot) hint.add('action-role-solo', 'Runs /role solo: you are back, rounds ask you again')
@@ -882,7 +896,7 @@ export async function drawPane($: $, e: { surface: string; props: RenderPropsOf[
   )
 }
 
-/** The band above the prompt: an open run in words plus the Base passes; with no run open, the recommended suggestion (a dialog open leaves the prompt to it). */
+/** The band above the prompt: an open run in words plus the Base passes; with no run open, the recommended suggestion. */
 export async function drawBand($: $, e: { props: RenderPropsOf['AbovePrompt'] } & Parameters<$['ui']['resolve']>[0]) {
   const role = await getRole($)
   const round = await getRound($)

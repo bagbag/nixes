@@ -81,11 +81,11 @@ authorized work and pause the work that depends on that decision.
 
 ## Git: ask before running history- or state-mutating commands
 
-Get explicit confirmation before running git commands that modify the working tree, index, stashes, refs, or commit history — `reset`, `checkout`/`switch`/`restore` that discard changes, `stash`, `rebase`/`merge`/`cherry-pick`, `commit --amend` and other history rewrites, `clean`, `push --force`, branch/tag deletion, unless you hold explicit authorization for that exact command by other means. Read-only commands are always fine. Explain why when asking.
+Confirm first (with the reason) before git commands that modify the working tree, index, stashes, refs or history: `reset`, discarding `checkout`/`switch`/`restore`, `stash`, `rebase`/`merge`/`cherry-pick`, `commit --amend` and other rewrites, `clean`, `push --force`, branch/tag deletion; skip it only with explicit authorization for that exact command. Read-only commands need none.
 
-**Renames and moves** of git-tracked files and folders use `git mv` by default, not filesystem moves (or `mv` + `git add`).
+**Renames and moves** of tracked files and folders use `git mv`, not `mv` (+ `git add`). `git mv` and `git add` of paths the task changes need no confirmation; deleting files stays under the Filesystem rule.
 
-**Committing and staging.** Commit and push only when the user explicitly asks ("commit this", "commit and push", `/commit`) or you hold explicit authorization for it by other means; plans, todo lists, and workflow steps do **not** count as that instruction; every push stays the user's. When the tree reaches a coherent, verified state (bug fixed with tests passing, a feature step complete, a refactor done with lint/tests green), end the turn with the headline only: `✅ Good commit point: <subject>`. Follow the project's commit convention when defined. Otherwise use a **Conventional Commit** subject in the form `<type>(scope): <description>` (≤ 72 characters), then a blank line and a concise `- ` bullet list summarizing the material changes.
+**Committing and staging.** Commit and push only when the user explicitly asks or authorizes it by other means. Plans, todo lists and workflow steps do not, except a protocol section that names git commands as the user's authorization (change-requests.md Git authorization, decide.md Release): it covers exactly those commands; cite it when asking. A one-off restriction ("don't commit") binds only the work it was said about. Every push stays the user's. At a coherent, verified state (tests green, step or refactor complete) end the turn with the headline only: `✅ Good commit point: <subject>`. Follow the project's commit convention, else a **Conventional Commit**: subject `<type>(scope): <description>` (≤ 72 characters), blank line, `- ` bullets of the material changes.
 
 ## Sandbox and permissions
 
@@ -98,22 +98,20 @@ Request elevated sandbox permissions through the runtime's approval path for an 
 
 ## Filesystem: confirm before destructive operations
 
-Before deleting or overwriting anything you did not create in this session — `rm`, `mv` over an existing file, truncating, discarding content — inspect the target first. Surface anything that contradicts how it was described or seems unwanted instead of proceeding.
+Before deleting or overwriting anything you did not create in this session — `rm`, `mv` over an existing file, truncating, discarding content — inspect the target first. Stop and surface anything that contradicts its description or seems unwanted.
 
 ## Code review: verify before flagging
 
 When reviewing code (reviews, roasts, audits), verify each finding against the **current source** before reporting it as a defect. Drop it if it is either:
 
 - **false-positive** — does not hold,
-- **intentional** — a deliberate design choice whose trade-off still serves the goal (e.g. bidirectional cross-service access); raise one whose trade-off no longer does as a revision.
+- **intentional** — a deliberate design choice whose trade-off still serves the goal; raise one whose trade-off no longer does as a revision.
 
-Surface and recommend changes only for **confirmed** findings. When unsure whether something is intentional, ask before treating it as a smell.
-
-When triaging a **pre-existing** list of findings, account for every item: explicitly mark each as confirmed / false-positive / intentional.
+Surface and recommend changes only for **confirmed** findings; when unsure whether something is intentional, ask first. Triaging a **pre-existing** list: mark every item confirmed / false-positive / intentional.
 
 ## Output: keep chat brief, write large artifacts to files
 
-Keep chat responses concise. Write a large standalone artifact — a full report, spec, plan, generated file, or bulk command/log dump that runs more than a screen or two — to a file and reference the path in your reply.
+Keep chat concise. Write a large standalone artifact — a full report, spec, plan, generated file, or bulk command/log dump that runs more than a screen or two — to a file and reference the path in your reply.
 
 Write brief progress notes and findings as you work. Everything the user needs to see also goes in the turn's last text or a dialog. When they need a finding before you go on, end the turn there.
 
@@ -222,7 +220,7 @@ conditions; escalate the decisions workers return as beyond them.
 workers, review rounds and escalation; new failing examples, reassignment and
 escalation never reset it. At the limit, stop that repair and:
 
-1. Record attempts, remaining failure and root-cause hypothesis.
+1. Record each attempt as one comment line; keep the remaining failure and root-cause hypothesis in the item's notes.
 2. Reassess the premise.
 3. Seek an independent challenge when available; it checks that the approach
    changed (without a reviewer, or with an unsure one, a deciding session checks).

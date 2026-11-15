@@ -5,7 +5,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface } from 'claude-code'
 
-import type { ConsoleBoard, ConsoleLenses, ConsoleReviewing, ConsoleReviewTree, ConsoleOpened, ConsolePassRun, ConsolePersonOrigin, ConsolePlaced, ConsoleQueued, ConsoleRefresh, ConsoleRole, ConsoleRound, ConsoleSection, ConsoleDeferred } from '../types'
+import type { ConsoleBoard, ConsoleLenses, ConsoleReviewing, ConsoleReviewTree, ConsoleOpened, ConsolePassRun, ConsolePersonOrigin, ConsolePlaced, ConsolePressing, ConsoleQueued, ConsoleRefresh, ConsoleRole, ConsoleRound, ConsoleSection, ConsoleDeferred } from '../types'
 
 import { isRoundOpen } from './engine'
 
@@ -25,6 +25,7 @@ const queuedState = atom({ plugin: 'console', key: 'queued' } as const, [], { sh
 const gateState = atom({ plugin: 'console', key: 'gate' } as const, [], { shape: 'gate-1' })
 const lensState = atom({ plugin: 'console', key: 'lenses' } as const, { 'step-back': [], ground: [], focus: '' } as ConsoleLenses, { shape: 'lenses-1' })
 const refreshState = atom({ plugin: 'console', key: 'refresh' } as const, { since: null, again: false } as ConsoleRefresh, { shape: 'refresh-1' })
+const pressingState = atom({ plugin: 'console', key: 'pressing' } as const, null as ConsolePressing | null, { shape: 'pressing-1' })
 const dismissedState = atom({ plugin: 'console', key: 'isPaneDismissed' } as const, false)
 const turnRunningState = atom({ plugin: 'console', key: 'isTurnRunning' } as const, false)
 const continueAskedState = atom({ plugin: 'console', key: 'isContinueAsked' } as const, false)
@@ -134,6 +135,28 @@ export async function takeRefreshAgain($: $): Promise<boolean> {
     return { ...current, again: false }
   })
   return isAgain
+}
+
+/** The change-request press at work, for the pane; null while none works. */
+export async function getPressing($: $): Promise<ConsolePressing | null> { return read($, pressingState) }
+
+/** Single flight for the change-request presses: null when this press holds it, else the one at work. A holder past `staleMs` (a reload mid-press) gives way. */
+export async function claimPressing($: $, press: ConsolePressing, staleMs: number): Promise<ConsolePressing | null> {
+  let holder = null as ConsolePressing | null
+  await update($, pressingState, current => {
+    holder = current !== null && press.since - current.since <= staleMs ? current : null
+    return holder ?? press
+  })
+  return holder
+}
+
+/** Moves the press at work to its next step; a press that no longer holds the flight changes nothing. */
+export async function stepPressing($: $, key: string, since: number, step: string): Promise<void> {
+  await update($, pressingState, current => current !== null && current.key === key && current.since === since ? { ...current, step } : current)
+}
+
+export async function releasePressing($: $, key: string, since: number): Promise<void> {
+  await update($, pressingState, current => current !== null && current.key === key && current.since === since ? null : current)
 }
 
 export async function releaseRefresh($: $): Promise<void> { await update($, refreshState, () => ({ since: null, again: false })) }

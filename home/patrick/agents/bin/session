@@ -22,7 +22,7 @@
 # {"unreadable": <file>} for one it cannot parse.
 set -euo pipefail
 
-state_dir=${AGENT_SESSION_STATE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/agent-sessions}
+state_dir=${AGENT_SESSION_STATE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/agents/sessions}
 pull_order=(plan design implement review)
 prune_days=7
 lock_file=$state_dir/.lock
@@ -38,6 +38,7 @@ usage: session <verb> [args]
   session show <id>                                          a session's registration as JSON
   session list                                               every registration, one JSON line each
   session ended                                              actors of pruned registrations
+  session find <id>                                          transcripts and scratch folders of a session id (6+ characters)
   session state-dir                                          the registry folder
   session alive                                              record this Claude Code process (hook)
   session session-active                                     touch the session's activity mark (hook)
@@ -424,6 +425,24 @@ case "$command" in
       jq -nc --arg actor "${session: -8}" --arg session "$session" \
         '{role: null, pulls: [], actor: $actor, tool: null, session: $session, registered_at: null,
           pid: null, pid_started: null, project: null, active_at: null, workers: {}}'
+    ;;
+  find)
+    # File names only: an actor is the id's last 8 characters; Claude projects/<project>/<id>.jsonl, Codex
+    # sessions/Y/M/D/rollout-<time>-<id>.jsonl, scratch <project>/sessions/<actor>.
+    [[ -z "$pulls$tool" && ( -z "$role" || -z "$session" ) ]] || usage
+    fragment=${session:-$role}
+    [[ "$fragment" =~ ^[A-Za-z0-9-]{6,}$ ]] || fail "find needs 6 or more characters of a session id"
+    state_home=${XDG_STATE_HOME:-$HOME/.local/state}
+    tail=$fragment
+    (( ${#fragment} <= 8 )) || tail=${fragment: -8}
+    found=$(
+      shopt -s nullglob
+      for path in "${CLAUDE_CONFIG_DIR:-$HOME/.claude}"/projects/*/*"$fragment"*.jsonl; do printf 'claude %s\n' "$path"; done
+      for path in "${CODEX_HOME:-$HOME/.codex}"/sessions/*/*/*/*"$fragment"*.jsonl; do printf 'codex %s\n' "$path"; done
+      for path in "$state_home"/agents/scratch/*/sessions/*"$tail"; do printf 'scratch %s\n' "$path"; done
+    )
+    [[ -n "$found" ]] || exit 1
+    printf '%s\n' "$found"
     ;;
   state-dir)
     # The one owner of the location: the protocol engine and the console mod ask here.

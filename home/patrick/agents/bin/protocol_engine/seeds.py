@@ -4,7 +4,7 @@ from __future__ import annotations
 import re
 
 from .base import PROPOSAL_ROUNDS, ProtocolError, SEEDS, SUMMARY_MAX, TEXT_LIMIT, TITLE_LIMIT, TITLE_MAX, band_warning, lines
-from . import words
+from . import schema, words
 from .boards import foreign_holds, view_rows
 from .engine import Context, fail
 from .questions import refuse_all
@@ -78,7 +78,7 @@ def next_text(ctx: Context) -> str:
     )
 
 
-PROPOSAL_FIELDS = {'title', 'summary', 'estimate', 'why', 'fresh', 'ids'}
+PROPOSAL_FIELDS = set(schema.names(schema.ProposalRound))
 QUESTION_NAME = re.compile(r'(?<![\w-])q\d+\b')  # a round's question id
 ITEM_CANDIDATE = re.compile(r'\b[A-Za-z][A-Za-z0-9]*(?:-[A-Za-z0-9]+)+(?:\.\d+)*\b')  # hyphenated words: an id only when the board knows it
 
@@ -119,8 +119,8 @@ def proposal_errors(ctx: Context, raw) -> tuple[list[str], dict[int, dict[str, s
         return ['stdin must be an object with `rounds`'], {}
     errors = [f"unknown fields {', '.join(sorted(set(raw) - {'rounds'}))}"] if set(raw) - {'rounds'} else []
     rounds = raw.get('rounds', [])
-    if not isinstance(rounds, list):
-        return [*errors, '`rounds` must be a list'], {}
+    if shape := schema.problems(schema.Proposal, raw):
+        return [*errors, *shape], {}
     if len(rounds) > PROPOSAL_ROUNDS:
         errors.append(f'`rounds` holds at most {PROPOSAL_ROUNDS}, not {len(rounds)}')
     titles, known = {}, {}
@@ -132,24 +132,24 @@ def proposal_errors(ctx: Context, raw) -> tuple[list[str], dict[int, dict[str, s
         if set(one) - PROPOSAL_FIELDS:
             errors.append(f"{where}: unknown fields {', '.join(sorted(set(one) - PROPOSAL_FIELDS))}")
         ids = one.get('ids')
-        if ids is not None and (not isinstance(ids, list) or not ids or not all(isinstance(i, str) and i.strip() for i in ids)):
-            errors.append(f'{where}: `ids`, when given, lists the question ids that must lead')
+        if 'ids' in one and (schema.problems(schema.ProposalRound, one, 'ids') or not ids):
+            errors.append(f"{where}: {schema.text_of(schema.ProposalRound, 'ids')}")
         elif ids:
             titles[index], lead_errors = lead_titles(ctx, [i.strip() for i in ids], where)
             errors += lead_errors
         for field, limit in (('title', TITLE_LIMIT), ('summary', SUMMARY_MAX), ('why', TEXT_LIMIT)):
-            if not isinstance(one.get(field), str) or not one[field].strip():
-                errors.append(f'{where}: `{field}` must be a non-empty string')
+            if bad := schema.problems(schema.ProposalRound, one, field):
+                errors.append(f'{where}: {bad[0]}')
             elif len(one[field]) > limit:
                 errors.append(f'{where}: `{field}` is {len(one[field])} characters, over the limit of {limit}')
             elif field != 'why' and (named := names_in(ctx, one[field], known)):
                 errors.append(f"{where}: `{field}` names {', '.join(named)}: say it in plain words, without ids")
         estimate = one.get('estimate')
-        if not (isinstance(estimate, dict) and set(estimate) == {'questions', 'unblocks'}
+        if schema.problems(schema.ProposalRound, one, 'estimate') or not (set(estimate) == {'questions', 'unblocks'}
                 and all(isinstance(n, int) and not isinstance(n, bool) and n >= 0 for n in estimate.values())):
-            errors.append(f'{where}: `estimate` is your estimate as whole numbers: {{"questions": n, "unblocks": n}}')
-        if not isinstance(one.get('fresh'), bool):
-            errors.append(f'{where}: `fresh` must be true or false')
+            errors.append(f"{where}: {schema.text_of(schema.ProposalRound, 'estimate')}")
+        if bad := schema.problems(schema.ProposalRound, one, 'fresh'):
+            errors.append(f'{where}: {bad[0]}')
     return errors, titles
 
 

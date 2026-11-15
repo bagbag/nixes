@@ -16,6 +16,7 @@ After a bd upgrade, run the soak too (`--soak 40`, or `--only soak`): it is the 
 """
 from __future__ import annotations
 
+import contextlib
 import argparse
 import collections
 import json
@@ -465,6 +466,12 @@ def t_pull() -> None:
     [t.start() for t in threads]
     [t.join() for t in threads]
     check(results == [0, 0, 0, 0], 'parallel commands with a pull due all finish', results)
+    # board wait pulls again on each poll, not only at its start.
+    time.sleep(options.seconds + 0.5)
+    gap = options.seconds + 0.5
+    pulled, started = ROOT / 'b/.beads/board-sync/pulled', time.time()
+    rc, out, err, _ = run('b', 'wait', '--queue', 'all', '--root', item, '--interval', str(gap), '--timeout', str(gap + 1))
+    check(rc == 3 and pulled.stat().st_mtime >= started + gap - 0.3, 'wait: a poll pulls when one is due', (rc, out, err, pulled.stat().st_mtime - started))
     # A dead remote: the command gives up on time.
     time.sleep(options.seconds + 0.5)
     hidden = ROOT / 'remote.git.hidden'
@@ -994,7 +1001,8 @@ def t_setup() -> None:
 
 def cleanup() -> None:
     for pid in waits():
-        os.kill(pid, signal.SIGKILL)
+        with contextlib.suppress(ProcessLookupError):  # a wait that ended since it was listed
+            os.kill(pid, signal.SIGKILL)
     for side in ('a', 'b', 'c', 'unset', 'setupproj', 'setupsrv'):
         if (ROOT / side / '.beads').exists():
             subprocess.run([sys.executable, '-B', BOARD, 'bd', 'dolt', 'stop'], cwd=ROOT / side, env=base_env(side), capture_output=True, input='', text=True)

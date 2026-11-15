@@ -1081,15 +1081,41 @@ def validate_session_registry(root: Path) -> None:
         env = {key: value for key, value in os.environ.items() if key != "AGENT_SESSION_STATE_DIR"}
         subprocess.run(["bash", str(script), "activate", "lead"], check=True,
                        env={**env, **as_session(SESSION), "XDG_STATE_HOME": state_home})
-        if not (Path(state_home) / "agent-sessions" / f"{SESSION}.json").is_file():
-            raise ValueError("the registry must live under $XDG_STATE_HOME/agent-sessions")
+        if not (Path(state_home) / "agents" / "sessions" / f"{SESSION}.json").is_file():
+            raise ValueError("the registry must live under $XDG_STATE_HOME/agents/sessions")
         # state-dir names that location, so the engine and the console never restate the rule.
-        for extra, expected in (({"XDG_STATE_HOME": state_home}, f"{state_home}/agent-sessions"),
+        for extra, expected in (({"XDG_STATE_HOME": state_home}, f"{state_home}/agents/sessions"),
                                 ({"XDG_STATE_HOME": state_home, "AGENT_SESSION_STATE_DIR": "/tmp/explicit"}, "/tmp/explicit")):
             named = subprocess.run(["bash", str(script), "state-dir"], capture_output=True, text=True, check=True,
                                    env={**env, **extra}).stdout.strip()
             if named != expected:
                 raise ValueError(f"session state-dir printed {named!r}, expected {expected!r}")
+    # find resolves an id by file names alone (no registry), for Claude, Codex and scratch, and exits 1 on a miss.
+    with tempfile.TemporaryDirectory() as home:
+        full = "7433c71d-e5d6-4bdc-88be-5d9883a2ead0"
+        claude, codex, scratch = Path(home) / "claude", Path(home) / "codex", Path(home) / "state" / "agents" / "scratch" / "-repo" / "sessions"
+        (claude / "projects" / "-repo").mkdir(parents=True)
+        (claude / "projects" / "-repo" / f"{full}.jsonl").touch()
+        (codex / "sessions" / "2026" / "11" / "15").mkdir(parents=True)
+        (codex / "sessions" / "2026" / "11" / "15" / f"rollout-2026-11-15T00-00-00-{full}.jsonl").touch()
+        (scratch / full[-8:]).mkdir(parents=True)
+        (scratch / "other000").mkdir()
+        find_env = {**env, "CLAUDE_CONFIG_DIR": str(claude), "CODEX_HOME": str(codex), "XDG_STATE_HOME": str(Path(home) / "state")}
+
+        def find(fragment: str) -> subprocess.CompletedProcess:
+            return subprocess.run(["bash", str(script), "find", fragment], capture_output=True, text=True, env=find_env)
+
+        for fragment in (full[-8:], full):
+            found = find(fragment)
+            kinds = [line.split(" ", 1)[0] for line in found.stdout.splitlines()]
+            if found.returncode != 0 or kinds != ["claude", "codex", "scratch"] or "other000" in found.stdout:
+                raise ValueError(f"session find {fragment} must print the Claude, Codex and scratch paths of that session only:\n{found.stdout}{found.stderr}")
+        missed = find("deadbeef")
+        if missed.returncode != 1 or missed.stdout:
+            raise ValueError(f"session find of an unknown id must print nothing and exit 1, got {missed.returncode}: {missed.stdout}")
+        short = find("abc")
+        if short.returncode != 2 or "6 or more characters" not in short.stderr:
+            raise ValueError("session find must refuse a fragment under 6 characters")
 
 
 def pre_tool_use(command: object, **payload: object) -> dict[str, object]:
@@ -1448,9 +1474,9 @@ def validate_setup_installer(root: Path) -> None:
             config = json.loads((home / rel).read_text(encoding="utf-8"))
             return [entry["command"] for groups in config.get("hooks", {}).values() for group in groups for entry in group["hooks"]]
 
-        scratch_root, records_root, extra_root = "~/.local/state/agents/scratch", "~/.local/share/agents/decisions", "~/.config/agents/extra"
+        scratch_root, records_root, extra_root = "~/.local/state/agents", "~/.local/share/agents/decisions", "~/.config/agents/extra"
         rule = lambda root_: f"Edit({root_}/**)"
-        entries = {"scratch": '("XDG_STATE_HOME", ".local/state", "agents/scratch"),', "records": '("XDG_DATA_HOME", ".local/share", "agents/decisions"),',
+        entries = {"scratch": '("XDG_STATE_HOME", ".local/state", "agents"),', "records": '("XDG_DATA_HOME", ".local/share", "agents/decisions"),',
                    "extra": '("XDG_CONFIG_HOME", ".config", "agents/extra"),'}
         v1 = bundle(base, "v1", "one", {
             ".claude/CLAUDE.md": "setup rules\n",
@@ -1527,6 +1553,15 @@ def validate_setup_installer(root: Path) -> None:
         if tree(home) != before or "install .claude/CLAUDE.md" not in dry.stdout or "merge   .codex/config.toml" not in dry.stdout:
             raise ValueError(f"install.py --dry-run changed files or said nothing: {dry.stdout}")
 
+        # The session registry's old folder moves once, only while the new one is absent.
+        state = home / ".local" / "state"
+        (state / "agent-sessions").mkdir(parents=True)
+        (state / "agent-sessions" / "a.json").write_text("{}", encoding="utf-8")
+        before = tree(home)
+        planned = ok(v1, "--dry-run")
+        if tree(home) != before or "move    " not in planned.stdout:
+            raise ValueError(f"install.py --dry-run must report the registry move and change nothing: {planned.stdout}")
+
         # First install: instructions replaced with a backup, the user's files and settings kept.
         first = ok(v1)
         backups = sorted((home / ".agent-config-backup").iterdir())
@@ -1534,6 +1569,12 @@ def validate_setup_installer(root: Path) -> None:
             raise ValueError(f"install.py must back up replaced instructions: {first.stdout}")
         if (home / ".claude" / "CLAUDE.md").read_text(encoding="utf-8") != "setup rules\n":
             raise ValueError("install.py must replace the global instructions")
+        if (state / "agent-sessions").exists() or (state / "agents" / "sessions" / "a.json").read_text(encoding="utf-8") != "{}":
+            raise ValueError("install.py must move the old session registry whole")
+        (state / "agent-sessions").mkdir()
+        if "both exist" not in ok(v1).stderr or not (state / "agent-sessions").is_dir():
+            raise ValueError("install.py must leave both registries and say so when the new one exists")
+        (state / "agent-sessions").rmdir()
         if not (home / ".claude" / "skills" / "mine" / "SKILL.md").is_file():
             raise ValueError("install.py removed the user's own skill")
         if not os.access(home / ".agents" / "bin" / "tool", os.X_OK):
@@ -1820,8 +1861,8 @@ def validate_hook_registrations(root: Path) -> None:
 
 
 def validate_agent_grants(root: Path) -> None:
-    """The installer's grant list names the folders the tools write outside repositories: bin/scratch's root and the
-    board-less decision records of protocol_engine/cli.py, both under their own agents/ folder. (This machine's own
+    """The installer's grant list names the folders the tools write outside repositories: the agents state root (bin/scratch and
+    bin/session live under it) and the board-less decision records of protocol_engine/cli.py, each in an agents/ folder. (This machine's own
     settings.json and config.toml are not compared with it.)"""
     spec = importlib.util.spec_from_file_location("setup_install", root / "setup" / "install.py")
     installer = importlib.util.module_from_spec(spec)
@@ -1829,10 +1870,10 @@ def validate_agent_grants(root: Path) -> None:
     with tempfile.TemporaryDirectory() as directory:
         home = os.path.realpath(directory)
         roots = installer.grant_roots(home, {})
-        if roots != ["~/.local/state/agents/scratch", "~/.local/share/agents/decisions"]:
+        if roots != ["~/.local/state/agents", "~/.local/share/agents/decisions"]:
             raise ValueError(f"install.py grants resolve to {roots}")
         moved = installer.grant_roots(home, {"XDG_STATE_HOME": home + "/s", "XDG_DATA_HOME": "/srv/d"})
-        if moved != ["~/s/agents/scratch", "/srv/d/agents/decisions"] or installer.edit_rule(moved[1]) != "Edit(//srv/d/agents/decisions/**)":
+        if moved != ["~/s/agents", "/srv/d/agents/decisions"] or installer.edit_rule(moved[1]) != "Edit(//srv/d/agents/decisions/**)":
             raise ValueError(f"install.py must follow XDG_STATE_HOME and XDG_DATA_HOME: {moved}")
         loader = importlib.machinery.SourceFileLoader("scratch_grants", str(root / "bin" / "scratch"))
         scratch = importlib.util.module_from_spec(importlib.util.spec_from_loader(loader.name, loader))
@@ -1844,13 +1885,13 @@ def validate_agent_grants(root: Path) -> None:
         finally:
             os.environ["HOME"] = previous
             os.environ.update({key: value for key, value in saved.items() if value is not None})
-        if tool_scratch != roots[0].replace("~", home, 1):
-            raise ValueError(f"bin/scratch writes to {tool_scratch}, not the granted {roots[0]}")
+        if tool_scratch != roots[0].replace("~", home, 1) + "/scratch":
+            raise ValueError(f"bin/scratch writes to {tool_scratch}, outside the granted {roots[0]}")
     records = (root / "bin" / "protocol_engine" / "cli.py").read_text(encoding="utf-8")
     if "call.env.get('XDG_DATA_HOME', '')" not in records or "/ '.local' / 'share'" not in records or \
             "Path(data) / 'agents' / 'decisions'" not in records:
         raise ValueError("protocol_engine/cli.py default_records moved: update GRANT_ROOTS in setup/install.py")
-    if any(root_.split("/")[-2] != "agents" for root_ in roots):
+    if any("agents" not in root_.split("/")[-2:] for root_ in roots):
         raise ValueError(f"every grant belongs under an agents/ folder: {roots}")
 
 
@@ -2316,14 +2357,18 @@ def validate_board(root: Path) -> None:
         held = any(issue.get("assignee") for issue in live)
         parents = {d["depends_on_id"] for issue in live for d in issue.get("dependencies") or [] if d["type"] == "parent-child"}
         childless = any(issue.get("issue_type") == "epic" and issue["id"] not in parents for issue in live)
-        if argv[0] == "show":
+        if argv[0] == "field":
+            expected = fake.reads()  # one show per call; the fake is reused across the calls of a test
+            if set(expected) != {"show"}:
+                raise ValueError(f"board field must only read the item: {expected}")
+        elif argv[0] == "show":
             # a second show only fetches the metadata of a pending revision's new record
             expected = fake.reads() if fake.reads() in (["show"], ["show", "show"]) else ["show"]
         elif argv[0] in ("related", "check", "block") or argv[:2] in (["ruling", "revise"], ["ruling", "release"], ["ruling", "supersede"]):
             expected = ["export"]
         elif argv[:2] == ["ruling", "record"]:
             expected = ["list"]
-        elif argv[0] in ("claim", "take") and fake.reads()[:1] == ["list"] and set(fake.reads()[1:]) <= {"show", "list"}:
+        elif argv[0] in ("claim", "take", "wait") and fake.reads()[:1] == ["list"] and set(fake.reads()[1:]) <= {"show", "list"}:
             # claim reads hand-over comments of in_review items, the comments of the session's other holds (staleness), and the
             # blockers a change request lifts (the closed items in a list, shows): after the one list
             expected = fake.reads()
@@ -2409,9 +2454,9 @@ def validate_board(root: Path) -> None:
                              "open questions holding work: 2", f"finished epics not closed: 1\n  {ids['Finished outcome']}"):
                 if expected not in recent:
                     raise ValueError(f"board position lacks {expected!r}:\n{recent}")
-            if "IDLE" in recent or "board take <id> | board unclaim <id>" in recent:
+            if "IDLE" in recent or "board take <id>" in recent:
                 raise ValueError("board position flagged fresh holds as idle")
-            if later.count("IDLE") != 3 or "If that session is gone: board take <id> | board unclaim <id>" not in later:
+            if later.count("IDLE") != 3 or "If that session is gone, take the item when your role could claim it: board take <id>" not in later:
                 raise ValueError(f"board position missed idle holds:\n{later}")
 
             # Session scope (r26-q115/q116/q120): a session lists when it holds items here, or when its project is this
@@ -2604,6 +2649,64 @@ def validate_board(root: Path) -> None:
             if help_code != 0 or "usage: board" not in help_output.getvalue() or help_fake.calls:
                 raise ValueError(f"board help must print usage without reading the board:\n{help_output.getvalue()}")
 
+            # board field: export the text, edit the file, apply; the base is the field's own text, not the item's revision.
+            with tempfile.TemporaryDirectory() as scratch_root:
+                texts = {"description": "Outcome.\nWhy.\n", "design": "Design A\n", "acceptance_criteria": "Done when A\n", "notes": "state 1\n"}
+                held = [{"id": "fx-fld", "title": "Field", "status": "open", "issue_type": "task", "priority": 2, **texts}]
+
+                def field(args, fake):
+                    with patch.object(board, "scratch_dir", lambda: Path(scratch_root)):
+                        return invoke(["field", *args], fake, "aaaa1111")
+
+                fake = Fake(held)
+                code, output, errors = field(["fx-fld", "notes", "--export"], fake)
+                exported = Path(output.strip())
+                if code or exported.parent != Path(scratch_root) or exported.read_text(encoding="utf-8") != "state 1\n" or fake.writes():
+                    raise ValueError(f"board field --export: {code} {output!r} {errors!r} {fake.writes()}")
+                exported.write_text("state 2\n", encoding="utf-8")
+                held[0]["updated_at"] = "2030-01-01T00:00:00Z"  # an unrelated write moved the item's revision: not a reason to refuse
+                held[0]["title"] = "Field renamed"
+                code, output, errors = field(["fx-fld", "notes", "--apply"], fake)
+                if code or fake.writes() != [["update", "fx-fld", "--notes=state 2\n", "--json"]] or exported.exists() \
+                        or Path(f"{exported}.sha256").exists() or len(output.strip().splitlines()) != 1:
+                    raise ValueError(f"board field --apply: {code} {output!r} {errors!r} {fake.writes()}")
+                # each field goes through its own bd flag; acceptance answers to both names
+                for name, key, expect in (("description", "description", ["update", "fx-fld", "--body-file", "-", "--json"]),
+                                          ("design", "design", ["update", "fx-fld", "--design-file", "-", "--json"]),
+                                          ("acceptance", "acceptance_criteria", ["update", "fx-fld", "--acceptance=Done when B\n", "--json"]),
+                                          ("acceptance_criteria", "acceptance_criteria", ["update", "fx-fld", "--acceptance=Done when B\n", "--json"])):
+                    fake = Fake(held)
+                    path = Path(field(["fx-fld", name, "--export"], fake)[1].strip())
+                    path.write_text("Done when B\n" if key == "acceptance_criteria" else f"{key} B\n", encoding="utf-8")
+                    code, _, errors = field(["fx-fld", name, "--apply", str(path)], fake)
+                    if code or fake.writes() != [expect] or (key != "acceptance_criteria" and fake.calls[-1][1] != f"{key} B\n"):
+                        raise ValueError(f"board field {name} --apply wrote the wrong field: {fake.writes()} {fake.calls[-1]} {errors}")
+                # refusals: the field moved since the export, an empty result, a no-op, an unknown field or item, no export
+                fake = Fake(held)
+                path = Path(field(["fx-fld", "design", "--export"], fake)[1].strip())
+                path.write_text("Design from memory\n", encoding="utf-8")
+                held[0]["design"] = "Design A, edited by someone else\n"
+                code, _, errors = field(["fx-fld", "design", "--apply"], fake)
+                if code != 1 or "--export" not in errors or fake.writes() or not path.exists():
+                    raise ValueError(f"board field --apply must refuse a field changed since the export: {code} {errors!r} {fake.writes()}")
+                held[0]["design"] = "Design A\n"
+                path = Path(field(["fx-fld", "design", "--export"], fake)[1].strip())
+                for result, word in (("  \n", "empty"), ("Design A\n", "no change")):
+                    path.write_text(result, encoding="utf-8")
+                    code, _, errors = field(["fx-fld", "design", "--apply"], fake)
+                    if code != 1 or word not in errors or fake.writes():
+                        raise ValueError(f"board field --apply must refuse a result that is {word}: {code} {errors!r} {fake.writes()}")
+                path.write_text("x" * 2500, encoding="utf-8")  # the size limit of board bd update holds here too
+                code, _, errors = field(["fx-fld", "design", "--apply"], fake)
+                if code != 1 or "over the 2000 limit" not in errors or fake.writes():
+                    raise ValueError(f"board field --apply must keep the field size limit: {code} {errors!r} {fake.writes()}")
+                path.unlink()
+                for args, word in ((["fx-fld", "title", "--export"], "unknown field"), (["fx-nope", "notes", "--export"], "unknown fx-nope"),
+                                   (["fx-fld", "design", "--apply"], "--export")):
+                    code, _, errors = field(args, Fake(held))
+                    if code != 1 or word not in errors:
+                        raise ValueError(f"board field {args}: {code} {errors!r}")
+
             with tempfile.TemporaryDirectory() as docs:
                 Path(docs, "design.md").write_text("Intro.\nTenancy owns membership.\n", encoding="utf-8")
                 _, related, _ = invoke(["related", "TENANCY", "--docs", docs], Fake(fixture))
@@ -2655,6 +2758,45 @@ def validate_board(root: Path) -> None:
             code, _, _ = invoke(["claim"], fake, "lead0001")
             if code != 1 or fake.writes():
                 raise ValueError("a lead's bare claim took work other than open questions")
+            # board wait: the same candidates a bare claim tries, read-only; exit 3 at --timeout, 1 for an unregistered session.
+            fake = Fake(fixture)
+            invoke(["claim"], fake, worker)
+            first = fake.writes()[0][1]
+            fake = Fake(fixture)
+            code, found, _ = invoke(["wait", "--timeout", "0"], fake, worker)
+            if code != 0 or not found.startswith(f"claimable: {first} ") or fake.writes():
+                raise ValueError(f"board wait did not name what a bare claim takes, or wrote ({code}): {found} {fake.writes()}")
+            fake = Fake(fixture)
+            code, found, _ = invoke(["wait", "--timeout", "0"], fake, "lead0001")
+            if code != 3 or found.strip() != "nothing claimable yet" or fake.writes():
+                raise ValueError(f"board wait did not time out where a bare claim finds nothing ({code}): {found}")
+            code, _, refusal = invoke(["wait", "--timeout", "0"], Fake(fixture), "nobody99")
+            if code != 1 or "no registered role" not in refusal:
+                raise ValueError(f"board wait did not refuse an unregistered session ({code}): {refusal}")
+            # Its own hand-over is no candidate for wait either, and another session's is.
+            only_handed = {issue["title"]: {"status": "closed"} for issue in fixture if issue["title"] != "Handed task"}
+            own = {"comments": [{"author": worker, "text": "board handover: done", "created_at": "2026-10-22T15:00:00Z"}]}
+            code, found, _ = invoke(["wait", "--timeout", "0"], Fake(variant(**only_handed, **{"Handed task": own})), worker)
+            if code != 3:
+                raise ValueError(f"board wait offered the caller's own hand-over ({code}): {found}")
+            code, found, _ = invoke(["wait", "--timeout", "0"], Fake(variant(**only_handed)), worker)
+            if code != 0 or f"claimable: {ids['Handed task']} " not in found:
+                raise ValueError(f"board wait did not offer another session's hand-over ({code}): {found}")
+            fake = Fake(variant())  # copies: the poll below edits its issues
+
+            def appears(_seconds):  # the next read finds the open question
+                for issue in fake.issues:
+                    if issue["id"] == ids["Store choice"]:
+                        issue["status"], issue["assignee"] = "open", ""
+
+            with patch.object(board.time, "sleep", appears):
+                code, found, _ = invoke(["wait", "--interval", "1"], fake, "lead0001")
+            if code != 0 or not found.startswith(f"claimable: {ids['Store choice']} "):
+                raise ValueError(f"board wait did not return once work appeared ({code}): {found}")
+            # A bare claim with nothing claimable names the held items it passed over, with holder and state (r5-q24).
+            code, report, held_errors = invoke(["claim"], Fake(variant(**{"Store choice": {"status": "open", "assignee": "cccc3333"}})), "lead0001")
+            if code != 1 or f"held: {ids['Store choice']} open, held by cccc3333 (live)" not in report:
+                raise ValueError(f"board claim did not name the held item it passed over ({code}):\n{report}\n{held_errors}")
             fake = Fake(variant(**{"Store choice": {"status": "open"}}))
             invoke(["claim"], fake, "lead0001")
             if fake.writes() != [["update", ids["Store choice"], "--claim", "--json"]]:
@@ -5141,6 +5283,12 @@ def validate_board(root: Path) -> None:
                 for needle in ("loose-task  no-cr", "nowt  cr-branch", "nowt2  cr-worktree", "cr-settings", "custom.board.look is not set"):
                     if needle not in report:
                         raise ValueError(f"board check lacks {needle!r}:\n{report}")
+                # A user design checkpoint waiting for the user has no branch to land; one still in work has (r5-q16).
+                waiting = cr_issue("cpwait", "needs_acceptance", base="main", base_sha=fresh_tip, checkpoint="user")
+                working = cr_issue("cpwork", "in_progress", assignee="aaaa1111", base="main", base_sha=fresh_tip, checkpoint="user")
+                _, report_cp, _ = invoke(["check"], Fake([waiting, working, *fresh]))
+                if "cpwait  cr-branch" in report_cp or "cpwork  cr-branch" not in report_cp:
+                    raise ValueError(f"board check on user design checkpoints:\n{report_cp}")
                 if "freshcr  cr-" in report:
                     raise ValueError(f"board check flagged a change request with its worktree:\n{report}")
 
@@ -5586,7 +5734,7 @@ def validate_board(root: Path) -> None:
         if own_start and (", active 10 min ago" not in row(fresh, "fx-running") or ", active 1 min ago" not in row(fresh, "fx-active") or "active" in row(fresh, "fx-idle")
                           or ", active 5 min ago" not in row(fresh, "fx-ended")):
             raise ValueError(f"board position activity ages:\n{fresh}")
-        if own_start and ("Free fx-gone, fx-stale: board take <id> | board unclaim <id>" not in fresh
+        if own_start and ("Take fx-gone, fx-stale when your role could claim it: board take <id>" not in fresh
                           or not row(fresh, "live0001").endswith("  process alive")
                           or not row(fresh, "gone0001").endswith("  GONE")
                           or "  workers 1/3  " not in row(fresh, "work0001")
@@ -7192,13 +7340,13 @@ def validate_protocol(root: Path, part: str) -> None:
             # r9-q44: Stage requires a record-only `root` (cause; end state, or "does not apply: <why>").
             refused("step", stdin={**ROUND_INFO, "questions": [{k: v for k, v in bare.items() if k != "root"}]}, needle="`root` must be a non-empty string")
             refused("step", stdin={**ROUND_INFO, "questions": [{**bare, "root": ["cause"]}]}, needle="`root` must be a non-empty string")
-            for part, value, needle in (("cases", 3, "`cases` must be a string or left out"), ("premises", ["x"], "`premises` must be a string or left out"),
-                                        ("note", 3, "`note` must be a string or left out"), ("rulings", "none", "`rulings`, when given, lists your own rulings")):
+            for part, value, needle in (("cases", 3, "`cases` must be a string or null"), ("premises", ["x"], "`premises` must be a string or null"),
+                                        ("note", 3, "`note` must be a string or null"), ("rulings", "none", "`rulings` must be a list of disclosure objects or null")):
                 refused("step", stdin={**ROUND_INFO, "questions": [{**bare, part: value}]}, needle=needle)
             refused("step", stdin={**ROUND_INFO, "questions": [{**bare, "options": [{"label": "Keep", "description": "d", "for": "f"},
                                                                                        {"label": "Drop", "description": "d", "against": " "}]}]},
                     needle="option 'Keep' needs `for` and `against`")
-            refused("step", stdin={**ROUND_INFO, "questions": [{**bare, "rulings": [{"ruling": "r", "alternative": "a"}]}]}, needle="`rulings`, when given, lists your own rulings")
+            refused("step", stdin={**ROUND_INFO, "questions": [{**bare, "rulings": [{"ruling": "r", "alternative": "a"}]}]}, needle="`rulings` must be a list of disclosure objects or null")
             refused("step", stdin={**ROUND_INFO, "questions": [{**bare, "rulings": [{"ruling": "r", "alternative": "a", "fails": "f", "evidence": "e"}]}]},
                     needle="each with ruling, why, alternative, fails, evidence")  # Stage: a ruling without its why
             refused("step", stdin={"round": {**ROUND_INFO["round"], "overview": " "}, "questions": [bare]}, needle="round `overview` is one line")
@@ -7233,7 +7381,7 @@ def validate_protocol(root: Path, part: str) -> None:
                 raise ValueError(f"protocol pass must keep the pending pass until its report: {after}")
             # A pass covers its scope (r4-q15, q16: every question on its first run); the refusal lands in the history and the pane's log.
             refused("step", stdin={"pass": "step-back", "updates": []}, needle="no `checked` entry or update for q1")
-            if not any(line["text"].startswith("refused step: `checked` is an object") for line in shown()["log"]):
+            if not any(line["text"].startswith("refused step: `checked` must be an object") for line in shown()["log"]):
                 raise ValueError(f"protocol log must show the refused call: {shown()['log']}")
             # An extra pass (asked for in chat) without changes leaves the sequence alone.
             proto("step", stdin={"pass": "ground", "updates": [], "checked": ["every question"]})
@@ -7333,7 +7481,7 @@ def validate_protocol(root: Path, part: str) -> None:
                 raise ValueError(f"a challenge after the last answer that changes nothing goes to Record:\n{out}")
             refused("step", stdin={"records": {}}, needle="records missing for q1")
             # r9-q47: a `ruleOwner` that is not a string (a JSON list) is a usage error, not a crash.
-            refused("step", stdin={"records": {"q1": {"rationale": "Simpler.", "ruleOwner": ["docs/cache.md#cache"]}}}, needle="rationale and ruleOwner, each a non-empty string")
+            refused("step", stdin={"records": {"q1": {"rationale": "Simpler.", "ruleOwner": ["docs/cache.md#cache"]}}}, needle="`ruleOwner` must be a non-empty string")
             out = proto("step", stdin={"records": {"q1": {"rationale": "Simpler.", "ruleOwner": "docs/cache.md#cache"}}}).stdout
             record = (notes / "r1-q1.md").read_text(encoding="utf-8")
             if "## Root\nThe cause lies in the fixture; the end state is one kept option.\n" not in record:
@@ -7532,7 +7680,7 @@ def validate_protocol(root: Path, part: str) -> None:
             added = next(q for q in extra["questions"] if q["text"] == "Pasted extra?")
             if extra["step"] != "related" or [h["id"] for h in added["overlaps"]] != ["fx-old", "fx-rel"]:
                 raise ValueError(f"protocol must search a draft added in Check before asking: {extra}")
-            refused("step", cwd=repo, stdin={"pass": "step-back", "updates": [], "checked": ["every question"]}, needle="`outcomes` must map")
+            refused("step", cwd=repo, stdin={"pass": "step-back", "updates": [], "checked": ["every question"]}, needle="`outcomes` must be an object")
             proto("step", cwd=repo, stdin={"outcomes": {added["id"]: {"fx-old": "unrelated", "fx-rel": "unrelated"}}})
             while shown(cwd=repo)["pending"]["command"] != "challenge-rulings":  # the refine pair and the lean pass come first
                 proto("step", cwd=repo, stdin={"pass": shown(cwd=repo)["pending"]["command"], "updates": [], "checked": ["every question"]})
@@ -8104,9 +8252,9 @@ def validate_protocol(root: Path, part: str) -> None:
             refused("next", "--set", stdin={"rounds": [{**good["rounds"][0], "premise": "old field"}]}, needle="unknown fields premise", cwd=repo)
             errors = proto("next", "--set", stdin={"rounds": [{"ids": [], "title": "x" * 76, "why": "", "fresh": "yes", "estimate": {"questions": "many"}}] * 4, "extra": 1},
                            ok=False, cwd=repo).stderr
-            for needle in ("unknown fields extra", "`rounds` holds at most 3, not 4", "rounds[0]: `ids`, when given, lists the question ids that must lead",
+            for needle in ("unknown fields extra", "`rounds` holds at most 3, not 4", "rounds[0]: `ids` must be a list of non-empty strings (the question ids that must lead)",
                            "rounds[0]: `title` is 76 characters, over the limit of 75", "rounds[0]: `summary` must be a non-empty string",
-                           "rounds[0]: `estimate` is your estimate as whole numbers", "rounds[0]: `why` must be a non-empty string",
+                           "rounds[0]: `estimate` must be an object (your estimate as whole numbers", "rounds[0]: `why` must be a non-empty string",
                            "rounds[0]: `fresh` must be true or false", "rounds[3]: `fresh` must be true or false"):
                 if needle not in errors:
                     raise ValueError(f"protocol next --set must list every error in one refusal, missing {needle!r}:\n{errors}")
@@ -8430,7 +8578,7 @@ def validate_protocol(root: Path, part: str) -> None:
             refused("step", stdin={"records": {"fx-r1": "unchanged", "fx-r2": {"change": "c", "reach": "unsure"}}},
                     needle="unsure is spreads", cwd=repo)
             refused("step", stdin={"records": {"fx-r1": "unchanged", "fx-r2": {"change": "c", "reach": "contained"}}},
-                    needle="names `why`", cwd=repo)
+                    needle="`why` must be a non-empty string", cwd=repo)
             # Contained: fx-r2 leaves the set, the rest continue; the stamp lapses with the changed set.
             refused("step", stdin={"records": {"fx-r1": "unchanged", "fx-r2": {"change": "c", "reach": "contained", "why": "w"}}},
                     needle='touches: "own"', cwd=repo)
@@ -8569,7 +8717,7 @@ def validate_protocol(root: Path, part: str) -> None:
             patch_config(items={rid: {k: v for k, v in item.items() if k != "description"} for rid, item in json.loads(config.read_text())["items"].items()})
             proto("start", "release", "fx-s1", "fx-s2", cwd=repo)
             proto("pass", "--origin", "press", stdin={"command": "release-round", "args": "fx-s1 fx-s2", "pending": None}, cwd=repo)
-            refused("step", stdin={"records": {"fx-s1": "unchanged", "fx-s2": {**own, "file": None}}}, needle="gives `file`", cwd=repo)
+            refused("step", stdin={"records": {"fx-s1": "unchanged", "fx-s2": {**own, "file": None}}}, needle="`file` must be a non-empty string", cwd=repo)
             calls()
             refused("step", stdin={"records": {"fx-s1": "unchanged", "fx-s2": {**own, "file": "missing-s2.md"}}},
                     needle="`board ruling record fx-s2 missing-s2.md` exited", cwd=repo)
@@ -9260,8 +9408,9 @@ def validate_protocol(root: Path, part: str) -> None:
                 raise ValueError(f"protocol Related through board related --json: {overlaps}")
 
         if part == "texts":
-            # r15-q88: `help` and a bare call print every verb with an example; the engine's audience table (base.VERBS) owns the
-            # sections, the origin check reads the same table. No session is needed.
+            # r15-q88, r2-q12/q13/q14: `help` and a bare call print every verb with an example; the Verb records (base.VERBS) own the
+            # sections, the origin check and the parser's registration; `help <verb>` and `<verb> -h` print the arguments, example and
+            # the stdin forms the schema declares. No session is needed.
             helped = proto("help", session=None)
             bare = engine_module.cli.run_cli([], base, Path(plain), "")
             if helped.stderr or bare != (0, helped.stdout, ""):
@@ -9269,24 +9418,240 @@ def validate_protocol(root: Path, part: str) -> None:
             head, _, console_part = helped.stdout.partition("console only:")
             if not console_part:
                 raise ValueError(f"protocol help lacks the console only section:\n{helped.stdout}")
-            table = engine_module.base.VERBS
+            records = {verb.name: verb for verb in engine_module.base.VERBS}
             listed = lambda part: re.findall(r"^  protocol ([a-z]+)\b", part, re.M)
-            console_only = sorted(verb for verb, (audience, _) in table.items() if audience == "console")
+            console_only = sorted(name for name, verb in records.items() if verb.audience == "console")
             if console_only != ["dropped", "nudged", "pending", "say", "scope"] or sorted(listed(console_part)) != console_only:
-                raise ValueError(f"help's console only section must be the table's console verbs: {listed(console_part)} {console_only}")
-            if set(listed(head)) & set(console_only) or not {"start", "step", "show", "next", "help", "defer", "edit"} <= set(listed(head)):
-                raise ValueError(f"help's session verbs: {listed(head)}")
+                raise ValueError(f"help's console only section must be the records' console verbs: {listed(console_part)} {console_only}")
+            if set(listed(head)) & set(console_only) or sorted(listed(head) + listed(console_part)) != sorted(records):
+                raise ValueError(f"help lists every verb record once: {listed(head)} {sorted(records)}")
             marked = sorted(re.findall(r"^  protocol ([a-z]+)\b.*\*\s*$", head, re.M))
-            if marked != sorted(verb for verb, (audience, _) in table.items() if audience == "origin") or marked != ["answer", "decline", "pass"] \
-                    or "* origin-dependent" not in head:
+            if marked != sorted(name for name, verb in records.items() if verb.audience == "origin") or marked != ["answer", "decline", "pass"] \
+                    or "* origin-dependent" not in head or "protocol help <verb>" not in head:
                 raise ValueError(f"help marks answer, decline and pass as origin-dependent: {marked}\n{head}")
-            # the origin check reads the table: a verb the table keeps console-only refuses a model origin, one with origins lists them
-            for verb, (audience, origins) in table.items():
-                if origins:
-                    refused(verb, "--origin", "model-nowhere", stdin={}, needle=f"accepted: {', '.join(origins)}")
+            # the origin check reads the records: a verb the records keep console-only refuses a model origin, one with origins lists them
+            for name, verb in records.items():
+                if verb.origins:
+                    refused(name, "--origin", "model-nowhere", stdin={}, needle=f"accepted: {', '.join(verb.origins)}")
+            # q13: one record per verb; a record missing a part fails when it is built, and every stdin names a declared form
+            for gap in ("summary", "example", "stdin", "origins", "audience", "name"):
+                full = {"name": "x", "audience": "session", "origins": (), "summary": "s", "example": "protocol x", "stdin": ()}
+                del full[gap]
+                try:
+                    engine_module.base.Verb(**full)
+                except TypeError:
+                    continue
+                raise ValueError(f"a Verb record without {gap} must raise TypeError")
+            if engine_module.base.Verb(name="x", audience="session", origins=(), summary="s", example="protocol x", stdin=()).name != "x":
+                raise ValueError("a complete Verb record builds")
+            schema = engine_module.schema
+            unknown = [(name, form) for name, verb in records.items() for form in verb.stdin if form not in schema.FORMS]
+            if unknown:
+                raise ValueError(f"every stdin form a verb names is declared in schema.py: {unknown}")
+            used = {form for verb in records.values() for form in verb.stdin}
+            nested = {name for form in schema.FORMS.values() for name in form.nested}
+            if used | nested != set(schema.FORMS):
+                raise ValueError(f"every declared form is a verb's stdin or printed under one: {sorted(set(schema.FORMS) - used - nested)}")
+            if "title: a non-empty string, required" not in proto("help", "next", session=None).stdout:
+                raise ValueError("help next prints a proposal row's fields")
+            if schema.needs(schema.Nudged, {"pass": ""}) != "nudged: stdin takes only \"pass\", \"batch\", \"step\"; see `protocol help nudged`":
+                raise ValueError("needs of a form with no required field")
+            if schema.FORMS["pass-report"].__dataclass_fields__["pass_"].default is schema.MISSING:
+                raise ValueError("a pass report's pass is optional in the schema: Ask takes a report without one")
+            # q14: the forms' steps are the engine's steps; a step without a form takes no stdin
+            taken = {step for form in schema.FORMS.values() for step in form.steps}
+            every = {f"{protocol} {step}" for protocol, one in engine_module.engine.PROTOCOLS.items() for step in one.steps}
+            if taken - every or every - taken != {"round closed", "release approval", "release ask", "release release", "release closed"}:
+                raise ValueError(f"every step takes a declared form or none: unknown {sorted(taken - every)}, without {sorted(every - taken)}")
+            # q12: `help <verb>` prints the arguments, the example and the stdin forms; `<verb> -h` the same; an unknown verb is a usage error
+            step_help = proto("help", "step", session=None).stdout
+            for name in records["step"].stdin:
+                form = schema.FORMS[name]
+                if f"\n  {name}" not in step_help:
+                    raise ValueError(f"help step lists the form {name}:\n{step_help}")
+                for spec in schema.specs(form):
+                    if f"    {spec.name}: " not in step_help.split(f"\n  {name}", 1)[1].split("\n\n", 1)[0] \
+                            or (spec.required and f"{spec.name}: {schema.describe(spec.type)}, required" not in step_help):
+                        raise ValueError(f"help step names the field {name}.{spec.name} and whether it is required:\n{step_help}")
+            answer_help = proto("help", "answer", session=None).stdout
+            if "example: protocol answer --origin chat" not in answer_help or "--origin: dialog, chat, model-reported" not in answer_help \
+                    or "question: a non-empty string, required; an id" not in answer_help or "marker: a non-empty string, required" not in answer_help:
+                raise ValueError(f"help answer prints its example, origins and both stdin forms:\n{answer_help}")
+            if proto("answer", "-h", session=None).stdout != answer_help or proto("help", "step", session=None).stdout != proto("step", "-h", session=None).stdout:
+                raise ValueError("<verb> -h prints what help <verb> prints")
+            if proto("help", "nonsuch", session=None, ok=False).returncode != 2:
+                raise ValueError("an unknown verb is a usage error")
+            # the schema's own rules: required, type, `due` (a caller's own requirement) and a present null
+            check = schema.problems
+            if check(schema.Scope, {"command": "ground", "pending": 3}) != ["scope: `pending` must be a string or null (the run's stamp: a pending id, or null); see `protocol help scope`"] \
+                    or check(schema.Scope, {"command": "ground", "pending": None}) or check(schema.Scope, {}) != ["scope: `command` must be one of step-back, ground, challenge-rulings; see `protocol help scope`"] \
+                    or check(schema.PassReport, {"pass": "ground", "checked": {}}, "rulings") or not check(schema.PassReport, {"pass": "ground", "checked": {}}, "rulings", due=("rulings",)) \
+                    or check(schema.Answer, {"marker": "m", "answers": {"q": 1}}, "answers") != ["`answers` must be an object of strings (question text to answer string); see `protocol help answer`"]:
+                raise ValueError("the schema's required, type, null and due rules")
             # F: round texts: every error at once, the limits, examples, the report format once, hand-offs, the release dialog.
             texts = {"session": "0000-texts001"}
             proto("start", "round", "--no-board", str(notes), stdin={"points": ["Limits?"]}, **texts)
+            # r10-q30: the field's type decides what a null is. `| None` takes it as a value; on another optional field it is dropped at parse
+            # time and counts as absent; a required field keeps it and is refused. Nested forms and their lists are walked.
+            proto("start", "round", "--no-board", str(notes), stdin={"points": None}, session="0000-nullstart1")
+            refused("say", "--origin", "composer", stdin={"text": None}, **texts, needle='say: stdin needs "text"')
+            dropped = schema.without_nulls({"questions": [{"text": None, "multiSelect": None, "board": None, "options": [{"label": "A", "example": None}]}],
+                                            "round": None}, [schema.Stage])
+            if dropped != {"questions": [{"text": None, "board": None, "options": [{"label": "A"}]}]}:
+                raise ValueError(f"a null is dropped on an optional field without `| None`, kept on `| None` and on a required one: {dropped}")
+            if schema.without_nulls({"records": {"q1": {"reversal": None, "rationale": None}}}, [schema.Record]) != {"records": {"q1": {"rationale": None}}}:
+                raise ValueError("a null in a dict of entries is dropped by the entry form's rule")
+            # an entry id named like a field of another step's form (`summary`) is still an entry id
+            if schema.without_nulls({"records": {"summary": {"rationale": "r", "ruleOwner": "o", "reversal": None}}}, schema.verb_forms("step")) \
+                    != {"records": {"summary": {"rationale": "r", "ruleOwner": "o"}}}:
+                raise ValueError("a dict of entries is read by its declared type, not by its keys")
+            # the open step names its one form, so a null is judged by that form (Record: `records` optional; Recheck: required)
+            if schema.verb_forms("step", "round record") != [schema.Record] or schema.verb_forms("step", "release recheck") != [schema.Recheck] \
+                    or schema.verb_forms("step", "round nonsuch") != schema.verb_forms("step") or schema.verb_forms("answer", "round record") != schema.verb_forms("answer") \
+                    or schema.without_nulls({"records": None}, schema.verb_forms("step", "round record")) != {}:
+                raise ValueError("a step's null is judged by the open step's form alone")
+            update = schema.without_nulls({"updates": [{"id": "q1", "waitsOn": None, "kind": None, "title": None}]}, [schema.PassReport])
+            if update != {"updates": [{"id": "q1", "waitsOn": None, "title": None}]} or schema.problems(schema.Question, update["updates"][0], "waitsOn"):
+                raise ValueError(f"an update's `waitsOn: null` is a value (it clears the waits); a required field's null stays: {update}")
+            # review 3: rows of a proposal are walked; the hung mutants' lines are asserted, so a break fails instead of hanging
+            row = {"title": "Member questions", "summary": "How the members share one cache.", "estimate": {"questions": 2, "unblocks": 6}, "why": "same module", "fresh": False}
+            proto("next", "--set", stdin={"rounds": [{**row, "ids": None}]}, session="0000-nullprop1")
+            if schema.problems(schema.Dropped, {"kind": "pass", "id": None}, "id") or schema.without_nulls({"records": None}, [schema.Record, schema.Recheck]) != {"records": None}:
+                raise ValueError("a null on an optional field is no problem; a field required by another of the verb's forms keeps its null")
+            nulled = {"session": "0000-nullflow1"}
+            proto("start", "round", "--no-board", str(notes), stdin={"points": ["Limits?"]}, **nulled)
+            proto("step", stdin={"classes": {"pt1": "user"}}, **nulled)
+            proto("step", stdin={"select": ["pt1"]}, **nulled)
+            proto("step", stdin={**ROUND_INFO, "questions": [question("First?", key="a", **{"for": "pt1"}), question("Second?", waitsOn=["a"])]}, **nulled)
+            held = {q["id"]: q for q in shown(**nulled)["questions"]}
+            if held["q2"]["status"] != "held" or held["q1"]["settles"] != []:
+                raise ValueError(f"the second question waits on the first: {held}")
+            proto("step", stdin={"pass": "step-back", "updates": [{"id": "q1", "waitsOn": None, "settles": None}, {"id": "q2", "waitsOn": None}],
+                                 "checked": {"round": "cleared the waits"}}, **nulled)
+            after = {q["id"]: q for q in shown(**nulled)["questions"]}
+            if after["q2"]["waitsOn"] != [] or after["q2"]["status"] == "held" or after["q1"]["settles"] != []:
+                raise ValueError(f"waitsOn: null clears the waits and a null list is stored as an empty one: {after}")
+            events = [json.loads(line) for line in proto("history", "--json", **nulled).stdout.splitlines() if line.strip()]
+            if [e["changes"] for e in events if e.get("event") == "pass"][-1] != 1:
+                raise ValueError("a null list on an empty list is no change; clearing the waits is one")
+            refused("step", stdin={"pass": "step-back", "updates": [{"id": "q1", "remove": "yes"}], "checked": {"round": "x"}}, needle="`remove` must be true or false", **nulled)
+            refused("step", stdin={"pass": "step-back", "updates": [{"id": None, "title": "No id"}], "checked": {"round": "x"}}, needle="`text` must be a non-empty string", **nulled)
+            proto("say", "--origin", "composer", stdin={"text": "please remove it"}, **nulled)
+            refused("edit", stdin={"updates": [{"id": "q1", "remove": "yes"}], "quote": "please remove it"}, needle="`remove` must be true or false", **nulled)
+            refused("edit", stdin={"updates": [{"id": "q1", "remove": "yes"}], "quote": "please remove it"}, needle="see `protocol help edit`", **nulled)
+            if "whole number or a number" in answer_help or "afkTimeoutMs: a number, optional" not in answer_help or "decision (a staged question" in step_help \
+                    or "dropped.id" in step_help or "id: a non-empty string, optional; with kind pass" not in proto("help", "dropped", session=None).stdout:
+                raise ValueError("help words: afkTimeoutMs is a number; the dropped id and marker say which kind they go with")
+            # r10-q31: every refusal is generated from the field's type and note, names the field and points to the verb's help
+            if set(schema.VERB_OF) != set(schema.FORMS) or any("refusal" in spec.__dataclass_fields__ for spec in schema.specs(schema.Say)):
+                raise ValueError("every form belongs to a verb whose help a refusal points to; fields carry no refusal text")
+            for caller, expected in (("edit", "edit"), ("step", "step"), ("", schema.VERB_OF["update"])):
+                schema.CALLER.set(caller)
+                if not schema.pointer(schema.Update).endswith(f"`protocol help {expected}`"):
+                    raise ValueError(f"a form shared by verbs points to the running verb's help: {caller} {schema.pointer(schema.Update)}")
+            for form in schema.FORMS.values():
+                for spec in schema.specs(form):
+                    text = schema.message(form, spec)
+                    if f"`{spec.name}` must be {schema.describe(spec.type)}" not in text or (spec.note and f"({spec.note})" not in text) \
+                            or not text.endswith(f"see `protocol help {schema.VERB_OF[form.name]}`"):
+                        raise ValueError(f"{form.name}.{spec.name}: the refusal names the field, type and note and points to help: {text}")
+            # q14 end to end: a refusal is built from the declaration (where, field, type), the form's needs text from its notes
+            refused("dropped", "--origin", "plugin", stdin={"kind": "nope"}, needle="dropped: `kind` must be one of pass, batch")
+            refused("nudged", "--origin", "plugin", stdin={"pass": ""}, needle="nudged: `pass` must be a non-empty string")
+            if schema.needs(schema.Edit, {"updates": [], "quote": "x"}) != 'edit: stdin needs "updates" (per-question updates as in a pass report) and "quote" (the user\'s exact words asking for it); see `protocol help edit`' \
+                    or schema.needs(schema.Defer, {"question": "q1"}) != 'defer: stdin needs "question" and "quote" (the user\'s exact words asking for it); "until" is optional; see `protocol help defer`' \
+                    or schema.needs(schema.Defer, {"question": "q1", "quote": "x"}, "question", "quote"):
+                raise ValueError("a form's needs text is built from its declaration")
+            if schema.problems(schema.Proposal, {"rounds": "x"}) != ["next --set: `rounds` must be a list (at most three rows, each as the proposal-round form below); see `protocol help next`"]:
+                raise ValueError("a proposal's rounds are a list")
+            refused("say", "--origin", "composer", stdin={}, **texts, needle='say: stdin needs "text"')
+            typing_args = __import__('typing').get_args
+            # q14: nested entries are declared in the schema and help step prints them under their form; CONTENT is the question form's
+            edit_help, next_help = proto("help", "edit", session=None).stdout, proto("help", "next", session=None).stdout
+            for name in ("question", "option", "disclosure", "update", "idea", "challenge-ruling", "record-entry", "change", "hit-row", "supersede",
+                         "own-ruling", "written-owner", "none-owner", "pending-owner", "prior-ruling", "lean-because"):
+                if f"nested: {name}" not in step_help + edit_help:
+                    raise ValueError(f"help step or edit prints the nested form {name}")
+            if "nested: update" not in edit_help or "nested: proposal-round" not in next_help \
+                    or any(f"{spec.name}: " not in edit_help for spec in schema.specs(schema.Question)):
+                raise ValueError(f"help edit prints the update and every question field; help next the proposal row:\n{edit_help}")
+            if not set(schema.PRESENTATION + schema.SCHEDULING) <= set(schema.CONTENT) or "waitsFor" not in schema.SCHEDULING or "key" in schema.PRESENTATION:
+                raise ValueError("PRESENTATION and SCHEDULING are subsets of CONTENT")
+            if typing_args(schema.specs(schema.Scoped)[0].type) != engine_module.release_set.SCOPED_PASSES:
+                raise ValueError("scoped.pass lists the passes the scoped step waits for")
+            if engine_module.questions.CONTENT is not schema.CONTENT or "for" not in schema.CONTENT or "key" in schema.CONTENT \
+                    or "root: a non-empty string, required" not in step_help or "rationale: a non-empty string, required" not in step_help:
+                raise ValueError("CONTENT comes from the question form; help step names the nested fields")
+            if schema.problems(schema.Idea, {"idea": "i", "verdict": "maybe", "why": "w"}) != ["`verdict` must be one of kept, dropped; see `protocol help step`"] \
+                    or schema.problems(schema.RecordEntry, {"rationale": "r"}, "rationale", "ruleOwner") != ["`ruleOwner` must be a non-empty string (where the rule is owned); see `protocol help step`"]:
+                raise ValueError("nested entries refuse through the schema")
+            # q14: a declared required/optional status is what the engine accepts: a required field left out is refused naming it,
+            # an optional one left out is not refused for it (stateless verbs and the first steps of a round)
+            def agrees(form, valid, run, only=None):
+                for spec in schema.specs(form):
+                    if spec.name not in valid or only and spec.name not in only:
+                        continue
+                    result = run({k: v for k, v in valid.items() if k != spec.name})
+                    named = f"`{spec.name}`" in result.stderr or f'"{spec.name}"' in result.stderr
+                    if spec.required and not (result.returncode and named):
+                        raise ValueError(f"{form.name}.{spec.name} is declared required: the engine must refuse its absence by name: {result.stderr}")
+                    if not spec.required and (named or "internal error" in result.stderr):
+                        raise ValueError(f"{form.name}.{spec.name} is declared optional: the engine must not refuse its absence: {result.stderr}")
+            agrees(schema.Scope, {"command": "ground", "pending": "p1"}, lambda r: proto("scope", "--origin", "plugin", stdin=r, ok=None, **texts))
+            agrees(schema.Dropped, {"kind": "pass", "id": "p1"}, lambda r: proto("dropped", "--origin", "plugin", stdin=r, ok=None, **texts), only=("kind",))  # id and marker depend on kind
+            agrees(schema.Say, {"text": "hi"}, lambda r: proto("say", "--origin", "composer", stdin=r, ok=None, **texts))
+            for number, (form, valid, upto) in enumerate([
+                    (schema.Select, {"select": ["pt1"]}, [{"classes": {"pt1": "user"}}]),
+                    (schema.Stage, {**ROUND_INFO, "questions": [question("Limits?", **{"for": "pt1"})]}, [{"classes": {"pt1": "user"}}, {"select": ["pt1"]}])]):
+                def run(report, number=number, upto=upto):
+                    again = {"session": f"0000-agree00{number}"}
+                    proto("start", "round", "--no-board", str(notes), stdin={"points": ["Limits?"]}, **again)
+                    for earlier in upto:
+                        proto("step", stdin=earlier, ok=None, **again)
+                    return proto("step", stdin=report, ok=None, **again)
+                if form is schema.Stage:  # round is required while the round has no title: the field note says so, the schema says optional
+                    valid = {k: v for k, v in valid.items() if k != "round"}
+                agrees(form, valid, lambda r, run=run: run(r))
+
+            # C3/C4: help is derived from the engine: every nested field's status and every declared choice is fed to the real Stage check.
+            # Cross-field fields are named here: `for` (every selected point needs a question), the marks (a lean needs leanBecause).
+            tries = iter(range(1000))
+
+            def stage_try(mutate):
+                good = question("Derive?", **{"for": "pt1"})
+                again = {"session": f"0000-derive{next(tries):03d}"}
+                proto("start", "round", "--no-board", str(notes), stdin={"points": ["Limits?"]}, **again)
+                proto("step", stdin={"classes": {"pt1": "user"}}, ok=None, **again)
+                proto("step", stdin={"select": ["pt1"]}, ok=None, **again)
+                return proto("step", stdin={**ROUND_INFO, "questions": [mutate(good)]}, ok=None, **again)
+
+            cross = {"for", "leanBecause", "strongBecause", "key"}
+            base_q = lambda q: {**q, "leanBecause": {"cause": "evidence", "detail": "an unchecked fact"}, "priorRulings": [{"ruling": "r", "verdict": "holds", "why": "w"}],
+                                "rulings": [{k: "x" for k in schema.names(schema.Disclosure)}]}
+            def drop_in(path, name):
+                def mutate(q):
+                    q = base_q(q)
+                    holder = q
+                    for step in path:
+                        holder = holder[step]
+                    holder.pop(name, None)
+                    return q
+                return mutate
+            for form, path in ((schema.Question, ()), (schema.Option, ("options", 0)), (schema.LeanBecause, ("leanBecause",)),
+                               (schema.PriorRuling, ("priorRulings", 0)), (schema.Disclosure, ("rulings", 0))):
+                for spec in schema.specs(form):
+                    if form is schema.Question and spec.name in cross:
+                        continue
+                    result = stage_try(drop_in(path, spec.name))
+                    if (result.returncode != 0) != spec.required:
+                        raise ValueError(f"{form.name}.{spec.name} is declared {'required' if spec.required else 'optional'}; Stage answered {result.returncode}: {result.stderr}")
+            for choice in schema.get_args(next(x.type for x in schema.specs(schema.Question) if x.name == "kind")):
+                if stage_try(lambda q, c=choice: {**base_q(q), "kind": c}).returncode:
+                    raise ValueError(f"help lists the question kind {choice}: Stage must accept it")
+            if stage_try(lambda q: {**base_q(q), "kind": "confirm-own-rulings"}).returncode == 0 or stage_try(lambda q: {**base_q(q), "strength": "maybe"}).returncode == 0:
+                raise ValueError("a kind or strength outside the declared choices is refused")
+            if stage_try(lambda q: {**base_q(q), "strength": "strong", "strongBecause": {n: "true: x" for n in engine_module.base.STRONG_CRITERIA}}).returncode:
+                raise ValueError("every declared strength is accepted by Stage")
             proto("step", stdin={"classes": {"pt1": "user"}}, **texts)
             stage_text = proto("step", stdin={"select": ["pt1"]}, **texts).stdout
             # r10-q38: the Stage text asks for an example on every option of a code choice, and its sample shows one on each option.
@@ -9735,7 +10100,7 @@ def validate_protocol(root: Path, part: str) -> None:
             refused("step", **texts, stdin={**ROUND_INFO, "questions": [question("Mix confirmation?", kind="confirm-own-rulings", **{"for": found})]},
                     needle="`kind` must be one of decision: a ruling of yours is an ordinary question")
             refused("step", **texts, stdin={**ROUND_INFO, "questions": [question("Mix weird?", kind="weird", **{"for": found})]},
-                    needle="`kind` must be one of decision, confirm-own-rulings")
+                    needle="`kind` must be one of decision")
             proto("abandon", **texts)
             # Pass identity (plan engine-refactor): a run counts only when it carried the pending pass's id; any other report is an extra pass.
             def ident_round(*words):
@@ -9791,7 +10156,7 @@ def validate_protocol(root: Path, part: str) -> None:
             proto("step", stdin={"select": [found]}, **texts)
             refused("step", **texts, stdin={**ROUND_INFO, "questions": [question("Same one?", leanBecause={"cause": "preference", "detail": "taste"}, **{"for": found})]},
                     needle="`leanBecause.flipsIf`")
-            refused("step", **texts, stdin={**ROUND_INFO, "questions": [question("Same one?", priorRulings=[{"ruling": "r1"}], **{"for": found})]}, needle="`priorRulings` lists")
+            refused("step", **texts, stdin={**ROUND_INFO, "questions": [question("Same one?", priorRulings=[{"ruling": "r1"}], **{"for": found})]}, needle="`priorRulings` must be a list of prior-ruling objects or null")
             hinted = proto("step", **texts, stdin={**ROUND_INFO, "questions": [
                 question("Same one?", priorRulings=[{"ruling": "r9-q1", "verdict": "holds", "why": "still the cheapest"}, {"ruling": "r9-q2", "verdict": "fails", "why": "no caller left"}], **{"for": found}),
                 question("Same two?", **{"for": found})]}).stdout
@@ -9832,6 +10197,14 @@ def validate_protocol(root: Path, part: str) -> None:
                     or "stale console actions dropped: 1" not in printed.stdout \
                     or "console continues (/console-continue, Continue): 4; queued a pass 1, reopened a batch 1, woke the model 1, none of these 1" not in printed.stdout:
                 raise ValueError(f"round-report counts late changes, Think more, drops and continues:\n{printed.stdout}\n{printed.stderr}")
+            # Without the explicit override, round-report finds the same folder by asking session state-dir.
+            with tempfile.TemporaryDirectory() as xdg:
+                (Path(xdg) / "agents").mkdir()
+                (Path(xdg) / "agents" / "sessions").symlink_to(state)
+                located = subprocess.run([str(root / "bin" / "round-report")], capture_output=True, text=True,
+                                         env={**{k: v for k, v in os.environ.items() if k != "AGENT_SESSION_STATE_DIR"}, "XDG_STATE_HOME": xdg})
+                if located.returncode != 0 or located.stdout != printed.stdout:
+                    raise ValueError(f"round-report must read the registry session state-dir names:\n{located.stdout}\n{located.stderr}")
             # Removing the only open question ends the check: no pass runs on nothing (r34).
             proto("say", "--origin", "composer", stdin={"text": "drop it"}, **texts)
             proto("edit", stdin={"updates": [{"id": one, "remove": True, "reason": "no need"}], "quote": "drop it"}, **texts)
@@ -10932,7 +11305,7 @@ def validate_protocol(root: Path, part: str) -> None:
                 label_fail("scope verb refuses another command", "accepted")
             if '"checked": {"q2"' not in out:
                 label_fail("pass format shows keyed checked", out[-800:])
-            expect_refused("checked as a list is refused", report("step-back", ["every question"]), "`checked` is an object")
+            expect_refused("checked as a list is refused", report("step-back", ["every question"]), "`checked` must be an object")
             expect_refused("unknown checked key is refused", report("step-back", {q: "read" for q in [*every, "q9"]}), "checked.q9")
             expect_refused("refusal names the missing ids", report("step-back", {"q1": "read", "q2": "read"}),
                            "no `checked` entry or update for q3 q4")
@@ -10986,7 +11359,7 @@ def validate_protocol(root: Path, part: str) -> None:
             verdicts = {"q2": {"strongBecause": STRONG_CLAIMS}, "q4": {"strongBecause": STRONG_CLAIMS}}
             expect_refused("verdict on a lean question refused", report("challenge-rulings", allc, rulings=[], verdicts={**verdicts, "q1": {"strongBecause": STRONG_CLAIMS}}),
                            "verdicts.q1")
-            expect_refused("rulings required", report("challenge-rulings", allc, verdicts=verdicts), "`rulings` lists")
+            expect_refused("rulings required", report("challenge-rulings", allc, verdicts=verdicts), "`rulings` must be a list")
             ruling = {"question": "q1", "ruling": "one cache", "why": "meets the goal", "alternative": "two caches", "fails": "clear ownership",
                       "evidence": "task-queue.ts:12", "sure": True}
             expect_refused("ruling fields validated", report("challenge-rulings", allc, verdicts=verdicts, rulings=[{**ruling, "why": ""}]),
@@ -11040,7 +11413,7 @@ def validate_protocol(root: Path, part: str) -> None:
             proto("step", stdin={"classes": {"pt1": "user"}}, **codex_cover)
             proto("step", stdin={"select": ["pt1"]}, **codex_cover)
             proto("step", stdin={**ROUND_INFO, "questions": [question("Codex one?", **{"for": "pt1"})]}, **codex_cover)
-            expect_refused("Codex: a list is refused", report("step-back", ["every question"]), "`checked` is an object", **{"session": "0000-cdx00001"})
+            expect_refused("Codex: a list is refused", report("step-back", ["every question"]), "`checked` must be an object", **{"session": "0000-cdx00001"})
             expect_ok("Codex: keyed checked accepted", report("step-back", {"q1": "goal read"}), **{"session": "0000-cdx00001"})
             proto("abandon", **codex_cover)
             proto("abandon", **cover)
@@ -11141,7 +11514,7 @@ def validate_protocol(root: Path, part: str) -> None:
             if "answer (away): Keep" not in asking or "away answer: the record also needs `reversal`" not in asking:
                 raise ValueError(f"Record asks the reversal of an away answer:\n{asking}")
             refused("step", stdin={"records": {q1: {"rationale": "Took fx-a.", "ruleOwner": "docs/x.md"}}}, needle="an away answer needs a `reversal`", **away)
-            refused("step", stdin={"records": {q1: {"rationale": "Took fx-a.", "ruleOwner": "docs/x.md", "reversal": ["undo it"]}}}, needle="`reversal` and `decision` are text", **away)
+            refused("step", stdin={"records": {q1: {"rationale": "Took fx-a.", "ruleOwner": "docs/x.md", "reversal": ["undo it"]}}}, needle="`reversal` must be a string", **away)
             calls()
             out = proto("step", stdin={"records": {q1: {"rationale": "Took fx-a.", "ruleOwner": "docs/x.md", "reversal": "board bd reopen fx-a"}}}, **away).stdout
             recorded = records_file.read_text(encoding="utf-8")

@@ -4,8 +4,10 @@ from __future__ import annotations
 import contextvars
 import json
 from collections.abc import Mapping
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Literal
 
 
 VERSION = 1  # the show --json contract and the state file schema
@@ -40,32 +42,81 @@ AWAY = 'away'  # the origin of an answer an away round took from the recommendat
 SETTLES = ('act', 'park')
 DROP_KINDS = ('pass', 'batch')  # what a dropped console action was: a pass run or prompt, a batch's dialog
 EXPLORED_VERDICTS = ('kept', 'dropped')
-# The verbs with a restricted audience, each with the origins it accepts; a verb not listed here is a session's, with no
-# origin check. `console`: only the console runs it; `origin`: sessions and the console both, the origin saying which.
-# `help` (cli.py) and the origin check (verbs.require_origin) both read this table.
-VERBS = {
-    'answer': ('origin', ('dialog', 'chat', 'model-reported')),  # model-reported: Codex sessions only
-    'decline': ('origin', ('dialog', 'model-reported')),
-    'pass': ('origin', PASS_ORIGINS),
-    'say': ('console', ('composer', 'bridge')),  # the person's own messages, stored for the chat quote check
-    'dropped': ('console', ('plugin',)),  # a stale console action the console did not deliver (r3-q10)
-    'nudged': ('console', ('plugin',)),  # the person's /console-continue or Continue press, with what the console did (r7-q24)
-    'scope': ('console', ('plugin',)),  # what the pass the console sees start must cover, named in its expanded text (r9-q36)
-    'pending': ('console', ()),  # the console's read of the pending pass: no origin
-}
-VERB_ORIGINS = {verb: origins for verb, (_, origins) in VERBS.items() if origins}
-NUDGE_KEYS = ('pass', 'batch', 'step')  # what a continue did: queued the pending pass, reopened the batch, woke the model at the step
+
+
+@dataclass(frozen=True, kw_only=True)
+class Verb:
+    """One protocol verb: the definition `protocol help`, the parser and the origin check read. No field has a default.
+    `audience`: `session` (no origin check), `origin` (sessions and the console, the origin saying which), `console` (console only).
+    `origins`: the accepted --origin values. `stdin`: names of its stdin forms in schema.py (checked on load)."""
+    name: str
+    audience: Literal['session', 'origin', 'console']
+    origins: tuple[str, ...]
+    summary: str
+    example: str
+    stdin: tuple[str, ...]
+
+    def __post_init__(self):
+        if self.audience not in ('session', 'origin', 'console') or not (self.summary and self.example.startswith(f'protocol {self.name}')):
+            raise ValueError(f'verb {self.name}: audience, summary or example is not valid')
+
+
+STEP_FORMS = ('prepass', 'collect', 'select', 'stage', 'related', 'pass-report', 'settle', 'record', 'recheck', 'board-check',
+              'own-rulings', 'scoped', 'owners')
+VERBS = (
+    Verb(name='start', audience='session', origins=(), summary='open a protocol run', example='protocol start round', stdin=('start',)),
+    Verb(name='step', audience='session', origins=(), summary="submit the current step's report; prints the next step",
+         example='protocol step < report.json', stdin=STEP_FORMS),
+    # model-reported: Codex sessions only
+    Verb(name='answer', audience='origin', origins=('dialog', 'chat', 'model-reported'), summary='record answers; prints show --json with a note',
+         example='protocol answer --origin chat < answer.json', stdin=('answer', 'answer-chat')),
+    Verb(name='decline', audience='origin', origins=('dialog', 'model-reported'), summary='a declined batch returns to ready; prints show --json',
+         example='protocol decline --origin model-reported < decline.json', stdin=('decline',)),
+    Verb(name='pass', audience='origin', origins=PASS_ORIGINS, summary='a pass started, or the person typed or pressed /release-round; prints show --json',
+         example='protocol pass --origin model < pass.json', stdin=('pass-run',)),
+    Verb(name='edit', audience='session', origins=(), summary="apply the user's requested change to the questions",
+         example='protocol edit < edit.json', stdin=('edit',)),
+    Verb(name='defer', audience='session', origins=(), summary="defer a question and the questions waiting on it at the user's request",
+         example='protocol defer < defer.json', stdin=('defer',)),
+    # the person's own messages, stored for the chat quote check
+    Verb(name='say', audience='console', origins=('composer', 'bridge'), summary="store the person's message for the chat quote check",
+         example='protocol say --origin composer < say.json', stdin=('say',)),
+    # a stale console action the console did not deliver (r3-q10)
+    Verb(name='dropped', audience='console', origins=('plugin',), summary='the console dropped a stale action',
+         example='protocol dropped --origin plugin < dropped.json', stdin=('dropped',)),
+    # the person's /console-continue or Continue press, with what the console did (r7-q24)
+    Verb(name='nudged', audience='console', origins=('plugin',), summary='the person asked the console to continue',
+         example='protocol nudged --origin plugin < nudged.json', stdin=('nudged',)),
+    # what the pass the console sees start must cover, named in its expanded text (r9-q36)
+    Verb(name='scope', audience='console', origins=('plugin',), summary='what a report of the pass starting now must cover, as JSON; changes nothing',
+         example='protocol scope --origin plugin < scope.json', stdin=('scope',)),
+    Verb(name='restart', audience='session', origins=(), summary='questions back to draft after a criterion answer; the check loop reruns',
+         example='protocol restart q2 --reason "criterion changed"', stdin=()),
+    Verb(name='next', audience='session', origins=(), summary='the seed questions, the open questions by topic and the stored proposal',
+         example='protocol next', stdin=('proposal',)),
+    Verb(name='compacted', audience='session', origins=(), summary="the session's context was compacted: what it was told prints in full again",
+         example='protocol compacted', stdin=()),
+    Verb(name='resume', audience='session', origins=(), summary='continue a paused check loop', example='protocol resume', stdin=()),
+    Verb(name='abandon', audience='session', origins=(), summary='close the open round without records', example='protocol abandon', stdin=()),
+    Verb(name='show', audience='session', origins=(), summary='the round as markdown, --json (the console contract), or <ids>: those questions whole',
+         example='protocol show --json', stdin=()),
+    # the console's read of the pending pass: no origin
+    Verb(name='pending', audience='console', origins=(), summary='the pending pass as JSON, or null', example='protocol pending', stdin=()),
+    Verb(name='status', audience='session', origins=(), summary='one recovery line', example='protocol status --line', stdin=()),
+    Verb(name='history', audience='session', origins=(), summary='passes by origin, answers, declines, restarts per round',
+         example='protocol history --all', stdin=()),
+    Verb(name='records', audience='session', origins=(),
+         summary="this repository's records folder for rounds without a board; needs no session",
+         example='protocol records', stdin=()),
+    Verb(name='help', audience='session', origins=(), summary='every verb with an example, or one verb in full (a call with no arguments prints the list too)',
+         example='protocol help step', stdin=()),
+)
+VERB_ORIGINS = {verb.name: verb.origins for verb in VERBS if verb.origins}
 COLLECT_VIEWS = 'decided,questions,ratification,accept,review,user'
 LIST_COMMAND = f'board health --items {COLLECT_VIEWS}'  # lists the open items Collect offers, but for the ready milestones and finished epics `board position` lists
-# Question fields a pass can change; a change to any of them counts (asking.md Check: premise, ruling, option or
-# question set).
-CONTENT = ('text', 'title', 'header', 'options', 'multiSelect', 'kind', 'board', 'waitsOn', 'waitsFor', 'for', 'settles',
-           'premises', 'problem', 'root', 'cases', 'rulings', 'note', 'recommendation', 'strength', 'leanBecause', 'strongBecause', 'priorRulings')
-# How a question is shown and backed, not what it asks (asking.md Check counts premise, ruling, option and question
-# set): an edit to these alone re-issues the batch without rerunning the check loop.
-PRESENTATION = ('title', 'header', 'note', 'root', 'strength', 'leanBecause', 'strongBecause')  # plus an option's `example` (see substantive)
-# When a question goes out, not what it asks (r9-q33): setting a hold alone reruns no check; freeing one re-checks the question.
-SCHEDULING = ('waitsFor',)
+SCOPED_PASSES = ('step-back', 'ground')  # once per release on the revised records, before the approval (r8-q36)
+REACHES = ('contained', 'spreads')  # no "unsure": unsure is spreads (r4-q14, fails closed)
+TOUCHES = ('own', 'decision')  # a contained change: only the model's own parts keeps the record; unsure is decision (r8-q36)
 CAP_CHOICES = ('Continue', 'Ask now', 'Pause')
 STRENGTHS = ('lean', 'strong')
 LEAN_CAUSES = ('preference', 'evidence')  # the user's values decide, or an unchecked fact (the lean pass)

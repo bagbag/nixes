@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from .base import OUTCOMES, ProtocolError, REVISES, REVISES_RULE, lines
-from . import words
+from . import schema, words
 from .boards import related_hits, split_holds
 from .engine import Context, by_id, fail, premise_status, unresolved
 from .questions import (
@@ -31,8 +31,8 @@ def stage_text(ctx: Context) -> str:
 def stage_accept(ctx: Context, report: dict) -> str:
     raw = report.get('questions')
     errors = describe_errors(report.get('round'), 'stage', required=not titled(ctx))
-    if not isinstance(raw, list):
-        fail('; '.join([*errors, '`questions` must be a list']))
+    if shape := schema.problems(schema.Stage, report, 'questions'):
+        fail('; '.join([*errors, *shape]))
     keys = {}
     for index, item in enumerate(raw):
         try:
@@ -120,9 +120,8 @@ def resolve_replaced(ctx: Context, q: dict) -> None:
 
 
 def related_accept(ctx: Context, report: dict) -> str:
-    outcomes = report.get('outcomes')
-    if not isinstance(outcomes, dict):
-        fail('`outcomes` must map question ids to {hit id: outcome}')
+    schema.require(schema.Related, report)
+    outcomes = report['outcomes']
     for qid, hits in outcomes.items():
         q = by_id(ctx, qid)
         if not isinstance(hits, dict):

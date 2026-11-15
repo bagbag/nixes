@@ -39,6 +39,7 @@ import time
 import tomllib
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from collections.abc import Iterator
 from typing import NamedTuple
 
 HOLDS_LEGEND = 'holds a/b: a stops at a milestone, b counts everything downstream'
@@ -1676,10 +1677,10 @@ def position(board: Board, args) -> None:
     if any(stale_since(board, issue) for issue, *_ in data['held']):
         print(STALE_OTHERS_LEGEND)
     if gone:
-        print(f"  GONE = the holding session ended or its registration was pruned. Free {', '.join(gone)}: board take <id> | board unclaim <id> (the user or a deciding session)")
+        print(f"  GONE = the holding session ended or its registration was pruned. Take {', '.join(gone)} when your role could claim it: board take <id> (board unclaim <id>: the user or a deciding session)")
     if idle:
         print(f'  idle = no activity for {IDLE_HOURS} h. '
-              'If that session is gone: board take <id> | board unclaim <id> (the user or a deciding session)')
+              'If that session is gone, take the item when your role could claim it: board take <id>; otherwise the user or a deciding session frees it: board unclaim <id>')
 
     section('open questions holding work',
             [line(issue, f'holds {waiting[0]}/{waiting[1]}', issue.get('assignee') or 'unassigned') for waiting, issue in data['questions']],
@@ -2248,6 +2249,66 @@ def show(board: Board, args) -> int:
     return 0
 
 
+FIELD_NAMES = {'description': 'description', 'design': 'design', 'acceptance': 'acceptance_criteria',
+               'acceptance_criteria': 'acceptance_criteria', 'notes': 'notes'}
+
+
+def scratch_dir() -> Path:
+    """This session's scratch folder (bin/scratch dir)."""
+    result = subprocess.run([sys.executable, str(REGISTRY.parent / 'scratch'), 'dir'], capture_output=True, text=True)
+    if result.returncode != 0 or not result.stdout.strip():
+        raise BoardError(f'no scratch folder: {(result.stderr or result.stdout).strip()}')
+    return Path(result.stdout.strip())
+
+
+def field_command(board: Board, args) -> int:
+    """`board field <id> <field> --export | --apply [path]`: a long field changes by editing its exported text in place,
+    never by rewriting it from memory. The sidecar (`<file>.sha256`) holds the exported text's hash: apply refuses
+    when the field itself moved since (the item's revision moves on unrelated writes, so it is not compared)."""
+    if args.id not in board.by_id:
+        raise BoardError(f'unknown {args.id}')
+    if args.field not in FIELD_NAMES:
+        raise BoardError(f"unknown field {args.field}; fields: description, design, acceptance, notes")
+    field = FIELD_NAMES[args.field]
+    text = board.by_id[args.id].get(field) or ''
+    digest = lambda value: hashlib.sha256(value.encode('utf-8')).hexdigest()
+    if args.export:
+        path = scratch_dir() / f'field-{args.id}-{field}.md'
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding='utf-8')
+        Path(f'{path}.sha256').write_text(digest(text), encoding='utf-8')
+        print(path)
+        return 0
+    path = Path(args.apply) if args.apply != '' else scratch_dir() / f'field-{args.id}-{field}.md'
+    sidecar = Path(f'{path}.sha256')
+    again = f'board field {args.id} {args.field} --export'
+    try:
+        edited = path.read_text(encoding='utf-8')
+        base = sidecar.read_text(encoding='utf-8').strip()
+    except (OSError, UnicodeDecodeError) as error:
+        raise BoardError(f'cannot read the export ({error}); run {again}') from None
+    if not edited.strip():
+        raise BoardError(f'{path} is empty: a field is never cleared this way; edit the text instead')
+    if digest(text) != base:
+        raise BoardError(f'{args.id} {args.field} changed since the export; run {again} and edit again')
+    if edited == text:
+        raise BoardError(f'no change: {path} equals the current {args.field}')
+    # The size limit `board bd update` applies to the same write (a work item's field over FIELD_LIMIT, unless it shrinks).
+    refusal = size_guard('update', [args.id, f'{FIELD_FLAGS[field][-1]}={edited}'])[0]
+    if refusal:
+        raise BoardError(refusal)
+    if field == 'description':
+        bd_checked('update', args.id, '--body-file', '-', '--json', stdin=edited)
+    elif field == 'design':
+        bd_checked('update', args.id, '--design-file', '-', '--json', stdin=edited)
+    else:
+        bd_checked('update', args.id, f"--{'acceptance' if field == 'acceptance_criteria' else 'notes'}={edited}", '--json')
+    path.unlink(missing_ok=True)
+    sidecar.unlink(missing_ok=True)
+    print(f'{args.id}: {args.field} updated ({len(text)} -> {len(edited)} characters)')
+    return 0
+
+
 def budgeted(run, board: Board, args, argv: list[str]) -> int:
     """Runs a view within READ_BUDGET. Rows are the indented lines; --offset skips that many, keeping the heading of
     the section it lands in. A cut names the --offset that prints the next rows."""
@@ -2542,6 +2603,67 @@ def mark_forced(issue: dict, actor: str, reason: str | None) -> None:
         bd_checked('update', issue['id'], '--unset-metadata', FORCED_BY, '--unset-metadata', FORCED_REASON, '--json')
 
 
+def held_skips(board: Board, scoped: list[dict], kinds: list[str], actor: str) -> list[str]:
+    """What a bare claim passed over: items of its kinds that another session holds, with holder, state and age
+    (an empty queue is not a held item)."""
+    skipped = [issue for issue in scoped if issue['status'] != 'closed' and held_by_a_session(issue)
+               and session_actor(issue['assignee']) != session_actor(actor)
+               and board.step_kind(issue) in kinds and not board.waits_of(issue)]
+    board.hydrate([issue['id'] for issue in skipped])
+    known = board.registry()
+    lines = []
+    for issue in skipped:
+        holder = session_actor(issue['assignee'])
+        entry = known.get(holder)
+        gone = liveness(entry) == 'GONE' or (entry is None and holder in board.ended())
+        lines.append(f"  held: {issue['id']} {issue['status']}, held by {issue['assignee']} ({'gone' if gone else 'live'}), "
+                     f"updated {age(board.last_activity(issue))} ago")
+    return lines
+
+
+WAIT_SECONDS = 60  # poll gap of `board wait`: a read of the board takes about a second
+
+
+def wait_command(board: Board, args) -> int:
+    """Blocks until a bare `board claim` would have a candidate (claim_candidates), prints it and exits 0; claims nothing.
+    Exit 3 once --timeout passes, 1 when the session's registration is gone. Each poll reads the board anew."""
+    actor, end = caller(), None if args.timeout is None else time.monotonic() + args.timeout
+    while True:
+        kinds = claim_kinds(board, own_entry(board, actor), actor)
+        found = next(claim_candidates(board, board.listed(args.root), kinds, actor), None)
+        if found is not None:
+            print(f"claimable: {found['id']} ({board.claimable(found)}) {found.get('title', '')}")
+            return 0
+        if end is not None and time.monotonic() >= end:
+            print('nothing claimable yet')
+            return 3
+        time.sleep(WAIT_SECONDS if args.interval is None else args.interval)
+        if shared is not None:
+            with contextlib.suppress(OSError, ValueError, BoardError, subprocess.SubprocessError):
+                shared.before()  # the pull a command start makes
+        board = Board.load('status', None)
+        set_view(board, getattr(args, 'queue', None))
+
+
+def claim_kinds(board: Board, entry: dict | None, actor: str) -> tuple[str, ...]:
+    """The kinds a bare claim takes from: the calling session's pulls (the refusals a bare claim and `board wait` share)."""
+    if entry is None:
+        raise BoardError(f'no registered role for session {session_actor(actor)}; run /role first')
+    if shared is not None and person() is None:
+        raise BoardError(f'a bare claim takes from your queue: {PERSON_HELP}')
+    return session_kinds(entry)
+
+
+def claim_candidates(board: Board, scoped: list[dict], kinds: tuple[str, ...], actor: str) -> Iterator[dict]:
+    """What a bare claim tries, in claim order: claimable in the session's kinds, minus its own hand-overs (lazily, the
+    authorship lookup reads history)."""
+    for issue in sorted((i for i in scoped if board.claimable(i) in kinds), key=lambda i: claim_order(board, i)):
+        if issue['status'] == 'in_review' and board.claimable(issue) == 'review' and authorship(board, issue)[0] \
+                and session_actor(authorship(board, issue)[0]) == session_actor(actor):
+            continue  # your own hand-over needs another reviewer
+        yield issue
+
+
 def claim(board: Board, args) -> int:
     actor = caller()
     claimed, failed, forced = [], [], {}
@@ -2583,7 +2705,7 @@ def claim(board: Board, args) -> int:
                 continue
             if holder:
                 failed.append(item_id)
-                print(f'{item_id}: held by {holder}; the user or a deciding session frees it with board take or board unclaim once its session is gone',
+                print(f'{item_id}: held by {holder}; once its session is gone, board take {item_id} takes it if your role could claim it; the user or a deciding session otherwise frees it with board unclaim',
                       file=sys.stderr)
                 continue
             if board.kind(issue) == 'milestone' and board.open_blockers(item_id):
@@ -2626,18 +2748,9 @@ def claim(board: Board, args) -> int:
                 failed.append(item_id)
                 print(f'{item_id}: not claimed: {message}', file=sys.stderr)
     else:
-        if entry is None:
-            raise BoardError(f'no registered role for session {session_actor(actor)}; run /role first')
-        if shared is not None and person() is None:
-            raise BoardError(f'a bare claim takes from your queue: {PERSON_HELP}')
-        kinds = session_kinds(entry)
+        kinds = claim_kinds(board, entry, actor)
         scoped = board.listed(args.root)
-        candidates = sorted((issue for issue in scoped if board.claimable(issue) in kinds),
-                            key=lambda issue: claim_order(board, issue))
-        for issue in candidates:
-            if issue['status'] == 'in_review' and board.claimable(issue) == 'review' and authorship(board, issue)[0] \
-                    and session_actor(authorship(board, issue)[0]) == session_actor(actor):
-                continue  # your own hand-over needs another reviewer
+        for issue in claim_candidates(board, scoped, kinds, actor):
             if issue.get('issue_type') == CR_TYPE:
                 kind = board.claimable(issue)
                 if claim_cr_checked(board, issue, actor, kind, claimed, failed):
@@ -2650,6 +2763,8 @@ def claim(board: Board, args) -> int:
                 break
         if not claimed:
             print(f"nothing claimable for {entry.get('role')} ({','.join(kinds)})")
+            for skipped in held_skips(board, scoped, kinds, actor):
+                print(skipped)
     args.claimed = [issue['id'] for issue in claimed]
     for issue in claimed:
         kind = issue.get('claim_kind') or board.kind(issue) or issue.get('issue_type')
@@ -3461,6 +3576,8 @@ def cr_deviations(board: Board, root: str | None) -> list[tuple[str, str, str]]:
         if info['main'] is None:
             continue
         if info['tip'] is None:
+            if cr['status'] == ACCEPT and meta(cr).get('checkpoint') == 'user':
+                continue  # a design checkpoint waiting for the user has no branch to land (change-requests.md)
             found.append((cr['id'], 'cr-branch', f"{cr['status']} without its branch {info['branch']}: restore it, or board return/unclaim the change request"))
         elif not Path(info['worktree']).is_dir():
             found.append((cr['id'], 'cr-worktree', f"{cr['status']} without its worktree {info['worktree']}: git worktree add {info['worktree']} {info['branch']}"))
@@ -3709,7 +3826,7 @@ def land_core(board: Board, cr: dict, main: Path, tip: str | None = None) -> lis
         raise BoardError(f'{cid}: not landed, {rebasing}')
     blocked = land_blocked(main, name, branch_tip)
     if blocked:
-        raise BoardError(f"{cid}: land blocked: uncommitted edits in the worktree with {name} checked out overlap: {', '.join(blocked)}; commit or stash them")
+        raise BoardError(f"{cid}: land blocked: uncommitted edits in the worktree with {name} checked out overlap: {', '.join(blocked)}; they are the user's: ask the user to commit or move them, and do not restore or stash them yourself")
     put_meta(cr, landing=branch_tip)  # vouches for this tip: if the close fails after the fast-forward, the next read finishes it
     done = git(where, 'merge', '--ff-only', branch_tip, check=False) if where else git(main, 'update-ref', ref, branch_tip, old, check=False)
     if done.returncode != 0:
@@ -5457,9 +5574,11 @@ EXAMPLES = {
     'check': 'board check --all',
     'related': 'board related --like draft.md tenancy --docs docs,README.md',
     'queue': 'board queue --root <epic>',
+    'wait': 'board wait --timeout 600',
     'mine': 'board mine',
     'console': 'board console',
     'show': 'board show <id> --section Decision',
+    'field': 'board field <id> notes --export; edit the file in place; board field <id> notes --apply',
     'claim': 'board claim [<id>] [--force "waits on the cache ruling"]',
     'ruling record': 'board ruling record <id> record.md',
     'block': 'board block <item> <item> --on <blocker> --reason "waits for the cache ruling"',
@@ -5485,7 +5604,7 @@ EXAMPLES = {
 NO_PULL = {'help', '-h', '--help', 'share', 'join', 'move'}
 BD_NO_PULL = {'dolt', 'sync', 'init', 'conflicts', 'sql', 'rename', 'flatten', 'vc', 'version', 'where', 'help', 'bootstrap'}
 # Commands that write nothing: a wrong entry costs a late sync, a missing one a cheap check.
-READS = {'health', 'position', 'holders', 'check', 'related', 'queue', 'mine', 'console', 'show', 'help', '-h', '--help', 'share', 'join',
+READS = {'health', 'position', 'holders', 'check', 'related', 'queue', 'wait', 'mine', 'console', 'show', 'help', '-h', '--help', 'share', 'join',
          'move'}
 BD_READS = {'list', 'ready', 'show', 'view', 'query', 'search', 'where', 'version', 'help', 'export', 'stats', 'blocked', 'lint',
             'history', 'count', 'events'}
@@ -5555,6 +5674,11 @@ def pointer_for(word: str, rest: list[str], groups: dict) -> str | None:
 
 
 CR_AWARE = {'claim', 'handover', 'return', 'unclaim', 'take', 'cr land', 'cr reject', 'cr refresh', 'cr edits', 'queue', 'health', 'position', 'console', 'check', 'mine', 'block'}
+
+
+def set_view(board: Board, chosen: str | None) -> None:
+    """A shared board's views show one queue: `--queue`, else the caller's (`all`: every queue)."""
+    board.view = None if shared is None or chosen == 'all' else chosen or person()
 
 
 def run_command(argv: list[str]) -> int:
@@ -5632,6 +5756,10 @@ def run_command(argv: list[str]) -> int:
                      help='canonical docs (files or directories of .md), separated by spaces or commas')
     sub.add_argument('--json', action='store_true', help='{terms, like, items, docs}; --limit per list')
     add('queue', 'claimable work by pull', queue, [scope, listing, queues])
+    sub = add('wait', 'block until `board claim` would find work for this session; run it in the background, it claims nothing',
+              wait_command, [scope, queues])
+    sub.add_argument('--timeout', type=float, metavar='SECONDS', help='give up with exit 3 after this long (default: never)')
+    sub.add_argument('--interval', type=float, metavar='SECONDS', help=f'gap between reads (default {WAIT_SECONDS})')
     sub = add('mine', 'items held by this session and its workers', mine, [scope, listing])
     sub.add_argument('--json', action='store_true', help='{session, actor, items}; every row')
     sub = add('console', 'JSON for the console pane from one snapshot: {counts, items (mine), sessions, held (position)}',
@@ -5646,6 +5774,12 @@ def run_command(argv: list[str]) -> int:
     sub.add_argument('--comments', action='store_true', help='select the comments, every one, newest first (not the rest of the item)')
     sub.add_argument('--full', action='store_true', help=f'no {READ_BUDGET}-character budget')
     sub.add_argument('--json', action='store_true', help='with --field: {id: {field: value}}, unbudgeted')
+    sub = add('field', "change an item's long field: --export its text to a scratch file, edit that file in place, --apply it (refused when the field changed since)", field_command)
+    sub.add_argument('id', type=board_id)
+    sub.add_argument('field', metavar='FIELD', help='description, design, acceptance (acceptance_criteria) or notes')
+    modes = sub.add_mutually_exclusive_group(required=True)
+    modes.add_argument('--export', action='store_true', help='write the field to a file in the session scratch folder and print its path')
+    modes.add_argument('--apply', nargs='?', const='', metavar='PATH', help='write the edited file back (default: the export of this item and field)')
     sub = add('claim', 'claim the next item routed to your role, or the given ids; a work item past your worker cap needs --force', claim, [scope])
     sub.add_argument('ids', nargs='*', type=board_id)
     sub.add_argument('--force', metavar='REASON', type=nonempty,
@@ -5782,14 +5916,14 @@ def run_command(argv: list[str]) -> int:
     try:
         # Status views read non-closed items. These read closed items too (check: closed decisions named in text;
         # block, revise, release, supersede: a closed blocker or old record) or comments (related, check).
-        scope = 'ids' if args.run in (show, route, send) else 'all' if args.run in (related, check, block, revise, release, supersede) \
+        scope = 'ids' if args.run in (show, route, send, field_command) else 'all' if args.run in (related, check, block, revise, release, supersede) \
             else 'status'
         if args.run in (route, send):
             mover(None, args, args.command)  # refuse before reading
         if args.run is console and not has_board():
             print(json.dumps(no_board_json(), indent=2, ensure_ascii=False))
             return 0
-        board = Board.load(scope, args.ids if scope == 'ids' else None)
+        board = Board.load(scope, ([args.id] if args.run is field_command else args.ids) if scope == 'ids' else None)
         if args.run is console:  # reads only: one read of the repository serves every change request, settle_landed's included
             read_git_view(board)
         if scope != 'ids' and name in CR_AWARE and settle_landed(board):
@@ -5798,7 +5932,7 @@ def run_command(argv: list[str]) -> int:
         chosen = getattr(args, 'queue', None)
         if chosen and shared is None:
             raise BoardError('--queue: this board is not shared, so no queues (board share shares it)')
-        board.view = None if shared is None or chosen == 'all' else chosen or person()
+        set_view(board, chosen)
         if getattr(args, 'json', False) and args.run in JSON_VIEWS:
             # Unbudgeted, every row (related keeps --limit per list); no capacity line after it.
             print(json.dumps(JSON_VIEWS[args.run](board, args), indent=2, ensure_ascii=False))

@@ -7,7 +7,7 @@ from .base import AWAY, SETTLES, utcnow
 from .engine import Context, by_id, fail, premise_status, questions, touch
 from .questions import refuse_all
 from .render import question_parts
-from . import words
+from . import schema, words
 from .record import board_item
 
 
@@ -84,10 +84,9 @@ def away_prepare(ctx: Context) -> None:
 
 
 def away_settle(ctx: Context, report: dict) -> str:
-    settle = report.get('settle')
+    schema.require(schema.Settle, report)
+    settle = report['settle']
     ready = [q for q in questions(ctx, 'ready') if not q.get('typed')]
-    if not isinstance(settle, dict):
-        fail('`settle` maps each question to "act" or "park"')
     errors = [f'settle: no entry for {q["id"]}' for q in ready if q['id'] not in settle]
     errors += [f'settle: {qid} is not waiting to be settled' for qid in settle if qid not in {q['id'] for q in ready}]
     errors += [f'settle.{qid}: "act" or "park"' for qid, value in settle.items() if value not in SETTLES]

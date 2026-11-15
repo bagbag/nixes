@@ -8,6 +8,8 @@ example. Read items with `board show`; raw `board bd show` serves `--json`,
 `--refs`, `--children`, `--as-of` and `--long`. When board output stops early,
 run the command it prints before relying on the missing part.
 
+**Codex sandbox:** run every `board` command with elevated sandbox permissions.
+
 **Content:** make each item complete without its linked files.
 
 - Keep the work content in the item: what to do, packets, designs, findings,
@@ -46,11 +48,12 @@ shared board, the user an unshared one (`bd dolt push`/`pull`).
 - Finish, hand over or unclaim each hold you still have.
 - Nothing frees a hold automatically. Free another doer's hold only with
   `board take <id>` (reassign to you with a comment) or
-  `board unclaim <id>`. Free another session's hold only as
-  the user or a [deciding session](../role/SKILL.md#roles) once
-  `board position` marks the holder gone, or you judge an idle-marked holder
-  gone. For your own workers' holds marked stopped in `board mine`: continue
-  the worker, hand the item over or free it.
+  `board unclaim <id>`. Take an item from a gone holder (`board position` or
+  the claim report marks it gone) whenever your role could claim it; free any
+  other session's hold only as the user or a
+  [deciding session](../role/SKILL.md#roles), once you judge an idle-marked
+  holder gone. For your own workers' holds marked stopped in `board mine`:
+  continue the worker, hand the item over or free it.
 - At your worker cap, hand over or unclaim partial work before
   `board claim --force "<reason>"`.
 - A CR that leaves its holder unfinished (unclaimed, returned, freed from a
@@ -138,6 +141,11 @@ item sits in a person's queue (the person's sessions work it):
 - Fields: description (outcome and reason), `--design` (contract, files,
   checks, ruling ids with owner anchors), `--acceptance` (done criteria),
   `--spec-id` (specification reference), `blocks` edges.
+- Keep every field of every item (description, `--design`, `--acceptance`,
+  `notes`) at its current state. Change a field with `board field <id> <field>`:
+  `--export` it, edit the file in place, `--apply` it; never rewrite it from
+  memory. Comments hold only one-line events (a failed attempt is one line);
+  history lives in `board bd history`.
 - Before creating an item or question, search with
   `board related --like <draft>` (or `board related <terms>`); extend an open
   item on the same decision, files or migration instead.
@@ -158,6 +166,8 @@ item sits in a person's queue (the person's sessions work it):
 | `needs_ratification` | Autopilot ruling in force, awaiting the user's ratification through a deciding session. Blocks nothing. |
 | closed | Planned, superseded or withdrawn. |
 
+- Withdraw a question the user drops with
+  `board bd close <id> --reason "withdrawn: <why>"`, quoting the user.
 - In role `agent`, put every user-facing question in Beads, including
   clarifications, blockers and approvals a governing rule reserves for the
   user; quote that rule in an approval question. Reuse the existing question
@@ -229,9 +239,7 @@ context coincide, keep `blocks`.
    (`$HOME/.agents/skills/shared/acceptance.md#evidence-and-gates`).
 2. Keep active work `in_progress` with its current state in `notes` (resume
    point, what it waits on: `board bd update <id> --notes "<state>"`).
-   Rewrite every field (description, `--design`, `--acceptance`, `notes`) to
-   the current state instead of appending to it; comments hold only one-line
-   events, and history lives in `board bd history`. Hand over only with
+   Change a field with `board field`, never from memory ([Work items](#work-items)). Hand over only with
    complete evidence for the CR's acceptance. When an item starts waiting on a
    blocker, block the item with notes: `board block` on your own held item
    unclaims it.
@@ -275,12 +283,8 @@ dispatch, `board bd dep cycles`.
 
 - Board mode: `.beads/metadata.json` with `"dolt_mode": "server"` marks a
   server-mode board; otherwise it is embedded.
-- On a server-mode board, every `board` command needs elevated sandbox
-  permissions (global Sandbox and permissions); `board` starts a stopped
-  server. On every board, each CR verb that writes `.git` (claim, handover,
-  cr refresh, cr land) and every commit in a CR worktree needs
-  elevation under Codex (its sandbox keeps `.git` read-only), embedded boards
-  included.
+- A server-mode board's `board` starts a stopped server. Under Codex, every commit in a CR worktree
+  needs elevation too (`.git` is read-only in its sandbox).
 - On an embedded board, run `board` commands one at a time and never
   interrupt a running one.
 - `board bd ready` returns 100 rows; use `--limit 0` for inventories. Read

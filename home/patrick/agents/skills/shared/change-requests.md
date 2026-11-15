@@ -48,6 +48,8 @@ queue order and refresh work: [Board coordination](board-coordination.md).
     held CR; `board cr land` only in a deciding session's Accept. A reviewer's
     passing `handover` of a `look` `after` CR also lands it.
   Removing an unlanded CR's worktree or branch needs the user's confirmation.
+  A land refused for the user's uncommitted edits (`land blocked`): ask the user to commit or move them;
+  never restore, stash or commit them yourself.
 - **Claim** creates the worktree (branch from `base`), assigns and runs
   setup. A worktree failure leaves the CR unclaimed; a setup failure keeps the
   claim and blocks hand-over until the holder reruns setup by claiming again.

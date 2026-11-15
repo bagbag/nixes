@@ -13,15 +13,14 @@ import json
 import os
 import re
 import statistics
+import subprocess
 import sys
 
 
 def state_dir() -> str:
-    explicit = os.environ.get('AGENT_SESSION_STATE_DIR')
-    if explicit:
-        return explicit
-    base = os.environ.get('XDG_STATE_HOME') or os.path.expanduser('~/.local/state')
-    return os.path.join(base, 'agent-sessions')
+    """The registry's state dir; the session tool owns its location."""
+    session = os.path.join(os.path.dirname(os.path.realpath(__file__)), 'session')
+    return subprocess.run(['bash', session, 'state-dir'], capture_output=True, text=True, check=True).stdout.strip()
 
 
 def moment(text: str) -> datetime.datetime:

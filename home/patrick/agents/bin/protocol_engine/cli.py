@@ -22,13 +22,12 @@ import contextlib
 import copy
 import json
 import os
-import re
 import subprocess
 import sys
 from collections.abc import Mapping
 from pathlib import Path
 
-from .base import BIN, CHECK_CAP, Call, PASSES, ProtocolError, VERBS, VERB_ORIGINS, _call, lines, utcnow
+from .base import BIN, CHECK_CAP, Call, ProtocolError, VERBS, VERB_ORIGINS, Verb, _call, lines, utcnow
 from .session import resolve_session
 from .store import Store, next_id
 from .boards import Board, board_root
@@ -37,7 +36,7 @@ from .record import abandon_note, refresh_board, release_claims
 from .away import SWITCH_TO_SOLO
 from .check import next_cycle, pending_view, refused_formats, start_scope
 from .ask import batch_back, withdraw_away
-from . import words
+from . import schema, words
 from .release_set import start_release
 from .release_files import start_files
 from .release import stamp_release
@@ -91,6 +90,7 @@ def start(ctx: Context, name: str, report: dict, scope: str = 'board', records: 
                 'records again)' if ctx.round['protocol'] == 'release' else ''))
     if ctx.away and records is not None:
         fail(f'--no-board is refused on autopilot: nothing would track its records for ratification; {SWITCH_TO_SOLO}')
+    schema.require(schema.Start, report)
     if name == 'release':
         if scope != 'board' or report or topic or proposal is not None or subject is not None:
             fail('start release takes record ids only (no --discussion, --topic, --proposal, --subject or stdin)'
@@ -154,43 +154,26 @@ class Parser(argparse.ArgumentParser):
         raise Exit(2, self.format_usage() + f'{self.prog}: error: {message}\n')
 
 
-# One example per verb for `protocol help` (a verb without one fails the help test).
-EXAMPLES = {
-    'start': 'protocol start round',
-    'step': 'protocol step < report.json',
-    'answer': 'protocol answer --origin chat < {"question","answer","quote"}',
-    'decline': 'protocol decline --origin model-reported < {"marker"}',
-    'pass': 'protocol pass --origin model < {"command":"ground","args":"","pending":null}',
-    'edit': 'protocol edit < {"updates":[...],"quote":"..."}',
-    'defer': 'protocol defer < {"question":"q3","quote":"..."}',
-    'say': 'protocol say --origin composer < {"text":"..."}',
-    'dropped': 'protocol dropped --origin plugin < {"kind":"pass","id":"p7"}',
-    'nudged': 'protocol nudged --origin plugin < {"pass":"p7"}',
-    'scope': 'protocol scope --origin plugin < {"command":"ground"}',
-    'restart': 'protocol restart q2 --reason "criterion changed"',
-    'next': 'protocol next',
-    'compacted': 'protocol compacted',
-    'resume': 'protocol resume',
-    'abandon': 'protocol abandon',
-    'show': 'protocol show --json',
-    'pending': 'protocol pending',
-    'status': 'protocol status --line',
-    'history': 'protocol history --all',
-    'records': 'protocol records',
-    'help': 'protocol help',
-}
 ORIGIN_MARK = ' *'
 
 
-def help_text(commands) -> str:
+def detail(verb: Verb) -> str:
+    """A verb's help epilog: example, origins and the stdin forms from the schema."""
+    forms = [line for name in verb.stdin for line in ('', *(f'  {row}' if row else row for row in schema.render(schema.FORMS[name])))]
+    return '\n'.join([f'example: {verb.example}',
+                       *([f"--origin: {', '.join(verb.origins)}"] if verb.origins else []),
+                       'stdin: ' + ('JSON on stdin; each form below is one case' + (' (each step\'s text prints its own example)' if verb.name == 'step' else '')
+                                    if verb.stdin else 'none'), *forms])
+
+
+def help_text() -> str:
     """Every verb with one example: the verbs sessions run first (`*`: the accepted --origin depends on the caller), then the
-    console's. The sections are base.VERBS's audiences."""
+    console's. The sections are the Verb records' audiences."""
     def section(audiences: tuple[str, ...]) -> list[str]:
-        return [f"  {EXAMPLES[name]}{ORIGIN_MARK if VERBS.get(name, ('session',))[0] == 'origin' else ''}\n      {re.split(r'\s*[;(]', sub.description)[0]}"
-                for name, sub in commands.choices.items() if VERBS.get(name, ('session',))[0] in audiences]
-    return '\n'.join(['usage: protocol <verb> [args]; reports are JSON on stdin (`<` below)', '', *section(('session', 'origin')), '',
-                      '* origin-dependent: the accepted --origin differs by caller (protocol <verb> -h)', '', 'console only:',
-                      *section(('console',))])
+        return [f"  {verb.example}{ORIGIN_MARK if verb.audience == 'origin' else ''}\n      {verb.summary}" for verb in VERBS if verb.audience in audiences]
+    return '\n'.join(['usage: protocol <verb> [args]; reports are JSON on stdin (`<` below); protocol help <verb> prints one verb in full', '',
+                      *section(('session', 'origin')), '', '* origin-dependent: the accepted --origin differs by caller (protocol help <verb>)', '',
+                      'console only:', *section(('console',))])
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -221,15 +204,16 @@ def cli(argv: list[str]) -> int:
                                           'registered session of this environment')
     parser.add_argument('--origin', dest='global_origin', help='who caused the call (also accepted after the verb)')
     origin = Parser(add_help=False, allow_abbrev=False)
-    origin.add_argument('--origin', help='who caused the call: answer dialog|chat|model-reported, decline '
-                                         'dialog|model-reported, pass composer|bridge|press|plugin|model, say '
-                                         'composer|bridge, dropped, nudged and scope plugin; other verbs model')
+    origin.add_argument('--origin', help='who caused the call: ' + '; '.join(f"{v.name} {'|'.join(v.origins)}" for v in VERBS if v.origins)
+                                         + '; other verbs model')
     commands = parser.add_subparsers(dest='command', required=True)
+    subs = {v.name: commands.add_parser(v.name, help=v.summary, description=v.summary, epilog=detail(v), parents=[origin], allow_abbrev=False,
+                                        formatter_class=argparse.RawDescriptionHelpFormatter) for v in VERBS}
 
-    def verb(name: str, text: str):
-        return commands.add_parser(name, help=text, description=text, parents=[origin], allow_abbrev=False)
+    def verb(name: str):
+        return subs[name]
 
-    sub = verb('start', 'open a protocol run; stdin {"points": [...]} adds pasted points')
+    sub = verb('start')
     sub.add_argument('name', choices=sorted(PROTOCOLS))
     sub.add_argument('ids', nargs='*', help="release: the decided records (default: the decided records this session holds, "
                                             "minus dropped ones; with --no-board: record ids in DIR, default the newest round's "
@@ -243,43 +227,23 @@ def cli(argv: list[str]) -> int:
     sub.add_argument('--no-board', metavar='DIR', type=Path, nargs='?', const=DEFAULT_RECORDS,
                      help="a topic outside this repository's board: no board reads or writes; records go to DIR (a release takes the record files in DIR); "
                           "without DIR: ${XDG_DATA_HOME:-~/.local/share}/agents/decisions/<repo key of bin/scratch> (put ids before a bare option)")
-    verb('step', "submit the current step's report (stdin JSON); prints the next step")
-    verb('answer', 'record answers (stdin JSON); prints show --json with a note')
-    verb('decline', 'a declined batch returns to ready (stdin JSON); prints show --json')
-    verb('pass', 'a pass started, or the person typed or pressed /release-round (stdin {"command","args","pending"}); prints '
-                 'show --json')
-    verb('edit', "apply the user's requested change to the questions (stdin {\"updates\", \"quote\"}); no pass for wording, options "
-                 "or a mark lowered to lean; a new question or changed recommendation gets the scoped check, a raise to strong one challenge")
-    verb('defer', "defer a question and the questions waiting on it at the user's request (stdin {\"question\", \"quote\", \"until\"?}); "
-                  "Record files each on the board (bd defer), a round without a board only notes it")
-    verb('say', "store the person's message for the chat quote check (stdin {\"text\"})")
-    verb('dropped', 'the console dropped a stale action (stdin {"kind": "pass", "id"} or {"kind": "batch", "marker"})')
-    verb('nudged', 'the person asked the console to continue (stdin: what it did, {"pass"?, "batch"?} or {"step"}; {} for none of these)')
-    verb('scope', 'what a report of the pass starting now must cover, as JSON {"covers", "explored", "text"} (stdin {"command", '
-                  '"pending"?: the stamp of a run not observed yet}); changes nothing')
-    sub = verb('restart', 'questions back to draft after a criterion answer; the check loop reruns')
+    sub = verb('restart')
     sub.add_argument('ids', nargs='+')
     sub.add_argument('--reason')
-    sub = verb('next', 'the seed questions, the open questions by topic and the stored proposal; --set stores the proposal (stdin)')
-    sub.add_argument('--set', action='store_true', help='store the proposal: stdin {"rounds": [{"title", "summary", "estimate": '
-                                                        '{"questions", "unblocks"}, "why", "fresh", "ids"?}]}')
-    verb('compacted', "the session's context was compacted: what it was told prints in full again")
-    verb('resume', 'continue a paused check loop')
-    verb('abandon', 'close the open round without records')
-    sub = verb('show', 'the round as markdown, --json (the console contract), or <ids>: those questions whole')
+    sub = verb('next')
+    sub.add_argument('--set', action='store_true', help='store the proposal (stdin)')
+    sub = verb('show')
     sub.add_argument('ids', nargs='*', help='question ids: their options, examples, premises and marks')
     sub.add_argument('--json', action='store_true')
-    verb('pending', 'the pending pass as JSON, or null')
-    sub = verb('status', 'one recovery line')
+    sub = verb('status')
     sub.add_argument('--line', action='store_true', required=True)
-    sub = verb('history', 'passes by origin, answers, declines, restarts per round')
+    sub = verb('history')
     sub.add_argument('--all', action='store_true', help='every session in the state dir')
     sub.add_argument('--json', action='store_true', help='the raw events')
-    verb('records', "this repository's records folder for rounds without a board (r15-q73, r20-q99); needs no session")
-    verb('help', 'every verb with an example (a call with no arguments prints it too)')
+    verb('help').add_argument('verb', nargs='?', choices=list(subs), metavar='verb', help='the verb to print in full: arguments, example and stdin forms')
     args = parser.parse_args(argv or ['help'])
     if args.command == 'help':
-        _call.get().stdout.append(help_text(commands) + '\n')
+        _call.get().stdout.append((subs[args.verb].format_help() if args.verb else help_text() + '\n'))
         return 0
     if args.command == 'records':
         try:
@@ -363,14 +327,18 @@ def run(ctx: Context, args) -> str:
         if ctx.board:
             refresh_board(ctx)
         return '\n'.join([*ctx.messages, next_text(ctx)])
-    report = read_stdin()
+    schema.CALLER.set(command)
+    open_step = f"{ctx.round['protocol']} {ctx.round['step']}" if command == 'step' and ctx.round else ''
+    report = schema.without_nulls(read_stdin(), schema.verb_forms(command, open_step))
     if command == 'next':
         return set_proposal(ctx, report)
     if command == 'start':
         start(ctx, args.name, report, 'discussion' if args.discussion else 'board', args.no_board, args.ids, args.topic, args.proposal, args.subject)
         prune(ctx.store)
         return instructions(ctx)
-    if command == 'pass' and report.get('command') == 'release-round':
+    if command == 'pass':
+        schema.require(schema.PassRun, report)
+    if command == 'pass' and report['command'] == 'release-round':
         note = stamp_release(ctx, args.origin, report.get('args') or '')
         ctx.messages.insert(0, note)
         ctx.complete = True  # the console does not forward this note: nothing here counts as told
@@ -410,8 +378,7 @@ def run(ctx: Context, args) -> str:
             raise ProtocolError(str(error), formats=words.DEFER_FORMAT) from None
         return instructions(ctx)
     if command == 'say':
-        if not isinstance(report.get('text'), str) or not report['text'].strip():
-            fail('say: stdin needs {"text"}')
+        schema.require_needs(schema.Say, report)
         r['messages'].append({'text': report['text'], 'origin': args.origin, 'at': utcnow()})
         return json.dumps({**show_json(ctx), 'note': None}, indent=1, ensure_ascii=False)
     if command in ('answer', 'decline'):
@@ -426,9 +393,7 @@ def run(ctx: Context, args) -> str:
         return json.dumps({**show_json(ctx), 'note': instructions(ctx), **({'echo': answered_line(ctx, batch, report)} if batch else {})},
                           indent=1, ensure_ascii=False)
     if command == 'pass':
-        pass_command = report.get('command')
-        if pass_command not in PASSES:
-            fail(f"`command` must be one of {', '.join(PASSES)}")
+        pass_command = report['command']
         # Observation only: the pending pass stays until its report (`step`), so the console can tell a pass turn
         # that ended without one.
         stamp = report.get('pending')

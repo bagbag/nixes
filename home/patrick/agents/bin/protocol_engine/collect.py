@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from .base import CLASSES, COLLECT_VIEWS, ProtocolError, lines
-from . import words
+from . import schema, words
 from .store import next_id
 from .boards import claim_items, foreign_holds, read_counts, view_rows
 from .engine import Context, fail
@@ -49,6 +49,7 @@ def collect_text(ctx: Context) -> str:
 
 def collect_accept(ctx: Context, report: dict) -> str:
     r = ctx.round
+    schema.require(schema.Collect, report)
     for raw in report.get('points') or []:
         point = {'text': raw} if isinstance(raw, str) else raw
         if not isinstance(point, dict) or not str(point.get('text') or '').strip():
@@ -58,8 +59,6 @@ def collect_accept(ctx: Context, report: dict) -> str:
         if point.get('class'):
             r['classes'][pid] = {'class': point['class'], 'owner': point.get('owner')}
     classes = report.get('classes') or {}
-    if not isinstance(classes, dict):
-        fail('`classes` must map ids to a class')
     keys = {i['id'] for i in r['items']} | {p['id'] for p in r['points']}
     for key, value in classes.items():
         if key not in keys:
@@ -129,9 +128,8 @@ def select_text(ctx: Context) -> str:
 
 
 def select_accept(ctx: Context, report: dict) -> str:
-    chosen = report.get('select')
-    if not isinstance(chosen, list) or not all(isinstance(i, str) for i in chosen):
-        fail('`select` must be a list of candidate ids')
+    schema.require(schema.Select, report)
+    chosen = report['select']
     pool = {c['key']: c for c in candidates(ctx)}
     unknown = [key for key in chosen if key not in pool]
     if unknown:

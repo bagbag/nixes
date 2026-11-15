@@ -94,7 +94,9 @@ Give each step's output as one line.
    its protocol from the table above through its Exit, and refill as it says.
    Without workers in the runtime, `board claim` one CR, run its protocol through its Exit,
    skipping its Claim step, and claim again. When nothing is claimable and no
-   worker runs, report the session's results and stop.
+   worker runs, report the session's results and stop; when the user asked you to keep watching, run
+   `board wait` in the background instead (exit 0 names a candidate: claim again; a claim that fails twice on the same
+   id is a blocker to report, not to wait out).
    Output per CR or item: `<id> → <protocol>: <exit result>`.
 
 ## Stop

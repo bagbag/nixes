@@ -6,7 +6,7 @@ import re
 from pathlib import Path
 
 from .base import AWAY, ProtocolError, REVISES, lines, utcnow
-from . import words
+from . import schema, words
 from .boards import held_decided, read_counts, split_holds, statuses
 from .engine import Context, by_id, fail, questions
 from .questions import board_keys
@@ -278,9 +278,8 @@ def checkpoint(ctx: Context) -> None:
 def record_accept(ctx: Context, report: dict) -> str:
     if 'defer' in report:
         fail('Record takes no `defer`: a deferral is `protocol defer` (stdin {"question", "quote", "until"?}), which Record then files')
+    schema.require(schema.Record, report)
     records = report.get('records') or {}
-    if not isinstance(records, dict):
-        fail('`records` maps question ids to objects')
     found = deferrals(ctx)
     waiting = [f"{q['id']} on {', '.join(q['waitsOn'])}" for q in questions(ctx, 'held')
                if q['id'] not in found and not q.get('recorded')]
@@ -295,10 +294,10 @@ def record_accept(ctx: Context, report: dict) -> str:
     if missing:
         fail(f"records missing for {', '.join(missing)}")
     for qid, fields in records.items():
-        if not isinstance(fields, dict) or not all(isinstance(fields.get(k), str) and fields[k].strip() for k in ('rationale', 'ruleOwner')):
-            fail(f'records.{qid}: needs rationale and ruleOwner, each a non-empty string')
-        if any(fields.get(k) is not None and not isinstance(fields[k], str) for k in ('reversal', 'decision')):
-            fail(f'records.{qid}: `reversal` and `decision` are text')
+        if not isinstance(fields, dict) or (bad := schema.problems(schema.RecordEntry, fields, 'rationale', 'ruleOwner')):
+            fail(f"records.{qid}: {bad[0] if isinstance(fields, dict) else schema.text_of(schema.RecordEntry, 'rationale')}")
+        if bad := schema.problems(schema.RecordEntry, fields, 'reversal', 'decision'):
+            fail(f'records.{qid}: {bad[0]}')
         if by_id(ctx, qid)['origin'] == AWAY and not str(fields.get('reversal') or '').strip():
             fail(f'records.{qid}: an away answer needs a `reversal` (the steps that undo it, executable without remembered context)')
         if prior_record(ctx, by_id(ctx, qid)) and not str(fields.get('decision') or '').strip():

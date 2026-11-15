@@ -4,7 +4,7 @@ from __future__ import annotations
 import copy
 
 from .base import ProtocolError, lines
-from . import words
+from . import schema, words
 from .boards import statuses, view_rows
 from .engine import Context, fail
 from .questions import disclosure_error
@@ -89,9 +89,8 @@ def hit_items(checks: dict, rid: str, name: str) -> set[str]:
 
 def board_check_accept(ctx: Context, report: dict) -> str:
     r = ctx.round
-    checks = report.get('checks')
-    if not isinstance(checks, dict):
-        fail('`checks` maps each record to its hit classes')
+    schema.require(schema.BoardCheck, report, 'checks')
+    checks = report['checks']
     if isinstance(report.get('closes') or {}, dict):
         checks, merged = prefill_settled(ctx, checks, report.get('closes') or {})
         report = {**report, 'closes': merged}
@@ -106,18 +105,15 @@ def board_check_accept(ctx: Context, report: dict) -> str:
         problems += [f'checks.{rid}: unknown hit class {name}' for name in classes if name not in HIT_CLASSES]
         for name, rows in classes.items():
             if rows != 'none' and not (isinstance(rows, list) and rows and all(
-                    isinstance(row, dict) and str(row.get('item') or '').strip() and str(row.get('action') or '').strip()
-                    for row in rows)):
+                    isinstance(row, dict) and not schema.problems(schema.HitRow, row) for row in rows)):
                 problems.append(f'checks.{rid}.{name}: "none" or rows {{"item", "action"}}')
     if problems:
         fail('board check: ' + '; '.join(problems))
     supersedes = report.get('supersedes') or []
     closes = report.get('closes') or {}
-    if not isinstance(supersedes, list) or not isinstance(closes, dict):
-        fail('`supersedes` is a list of {old, new, partial?}; `closes` maps questions to the records answering them')
+    schema.require_all(schema.BoardCheck, report, 'supersedes', 'closes')
     for index, sup in enumerate(supersedes):
-        if not isinstance(sup, dict) or not all(isinstance(sup.get(k), str) and sup[k].strip() for k in ('old', 'new')) \
-                or not isinstance(sup.get('partial', ''), (str, type(None))):
+        if not isinstance(sup, dict) or schema.problems(schema.Supersede, sup):
             problems.append(f'supersedes[{index}]: {{"old", "new", "partial": "<rule>" (optional)}}')
         elif sup['new'] not in current:
             problems.append(f"supersedes[{index}]: {sup['new']} is not in the set")
@@ -193,14 +189,13 @@ def own_rulings_text(ctx: Context) -> str:
 
 
 def own_rulings_accept(ctx: Context, report: dict) -> str:
-    rulings = report.get('rulings')
-    if not isinstance(rulings, list):
-        fail('`rulings` lists every ruling you made in the set (an empty list when there is none)')
+    schema.require(schema.OwnRulings, report)
+    rulings = report['rulings']
     current = in_set(ctx)
     for index, ruling in enumerate(rulings):
         if not isinstance(ruling, dict) or ruling.get('record') not in current:
             fail(f'rulings[{index}]: `record` names a record of the set')
-        error = disclosure_error(ruling, f'rulings[{index}]')
+        error = disclosure_error(ruling, f'rulings[{index}]', schema.OwnRuling)
         if error:
             fail(error)
     ctx.round['rulings'] = rulings
