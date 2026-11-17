@@ -18,7 +18,7 @@ setup, run `/role autopilot` again.
   `needs_ratification` through a decide round, grouped by shared premise; skip
   it for a trivial default. In its Ask, report `act` or `park` by these classes.
   - **Trivial:** decide; record relevant defaults.
-  - **Entailed or other reversible:** `act`, a lean recommendation included.
+  - **Entailed or two-way door:** `act`, a lean recommendation included.
     Compare options as if presenting them to the user and write the
     recommendation into its owner. Make its reversal executable without
     remembered context or costly downstream rework. Record revisions under
@@ -27,7 +27,7 @@ setup, run `/role autopilot` again.
   - **Revising a released ruling of the user's:** `act` when new evidence or
     a new problem the ruling did not weigh supports it, named in the record;
     `park` a revision resting on preference or the same facts.
-  - **Irreversible, outward-facing or scope-changing:** `park` as an unassigned
+  - **One-way door or scope-changing:** `park` as an unassigned
     question for the user with a recommendation (`board unclaim <id>` when you
     hold it outside a round). Parked questions form the user's next round;
     their dependents wait. Continue independent tracks.

@@ -157,7 +157,7 @@ On a shared board (`.beads/board-shared.json` exists):
 | `in_progress` | Unanswered; claimed by the session running its round. Blocks its dependents. |
 | `decided` | Answered, release pending. Still blocks. |
 | `released` | Binding. Blocks the open items it changes until a `plan` session plans it and closes it. Waits only on what its planning needs: a live decision, a `user <date>` gate, a design or a spike. Holds no decided record resting on it. |
-| `needs_ratification` | Autopilot ruling in force, awaiting the user's ratification through a deciding session. Blocks nothing. |
+| `needs_ratification` | Ruling in force taken without the user (autopilot, or a standing two-way default), awaiting the user's ratification through a deciding session. Blocks nothing. |
 | closed | Planned, superseded or withdrawn. A reversal is a revision record (`board ruling revise <id>`, [Rulings](../shared/board-coordination.md#rulings)). |
 
 - Withdraw a question the user drops with

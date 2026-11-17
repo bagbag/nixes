@@ -32,8 +32,9 @@ findings or stops.
    Output: ruling ids and owner anchors read, or `<id> moot: <reason>`.
 3. **Do.** Run the open items in dependency order yourself or through item
    workers; you judge how they share the worktree.
-   - Design items: architecture where open, the package graph, and needed
-     decisions as questions blocking their dependents, merged only under
+   - Design items: architecture where open, the package graph, and
+     one-way-door decisions as questions blocking their dependents, merged
+     only under
      [Question format](../../shared/question-format.md#question-format); no
      implementation. Before raising the questions and again before handing
      over, invoke `step-back`, then `ground`, on the design; repeat until a
@@ -41,10 +42,10 @@ findings or stops.
      implementation items arrive after the checkpoint passes.
    - Implementation items: tests alongside the change; changelog and doc
      duties are in the item's acceptance.
-   - Choices: rule those that stay inside the CR's files and are cheap to
-     change under
+   - Choices: decide what
      [Decision authority](../../shared/decision-protocol.md#decision-authority)
-     and list them in the hand-over; raise every other choice as a question
+     lets you decide and list the two-way defaults in the hand-over
+     (marking standing rules); raise every other choice as a question
      blocking the affected part, and continue unaffected parts.
    - After each pass: run the item's gates, then commit and close its items
      under [Change requests](../../shared/change-requests.md#change-requests)

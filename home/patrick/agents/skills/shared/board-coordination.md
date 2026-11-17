@@ -71,7 +71,7 @@ milestones, recorded rulings and deferrals. The board model is
 ### Rulings
 
 - At decision time, write the record with `board ruling record <id> <file>`:
-  it replaces the packet and sets status `decided` (autopilot: `--status
+  it replaces the packet and sets status `decided` (autopilot, or a standing two-way default: `--status
   needs_ratification`). `--replaces <old>[,<old>]` links each ruling it
   replaces, decided or released; each is superseded when the new ruling comes
   into force: at its release, or at once for an autopilot record. Rerun it

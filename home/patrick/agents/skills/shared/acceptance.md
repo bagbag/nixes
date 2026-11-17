@@ -23,10 +23,11 @@ open), sized to stakes; a role protocol may tighten it.
 - Select and brief reviewers under
   [Reviewers](../shared/reviewers.md#reviewers).
 - **Hidden and costly:** a concrete failure path the review could not settle
-  (no test settles it: a race, real production data) whose damage a code fix
-  cannot undo: data lost beyond recovery, a leaked secret or access, writes
-  into the wrong tenant, money moved or messages sent to outside parties, a
-  one-way migration of production data.
+  (no test settles it: a race, real production data) through a
+  [one-way door](../shared/decision-protocol.md#decision-authority): data
+  lost beyond recovery, a leaked secret or access, writes into the wrong
+  tenant, money moved or messages sent to outside parties, a one-way
+  migration of production data.
 
 ### Evidence and gates
 

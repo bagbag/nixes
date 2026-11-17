@@ -60,8 +60,8 @@ uncertain.
 |---|---|
 | Trivial: reversible, consumer-invisible, sets no convention | Decide; mention in one line. |
 | Entailed (the only realistic clean option): meets ratified goals, constraints and principles without material residual trade-off; every other realistic option fails a cleanliness test, principle or correctness property (a preference is no failure) | Decide; report with one-line reason. In a round, ask it as a question with your pick as its recommendation. |
-| Other reversible: semantics, naming, contracts, conventions, trade-offs | Ask the decider. |
-| Irreversible, outward-facing or scope-changing | Ask the decider; act only on confirmation. |
+| Two-way door: any other choice a code change alone fixes after the next run | Take the simplest correct option that fails safe and keep going. List it in its CR (the choice, the alternative not taken); a standing rule other work builds on, or a choice outside any CR, gets a `needs_ratification` record. |
+| One-way door (fixing it after the next run takes more than a code change: a migration of real data, changes outside the repository, effects already happened; always security and isolation, money, public contracts, privacy and legal) or scope-changing | Ask the decider; act only on confirmation. |
 
 Reviewer agreement is evidence, not authority; it settles no product, semantic,
 risk or scope trade-off.
@@ -100,11 +100,11 @@ risk or scope trade-off.
 | Class | Definition | Handling |
 |---|---|---|
 | Current blocker | Violates committed behavior, an enduring current contract or realistic integrity under supported workloads. | Blocks acceptance. |
-| Deferred committed requirement | Later committed behavior, addable without replacing current architecture. | Record its activation condition; keep out of current scope. |
-| Speculative concern | No committed consumer or plausible supported-workload failure. | Labeled observation until evidence justifies action. |
+| Deferred committed requirement | Later committed behavior, addable without replacing current architecture. | A deferred item with its revisit condition; keep out of current scope. |
+| Speculative concern | No committed consumer or plausible supported-workload failure. | Drop: neither report, build nor ask it. |
 
 A recommendation expanding structure states its cumulative cost, its effect on
-the walking skeleton and why a smaller coherent option fails. When findings
+the next run and why a smaller coherent option fails. When findings
 repeatedly add structure without executable progress, re-derive the premise.
 
 ### Recommendation strength

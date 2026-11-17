@@ -100,7 +100,7 @@ Establish the outcome's contribution to its milestone:
 | Identity | Topic and arc slugs. |
 | Outcome | Value path and material hypotheses. |
 | Contract | Scope, exclusions, done criteria and evidence, constraints, compatibility, the user's quality criterion. |
-| Product path | Product boundary and smallest executable walking skeleton when architecture or flow changes. |
+| Product path | Product boundary and the next run: the smallest executable walking skeleton (what runs, where, what the user sees). |
 | Open premises | Decisions, unknowns, empirical assumptions. |
 
 - Create or resume the outcome epic (readable title stating the outcome, label
@@ -130,7 +130,9 @@ Establish the outcome's contribution to its milestone:
   CR. Every item gets `--parent <cr>`; a CR sits under its topic epic. Split,
   merge or reorder items for a cleaner end state.
 - Designed work is one CR that starts with only its design items and a
-  `checkpoint`: `user` in a `look` `before` project, else `agent`. When the
+  `checkpoint`: `user` when the design opens a
+  [one-way door](../../shared/decision-protocol.md#decision-authority) on the
+  next run's path, else `agent`. When the
   checkpoint passes, the CR returns to you: add the implementation items to
   it. Dependent CRs wait under
   [Waiting and stacks](../../shared/change-requests.md#change-requests);
@@ -165,8 +167,8 @@ Establish the outcome's contribution to its milestone:
 - Justify and defer additions under the decision protocol's
   [End-state criteria](../../shared/decision-protocol.md#end-state-criteria).
   Implement together changes that would immediately reshape the same public
-  contract; defer orthogonal capabilities. Return ceremony and speculative
-  scope for explicit decisions.
+  contract; defer orthogonal capabilities. Return ceremony for explicit
+  decisions; drop speculative scope.
 - Before freezing a public API, sketch declarations, registration and runtime
   calls against the strongest analogous API. Challenge brittle literals,
   duplicate names and unnecessary wrappers; freeze on coherent representative

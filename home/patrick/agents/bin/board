@@ -6943,7 +6943,7 @@ def run_command(argv: list[str]) -> int:
     sub.add_argument('id', type=board_id)
     sub.add_argument('file')
     sub.add_argument('--status', choices=('decided', 'needs_ratification'), default='decided',
-                     help='needs_ratification: an autopilot ruling; requires ## Reversal and frees the hold')
+                     help='needs_ratification: a ruling taken without the user (autopilot, or a standing two-way default); requires ## Reversal and frees the hold')
     sub.add_argument('--replaces', action=Values, default=[], metavar='ID[,ID...]',
                      help='the rulings this record replaces, rerunnable after a stop: each decided or released one gets a pending revision link and is superseded when '
                           'this record comes into force (its release; with --status needs_ratification at once); one already superseded by it is done; anything else refuses before any write (repeatable)')

@@ -45,11 +45,12 @@ steps 3-7.
    triage the author's disclosed judgment calls; classify scope growth under
    [Expansion findings](#expansion-findings).
    Output: verdict; then each confirmed defect, risk and open question.
-6. **Fix.** Unless the brief forbids assessor fixes, fix wording, doc and
-   comment findings yourself, and fix a code finding when the fix is the only
-   clean option and stays within a few lines, as commits on `cr/<id>` in its
-   worktree; rerun the gates after a code fix. Return larger fixes to the
-   author.
+6. **Fix.** Unless the brief forbids assessor fixes, fix wording, doc,
+   comment and local design findings yourself, and fix a code finding when
+   the fix is the only clean option and stays within a few lines, as
+   commits on `cr/<id>` in its worktree; rerun the gates after a code fix.
+   Return larger fixes, and every fix to a design that opens a one-way
+   door, to the author.
    Output: each fix with its commit, or `no fixes`; gate reruns.
 7. **Pass or return.** Pass only when certain everything is clean and every
    required gate passed (your fixes included, listed in the verdict):
@@ -130,7 +131,9 @@ invariants. Repair completion reopens no broader review.
 ## Expansion findings
 
 Classify each under
-[Concern classes](../../shared/decision-protocol.md#concern-classes). When
+[Concern classes](../../shared/decision-protocol.md#concern-classes) against
+the next run ([Frame](plan.md#frame)); deferred ones stay out of the design
+text. When
 reviews keep adding structure without runnable progress, pause affected
 fan-out, re-derive the premise with an architect, test a smaller coherent
 option against the earliest runnable checkpoint and bring the options to the

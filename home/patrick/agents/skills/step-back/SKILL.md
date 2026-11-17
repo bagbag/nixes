@@ -48,8 +48,8 @@ focus; keep the other default criteria to a line each.
 - **root-fix:** does it fix the root cause, not a symptom? Trace the cause;
   the root may lie outside this module or repo; recommend the fix there.
 - **bloat:** over-engineered? Too much magic?
-- **gaps:** under-built: does anything the goal or realistic consumers need
-  fall short?
+- **gaps:** under-built: does anything the next run needs fall short? A
+  later need becomes a deferred item, not a change.
 - **clean:** the six cleanliness tests, one by one.
 - **overfit:** tailored to this case, or does it hold for the neighbouring
   cases?

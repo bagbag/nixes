@@ -25,7 +25,8 @@ Entry: [decide.md](decide.md#accept) Accept. Read `$HOME/.agents/skills/shared/c
    its pre-pass report is the walkthrough (verdict and findings first, then the
    design). A ratification: the
    landed result, in its user review or at the result. If the refresh changed
-   the CR meanwhile, show the range-diff before continuing.
+   the CR meanwhile, show the range-diff before continuing. Open with the
+   defaults its hand-over lists; the user keeps or changes each.
    Output: the walkthrough; for a design, the round's answers.
 4. **Land or return.**
    - **Accept:** `board cr land <cr> --tip <tip>` (the tip the user reviewed;

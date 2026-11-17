@@ -4,7 +4,7 @@
 
 When guidance seems to conflict, these decide:
 
-- **Decisions belong to the user.** Surface real choices as options with for and against each, your recommendation first (name a genuine toss-up as one); decide alone only trivial, reversible defaults and entailed choices (no other realistic, clean alternative); Decision authority in `$HOME/.agents/skills/shared/decision-protocol.md` owns the details.
+- **Decisions belong to the user.** Surface real choices as options with for and against each, your recommendation first (name a genuine toss-up as one); decide alone only trivial and entailed choices (no other realistic, clean alternative), and take a safe default for a two-way door, which the user judges later; Decision authority in `$HOME/.agents/skills/shared/decision-protocol.md` owns the details.
 - **Decisions stay revisable.** Prior decisions and ratifications bind while
   their case holds. When new information, constraints, consequences or a
   better-supported alternative materially change it, say what changed and
