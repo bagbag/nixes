@@ -42,7 +42,7 @@ def link_parked(ctx: Context) -> None:
         for other in q.get('waitsOn') or []:
             target = by_id(ctx, other).get('parked')
             if target and other not in done:
-                ctx.board.checked('bd', 'dep', 'add', q['parked'], target, '-t', 'relates-to')
+                ctx.board.checked('link', q['parked'], target, '--type', 'relates-to')
                 done.append(other)
 
 
@@ -57,7 +57,7 @@ def park(ctx: Context, q: dict) -> None:
     if existing:  # the item exists already; the parts go in as a comment
         packet = path.with_suffix('.packet.md')
         packet.write_text(text, encoding='utf-8')
-        ctx.board.checked('bd', 'comments', 'add', item, '-f', str(packet), '--board-packet')  # the board's own packet: exempt from the comment limit
+        ctx.board.checked('comment', item, '-f', str(packet), '--board-packet')  # the board's own packet: exempt from the comment limit
     claimed = ctx.round.get('claimed', [])
     if item in claimed:
         ctx.board.checked('unclaim', item)

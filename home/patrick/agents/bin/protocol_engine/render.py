@@ -21,7 +21,7 @@ def question_parts(ctx: Context, q: dict) -> dict[str, str]:
         return approval_parts(ctx)
     parts = {
         'problem': q.get('problem') or '', 'cases': q.get('cases') or '',
-        'settles': '\n'.join(settled_lines(ctx, q)), 'premises': (q.get('premises') or '').strip(),
+        'settles': '\n'.join(settled_lines(ctx, q)), 'holds': ', '.join(q.get('holds') or []), 'premises': (q.get('premises') or '').strip(),
         'options': words.options_text(q), 'dropped': words.dropped_text(q),
         'rulings': '\n\n'.join(words.ruling_block(x) for x in q.get('rulings') or []),
         'priorRulings': words.prior_rulings_text(q),
@@ -62,6 +62,9 @@ def render_batch(ctx: Context, chosen: list[dict]) -> str:
         mark = words.changed_mark(changed) if changed else ''
         title = words.batch_title(index, len(chosen), q['title'], mark)
         blocks.append('\n\n'.join([f'**{title}**', *(words.part_block(name, text) for name, text in parts.items())]))
+    unseen = [x for x in words.retired_points(r) if not by_id(ctx, x['id']).get('retiredPrinted')]  # a retired point has no question to ask
+    if blocks and unseen:
+        blocks.insert(0, '\n\n'.join(words.retired_block(x) for x in unseen))
     overview = (r.get('overview') or '').strip()
     if blocks and overview and r.get('overviewPrinted') != overview:
         blocks.insert(0, overview)
@@ -73,5 +76,8 @@ def batch_seen(ctx: Context, batch: dict) -> None:
     for qid in batch['ids']:
         q = by_id(ctx, qid)
         q['printed'] = question_parts(ctx, q)
+    for x in words.retired_points(ctx.round):
+        if words.retired_block(x) in (batch.get('notice') or ''):
+            by_id(ctx, x['id'])['retiredPrinted'] = True
     if batch.get('notice') and ctx.round.get('overview'):
         ctx.round['overviewPrinted'] = ctx.round['overview'].strip()

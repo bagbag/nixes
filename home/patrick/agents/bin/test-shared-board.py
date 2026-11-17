@@ -63,7 +63,39 @@ def base_env(side: str) -> dict[str, str]:
     return env
 
 
+def raw(side: str, *args: str, timeout: float = 200):
+    """bd without --readonly, through `board bd --raw --yes`: setup and maintenance no board verb offers (an explicit id, dolt, sync, sql, delete)."""
+    result = subprocess.run([sys.executable, '-B', BOARD, 'bd', '--raw', '--yes', *args], cwd=ROOT / side, capture_output=True, text=True, timeout=timeout,
+                            env={**base_env(side), 'BD_NO_REMOTE_ADOPT': '1'}, input='')
+    return result.returncode, result.stdout, result.stderr, 0.0
+
+
+def board_create_args(args: tuple[str, ...], stdin: str | None) -> tuple[list[str], str | None]:
+    """A bd-create-style call as board create takes it: the description by stdin, labels as --label, ids printed without --silent."""
+    out, text, at = [], None, 0
+    while at < len(args):
+        arg = args[at]
+        if arg == '--silent':
+            at += 1
+        elif arg == '--description':
+            text, at = args[at + 1], at + 2
+        elif arg == '--stdin':
+            text, at = stdin or '', at + 1
+        elif arg in ('-l', '--labels'):
+            out += ['--label', args[at + 1]]
+            at += 2
+        else:
+            out.append(arg)
+            at += 1
+    return (out + ['--description-file', '-'], text) if text is not None else (out, stdin)
+
+
 def run(side: str, *args: str, role: str | None = 'lead', stdin: str | None = None, timeout: float = 200):
+    if args[:1] == ('create',) and '--id' in args:
+        return raw(side, *args)
+    if args[:1] == ('create',):
+        converted, stdin = board_create_args(args[1:], stdin)
+        args = ('create', *converted)
     env = base_env(side)
     if role:
         env['CLAUDE_CODE_SESSION_ID'] = session(side, role)
@@ -78,7 +110,45 @@ def run(side: str, *args: str, role: str | None = 'lead', stdin: str | None = No
 
 
 def bd(side: str, *args: str, **kwargs):
-    return run(side, 'bd', *args, **kwargs)
+    """A bd call as the board offers it: the writes go through their board verbs (create, close --force, block, link, update, label); setup
+    and maintenance no verb offers (dolt, sync, sql, delete, conflicts) run `board bd --raw --yes`."""
+    if args[:1] == ('create',):
+        return run(side, 'create', *args[1:], **kwargs)
+    if args[:1] == ('q',):
+        return run(side, 'bd', *args, **kwargs)  # refused by --readonly, not run raw
+    if args[:1] == ('close',):
+        reason = args[args.index('--reason') + 1]
+        return run(side, 'close', args[1], '--reason', reason, *(['--force'] if '--force' in args else []), **kwargs)
+    if args[:2] == ('dep', 'add') and '--type' not in args:
+        return run(side, 'block', args[2], '--on', args[3], '--reason', 'test setup', **kwargs)
+    if args[:2] == ('dep', 'add'):
+        return run(side, 'link', args[2], args[3], '--type', args[args.index('--type') + 1], **kwargs)
+    if any(arg.startswith(('queue:', 'for:')) for arg in args) and kwargs.get('role', 'lead') not in ('agent', 'none'):
+        return raw(side, *args)  # moves belong to send/route; the setup here changes the labels directly
+    if args[:1] == ('update',) and '--claim' in args:
+        return run(side, 'bd', *args, **kwargs)  # refused read-only
+    if args[:1] == ('update',) and '--claim' not in args and '--assignee' not in args:  # the user hold is set by hand here: no board verb does it
+        words = []
+        flags = {'--add-label': '--label', '--remove-label': '--unlabel'}
+        for arg in args:
+            words.append(flags.get(arg, arg))
+        return run(side, *words, **kwargs)
+    if args[:2] in (('label', 'add'), ('label', 'remove')):
+        return run(side, 'update', args[2], '--label' if args[1] == 'add' else '--unlabel', args[3], **kwargs)
+    if args[:1] in (('list',), ('ready',)) or args[:2] == ('dolt', 'remote') and args[2:3] == ('list',) or args[:1] == ('sql',) and args[-1].lstrip().lower().startswith('select'):
+        return run(side, 'bd', *args, **kwargs)
+    if kwargs.get('role', 'lead') is None:
+        return raw(side, *args)
+    return run(side, 'bd', '--raw', '--yes', *args, **kwargs)
+
+
+def set_field(side: str, item: str, field: str, text: str, role: str | None = 'lead'):
+    """board field export, edit the file, board field apply."""
+    rc, out, err, took = run(side, 'field', 'export', item, '--field', field, role=role)
+    if rc:
+        return rc, out, err, took
+    Path(out.strip().splitlines()[0]).write_text(text, encoding='utf-8')
+    return run(side, 'field', 'apply', item, '--field', field, role=role)
 
 
 def check(ok: bool, what: str, detail: object = '') -> None:
@@ -96,8 +166,9 @@ def items(side: str) -> dict[str, dict]:
     return {row['id']: row for row in map(json.loads, filter(str.strip, out.splitlines())) if row.get('_type', 'issue') == 'issue'}
 
 
-def create(side: str, title: str, *flags: str, role: str | None = 'lead') -> str:
-    rc, out, err, _ = bd(side, 'create', title, '-t', 'change-request', '--description', 'x', '--silent', *flags, role=role)
+def create(side: str, title: str, *flags: str, role: str | None = 'lead', kind: str = 'change-request') -> str:
+    holds = ['--holds', 'none'] if '-t' in flags and flags[flags.index('-t') + 1] == 'decision' else []
+    rc, out, err, _ = bd(side, 'create', title, '-t', kind, '--description', 'x', '--silent', *flags, *holds, role=role)
     if rc:
         raise RuntimeError(f'create {title}: {err}{out}')
     return out.strip().splitlines()[-1]
@@ -205,7 +276,7 @@ def t_unshared() -> None:
     rc, _, err, _ = run('a', 'health', '--queue', 'ben')
     check(rc == 1 and 'not shared' in err, 'unshared board: --queue says there are no queues', err)
     rc, _, err, _ = bd('a', 'dolt', 'remote', 'add', 'origin', f'git+file://{ROOT}/remote.git', '--allow-git-origin', role=None)
-    check(rc == 0 and 'board share' in err and len(err.strip().splitlines()) == 1, 'a hand-added remote: one line pointing at board share', err)
+    check(rc == 0, 'a hand-added remote is added (board no longer comments on it)', err)
     rc, out, err, _ = run('a', 'health')
     check(rc == 0 and 'other queues' not in out and not (ROOT / 'a/.beads/board-sync').exists(), 'only board\'s mark shares: a remote alone does not', err)
     bd('a', 'dolt', 'remote', 'remove', 'origin', role=None)
@@ -218,7 +289,7 @@ def t_unshared() -> None:
     rc, out, err, _ = bd('a', 'create', 'short stdin', '-t', 'task', '--stdin', '--parent', parent, '--silent', stdin='short text')
     made = out.strip().splitlines()[-1] if rc == 0 and out.strip() else ''
     check(made != '' and items('a').get(made, {}).get('description') == 'short text', 'a short description through stdin reaches bd', err or out)
-    rc, out, err, _ = bd('a', 'create', 'record', '-t', 'decision', '--description', long, '--parent', parent, '--silent')
+    rc, out, err, _ = bd('a', 'create', 'record', '-t', 'decision', '--description', long, '--parent', parent, '--holds', 'none', '--silent')
     check(rc == 0, 'a decision is not limited', err)
     bd('a', 'dolt', 'commit', '-m', 'unshared items')
 
@@ -287,13 +358,78 @@ def t_child_ids() -> None:
     _, out2, _, _ = bd('a', 'sql', '--json', f'select count(*) c from child_counters where parent_id = "{epic}"')
     check(json.loads(out2)[0]['c'] == 0, 'child ids: child_counters untouched', out2)
     rc, out, err, _ = bd('a', 'q', 'quick child', '--parent', epic)
-    check(rc == 1 and 'board bd create' in err and not out.strip(), 'child ids: q --parent is refused, naming create', out + err)
+    check(rc != 0 and 'board create' in err and not out.strip(), 'q is refused read-only, naming board create', out + err)
     tracked = create('a', 'tracked')
-    both = create('a', 'two link kinds', '--deps', f'tracks:{tracked}', '--parent', epic)
+    both = create('a', 'two link kinds', '--deps', f'discovered-from:{tracked}', '--parent', epic)
     kinds = {(dep['type'], dep['depends_on_id']) for dep in items('a')[both].get('dependencies', [])}
-    check(kinds == {('tracks', tracked), ('parent-child', epic)}, "child ids: a revision's two links both land (real bd)", kinds)
+    check(kinds == {('discovered-from', tracked), ('parent-child', epic)}, "child ids: a node's dep and its parent link both land (real bd; a revision's tracks link and its parent do alike)", kinds)
     rc, out, err, _ = bd('a', 'create', 'no such parent', '-t', 'task', '--description', 'x', '--parent', 'sb-nope')
     check(rc != 0, 'child ids: an unknown parent fails', out)
+    # Links (real bd): a blocking edge between two new work items is bd's own write; a pair with another link kind refuses before record writes.
+    plan = ROOT / 'links-plan.json'
+    plan.write_text(json.dumps({'nodes': [{'key': 'one', 'title': 'first new task', 'type': 'task', 'description': 'x'},
+                                          {'key': 'two', 'title': 'second new task', 'type': 'task', 'description': 'x'}],
+                                'edges': [{'from_key': 'two', 'to_key': 'one', 'type': 'blocks'}]}))
+    rc, out, err, _ = run('a', 'create', '--graph', str(plan))
+    made = dict(line.split() for line in out.splitlines() if len(line.split()) == 2)
+    check(rc == 0 and not err.strip() and any(dep['type'] == 'blocks' and dep['depends_on_id'] == made.get('one') for dep in items('a').get(made.get('two'), {}).get('dependencies', [])),
+          'links: a plan edge between two new work items is written by bd, no refusal', (rc, out, err))
+    draft = ROOT / 'record.md'
+    draft.write_text('## Question\nq\n## Alternatives Considered\na\n## Decision\nd\n## Rationale\nr\n## Rule owner\no\n')
+
+    def decision(title: str) -> str:
+        item = create('a', title, '-t', 'decision', kind='decision')
+        run('a', 'claim', item)
+        return item
+
+    def status_of(item: str) -> str:
+        return items('a')[item]['status']
+
+    def superseded_by(old: str, new: str) -> bool:
+        return any(dep['type'] == 'supersedes' and dep['depends_on_id'] == new for dep in items('a')[old].get('dependencies', []))
+
+    # record --replaces (real bd): a pair with another link kind refuses before any write for a released record; a decided one replaces it.
+    released = decision('released ruling')
+    check(run('a', 'ruling', 'record', released, str(draft))[0] == 0 and run('a', 'ruling', 'release', released)[0] == 0 and status_of(released) == 'released',
+          'links: the released ruling is set up')
+    newer = decision('newer ruling')
+    run('a', 'link', newer, released, '--type', 'relates-to')
+    rc, out, err, _ = run('a', 'ruling', 'record', newer, str(draft), '--replaces', released)
+    row = items('a')[newer]
+    check(rc != 0 and 'linked already (relates-to)' in err and row['status'] != 'decided' and 'Rule owner' not in (row.get('description') or ''),
+          'links: record --replaces over a released record whose pair has another link refuses before any write', (rc, err, row['status']))
+    # A decided old closes with the record, whatever other link its pair held; a rerun finds it done and changes nothing.
+    first, second = decision('first old ruling'), decision('second old ruling')
+    for old in (first, second):
+        check(run('a', 'ruling', 'record', old, str(draft))[0] == 0, 'links: an old ruling records')
+    run('a', 'link', newer, first, '--type', 'relates-to')
+    rc, out, err, _ = run('a', 'ruling', 'record', newer, str(draft), '--replaces', f'{first},{second}')
+    check(rc == 0 and status_of(newer) == 'decided' and all(status_of(old) == 'closed' and superseded_by(old, newer) for old in (first, second)),
+          'record --replaces: one call records the new ruling and closes both decided olds, whatever link their pair held', (rc, err, out))
+    rc, out, err, _ = run('a', 'ruling', 'record', newer, str(draft), '--replaces', f'{first},{second}')
+    check(rc == 0, 'record --replaces: a rerun after everything is done succeeds', (rc, err))
+    # Reruns from each stop. Stopped after the body and status write (revision links written, olds still decided):
+    first, second, third = decision('first old ruling b'), decision('second old ruling b'), decision('third old ruling b')
+    for old in (first, second, third):
+        run('a', 'ruling', 'record', old, str(draft))
+    newer = decision('newer ruling b')
+    rc, out, err, _ = raw('a', 'update', newer, '--status', 'decided')
+    for old in (first, second, third):
+        raw('a', 'dep', 'add', newer, old, '--type', 'tracks')
+    rc, _, err, _ = run('a', 'ruling', 'release', first)
+    check(rc != 0 and f'revised by {newer}' in err and status_of(first) == 'decided', 'record --replaces: a stop after its links leaves an old that release refuses until the new record closes it', err)
+    # ... and after the first old's supersede (closed, supersedes edge, revision link replaced):
+    check(run('a', 'ruling', 'supersede', first, '--with', newer)[0] == 0 and status_of(first) == 'closed', 'record --replaces: the first old is superseded by hand (a stop mid-way)')
+    rc, out, err, _ = run('a', 'ruling', 'record', newer, str(draft), '--replaces', f'{first},{second},{third}')
+    check(rc == 0 and all(status_of(old) == 'closed' and superseded_by(old, newer) for old in (first, second, third)),
+          'record --replaces: a rerun after a stop between supersedes finishes the rest and skips the closed one', (rc, err, out))
+    # A live session's hold on an old refuses the call before any write (the other side's session).
+    held, newest = decision('held old ruling'), decision('newest ruling')
+    run('a', 'ruling', 'record', held, str(draft))
+    run('a', 'unclaim', held)
+    run('a', 'claim', held, role='solo')  # another session of the same clone
+    rc, out, err, _ = run('a', 'ruling', 'record', newest, str(draft), '--replaces', held)
+    check(rc != 0 and status_of(newest) != 'decided' and status_of(held) == 'decided', 'record --replaces: a hold of another session refuses before any write', (rc, err))
     bd('a', 'sync')
 
 
@@ -330,7 +466,7 @@ def t_queues() -> None:
     rc, _, err, _ = run('a', 'claim', question)
     check(rc == 1 and "ben's queue" in err, 'claim by id: questions refused alike', err)
     rc, _, err, _ = bd('a', 'update', ben, '--claim', role='agent')
-    check(rc == 2 and "ben's queue" in err, 'update --claim on another queue: refused', err)
+    check(rc != 0 and 'board claim' in err, 'bd update --claim is refused read-only, naming board claim', err)
     rc, out, _, _ = run('a', 'claim', role='agent')
     check(rc == 0 and ben not in out and 'claimed' in out, 'bare claim: mine only', out)
     run('a', 'unclaim', out.split()[1], role='agent') if rc == 0 else None
@@ -342,7 +478,7 @@ def t_queues() -> None:
     check('blocking yours' in out and ben in out, "other people's items blocking mine are listed", out)
     # Parents in different queues.
     mixed = create('a', 'two parents', '--parent', epic)
-    bd('a', 'dep', 'add', mixed, ben, '--type', 'parent-child')
+    raw('a', 'dep', 'add', mixed, ben, '--type', 'parent-child')
     settle('a', 'b')
     _, out, _, _ = run('b', 'health')
     check('unrouted' in out and mixed in out and 'queues anna,ben' in out, 'parents in different queues: unrouted and listed', out)
@@ -352,8 +488,6 @@ def t_queues() -> None:
     check(rc == 1 and 'unrouted' in err and f'board route <person> {mixed}' in err, 'claim by id on an unrouted item: refused until routed', err)
     rc, _, err, _ = run('a', 'take', mixed)
     check(rc == 1 and 'unrouted' in err, 'take on an unrouted item: refused', err)
-    rc, _, err, _ = bd('a', 'update', mixed, '--claim', role='agent')
-    check(rc == 2 and 'unrouted' in err, 'update --claim on an unrouted item: refused', err)
     rc, _, err, _ = run('a', 'route', 'anna', mixed, role='agent')
     check(rc == 1 and 'only lead' in err, 'route: an agent is refused', err)
     rc, _, err, _ = run('a', 'route', 'anna', mixed, role='autopilot')
@@ -395,19 +529,19 @@ def t_queues() -> None:
 
 
 def t_moves() -> None:
-    item = create('a', 'to move')
-    parent_b = create('b', 'ben parent')
+    item = create('a', 'to move', kind='task')  # work items: a change request keeps its parent, which would hide the queue rule
+    parent_b = create('b', 'ben parent', kind='task')
     settle('a', 'b')
-    child = create('a', 'to reparent', '--parent', item)
+    child = create('a', 'to reparent', '--parent', item, kind='task')
     for role in ('agent', 'none'):
-        for args in (('label', 'add', item, 'queue:ben'), ('label', 'remove', item, 'queue:anna'),
-                     ('update', item, '--add-label', 'queue:ben'), ('update', item, '--set-labels', 'x:y'),
-                     ('update', child, '--parent', parent_b), ('dep', 'add', child, parent_b, '--type', 'parent-child'),
-                     ('sql', f"delete from labels where issue_id='{item}'"),
+        for args in (('update', item, '--label', 'queue:ben'), ('update', item, '--unlabel', 'queue:anna'), ('update', child, '--parent', parent_b),
                      ('create', 'for ben', '-t', 'task', '--description', 'x', '-l', 'queue:ben')):
             rc, _, err, _ = bd('a', *args, role=role)
-            check(rc == 2 and 'only lead and solo' in err, f'{role} session refused: {" ".join(args[:2])}', err)
-    env_rc = subprocess.run([sys.executable, '-B', BOARD, 'bd', 'label', 'add', item, 'queue:ben'], cwd=ROOT / 'a', capture_output=True, text=True,
+            check(rc in (1, 2) and ('only lead and solo' in err or 'board send' in err or 'board route' in err), f'{role} session refused: {" ".join(args[:2])}', err)
+    for args in (('label', 'add', item, 'queue:ben'), ('sql', f"delete from labels where issue_id='{item}'")):
+        rc, _, err, _ = run('a', 'bd', *args, role='agent')
+        check(rc != 0 and 'read-only' in err, f'board bd refuses a write read-only: {" ".join(args[:2])}', err)
+    env_rc = subprocess.run([sys.executable, '-B', BOARD, 'update', child, '--parent', parent_b], cwd=ROOT / 'a', capture_output=True, text=True,
                             env={**base_env('a'), 'BEADS_ACTOR': f"{session('a', 'lead')[-8:]}/worker01", 'CLAUDE_CODE_SESSION_ID': session('a', 'lead')})
     check(env_rc.returncode == 2 and 'only lead and solo' in env_rc.stderr, "a lead's worker is refused", env_rc.stderr)
     rc, _, err, _ = bd('a', 'update', item, '--add-label', 'topic:free', role='agent')
@@ -428,9 +562,9 @@ def t_window() -> None:
     check(wait_until(lambda: not waits(), options.seconds * 3), 'no wait left running before the burst', waits())
     before = commits('a')
     started = time.time()
-    rc, _, err, took = bd('a', 'create', 'burst first', '-t', 'task', '--description', 'x', '--silent')
+    rc, _, err, took = raw('a', 'create', 'burst first', '-t', 'task', '--description', 'x', '--silent')
     check(took < 4, f'a write returns at once with the wait detached ({took:.1f} s)', took)
-    made = [create('a', f'burst {n}') for n in range(5)]
+    made = [raw('a', 'create', f'burst {n}', '-t', 'task', '--description', 'x', '--silent')[1].strip() for n in range(5)]  # board create commits per call; the window is about bd's own writes
     check(len(waits()) == 1, 'one wait for the board', waits())
     check(commits('a') == before, 'writes stay uncommitted during the window')
     if not wait_until(lambda: commits('a') > before and not waits(), options.seconds * 4):
@@ -440,6 +574,16 @@ def t_window() -> None:
     check(commits('a') - before <= 2 and commits('a') - before >= 1, 'a burst goes out as one commit (a merge may add one)', commits('a') - before)
     bd('b', 'dolt', 'pull')
     check(all(item in items('b') for item in made), 'the burst reached the other clone')
+    # The product path: board create commits once per call (bd's create --graph ignores dolt.auto-commit=batch, accepted), so the count is not
+    # pinned. What must hold: one wait for the burst, every item reaches the other clone, nothing is left unsent.
+    settle('a', 'b')
+    check(wait_until(lambda: not waits(), options.seconds * 3), 'no wait left running before the board create burst', waits())
+    made = [create('a', f'board burst {n}', kind='task') for n in range(5)]
+    check(len(waits()) == 1, 'one wait for a burst of board create calls', waits())
+    check(wait_until(lambda: not waits(), options.seconds * 4), 'the wait ended after the board create burst')
+    check(not (ROOT / 'a' / '.beads' / 'board-sync' / 'unsent').exists(), 'nothing left unsent after the board create burst')
+    bd('b', 'dolt', 'pull')
+    check(all(item in items('b') for item in made), 'a board create burst reached the other clone')
 
 
 def t_pull() -> None:
@@ -527,7 +671,7 @@ def t_soak() -> None:
                 continue
             item = out.strip().splitlines()[-1]
             expected[item] = 'v0'
-            rc, _, err, _ = bd(side, 'update', item, '--description', 'v1', role='lead')
+            rc, _, err, _ = set_field(side, item, 'description', 'v1')
             if rc:
                 with lock:
                     errors[(err.strip().splitlines() or ['?'])[-1][:90]] += 1
@@ -557,7 +701,7 @@ def conflicted() -> str:
     settle('a', 'b')
     bd('a', 'delete', victim, '--force')
     bd('a', 'sync')
-    bd('b', 'update', victim, '--description', 'edited on b')
+    set_field('b', victim, 'description', 'edited on b')
     return victim
 
 
@@ -565,7 +709,7 @@ def t_stopped() -> None:
     victim = conflicted()
     check(wait_until(lambda: sync_state('b').get('kind') == 'conflict', options.seconds * 4), 'the wait reports the conflict', sync_state('b'))
     rc, out, err, _ = run('b', 'health')
-    check(rc == 0 and 'merge conflict' in err and 'bd conflicts resolve' in err, 'stopped sync: a read prints the problem and the fix', err)
+    check(rc == 0 and 'merge conflict' in err and 'board bd --raw --yes conflicts resolve' in err, 'stopped sync: a read prints the problem and the fix', err)
     check(sum('merge conflict' in row for row in err.splitlines()) == 1, 'stopped sync: one line', err)
     rc, out, err, _ = run('b', 'console')
     check(rc == 0 and 'merge conflict' in (json.loads(out).get('sync') or ''), 'stopped sync: the console field names it', out[:200])
@@ -589,7 +733,7 @@ def t_stopped() -> None:
     bd('b', 'create', 'same b', '-t', 'task', '--description', 'x', '--id', 'sb-collide', '--silent')
     check(wait_until(lambda: sync_state('b').get('kind') == 'conflict', options.seconds * 4), 'an id collision reports a conflict', sync_state('b'))
     rc, _, err, _ = run('b', 'position')
-    check('CALL DOLT_MERGE' in err and 'bd rename' in err, 'the line carries the collision fix', err)
+    check('CALL DOLT_MERGE' in err and 'board bd --raw --yes rename' in err, 'the line carries the collision fix', err)
     rc, out, err, _ = bd('b', 'sql', "CALL DOLT_MERGE('--abort')")
     check(rc == 0, 'collision fix: abort', err + out)
     rc, out, err, _ = bd('b', 'rename', 'sb-collide', 'sb-other')
@@ -613,7 +757,7 @@ def t_stopped() -> None:
     check(wait_until(lambda: int(sync_state('a').get('failures') or 0) >= 3, 30), 'failures go on being counted', sync_state('a'))
     _, _, err, _ = run('a', 'health')
     check('sync failing' in err and 'Fix:' in err, 'repeated failures print the problem and the fix', err)
-    rc, _, err, _ = bd('a', 'update', sorted(items('a'))[0], '--notes', 'still working')
+    rc, _, err, _ = bd('a', 'update', sorted(items('a'))[0], '--title', 'still working')
     check(rc == 0, 'work continues while sync fails', err)
     hidden.rename(ROOT / 'remote.git')
     wait_until(lambda: not waits(), 30)
@@ -670,7 +814,7 @@ def t_inbox() -> None:
     check(rc == 0 and {'for:ben', 'queue:anna'} <= set(row.get('labels', [])) and row.get('assignee') == 'user',
           'create --for: in my queue, held for my person, labelled for the other', err + out)
     rc, _, err, _ = run('a', 'create', '--for', 'ben', 'child find', '-t', 'bug', '--description', 'x', '--parent', found, role='agent')
-    check(rc == 1 and '--parent' in err, 'create --for refuses --parent', err)
+    check(rc == 2 and '--parent' in err, 'create --for refuses --parent', err)
     rc, _, err, _ = run('a', 'claim', found, role='agent')
     check(rc == 1, 'a held find is not claimed', err)
     _, out, _, _ = run('a', 'health', '--json')
@@ -806,7 +950,7 @@ def t_cr() -> None:
     check(rc == 0 and git('rev-parse', target, cwd=side).strip() == tip and items('a')[a]['status'] == 'closed' and not wt(a).exists()
           and not git('branch', '--list', f'cr/{a}', cwd=side).strip(), 'cr: land fast-forwards the target, closes the CR and removes worktree and branch', err + out)
 
-    b = create('a', 'change request B', '--metadata', '{"look":"after"}')
+    b = create('a', 'change request B', '--metadata', 'look=after')
     b1 = task(b, 'B item')
     run('a', 'claim', b, role='agent')
     worker_pass(b, b1, 'b.txt')
@@ -909,11 +1053,11 @@ def t_move() -> None:
     rc, _, err, _ = run('b', 'join', f'git+file://{ROOT}/missing.git', role=None)
     check(rc == 1 and mark('b') and sync_state('b').get('moved') == fresh and stale in items('b'), 'a failed rejoin puts the old board back', err)
     rc, out, err, _ = run('b', 'join', fresh, role=None)
-    check(rc == 0 and stale in out and 'board bd import' in out, 'rejoin: lists the items the new board lacks, with bd import', err + out)
+    check(rc == 0 and stale in out and 'board bd --raw --yes import' in out, 'rejoin: lists the items the new board lacks, with the raw import', err + out)
     check(not git('status', '--short', cwd=ROOT / 'b').strip(), 'rejoin: the kept copy stays out of project history', git('status', '--short', cwd=ROOT / 'b'))
     rows = items('b')
     check(item in rows and stale not in rows and not sync_state('b').get('moved'), 'rejoin: the new board, without the stale write')
-    found = re.search(r'board bd import (\S+)', out)
+    found = re.search(r'board bd --raw --yes import (\S+)', out)
     rc, _, err, _ = bd('b', 'import', found.group(1) if found else 'missing')
     check(rc == 0 and stale in items('b'), 'bd import brings the stale write over', err)
     mine = create('b', 'after the move')

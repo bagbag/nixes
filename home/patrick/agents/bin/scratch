@@ -7,7 +7,7 @@ Layout under ${XDG_STATE_HOME:-~/.local/state}/agents/scratch/:
   <repo folder>/items/<id>/         a board item's folder
   <repo folder>/shared/<name>/      data shared across sessions or items
   .trash/<repo folder>/<name>[-N]/{origin,trashed,size,data}
-  .cache/<repo folder>/{cache.json,scan.lock/}   .cache/.scanned.json: when the root was last scanned
+  .cache/<repo folder>/{cache.json,scan.lock}   .cache/.scanned.json: when the root was last scanned
 
 Entries expire on their own: the hourly scan (started by dir and status, one per scratch root; `scratch sweep` runs it
 now) goes over every repository folder, each under its own lock, and trashes every top-level entry unchanged (mtime and
@@ -23,6 +23,7 @@ SCRATCH_NO_BACKGROUND=1 (no detached scan; the trash purge deletes in the foregr
 from __future__ import annotations
 
 import argparse
+import fcntl
 import itertools
 import math
 import json
@@ -39,7 +40,6 @@ from pathlib import Path
 IDLE_DAYS = 14  # an entry not written for this long is ready (q72)
 TRASH_DAYS = 7  # trash entries older than this are purged
 SCAN_SECONDS = 3600  # at most one background scan per scratch root and hour
-LOCK_STALE_SECONDS = 3600  # a scan lock older than this belongs to a dead scan
 PURGE_STALL_SECONDS = 600  # a .purging-* entry untouched this long lost its deleter
 NAME = re.compile(r'[A-Za-z0-9][A-Za-z0-9._-]*')  # one path component, never hidden
 
@@ -338,28 +338,24 @@ def write_json(path: Path, data: dict) -> None:
     os.replace(temporary, path)
 
 
-def lock_scan(folder: Path) -> Path | None:
+def lock_scan(folder: Path) -> int | None:
+    """The repository's scan lock as an open descriptor (closing it releases the lock), or None when a scan holds it.
+    A flock dies with its process, so no lock is ever stale; the file stays (unlinking it would let two scans lock
+    different files)."""
     lock = state_dir(folder) / 'scan.lock'
     lock.parent.mkdir(parents=True, exist_ok=True)
-    for _ in range(2):
-        try:
-            os.mkdir(lock)
-            (lock / 'pid').write_text(str(os.getpid()), encoding='utf-8')
-            return lock
-        except FileExistsError:
-            try:
-                stale = now() - os.lstat(lock).st_mtime > LOCK_STALE_SECONDS
-            except OSError:
-                continue
-            if not stale:
-                return None
-            gone = lock.with_name(f'scan.lock.stale-{os.getpid()}')
-            try:
-                os.rename(lock, gone)  # one reclaimer wins
-            except OSError:
-                return None
-            shutil.rmtree(gone, ignore_errors=True)
-    return None
+    if lock.is_dir() and not lock.is_symlink():
+        shutil.rmtree(lock, ignore_errors=True)  # the directory lock older versions left
+    try:
+        fd = os.open(lock, os.O_RDWR | os.O_CREAT, 0o600)
+    except OSError:
+        return None
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        os.close(fd)
+        return None
+    return fd
 
 
 def scan(folder: Path, renamed: tuple[str, ...] = ()) -> list[dict] | None:
@@ -386,7 +382,7 @@ def scan(folder: Path, renamed: tuple[str, ...] = ()) -> list[dict] | None:
         write_json(cache_file(folder), {'scanned_at': now(), 'repo': folder.name, 'total_entries': len(kept),
                                         'total_size': sum(e['size'] for e in kept)})
     finally:
-        shutil.rmtree(lock, ignore_errors=True)
+        os.close(lock)
     return trashed
 
 
@@ -418,12 +414,10 @@ def maybe_scan(folder: Path) -> None:
     marked = load_json(scanned_marker())
     if marked and now() - marked.get('scanned_at', 0) < SCAN_SECONDS:
         return
-    lock = state_dir(folder) / 'scan.lock'
-    try:
-        if now() - os.lstat(lock).st_mtime < LOCK_STALE_SECONDS:
-            return
-    except OSError:
-        pass
+    lock = lock_scan(folder)
+    if lock is None:
+        return
+    os.close(lock)
     spawn([sys.executable, str(Path(__file__).resolve()), '__scan'])
 
 

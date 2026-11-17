@@ -23,9 +23,8 @@ without subagents.
    Output: the points.
 2. **Start or join.** With a round open, add the items as new questions
    through `protocol edit`, the pasted list as the quote. Otherwise run
-   `protocol start round --discussion` with the points; add
-   `--no-board <dir>` for a topic outside this repository's board or one
-   without a board.
+   `protocol start round --discussion` with the points, with the `--no-board`
+   and `--topic` flags where decide.md Round names them.
    Output: the round's next step.
 3. **Run** the round, following the engine's output.
    Output: that protocol's outputs.

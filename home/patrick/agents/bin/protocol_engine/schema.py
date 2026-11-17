@@ -223,6 +223,22 @@ def needs(cls, report: dict, *only: str) -> str | None:
         f"; {', '.join(left)} {'is' if len(left) == 1 else 'are'} optional" if left else '') + f'; {pointer(cls)}'
 
 
+def takers(key: str) -> list[str]:
+    """The steps whose report names `key` as a field, else the verbs whose stdin does (a verb's own name counts: `defer`)."""
+    found = [step for cls in FORMS.values() if key in names(cls) for step in cls.steps]
+    if not found:  # a report meant for another step names that step, not the verbs that happen to share a field name
+        found = [f'protocol {verb.name}' for verb in VERBS
+                 if verb.name == key or any(key in names(FORMS[form]) and not FORMS[form].steps for form in verb.stdin)]
+    return list(dict.fromkeys(found))
+
+
+def unknown_keys(step: str, report: dict) -> tuple[dict[str, list[str]], list[str]]:
+    """The keys of `report` the forms of the open `<protocol> <step>` do not name, each with the steps and verbs that take it, and
+    the keys the step does take (r7-q26: a report meant for another step fails loudly instead of being dropped)."""
+    accepted = list(dict.fromkeys(name for cls in FORMS.values() if step in cls.steps for name in names(cls)))
+    return {key: takers(key) for key in report if key not in accepted}, accepted
+
+
 def require(cls, report: dict, *only: str, due: tuple[str, ...] = ()) -> None:
     if found := problems(cls, report, *only, due=due):
         raise ProtocolError(found[0])
@@ -271,7 +287,8 @@ class Answer:
 
 @form('answer-chat', where='answer --origin chat')
 class AnswerChat:
-    """An answer the user typed in chat; its quote must appear in a message the console relayed."""
+    """An answer the user typed in chat to any undecided question of the round; its quote must appear in a message the console relayed
+    (after the question went out; for one not asked yet, in any message of the round). The record notes the checks it skipped."""
     question: Text = req('an id')
     answer: Text = req()
     quote: Text = req("the user's exact words")
@@ -400,6 +417,7 @@ class Question:
     waitsFor: Text | None = opt('the outside result it waits for and where it lands; null frees the question', group='scheduling')
     for_: str | None = opt('the pasted point it answers', key='for')
     settles: list[Text] | None = opt('selected keys: board ids or pasted point ids')
+    holds: list[Text] | None = opt('board ids of the items this question holds up (blocks edges on its record); none or empty: it holds nothing up')
     premises: str | None = opt()
     problem: Text = req('what is decided and why now')
     root: Text = req('"<cause>; <end state>", or "does not apply: <why>" (a preference or naming question); record-only', group='presentation')
@@ -421,13 +439,16 @@ PRESENTATION = tuple(spec.name for spec in specs(Question) if spec.group == 'pre
 SCHEDULING = tuple(spec.name for spec in specs(Question) if spec.group == 'scheduling')
 
 
-@form('update', nested=('question',), like=('question',))
+@form('update', nested=('question', 'disclosure'), like=('question',))
 class Update:
     """A per-question update: `id` and the changed fields of the question form below (each optional here), or a new question
-    (no `id`: its required fields; it goes last, or ahead of the question `before` names), or {"id", "remove": true, "reason"}."""
+    (no `id`: its required fields; it goes last, or ahead of the question `before` names), or {"id", "remove": true, "reason"}.
+    A removal that leaves a selected point with no question also needs `ruling`: the point is entailed, and your disclosed
+    ruling covers it (the record, `show` and the walkthrough carry it)."""
     id: Text = opt()
     remove: bool = opt()
     reason: str = opt()
+    ruling: Disclosure = opt('with `remove`: your own ruling that retires a point found entailed, as {"ruling", "why", "alternative", "fails", "evidence"}')
     before: str = opt('a question id')
 
 
@@ -571,10 +592,11 @@ class Settle:
     settle: dict = req('question id to "act" or "park"')
 
 
-@form('record', steps=('round record',), nested=('record-entry',))
+@form('record', steps=('round record',), nested=('record-entry', 'update'))
 class Record:
-    """The record fields per answered question."""
+    """The record fields per answered question, or (not both) the held questions whose outside result landed."""
     records: dict = opt('question id to the record entry below', of='record-entry')
+    updates: list[Update] = opt('a held question whose outside result landed: {"id", "waitsFor": null, "premises"?}; it is checked again and asked in this round, Record follows')
 
 
 @form('recheck', steps=('release recheck',), nested=('change',))

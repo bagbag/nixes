@@ -89,6 +89,10 @@ export type World = {
   /** `board console` `noBoard`: the directory has no board. */
   noBoard: boolean
   ratifications: unknown[]
+  /** What `board review open` answers: stdout (the path to open; empty: the item's worktree) and, with a nonzero exit, its stderr. */
+  reviewOpen: { exit: number; stdout: string; stderr: string }
+  /** What `board ratify` answers: an exit code with its stderr. */
+  ratify: { exit: number; stderr: string }
   /** What `scratch status --line` answers: its stdout, or an exit code (null: the tool is missing). */
   scratch: { line: string; exit: number } | null
   agents: { id: string; description: string; type: string; status: string }[]
@@ -142,6 +146,8 @@ export function world(on: On, init: Partial<Pick<World, 'round' | 'role' | 'surf
     prefix: init.prefix ?? null,
     noBoard: init.noBoard ?? false,
     ratifications: init.ratifications ?? [],
+    reviewOpen: { exit: 0, stdout: '', stderr: '' },
+    ratify: { exit: 0, stderr: '' },
     scratch: init.scratch ?? null,
     sync: init.sync,
     queueLine: init.queueLine,
@@ -249,6 +255,11 @@ export function world(on: On, init: Partial<Pick<World, 'round' | 'role' | 'surf
         return w.hold.until.then(() => answered)
       }
       if (argv[1] === 'console') return ok({ noBoard: w.noBoard, counts: w.noBoard ? null : BOARD_COUNTS, forYou: w.forYou, items: w.items, sessions: w.sessions, held: w.held, crs: w.crs, queued: w.queued, waitingOnYou: w.waitingOnYou, prefix: w.prefix, ratifications: w.ratifications, sync: w.sync, queueLine: w.queueLine })
+      if (argv[1] === 'review' && argv[2] === 'open') {
+        const served = { value: { exitCode: w.reviewOpen.exit, stdout: w.reviewOpen.exit === 0 ? w.reviewOpen.stdout || `/main/.worktrees/${argv[3]}\n` : '', stderr: w.reviewOpen.stderr, isStdoutTruncated: false, isStderrTruncated: false } }
+        return w.hold?.verb === 'board review' ? w.hold.until.then(() => served) : served
+      }
+      if (argv[1] === 'ratify') return { value: { exitCode: w.ratify.exit, stdout: w.ratify.exit === 0 ? 'ok' : '', stderr: w.ratify.stderr, isStdoutTruncated: false, isStderrTruncated: false } }
       if (argv[1] === 'show' && w.show.exit !== 0) return { value: { exitCode: w.show.exit, stdout: '', stderr: 'no such item', isStdoutTruncated: false, isStderrTruncated: false } }
       if (argv[1] === 'show' && argv.includes('--json')) return ok(w.show.bad ? 'not json' : { [argv[2] as string]: w.show.record })
       if (argv[1] === 'show') return ok(`${argv[2]}: Which engine name?\nstatus: in_progress`)

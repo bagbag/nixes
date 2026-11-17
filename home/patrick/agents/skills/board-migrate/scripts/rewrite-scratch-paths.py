@@ -22,7 +22,7 @@ import subprocess
 import sys
 
 BOARD = os.environ.get('AGENT_BOARD_COMMAND') or os.path.expanduser('~/.agents/bin/board')
-FIELDS = (('description', '--description'), ('design', '--design'), ('acceptance_criteria', '--acceptance'), ('notes', '--notes'))
+FIELDS = (('description', 'description'), ('design', 'design'), ('acceptance_criteria', 'acceptance'), ('notes', 'notes'))  # (item key, board field name)
 UNDECIDED = ('open', 'in_progress')  # a decision item in another live status is a record past decision
 PATH_CHAR = r'[\w.~/-]'
 
@@ -133,12 +133,17 @@ def main() -> int:
             continue
         texts = {flag: row.get(field) or '' for field, flag in FIELDS}
         changed = {flag: new for flag, text in texts.items() if (new := rewrite(text)[0]) != text}
-        show(f"{row['id']}: {', '.join(flag[2:] for flag in changed) or 'nothing rewritten'}", texts.values())
+        show(f"{row['id']}: {', '.join(changed) or 'nothing rewritten'}", texts.values())
         report(row['id'], texts.values())
         if changed:
             items += 1
-            if args.apply:  # flag=value: a text starting with '-' stays a value
-                board('bd', 'update', row['id'], *[f'{flag}={text}' for flag, text in changed.items()])
+            if args.apply:  # the board's field flow: export the changed fields, write the new text into the files, apply
+                named = [arg for name in changed for arg in ('--field', name)]
+                paths = board('field', 'export', row['id'], *named).splitlines()
+                for path, new in zip(paths, changed.values()):
+                    with open(path, 'w', encoding='utf-8') as out:
+                        out.write(new)
+                board('field', 'apply', row['id'], *named)
     for key, value in json.loads(board('bd', 'memories', '--json') or '{}').items():
         if not isinstance(value, str):  # bd adds schema_version
             continue
@@ -148,7 +153,7 @@ def main() -> int:
         if new != value:
             memories += 1
             if args.apply:
-                board('bd', 'remember', '--key', key, '--', new)
+                board('bd', '--raw', '--yes', 'remember', '--key', key, '--', new)  # no board command writes a memory
     for (path, name), owners in sorted(missing.items()):
         print(f'missing {path}: {len(owners)} items (scratch restore {name})')
     for name, owners in sorted(unmapped.items()):

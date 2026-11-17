@@ -41,6 +41,9 @@ describe('engine contract', () => {
     expect(parseRound(ENGINE_CONTRACT.revised).records.map(one => one.state)).toEqual(['set', 'revised'])
     expect(parseRound(ENGINE_CONTRACT.parked).questions.map(one => one.status)).toEqual(['parked'])  // an away round's parked question
     expect(parseRound(ENGINE_CONTRACT.parked).batch).toBeNull()
+    expect(parseRound({ ...ENGINE_CONTRACT.answered, retired: [{ id: 'q1', title: 'Cache', covers: ['x-1', ''], reason: 'entailed', ruling: 'Keep', why: 'w', alternative: 'a', fails: 'f', evidence: 'e' }, { title: 'no id' }] }).retired)
+      .toEqual([{ id: 'q1', title: 'Cache', covers: ['x-1'], reason: 'entailed', ruling: 'Keep', why: 'w', alternative: 'a', fails: 'f', evidence: 'e' }])
+    expect(parseRound(ENGINE_CONTRACT.none).retired).toEqual([])
     expect(parseRound(ENGINE_CONTRACT.revised).records[1]?.reason).toBe('changed (contained, own): the rationale cited a wrong size')
   })
 })

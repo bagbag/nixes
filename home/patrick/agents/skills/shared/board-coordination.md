@@ -13,17 +13,17 @@ milestones, recorded rulings and deferrals. The board model is
   (topic epic) it contributes to and its work items under the CR; loose CRs
   sit under the goal epic. An epic is a topic, never claimed; a CR without a
   parent epic is fine.
-  Topics are labels (`topic:<topic-slug>`). `board bd create --graph` copies
+  Topics are labels (`topic:<topic-slug>`). `board create --graph` copies
   no labels from the parent: give each node its `topic:` label.
 - Title: the outcome. Description: two to four sentences on what will be true,
-  why, scope and the owner link. `--acceptance`: checkable done criteria.
+  why, scope and the owner link. Acceptance: checkable done criteria.
   Epics carry no rules, holds, status, item lists or history; history goes to
   comments, rules to their owners.
 - An outcome's own verification is its epic acceptance; name the user there
   when the outcome needs the user's judgment.
 - The planning session closes an epic as soon as its criteria hold and no
   child is open (`board bd epic close-eligible --dry-run`), detaching deferred
-  children first (`board bd update <id> --parent ""`). A
+  children first (`board update <id> --parent ""`). A
   [deciding session](../role/SKILL.md#roles) walks the user through an epic
   whose acceptance names the user and closes it on acceptance; it or the user
   closes the goal epic once the user confirms the goal is reached.
@@ -33,8 +33,8 @@ milestones, recorded rulings and deferrals. The board model is
 - Track each release checkpoint as one `milestone` item (`1.0-beta`) under
   the goal epic. Its acceptance names the checkpoint's evidence and the user;
   the goal owner states which work belongs to it.
-- Add members with `board bd dep add <milestone> <member>`, without a reason
-  line. Everything a member waits on belongs to the milestone too. Block the
+- Add members with `board block <milestone> --on <member>`, without a reason
+  line (a milestone needs none). Everything a member waits on belongs to the milestone too. Block the
   milestone by the last release step as well.
 - When release checks must run on the finished scope, members block a
   `<release> scope` milestone instead, and it blocks the first checks.
@@ -69,23 +69,23 @@ milestones, recorded rulings and deferrals. The board model is
 
 ### Rulings
 
-- At decision time, write the record with `board ruling record <id> <file>`, which
-  replaces the packet and sets status `decided`
-  (autopilot: `--status needs_ratification`). The file holds these `##`
-  sections, which `board ruling record` checks: `Question`,
-  `Alternatives Considered`, `Decision`, `Rationale` (with provenance: user or
-  the ruling session's role, and date) and `Rule owner`.
+- At decision time, write the record with `board ruling record <id> <file>`:
+  it replaces the packet and sets status `decided` (autopilot: `--status
+  needs_ratification`). `--replaces <old>[,<old>]` closes the decided rulings
+  it replaces, links the released ones it revises, and reruns to finish after a
+  stop; `board ruling supersede <old> --with <new>` alone for one rule or by
+  hand. The file holds these `##` sections, which `board ruling record`
+  checks: `Question`, `Alternatives Considered`, `Decision`, `Rationale` (with
+  provenance: user or the ruling session's role, and date) and `Rule owner`.
 - Record each ruling you make as "ruling — rejected: <alternative>, fails
   <cleanliness test, principle or correctness property>". For a consequential
   ruling without a question, create and answer one at once.
 - Open a revision with
-  `board ruling revise <old> --title "<question>" --body-file <packet>`; for one rule
+  `board ruling revise <old> --title "<question>" --body-file <packet> --holds <ids>|none`; for one rule
   of a record add `--partial "<rule>"`, and the rest stays in force. Its
-  record restates the rule in full. `board ruling release` supersedes a released old
-  record. A decided old record closes when its replacement is recorded
-  (`board ruling supersede <old> --with <new>`; autopilot runs it too), and
-  `board ruling release` refuses a decided record a live revision names. A
-  revision question blocks only the work items whose part it would change.
+  record restates the rule in full. `board ruling release` supersedes a released
+  old record and refuses a decided record a live revision names. A revision
+  question blocks only the work items whose part it would change.
 - On the user's ratification, the claiming deciding session closes a
   `needs_ratification` record with the ratification as reason; a reversal
   becomes a revision record.
@@ -99,5 +99,5 @@ milestones, recorded rulings and deferrals. The board model is
 
 | Item | Lifecycle |
 |---|---|
-| Deferral | `board bd defer <id> --reason "<revisit condition>"`, plus `--until <date>` for a date condition (bd undefers it then); undefer other conditions on named new evidence. Deferred items are the project backlog. |
-| Environment fact | `board bd remember --key <key>` for temporary repository-wide facts needed by every current session, a user's broad stop (area, paths, kind of action) included with its words and date; state a removal condition; remove with `board bd forget`. |
+| Deferral | `board defer <id> --reason "<revisit condition>"`, plus `--until <date>` for a date condition (bd undefers it then); `board undefer` other conditions on named new evidence. Deferred items are the project backlog. |
+| Environment fact | `board bd --raw --yes remember --key <key>` (no board command) for temporary repository-wide facts needed by every current session, a user's broad stop (area, paths, kind of action) included with its words and date; state a removal condition; remove with `board bd --raw --yes forget`. |

@@ -106,8 +106,8 @@ VERBS = (
     Verb(name='history', audience='session', origins=(), summary='passes by origin, answers, declines, restarts per round',
          example='protocol history --all', stdin=()),
     Verb(name='records', audience='session', origins=(),
-         summary="this repository's records folder for rounds without a board; needs no session",
-         example='protocol records', stdin=()),
+         summary="this repository's records folder for rounds without a board, or --topic <text>: the record files of that topic; needs no session",
+         example='protocol records --topic "Cache: pick one"', stdin=()),
     Verb(name='help', audience='session', origins=(), summary='every verb with an example, or one verb in full (a call with no arguments prints the list too)',
          example='protocol help step', stdin=()),
 )

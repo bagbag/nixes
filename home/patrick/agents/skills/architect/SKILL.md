@@ -20,6 +20,9 @@ description: >-
 
 ## 1. Frame
 
+- Read `$HOME/.agents/skills/shared/decision-protocol.md` unless its text is
+  already in your context; its Decision authority sets which framing choices
+  are the user's.
 - Ask for the target only when genuinely ambiguous.
 - Read cheap orientation sources; leave broad discovery to the architect.
 - Frame target and boundary, goal and consumers, non-goals, constraints, lenses,
@@ -27,9 +30,8 @@ description: >-
   factual claims and prior decisions as context to verify.
 - Resolve user-owned framing choices first. When delegated, use the invoking
   session's frame and return material ambiguity to it.
-- For a substantive result, assign its output path (AGENTS.md Orchestration and
-  delegation; ask the user when standalone) and expected content; keep short
-  answers in the response.
+- For a substantive result, assign an output path (ask the user when
+  standalone) and expected content; keep short answers in the response.
 
 Output: frame and output path.
 
@@ -45,15 +47,16 @@ Use the lightest level that protects the decision:
   load-bearing uncertainties; add a critic or verifier for a named unanswered
   question needing distinct expertise or evidence.
 
-Apply [Reviewers](#reviewers) for depth, count, reuse, independence and
-disagreement.
+Apply [Reviewers](../shared/reviewers.md#reviewers) for depth, count, reuse,
+independence and disagreement; read `$HOME/.agents/skills/shared/reviewers.md`
+unless its text is already in your context.
 
 Output: the level, with any reason for raising it.
 
 ## 3. Dispatch and mediate
 
 - Dispatch with frame, depth, expected result and paths.
-- Reuse or start a fresh architect under [Reviewers](#reviewers).
+- Reuse or start a fresh architect under [Reviewers](../shared/reviewers.md#reviewers).
 - Relay focused questions and consequential alternatives to the user, or the
   invoking session when delegated; return decisions and rationale to the
   architect. Realign on scope or premise changes.
@@ -65,15 +68,12 @@ Output: agent and depth dispatched.
 - Arrange independent review at the chosen depth: `review` assesses the
   architecture; `second-opinion` challenges decision,
   premise, alternatives and trade-offs. Verify grounding against current
-  sources, not summaries alone. Apply the [Decision protocol](#decision-protocol)
-  to premises and alternatives.
+  sources, not summaries alone. Apply the
+  [Decision protocol](../shared/decision-protocol.md#decision-protocol) to
+  premises and alternatives.
 - Spot-check load-bearing claims. Return the result, artifact paths,
   recommendation and alternatives, with concerns under
-  [Concern classes](#concern-classes) and unknowns separate; keep the response
+  [Concern classes](../shared/decision-protocol.md#concern-classes) and unknowns separate; keep the response
   proportional to the decision.
 
 Output: result, artifact paths and recommendation.
-
-<!-- @include shared/decision-protocol.md -->
-
-<!-- @include shared/reviewers.md -->

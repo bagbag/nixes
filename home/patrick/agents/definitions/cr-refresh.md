@@ -32,5 +32,4 @@ since its review touch it?
   and what you could not judge.
 - Leave verification, adaptation and the verdict to the invoker.
 
-Return findings in your response; route artifact-writing requests to the
-invoker. Never modify files or system state.
+<!-- @include shared/limits-readonly.md -->

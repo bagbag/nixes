@@ -7,6 +7,7 @@ import json
 import os
 import re
 import tempfile
+from pathlib import Path
 
 from .base import ProtocolError, VERSION, utcnow
 from .session import state_root
@@ -70,3 +71,20 @@ class Store:
 def next_id(state: dict, kind: str, prefix: str) -> str:
     state['seq'][kind] = state['seq'].get(kind, 0) + 1
     return f'{prefix}{state["seq"][kind]}'
+
+
+def next_records_round(folder: Path, state: dict) -> str:
+    """The round id of a round without a board: one counter per records folder, bumped under its own lock so sessions get distinct
+    ids; it starts past the highest round of the folder's record files (a folder from before the counter) and past the session's own
+    rounds, and the session's counter follows it, so the session's later rounds and releases stay distinct too."""
+    folder.mkdir(parents=True, exist_ok=True)
+    with open(folder / '.round', 'a+') as handle:
+        fcntl.flock(handle, fcntl.LOCK_EX)
+        handle.seek(0)
+        filed = (re.match(r'r(\d+)-q\d+\.md$', path.name) for path in folder.iterdir())
+        number = max([int(handle.read().strip() or 0), state['seq'].get('round', 0), *(int(found[1]) for found in filed if found)]) + 1
+        state['seq']['round'] = number
+        handle.seek(0)
+        handle.truncate()
+        handle.write(str(number))
+    return f'r{number}'

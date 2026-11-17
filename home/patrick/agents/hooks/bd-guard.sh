@@ -80,10 +80,14 @@ word='([[:space:];&|)'\''"]|$)'
 bare="$position[[:space:]]*([^[:space:];&|()'\"]*/)?bd$word"
 bodies=$(grep -Eo -- "-c[[:space:]]+('[^']*'|\"[^\"]*\")" <<<"$cmd" | sed -E 's/^-c[[:space:]]+.(.*).$/\1/' || true)
 if grep -Eq "$bare" <<<"$stripped" || { [[ -n "$bodies" ]] && grep -Eq "$bare" <<<"$bodies"; }; then
-  # board bd refuses raw item reads (show, view, comment listings): name their replacement directly.
+  # board bd refuses raw item reads (show, view, comment listings); it runs bd read-only, so a write has a board verb: name the replacement directly.
   reads="$position[[:space:]]*([^[:space:];&|()'\"]*/)?bd[[:space:]]+(show|view|comments[[:space:]]+([^a[:space:];&|-]|a[^d[:space:]]|ad[^d[:space:]]|add[^[:space:];&|]))"
   if grep -Eq "$reads" <<<"$stripped" || { [[ -n "$bodies" ]] && grep -Eq "$reads" <<<"$bodies"; }; then
     deny 'read items with `$HOME/.agents/bin/board show <ids> [--section …] [--field …] [--comments] [--full]`; other bd commands run as `$HOME/.agents/bin/board bd <same args>`.'
+  fi
+  verbs="$position[[:space:]]*([^[:space:];&|()'\"]*/)?bd[[:space:]]+(create|new|q|close|done|comments?[[:space:]]+add|comment|update|dep[[:space:]]+(add|remove|rm|relate)|link|reopen|defer|undefer|gate[[:space:]]+(create|resolve)|label[[:space:]]+(add|remove|rm))$word"
+  if grep -Eq "$verbs" <<<"$stripped" || { [[ -n "$bodies" ]] && grep -Eq "$verbs" <<<"$bodies"; }; then
+    deny 'run bd as `$HOME/.agents/bin/board bd <same args>`; every write has a board verb (`board create`, `board field`, `board update`, `board comment`, `board close`, `board reopen`, `board claim`, `board block`, `board unblock`, `board link`, `board unlink`, `board defer`, `board gate`); `board bd` runs bd read-only and names the verb when bd refuses a write.'
   fi
   deny 'run bd as `$HOME/.agents/bin/board bd <same args>`.'
 fi

@@ -2,7 +2,7 @@
 // description, notes on tool results, compaction instructions). Lens names and focus follow
 // skills/step-back/SKILL.md and skills/ground/SKILL.md, which own them: typed name = label in
 // lowercase with hyphens.
-import type { ConsoleBoard, ConsoleCount, ConsoleCr, ConsoleItemSlot, ConsoleQuestion, ConsoleReviewTree, ConsoleRole, ConsoleRound, ConsoleSuggestion } from '../types'
+import type { ConsoleBoard, ConsoleCount, ConsoleCr, ConsoleItemSlot, ConsoleQuestion, ConsoleReview, ConsoleRole, ConsoleRound, ConsoleSuggestion } from '../types'
 
 import { isRoundOpen, START_COMMAND } from './engine'
 
@@ -415,14 +415,14 @@ export const crNewCountText = (cr: ConsoleCr): string | null => cr.check.newFail
 /** What the row leaves out: marks that are no problem (lands with <id>). */
 export const crQuietMarks = (cr: ConsoleCr, prefix: string | null = null): string[] => crMarks(cr, prefix).filter(mark => !mark.isProblem).map(mark => mark.text)
 
-/** The review tree's state for this request: null while it is not the one open there. */
-export const crTreeText = (cr: ConsoleCr, reviewing: ConsoleReviewTree | null): string | null =>
-  reviewing?.cr !== cr.id ? null : reviewing.end === cr.tip ? 'in review tree' : 'review tree behind'
+/** The mark of a request or ratification open for your review (from the board's `review`): `in review`, `, edited` once you changed it; null while it is not open. */
+export const crTreeText = (item: { review: ConsoleReview | null }): string | null =>
+  item.review === null ? null : `in review${item.review.edited === true ? ', edited' : ''}`
 
-/** The opened summary's details line for a change request: the accept stage the row leaves out, look, view, failure counts, then the quiet marks and the review tree's state; null when none is known. */
-export function crDetailsText(cr: ConsoleCr, reviewing: ConsoleReviewTree | null, prefix: string | null = null): string | null {
+/** The opened summary's details line for a change request: the accept stage the row leaves out, look, view, failure counts, then the quiet marks and its review mark; null when none is known. */
+export function crDetailsText(cr: ConsoleCr, prefix: string | null = null): string | null {
   const { baseCount, tipCount } = cr.check
-  const parts = [isCrAccepting(cr) ? crStageText(cr) : null, crLookText(cr), baseCount === null || tipCount === null ? null : `base ${baseCount}, tip ${tipCount}`, crCheckKindText(cr), ...crQuietMarks(cr, prefix), crTreeText(cr, reviewing)].filter(part => part !== null)
+  const parts = [isCrAccepting(cr) ? crStageText(cr) : null, crLookText(cr), baseCount === null || tipCount === null ? null : `base ${baseCount}, tip ${tipCount}`, crCheckKindText(cr), ...crQuietMarks(cr, prefix), crTreeText(cr)].filter(part => part !== null)
   return parts.length === 0 ? null : parts.join(' · ')
 }
 
@@ -446,14 +446,12 @@ export function crFailuresText(cr: ConsoleCr): string | null {
   return `${newFailures.length} new: ${named}${newFailures.length > 3 ? ', …' : ''}${counts}`
 }
 
-/** The request's row mark while the review tree holds it (only a deciding session that claims it refreshes it); null otherwise. */
-export const crHeldText = (cr: ConsoleCr): string | null => cr.heldByReviewTree ? 'held by your review tree' : null
-
 /** What holds the request up besides its check, each with its colour: setup failed, review stale (waiting for its Accept), land blocked (paths, first three), lands with its base. */
 export function crMarks(cr: ConsoleCr, prefix: string | null = null): { text: string; isProblem: boolean }[] {
   const blocked = cr.landBlocked ?? []
   return [
     ...(cr.setupFailed ? [{ text: 'setup failed', isProblem: true }] : []),
+    ...(cr.worktreeBlocked !== null ? [{ text: `mid ${cr.worktreeBlocked} (not the board's)`, isProblem: true }] : []),
     ...(isCrAccepting(cr) && cr.reviewState === 'stale' ? [{ text: 'review stale', isProblem: true }] : []),
     ...(blocked.length > 0 ? [{ text: `land blocked: ${blocked.slice(0, 3).join(', ')}${blocked.length > 3 ? ', …' : ''}`, isProblem: true }] : []),
     ...(cr.after !== null ? [{ text: `lands with ${displayId(cr.after, prefix)}`, isProblem: false }] : []),
@@ -485,22 +483,23 @@ export const isCrAccepting = (cr: ConsoleCr): boolean => cr.status === 'needs_ac
 /** Refreshing is review work: offered only on the request the board marks as refresh work, in a session that pulls reviews. */
 export const canRefreshCr = (cr: ConsoleCr, pulls: readonly string[]): boolean => cr.refreshWork && pulls.includes('review')
 
-/** Your review-tree edits a press carries: the tree and the tip they were made against. */
+/** Your review edits a press carries: the worktree and the tip the review was opened at, which they are against. */
 export type ReviewEditsRef = { tree: string; tip: string }
 
-/** The line the session runs to read the edits (and with --commit, to commit them: decide.md step 4). */
-export const editsLine = (cr: ConsoleCr, edits: ReviewEditsRef): string => `board cr edits ${cr.id} --from ${edits.tree} --tip ${edits.tip}`
+/** The line the session runs to read the edits; Accept adds `--commit -m "<msg>" <gate>` (decide.md step 4). */
+export const editsLine = (cr: ConsoleCr, edits: ReviewEditsRef): string => `board cr edits ${cr.id} --tip ${edits.tip}`
 
-/** The Accept request for the lead (decide.md Accept), naming the tip it was looked at in so a moved branch is refused, and the edits you made in the review tree. A design without a branch has no tip to name. */
+/** The Accept request for the lead (decide.md Accept), naming the tip it was looked at in so a moved branch is refused, and the edits you made in the review. A design without a branch has no tip to name. */
 export function acceptText(cr: ConsoleCr, tip: string | null, edits: ReviewEditsRef | null = null): string {
   if (cr.checkpoint === 'user') return `Accept the design of ${cr.id} (${cr.title})${tip === null ? '' : ` at ${short(tip)}`}: planning continues in the same request, nothing lands.`
-  const accept = `Accept ${cr.id} (${cr.title}) at ${short(tip ?? '')}: land it.`
-  return edits === null ? accept : `${accept} I edited it in the review tree ${edits.tree}: read my edits with \`${editsLine(cr, edits)}\`, check and commit them as decide.md says, then land.`
+  const land = `board cr land ${cr.id} --tip`
+  if (edits === null) return `Accept ${cr.id} (${cr.title}): land it with \`${land} ${short(tip ?? '')}\`.`
+  return `Accept ${cr.id} (${cr.title}) at ${short(tip ?? '')}: I edited it in the review folder ${edits.tree}: read my edits with \`${editsLine(cr, edits)}\`, check and commit them (\`--commit -m "<msg>"\` with a gate) as decide.md says, then land it with \`${land} <the tip it prints>\`.`
 }
 export const returnText = (cr: ConsoleCr, edits: ReviewEditsRef | null = null): string =>
-  edits === null ? `Return ${cr.id} (${cr.title}): ` : `Return ${cr.id} (${cr.title}) with my edits from the review tree ${edits.tree}, which you commit without a check (\`${editsLine(cr, edits)}\`): `
+  edits === null ? `Return ${cr.id} (${cr.title}): ` : `Return ${cr.id} (${cr.title}) with my edits from the review folder ${edits.tree}, which you commit without a check (\`${editsLine(cr, edits)} --commit -m "<msg>"\`): `
 
-/** Whether the walk-through is the way in: a design (no branch to open) or a result view. Code opens in the review tree. */
+/** Whether the walk-through is the way in: a design (no branch to open) or a result view. Code opens for your review in its worktree. */
 export const isWalkCr = (cr: ConsoleCr): boolean => cr.checkpoint === 'user' || cr.view === 'result'
 export const walkText = (cr: ConsoleCr): string => cr.checkpoint === 'user' ? `Walk me through ${cr.id}'s design (${cr.title}).` : `Walk me through ${cr.id}'s result (${cr.title}).`
 export const refreshText = (cr: ConsoleCr): string => `Refresh ${cr.id} under the review protocol's Refresh.`
@@ -522,14 +521,14 @@ export const crPriorityHint = (cr: ConsoleCr, prefix: string | null): string | n
 export const fitText = (value: string, width: number): string => value.length <= width ? value : `${value.slice(0, Math.max(1, width - 1)).trimEnd()}…`
 
 /** One change request as a text line: state only, since a text reader presses nothing. */
-export function crLine(cr: ConsoleCr, depth: number, reviewing: ConsoleReviewTree | null, prefix: string | null = null): string {
-  const tree = crTreeText(cr, reviewing)
-  const parts = [crStageText(cr), crPriorityText(cr), crUnblocksText(cr), cr.milestone, crCheckText(cr), crFailuresText(cr), crLookText(cr), tree, crHeldText(cr), cr.holder === null ? null : `held by ${cr.holder}`].filter(part => part !== null)
+export function crLine(cr: ConsoleCr, depth: number, prefix: string | null = null): string {
+  const tree = crTreeText(cr)
+  const parts = [crStageText(cr), crPriorityText(cr), crUnblocksText(cr), cr.milestone, crCheckText(cr), crFailuresText(cr), crLookText(cr), tree, cr.holder === null ? null : `held by ${cr.holder}`].filter(part => part !== null)
   return `${'  '.repeat(depth + 1)}${displayId(cr.id, prefix)}  ${cr.title} · ${parts.join(' · ')}`
 }
 
 /** `/console` as text: what the pane shows, for a bridge client or a narrow terminal. */
-export function consoleText(role: ConsoleRole, board: ConsoleBoard | null, round: ConsoleRound | null, isRoundRole: boolean, offered: readonly ConsoleSuggestion[], reviewing: ConsoleReviewTree | null = null): string {
+export function consoleText(role: ConsoleRole, board: ConsoleBoard | null, round: ConsoleRound | null, isRoundRole: boolean, offered: readonly ConsoleSuggestion[]): string {
   const prefix = board?.prefix ?? null
   const shown = (id: string) => displayId(id, prefix)
   const lines: string[] = [`Board · ${role.role} ${role.actor}${board?.isMissing === true ? ' · no board' : ''}`]
@@ -553,7 +552,7 @@ export function consoleText(role: ConsoleRole, board: ConsoleBoard | null, round
     if (board.error !== null) lines.push(`  board error: ${board.error}`)
     if (board.crs.length > 0 || board.queued > 0 || board.waitingOnYou > 0) {
       lines.push('', `Change requests · ${crSummaryText(board)}`)
-      for (const { cr, depth } of crRows(board.crs)) lines.push(crLine(cr, depth, reviewing, prefix))
+      for (const { cr, depth } of crRows(board.crs)) lines.push(crLine(cr, depth, prefix))
     }
     if (board.ratifications.length > 0) {
       lines.push('', 'To ratify')

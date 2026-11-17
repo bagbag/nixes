@@ -13,17 +13,20 @@ description: >-
 
 Own user-facing orchestration; the `second-opinion` agent owns the judgment and
 report. Use `explore-options` for a broader solution space; treat its result as
-context, not independent review. Apply [Reviewers](#reviewers) throughout.
+context, not independent review. Apply [Reviewers](../shared/reviewers.md#reviewers) throughout; read
+`$HOME/.agents/skills/shared/reviewers.md` unless its text is already in your
+context.
 
 ## 1. Frame
 
+- Read `$HOME/.agents/skills/shared/decision-protocol.md` unless its text is
+  already in your context.
 - Inspect the cheapest orientation sources. Brief neutrally: the exact
   decision, proposal or claim; committed goal, product boundary, constraints
   and non-goals; authoritative sources and current empirical facts; opinion or
   strict sign-off.
-- Write long briefs to a file. For a substantive assessment, assign its output
-  path (AGENTS.md Orchestration and delegation) and expected content; keep
-  short opinions in the response.
+- Write long briefs to a file. For a substantive assessment, assign an output
+  path and expected content; keep short opinions in the response.
 
 Output: the neutral brief or its path.
 
@@ -49,14 +52,11 @@ Output: agent dispatched, depth.
 
 ## 3. Return
 
-- Spot-check load-bearing evidence; apply the [Decision protocol](#decision-protocol)
-  to premises and alternatives.
+- Spot-check load-bearing evidence; apply the
+  [Decision protocol](../shared/decision-protocol.md#decision-protocol) to
+  premises and alternatives.
 - Return the options, your recommendation after considering them, preserved
   disagreements with what changed or stayed persuasive, and remaining decisions
   for the user. The opinion authorizes nothing.
 
 Output: options, recommendation, disagreements, remaining decisions.
-
-<!-- @include shared/decision-protocol.md -->
-
-<!-- @include shared/reviewers.md -->

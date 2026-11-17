@@ -5,7 +5,7 @@ import re
 
 from .base import (
     DESCRIPTION_LIMIT, DESCRIPTION_MAX, HEADER_MAX, KINDS, MAY_NOT_APPLY, ProtocolError, STAGED_KINDS, STRENGTHS,
-    STRONG_CRITERIA, SUMMARY_MAX, TEXT_LIMIT, TEXT_MAX, TITLE_LIMIT, TITLE_MAX, band_warning
+    STRONG_CRITERIA, SUMMARY_MAX, TEXT_LIMIT, TEXT_MAX, TITLE_LIMIT, TITLE_MAX, band_warning, utcnow
 )
 from . import schema
 from .schema import CONTENT, PRESENTATION, SCHEDULING
@@ -55,7 +55,7 @@ def question_errors(q: dict, where: str, marks: bool = True, parts: tuple[str, .
                    for o in options if len(o.get('description', '')) > DESCRIPTION_LIMIT]
         if any('preview' in o for o in options):  # r10-q37
             errors.append(f'{where}: rename `preview` to `example`')
-    errors += [f'{where}: {text}' for text in schema.problems(schema.Question, q, 'multiSelect', 'waitsOn', 'waitsFor', 'board', 'settles')]
+    errors += [f'{where}: {text}' for text in schema.problems(schema.Question, q, 'multiSelect', 'waitsOn', 'waitsFor', 'board', 'settles', 'holds')]
     if q.get('kind', 'decision') not in KINDS:  # the form lists what a session stages; a stored release approval has the other kind
         errors.append(f"{where}: {schema.text_of(schema.Question, 'kind')}")
     if not marks:
@@ -137,7 +137,7 @@ def new_question(ctx: Context, raw: dict, where: str) -> dict:
     unknown = set(raw) - set(CONTENT) - {'key'}
     errors = [unknown_fields(where, unknown)] if unknown else []
     q = {'id': next_id(ctx.state, 'question', 'q'), 'board': None, 'kind': 'decision', 'multiSelect': False,
-         'waitsOn': [], 'waitsFor': None, 'for': None, 'settles': [], 'premises': None, 'priorRulings': None, 'recommendation': None, 'strength': None,
+         'waitsOn': [], 'waitsFor': None, 'for': None, 'settles': [], 'holds': [], 'premises': None, 'priorRulings': None, 'recommendation': None, 'strength': None,
          'leanBecause': None, 'strongBecause': None,
          **{k: v for k, v in raw.items() if k != 'key'},
          'status': 'draft', 'overlaps': [], 'searched': False, 'answer': None, 'round': ctx.round['id']}
@@ -285,16 +285,17 @@ def coverage_errors(ctx: Context) -> list[str]:
 MARK_FIELDS = ('recommendation', 'strength', 'leanBecause', 'strongBecause', 'options')
 
 
-def apply_updates(ctx: Context, updates) -> int:
+def apply_updates(ctx: Context, updates, answered_rulings: bool = False) -> int:
     """Applies a report's per-question updates, all or none (r23-q95): one refusal lists every error, and a refused call
     saves nothing. Returns the number of questions added, removed or changed in substance (PRESENTATION and SCHEDULING edits apply but do
-    not count); `ctx.applied` lists the question of each update that applied."""
+    not count); `ctx.applied` lists the question of each update that applied. `answered_rulings`: the pass after the last answer, whose
+    updates may also change the `rulings` of an answered, unrecorded question (r7-q27)."""
     if not isinstance(updates, list):
         fail('`updates` must be a list')
     changes, keys, errors, placed, touched = 0, {}, [], [], []
     for index, update in enumerate(updates):
         try:
-            changed, qid = apply_update(ctx, update, f'updates[{index}]', keys)
+            changed, qid = apply_update(ctx, update, f'updates[{index}]', keys, answered_rulings)
         except ProtocolError as error:
             errors.append(str(error))
             continue
@@ -331,12 +332,48 @@ def place_before(ctx: Context, qid: str, target: str, where: str) -> None:
     listed.insert(listed.index(other), q)
 
 
-def apply_update(ctx: Context, update, where: str, keys: dict) -> tuple[int, str]:
+def retire(ctx: Context, q: dict, update: dict, where: str) -> None:
+    """A pass finds the question's point entailed (r3-q18): the question stays in the round as answered by the session's
+    disclosed ruling (origin `session`), so it covers its point, shows, is walked through once and is recorded like any answered
+    question (board item included); the release lists its ruling with the own rulings."""
+    if not str(update.get('reason') or '').strip():
+        fail(f'{where}: a retiring `ruling` needs the `reason` the point is entailed')
+    selected = set(ctx.round['selected'])
+    ruling = {k: update['ruling'][k].strip() for k in DISCLOSURE}
+    covers = [key for key in dict.fromkeys([q['board'], q['for'], *(q.get('settles') or [])]) if key in selected]
+    q.pop('unchecked', None)
+    q.update(status='answered', answer=ruling['ruling'], origin='session', quote=None, answeredAt=utcnow(), rulings=[ruling],
+             retired={'reason': update['reason'].strip(), 'covers': covers})
+    ctx.state['answers'][q['id']] = q['answer']
+
+
+def change_rulings(ctx: Context, q: dict, update: dict, where: str) -> tuple[int, str]:
+    """After the last answer my rulings on an answered question may change; the answer and its options stay the user's (r7-q27).
+    Logged, and the record and the release carry it: the release asks the user even when every ruling is sure."""
+    if q.get('retired'):
+        fail(f"{where}: {q['id']} is retired: its ruling is its answer (the engine lists it with the own rulings)")
+    if extra := set(update) - {'id', 'rulings'}:
+        fail(f"{where}: {q['id']} is answered; this pass may change only its `rulings`, not {', '.join(sorted(extra))} "
+             f"(anything else: restart it first, protocol restart {q['id']})")
+    if 'rulings' not in update:
+        return 0, q['id']
+    rulings = update['rulings'] or []
+    refuse_all(part_errors({**q, 'rulings': rulings}, f"{where} ({q['id']})", ('rulings',)))
+    if rulings == (q.get('rulings') or []):
+        return 0, q['id']
+    ctx.log('rulings-changed', question=q['id'], was=q.get('rulings') or [], now=rulings)
+    q.update(rulings=rulings, rulingsChanged=True)
+    return 1, q['id']
+
+
+def apply_update(ctx: Context, update, where: str, keys: dict, answered_rulings: bool = False) -> tuple[int, str]:
     """One update; returns (1 for a substantive change, else 0; the question's id)."""
     if not isinstance(update, dict):
         fail(f'{where}: must be an object')
-    if bad := schema.problems(schema.Update, update, 'id', 'remove', 'reason', 'before'):
+    if bad := schema.problems(schema.Update, update, 'id', 'remove', 'reason', 'before', 'ruling'):
         fail(f'{where}: {bad[0]}')
+    if update.get('ruling') and not update.get('remove'):
+        fail(f'{where}: `ruling` goes with `remove`: it retires the question as your disclosed ruling')
     if 'id' not in update:
         q = new_question(ctx, {k: v for k, v in update.items() if k != 'before'}, where)
         ctx.round['questions'].append(q)
@@ -344,16 +381,22 @@ def apply_update(ctx: Context, update, where: str, keys: dict) -> tuple[int, str
         q['status'] = 'draft'
         return 1, q['id']
     q = by_id(ctx, update['id'])
+    if answered_rulings and q['status'] == 'answered' and not q.get('recorded'):
+        return change_rulings(ctx, q, update, where)
     if q['status'] in ('asked', 'answered'):
         fail(f"{where}: {q['id']} is {q['status']}; restart it first (protocol restart {q['id']})")
     if update.get('remove'):
+        if update.get('ruling'):
+            retire(ctx, q, update, where)
+            ctx.log('retired', question=q['id'], reason=update.get('reason'))
+            return 1, q['id']
         ctx.round['questions'].remove(q)
         ctx.log('removed', question=q['id'], reason=update.get('reason'))
         return 1, q['id']
     unknown = set(update) - set(CONTENT) - {'id', 'reason'}
     if unknown:
         fail(unknown_fields(where, unknown))
-    merged = {**q, **{k: [] if v is None and k in ('waitsOn', 'settles') else v for k, v in update.items() if k in CONTENT}}  # the lists new_question defaults to []
+    merged = {**q, **{k: [] if v is None and k in ('waitsOn', 'settles', 'holds') else v for k, v in update.items() if k in CONTENT}}  # the lists new_question defaults to []
     check_question(merged, f"{where} ({q['id']})", marks=any(k in update for k in MARK_FIELDS),
                    parts=tuple(k for k in PARTS if k in update))
     ctx.messages += question_warnings(merged, update)

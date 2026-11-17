@@ -49,7 +49,7 @@ def select_files(folder: Path, ids: list[str]) -> list[str]:
         if not open_stems:
             fail(f"no default set: " + (f"every record of the newest round {stems[0].split('-')[0]} in {folder} is released"
                                          if stems else f'{folder} holds no record files')
-                 + '; name the ids: `protocol start release --no-board <dir> <id> …`')
+                 + '; name the ids: `protocol start release --no-board <id> …`')
         return open_stems
     chosen, problems = [], []
     for one in dict.fromkeys(ids):

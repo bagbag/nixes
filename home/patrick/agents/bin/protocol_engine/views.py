@@ -74,7 +74,7 @@ def show_json(ctx: Context) -> dict:
     r = ctx.round
     base = {'version': VERSION, 'session': ctx.store.session, 'protocol': None, 'round': None, 'title': None,
             'summary': None, 'subject': None, 'step': None,
-            'check': None, 'pending': None, 'questions': [], 'batch': None, 'counts': ctx.state.get('counts'),
+            'check': None, 'pending': None, 'questions': [], 'retired': [], 'batch': None, 'counts': ctx.state.get('counts'),
             'progress': None, 'log': [], 'records': [], 'stopped': stopped_view(r), 'next': None}
     if not r or r['step'] == 'closed':  # contract-rulings R-B3: no open round
         return {**base, 'next': next_run(ctx)}
@@ -86,13 +86,14 @@ def show_json(ctx: Context) -> dict:
             'pending': pending_view(ctx),
             'questions': [{'id': q['id'], 'board': q['board'], 'text': q['text'], 'title': q['title'], 'kind': q['kind'],
                            'status': q['status'], 'waitsOn': q['waitsOn'],
-                           'waitsFor': q.get('waitsFor'), 'settles': q.get('settles') or [], 'overlaps': q['overlaps'],
+                           'waitsFor': q.get('waitsFor'), 'settles': q.get('settles') or [], 'holds': q.get('holds') or [], 'overlaps': q['overlaps'],
                            'answer': q['answer'],
                            'answeredAt': q.get('answeredAt') if q['answer'] is not None else None,
                            'changedBy': (r.get('lastPass') or {}).get('pass') if q['id'] in (r.get('lastPass') or {}).get('questions', []) else None,
                            'recommendation': q.get('recommendation'), 'strength': q.get('strength'),
                            'leanBecause': q.get('leanBecause'), 'strongBecause': q.get('strongBecause')}
                           for q in r['questions']],
+            'retired': words.retired_points(r),
             'batch': {'marker': r['batch']['marker'], 'questions': r['batch']['questions'], 'notice': r['batch'].get('notice') or ''}
             if r['batch'] else None,
             'progress': progress(ctx) if r['protocol'] == 'round' else None, 'log': round_log(ctx),

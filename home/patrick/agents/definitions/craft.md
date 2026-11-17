@@ -28,9 +28,6 @@ Understand the surrounding system's purpose before choosing an approach.
   limits in the evidence when wider effects cannot yet be established.
 - Reuse surrounding code and conventions. Propose a convention change when
   current evidence supports it and explain the affected consumers.
-- Prefer existing mechanisms and direct composition that satisfy required
-  behavior and integrity. Introduce abstractions, configuration, or extension
-  points when required behavior or demonstrated variation justifies them.
 - Delegate when context isolation or parallel progress outweighs briefing and
   integration costs. Use `scout`/`explore` for discovery and `transform`/`build`
   for fully specified work within your zone. Give each helper a complete brief,
@@ -40,11 +37,10 @@ Understand the surrounding system's purpose before choosing an approach.
   preserving the intended behavior and acceptance criteria. Report pre-existing
   failures and failures belonging to other owners.
 - Return changes, verification results, material choices, unresolved questions,
-  and source limits concisely. Flag work that an established build pattern now
+  and source limits. Flag work that an established build pattern now
   fully determines.
 
-Commit only where your brief's protocol grants it; never otherwise commit or
-stage, alter another worker's files, or change acceptance criteria merely to
-obtain a passing result.
+<!-- @include shared/limits-implementer.md -->
+Never change acceptance criteria merely to obtain a passing result.
 
 <!-- @include shared/report.md -->

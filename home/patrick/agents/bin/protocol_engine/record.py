@@ -5,11 +5,11 @@ import json
 import re
 from pathlib import Path
 
-from .base import AWAY, ProtocolError, REVISES, lines, utcnow
+from .base import AWAY, ProtocolError, lines, utcnow
 from . import schema, words
-from .boards import held_decided, read_counts, split_holds, statuses
+from .boards import held_decided, read_counts, statuses
 from .engine import Context, by_id, fail, questions
-from .questions import board_keys
+from .questions import apply_updates, board_keys, refuse_all
 from .render import question_parts
 from .told import report_hint
 
@@ -75,12 +75,43 @@ def record_text(ctx: Context) -> str:
         words.record_intro(ctx.round['id']),
         *rows,
         *(words.record_deferred(qid, found) for qid, found in deferrals(ctx).items()),
+        *([words.record_landed(outside)] if (outside := [qid for qid, found in deferrals(ctx).items() if found['kind'] == 'outside']) else []),
         words.RECORD_GIVE,
         report_hint(ctx, 'record', words.record_example(todo[:1])),
     )
 
 
-def record_file(q: dict, fields: dict) -> str:
+TOPIC_LINE = re.compile(r'\ATopic: (.*)\n')
+
+
+def record_topic(path: Path) -> str | None:
+    """The topic a record file's header names; a file of an old topic folder has the folder's name."""
+    head = path.read_text(encoding='utf-8')[:2000]
+    return found[1] if (found := TOPIC_LINE.match(head)) else None
+
+
+def topic_records(folder: Path, topic: str) -> list[Path]:
+    """The record files of `topic` in the records folder, archive subfolders included (read-only: each names its topic by its folder)."""
+    wanted = ' '.join(topic.split())
+    files = sorted(path for path in folder.rglob('*.md') if path.is_file()) if folder.is_dir() else []
+    return [path for path in files if (path.relative_to(folder).parts[0] if path.parent != folder else record_topic(path)) == wanted]
+
+
+def write_record(q: dict, path: Path, text: str) -> None:
+    """A record file is created, never overwritten; only the rerun of a Record that wrote this question's file already rewrites it.
+    A file holding the very text is done: a crash between the write and the state save left it, and the rerun goes on."""
+    if q.get('recordFile') == str(path):
+        path.write_text(text, encoding='utf-8')
+        return
+    try:
+        with open(path, 'x', encoding='utf-8') as out:
+            out.write(text)
+    except FileExistsError:
+        if path.read_text(encoding='utf-8', errors='replace') != text:
+            fail(f'{path} exists: a record file is never overwritten')
+
+
+def record_file(q: dict, fields: dict, topic: str | None = None) -> str:
     chosen = q['answer'] or ''
     # AskUserQuestion answers carry the chosen labels (comma-joined for multiSelect) or the user's own words.
     picked = {part.strip() for part in chosen.split(',')}
@@ -89,20 +120,33 @@ def record_file(q: dict, fields: dict) -> str:
         f"- {o['label']}: {o['description']}".rstrip(': ') for o in q['options'] if o['label'] not in picked)
     question = section(prior, 'Question') if prior else q['text']
     source = {'dialog': 'User (dialog)', 'chat': 'User (chat)', 'model-reported': 'User (model-reported)',
-              AWAY: 'Away round (autopilot took the recommendation; no person answered)'}[q['origin']]
+              AWAY: 'Away round (autopilot took the recommendation; no person answered)',
+              'session': "Session's disclosed ruling (the point is entailed; no person answered)"}[q['origin']]
     quoted = f"{source}, {q.get('answeredAt', utcnow())[:10]}: \"{q.get('quote') or chosen}\""
     if q.get('strength') == 'strong' and isinstance(q.get('strongBecause'), dict):
         quoted = 'Recommended (strong): ' + '; '.join(f'{k} {v}' for k, v in q['strongBecause'].items()) + '\n\n' + quoted
-    return (f"## Question\n{question}\n\n## Alternatives Considered\n{alternatives or '- none offered'}\n\n"
+    if q.get('retired'):
+        covers = f" Covers {', '.join(q['retired']['covers'])}." if q['retired']['covers'] else ''
+        quoted += f"\n\nRetired as entailed: {q['retired']['reason']}.{covers}"
+    if q.get('skipped'):
+        quoted += f"\n\nChecks skipped: {q['skipped']}."
+    return ((f"Topic: {' '.join(topic.split())}\n\n" if topic else '') + f"## Question\n{question}\n\n## Alternatives Considered\n{alternatives or '- none offered'}\n\n"
             f"## Decision\n{fields.get('decision') or chosen}\n\n## Rationale\n{fields['rationale'].strip()}\n\n{quoted}\n\n"
             + (f"## Premises\n{q['premises'].strip()}\n\n" if (q.get('premises') or '').strip() else '')
             + (f"## Root\n{q['root'].strip()}\n\n" if (q.get('root') or '').strip() else '')
-            + ('## Own rulings\n' + '\n'.join(f'- {words.ruling_line(x)}' for x in q['rulings']) + '\n\n' if q.get('rulings') else '')
+            + ('## Own rulings\n' + '\n'.join(f'- {words.ruling_line(x)}' for x in q['rulings'])
+               + ('\n\n' + words.RULINGS_CHANGED if q.get('rulingsChanged') else '') + '\n\n' if q.get('rulings') else '')
             + ('## Earlier rulings\n' + '\n'.join(f"- {x['ruling'].strip()}: {x['verdict']}. {x['why'].strip()}" for x in q['priorRulings']) + '\n\n' if q.get('priorRulings') else '')
             + f"## Rule owner\n{fields['ruleOwner'].strip()}\n"
             + (f"\n## Reversal\n{fields['reversal'].strip()}\n" if q['origin'] == AWAY else '')
-            + (f"Reopen the questions it closed: `board bd reopen {' '.join(board_keys(q.get('settles')))}`.\n"
+            + (f"Reopen the questions it closed: `board reopen {' '.join(board_keys(q.get('settles')))}`.\n"
                if q['origin'] == AWAY and board_keys(q.get('settles')) else ''))
+
+
+def mark_changed_rulings(ctx: Context, q: dict, record: str) -> None:
+    """The record whose own rulings changed after the user's answer (r7-q27): the release asks the person about it."""
+    if q.get('rulingsChanged'):
+        ctx.state.setdefault('rulingChanges', {})[record] = q['id']
 
 
 def record_tag(ctx: Context, q: dict) -> str:
@@ -132,19 +176,26 @@ def board_item(ctx: Context, q: dict, path: Path, body: str | None = None, plain
     tag = record_tag(ctx, q)
     if found := tagged_item(ctx, tag):
         q['board'] = found
+        # A rerun after a create whose block edges did not all land: board block is idempotent, an item closed meanwhile needs none.
+        held = [item for item, status in statuses(ctx, list(q.get('holds') or [])).items() if status != 'closed'] if q.get('holds') else []
+        if held:
+            ctx.board.checked('block', *held, '--on', found, '--reason', f'{found} holds it up until answered or its ruling is planned.')
         return found
     packet = path.with_suffix('.packet.md')
     packet.write_text(body or f"## Question\n{q['text']}\n\nOptions: " + '; '.join(o['label'] for o in q['options'])
                       + f"\n\nStaged in round {ctx.round['id']}.\n", encoding='utf-8')
     # The released record it revises, else the first record it closes: the new question is linked to it (parent and topic
-    # labels come from it) until Record closes it; link_record links the other records it closes the same way.
+    # labels come from it) until `ruling record --replaces` closes it, which links and closes the other records it replaces.
+    holds = ','.join(q.get('holds') or []) or 'none'
     revised = None if plain else q.get('revises') or next(iter(q.get('replaces') or []), None)
     if revised:
-        new = ctx.board.checked('ruling', 'revise', revised, '--title', q['title'], '--body-file', str(packet), '--external-ref', tag).strip()
+        new = ctx.board.checked('ruling', 'revise', revised, '--title', q['title'], '--body-file', str(packet), '--external-ref', tag, '--holds', holds).strip()
     else:
-        created = json.loads(ctx.board.checked('bd', 'create', '--type', 'decision', '--title', q['title'],
-                                               '--body-file', str(packet), '--external-ref', tag, '--json') or '{}')
-        new = created.get('id') if isinstance(created, dict) else None
+        plan = packet.with_suffix('.plan.json')
+        plan.write_text(json.dumps({'nodes': [{'key': 'question', 'title': q['title'], 'type': 'decision', 'external_ref': tag,
+                                               'description': packet.read_text(encoding='utf-8')}]}), encoding='utf-8')
+        ctx.board.checked('create', '--graph', str(plan), '--holds', holds)
+        new = tagged_item(ctx, tag)  # by the tag, as a rerun after a cut create finds it: the create's output is not parsed
     if not new:
         fail(f"{q['id']}: the board returned no id for the new question")
     q['board'] = new
@@ -175,20 +226,24 @@ def inherited_blocks(ctx: Context, q: dict) -> list[str]:
 
 
 def link_record(ctx: Context, q: dict) -> None:
-    """Relates the question's item to its `relate` hits and gives it the inherited blocks, in one batch; retried on a
-    rerun until it succeeded once. bd keeps one edge per pair: a blocks link wins over a relate."""
+    """Relates the question's item to its `relate` hits and gives it the inherited blocks; retried on a rerun until it succeeded once
+    (a pair already linked is left). bd keeps one edge per pair: a blocks link wins over a relate. The replaced records are not here:
+    `ruling record --replaces` links and closes them."""
     if not q.get('linked'):
+        item = q['board']
         blocks = inherited_blocks(ctx, q)
         taken = {frozenset(op.split()[2:4]) for op in blocks}
-        relate = [h['id'] for h in q['overlaps'] if h['outcome'] == 'relate' and frozenset((q['board'], h['id'])) not in taken]
-        # A record the question closes stays linked (as a revision) until Record closes it: a Record that stops before the
-        # close leaves a link `board ruling release` refuses to pass, not two unrelated decided records.
-        linked_now = q.get('revises') or next(iter(q.get('replaces') or []), None)
-        pending = [old for old in q.get('replaces') or [] if old != linked_now]
-        operations = [*(f"dep add {q['board']} {hit} relates-to" for hit in relate), *blocks,
-                      *(f"dep add {q['board']} {old} {REVISES}" for old in pending)]
-        if operations:
-            ctx.board.checked('bd', 'batch', '-m', f"protocol: link {q['board']}", '--json', stdin=''.join(f'{op}\n' for op in operations))
+        relate = [h['id'] for h in q['overlaps'] if h['outcome'] == 'relate' and frozenset((item, h['id'])) not in taken]
+        if relate:  # the links already there are read once, only when there is a link to make
+            have = {frozenset((dep['issue_id'], dep['depends_on_id'])) for row in ctx.board.json('show', item, '--json', '--field', 'dependencies').values()
+                    for dep in (row or {}).get('dependencies') or []}
+            relate = [hit for hit in relate if frozenset((item, hit)) not in have]
+        for hit in relate:
+            ctx.board.checked('link', item, hit, '--type', 'relates-to')
+        for op in blocks:  # `dep add <waiting> <blocker> blocks`: the hold board block makes
+            _, _, waiting, blocker, _ = op.split()
+            reason = [] if blocker == item else ['--reason', f'{item} waits on {blocker} as the items it settles did.']
+            ctx.board.checked('block', waiting, '--on', blocker, *reason)
     q['linked'] = True
 
 
@@ -202,7 +257,7 @@ def close_settled_away(ctx: Context, q: dict, item: str) -> None:
     done = q.setdefault('closedSettled', [])
     for key in board_keys(q.get('settles')):
         if key not in done:
-            ctx.board.checked('bd', 'close', key, '--reason', f'Settled by away ruling {item}, awaiting ratification')
+            ctx.board.checked('close', key, '--reason', f'Settled by away ruling {item}, awaiting ratification')
             done.append(key)
 
 
@@ -210,39 +265,6 @@ def move_settled(ctx: Context, item: str, keys: list[str]) -> None:
     """The items a record settles, which stay claimed until a release closes them by that record."""
     settles = ctx.state.setdefault('settles', {})
     settles[item] = list(dict.fromkeys([*settles.get(item, []), *keys]))
-
-
-def close_replaced(ctx: Context, q: dict, item: str) -> None:
-    """Closes each decided record the recorded question replaces: `board ruling supersede <old> --with <item>` once `item` is
-    written and decided (it closes the old record and blocks the items waiting on it on the new one; a pending revision
-    of the old record moves to the new one). The items the old record settles move to the new record, or they stay
-    claimed with no release to close them. Repeatable: a record closed already is done. A hold of a gone session is
-    taken; a live one's is refused."""
-    todo = [old for old in q.get('replaces') or [] if old not in q.setdefault('closed', [])]
-    if not todo:
-        return
-    rows = ctx.board.json('show', *todo, '--json', '--field', 'status', '--field', 'assignee')
-    held = split_holds(ctx, {old: (rows.get(old) or {}).get('assignee') or '' for old in todo if (rows.get(old) or {}).get('status') != 'closed'})
-    if held[0]:
-        fail(f"{', '.join(f'{rid} (held by {holder})' for rid, holder in held[0].items())} closes with this record, and another "
-             'live session holds it; ask that session to hand it off (board unclaim), then report again')
-    for old in todo:
-        status = (rows.get(old) or {}).get('status')
-        if status == 'closed':
-            pass
-        elif status != 'decided':
-            fail(f"{old} is {status}, not decided: it changed since Related, so it cannot close here")
-        else:
-            if old in held[1]:
-                ctx.board.checked('take', old)
-            result = ctx.board.run('ruling', 'supersede', old, '--with', item)
-            after = (ctx.board.json('show', old, '--json', '--field', 'status').get(old) or {}).get('status')
-            if after != 'closed':  # a failure before bd closed it; a later failure (blocks) leaves it closed
-                fail(f"`board ruling supersede {old} --with {item}` exited {result.returncode}: {(result.stderr or result.stdout).strip()}")
-            if result.returncode != 0:
-                ctx.messages.append(words.supersede_exited(old, item, result.returncode, (result.stderr or result.stdout).strip()))
-        move_settled(ctx, item, ctx.state.get('settles', {}).pop(old, []))
-        q['closed'].append(old)
 
 
 def deferred_text(ctx: Context, q: dict, found: dict) -> str:
@@ -262,7 +284,7 @@ def file_deferral(ctx: Context, q: dict, found: dict, folder: Path) -> None:
         if item in claimed:
             ctx.board.checked('unclaim', item)
             claimed.remove(item)
-        ctx.board.checked('bd', 'defer', item, '--reason', found['reason'], *(['--until', found['until']] if found['until'] else []))
+        ctx.board.checked('defer', item, '--reason', found['reason'], *(['--until', found['until']] if found['until'] else []))
         q['deferralItem'] = item
     q['recorded'] = 'deferred'
     ctx.log('deferred', question=q['id'], reason=found['reason'], until=found['until'], board=q.get('deferralItem'))
@@ -275,9 +297,35 @@ def checkpoint(ctx: Context) -> None:
     ctx.store.flush()
 
 
+LANDED_FIELDS = ('id', 'waitsFor', 'premises')
+
+
+def free_landed(ctx: Context, report: dict) -> str:
+    """A result a held question waits for landed before Record (r7-q26): its `updates` entry clears `waitsFor` (and may set
+    `premises`); the question takes the scoped check the freed ones take (r11-q42) and is asked in this round, so the report records
+    nothing. A result that does not land is still deferred below (r8-q31, r23-q91)."""
+    if 'records' in report:
+        fail(words.RECORD_OR_UPDATES)
+    schema.require(schema.Record, report, 'updates')
+    waiting = {q['id'] for q in questions(ctx, 'held') if q.get('waitsFor') and not q.get('recorded')}
+    errors = []
+    for index, update in enumerate(report['updates']):
+        where = f'updates[{index}]'
+        if set(update) - set(LANDED_FIELDS):
+            errors.append(f"{where} takes only `id`, `waitsFor` (null) and `premises`: the question is checked again after it")
+        elif update.get('id') not in waiting:
+            errors.append(f"{where}: {update.get('id')} is not waiting for an outside result")
+        elif 'waitsFor' not in update or update['waitsFor'] is not None:
+            errors.append(f'{where}: `waitsFor` must be null: the result landed (one that did not stays waiting and Record defers the question)')
+    refuse_all(errors)
+    apply_updates(ctx, report['updates'])
+    ctx.log('freed', questions=list(dict.fromkeys(ctx.applied)))
+    return 'ask'
+
+
 def record_accept(ctx: Context, report: dict) -> str:
-    if 'defer' in report:
-        fail('Record takes no `defer`: a deferral is `protocol defer` (stdin {"question", "quote", "until"?}), which Record then files')
+    if 'updates' in report:
+        return free_landed(ctx, report)
     schema.require(schema.Record, report)
     records = report.get('records') or {}
     found = deferrals(ctx)
@@ -321,10 +369,11 @@ def record_accept(ctx: Context, report: dict) -> str:
     errors = []
     for q in todo:
         path = folder / f"{ctx.round['id']}-{q['id']}.md"
-        path.write_text(record_file(q, records[q['id']]), encoding='utf-8')
+        write_record(q, path, record_file(q, records[q['id']], None if ctx.board else ctx.round.get('topic')))
         q['recordFile'] = str(path)
         if not ctx.board:
             q['recorded'] = 'file'
+            mark_changed_rulings(ctx, q, path.stem)
             ctx.log('recorded', question=q['id'], board=None, file=str(path), ok=True)
             checkpoint(ctx)
             continue
@@ -332,18 +381,29 @@ def record_accept(ctx: Context, report: dict) -> str:
             item = board_item(ctx, q, path)
             link_record(ctx, q)
             ctx.board.checked('claim', item)
-            ctx.board.checked('ruling', 'record', item, str(path), *(['--status', 'needs_ratification'] if q['origin'] == AWAY else []))
+            replaces = q.get('replaces') or []
+            result = ctx.board.run('ruling', 'record', item, str(path), *(['--status', 'needs_ratification'] if q['origin'] == AWAY else []),
+                                   *(['--replaces', ','.join(replaces)] if replaces else []))
+            if result.returncode != 0:
+                left = [old for old, status in statuses(ctx, replaces).items() if status != 'closed']
+                if left or not replaces:  # the record or a close did not happen: the rerun picks up what is left
+                    fail(f"`board ruling record {item}` exited {result.returncode}: {(result.stderr or result.stdout).strip()}")
+                ctx.messages.append(words.record_exited(item, result.returncode, (result.stderr or result.stdout).strip()))  # all closed: only the items waiting on the old ones are not blocked
             if q['origin'] == AWAY:
                 close_settled_away(ctx, q, item)
             elif board_keys(q.get('settles')):
                 move_settled(ctx, item, board_keys(q['settles']))  # the release closes them
-            close_replaced(ctx, q, item)  # a failed close leaves the question unrecorded: the rerun retries what is left
+            for old in replaces:  # the items the old record settles move to the new record, or they stay claimed with no release to close them
+                move_settled(ctx, item, ctx.state.get('settles', {}).pop(old, []))
             q['recorded'] = item
+            mark_changed_rulings(ctx, q, item)
+            if q.get('retired'):  # the release lists it with the own rulings, sure (r3-q18)
+                ctx.state.setdefault('sessionRulings', {})[item] = {'record': item, **q['rulings'][0], 'sure': True}
             (ctx.state.get('dropReasons') or {}).pop(item, None)  # a re-recorded record is back in the default set
         except ProtocolError as error:
             errors.append(f"{q['id']}: {error}")
         ctx.log('recorded', question=q['id'], board=q['board'], file=str(path), ok=bool(q.get('recorded')))
-        for old in [one for one in q.get('closed') or [] if one not in q.setdefault('reported', [])]:  # after the record's own line
+        for old in [one for one in (q.get('replaces') or []) if q.get('recorded') and one not in q.setdefault('reported', [])]:  # after the record's own line
             q['reported'].append(old)
             ctx.log('superseded', question=q['id'], old=old, new=q['board'], partial=None)
         checkpoint(ctx)

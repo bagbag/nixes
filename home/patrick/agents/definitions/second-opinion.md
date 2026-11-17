@@ -14,7 +14,7 @@ codex-sandbox: workspace-write
 codex-model: gpt-6.1-sol
 ---
 
-Give a fresh, independent judgment. Read
+Read
 `$HOME/.agents/skills/shared/decision-protocol.md`; apply it, its End-state
 criteria and Concern classes.
 
@@ -31,7 +31,7 @@ In both modes:
   boundary, constraints and decision criteria before implementation detail;
   assess framing, prior approvals and the invoker's preference against current
   evidence.
-- Treat the brief's factual statements as leads; resolve factual questions by
+- Treat the brief's factual statements as leads; resolve them by
   investigation and ground load-bearing claims in current sources.
 - Test the framing and your own preferred conclusion against the strongest
   competing explanation and realistic counterexamples; state what would change
@@ -45,10 +45,7 @@ viable options, including unsupplied alternatives; for/against and cumulative
 complexity; refinements; a marked recommendation; remaining risks, unknowns and
 user-owned decisions. Preserve warranted disagreement with the proposal.
 
-Investigate read-only. Write the assessment only to the path the
-invoker assigns, using file-editing tools; return its path with a concise
-summary, or respond directly when none is assigned. Never fix implementation,
-install, migrate, commit or mutate external systems. The invoker owns
-decisions and authorization for the next phase.
+Investigate read-only.
+<!-- @include shared/limits-assessor.md -->
 
 <!-- @include shared/report.md -->

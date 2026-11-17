@@ -84,8 +84,8 @@ def related_text(ctx: Context) -> str:
 def resolve_replaced(ctx: Context, q: dict) -> None:
     """What the question's `supersedes` hits mean, read from the board: a decided (unreleased) record closes at Record
     (`q['replaces']`); a released one is revised, replaced at its release (`q['revises']`, at most one). Refuses what
-    Record could not carry out: a record that is no ruling, a foreign live hold (`board ruling supersede` has no holder
-    check), more than one revision to carry onto the new record."""
+    `board ruling record --replaces` would refuse, before the user answers: a record that is no ruling, a foreign live hold, more
+    than one revision to carry onto the new record (the board judges them again at Record)."""
     hits = [h['id'] for h in q['overlaps'] if h['outcome'] == 'supersedes']
     q['replaces'], q['revises'] = [], None
     if not hits:

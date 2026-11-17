@@ -16,7 +16,7 @@ from .record import refresh_board
 from .release_files import release_files_enter
 from .ask import approval_question, approval_reasons, ask_enter, ask_text
 from .release_set import (
-    APPROVE, HOLD, in_set, recheck_accept, recheck_text, release_label, set_record, set_rows, start_release, stop
+    APPROVE, HOLD, in_set, recheck_accept, recheck_text, release_label, ruling_changes, set_record, set_rows, start_release, stop
 )
 from .release_checks import (
     board_check_accept, board_check_enter, board_check_text, own_rulings_accept, own_rulings_text, scoped_accept,
@@ -29,7 +29,7 @@ def release_question_text(ctx: Context) -> str:
     limits whatever the set holds; the notice before the dialog prints each ruling in full."""
     return words.release_question_text(len(in_set(ctx)), bool(ctx.round.get('source')),
                                        [x for x in ctx.round['rulings'] or [] if not x['sure']],
-                                       [rec for rec in ctx.round['set'] if rec['state'] == 'revised'])
+                                       [rec for rec in ctx.round['set'] if rec['state'] == 'revised'], ruling_changes(ctx))
 
 
 def approve(ctx: Context, origin: str, how: str, quote: str | None = None) -> str:
@@ -57,7 +57,7 @@ def approval_enter(ctx: Context) -> str | None:
         return 'ask'
     changed = [rec['id'] for rec in r['set'] if rec['state'] != 'set']
     unsure = [x for x in r['rulings'] or [] if not x['sure']]
-    if r['conditional'] and not changed and not unsure:
+    if r['conditional'] and not changed and not unsure and not ruling_changes(ctx):
         return approve(ctx, r['conditional']['origin'], '/release-round')
     if q is None:
         reasons = approval_reasons(ctx)
@@ -248,7 +248,7 @@ def release_enter(ctx: Context) -> str | None:
         return None
     still = [q for q in r['closes'] if now[q] != 'closed']
     if r['retry'] or still or any(now[rid] == 'decided' for rid in ids):
-        argv = ['ruling', 'release', *ids, *(['--closes', *(f"{q}={','.join(r['closes'][q])}" for q in still)] if still else [])]
+        argv = ['ruling', 'release', *ids, *(arg for q in still for arg in ('--closes', f"{q}={','.join(r['closes'][q])}"))]
         result = ctx.board.run(*argv)
         r['retry'] = result.returncode != 0
         ctx.log('board-release', records=ids, closes=still, exit=result.returncode)

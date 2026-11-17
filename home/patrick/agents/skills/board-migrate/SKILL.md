@@ -22,7 +22,7 @@ or other skills.
 
 1. **Scan.** Read-only, a few commands:
    - trackers: `TODO.md`, `REVIEW.md`, Markdown boards, `docs/` backlogs;
-   - board: `.beads/`, `board check --all` classes with counts, `board
+   - board: `.beads/`, `board check --limit 0` classes with counts, `board
      holders`, stored settings (`board bd config list`);
    - scratch: in-repo `.scratch` folders (count, size);
    - dirty main-tree paths.
@@ -35,8 +35,9 @@ or other skills.
 
 ## Target
 
-- Board model: [Board core](#board-core-beads) below; read
-  `$HOME/.agents/skills/shared/board-coordination.md`.
+- Board model: read `$HOME/.agents/skills/shared/board-core.md` and
+  `$HOME/.agents/skills/shared/board-coordination.md` unless their text is
+  already in your context.
 - Owners of knowledge, outstanding work, arc state and history:
   `$HOME/.agents/skills/shared/project-memory.md`.
 - Sessions enter through `/role`; read `$HOME/.agents/skills/role/SKILL.md` for
@@ -82,7 +83,7 @@ or other skills.
 ## Tracker
 
 1. **Discover.**
-   - Where a board exists, run `board check --all` for its mechanical
+   - Where a board exists, run `board check --limit 0` for its mechanical
      deviations and flags, and save one `board bd export` as
      `board-baseline.jsonl` in the plan's directory (step 2); derive every
      board mapping from it.
@@ -92,9 +93,9 @@ or other skills.
      rules, status or history; rules without an owner (including rules in
      force that live only in closed records); acceptance repeated across
      items (one task others wait on, or the epic acceptance); entries without
-     a deliberate priority (rank under [Priority](#priority)); user stops
+     a deliberate priority (rank under [Priority](../shared/board-core.md#priority)); user stops
      stated in comments or deferral reasons (convert those in force under
-     [Dependencies](#dependencies) or
+     [Dependencies](../shared/board-core.md#dependencies) or
      [Deferrals and environment facts](../shared/board-coordination.md#deferrals-and-environment-facts),
      drop lifted ones); `board bd memories` past their removal condition (to
      the user).
@@ -129,7 +130,7 @@ or other skills.
    its owner.
    Output: one line per applied part; each moot close with its reason.
 5. **Reconcile.** Compare counts per source with the target and history; read
-   back mapped dependencies (`board bd dep list <id>`); run `board check --all`
+   back mapped dependencies (`board bd dep list <id>`); run `board check --limit 0`
    until it reports no deviation (flags are reported, not required clean);
    resolve every gap.
    Output: reconciliation table.
@@ -160,7 +161,7 @@ Per project (model:
 [Change requests](../shared/change-requests.md#change-requests)); every git
 step goes in a change set and runs on the user's confirmation.
 
-1. **Inspect.** `board check --all`, `board holders`, items in review, dirty
+1. **Inspect.** `board check --limit 0`, `board holders`, items in review, dirty
    main-tree paths. A project whose tests share one database needs
    per-checkout test databases landed first.
    Output: holds by holder, in-review items, dirty path count.
@@ -185,7 +186,7 @@ step goes in a change set and runs on the user's confirmation.
    Output: the settings as stored.
 5. **Reconcile.** Wrap each design still waiting for the user's accept in a
    CR under its topic: the design its child, `checkpoint` `user`, status
-   `needs_acceptance`. `board check --all` clean but for user-accepted
+   `needs_acceptance`. `board check --limit 0` clean but for user-accepted
    deviations; one `board claim` of a CR works end to end. Open items stay
    ungrouped: the plan protocol groups them into CRs when they become due.
    Tell the user pulls may start.
@@ -219,19 +220,15 @@ log in `$HOME/.agents/bin/scratch dir`.
 
 - Comments are permanent (no edit or delete). Read them as JSON with
   `board show <id> --json --field comments`.
-- Merge duplicates after import: `board bd duplicate <dup> --of <keeper>`.
-- `board bd import --dry-run <file>` first; it must report every issue as new,
+- Merge duplicates after import: `board bd --raw --yes duplicate <dup> --of <keeper>`.
+- `board bd --raw --yes import --dry-run <file>` first; it must report every issue as new,
   otherwise choose other ids. On retry, import only missing entries.
 - Import skips a dependency whose target is missing and still succeeds:
   resolve every `Skipped dependency` it reports.
-- Import file uses the `board bd export` schema (`board bd import --help`); an
+- Import file uses the `board bd export` schema (`board bd import --help`; imports run as `board bd --raw --yes import`); an
   omitted `priority` means P0; labels are not inherited from epics; set
   `external_ref` to the old id and `source_system` to the source file; add
   `parent-child` dependencies explicitly.
 - Temporary environment facts import as memory rows
   `{"_type":"memory","key":…,"value":…}`.
-
-## Shared conventions
-
-<!-- @include shared/board-core.md -->
 

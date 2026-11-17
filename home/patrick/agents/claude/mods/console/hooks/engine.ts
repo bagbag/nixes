@@ -4,7 +4,7 @@
 import type { EngineInterface } from 'claude-code'
 
 import type {
-  ConsoleAction, ConsoleAgent, ConsoleBoard, ConsoleBoardCounts, ConsoleCheckState, ConsoleCount, ConsoleCounts, ConsoleCr, ConsoleDialogQuestion, ConsoleHeld, ConsoleItem, ConsolePassOrigin, ConsolePending, ConsoleProgress, ConsoleProposal, ConsoleQuestion,
+  ConsoleAction, ConsoleAgent, ConsoleBoard, ConsoleBoardCounts, ConsoleReview, ConsoleRetired, ConsoleCheckState, ConsoleCount, ConsoleCounts, ConsoleCr, ConsoleDialogQuestion, ConsoleHeld, ConsoleItem, ConsolePassOrigin, ConsolePending, ConsoleProgress, ConsoleProposal, ConsoleQuestion,
   ConsoleRatification, ConsoleRecord, ConsoleRole, ConsoleRound, ConsoleSession,
 } from '../types'
 
@@ -13,6 +13,8 @@ type $ = EngineInterface
 export const CONTRACT_VERSION = 1
 export const ROUND_ROLES: readonly string[] = ['lead', 'solo', 'autopilot']
 export const PASS_COMMANDS: readonly string[] = ['step-back', 'ground', 'challenge-rulings']
+
+const RATIFY_EDITS_TIMEOUT_MS = 600_000  // the follow-up's setup and checks run inside the command
 
 export class EngineError extends Error {}
 
@@ -193,6 +195,22 @@ export async function boardRead($: $, session: string, id: string): Promise<{ te
   return ran.exitCode === 0 ? { text: ran.stdout.trim(), isFailed: false } : { text: `board show ${id}: exit ${ran.exitCode}: ${ran.stderr.trim()}`, isFailed: true }
 }
 
+/** The user's verdict on a ratification (`board ratify <id> yes|edits|no`); `edits` reruns the project's checks on the follow-up, so it gets more time. A refusal comes back as `error` (the board's stderr). */
+export async function boardRatify($: $, session: string, id: string, verdict: 'yes' | 'edits' | 'no', message?: string): Promise<{ error: string | null }> {
+  const homeDir = await home($)
+  const ran = await $.process.run([binary(homeDir, 'board'), 'ratify', id, verdict, ...(message === undefined ? [] : ['-m', message])],
+    { timeoutMs: verdict === 'edits' ? RATIFY_EDITS_TIMEOUT_MS : 60_000, env: { CLAUDE_CODE_SESSION_ID: session } })
+  return { error: ran.exitCode === 0 ? null : (ran.stderr.trim() || ran.stdout.trim() || `exit ${ran.exitCode}`) }
+}
+
+/** `board review open <id>`: the board opens the item for your review in its own worktree, on its own branch, and prints the path to open (stdout); a refusal comes back as `error` (its stderr). */
+export async function boardReviewOpen($: $, session: string, id: string): Promise<{ open: string | null; error: string | null }> {
+  const ran = await $.process.run([binary(await home($), 'board'), 'review', 'open', id], { timeoutMs: 60_000, env: { CLAUDE_CODE_SESSION_ID: session } })
+  const open = ran.stdout.trim().split('\n').pop()?.trim() ?? ''
+  if (ran.exitCode === 0 && open !== '') return { open, error: null }
+  return { open: null, error: ran.stderr.trim() || ran.stdout.trim() || `exit ${ran.exitCode}` }
+}
+
 export async function boardShow($: $, session: string, id: string): Promise<string> {
   return (await boardRead($, session, id)).text
 }
@@ -316,6 +334,7 @@ function parseQuestion(value: unknown): ConsoleQuestion {
     waitsOn: list(raw.waitsOn).map(text).filter(id => id !== ''),
     waitsFor: nullableText(raw.waitsFor),
     settles: list(raw.settles).map(text).filter(id => id !== ''),
+    holds: list(raw.holds).map(text).filter(id => id !== ''),
     overlaps: list(raw.overlaps).map(one => ({ id: text(record(one).id), title: text(record(one).title), outcome: nullableText(record(one).outcome) })).filter(one => one.id !== ''),
     answer: nullableText(raw.answer),
     answeredAt: nullableText(raw.answeredAt),
@@ -389,6 +408,7 @@ export function parseRound(value: unknown): ConsoleRound {
     },
     pending: parsePending(raw.pending),
     questions: list(raw.questions).map(parseQuestion),
+    retired: list(raw.retired).map(parseRetired).filter(one => one.id !== ''),
     batch: batch === null ? null : { marker: text(batch.marker), questions: list(batch.questions) as ConsoleDialogQuestion[], notice: text(batch.notice) },
     counts: parseCounts(raw.counts),
     progress: parseProgress(raw.progress),
@@ -431,13 +451,28 @@ function parseCr(value: unknown): ConsoleCr {
     after: nullableText(raw.after), setupFailed: raw.setupFailed === true,
     priority: typeof raw.priority === 'number' ? raw.priority : 9, ownPriority: typeof raw.ownPriority === 'number' ? raw.ownPriority : 9,
     raisedBy: raw.raisedBy === null || raw.raisedBy === undefined || text(record(raw.raisedBy).id) === '' ? null : { id: text(record(raw.raisedBy).id), isItem: record(raw.raisedBy).isItem === true },
-    reviewState: oneOf(raw.reviewState, ['current', 'stale']), refreshWork: raw.refreshWork === true, heldByReviewTree: raw.heldByReviewTree === true,
+    reviewState: oneOf(raw.reviewState, ['current', 'stale']), refreshWork: raw.refreshWork === true, review: parseReview(raw.review),
+    worktreeBlocked: oneOf(raw.worktreeBlocked, ['rebase', 'merge', 'cherry-pick', 'revert', 'bisect']),
   }
 }
 
 function parseRatification(value: unknown): ConsoleRatification {
   const raw = record(value)
-  return { id: text(raw.id), cr: text(raw.cr), title: text(raw.title), tip: nullableText(raw.tip), baseTip: nullableText(raw.baseTip) }
+  return { id: text(raw.id), cr: text(raw.cr), title: text(raw.title), tip: nullableText(raw.tip), baseTip: nullableText(raw.baseTip), review: parseReview(raw.review) }
+}
+
+function parseReview(value: unknown): ConsoleReview | null {
+  if (value === null || value === undefined) return null
+  const raw = record(value)
+  return { opened: text(raw.opened), edited: typeof raw.edited === 'boolean' ? raw.edited : null, files: list(raw.files).map(text).filter(one => one !== '') }
+}
+
+function parseRetired(value: unknown): ConsoleRetired {
+  const raw = record(value)
+  return {
+    id: text(raw.id), title: text(raw.title), covers: list(raw.covers).map(text).filter(one => one !== ''), reason: text(raw.reason),
+    ruling: text(raw.ruling), why: text(raw.why), alternative: text(raw.alternative), fails: text(raw.fails), evidence: text(raw.evidence),
+  }
 }
 
 function parseHeld(value: unknown): ConsoleHeld {

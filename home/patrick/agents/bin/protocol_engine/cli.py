@@ -29,10 +29,10 @@ from pathlib import Path
 
 from .base import BIN, CHECK_CAP, Call, ProtocolError, VERBS, VERB_ORIGINS, Verb, _call, lines, utcnow
 from .session import resolve_session
-from .store import Store, next_id
+from .store import Store, next_id, next_records_round
 from .boards import Board, board_root
 from .engine import Context, PROTOCOLS, fail
-from .record import abandon_note, refresh_board, release_claims
+from .record import abandon_note, refresh_board, release_claims, topic_records
 from .away import SWITCH_TO_SOLO
 from .check import next_cycle, pending_view, refused_formats, start_scope
 from .ask import batch_back, withdraw_away
@@ -63,16 +63,13 @@ def read_stdin() -> dict:
     return value
 
 
-DEFAULT_RECORDS = Path('<default records folder>')  # `--no-board` without a folder (r15-q73)
-
-
 def default_records() -> Path:
     """The private folder of a repository's board-less decision records, named as bin/scratch names the repository (r15-q71)."""
     call = _call.get()
     result = subprocess.run([sys.executable, str(BIN / 'scratch'), '__repo'], capture_output=True, text=True, env=call.env, cwd=call.cwd,
                             stdin=subprocess.DEVNULL)
     if result.returncode != 0 or not result.stdout.strip():
-        fail(f"--no-board without a folder needs the repository's name from `scratch __repo`: {result.stderr.strip() or 'it printed nothing'}")
+        fail(f"--no-board needs the repository's name from `scratch __repo`: {result.stderr.strip() or 'it printed nothing'}")
     data = call.env.get('XDG_DATA_HOME', '')
     if not data.startswith('/'):  # the XDG spec: a relative value is invalid and ignored
         data = str(Path(call.env.get('HOME') or Path.home()) / '.local' / 'share')
@@ -94,7 +91,7 @@ def start(ctx: Context, name: str, report: dict, scope: str = 'board', records: 
     if name == 'release':
         if scope != 'board' or report or topic or proposal is not None or subject is not None:
             fail('start release takes record ids only (no --discussion, --topic, --proposal, --subject or stdin)'
-                 ' and --no-board <dir> for the record files of a round without a board')
+                 ' and --no-board for the record files of a round without a board')
         if records is not None:
             start_files(ctx, records, ids or [])
         else:
@@ -110,9 +107,9 @@ def start(ctx: Context, name: str, report: dict, scope: str = 'board', records: 
     if ids and (scope != 'board' or ctx.board is None):
         fail('start round <ids> names open board items: not with --discussion or --no-board')
     if ctx.board is None and records is None:
-        fail('no board here: name the records folder with `start round --no-board <dir>`')
+        fail('no board here: `start round --no-board` records the round as files in the records folder (`protocol records`)')
     ctx.state.pop('proposal', None)  # a round starts from its proposal or without one: the next proposal is made after it
-    ctx.state['round'] = {'id': next_id(ctx.state, 'round', 'r'), 'protocol': name, 'step': 'prepass',
+    ctx.state['round'] = {'id': next_records_round(records, ctx.state) if records else next_id(ctx.state, 'round', 'r'), 'protocol': name, 'step': 'prepass',
                           'subject': (subject or '').strip() or None, 'first': [],
                           'repo': ctx.board.repo if ctx.board else None, 'scope': scope,
                           'records': str(records.resolve()) if records else None, 'items': [],
@@ -216,7 +213,7 @@ def cli(argv: list[str]) -> int:
     sub = verb('start')
     sub.add_argument('name', choices=sorted(PROTOCOLS))
     sub.add_argument('ids', nargs='*', help="release: the decided records (default: the decided records this session holds, "
-                                            "minus dropped ones; with --no-board: record ids in DIR, default the newest round's "
+                                            "minus dropped ones; with --no-board: record ids in the records folder, default the newest round's "
                                             "unreleased records); round: the open items to look at first (default: the whole list)")
     sub.add_argument('--topic', metavar='TEXT', help="round: the topic, '<title>: <summary>'")
     sub.add_argument('--proposal', metavar='N', type=int, help="round: start row N of the stored proposal; not with --topic or ids")
@@ -224,9 +221,10 @@ def cli(argv: list[str]) -> int:
                                                           "its pre-pass presents it with a verdict and findings, which become the points; not with --proposal")
     sub.add_argument('--discussion', action='store_true',
                      help="the pasted points alone (question-me): no board list at Collect; board items join through Related")
-    sub.add_argument('--no-board', metavar='DIR', type=Path, nargs='?', const=DEFAULT_RECORDS,
-                     help="a topic outside this repository's board: no board reads or writes; records go to DIR (a release takes the record files in DIR); "
-                          "without DIR: ${XDG_DATA_HOME:-~/.local/share}/agents/decisions/<repo key of bin/scratch> (put ids before a bare option)")
+    sub.add_argument('--no-board', action='store_true',
+                     help="a topic outside this repository's board: no board reads or writes; records are files in the repo's records folder "
+                          "(`protocol records`), which a release takes the ids from")
+    verb('records').add_argument('--topic', metavar='TEXT', help="list the record files of this topic (also the archive's topic folders) instead of the folder")
     sub = verb('restart')
     sub.add_argument('ids', nargs='+')
     sub.add_argument('--reason')
@@ -247,7 +245,8 @@ def cli(argv: list[str]) -> int:
         return 0
     if args.command == 'records':
         try:
-            _call.get().stdout.append(f'{default_records()}\n')
+            folder = default_records()
+            _call.get().stdout.append(''.join(f'{path}\n' for path in topic_records(folder, args.topic)) if args.topic else f'{folder}\n')
             return 0
         except ProtocolError as error:
             _call.get().stderr.append(f'protocol: {error}\n')
@@ -265,14 +264,16 @@ def cli(argv: list[str]) -> int:
             open_round = state.get('round') if (state.get('round') or {}).get('step') not in (None, 'closed') else None
             if open_round:
                 repo = open_round.get('repo')  # the round keeps the board it started on, or none (--no-board)
-            elif args.command == 'start' and args.no_board is not None:
+            elif args.command == 'start' and args.no_board:
                 repo = None
             else:
                 repo = str(board_root(_call.get().cwd)) if board_root(_call.get().cwd) else None
             board = Board(repo, entry.get('actor') or session[-8:]) if repo else None
             ctx = Context(store, state, entry, board)
-            if args.command == 'start' and args.no_board == DEFAULT_RECORDS:
-                args.no_board = default_records()
+            if args.command == 'start':
+                if args.no_board and any('/' in rid for rid in args.ids or []):  # the old form `--no-board <dir>`
+                    fail('--no-board takes no folder: the records go to the records folder (`protocol records`)')
+                args.no_board = default_records() if args.no_board else None
             require_origin(ctx, args.command, args.origin)
             output = run(ctx, args)
             if write:
@@ -361,6 +362,9 @@ def run(ctx: Context, args) -> str:
         step = PROTOCOLS[r['protocol']].steps[r['step']]
         before = copy.deepcopy(ctx.state)
         try:
+            unknown, accepted = schema.unknown_keys(open_step, report)
+            if unknown:
+                fail(words.step_unknown_keys(open_step, unknown, accepted))
             ctx.go(step.accept(ctx, report))
         except ProtocolError as error:
             raise ProtocolError(str(error), formats=refused_formats(ctx, step, report, before)) from None

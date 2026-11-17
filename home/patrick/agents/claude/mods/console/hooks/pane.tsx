@@ -3,12 +3,12 @@
 // ` • ` = toggle or link, secondary text `inactive`, hover hints gathered at the bottom.
 import type { EngineInterface, RenderPropsOf } from 'claude-code'
 
-import type { ConsoleBoard, ConsoleCr, ConsoleItem, ConsoleQuestion, ConsoleRecord, ConsoleRole, ConsoleRound, ConsoleSection, ConsoleSession, ConsoleSuggestion } from '../types'
+import type { ConsoleBoard, ConsoleCr, ConsoleItem, ConsoleRatification, ConsoleQuestion, ConsoleRecord, ConsoleRole, ConsoleRound, ConsoleSection, ConsoleSession, ConsoleSuggestion } from '../types'
 
-import { crPressKey, pressAcceptCr, pressContinue, pressOpenCr, pressOpenItem, pressOpenOverlaps, pressOpenRatification, pressOpenSettles, pressOpenSuggestion, pressRefreshCr, pressReturnCr, pressRole, pressRun, pressStart, pressView, pressWorkers, queuedRuns, runKey } from './core'
+import { crPressKey, ratifyPressKey, pressAcceptCr, pressContinue, pressOpenCr, pressOpenItem, pressOpenOverlaps, pressOpenRatification, pressOpenReason, pressOpenSettles, pressOpenSuggestion, pressRatify, pressRefreshCr, pressReturnCr, pressRole, pressRun, pressStart, pressView, pressWorkers, queuedRuns, runKey } from './core'
 import { isRoundOpen, RELEASE_COMMAND, ROUND_ROLES, START_COMMAND } from './engine'
-import { getBoard, getExpanded, getLenses, getOpened, getPass, getPlaced, getPressing, getReviewTree, getRole, getRound, getRoundError, getTurnRunning, toggleExpanded, updateLenses } from './state'
-import { answerText, canRefreshCr, COUNT_GROUPS, countText, crDetailsText, crFailureParts, crFileHref, crHeldText, crMarks, crNewCountText, crKind, crPriorityHint, crPriorityText, crRowCheckText, crRows, crRowStageText, crSummaryText, crUnblocksHint, crUnblocksText, displayId, displayIds, fitText, isCrAccepting, isWalkCr, GROUND, GROUND_BASE, lensArgs, LENS_SETS, plural, pullsText, recommendationMark, recommendationText, roleText, roundWords, runNoun, staleHolds, staleSessions, startHint, STEP_BACK_BASE, suggestionText, WHAT, WHERE } from './words'
+import { getBoard, getExpanded, getLenses, getOpened, getPass, getPlaced, getPressing, getRole, getRound, getRoundError, getTurnRunning, toggleExpanded, updateLenses } from './state'
+import { answerText, canRefreshCr, COUNT_GROUPS, countText, crDetailsText, crFailureParts, crFileHref, crMarks, crNewCountText, crKind, crPriorityHint, crPriorityText, crRowCheckText, crRows, crRowStageText, crSummaryText, crTreeText, crUnblocksHint, crUnblocksText, displayId, displayIds, fitText, isCrAccepting, isWalkCr, GROUND, GROUND_BASE, lensArgs, LENS_SETS, plural, pullsText, recommendationMark, recommendationText, roleText, roundWords, runNoun, staleHolds, staleSessions, startHint, STEP_BACK_BASE, suggestionText, WHAT, WHERE } from './words'
 import type { CrKind, Lens, LensCommand } from './words'
 
 type $ = EngineInterface
@@ -83,7 +83,6 @@ export async function drawPane($: $, e: { surface: string; props: RenderPropsOf[
   const opened = await getOpened($)
   const roundError = await getRoundError($)
   const passRun = await getPass($)
-  const reviewing = await getReviewTree($)
   const isTurnRunning = await getTurnRunning($)
   const pressing = await getPressing($)
   const queued = await queuedRuns($)
@@ -397,12 +396,13 @@ export async function drawPane($: $, e: { surface: string; props: RenderPropsOf[
 
   // Round block
 
-  const questionRow = (question: ConsoleQuestion) => {
+  const questionRow = (question: ConsoleQuestion, open: ConsoleRound) => {
     const overlaps = question.overlaps.filter(one => one.outcome === null)
     const focus = `${question.id} ${question.title}`
     const backing = recommendationText(question)
     const mark = recommendationMark(question)
-    hint.add(`q-${question.id}-text`, `${question.id}: ${question.text}${backing === '' ? '' : ` — ${backing}`}`)
+    const retired = open.retired.find(one => one.id === question.id)
+    hint.add(`q-${question.id}-text`, `${question.id}: ${question.text}${backing === '' ? '' : ` — ${backing}`}${retired === undefined ? '' : ` — entailed: ${retired.reason}`}`)
     hint.add(`q-${question.id}-explain`, `Runs /explain ${focus}`)
     hint.add(`q-${question.id}-sb`, `Runs /step-back ${focus}`)
     hint.add(`q-${question.id}-ov`, `Open the board items ${question.id} overlaps here; each needs an outcome before asking`)
@@ -418,7 +418,9 @@ export async function drawPane($: $, e: { surface: string; props: RenderPropsOf[
             <Text wrap="truncate-end">{question.title}{question.waitsOn.length > 0 ? <Text color="inactive"> (waits on {question.waitsOn.join(', ')})</Text> : ''}{question.waitsFor !== null ? <Text color="inactive"> (waits for {question.waitsFor})</Text> : ''}</Text>
           </Box>
           <Box key={`q-${question.id}-marks`} flexShrink={0} flexDirection="row">
-            {question.status === 'answered' && question.answer !== null && <Text color="inactive"> → {answerText(question.answer)}</Text>}
+            {question.status === 'answered' && question.answer !== null && (retired === undefined
+              ? <Text color="inactive"> → {answerText(question.answer)}</Text>
+              : <Text color="inactive"> → my ruling: {answerText(question.answer)}</Text>)}
             {question.status !== 'answered' && mark !== null && <Text color={mark.color}> {mark.text}</Text>}
             {question.changedBy !== null && <Text color="inactive"> ↻ {question.changedBy}</Text>}
             {question.settles.length > 0 && (
@@ -467,7 +469,7 @@ export async function drawPane($: $, e: { surface: string; props: RenderPropsOf[
     const asked = open.questions.filter(one => one.status === 'asked')
     const upcoming = [...open.questions.filter(one => one.status === 'ready'), ...open.questions.filter(one => one.status === 'draft')]
     if (open.questions.length <= QUESTIONS_SHOWN) {
-      return <Box key="round-questions" flexDirection="column" marginTop={1}>{[...answered, ...asked, ...upcoming, ...held, ...parked].map(questionRow)}</Box>
+      return <Box key="round-questions" flexDirection="column" marginTop={1}>{[...answered, ...asked, ...upcoming, ...held, ...parked].map(one => questionRow(one, open))}</Box>
     }
     const isAll = expanded.includes('questions')
     const isHeldOpen = expanded.includes('held')
@@ -482,10 +484,10 @@ export async function drawPane($: $, e: { surface: string; props: RenderPropsOf[
     hint.add('held-toggle', isHeldOpen ? 'Collapse the held questions' : 'Show the held questions')
     return (
       <Box key="round-questions" flexDirection="column" marginTop={1}>
-        {[...older, ...latest, ...asked, ...next].map(questionRow)}
+        {[...older, ...latest, ...asked, ...next].map(one => questionRow(one, open))}
         {more('questions', hidden, 'questions')}
-        {heldShown.map(questionRow)}
-        {parked.map(questionRow)}
+        {heldShown.map(one => questionRow(one, open))}
+        {parked.map(one => questionRow(one, open))}
         {(heldFolded > 0 || isHeldOpen) && (
           <Box key="held-toggle-box" hover={{ scope: 'held-toggle' }}>
             <Button key="held-toggle" plain onPress={() => toggleExpanded($, 'held')}>
@@ -697,7 +699,7 @@ export async function drawPane($: $, e: { surface: string; props: RenderPropsOf[
   }
   const crDetails = (cr: ConsoleCr) => {
     if (opened?.kind !== 'item' || opened.id !== cr.id || opened.from !== null || opened.phase !== 'read') return null
-    const details = crDetailsText(cr, reviewing, boardPrefix)
+    const details = crDetailsText(cr, boardPrefix)
     const failures = cr.check.newFailures ?? []
     if (details === null && failures.length === 0) return null
     return (
@@ -709,6 +711,15 @@ export async function drawPane($: $, e: { surface: string; props: RenderPropsOf[
             ? <Text key={`cr-${cr.id}-fail-${entry}`} color="error" wrap="truncate-end">{entry}</Text>
             : <Link key={`cr-${cr.id}-fail-${entry}`} href={href} label={entry} />
         })}
+      </Box>
+    )
+  }
+  // Not OK asks its reason inline (`board ratify no` needs one); submitting runs the verdict.
+  const reasonRow = (one: ConsoleRatification) => {
+    if (opened?.kind !== 'reason' || opened.id !== one.id || Input === undefined) return null
+    return (
+      <Box key={`ratify-${one.id}-reason-box`} paddingLeft={2}>
+        <Input key={`ratify-${one.id}-reason`} placeholder="what you want instead (fix or revert)…" submitLabel="Not OK" onSubmit={(typed: string) => pressRatify($, one, 'no', typed)} />
       </Box>
     )
   }
@@ -724,7 +735,7 @@ export async function drawPane($: $, e: { surface: string; props: RenderPropsOf[
         const refreshing = canRefreshCr(cr, pulls)
         return {
           accepting, refreshing, width: buttonsWidth([...(accepting ? [walkLabel, CR_BUTTONS.accept, CR_BUTTONS.return] : []), ...(refreshing ? [CR_BUTTONS.refresh] : [])]),
-          walkLabel, walkHint: isWalkCr(cr) ? 'Sends the walk-through request' : `Opens ${shown(cr.id)} in the review tree (its diff unstaged against where it forked)`,
+          walkLabel, walkHint: isWalkCr(cr) ? 'Sends the walk-through request' : `Opens ${shown(cr.id)} for your review in its worktree: its change as Outgoing Changes, your edits as Changes`,
         }
       }
       const crIdWidth = idWidth(queue.shown.map(one => one.cr.id))
@@ -744,7 +755,7 @@ export async function drawPane($: $, e: { surface: string; props: RenderPropsOf[
             const check = crRowCheckText(cr)
             const count = crNewCountText(cr)
             const marks = crMarks(cr).filter(mark => mark.isProblem)  // the quiet ones are the summary's
-            const held = crHeldText(cr)
+            const held = crTreeText(cr)
             const buttons = buttonsOf(cr)
             hint.add(`bar-${cr.id}`, crRowStageText(cr))
             const unblocks = crUnblocksText(cr)
@@ -830,6 +841,17 @@ export async function drawPane($: $, e: { surface: string; props: RenderPropsOf[
           <Text color="warning">to ratify</Text>
           {ratify.shown.map(one => {
             hint.add(`item-${one.id}`, `${shown(one.id)}: open its summary here`)
+            // What its review holds (the board's read): your edits make Ratify wait for Ratify with edits.
+            const isEdited = one.review?.edited === true
+            const buttons = [
+              ...(one.tip !== null && one.baseTip !== null ? [act(crPressKey('ratify', one.id), 'Open', () => pressOpenRatification($, one), 'Opens the landed change for your review in VS Code')] : []),
+              isEdited
+                ? <Box key={`ratify-${one.id}-yes-wait`} hover={{ scope: `ratify-${one.id}-yes` }}><Text color="inactive">Ratify</Text></Box>
+                : act(ratifyPressKey('yes', one.id), 'Ratify', () => pressRatify($, one, 'yes'), 'Closes the ratification: you accept what landed', 'success'),
+              ...(isEdited ? [act(ratifyPressKey('edits', one.id), 'Ratify with edits', () => pressRatify($, one, 'edits'), `Records your ${one.review?.files.length ?? 0} edited file(s) in the review as a follow-up request waiting for your Accept`, 'success')] : []),
+              act(ratifyPressKey('no', one.id), 'Not OK', () => pressOpenReason($, one.id), 'Asks what you want instead; closes the ratification and files the follow-up', undefined, true),
+            ]
+            if (isEdited) hint.add(`ratify-${one.id}-yes`, 'Your edits in the review are not recorded: Ratify with edits records them first')
             return (
               <Box key={`ratify-${one.id}`} flexDirection="column">
                 <Box flexDirection="row">
@@ -837,10 +859,9 @@ export async function drawPane($: $, e: { surface: string; props: RenderPropsOf[
                     <Button key={`ratify-${one.id}-show`} plain onPress={() => pressOpenItem($, one.id)}>{dimId(one.id)}</Button>
                   </Box>
                   <Box flexGrow={1} flexShrink={1} minWidth={0}><Text wrap="truncate-end">{one.title}</Text></Box>
-                  {one.tip !== null && one.baseTip !== null && (
-                    <Box marginLeft={1} flexShrink={0}>{act(crPressKey('ratify', one.id), 'Open', () => pressOpenRatification($, one), 'Sets the review tree to the range this request landed and opens it in VS Code')}</Box>
-                  )}
+                  {buttons.length > 0 && <Box key={`ratify-${one.id}-buttons`} marginLeft={1} flexShrink={0} flexDirection="row">{buttons.flatMap((button, i) => i === 0 ? [button] : [<Text key={`ratify-${one.id}-sep-${i}`} color="inactive">{BUTTON_SEP}</Text>, button])}</Box>}
                 </Box>
+                {reasonRow(one)}
                 {slot(one.id)}
               </Box>
             )

@@ -26,8 +26,8 @@ findings or stops.
 2. **Read.** The CR and its items (`board show <cr>`), the briefs, the
    project instructions, and every released ruling linked to them with that
    ruling's owner section; linked rulings bind, planned (closed) ones
-   included. Bring a better evidence-backed alternative to a ruling as a
-   question (global Challenge on receipt). When a ruling or landed change has
+   included. Raise a better evidence-backed alternative to a ruling as a
+   question. When a ruling or landed change has
    removed an item's outcome, close it as moot, naming that ruling or change.
    Output: ruling ids and owner anchors read, or `<id> moot: <reason>`.
 3. **Do.** Run the open items in dependency order yourself or through item
@@ -82,7 +82,7 @@ report to the session. It does not hand over, rebase or land.
 
 - Edit files instead of overwriting them whole.
 - Commit and rebase only on `cr/<id>` of the CR you hold, inside its
-  worktree; other Git: the global Git rule.
+  worktree.
 - Inventory destructive actions (deletion, reset, discard) with exact targets
   and return them to your session or the user; execute only on confirmation.
 
@@ -90,15 +90,14 @@ report to the session. It does not hand over, rebase or land.
 
 - The brief contradicts the board, a spec or a current ruling: raise a
   question blocking the affected part; continue the rest.
-- A blocker whose clean fix lies outside the CR: stop that part and raise
-  the root fix as a question that blocks it (global Fix at the root).
+- A blocker whose clean fix lies outside the CR: raise the root fix as a
+  question blocking that part.
 - A design gap or contradiction: raise a question that blocks its dependents.
-- A refusal by the user or an approval reviewer: record the refusal and its
-  revisit condition on the CR (global Sandbox and permissions).
+- A refusal by the user or an approval reviewer: record it and its revisit
+  condition on the CR.
 - Unavailable evidence: state the unestablished claim and its acceptance
   consequence on the CR.
-- The retry limit (global Retry limit): follow it, recording in the CR's
-  `notes`.
+- The retry limit: follow it, recording in the CR's `notes`.
 
 When a blocker holds one item, block the item on it and continue the rest; planning moves a waiting part to
 another CR. When it holds the whole CR, block the CR and `board unclaim` it.

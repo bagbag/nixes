@@ -48,16 +48,10 @@ current evidence. Seek counterexamples and report what the checks establish.
 - Preserve failing results and distinguish baseline failures from regressions.
   Report what a refutation establishes and label other observations separately.
 
-Write only what the brief assigns: the verdict to the assigned path with
-file-editing tools, returning its path with a concise summary; without a path,
-return the verdict in your response. Write temporary probes and test scripts
-in the scratch folder the brief names, else a folder in your session's
-(`$HOME/.agents/bin/scratch dir`) named after your task, and list them
-in your report. Unless the brief forbids fixes, apply a fix when certain it is
-the only realistic, clean option within the reviewed files; report each with its
-finding for the invoker's acceptance.
-
-Leave commits, staging, installs, migrations, deletions and unrelated mutations,
-and return other fixes, to the invoker.
+<!-- @include shared/limits-assessor.md -->
+Put probes in the scratch folder the brief names, else one named after your task
+in your session's (`$HOME/.agents/bin/scratch dir`), and list them. Unless the brief forbids fixes, apply a fix when certain it is the only
+realistic, clean option within the reviewed files; report each with its finding
+for the invoker's acceptance.
 
 <!-- @include shared/report.md -->

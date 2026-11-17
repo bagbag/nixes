@@ -6,11 +6,11 @@ import re
 import shutil
 from datetime import datetime, timedelta, timezone
 
-from .base import CAP_CHOICES, CHECK_CAP, PRUNE_DAYS, THINK_MORE, VERB_ORIGINS, recommended_suffix, utcnow
+from .base import CAP_CHOICES, CHECK_CAP, PASSES, PRUNE_DAYS, THINK_MORE, VERB_ORIGINS, recommended_suffix, utcnow
 from . import schema, words
 from .session import state_root
 from .store import Store
-from .engine import Context, by_id, fail, premise_status, questions, touch
+from .engine import Context, answered, by_id, fail, premise_status, questions, touch
 from .questions import apply_updates
 from .render import batch_seen
 from .check import gate_ask, leave_check, next_cycle, nothing_to_check, rescope_check
@@ -64,34 +64,52 @@ def normalized(text: str) -> str:
     return ' '.join(str(text).split())
 
 
+def skipped_checks(ctx: Context, q: dict) -> str:
+    """What a chat answer to a question that never went out skipped (r3-q17): its status and the Base passes that had not
+    covered it, for the record. A question that was asked had every check."""
+    if q['status'] == 'asked':
+        return ''
+    coverage = ctx.round.get('coverage') or {}
+    seen, at = coverage.get('seen') or {}, (coverage.get('at') or {}).get(q['id'], 0)
+    missing = [command for command in PASSES if q['id'] not in (seen.get(command) or {}) or at > seen[command][q['id']]]
+    open_premises = [other for other in q.get('waitsOn') or [] if not answered(ctx, other)]
+    return words.chat_skipped(q['status'], missing, open_premises, bool(q.get('waitsFor')))
+
+
 def chat_answer(ctx: Context, report: dict) -> str:
-    """An answer the user typed in chat, mapped by the model: accepted only when its quote appears in a message the
-    console relayed from the person after the question went out (a short "yes" from earlier must not count)."""
+    """An answer the user typed in chat, mapped by the model, to any undecided question of the round (r3-q17): accepted only
+    when its quote appears in a message the console relayed from the person after the question went out, or, for one that never
+    went out (draft, held, ready), in any message of the round (a short "yes" from earlier must not count). The record notes the
+    checks the question skipped."""
     schema.require_needs(schema.AnswerChat, report)
     qid, text, quote = report['question'], report['answer'], report['quote']
     q = by_id(ctx, qid)
-    if q['status'] not in ('ready', 'asked'):
-        fail(f"answer --origin chat: {qid} is {q['status']}, not ready or asked")
-    after = ctx.round['messages'][q.get('messagesBefore', 0):]
+    if q['status'] not in ('draft', 'held', 'ready', 'asked'):
+        fail(f"answer --origin chat: {qid} is {q['status']}, not an undecided question of the round")
+    after = ctx.round['messages'][(q.get('messagesBefore', 0) if q['status'] == 'asked' else 0):]
     if not any(normalized(quote) in normalized(message['text']) for message in after):
-        fail('answer --origin chat: quote check failed: the quote appears in no message the user sent since the question '
-             'went out')
+        fail('answer --origin chat: quote check failed: the quote appears in no message the user sent '
+             + ('since the question went out' if q['status'] == 'asked' else 'in this round'))
+    skipped = skipped_checks(ctx, q)
     batch = ctx.round['batch']
     if batch and qid in batch['ids']:
         index = batch['ids'].index(qid)
         del batch['ids'][index], batch['questions'][index]
         if not batch['ids']:
             ctx.round['batch'] = None
-    q.pop('typed', None)
+    for key in ('typed', 'unchecked'):
+        q.pop(key, None)
     ctx.round.pop('reading', None)  # a chat answer is the model's reading
-    q.update(status='answered', answer=text, origin='chat', quote=quote, answeredAt=utcnow())
+    q.update(status='answered', answer=text, origin='chat', quote=quote, answeredAt=utcnow(), **({'skipped': skipped} if skipped else {}))
     ctx.state['answers'][qid] = text
     touch(ctx, [qid])
     if ctx.round['protocol'] == 'round':
         ctx.round['check']['challenged'] = False  # the answer is news to the last challenge-rulings run
-    ctx.log('answered', origin='chat', questions=[qid], quote=quote)
+    ctx.log('answered', origin='chat', questions=[qid], quote=quote, **({'skipped': skipped} if skipped else {}))
     if ctx.round['step'] == 'ask':
         ctx.go('ask')
+    elif ctx.round['step'] == 'check' and nothing_to_check(ctx):
+        ctx.go(leave_check(ctx))  # the pending pass has nothing left to judge
     return words.chat_recorded(qid)
 
 
@@ -212,7 +230,7 @@ def defer_round(ctx: Context, report: dict) -> str:
     for other_id, with_ in group.items():
         q = by_id(ctx, other_id)
         ctx.state['answers'].pop(other_id, None)
-        for key in ('typed', 'quote', 'annotations', 'unchecked'):
+        for key in ('typed', 'quote', 'annotations', 'unchecked', 'skipped'):
             q.pop(key, None)
         q.update(answer=None, status='deferred', deferral={
             'reason': quote if with_ is None else words.waits_on_deferred(qid, quote, 'person'), 'until': until, 'with': with_})
@@ -423,6 +441,8 @@ def restart(ctx: Context, ids: list[str], reason: str | None) -> None:
         q.pop('deferral', None)
         q.pop('quote', None)  # the answer's own words go with it: a later answer's record must not quote them
         q.pop('annotations', None)
+        q.pop('skipped', None)
+        q.pop('retired', None)
         q.update(answer=None, status='draft')
     for q in questions(ctx, 'draft', 'held', 'ready'):
         q['status'] = premise_status(ctx, q)

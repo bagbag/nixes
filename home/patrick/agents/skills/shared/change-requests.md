@@ -42,11 +42,16 @@ queue order and refresh work: [Board coordination](board-coordination.md).
   holding a CR (and its workers) under the work, review or decide protocol,
   and only for these commands:
   - in that CR's worktree on `cr/<id>`: `git mv`, `git add`, one commit per
-    pass, and resolving a conflict that `board handover` or `board cr refresh`
-    stops on, then `git rebase --continue`;
+    pass, and resolving the files of a conflict that `board handover` or
+    `board cr refresh` stops on (edit, `git add`), then rerunning that command,
+    which continues the rebase;
   - the git steps of `board claim`, and of `handover` and `board cr refresh` on the
     held CR; `board cr land` only in a deciding session's Accept. A reviewer's
-    passing `handover` of a `look` `after` CR also lands it.
+    passing `handover` of a `look` `after` CR also lands it;
+  - in a deciding session, with the user: the git steps of `board review
+    open`, `board cr edits` (`--commit`, and `--merged` after the user
+    confirms a conflict merge on their edit commit) and `board ratify`, and
+    resolving such a conflict with the user.
   Removing an unlanded CR's worktree or branch needs the user's confirmation.
   A land refused for the user's uncommitted edits (`land blocked`): ask the user to commit or move them;
   never restore, stash or commit them yourself.
@@ -57,7 +62,7 @@ queue order and refresh work: [Board coordination](board-coordination.md).
   `setup_sha`.
 - **Items:** a worker claims an item of the held CR, commits its pass on
   `cr/<id>` (one commit per pass; no git notes), then
-  `board bd close <item> --reason "<sha>: <what>"`. Items carry no review of
+  `board close <item> --reason "<sha>: <what>"`. Items carry no review of
   their own.
 - **Check:** valid for the (branch tip, base tip) pair it ran on, recorded only
   from a clean tree. Queue state: `current`, `stale` (base moved), `conflict`
@@ -73,8 +78,9 @@ queue order and refresh work: [Board coordination](board-coordination.md).
   it. The agent review's pass holds for the (tip, base tip) it was given on,
   like a check; after a base change the refresh triage keeps it or sends the
   CR back to `in_review`.
-  Commits `board cr edits --commit` made keep it, rebased too; any other new
-  commit voids it.
+  The user's edit commits (accept.md User review) keep it, rebased too, or merged with
+  the user's confirmation (Rebase); any other new commit voids it. A CR whose own commits are all such user edits needs no
+  agent review: it lands on the user's Accept once its gate passes.
 - **Waiting and stacks:** item edges lift to their CRs; items in a CR order
   only that session's work. A CR waits while a CR it depends on is not landed,
   except one in `needs_acceptance` that is no user design checkpoint: the CR
@@ -85,7 +91,24 @@ queue order and refresh work: [Board coordination](board-coordination.md).
   land and their reviews wait.
 - **Rebase:** always `rebase --onto <current base tip> <base_sha>`. A child
   follows a rebased parent through its own holder or refresher, never the
-  parent's.
+  parent's. A rebase the board started and stopped on a conflict stays the
+  CR's: `board claim` accepts the CR mid-rebase, and `handover` or `cr refresh`
+  continues it once its files are resolved and added (only one whose target is
+  the recorded `rebase_onto`). A conflict on a commit of the user's edits
+  (`board cr edits`, a ratification follow-up) is merged by a deciding session
+  with the user (the board prints the `board cr edits --merged` step when its
+  rebase continues past such a commit); on the user's confirmation the board
+  records the merged commit as the user's edit in place of the pre-rebase one,
+  otherwise it counts as an agent change. A rebase,
+  merge, cherry-pick, revert or bisect the board
+  did not start takes the CR out of the claim queue and shows on its pane row
+  and in `board check`; the board never continues or aborts it, its owner ends
+  it. Uncommitted changes alone keep a CR claimable.
+- **Shared append-lists:** design away files that parallel CRs would each add
+  entries to (changelogs, registries, catalogs, route or export lists): each
+  change adds its own file, found by naming convention or composed by a
+  generator in the project's build or release. Ordinary code edited often and
+  generated files (lockfiles) are not such lists. A review flags a new one.
 - **Nothing to merge:** a CR whose branch holds no commit of its own and is
   at no design checkpoint lands when its review passes, in either `look`,
   without the Accept and without a ratification. Plan work that changes no
@@ -93,18 +116,19 @@ queue order and refresh work: [Board coordination](board-coordination.md).
 - **Ratification:** after a `look` `after` landing, or an agent design
   checkpoint pass in such a project, the child task `Ratify: <CR title>` sits
   in `needs_ratification` under the closed CR and blocks nothing; the user's
-  "no" becomes a follow-up CR; edits the user made in the review tree become
-  its first commit (`board cr edits`).
+  verdict goes through `board ratify` (accept.md Ratification).
+- **User review:** from `board review open` until the user's Accept or Return
+  (ratification: verdict), refresh and agent steps leave the item alone; Open
+  does not refresh it. Opening, reading and recording edits: accept.md User
+  review.
 
 | Command | Effect |
 |---|---|
-| `board handover <cr> "<evidence>"` | Refuses open items, uncommitted changes, conflict state, failed setup or checks. Rebases onto the base tip (a conflict: resolve, rerun), runs setup and checks, stores the check. `in_review`, or `needs_acceptance` when `checkpoint` is `user`; the worktree stays. The reviewer's pass is `handover` again: when the tip moved since the reviewer looked (or no look is recorded) it prints the range and records nothing, so the reviewer looks and passes again; otherwise it stores the review, then `needs_acceptance` (`look` `before`), landed (`look` `after`, or a CR with nothing to merge), or `open` for planning (agent checkpoint; in a `look` `after` project also a design ratification). |
+| `board handover <cr> "<evidence>"` | Rebases onto the base tip, runs setup and checks, stores the check. `in_review`, or `needs_acceptance` when `checkpoint` is `user`; the worktree stays. The reviewer's pass is `handover` again: when the tip moved since the reviewer looked (or no look is recorded) it prints the range and records nothing, so the reviewer looks and passes again; otherwise it stores the review, then `needs_acceptance` (`look` `before`), landed (`look` `after`, or a CR with nothing to merge), or `open` for planning (agent checkpoint; in a `look` `after` project also a design ratification). |
 | `board return <cr> "<findings>"` | `open`, unassigned; also the user's "changes". |
-| `board cr refresh <cr> [--review-holds]` | Rebases, reruns setup and checks, stores the check, prints `git range-diff` and the incoming file list (for `cr-refresh`); for a CR whose review is stale both are measured since the review, not since the last refresh. Refuses while another session holds the CR; a CR open in the user's review tree only its holder refreshes (a deciding session, after its claim). `--review-holds` (the triage found no link): re-stamps the review for the new (tip, base tip); refused unless the check passes, the commits (edit commits aside) are patch-identical to the reviewed range, and the base and tip are those the last refresh showed (otherwise it prints the new incoming list and asks for a new triage). |
-| `board cr land <cr> [--tip <sha>]` | Refuses unless the base is the target, check (full, or the `board cr edits` gate result, for exactly this tip) and review are `current` and passing, no item is open, no worktree is rebasing or bisecting the target, and the branch is at `--tip` (the tip the user reviewed; a short sha is accepted). A `look` `after` CR on a `needs_acceptance` parent waits marked `after <base>`; landing the parent lands each such child whose check and review still match, else leaves it as refresh work. Advances `custom.board.target` (`merge --ff-only` where checked out, else `update-ref`); overlap with uncommitted edits there refuses (`land blocked: <paths>`). A landing that stopped midway (its tip already on the target, recorded by `land` or checked) closes the CR on the next board read; a failure there shows as a `cr-landing` deviation in `board check`. Removes worktree and branch; stacked children get `base` = target; `look` `after` creates the ratification, unless nothing was merged. |
-| `board cr land <cr> --checkpoint --design <hash>` | The user's design checkpoint accept: `open`, checkpoint cleared, to planning; nothing lands. Refuses unless `<hash>` is the `design hash` `board claim <cr>` printed and still matches the design items' description, design, acceptance and notes. |
-| `board cr edits <cr> --from <tree> --tip <sha> [--commit …]` | Prints, or with `--commit` commits as the user's, the user's review-tree edits; flags and gates: `board cr edits --help`. A failing gate keeps the commit and the CR waits for the user. On a ratification item it starts the follow-up CR. |
+| `board cr refresh <cr> [--review-holds]` | Rebases, reruns setup and checks, stores the check, prints `git range-diff` and the incoming file list (for `cr-refresh`); for a CR whose review is stale both are measured since the review, not since the last refresh. `--review-holds` (the triage found no link) re-stamps the review for the new (tip, base tip) when the check passes and the commits (edit commits aside) are patch-identical to the reviewed range. |
+| `board cr land <cr> [--tip <sha>]` | Lands the CR's tip (`--tip`: the tip the user reviewed; a short sha is accepted) when base is the target and check (full, or the `board cr edits` gate result, for exactly this tip) and review are `current` and passing. A `look` `after` CR on a `needs_acceptance` parent waits marked `after <base>`; landing the parent lands each such child whose check and review still match, else leaves it as refresh work. Advances `custom.board.target` (`merge --ff-only` where checked out, else `update-ref`). A landing that stopped midway (its tip already on the target) closes the CR on the next board read; a failure there shows as a `cr-landing` deviation in `board check`. Removes worktree and branch; stacked children get `base` = target; `look` `after` creates the ratification, unless nothing was merged. |
 | `board cr reject <cr> "<reason>"` | Closes unlanded; items reopen, children return to planning. Branch `cr/<id>` and worktree stay until the user confirms deletion (the only copy). |
-| `board unclaim <cr>`, `board take <cr>` | Release, take over. `take` refuses the author's own CR in `in_review` and clears the taker's seen tip. |
+| `board unclaim <cr>`, `board take <cr>` | Release, take over. `take` clears the taker's seen tip. |
 
-Close a CR only through `board cr land` or `board cr reject`; `board bd close` refuses one.
+Close a CR only through `board cr land` or `board cr reject`.

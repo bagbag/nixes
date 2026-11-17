@@ -21,7 +21,7 @@ it first. `bin/board` owns the settings.
 
 Run these on the user's request. Only `board share` and `board join` make a
 board shared (they write `.beads/board-shared.json`); `board` then syncs it and
-applies queues ([Routing](../shared/board-core.md#routing)). A Dolt remote alone
+applies queues ([board-core Routing](board-core.md#routing)). A Dolt remote alone
 shares nothing; `board` runs bd with `BD_NO_REMOTE_ADOPT=1`, so bd never adopts
 git origin itself.
 
@@ -34,20 +34,17 @@ git origin itself.
   agents.person <name>`, labels `queue:<name>`.
 - `board` commits and syncs by itself about 60 seconds after a write, in a
   detached process (ending the session needs no sync), and pulls before
-  commands; `board bd sync` syncs at once.
-
-Never create items with `--id` or dotted children on a shared board: `board`'s
-plain ids prevent collisions, and parent.N ids stop sync.
+  commands; `board bd --raw --yes sync` syncs at once.
 
 ### History
 
 `board` warns at about 1 GB of local store. A flatten moves the board to a
 fresh private repository with at least one commit, agreed with everyone:
 
-1. Everyone: `board bd sync`, then stop writing.
+1. Everyone: `board bd --raw --yes sync`, then stop writing.
 2. One person, from a terminal or a lead or solo session: `board move <url>`.
 3. Others: once `board` refuses writes, `board join <url>`; it keeps the old
-   `.beads/` and names the `board bd import` for items written after the move.
+   `.beads/` and names the `board bd --raw --yes import` for items written after the move.
    New joiners name the new url too.
 4. Once everyone rejoined (a stale clone's sync hangs without the old data),
    delete the old board data:

@@ -29,5 +29,4 @@ system, or web sources. Return a factual map for the invoker's decisions.
 - Leave recommendations and defect judgments to the invoker or reviewer.
   Return implementation requests to the invoker.
 
-Return maps and findings in your response; route artifact-writing requests to
-the invoker. Never modify files or system state.
+<!-- @include shared/limits-readonly.md -->

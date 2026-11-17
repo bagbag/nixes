@@ -2,14 +2,12 @@
 // declarations throughout: past an import, the engine follows $ only into those.
 import type { EngineInterface, ToolCallResult } from 'claude-code'
 
-import type { ConsoleAction, ConsoleBatch, ConsoleBoard, ConsoleCr, ConsolePassOrigin, ConsolePassRun, ConsolePending, ConsoleQueued, ConsoleRatification, ConsoleReviewing, ConsoleRound, ConsoleSuggestion } from '../types'
+import type { ConsoleAction, ConsoleBatch, ConsoleBoard, ConsoleCr, ConsolePassOrigin, ConsolePassRun, ConsolePending, ConsoleQueued, ConsoleRatification, ConsoleRound, ConsoleSuggestion } from '../types'
 
-import { boardItem, boardViews, decline, dropped, isRoundOpen, nudged, pass, PASS_COMMANDS, pending as readPending, readRole, RELEASE_COMMAND, ROUND_ROLES, setWorkers, show, stampRelease, START_COMMAND, startScope, stateDir, statusLine } from './engine'
+import { boardItem, boardRatify, boardReviewOpen, boardViews, decline, dropped, isRoundOpen, nudged, pass, PASS_COMMANDS, pending as readPending, readRole, RELEASE_COMMAND, ROUND_ROLES, setWorkers, show, stampRelease, START_COMMAND, startScope, stateDir, statusLine } from './engine'
 import type { ConsoleNudge } from './engine'
-import { pickRange, readReviewEnd, readReviewTree } from './review'
-import type { Ran } from './review'
 import {
-  addPlaced, claimPressing, claimRefresh, getAskSent, getBoard, getDrawn, getPaneDismissed, getPass, getQueued, getReviewing, getRole, getRound, getTurnRunning, releasePressing, releaseRefresh, setAskSent, setBoard, setContinueAsked, setDrawn, setPass, setPrinted, setReviewEnd, setReviewing, setRole,
+  addPlaced, claimPressing, claimRefresh, getAskSent, getBoard, getDrawn, getPaneDismissed, getPass, getQueued, getRole, getRound, getTurnRunning, releasePressing, releaseRefresh, setAskSent, setBoard, setContinueAsked, setDrawn, setPass, setPrinted, setRole,
   setRound, setRoundError, stepPressing, takeContinueAsked, takeRefreshAgain, updateOpened, updateQueued,
 } from './state'
 import {
@@ -534,11 +532,6 @@ export async function refreshBoard($: $, ctx: Context): Promise<ConsoleBoard> {
   const board = await boardViews($, ctx.session)
   const before = await getBoard($)
   await setBoard($, board)
-  // The review tree's change request left the queue (landed, rejected): nothing is open any more.
-  const reviewing = await getReviewing($)
-  if (reviewing !== null && board.error === null && !board.crs.some(one => one.id === reviewing.cr)) await setReviewing($, null)
-  // The pane's "in review tree"/"behind" reads the tree's marker, which `board cr edits` moves as well.
-  await setReviewEnd($, (await getReviewing($)) === null ? null : await readReviewEnd(argv => gitRun($, argv), await $.session.cwd()))
   // Off the caller's path: the claim waits CLAIM_SETTLE_MS.
   $.clock.after(0, () => notifyIdleAgents($, ctx.session, board).catch(failOpen($, 'the idle-agent notification')))
   $.clock.after(0, () => notifyAcceptances($, ctx.session, before, board).catch(failOpen($, 'the accept notification')))
@@ -562,11 +555,6 @@ export async function refreshAll($: $): Promise<void> {
   } finally {
     await releaseRefresh($)
   }
-}
-
-async function gitRun($: $, argv: readonly string[], env?: Readonly<Record<string, string>>): Promise<Ran> {
-  const ran = await $.process.run(argv, { timeoutMs: 60_000, ...(env === undefined ? {} : { env: { ...env } }) })
-  return { exitCode: ran.exitCode, stdout: ran.stdout, stderr: ran.stderr }
 }
 
 export function refreshLater($: $): void {
@@ -950,6 +938,11 @@ export async function pressOpenItem($: $, id: string, from: string | null = null
   })
 }
 
+/** Opens (or closes) the reason field a ratification's Not OK collects below its row. */
+export async function pressOpenReason($: $, id: string): Promise<void> {
+  await updateOpened($, current => current?.kind === 'reason' && current.id === id ? null : { kind: 'reason', id })
+}
+
 /** Opens (or closes) a question's unresolved overlaps inline below its row; each listed id opens its item. */
 export async function pressOpenOverlaps($: $, question: string, overlaps: readonly { id: string; title: string }[]): Promise<void> {
   await updateOpened($, current => current?.kind === 'overlaps' && current.question === question ? null
@@ -990,6 +983,7 @@ async function crPress($: $, pressed: { key: string; id: string; verb: string },
       $.ui.toast(`Change request: ${message(error)}`)
     } finally {
       await releasePressing($, pressed.key, since)
+      refreshLater($)  // r3-q14: the press acted on the shown board; what it changed shows within seconds, not at the next poll
     }
   })
 }
@@ -1007,69 +1001,90 @@ async function fillPrompt($: $, text: string): Promise<string | null> {
 }
 
 /**
- * Open (`label`: the button's, Open or Walk through): view=code sets the review tree to the request's (base tip, tip) and opens it in VS Code; a result view or a design (it has
- * no branch) sets no tree and puts the walk-through request in the prompt.
+ * `board review open <id>` (the board owns the review), then the folder or workspace it prints in VS Code. The board's refusal
+ * (stderr) is the toast; `what` heads it.
  */
+async function openReview($: $, id: string, what: string, step: Step): Promise<string> {
+  await step('opening your review')
+  const opened = await boardReviewOpen($, await $.session.id(), id)
+  if (opened.open === null) return `${what}: ${opened.error ?? 'nothing opened'}`
+  await step('opening VS Code')
+  const ran = await $.process.run(['code', opened.open], { timeoutMs: 30_000 }).catch(error => ({ exitCode: 1, stderr: message(error) }))
+  // `code` returns once VS Code has the folder, before its window shows: the toast bridges the wait.
+  return ran.exitCode === 0 ? `${id} is opening in VS Code (${opened.open})` : `${what}: ${id} is open for your review (${opened.open}); VS Code did not open it (${ran.stderr.trim()})`
+}
+
+/** Open (`label`: the button's, Open or Walk through): view=code opens the request for your review (its worktree, on its branch) in VS Code; a result view or a design (it has no branch) sets no view and puts the walk-through request in the prompt. */
 export async function pressOpenCr($: $, cr: ConsoleCr, label: string): Promise<void> {
   await crPress($, { key: crPressKey('open', cr.id), id: cr.id, verb: label }, async step => {
     if (isWalkCr(cr)) return sendRequest($, walkText(cr))
     if (cr.tip === null || cr.baseTip === null) return `Change request: ${cr.id} has no branch tip to open`
-    await step('setting the review tree')
-    const picked = await pickRange((argv, env) => gitRun($, argv, env), await $.session.cwd(), { tip: cr.tip, baseTip: cr.baseTip })
-    if (!picked.ok || picked.open === undefined) return `Change request: ${picked.ok ? 'nothing opened' : picked.why}`
-    await setReviewing($, { cr: cr.id })
-    await setReviewEnd($, cr.tip)
-    await step('opening VS Code')
-    const opened = await $.process.run(['code', picked.open], { timeoutMs: 30_000 }).catch(error => ({ exitCode: 1, stderr: message(error) }))
-    // `code` returns once VS Code has the folder, before its window shows: the toast bridges the wait.
-    return opened.exitCode === 0 ? `${cr.id} is opening in VS Code (${picked.tree})` : `Change request: ${cr.id} is set in ${picked.tree}; VS Code did not open it (${opened.stderr.trim()})`
+    return openReview($, cr.id, 'Change request', step)
   })
 }
 
-/** Open on a ratification: the range its request landed (fork point to tip) in the review tree, opened in VS Code. */
+/** Open on a ratification: its worktree on branch `ratify/<id>` at the landed tip, opened for your review in VS Code. */
 export async function pressOpenRatification($: $, one: ConsoleRatification): Promise<void> {
   await crPress($, { key: crPressKey('ratify', one.id), id: one.id, verb: 'Open' }, async step => {
     if (one.tip === null || one.baseTip === null) return `Ratification: ${one.id} has no landed range to open`
-    await step('setting the review tree')
-    const picked = await pickRange((argv, env) => gitRun($, argv, env), await $.session.cwd(), { tip: one.tip, baseTip: one.baseTip })
-    if (!picked.ok || picked.open === undefined) return `Ratification: ${picked.ok ? 'nothing opened' : picked.why}`
-    await setReviewing($, null)  // the tree now holds a landed range, no request's
-    await step('opening VS Code')
-    const opened = await $.process.run(['code', picked.open], { timeoutMs: 30_000 }).catch(error => ({ exitCode: 1, stderr: message(error) }))
-    return opened.exitCode === 0 ? `${one.id} is opening in VS Code (${picked.tree})` : `Ratification: ${one.id} is set in ${picked.tree}; VS Code did not open it (${opened.stderr.trim()})`
+    return openReview($, one.id, 'Ratification', step)
+  })
+}
+
+export type RatifyVerdict = 'yes' | 'edits' | 'no'
+export const ratifyPressKey = (verdict: RatifyVerdict, id: string): string => `ratify-${id}-${verdict}`
+const RATIFY_VERBS: Record<RatifyVerdict, { verb: string; done: string }> = {
+  yes: { verb: 'Ratify', done: 'is ratified' }, edits: { verb: 'Ratify with edits', done: 'is ratified with your edits as a follow-up request' }, no: { verb: 'Not OK', done: 'is closed; its follow-up is filed' },
+}
+
+/**
+ * Ratify, Ratify with edits and Not OK: the person's verdict, run as `board ratify <id> yes|edits|no` (the board owns what it
+ * refuses: edits unrecorded for `yes`, none for `edits`); its stderr comes back as the toast. `no` takes the reason (`board ratify` requires it).
+ */
+export async function pressRatify($: $, one: ConsoleRatification, verdict: RatifyVerdict, reason = ''): Promise<void> {
+  const { verb, done } = RATIFY_VERBS[verdict]
+  if (verdict === 'no' && reason.trim() === '') {
+    $.ui.toast(`Ratification: ${verb} needs what you want instead of ${one.id}`)
+    return
+  }
+  await crPress($, { key: ratifyPressKey(verdict, one.id), id: one.id, verb }, async step => {
+    await step('asking the board')
+    const ran = await boardRatify($, await $.session.id(), one.id, verdict, verdict === 'no' ? reason.trim() : undefined)
+    if (ran.error !== null) return `Ratification: ${one.id}: ${ran.error}`
+    if (verdict === 'no') await updateOpened($, current => current?.kind === 'reason' && current.id === one.id ? null : current)
+    return `${one.id} ${done}`
   })
 }
 
 /**
- * The review tree's edits of yours on this request, for Accept and Return (r15-q76): `tip` is the tree's marker, what you looked at
- * plus the edits the board committed; `edits` while the tree holds edits no commit has yet (the prompt names them and the
- * `board cr edits` line). Not open there: the request's own tip.
+ * Your edits on this request, for Accept and Return, from the board's `review` of the row, never from git (the pane presses board
+ * commands and reads board JSON): `tip` is what you looked at (the request's tip while you edited nothing, else the tip it was opened
+ * at, which the edits are against); `edits` once you have commits after it or uncommitted changes. Not open: the request's own tip.
+ * Edits made after the board's last read are the board's to catch: `land` and `return` refuse them and name the `board cr edits` line.
+ * Fails closed when the board could not read the review (`edited` null).
  */
-async function reviewState($: $, cr: ConsoleCr): Promise<{ said: string } | { tip: string | null; edits: { tree: string; tip: string } | null }> {
-  const reviewing = await getReviewing($)
-  if (reviewing === null || reviewing.cr !== cr.id) return { tip: cr.tip, edits: null }
-  const found = await readReviewTree((argv, env) => gitRun($, argv, env), await $.session.cwd())
-  if (!found.ok) return { said: `Change request: ${found.why}` }
-  const state = found.state
-  if (state === null || state.end === null) return { said: `Change request: the review tree no longer holds ${cr.id}; Open it again` }
-  return { tip: state.end, edits: state.isClean ? null : { tree: state.tree, tip: state.end } }
+function reviewState(cr: ConsoleCr): { said: string } | { tip: string | null; edits: { tree: string; tip: string } | null } {
+  const review = cr.review
+  if (review === null) return { tip: cr.tip, edits: null }
+  if (review.edited === null) return { said: `Change request: ${cr.id}: the board could not read your review (\`board show ${cr.id}\` says why); open it again` }
+  if (!review.edited) return { tip: cr.tip, edits: null }
+  if (cr.worktree === null) return { said: `Change request: ${cr.id} has no worktree to name your review from` }
+  return { tip: review.opened, edits: { tree: cr.worktree, tip: review.opened } }
 }
 
-/** Accept: the lead's request, naming the tip you looked at (the review tree's when this request is open there), and your review-tree edits when it holds any. A design without a branch names none. */
+/** Accept: the lead's request, naming the tip you looked at (the board's `review.opened` when you edited), and your edits when you made any. A design without a branch names none. */
 export async function pressAcceptCr($: $, cr: ConsoleCr): Promise<void> {
   await crPress($, { key: crPressKey('accept', cr.id), id: cr.id, verb: 'Accept' }, async step => {
-    await step('reading the review tree')
-    const state = await reviewState($, cr)
+    const state = reviewState(cr)
     if ('said' in state) return state.said
     return state.tip === null && cr.checkpoint !== 'user' ? `Change request: ${cr.id} has no branch tip` : sendRequest($, acceptText(cr, state.tip, state.edits))
   })
 }
 
-/** Return: the request with room for your changes, and your review-tree edits when it holds any; the lead takes it from there. */
+/** Return: the request with room for your changes, and your edits when you made any; the lead takes it from there. */
 export async function pressReturnCr($: $, cr: ConsoleCr): Promise<void> {
   await crPress($, { key: crPressKey('return', cr.id), id: cr.id, verb: 'Return' }, async step => {
-    await step('reading the review tree')
-    const state = await reviewState($, cr)
+    const state = reviewState(cr)
     return 'said' in state ? state.said : fillPrompt($, returnText(cr, state.edits))
   })
 }

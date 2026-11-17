@@ -25,9 +25,8 @@ to design architecture.
   another owner.
 - Resolve consequential framing ambiguity; leave factual uncertainty to the
   investigation.
-- Dispatch a fresh `option-explorer`. For substantial exploration, assign its
-  output path (AGENTS.md Orchestration and delegation); keep short bounded
-  results in the response. Authorize investigation and that file only. Resume
+- Dispatch a fresh `option-explorer`. For substantial exploration, assign an
+  output path; keep short bounded results in the response. Authorize investigation and that file only. Resume
   the same agent for clarifications and additions on the same decision; a
   changed premise gets a fresh one.
 

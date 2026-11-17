@@ -25,10 +25,9 @@ Apply a fully specified change faithfully; the brief makes every design choice.
 - Run the agreed checks and repair regressions introduced by the transformation.
   Distinguish pre-existing failures and report counts when they help assess
   completeness.
-- Return changes, skipped instances, unresolved questions, and verification
-  concisely.
+- Return changes, skipped instances, unresolved questions and verification.
 
-Commit only where your brief's protocol grants it; never otherwise commit or
-stage, alter another worker's files, or broaden the specified transformation.
+<!-- @include shared/limits-implementer.md -->
+Never broaden the specified transformation.
 
 <!-- @include shared/report.md -->

@@ -16,9 +16,9 @@ agent implements; the user stages and commits.
 
 ## Authority and evidence
 
-- Treat the captured target snapshot as the source of the verdict. Read and
-  search that snapshot, not the working tree.
-- Treat every snapshot as read-only evidence.
+- Treat the captured target snapshot as the source of the verdict and every
+  snapshot as read-only evidence. Read and search the snapshot, not the working
+  tree.
 - Label reused check results *implementer-reported*, with command, outcome and
   revision. Label checks you run *reviewer-verified*.
 - Verify claims in comments, TSDoc, README and CHANGELOG against the code,

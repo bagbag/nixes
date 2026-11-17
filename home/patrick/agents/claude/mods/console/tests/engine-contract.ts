@@ -12,6 +12,7 @@ export const ENGINE_CONTRACT = {
     "check": null,
     "pending": null,
     "questions": [],
+    "retired": [],
     "batch": null,
     "counts": null,
     "progress": null,
@@ -36,6 +37,7 @@ export const ENGINE_CONTRACT = {
       "args": "goal decisions; pre-pass on Cache design"
     },
     "questions": [],
+    "retired": [],
     "batch": null,
     "counts": null,
     "progress": {
@@ -85,6 +87,7 @@ export const ENGINE_CONTRACT = {
         "waitsOn": [],
         "waitsFor": null,
         "settles": [],
+        "holds": [],
         "overlaps": [],
         "answer": null,
         "answeredAt": null,
@@ -99,6 +102,7 @@ export const ENGINE_CONTRACT = {
         "strongBecause": null
       }
     ],
+    "retired": [],
     "batch": null,
     "counts": null,
     "progress": {
@@ -175,6 +179,7 @@ export const ENGINE_CONTRACT = {
         "waitsOn": [],
         "waitsFor": null,
         "settles": [],
+        "holds": [],
         "overlaps": [],
         "answer": null,
         "answeredAt": null,
@@ -189,6 +194,7 @@ export const ENGINE_CONTRACT = {
         "strongBecause": null
       }
     ],
+    "retired": [],
     "batch": {
       "marker": "round:r1:1",
       "questions": [
@@ -316,7 +322,7 @@ export const ENGINE_CONTRACT = {
     "pending": {
       "id": "p10",
       "command": "challenge-rulings",
-      "args": "q1"
+      "args": "q1 and my rulings on them"
     },
     "questions": [
       {
@@ -329,6 +335,7 @@ export const ENGINE_CONTRACT = {
         "waitsOn": [],
         "waitsFor": null,
         "settles": [],
+        "holds": [],
         "overlaps": [],
         "answer": "Keep",
         "answeredAt": "2026-01-01T00:00:00Z",
@@ -343,6 +350,7 @@ export const ENGINE_CONTRACT = {
         "strongBecause": null
       }
     ],
+    "retired": [],
     "batch": null,
     "counts": null,
     "progress": {
@@ -432,6 +440,7 @@ export const ENGINE_CONTRACT = {
     "check": null,
     "pending": null,
     "questions": [],
+    "retired": [],
     "batch": null,
     "counts": {
       "questions": {
@@ -487,6 +496,7 @@ export const ENGINE_CONTRACT = {
     "check": null,
     "pending": null,
     "questions": [],
+    "retired": [],
     "batch": null,
     "counts": {
       "questions": {
@@ -564,6 +574,7 @@ export const ENGINE_CONTRACT = {
     "check": null,
     "pending": null,
     "questions": [],
+    "retired": [],
     "batch": null,
     "counts": {
       "questions": {
@@ -621,6 +632,7 @@ export const ENGINE_CONTRACT = {
     "check": null,
     "pending": null,
     "questions": [],
+    "retired": [],
     "batch": null,
     "counts": {
       "questions": {
@@ -698,6 +710,7 @@ export const ENGINE_CONTRACT = {
     "check": null,
     "pending": null,
     "questions": [],
+    "retired": [],
     "batch": null,
     "counts": {
       "questions": {
@@ -778,6 +791,7 @@ export const ENGINE_CONTRACT = {
     "check": null,
     "pending": null,
     "questions": [],
+    "retired": [],
     "batch": null,
     "counts": {
       "questions": {
@@ -858,6 +872,7 @@ export const ENGINE_CONTRACT = {
         "waitsOn": [],
         "waitsFor": null,
         "settles": [],
+        "holds": [],
         "overlaps": [],
         "answer": null,
         "answeredAt": null,
@@ -872,6 +887,7 @@ export const ENGINE_CONTRACT = {
         "strongBecause": null
       }
     ],
+    "retired": [],
     "batch": null,
     "counts": {
       "questions": {

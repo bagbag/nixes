@@ -21,5 +21,4 @@ Answer one narrow factual question about the codebase or system.
   state that result and the locations checked.
 - Return implementation requests or broader judgment to the invoker.
 
-Return findings in your response; route artifact-writing requests to the
-invoker. Never modify files or system state.
+<!-- @include shared/limits-readonly.md -->

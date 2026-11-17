@@ -12,8 +12,7 @@ Read
 One of: an `in_review` change request (CR: agent review or agent
 checkpoint), or refresh work ([Refresh](#refresh)), or a standalone review
 (findings only, outside any CR), is ready for your session's `review` pull; a
-dispatch brief names an id and this protocol. Deciding sessions accept CRs in
-`needs_acceptance` and user-judged epics under the decide protocol.
+dispatch brief names an id and this protocol.
 
 ## Steps
 
@@ -41,7 +40,7 @@ steps 3-7.
 4. **Evidence.** Apply [Evidence and gates](../../shared/acceptance.md#evidence-and-gates) to every
    required gate.
    Output: one line per gate: command, result, accepted or reproduced.
-5. **Assess.** Check correctness, the global Cleanliness tests and the
+5. **Assess.** Check correctness, the Cleanliness tests and the
    decision protocol's
    [End-state criteria](../../shared/decision-protocol.md#end-state-criteria);
    triage the author's disclosed judgment calls; classify scope growth under
@@ -61,13 +60,13 @@ steps 3-7.
    confirmed defects, open questions, executed checks and next action:
    `board return <cr> "<findings>"`.
    Raise a choice that needs a decision as a question blocking the CR. A
-   standalone review closes with `board bd close <id> --reason "<verdict>"`,
+   standalone review closes with `board close <id> --reason "<verdict>"`,
    recording each finding as a new item discovered from it
    (`--deps discovered-from:<id>`).
    Escalate instead of passing when a
    [hidden-and-costly](../../shared/acceptance.md#review-policy) path stays
    unsettled: comment your findings and evidence, then
-   `board bd update <id> --set-metadata deep_review="<the path>"` and
+   `board bd --raw --yes update <id> --set-metadata deep_review="<the path>"` and
    `board unclaim <id>`. A `deep-review` ending an escalated item removes the
    mark (`--unset-metadata deep_review`).
    Output: `passed <cr> to <status>`, `returned <cr>`, `question <id>`,
@@ -79,8 +78,8 @@ steps 3-7.
 - You are the author doer: `board unclaim <id>`, report it, stop.
 - A required gate cannot run: return the item naming the unestablished claim
   and its acceptance consequence.
-- Repairs on the same problem reach the retry limit (global Retry limit):
-  follow it, recording in the item's `notes`.
+- Repairs on the same problem reach the retry limit: follow it, recording in
+  the item's `notes`.
 
 ## Exit
 
@@ -128,9 +127,8 @@ its command: the `board cr refresh` row of
 
 ## Assessor conduct
 
-- The author repairs; the same assessor checks repairs and the affected
-  invariants. Repair completion reopens no broader review.
-- Independence: [Reviewers](../../shared/reviewers.md#reviewers).
+The author repairs; the same assessor checks repairs and the affected
+invariants. Repair completion reopens no broader review.
 
 ## Expansion findings
 

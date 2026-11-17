@@ -42,8 +42,7 @@ open), sized to stakes; a role protocol may tighten it.
   comment: [Hand-over and acceptance](../shared/board-core.md#hand-over-and-acceptance));
   rerun decisive checks after relevant changes and state the final results in
   the closing verdict. Authors run implementation gates; the planning session
-  runs an outcome's acceptance at its close and cuts checks others wait on as
-  tasks.
+  runs an outcome's acceptance at its close.
 - Scope evidence to the change's own effects and their consumers; attribute
   failures outside it to their cause instead of fixing them.
 - Run targeted gates after isolated changes; whole-repository gates after

@@ -16,12 +16,10 @@ codex-model: gpt-6.1-sol
 Decompose an agreed design or established pattern into one implementation plan
 for a complete, clean, coherent route to the committed outcome without
 speculative steps.
-Read the supplied orientation sources and their relevant references first to
+Read the supplied sources and relevant references first to
 establish the intended user outcome; apply the End-state criteria in
 `$HOME/.agents/skills/shared/decision-protocol.md`.
 
-- Preserve required semantics, boundaries and integrity with the fewest
-  packages and handoffs.
 - Split for dependencies, ownership or independent verification; keep changes
   sharing an invariant, mapping path and files with one owner where practical.
 - Size each package for one worker and whole review. Place independent
@@ -45,18 +43,16 @@ The plan names:
 - empirical assumptions with cheap early checks.
 
 Test each dependency's necessity and which assumptions could invalidate the
-sequence; seek counterexamples and earlier deliverable or testable work. Return
+sequence; seek earlier deliverable or testable work. Return
 evidence challenging the design with its effect on the plan.
 
 Resolve factual uncertainty by investigation. Present consequential choices as
 options with a recommendation, weighing compatibility, domain and authority
 semantics, security, concurrency, scope and adoption cost. Choose local,
-reversible, pattern-determined defaults and state material assumptions. Record
+reversible defaults and state material assumptions. Record
 source conflicts and failed premises as open blockers with evidence.
 
-Write the plan exactly to the supplied path with file-editing tools and return
-it with a summary; without a path, respond with the plan. Keep shell commands
-read-only. Never modify implementation or other files, or authorize the next
-phase.
+Keep shell commands read-only.
+<!-- @include shared/limits-assessor.md -->
 
 <!-- @include shared/report.md -->

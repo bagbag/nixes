@@ -328,7 +328,7 @@ def scope_ids(ctx: Context, command: str, settled: bool | None) -> tuple[list[st
 
 def scope_text(ctx: Context, command: str) -> str:
     """The pending pass's scope as the step names it: the ids to cover and, for challenge-rulings, the strong ones."""
-    return words.pass_scope(*scope_ids(ctx, command, settled=True), command)
+    return words.pass_scope(*scope_ids(ctx, command, settled=True), command, pass_kind(ctx, command, True)[0] == 'after answers')
 
 
 SCOPE_STEPS = ('check', 'ask')  # the steps that take a pass report (check_accept, ask_accept)
@@ -347,7 +347,7 @@ def start_scope(ctx: Context, report: dict) -> dict:
     settled = stamp_settles(ctx, command, stamp) if 'pending' in report else None
     ids, strong = scope_ids(ctx, command, settled)
     due = options_due(ctx, command, settled)
-    text = words.start_scope(ids, strong, due or [], command) if ids or due else ''
+    text = words.start_scope(ids, strong, due or [], command, pass_kind(ctx, command, settled)[0] == 'after answers') if ids or due else ''
     return {'covers': ids, 'explored': due, 'text': text}
 
 
@@ -406,7 +406,7 @@ def record_pass(ctx: Context, report: dict) -> tuple[str, int, str]:
     explored = explored_of(raw, due if due is not None else [qid for qid in raw if any(q['id'] == qid for q in ctx.round['questions'])] if isinstance(raw, dict) else []) if due is not None or raw is not None else {}
     updates = report.get('updates') or []
     try:
-        changes = apply_updates(ctx, updates)
+        changes = apply_updates(ctx, updates, answered_rulings=kind == 'after answers')
     except ProtocolError as error:
         refuse_all([*errors, str(error)])
     covered = {*checked, *explored, *(u['id'] for u in updates if isinstance(u, dict) and isinstance(u.get('id'), str))}
@@ -440,7 +440,7 @@ def start_challenge(ctx: Context, kind: str, ids: list[str]) -> None:
     the questions an edit raised to strong. Its additions wait for their scoped check; nothing reruns the loop."""
     ctx.round['check'].update(expect='challenge-rulings', converged=True, pathNow=False, pathScoped=False, optionsNow=False,
                               optionsScoped=False, refineNow=None, refineScoped=False, focusing=False, challenge={'kind': kind, 'ids': ids})
-    ctx.set_pending('challenge-rulings', ' '.join(ids))
+    ctx.set_pending('challenge-rulings', words.answers_args(ids) if kind == 'answers' else ' '.join(ids))
 
 
 def finish_challenge(ctx: Context, changes: int) -> str:

@@ -5,6 +5,7 @@ from .base import BATCH, ProtocolError, THINK_MORE, TITLE_MAX, cut, lines, recom
 from . import words
 from .engine import Context, PROTOCOLS, by_id, fail, premise_status, questions
 from .questions import check_question
+from .release_set import ruling_changes
 from .told import first_time, report_hint
 from .render import render_batch
 from .away import away_cap, away_guard, away_prepare, away_settle
@@ -209,7 +210,7 @@ def ask_accept(ctx: Context, report: dict) -> str:
 
 
 def approval_reasons(ctx: Context) -> list[str]:
-    return words.approval_reasons(ctx.round['rulings'], ctx.round['set'])
+    return words.approval_reasons(ctx.round['rulings'], ctx.round['set'], ruling_changes(ctx))
 
 
 def approval_question(ctx: Context) -> dict | None:

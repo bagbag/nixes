@@ -9,7 +9,7 @@ from .boards import statuses, view_rows
 from .engine import Context, fail
 from .questions import disclosure_error
 from .told import report_hint
-from .release_set import HIT_CLASSES, SCOPED_PASSES, apply_changes, drop, in_set, scoped_records, set_rows, stop
+from .release_set import HIT_CLASSES, SCOPED_PASSES, apply_changes, drop, in_set, ruling_changes, scoped_records, set_rows, stop
 
 
 def board_check_enter(ctx: Context) -> str | None:
@@ -180,10 +180,19 @@ def board_targets(ctx: Context, closes: list[str], olds: list[str]) -> list[str]
     return problems
 
 
+def session_rulings(ctx: Context) -> dict[str, dict]:
+    """The set's records this session recorded as retired points (r3-q18): its disclosed, entailed rulings, listed with the own
+    rulings without a report."""
+    kept = ctx.state.get('sessionRulings') or {}
+    return {rid: kept[rid] for rid in in_set(ctx) if rid in kept}
+
+
 def own_rulings_text(ctx: Context) -> str:
     return lines(
         words.own_rulings_intro(ctx.round['id']),
         *set_rows(ctx),
+        *(words.session_ruling_row(rid) for rid in session_rulings(ctx)),
+        *(words.ruling_changed_row(rid) for rid in ruling_changes(ctx)),
         report_hint(ctx, 'own-rulings', words.own_rulings_example((in_set(ctx) or ['<id>'])[0])),
     )
 
@@ -198,6 +207,8 @@ def own_rulings_accept(ctx: Context, report: dict) -> str:
         error = disclosure_error(ruling, f'rulings[{index}]', schema.OwnRuling)
         if error:
             fail(error)
+    listed = {x['record'] for x in rulings}
+    rulings = [*rulings, *(x for rid, x in session_rulings(ctx).items() if rid not in listed)]
     ctx.round['rulings'] = rulings
     ctx.log('own-rulings', rulings=len(rulings), unsure=sum(1 for x in rulings if not x['sure']))
     return 'scoped'

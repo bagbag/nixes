@@ -65,7 +65,7 @@ describe('pane', () => {
   })
 
   test('a shared board\'s stopped sync shows with its fix, and its other queues as counts', async ($, on) => {
-    const { clock } = world(on, { sync: 'sync stopped by a merge conflict. Fix: board bd conflicts show', queueLine: 'other queues: ben 3' })
+    const { clock } = world(on, { sync: 'sync stopped by a merge conflict. Fix: board bd conflicts show, board bd --raw --yes sync', queueLine: 'other queues: ben 3' })
     await ready($, clock)
     const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
     expect(await texts(ui)).toContain('sync stopped by a merge conflict')
@@ -1209,6 +1209,25 @@ describe('long lists', () => {
     expect(await color('→ Keep')).toEqual(['inactive'])
     expect(await color('↻ ground')).toEqual(['inactive'])
     expect(await texts(ui)).toContain('→ a very long typed answer that goes on a…')
+    await ui.unmount()
+  })
+
+  test('a retired point reads as the session\'s ruling, not as your answer (r3-q18)', async ($, on) => {
+    const base = { board: null, kind: 'decision', waitsOn: [], overlaps: [], answeredAt: null, changedBy: null }
+    const questions = [
+      { ...base, id: 'q1', text: 'A?', title: 'Settled one', status: 'answered', answer: 'Keep the name' },
+      { ...base, id: 'q2', text: 'B?', title: 'Retired one', status: 'answered', answer: 'Use the cache' },
+    ]
+    const retired = [{ id: 'q2', title: 'Retired one', covers: ['tstdl-x1'], reason: 'only one realistic answer', ruling: 'Use the cache', why: 'w', alternative: 'a', fails: 'f', evidence: 'e' }]
+    const { clock } = world(on, { round: roundJson({ questions, retired }) })
+    await ready($, clock)
+    const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+    const drawn = await texts(ui)
+    expect(drawn).toContain('→ Keep the name')
+    expect(drawn).toContain('→ my ruling: Use the cache')
+    expect(drawn).not.toContain('→ Use the cache')
+    expect(drawn).toContain('q2: B? — entailed: only one realistic answer')  // the hover hint
+    expect(drawn.match(/my ruling/g)).toHaveLength(1)
     await ui.unmount()
   })
 

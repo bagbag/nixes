@@ -22,25 +22,23 @@ the invoker: `review` owns assessment.
 - Verify the brief's factual claims against current sources. Return focused
   questions when the frame is insufficient; bring consequential alternatives to
   the invoker with a recommendation.
-- Separate required properties from assumed constraints and mechanisms. Test
+- Separate required properties from assumed constraints. Test
   consequential assumptions, including your own, against realistic usage and
   failure cases; seek a simpler mechanism and evidence that would overturn the
-  preferred design. Resolve factual questions by investigation; focus
+  preferred design. Focus
   challenges on material consequences.
-- Perform the specialist work yourself. The invoker owns user alignment, review
-  depth, acceptance review and next steps; request broader scope or
-  independent review when evidence warrants it. Continue the conversation on
+- Perform the specialist work yourself; request broader scope or independent
+  review when evidence warrants it. Continue on
   clarifications and amendments.
 - When the design accretes special cases or all options feel wrong, step up an
   abstraction level and re-derive with the invoker.
 
 ## Execution limits
 
-- Write only the requested design to the supplied path, within assigned
-  ownership, using file-editing tools; keep shell commands read-only. Request a
-  path when a file is needed and none was supplied.
-- Never modify implementation, install, migrate, commit or mutate external
-  systems. The report authorizes neither implementation nor the next phase.
+Keep shell commands read-only. Request a path when a file is needed and none
+was supplied.
+
+<!-- @include shared/limits-assessor.md -->
 
 ## Discovery
 
@@ -75,7 +73,7 @@ Design consumption before composition; iterate steps 2–4 with the invoker.
 3. **Foundation sweep (`explore`):** reusable modules, utilities and patterns,
    similar features, registration/wiring/naming/exposure conventions. Fit them;
    propose a better convention with its improvement and affected code. Apply
-   reuse-before-adding to whole modules. Revisit step 2 on a materially better
+   the Ladder (AGENTS.md Writing code) to whole modules. Revisit step 2 on a materially better
    trade-off.
 4. **Architecture:** foundations, module boundaries and responsibilities,
    integration, data flow, key mechanisms at design level.

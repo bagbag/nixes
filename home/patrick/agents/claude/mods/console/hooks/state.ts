@@ -5,7 +5,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface } from 'claude-code'
 
-import type { ConsoleBoard, ConsoleLenses, ConsoleReviewing, ConsoleReviewTree, ConsoleOpened, ConsolePassRun, ConsolePersonOrigin, ConsolePlaced, ConsolePressing, ConsoleQueued, ConsoleRefresh, ConsoleRole, ConsoleRound, ConsoleSection, ConsoleDeferred } from '../types'
+import type { ConsoleBoard, ConsoleLenses, ConsoleOpened, ConsolePassRun, ConsolePersonOrigin, ConsolePlaced, ConsolePressing, ConsoleQueued, ConsoleRefresh, ConsoleRole, ConsoleRound, ConsoleSection, ConsoleDeferred } from '../types'
 
 import { isRoundOpen } from './engine'
 
@@ -17,9 +17,7 @@ const roundState = atom({ plugin: 'console', key: 'round' } as const, null, { sh
 const roundErrorState = atom({ plugin: 'console', key: 'roundError' } as const, null)
 const printedState = atom({ plugin: 'console', key: 'printed' } as const, null)
 const askSentState = atom({ plugin: 'console', key: 'askSent' } as const, null)
-const boardState = atom({ plugin: 'console', key: 'board' } as const, null, { shape: 'board-11' })
-const reviewingState = atom({ plugin: 'console', key: 'reviewing' } as const, null, { shape: 'reviewing-3' })
-const reviewEndState = atom({ plugin: 'console', key: 'reviewEnd' } as const, null as string | null)
+const boardState = atom({ plugin: 'console', key: 'board' } as const, null, { shape: 'board-13' })
 const passState = atom({ plugin: 'console', key: 'pass' } as const, null, { shape: 'pass-5' })
 const queuedState = atom({ plugin: 'console', key: 'queued' } as const, [], { shape: 'queued-2' })
 const gateState = atom({ plugin: 'console', key: 'gate' } as const, [], { shape: 'gate-1' })
@@ -31,7 +29,7 @@ const turnRunningState = atom({ plugin: 'console', key: 'isTurnRunning' } as con
 const continueAskedState = atom({ plugin: 'console', key: 'isContinueAsked' } as const, false)
 const expandedState = atom({ plugin: 'console', key: 'expanded' } as const, [] as ConsoleSection[], { shape: 'expanded-1' })
 
-const openedState = atom({ plugin: 'console', key: 'opened' } as const, null, { shape: 'opened-4' })
+const openedState = atom({ plugin: 'console', key: 'opened' } as const, null, { shape: 'opened-5' })
 const deferredState = atom({ plugin: 'console', key: 'deferred' } as const, [] as ConsoleDeferred[], { shape: 'deferred-1' })
 
 const personOriginState = atom({ plugin: 'console', key: 'personOrigin' } as const, null as ConsolePersonOrigin | null)
@@ -74,19 +72,6 @@ export async function setAskSent($: $, value: string | null): Promise<void> { aw
 
 export async function getBoard($: $): Promise<ConsoleBoard | null> { return read($, boardState) }
 export async function setBoard($: $, value: ConsoleBoard | null): Promise<void> { await update($, boardState, () => value) }
-
-/** The change request the person last opened in the review tree. */
-export async function getReviewing($: $): Promise<ConsoleReviewing | null> { return read($, reviewingState) }
-export async function setReviewing($: $, value: ConsoleReviewing | null): Promise<void> { await update($, reviewingState, () => value) }
-
-/** The review tree's marker as last read (a refresh, an Open); the pane's status only, a press reads the tree itself. */
-export async function setReviewEnd($: $, value: string | null): Promise<void> { await update($, reviewEndState, () => value) }
-
-/** The review tree as the pane shows it: its change request and marker; null while none is open. */
-export async function getReviewTree($: $): Promise<ConsoleReviewTree | null> {
-  const reviewing = await read($, reviewingState)
-  return reviewing === null ? null : { cr: reviewing.cr, end: await read($, reviewEndState) }
-}
 
 export async function getPass($: $): Promise<ConsolePassRun | null> { return read($, passState) }
 export async function setPass($: $, value: ConsolePassRun | null): Promise<void> { await update($, passState, () => value) }

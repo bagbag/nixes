@@ -43,8 +43,7 @@ per step for a local, reversible choice.
    current status (superseded, closed, revised by a later ruling). Verify an
    absence by searching its owner docs and, where a board exists,
    `$HOME/.agents/bin/board related <terms> --docs <paths>`. Verify each unverified premise now
-   or ask it first as its own question; base no ruling or recommendation on an
-   assumption. When an earlier ruling, an existing owner or the platform
+   or ask it first as its own question. When an earlier ruling, an existing owner or the platform
    already answers a question, present that answer with its re-derivation
    instead of an open question. Turn each released ruling the end state
    revises into a question.
@@ -69,19 +68,16 @@ risk or scope trade-off.
 
 ### End-state criteria
 
-- Question existing and proposed parts; keep each part that one realistic
-  consumer scenario needs, including external library consumers without
-  in-repo call sites. Among options serving the same uses, prefer fewer
-  speculative parts. Use in-repo call-site counts to size changes, not to
-  establish consumer need.
-- For each option, name the consumer or failure each part (log, option,
-  status, mechanism) serves, drop parts without one, and roughly estimate its
-  size in lines and files.
+- Apply AGENTS.md's code-level rules (Core principles end state; Writing code
+  Ladder and No unrequested structure) to existing and proposed parts. For each
+  option, name the consumer or failure each part (log, option, status,
+  mechanism) serves, drop parts without one, and roughly estimate its size in
+  lines and files.
 - Separate required properties from mechanisms; compare mechanisms by those
   properties.
-- Reuse platform and module capabilities. For coordination, use platform state,
-  lifecycle, failure and retry semantics before parallel state. Follow analogous
-  module patterns or state the reason for divergence.
+- For coordination, use platform state, lifecycle, failure and retry semantics
+  before parallel state. Follow analogous module patterns or state the reason
+  for divergence.
 - Justify each added durable concept, abstraction, workflow boundary,
   coordination mechanism or acceptance layer by its current or committed
   consumer, the realistic failure or contract instability it prevents, and why

@@ -60,8 +60,8 @@ def check_title(round_id: str, cycle: str | None) -> str:
     return f"Round {round_id} · Check" + ('' if cycle is None else f' cycle {cycle}')
 
 
-CHECK_AFTER_ANSWERS = (' (after the last answer: challenge your own rulings in this round and what the open questions take from the answers, not the strong marks of answered questions; a finding is a new question, '
-                       'checked before it is asked).')
+CHECK_AFTER_ANSWERS = (' (after the last answer: challenge your own rulings in this round, those on answered questions included (an update may change only their `rulings`), and what the open questions take from the answers, '
+                       'not the strong marks of answered questions; a finding that needs the user\'s decision is a new question, checked before it is asked).')
 CHECK_PLAIN = '.'
 CHECK_LAST = ' (last before the batch).'
 CHECK_PATH_NOW = " (the round's path pass: goal and foundations, before the drafts settle)."
@@ -118,7 +118,9 @@ def pass_format(command: str) -> str:
     return lines(
         'After the pass, report each change as a per-question update: changed fields, a new question (the Stage fields, `root` included; no id; it goes last, '
         'or ahead of the question its `before` names), or '
-        '{"id", "remove": true, "reason"}; report an empty list when nothing changed. Raise a change that would revise a '
+        '{"id", "remove": true, "reason"} (a point you find already entailed, whose question is its only cover, retires with '
+        '"ruling": {"ruling", "why", "alternative", "fails", "evidence"} as your disclosed ruling: the walkthrough shows it, Record writes it as a record of its own, and the release lists it); '
+        'report an empty list when nothing changed. Raise a change that would revise a '
         "user's ruling as a new question. "
         f'{WAITS_FOR} Name a hold you set for your own spike or review in `summary`. {MERGE_TEST} A merge is one rule question (`settles`: the keys it settles); split an item out when the rule\'s application to it is open. '
         f'A question that widens the round\'s scope: list the open items with `{LIST_COMMAND}`.',
@@ -134,11 +136,16 @@ ROOT_CHECK = (" Goal lens: check each question's `root`; rewrite a question whos
               '`root`.')
 
 
-def pass_scope(ids: list[str], strong: list[str] | None, command: str | None = None) -> str:
+ANSWERED_RULINGS = (' An update to an answered question may change only its `rulings`: the answer and its options stay the user\'s; '
+                    'each change is logged and the release asks the user about it.')
+
+
+def pass_scope(ids: list[str], strong: list[str] | None, command: str | None = None, answered: bool = False) -> str:
     """The pending pass's scope (r4-q15, q16); `strong`: the strong ids a challenge-rulings pass re-derives, None for other passes;
-    a step-back pass also checks each question's `root`."""
-    head = (f"This pass covers {' '.join(ids)}: a `checked` entry (what you examined in it this run, one line of about {CHECKED_MAX} characters) or an update for each."
-            + (ROOT_CHECK if command == 'step-back' else '')
+    a step-back pass also checks each question's `root`; `answered`: the pass after the last answer, which covers the answered
+    questions and my rulings on them (r7-q27)."""
+    head = (f"This pass covers {' '.join(ids)}{' and my rulings on them' if answered else ''}: a `checked` entry (what you examined in it this run, one line of about {CHECKED_MAX} characters) or an update for each."
+            + (ROOT_CHECK if command == 'step-back' else '') + (ANSWERED_RULINGS if answered else '')
             if ids else 'Nothing changed since this pass last ran: `checked` needs only a `round` note.')
     if strong is None:
         return head
@@ -147,10 +154,15 @@ def pass_scope(ids: list[str], strong: list[str] | None, command: str | None = N
     return head + verdicts + ' List your own rulings in `rulings` (an empty list when there is none).'
 
 
-def start_scope(ids: list[str], strong: list[str] | None, explored: list[str], command: str | None = None) -> str:
+def answers_args(ids: list[str]) -> str:
+    """The after-answers challenge's argument: the answered questions and my rulings on them (r7-q27)."""
+    return f"{' '.join(ids)} and my rulings on them"
+
+
+def start_scope(ids: list[str], strong: list[str] | None, explored: list[str], command: str | None = None, answered: bool = False) -> str:
     """The scope as the pass starts (r9-q36), appended to its expanded skill text: pass_scope's line, which it supersedes, and
     for an options pass the ids `explored` covers."""
-    return (f"Use this scope, not one printed earlier. {pass_scope(ids, strong, command)}"
+    return (f"Use this scope, not one printed earlier. {pass_scope(ids, strong, command, answered)}"
             + (f" Give `explored` an entry for each of {' '.join(explored)} and no other." if explored else ''))
 
 
@@ -296,6 +308,8 @@ def stage_instructions(round_id: str, selected: list[str], has_board: bool, prop
         'question is a draft (`board`: null, `for`: the point id)' + (', created on the board at Record' if has_board else '') + '.',
         '- `settles` lists the items '
         f'one answer settles the same way (a rule question); an open decision outside the selection named there or in `board` joins the round. {MERGE_TEST}',
+        '- `holds` lists the board ids of the items this question holds up (board-core.md "Questions and rulings"; absent or empty: none); '
+        'Record passes it to the board, which links the record to them.',
         f'- `waitsOn` names the questions a decision rests on; it holds a dependent back until its premise is answered; {WAITS_FOR}',
         '- Cut under question-format.md: the first part keeps the item in `board`, the others are drafts (`for`: the item or point id); '
         'a detail `waitsOn` the direction it rests on.',
@@ -334,7 +348,7 @@ def stage_example(first_selected: str | None) -> dict:
     return {'round': {'title': '<what this round decides>', 'summary': '<the topic in plain words>',
                       'overview': '<optional: one line across the questions>'},
             'questions': [{'key': 'a', 'board': None, 'for': first_selected,
-                           'settles': [], 'text': '<question>?',
+                           'settles': [], 'holds': [], 'text': '<question>?',
                            'title': '<the decision as a short question>', 'header': '<topic noun>',
                            'kind': 'decision',
                            'problem': '<what is decided and why now>', 'root': '<cause>; <end state>',
@@ -484,9 +498,10 @@ def claude_answer_how(first_id: str | None) -> str:
                           'quote': "<the user's exact words>"}) + '.')
 
 
-def approval_reasons(rulings: list[dict] | None, records: list[dict]) -> list[str]:
-    """Why the approval is asked (unsure rulings, revised records, records that left the set): for the model and the Log."""
+def approval_reasons(rulings: list[dict] | None, records: list[dict], changed: list[str] | None = None) -> list[str]:
+    """Why the approval is asked (unsure rulings, a ruling changed after the user's answer, revised records, records that left the set): for the model and the Log."""
     return [f"unsure: {x['record']} {x['ruling']}" for x in rulings or [] if not x['sure']] + \
+           [f"ruling changed after the answer: {rid}" for rid in changed or []] + \
            [f"revised: {rec['id']} ({rec['change']})" for rec in records if rec['state'] == 'revised'] + \
            [f"left the set: {rec['id']} ({rec['reason']})" for rec in records if rec['state'] in ('dropped', 'changed')]
 
@@ -521,6 +536,25 @@ def record_deferred(qid: str, found: dict) -> str:
     return f"- {qid}: deferred at Record, it " + (f"waits for {found['reason']}" if found['kind'] == 'outside' else found['reason'])
 
 
+def step_unknown_keys(step: str, found: dict[str, list[str]], accepted: list[str]) -> str:
+    """A report with keys its step's forms do not name (r7-q26): says where each goes and what the step takes."""
+    by_takers: dict[tuple, list[str]] = {}
+    for key, takers in found.items():
+        by_takers.setdefault(tuple(takers), []).append(f'`{key}`')
+    goes = '; '.join(f"{', '.join(keys)} {'go' if len(keys) > 1 else 'goes'} to {', '.join(takers)}" for takers, keys in by_takers.items() if takers)
+    return (f"{step} takes no {', '.join(f'`{key}`' for key in found)}" + (f": {goes}" if goes else '') + '. '
+            + (f"It takes {', '.join(f'`{key}`' for key in accepted)}" if accepted else 'It takes no fields (report {})'))
+
+
+RECORD_OR_UPDATES = 'Record takes records or updates, not both: free the held questions first, record after their answers.'
+
+
+def record_landed(ids: list[str]) -> str:
+    """Record's offer to a question still waiting for an outside result (r7-q26)."""
+    return ('If a result landed, report it first: ' + json_block({'updates': [{'id': ids[0], 'waitsFor': None, 'premises': '<what the result settled>'}]})
+            + f" ({', '.join(ids)} wait). The question is checked again and asked in this round; Record follows its answer.")
+
+
 def revise_needs_decision(qid: str, item: str) -> str:
     return (f"records.{qid}: {item} already holds a decision record, which this one revises in place: give `decision`, "
             'the revised Decision (the record step prints the current one)')
@@ -553,8 +587,8 @@ def counts_unavailable(error) -> str:
     return f'Board counts unavailable ({error}); run `board health`.'
 
 
-def supersede_exited(old: str, item: str, returncode: int, output: str) -> str:
-    return f"`board ruling supersede {old} --with {item}` closed {old} but exited {returncode}: {output}"
+def record_exited(item: str, returncode: int, output: str) -> str:
+    return f"`board ruling record {item}` recorded it and closed the records it replaces but exited {returncode}: {output}"
 
 
 def abandoned_records(kept: list[str]) -> str:
@@ -583,7 +617,7 @@ def closed_done(q: dict) -> str:
     if q['recorded'] == 'deferred':
         return f"- {q['id']} deferred" + (f" → {q['deferralItem']}" if q.get('deferralItem') else ' (no board: noted here only)')
     return (f"- {q['id']} → {q['recorded'] if q['recorded'] not in ('file',) else q['recordFile']}"
-            + (f", closed {', '.join(q['closed'])}" if q.get('closed') else ''))
+            + (f", closed {', '.join(q['replaces'])}" if q.get('replaces') else ''))
 
 
 def closed_parked(q: dict) -> str:
@@ -605,6 +639,30 @@ def round_closed(round_id: str) -> str:
 
 
 # Verbs: the notes after an answer, a decline, a restart (verbs.py).
+
+def chat_skipped(status: str, missing: list[str], open_premises: list[str], waits_for: bool) -> str:
+    """The record's note on a chat answer to a question that never went out (r3-q17)."""
+    parts = [f'answered in chat while {status}, before it was asked']
+    if missing:
+        parts.append(f"no {', '.join(missing)} pass had covered it")
+    if open_premises:
+        parts.append(f"its premises {', '.join(open_premises)} were unanswered")
+    if waits_for:
+        parts.append('it still waited on an outside result')
+    return '; '.join(parts)
+
+
+def retired_points(r: dict) -> list[dict]:
+    """The round's retired points (r3-q18): the answered questions a pass retired with the session's disclosed ruling, each as its
+    id, title, covered keys, reason and the five disclosure fields."""
+    return [{'id': q['id'], 'title': q['title'], **q['retired'], **q['rulings'][0]} for q in r['questions'] if q.get('retired')]
+
+
+def retired_block(x: dict) -> str:
+    """A retired point as printed with the walkthrough: the ruling that replaces its question."""
+    covers = f" for {', '.join(x['covers'])}" if x['covers'] else ''
+    return ruling_block(x, f"retired {x['id']}{covers}, entailed: {x['reason'].strip()}")
+
 
 def chat_recorded(qid: str) -> str:
     return f'Recorded the chat answer to {qid} with its quote.'
@@ -756,6 +814,8 @@ def log_text(event: dict) -> str | None:
         'asked': f"asked {ids('questions')}", 'answered': f"answered {ids('questions')} ({e.get('origin')})" + (f"; typed {ids('typed')}" if e.get('typed') else ''),
         'decline': f"batch {batch_number(e.get('marker'))} {e.get('reason')}", 'restart': f"restarted {ids('questions')}",
         'continued': f"released {ids('questions')} from held: checked again before the next batch",
+        'freed': f"{ids('questions')} freed at Record: the outside result landed, checked again before it is asked",
+        'rulings-changed': f"{e.get('question')}: my rulings changed after the answer (the release asks you)",
         'cap': f"cycle cap at {e.get('cycle')}" + (': the questions park' if e.get('away') else ''), 'cap-decision': f"cap: {e.get('choice')}",
         'settled': f"away: acted {ids('acted')}, parked {ids('parked')}", 'parked': f"parked {e.get('question')} → {e.get('board')}",
         'batch-withdrawn': f"batch {batch_number(e.get('marker'))} withdrawn for updates", 'recorded': f"recorded {e.get('question')} → {e.get('board') or 'file'}",
@@ -793,6 +853,9 @@ def show_markdown(r: dict | None, counts: dict | None, next_step: str | None) ->
         lines.append(f"Pending: /{r['pending']['command']} ({r['pending']['id']}).")
     if r['batch']:
         lines.append(f"Batch out: {r['batch']['marker']}.")
+    if retired := retired_points(r):
+        lines += ['', 'Retired points (the session\'s disclosed rulings):',
+                  *(f"- {x['id']} ({', '.join(x['covers']) or x['title']}): {x['ruling']} Reason: {x['reason']}" for x in retired)]
     lines += ['', '| id | board | status | kind | question | answer |', '|---|---|---|---|---|---|']
     for q in r['questions']:
         overlap = ''.join(f" (overlaps {h['id']}: {h['outcome'] or 'open'})" for h in q['overlaps'])
@@ -959,14 +1022,16 @@ def recheck_example(first: list[str]) -> dict:
                         'touches': 'own', 'file': '<path of the corrected record text, for own>'}}}
 
 
-def release_question_text(count: int, source: bool, unsure: list[dict], revised: list[dict]) -> str:
+def release_question_text(count: int, source: bool, unsure: list[dict], revised: list[dict], changed: list[str] | None = None) -> str:
     """`Release 3 records? Unsure: tstdl-a (…) Revised: tstdl-b (…)`: an unsure ruling first (r14 q56), within the dialog
     limits whatever the set holds; the notice before the dialog prints each ruling in full."""
     counted = plural(count, 'record')
     text = f"Release the session's {counted}?" if source else f"Release {counted}?"
     unsure_text = '; '.join(f"{x['record']} ({x['ruling']})" for x in unsure)
     changes = '; '.join(f"{rec['id']} ({cut(rec['change'], 80)})" for rec in revised)
-    return cut(' '.join(filter(None, [text, f'Unsure: {unsure_text}' if unsure_text else '', f'Revised: {changes}' if changes else ''])), TEXT_MAX)
+    return cut(' '.join(filter(None, [text, f'Unsure: {unsure_text}' if unsure_text else '',
+                                      f"Ruling changed after your answer: {', '.join(changed)}" if changed else '',
+                                      f'Revised: {changes}' if changes else ''])), TEXT_MAX)
 
 
 
@@ -1167,6 +1232,18 @@ def own_rulings_intro(round_id: str) -> str:
             'authority).')
 
 
+def session_ruling_row(rid: str) -> str:
+    return f'{rid} is your retired point: its disclosed ruling is listed with the own rulings (sure); list no second one for it.'
+
+
+RULINGS_CHANGED = "Changed after the user's answer: the release asks the user about these rulings."  # a line of the record file
+
+
+def ruling_changed_row(rid: str) -> str:
+    return (f"{rid} has a ruling you changed after the user's answer (it is in the record's Own rulings): list it as any other; "
+            'the release asks the user about it even when every ruling is sure.')
+
+
 def own_rulings_example(first: str) -> dict:
     return {'rulings': [{'record': first, 'ruling': '<your ruling>', 'why': '<what it meets, why no material trade-off remains>',
                          'alternative': '<strongest alternative>', 'fails': '<what it fails>',
@@ -1334,7 +1411,7 @@ def prior_rulings_text(q: dict) -> str:
     return '\n'.join([f'{len(prior) - len(fails)} held.', *fails])
 
 
-PART_TITLES = {'problem': 'Problem', 'cases': 'Cases', 'settles': 'Settles', 'premises': 'Premises', 'note': 'Note', 'priorRulings': 'Earlier rulings',
+PART_TITLES = {'problem': 'Problem', 'cases': 'Cases', 'settles': 'Settles', 'holds': 'Holds up', 'premises': 'Premises', 'note': 'Note', 'priorRulings': 'Earlier rulings',
                'corrections': 'Corrections', 'boardCheck': 'Board check'}
 LIST_PARTS = ('settles', 'corrections', 'boardCheck')  # parts printed one line per entry
 SELF_TITLED = ('options', 'dropped', 'rulings')  # parts whose lines say what they are (`Recommended:`, `Dropped:`, `My ruling:`)

@@ -18,7 +18,8 @@ The build expands includes recursively into complete standalone skill files.
 Agent definitions take the same markers, resolved against `skills/`
 (`review` and `deep-review` share `shared/review-method.md`; `verify` takes
 `shared/reuse-check.md`; every file-writing agent takes the report cap in
-`shared/report.md`).
+`shared/report.md`; worker limits come from one of `shared/limits-assessor.md`,
+`limits-implementer.md` or `limits-readonly.md`).
 Missing targets, escaping paths, cycles, frontmatter markers, and malformed or
 unresolved markers fail validation.
 
@@ -36,8 +37,10 @@ on its own:
 - Include content a skill acts on in every run; the rendered skill carries it,
   so reloading the skill after compaction restores it.
 - Reference `$HOME/.agents/skills/shared/<file>` by path for readers without
-  includes (agent definitions, `AGENTS.md`) and for conditional or
-  single-section needs.
+  includes (agent definitions, `AGENTS.md`), for conditional or
+  single-section needs, and for files role sessions already load (board-core,
+  decision-protocol, reviewers): the skill reads them "unless its text is
+  already in your context".
 - Links only navigate loaded content: in-file anchors for included files,
   `../shared/` links for files the skill reads by path. Validation rejects
   other links and unresolved anchors.
@@ -114,7 +117,8 @@ Workflow owners:
   [review](skills/role/protocols/review.md) (independent review, review policy,
   evidence and gates) and
   [unattended](skills/role/protocols/unattended.md) (autopilot authority and
-  parking). Sessions read them by path; compaction recovery names them again.
+  parking); [accept](skills/role/protocols/accept.md) (user acceptance, user
+  review and ratification), read only at decide's Accept. Sessions read them by path; compaction recovery names them again.
 - [Board core](skills/shared/board-core.md) and
   [board coordination](skills/shared/board-coordination.md): board model, holds,
   routing, record shapes, epics, milestones and rulings; [board-migrate](skills/board-migrate/SKILL.md)
@@ -145,8 +149,7 @@ in place (`to_server`: bd backup and restore, the old folder kept). It reports `
 lines matching tracked files; share and join apply the same lists. `no-git-ops` stays `true`, as stealth init sets it: bd 1.3's stealth handling keys on it
 (with `false`, `bd doctor --fix` writes a project `.gitignore`).
 
-Shared boards ([beads-setup](skills/shared/beads-setup.md#shared-boards), queues in
-[Routing](skills/shared/board-core.md#routing)): only board's own mark, `.beads/board-shared.json`,
+Shared boards ([beads-setup](skills/shared/beads-setup.md#shared-boards); queues: [board-core Routing](skills/shared/board-core.md#routing)): only board's own mark, `.beads/board-shared.json`,
 makes a board shared, so a board without it costs no bd call and a stray Dolt remote shares nothing.
 `board share` (two steps: it says what goes out, `--yes` sends) and `board join` write it after the
 first push or the clone; a failed join removes what it made. Every bd call sets `BD_NO_REMOTE_ADOPT=1`.
@@ -156,9 +159,9 @@ it); `board move` flattens to a fresh repository, leaving a moved note (`custom.
 the old board that `Shared.check_moved` reads after each pull, so stale clones refuse writes until
 `board join` rejoins them. `Shared` in `bin/board` owns sync: `before` pulls,
 `after` opens the window, a detached `board _sync-wait` commits and syncs, and `.beads/board-sync/`
-holds its locks, stamps and reported problem. On these boards `board bd` runs bd as a child instead
-of exec'ing it, to retry `foreign key conflicts` and start the wait. `Board.listed` applies the queue
-filter, `queue_guard` refuses moves and cross-queue claims, and `rewritten_create` makes plain child
+holds its locks, stamps and reported problem. `board bd` runs bd as a child (never an exec), to retry `foreign key conflicts`,
+start the wait and add its warning to bd's read-only refusal. `Board.listed` applies the queue
+filter, `parent_move_refusal` refuses a reparenting by a session that may not move items (and a change request's or its held items'), and `create_item` makes plain child
 ids on every board. `board console` adds `sync` (the problem line) and `queueLine` (other queues,
 unrouted with the count for you, blocking yours), both shown in the pane.
 The console pane shows the repository's scratch line (`scratch status --line`, read on every refresh; nothing when empty or when scratch fails) as one informational line (no button; trashed folders expire by themselves, in every repository); no model context gets the line (r15-q83 revised).
@@ -172,10 +175,13 @@ the command (`Board.load`: a `bd list` of the non-closed items plus one
 `bd show` of the held items' comments for status views, `bd export` for
 `related`, `check` and the writes that read closed items, a `bd show` of only
 the named items for `board show`), and `board bd <args>` for every other bd
-command (`bd edit`, which blocks on an editor, and `--readonly` are refused with
-the way on named in one line; a plain `bd show`, `view` or comment listing by
-ids runs `board show`, and type `question` runs as `decision`, each with a
-stderr note, r9-q35). It starts a stopped
+command (`bd edit`, which blocks on an editor, is refused with the way on named). `board bd` runs bd with `--readonly` and rewrites nothing:
+bd's reads (`list`, `ready`, `search`, `history`, `export` …) pass and bd refuses a write; board then prints bd's error and the board command that
+does it (`board create`, `field`, `update`, `comment`, `close`, `reopen`, `claim`, `block`/`unblock`, `link`/`unlink`, `defer`/`undefer`, `gate`) and the
+raw rule. `--readonly` does not catch every write: on a server-mode board `import`, `rename`, `config set` and `dolt remote add`/`dolt set` pass
+(probed on bd 1.3.2; no further guard, by decision). `board bd --raw --yes <args>` runs bd without it, for a write no board command does or one the
+user authorized; `--raw` alone prints that rule, runs nothing and exits 2. `show`, `view` and comment listings are refused naming `board show` (one
+read path for items, whole items with `--json`). It starts a stopped
 server on server-mode boards (bd's auto-start is off) and takes the actor from
 `session actor`, the owner of the session identity
 (`CODEX_SESSION_ID`/`CODEX_THREAD_ID`, else `CLAUDE_CODE_SESSION_ID`). Hooks
@@ -226,21 +232,41 @@ with no update (fields, notes, comments) for an hour is `STALE` in position, min
 holder's claim output (r13-q76); nothing is refused. An unregistered session has no cap; one whose own registration file
 exists but is unreadable is refused by `board claim` and `board take` until it registers again (r3-q16). Registration takes `--pulls` for every role;
 lead, solo and agent are presets, and a session's pulls add to its preset for bare claims, handles
-and capacity (r13-q61). `board create` and `board bd create|update` refuse a task, bug, design or
-spike whose description, design, acceptance or notes is over 2000 characters (naming field and size;
-`--append-notes` counts the old notes plus the appended text; the refusal says how to cut, r3-q14); an update that shrinks an over-limit field
+and capacity (r13-q61). `board create` and `board field apply` refuse a task, bug, design or
+spike whose description, design, acceptance or notes is over 2000 characters (naming field and size; the refusal says how to cut, r3-q14); an update that shrinks an over-limit field
 or only replaces paths in it (same tokens and whitespace, each changed token holding a `/`; the rewrite after a scratch move) passes, and decision records are not limited (r13-q74, r16-q96). Comments a session writes are held to
-the same 2000 (`board bd comments add` by text, `-f` or stdin, `board handover` evidence, `board return`
+the same 2000 (`board comment <id>... (-m <text> | -f <file>)`, `-f -` for stdin; `board handover` evidence, `board return`
 findings, `board block` reasons); the board's own packets are exempt: the protocol engine's autopilot
-park adds its packet with `--board-packet`, which `board bd` strips before bd (r16-q87). Plain
+park adds its packet with `board comment … --board-packet` (r16-q87).
+`board close <id>... --reason "<why>"` refuses a reason under bd's 20 characters before calling bd, and a change request
+(`board cr land` or `reject` closes it).
+`--force` closes past open blockers. The other writes `board bd` no longer carries have verbs: `board update <id>... [--title] [--priority] [--label L]...
+[--unlabel L]... [--parent P|""]` (a `queue:` or `for:` label goes through `send`, `route` or `create --for`; `--parent` keeps a change request and its held
+items where they are), `board link <a> <b> --type T` and `board unlink <a> <b>` (links that hold nothing up; a blocking one is `board block` /
+`board unblock <ids> --on <blocker>`, whose `--reason` a work item needs and a decision or gate blocker or a milestone item does not),
+`board reopen <id>...` (not a change request), `board defer <id>... --reason [--until]` / `board undefer`, and `board gate create|resolve`. Refused
+calls of these verbs exit 2, as every verb that writes an item from its flags does (`REFUSAL_EXIT_2` in `bin/board` is the list). Plain
 `board show` prints the item's newest 5 comments, each cut at 2000 characters with a pointer to
 `board show <id> --comments`, which prints them whole (r16-q88, q89); it prints item metadata
 `deep_review=<path>`, the failure path a review escalated, as `deep-review: <path>` (r16-q94, r7-q28).
-`board field <id> <field> --export` writes a long field (description, design, acceptance, notes) to a file in
-the session's scratch folder and prints its path; edit that file in place, then `board field <id> <field> --apply`
-writes it back through `bd update` under the same size limit. Apply refuses when the field's own text changed
-since the export (export again), an empty result and a no-op, and removes the file; it replaces rewriting a field
-from memory. Reading stays `board show --field`.
+`board field export <id>... [--field F]...` (fields description, design, acceptance (`acceptance_criteria`), notes; default all
+four, empty ones too) writes `<scratch>/fields/<id>/<field>.md` and one hidden `.base.json` per item folder with each field's
+hash, and prints the paths; edit the files in place, then `board field apply <id>... [--field F]...` makes one `bd update` per item
+with its changed fields, under the same size limit, and removes the files. An item is refused whole (files kept, exit 2) when an edited field
+changed on the board since its export or an edited file is empty; an unedited file is never written, moved on the board or not: it is only removed; items are independent.
+Export never overwrites an export edited since and not applied (it names apply and discard); an untouched one is refreshed.
+`board field discard <id>...` removes the exports. The flow replaces rewriting a field from memory. Reading stays `board show --field`; `board show <ids> --json` without `--field` prints whole items `{id: item}` with comments.
+`board create [<title>] [--type T] [--parent ID] [--label L]... [--priority N] [--description-file F|-] [--design-file F] [--acceptance-file F]
+[--deps type:ID]... [--holds ID|none]... [--metadata k=v]... [--status S] [--assignee A] [--for PERSON]` builds one node of a bd graph plan; `--graph <plan.json>`
+takes a whole plan (no node flags beside it). Both pass the plan checks (types, a change request's look or view equal to the project default,
+decisions naming what they hold up, queue labels, `--for`: top-level nodes, your queue, held for you, a shared board only, the size
+limit of a work item's long fields) and go to `bd create --graph --json`; the ids print (`key id` per node for `--graph`). Node field names are
+bd's graph JSON (`acceptance_criteria`, `parent_id`/`parent_key`, `deps: [{target, type}]`; bd ignores an unknown key silently): `--deps blocks:ID`
+makes ID wait on the new item (as `bd create --deps`), a bare ID or `blocked-by:ID` makes it wait on ID. The links `create`, `link`, `ruling revise|supersede|record` write meet one set of rules (`block` writes its own wait, `update --parent` meets the same parent-move test, and bd writes `supersede` and gate links itself): an existing item made to wait on a new one gets `board block`'s effects, and only where block needs no
+reason (a decision or gate as the new item, a milestone as the waiting one), else the create is refused (exit 2) naming `board block <id> --on <new> --reason`; `supersedes` and `tracks` links belong to
+the ruling verbs; a plan edge needs a new item at one end; a node without a description is refused; `--parent` copies the parent's labels
+except its queue (bd copies none for a graph node). `--limit 0` is every row of a view;
+`related --docs`, `--holds`, `--deps`, `--label`, `--field`, `--section` and `health --items` repeat and take commas (`--closes` repeats, one `QUESTION=RECORD[,RECORD]` each, its comma separates records); options do not abbreviate; `--limit` and `--offset` are 0 or more. A refusal of `create`, `comment`, `close` and `field` exits 2, as `board bd` does. `board close --force` is bd's: it closes a blocked item or an epic with open children. `create` refuses `--status closed` (close it with a reason) and takes `-p P0..P4`; a plan with a key bd would drop silently, labels that are not a list of strings, or an edge that is not an object is refused. `board help <verb>` prints that verb's help and example.
 `board wait [--timeout <s>]` blocks until a bare `board claim` would have a candidate for the session (its pulls, minus its own
 hand-overs; one helper serves both), prints `claimable: <id> (<kind>) <title>` and exits 0 without claiming. It polls every 60 s,
 exits 3 at the timeout and 1 when the session's registration is gone. Run it with the shell tool's background mode, not a
@@ -248,40 +274,99 @@ exits 3 at the timeout and 1 when the session's registration is gone. Run it wit
 `board check` encodes the board-core
 conventions mechanically; change both in the same change, so drifted boards
 surface in `board health` and move through `/board-migrate`.
-`board bd update --set-metadata look=…|view=…` and `create --graph` node metadata are refused when the value equals the
+`board create` / `create --graph` node metadata are refused when the value equals the
 project default (an unreadable default lets bd answer); `board setup` that changes `look` or `view` prints, under the
 `old -> new` line, the open CRs keeping their own value, each with the first line of its description, design or notes naming the
 setting (`no reason in its text` otherwise) and a note when it now equals the default (r10-q52).
 `ITEM_TYPES` in `bin/board` is the one list of item types (board-core.md Kinds, a test compares them):
-`board bd create`, `create --graph` and `update --type` refuse any other type, `question` is read as
-`decision`, and `board check` flags a live item of another type (class `unknown-type`).
+`board create` (flags or `--graph`) and `update --type` refuse any other type, `question` is refused naming
+`--type decision` (never rewritten), and `board check` flags a live item of another type (class `unknown-type`).
 Metadata `no_code=1`, set at creation (`create --metadata` or a graph node), marks work that changes no code
 (r10-q50): it may be claimed outside a CR and `board check` drops its `no-cr` flag; `update --set-metadata no_code`
 is refused. A CR whose branch has no commits of its own lands on its passed review in either look, with no
 ratification and no Accept (a stacked one with its base); a design checkpoint is the exception.
-`board cr edits <cr> --from <tree> --tip <sha> [--commit -m <msg> [--gate '<cmd>' | --no-gate '<reason>' | --checks]]` carries the
-user's review-tree edits (r15-q75..q79). Without `--commit` it prints them (tracked and new, not ignored files) against
-`<tip>` and refuses a branch that left `<tip>`, or a tree set to another tip. `--commit` commits exactly the tree on disk
-(`commit-tree`, the review tree's files untouched): author the repository's `user.name`/`user.email`, committer the session, no trailer: the
-board records `{commit}` in the CR's `review_edits` metadata, and moves the review tree's marker `refs/worktree/console-review-end` from
-`<tip>` to that commit by compare-and-swap (`mark_reviewed`; a tree set to another range meanwhile rolls the branch back and commits
-nothing). The marker always names that commit, also when `--checks` then rebases the branch (its failure says to Open again). `--gate` runs the command in the CR worktree and stores it as a targeted check for
+`board review open <cr|ratification>` opens the item for the user's review in its own worktree (`<main>/.worktrees/<id>`), on its own branch
+(r6-q24, r6-q25; accept.md User review) and prints the folder to open on stdout (the worktree's single root `*.code-workspace` file,
+else the folder). It refuses (lead, solo or person only) a request not waiting for its Accept (`needs_acceptance`: in work, in agent review or
+returned) or held by an agent session, a worktree mid a rebase, merge, cherry-pick, revert or bisect, with uncommitted changes, or off its
+branch, and a remote named `board` that is not the board's (the board's own has the disabled push address; a stale url of it, after the checkout moved, is repaired). It moves nothing in git: no detach, no reset, no marker. It records the tip it
+opens at in the item's metadata `opened_tip`, makes the remote `board` when missing (url the main checkout, `remote.board.pushurl`
+`no-push://the-board-lands-requests`, which no `git-remote-no-push` helper serves, so any push fails; fetch `+refs/heads/*:refs/remotes/board/*`),
+sets the branch's upstream to `board/<base branch>` (a stacked request's base is its parent's branch; with `branch.<name>.rebase=false` and `mergeOptions=--ff-only`, so a plain Pull, whatever the user's global `pull.rebase`, fast-forwards or fails and never rewrites reviewed commits) and fetches `board` (pruned; VS Code's
+auto-fetch is off by default), so VS Code shows the request's commits as Outgoing Changes, the user's edits as Changes and a moved base as
+Incoming. The board fetches `board` again whenever it moves a base (a landing, any rebase of a branch) and re-points the upstream of a
+stacked request open for review to the target when its base lands; deleting a branch removes its `branch.<name>` config. Opening an item that
+is already open changes nothing it holds (its `opened_tip` stays, so the user's commits and uncommitted edits stay theirs; a missing worktree
+is made again from the branch; the uncommitted-changes refusal applies to the first open only). Open does not refresh: Accept brings in a moved
+base. A ratification opens `.worktrees/<ratification id>` on a new branch `ratify/<id>` at its landed tip, with the same remote and upstream
+(`board/<target>`). From Open until the user's Accept or Return (a ratification: its verdict) the item is held: `claim` for work, review or
+refresh (the deciding session's accept claim takes it), `handover` and `cr refresh` (its holder's too) refuse it (`refuse_open`), and the queue
+offers no review or refresh for it (`cr_claimable`; no refresh work). The user's edits are their commits after `opened_tip` plus the uncommitted
+changes (tracked and new, not ignored files, staged or not, through a throwaway index: `review_edits_tree`); `review_read` reads them live. The
+opened tip must still be an ancestor of the branch, and `opened..tip` must hold no merge commit and no commit of the base branch (a merging or fast-forwarding Pull brought them in; they are never the user's edits): otherwise `board cr land`, `board return`, `board cr edits`, `ratify` and `board show` (which prints the reason) refuse with the way back, `git -C <worktree> reset --hard <opened sha>` (it drops the user's commits after it, so they re-apply them), so a rewrite of reviewed work never passes as the user's edit. `board return` and `board cr land` end an unedited review
+(`opened_tip` cleared) and refuse one holding edits, naming the `cr edits --commit` line, and `land` on a stale check names `cr edits … --commit`
+before `cr refresh`, since a refresh refuses an open review. `board check` names a `<main>-review` folder (the old shared review folder, never
+deleted by tooling) in one line (a flag, not a deviation; no `check --json` row).
+`board cr edits <cr> --tip <sha> [--commit -m <msg> [--gate '<cmd>' | --no-gate '<reason>' | --checks]]` works on an item open for review
+(r15-q75..q79, r6-q24, r6-q25); `<sha>` is the tip it was opened at (`opened`). Without `--commit` it prints the edits (the commits after it and the
+uncommitted changes, against `<sha>`) and refuses another tip or an item not open. `--commit` records every commit after the opened tip in the CR's
+`review_edits` metadata (each its own `{commit}`), commits the uncommitted changes as one more (exactly the files on disk, `commit-tree`; the hand-staged
+ones too; `-m` needed only then): author the repository's `user.name`/`user.email`, committer the session, no trailer. The record comes first, the branch
+then moves by compare-and-swap (`update-ref`, a branch that moved meanwhile commits nothing and unrecords), the worktree's index follows (`reset`), and
+`opened_tip` is cleared before any check or rebase that can stop, so the refresh that follows is allowed. A `--gate`/`--no-gate` on a branch behind its base
+is refused naming the steps that work (commit without a gate, then `board cr refresh`; or `--checks`, which rebases itself). With no edits `--commit` only
+ends the review (clears `opened_tip`; no message, no check): the Accept and Return of an unedited review. `--gate` runs the command in the CR worktree and stores it as a targeted check for
 that tip (`check_kind=targeted`, `check_command`, output); `--no-gate` stores `check_kind=none` with the reason; `--checks` reuses `sync_branch` (rebase, setup, project checks, no new failures) and stores a normal full check; none
 stores nothing (Return). Both show as such (`board queue`: `check current (targeted: …)`, the console's `check.kind`) and
 land only for that tip. A full check (`handover`, `refresh`) clears the kind. The review stays current past its tip while
 every later commit is a recorded edit commit or its replay (`edits_only`, `is_replay`: replaying the recorded change onto the commit's
 parent by 3-way merge gives exactly its tree, so a rebase keeps it, and a copied message, a reindent or the same change at another place
 does not; `refresh --review-holds` drops such commits from the new range before comparing patch-ids with the reviewed one). A
-failing gate leaves the commit, stores the failure and the CR waiting for the user. On a ratification item `--commit`
-starts a follow-up CR (`open_worktree` forked at the landed tip, linked `discovered-from` the ratification) whose first
-commit is the edit; it takes no gate. The console's review tree (`<main>-review`) is clean when its files, written as a tree in a
-throwaway index from the marker (`read-tree`, `add -A`, `write-tree`: the board's `review_edits_tree` recipe, review.ts `snapshotTree`),
-equal the marker's tree. Open resets only a clean tree; Accept names the marker's commit (the tip you looked at plus the edits the board
-committed), and with the tree unclean Accept and Return add the edits and the `board cr edits … --tip <marker>` line. The pane's
-"in review tree" / "review tree behind" compares the marker with the CR's tip. While the marker names the tip of a CR waiting
-for the user (`held_by_review_tree`), only a session holding it (a deciding session's claim) refreshes it: it is no refresh
-work, another session's `board cr refresh` refuses it, and `board console --json` marks it `heldByReviewTree` ("held by your
-review tree" on its row). `cr edits` still refuses a moved tip.
+failing gate leaves the commit, stores the failure and the CR waiting for the user. A CR with no stored review whose own commits (base
+tip..tip) are all recorded edit commits is reviewed (`review_current`), so it lands on that Accept without an agent review.
+A conflict on a recorded edit commit (a rebase of any such request, a follow-up's included) is no special path: the request stays an
+ordinary CR mid its own board rebase, status as for any request waiting for the user (the follow-up is `needs_acceptance`, never
+`in_review`; `cr_claimable` keeps a CR whose rebase stopped on a recorded edit commit out of the refresh queue, a stop on any other commit stays refresh work); the deciding session claims it,
+merges with the user (resolve, `git add`, `board cr refresh`), and the user's confirmation is `board cr edits <cr> --merged <commit>`
+(alone; lead, solo or person; the commit is on the branch past its fork point and carries the author and time of a recorded edit commit,
+which a rebase and a conflict merge keep): it replaces the pre-rebase entry in `review_edits` with the merged commit, so the edit-only rule covers it
+(checks run, the user's Accept lands it). Without it the merged commit counts as an agent change (`is_replay` fails for it). When a refresh or any rebase
+the board continues goes past such a stopped edit commit (`resume_rebase`), it prints that exact `board cr edits <cr> --merged <commit>` step.
+On a ratification `--commit` turns its worktree into a follow-up CR's (r1-q5, r6-q24): the follow-up is created (linked
+`discovered-from` the ratification, `look` before, forked at the landed tip), its branch `cr/<id>` is made at the user's last commit (their commits after the
+landed tip, plus their uncommitted changes as one more, all recorded in `review_edits`), the worktree moves to it, `ratify/<id>` is deleted (the
+branch is renamed in separate compare-and-swap steps, each rerunnable) and the worktree moves to `.worktrees/<follow-up id>`, then the board rebases it onto the target and stores its check as
+it would for `--checks` (or the `--gate` / `--no-gate` for the rebased tip) and sets it to `needs_acceptance`, waiting for the user's Accept; a
+failing check keeps it there marked failed, a rebase that stops or a failed setup too (exit 1, see above). The follow-up is created held by the
+ratifying session until it waits for the user (nobody claims it during setup and checks), and the worktree moves last: a failure before
+it could be used closes a new follow-up again; a failure at a later step leaves it standing, and a rerun of the verdict reuses it and
+redoes what is left from wherever the worktree stands, needing no review.
+The board is the one reader of what a review holds (r1-q3): `board show <item>` of a CR (any status) or a ratification open for review prints
+`open for your review: opened at <tip>; not edited` or `…; edited (<files>): not yet recorded as yours`; `board console` carries the same per request
+and per ratification (several reviews open at once) as `review: {opened, edited, files} | null` on each `crs[]` and `ratifications[]` row (`opened`: the
+tip it was opened at; `edited`: true / false, null when it could not be read: an amended opened tip, a missing worktree; `files`: the paths that differ
+from `opened`), null while not open. There is no top-level `reviewTree`, and no `heldInReviewView` (an open item is the held one). The pane keeps no copy
+of any of it: Accept and Return read `review` from the board JSON only and name the board commands (`board cr land <cr> --tip <the tip>`; `board cr edits <cr>
+--tip <review.opened>` while `review.edited`); edits made after the board's last read are caught by the board's own refusal of `land` and `return`, which
+names the line; `edited` null (unreadable) makes the pane refuse.
+`board ratify <ratification> yes|edits|no [-m <msg>] [--gate '<cmd>' | --no-gate '<reason>' | --checks]` is the user's verdict on a
+ratification item (r1-q6; a lead or solo session or a person only): `yes` closes it (without `-m` the reason is `Ratified change request
+<id>: <title>`, long enough for bd's 20-character minimum) and removes its worktree and `ratify/<id>` branch (refused while they hold the
+user's edits: commits after the landed tip or uncommitted changes); `edits` runs `cr edits --commit` on it (`-m` defaults to a stock message), which starts the follow-up that waits for
+the Accept, and closes it; `no` needs `-m <reason>`, files the follow-up CR the user asked for (open, its description the reason),
+closes the item with it and removes the worktree and branch when they hold no edits.
+`board create --type decision` (also `--graph` plans holding a decision) and `board ruling revise` hold items up by their blocking links
+however made (r3-q16): `--holds <id>[,<id>…]` (the shorthand), `--deps blocks:<id>`, a plan's edges or node deps that make an item wait on
+a decision node. `board` reads them before creating: a decision with none needs `--holds none` (which stands alone, refused beside a link),
+the held items must exist and be open, and after the create every link gets the effects of `board block <item> --on <question>` (the wait
+commented, the creator's claimed item handed back); bd never sees `--holds`, and `--holds` ids with a plan are held by every decision of
+it. `board ruling revise` takes `--holds` or `--deps blocks:<id>` (no graph). Rounds pass their questions' `holds` to the same step (Record).
+A CR whose worktree is mid a rebase, merge, cherry-pick, revert or bisect the board did not start (marker files `rebase-merge`,
+`rebase-apply`, `MERGE_HEAD`, `CHERRY_PICK_HEAD`, `REVERT_HEAD`, `BISECT_START` in the worktree's git dir, read by file existence; a rebase is the
+board's when its `onto` equals the CR's `rebase_onto`) leaves the claim queue (`cr_claimable`), `board claim` refuses it, `board check`
+lists it as `cr-git-state`, and `board console` marks the row with `worktreeBlocked` (`rebase`, `merge`, `cherry-pick`, `revert`, `bisect`, else
+null). A rebase the board started and stopped on a conflict stays claimable: `sync_branch` (handover, `cr refresh`, `cr edits
+--checks`) refuses while unmerged paths remain and otherwise runs `git rebase --continue` with `GIT_EDITOR=true` itself (r1-q2, q4).
 `health`, `mine`, `position` and `related` take `--json` (every row; `related`
 keeps `--limit` per list) for the engine and the console; text output stays
 unchanged. `board console` prints the console pane's JSON (health counts,
@@ -313,9 +398,12 @@ example and stdin forms, `help step` every report form by step. Both come from t
 forms; a record missing a part fails at import), which the parser's registration and
 `require_origin` also read. The stdin forms are the dataclasses of `protocol_engine/schema.py`:
 the one declaration of each form's field names, types and required/optional, read by the checks,
-refusal text and help; prose (`words.py`) and rules across fields stay code. An unknown
+refusal text and help; prose (`words.py`) and rules across fields stay code. A step's report
+refuses a key its step's forms do not name (`schema.unknown_keys`, in `cli.py` before the step
+reads it; r7-q26): the refusal names the steps or verbs that take the key, so a pass report sent
+to Record fails instead of passing as empty records. An unknown
 `board` verb that the installed bd knows (`bd <verb> --help` exits 0) fails with exit 2 and
-`board: no verb 'comment'; run: board bd comment <args>`; a verb that moved into a group
+`board: no verb 'ready'; run: board bd ready <args>`; a verb that moved into a group
 points to `board cr land` or `board ruling release`; nothing runs or forwards, and a word bd
 does not know keeps argparse's error (r15-q90).
 
@@ -360,22 +448,26 @@ and functions taking the values they interpolate, imported by the modules that
 decide what to say; error and refusal messages and the CLI help stay where
 they are raised or defined. Its protocols are `round` (the decide protocol's
 Round from the pre-pass to Record) and `release` (its Release).
-A question whose Related outcome supersedes a decided record closes it at Record
-(`board ruling supersede`: waiting items, settled items and a pending revision move to
-the new record; the dialog names it by id and title); a released record is
+A reversal is a revision record: a superseded ruling is put back only by recording a new revision (`board ruling revise <id>`); `board reopen` refuses a superseded ruling and says so. A question whose Related outcome supersedes a decided record closes it at Record
+(`board ruling record --replaces`, which supersedes it: waiting items and a pending revision move to
+the new record, the engine moves the settled items; the dialog names it by id and title); a released record is
 revised and replaced at release. Related may mark any decided record this way,
 a hit or not, by naming its id under `outcomes` (only a recorded ruling; a
-record another live session holds is refused). `board ruling record` writes the record and no comment copies of
-the replaced text; the board's history (`board bd history`) keeps earlier versions (r16-q95).
+record another live session holds is refused). `board ruling record <id> <file> [--replaces <old>[,<old>]...]` writes the record and no comment copies of
+the replaced text. `--replaces` is one rerunnable command for what the record replaces: it judges every old before the first write (a decided one closes with the record, one closed and superseded by it is done, a released one is linked and closes at its release, anything else is refused; a live other session's hold is refused, a gone session's taken), writes the revision links with the status, then supersedes each decided old (`board ruling supersede`'s effects); a rerun after a stop derives what is done from the board alone, and a stop leaves a decided old linked as revised, so `board ruling release` refuses releasing that old while the new record revises it. `board ruling supersede` stays for a rule (`--partial`) and by hand. The engine's Record makes this one call with every record the question closes; the board's history (`board bd history`) keeps earlier versions (r16-q95).
 A round:
 
 - Collect classifies every pasted point and the board items in the round's
   scope; `start round --discussion` takes the pasted points alone, and
-  `--no-board [<dir>]` (required without a board) writes the records as files
-  with no board reads or writes: in `<dir>`, else in the repository's private
+  `--no-board` (required without a board; a switch, no path) writes the records as files
+  with no board reads or writes, in the repository's private
   folder `${XDG_DATA_HOME:-~/.local/share}/agents/decisions/<repo>/`, which `protocol records` prints (`<repo>`
-  is the repository's scratch folder name; a release takes the files there too, ids
-  before a bare option; a named topic is its own `<dir>`). Items another live session holds
+  is the repository's scratch folder name; a release takes the files there too, the
+  folder's newest round when no ids are named, which may be another session's).
+  Such a round's id comes from a counter in that folder, so sessions never share
+  one; a record file is created, never overwritten; `--topic` heads each record
+  (`Topic: …`) and `protocol records --topic <text>` lists the files of that topic,
+  the archive's old topic subfolders (named by topic) included. Items another live session holds
   stay out, named in one line; a gone session's hold is offered, marked.
   `start round <ids>` names the open items to look at first (an id that is closed,
   held by another live session or no item a round offers is refused by name);
@@ -420,7 +512,7 @@ A round:
 - The text before a dialog (r24-q99, r30-q141) is rendered by the engine into the batch's
   `notice` (`show --json`): per question, numbered like the dialog, its
   title and its parts in order, a blank line between parts: `Problem:`, `Cases:`,
-  the items a rule question settles one line each (`Settles:`), `Premises:`, the options,
+  the items a rule question settles one line each (`Settles:`), the board ids it holds up (`Holds up:`, one line, when set), `Premises:`, the options,
   the ideas the options pass dropped, the own rulings, `Note:`; the round's `overview` comes before the first
   block once. The options print as layered plain text: the recommended option first
   as `Recommended: <label>` with its reason on the next line (`Lean, your call: …`,
@@ -501,7 +593,15 @@ A round:
   question's `board`, `for` or `settles`; Stage and every update set (a pass
   report, `protocol edit`) is checked once after all its updates, and one that
   leaves a key uncovered is refused as a whole, naming the keys with the other
-  errors. A merge or split is such an update set (set `settles`, add the rule
+  errors. A pass that finds a point entailed retires its question with
+  `{"id", "remove": true, "reason", "ruling": {ruling, why, alternative, fails, evidence}}`: the
+  question then stays in the round as answered by that ruling (origin `session`: the session's disclosed ruling), so it
+  still covers its point, even when it was the only cover. It lists in `show` (`retired`, and the `show` text), prints
+  once ahead of the next batch's questions as `My ruling: … (retired <id> for <keys>, entailed: <reason>)`, and
+  Record writes it as a record of its own like any answered question (a board item is recorded and closed by the same
+  path; its Decision is the ruling, with the reason, the covered keys and `## Own rulings`). The release lists a record
+  of this session's retired points with the own rulings as `sure` without a report. A removal without `ruling`
+  that leaves a key uncovered stays refused. A merge or split is such an update set (set `settles`, add the rule
   question, `remove` the instance questions, or the reverse); only unanswered
   questions change. A merge counts as a change for the Base loop. Settled board
   items stay claimed by the round through Record into the release (a deferred
@@ -518,6 +618,11 @@ A round:
   that record, so `board ruling release --closes` closes it; one still open afterwards
   follows the partial-failure path. A `--no-board` round only names the settled
   points in the record file. `show --json` questions carry `settles`.
+- A question's optional `holds` (list of board ids; absent or empty: none) names the items it holds up
+  (board-core.md "Questions and rulings"): Record passes `--holds <ids>` (or `--holds none`) to the
+  `board ruling revise` or `board create --graph` (a decision node) that creates its record, which records the
+  blocks edges (the settled items' inherited links above are separate). It is content: an update of it
+  counts as a change; `show --json` questions carry `holds`.
 - Every round opens with the pre-pass (step `prepass`, before Collect; r1-q7): the
   engine queues a `step-back` pass with the lenses `goal decisions` and the focus `pre-pass over the round's points`
   (`pre-pass on <subject>`), over the pasted points and the board items listed as read at `start`. It is the rough overview
@@ -560,7 +665,14 @@ A round:
   pass over the answered set before Record (`challenge-rulings (after
   answers)`): a finding is a new question that gets the scoped check below
   before it is asked, and the pass runs again after its answer; a pass that
-  changes nothing goes to Record, and a round with nothing answered skips it.
+  changes nothing goes to Record, and a round with nothing answered skips it. It is invoked
+  and scoped as the answered questions and my rulings on them (`challenge-rulings q1 q2 and my
+  rulings on them`; r7-q27), and its updates may change the `rulings` of an answered,
+  unrecorded question and nothing else of it (the answer and its options stay the user's; any
+  other field is refused, `protocol restart` is the way): each change is logged
+  (`rulings-changed`), the record carries it in its Own rulings (marked), and the release asks
+  the user about a record with such a change, even when every own ruling is sure and the
+  approval was typed or pressed (`ruling changed after the answer: <id>`).
   Base's own lenses
   (consumer, root-fix, bloat, gaps) are in none of the sets. The path, options and refine
   passes run once per round, flagged on the round: a check rebuilt at
@@ -596,7 +708,7 @@ A round:
   questions changed since that kind last ran (another pass's update, an edit, an
   answer, a restart, a release from held, a new question; its own changes do not
   count); a Base ground right after a Base step-back that updated no question, with nothing changed since that ground last ran, is skipped (r18-q121); the path, options and refine passes cover their scoped ids, else every
-  question they work on; the challenge after the answers covers the answered set,
+  question they work on; the challenge after the answers covers the answered set and my rulings on it,
   the raised one its ids. An unchanged question resting on a changed one is
   outside a rerun's scope; every rerun still runs. challenge-rulings also re-sends,
   in `verdicts`, the `strongBecause` of each strong question in its scope (or an
@@ -702,14 +814,18 @@ A round:
   a circle, abandoning keeps no held question, and the board owns what a later
   round asks. A question still held on an outside result (`waitsFor`, below) at
   Record is deferred with that text as its reason (logged `deferred`), and the
-  questions whose `waitsOn` reaches it with it; the Record step lists them.
+  questions whose `waitsOn` reaches it with it; the Record step lists them. A result that
+  landed before Record is taken there (r7-q26): the Record report `{"updates": [{"id",
+  "waitsFor": null, "premises"?}]}` (instead of `records`; nothing else of the question
+  changes) frees the question, which takes the scoped check of a released held question, is
+  asked in the same round and recorded after its answer (logged `freed`).
   `protocol defer` (stdin `{"question", "quote", "until"?}`; where `edit` applies, the quote
   checked the same way) defers a question the person asked to put off and the questions
   waiting on it, through chains (an answer already given to one goes; a batch holding one
   comes back without it; `until` is a date or duration `bd` reads). Record has no `defer`
   input (a report with one is refused) and files every deferral through one writer: on a board
   the question's item (a decision created for a draft, never a revision) is unclaimed and
-  `board bd defer <id> --reason <the quote> [--until <date>]`d, outside waits too (no date);
+  `board defer <id> --reason <the quote> [--until <date>]`d, outside waits too (no date);
   `recorded` is set only after the defer succeeds, so a rerun creates nothing twice. A round
   without a board files nothing: the history (`deferred`) and the Closed text note it. `protocol
   restart` of a deferred question takes it back, with the questions deferred with it. A
@@ -773,7 +889,7 @@ saying what (a spike, a review, the person's own try, another session's ruling)
 and where it lands, holds it out of the batches like `waitsOn`, and its
 dependents with it; `show`, the Check list and the pane's row name it ("waits
 for …"). It is set and freed (`waitsFor`: null) through a pass report (the
-model's own spike or review, disclosed in the report) or `edit` with the
+model's own spike or review, disclosed in the report; at Record too, above) or `edit` with the
 person's quote; a freed question gets the scoped check of an edited one before
 it is asked. `restart`
 takes answered dependents along, through chains, and names them. Questions go out
@@ -781,6 +897,12 @@ in listed order, four at a time; a new question goes last, or ahead of the one
 its `before` names, and existing questions stay put. `show <ids>` prints
 questions whole, and a record carries the question's premises as `## Premises` and its root as `## Root`.
 The quote check of `edit` and chat answers also accepts a dialog note.
+`protocol answer --origin chat` takes an answer to any undecided question of the open round (draft, held,
+ready or asked): the quote must appear in a message the person sent after the question went out, or in any
+message of the round when it never went out. The record then adds `Checks skipped: answered in chat while
+<status>, before it was asked; no <pass> pass had covered it` (and unanswered premises or a pending
+`waitsFor`). The answered question leaves its batch, the check loop's scopes (answered questions drop out of
+them) and its dependents are released as by any answer.
 
 `protocol next` prints the top 5 seed questions of the next round (open
 decisions, unblocked, not held by another live session; members of an open
@@ -909,8 +1031,8 @@ repeat guard, else wakes the model at the open step with `protocol status --line
 (counts, the ready items for you (id, type, title; 3 show, the rest fold behind `+N more`), sessions with runtime and pull initials, `auto` for autopilot,
 this session's items under `this session holds`, stale holds, live workers; the counts split by who acts, `you` (for you, to accept, to ratify,
 decided, questions) then `agents` (to plan, to design, to implement, to review), zeros dim; in a project without a board, a dim `no board` beside the title and nothing else, while a failing board keeps its error), Change requests
-(only the requests waiting for you and those in work (being built or under agent review), in the accept-queue order (board-coordination.md#change-request-queue; in-work rows by created); the banner counts `N to accept · N in work · N wait on your answers · N queued` (zero parts left out; waiting on your answers: queued requests whose work unit waits on an unreleased decision), the queued ones listed nowhere in the pane; two lines per request under a legend of the bar colors (design teal, code orange, result blue, in work green; only the kinds present): a bar in the first cell of the title line colored by kind (its hover names the stage), the title in bold and the buttons at the right edge, plain and separated by bullets as in Decide and Actions (Walk through (a design or a result view) or Open (code, in VS Code's review tree) in the accent color, Accept in a dimmed green, Return dim, Refresh in the accent color); every second request sits on a darker stripe (`STRIPE` in `hooks/pane.tsx`, a fixed color made for dark themes); on line two the id dim, the effective priority dim (the hover names what raised it) and `unblocks N` (open work, designs, questions and requests waiting on it directly or through others; milestones and epics not counted) when N > 0, each in a column as wide as the widest shown request, the milestone it is work of dim (it shrinks first on a narrow pane), then flush against the right edge the problem marks (setup failed, review stale, land blocked), the held word, the new-failure count only above 0 and the check state unless it is a plain `checks current` or none ran yet, as on a request in work (the opened summary keeps both); the parts stand two cells apart (`PART_GAP` in `hooks/pane.tsx`); a to-ratify row with a landed range has an Open that shows that range in the review tree (r10-q50); 3 show, the rest and the to-ratify list fold behind `+N more`; ids show without the board's own prefix, while presses and prompts keep the full id (`board` resolves a bare id to the board prefix); the opened summary adds the accept stage, look, view, the
-failure counts, the quiet marks (lands with, in review tree) and each new failure as a `vscode://file` link), Round: while no run is open and the engine's `next`
+(only the requests waiting for you and those in work (being built or under agent review), in the accept-queue order (board-coordination.md#change-request-queue; in-work rows by created); the banner counts `N to accept · N in work · N wait on your answers · N queued` (zero parts left out; waiting on your answers: queued requests whose work unit waits on an unreleased decision), the queued ones listed nowhere in the pane; two lines per request under a legend of the bar colors (design teal, code orange, result blue, in work green; only the kinds present): a bar in the first cell of the title line colored by kind (its hover names the stage), the title in bold and the buttons at the right edge, plain and separated by bullets as in Decide and Actions (Walk through (a design or a result view) or Open (code, `board review open` and then VS Code) in the accent color, Accept in a dimmed green, Return dim, Refresh in the accent color); every second request sits on a darker stripe (`STRIPE` in `hooks/pane.tsx`, a fixed color made for dark themes); on line two the id dim, the effective priority dim (the hover names what raised it) and `unblocks N` (open work, designs, questions and requests waiting on it directly or through others; milestones and epics not counted) when N > 0, each in a column as wide as the widest shown request, the milestone it is work of dim (it shrinks first on a narrow pane), then flush against the right edge the problem marks (setup failed, review stale, land blocked), the held word, the new-failure count only above 0 and the check state unless it is a plain `checks current` or none ran yet, as on a request in work (the opened summary keeps both); the parts stand two cells apart (`PART_GAP` in `hooks/pane.tsx`); a to-ratify row with a landed range has an Open (`board review open` on the ratification) that opens that range on its `ratify/<id>` branch for your review (r10-q50); 3 show, the rest and the to-ratify list fold behind `+N more`; ids show without the board's own prefix, while presses and prompts keep the full id (`board` resolves a bare id to the board prefix); the opened summary adds the accept stage, look, view, the
+failure counts, the quiet marks (lands with; `in review` / `in review, edited` while the request is open for your review, read from the row's `review`) and each new failure as a `vscode://file` link), Round: while no run is open and the engine's `next`
 offers something, the banner reads `the next step, proposed` over the proposals (one row per proposed round: `[ Start ] <title> · ~N questions ·
 unblocks ~M items`, plus `· compacts first` for a
 `fresh` round while the context is at 150k tokens or more
@@ -941,9 +1063,8 @@ lines with a `+N more` toggle for the whole round. Every press shows at once: a
 pressed command (Actions, Decide, Start, the pass and question buttons) reads `· starting…` after its label until
 its skill expands (`· queued` while a turn runs, which the host waits out); a change-request or ratification
 press draws its button inverse and its hover hint reads `<verb> · <step>…` (reading the board,
-setting the review tree, opening VS Code) while it works, so no row gains a line (r7-q26), a press meanwhile toasts that one is at work (single flight: git works on
-one tree at a time; a press older than 3 minutes gives way), and a successful Open toasts `<id> is opening in
-VS Code (<tree>)`, since `code` returns before its window shows. A click on an item id (board
+opening your review, opening VS Code) while it works, so no row gains a line (r7-q26), a press meanwhile toasts that one is at work (single flight; a press older than 3 minutes gives way), and a successful Open toasts `<id> is opening in
+VS Code (<path>)`, since `code` returns before its window shows; a refusal of `board review open` is the toast, as the board said it. The pane runs no git: Accept and Return read the row's `review` from the board JSON (the tip `review.opened` and `review.edited` for the edits), failing closed when the board showed a review it could not read (`edited` null); edits typed after the board's last read are caught by the board's own refusal of `land` and `return`; every press ends with a board refresh (r3-q14), never one before the action. A retired point (r3-q18) reads `→ my ruling: <ruling>` in the round, its reason in the hover. A click on an item id (board
 items, stale holds, release records) opens it inline below the row (`reading…`
 meanwhile, the error in the error color if the read fails): up to 4 lines of
 its `## Decision` (else the description's start, headings dropped), then a

@@ -10,6 +10,8 @@ copy (the break checks).
 from __future__ import annotations
 
 import argparse
+import contextlib
+import fcntl
 import json
 import os
 import re
@@ -746,10 +748,39 @@ def list_all_flags_gone_repos(e: Env):
     check(os.path.isdir(gone), 'list --all never removes a repo folder')
 
 
+def scan_lock(e: Env, repo: str) -> str:
+    return f'{e.root}/.cache/{os.path.basename(e.folder(repo))}/scan.lock'
+
+
+@contextlib.contextmanager
+def holding(lock: str):
+    """Holds the scan lock from this process, as a running scan would."""
+    os.makedirs(os.path.dirname(lock), exist_ok=True)
+    fd = os.open(lock, os.O_RDWR | os.O_CREAT, 0o600)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        yield
+    finally:
+        os.close(fd)
+
+
+def held(lock: str) -> bool:
+    try:
+        fd = os.open(lock, os.O_RDWR)
+    except OSError:
+        return False
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        return False
+    except OSError:
+        return True
+    finally:
+        os.close(fd)
+
+
 def wait_idle(e: Env, repo: str) -> None:
-    lock = f'{e.root}/.cache/{os.path.basename(e.folder(repo))}/scan.lock'
     deadline = time.time() + 15
-    while os.path.exists(lock) and time.time() < deadline:
+    while held(scan_lock(e, repo)) and time.time() < deadline:
         time.sleep(0.1)
 
 
@@ -794,8 +825,8 @@ def scan_trashes_ready_entries(e: Env):
     cached = json.loads(Path(cache_path(e, repo)).read_text())
     check('ready' not in cached and cached['total_entries'] == 2, f'the cache counts what remains (fresh.txt, long name): {cached}')
     check(e.scratch('restore', 'old0', cwd=repo).returncode == 0 and os.path.exists(f'{mine}/old0/f.txt'), 'scan-trashed entries restore')
-    check(not [n for n in os.listdir(os.path.dirname(cache_path(e, repo))) if n.startswith('.') or n.endswith('.lock')],
-          'the scan leaves no temporary file or lock behind')
+    check(not [n for n in os.listdir(os.path.dirname(cache_path(e, repo))) if n.startswith('.')] and not held(scan_lock(e, repo)),
+          'the scan leaves no temporary file and releases its lock')
 
 
 @test
@@ -879,14 +910,14 @@ def status_line_reports_the_trash(e: Env):
 def scan_lock_and_hourly_rule(e: Env):
     repo = e.repo('proj')
     seed_ready(e, repo)
-    state = os.path.dirname(cache_path(e, repo))
-    os.makedirs(f'{state}/scan.lock')
-    e.scratch('__scan', cwd=repo)
-    check(not os.path.exists(cache_path(e, repo)), 'a held lock means no second scan')
+    lock = scan_lock(e, repo)
     old = time.time() - 2 * 3600
-    os.utime(f'{state}/scan.lock', (old, old))
+    with holding(lock):
+        os.utime(lock, (old, old))  # a scan running for hours, or a clock ahead, still holds it
+        e.scratch('__scan', cwd=repo)
+        check(not os.path.exists(cache_path(e, repo)), 'a held lock means no second scan, however old it looks')
     e.scratch('__scan', cwd=repo)
-    check(os.path.exists(cache_path(e, repo)) and not os.path.exists(f'{state}/scan.lock'), 'a stale lock is reclaimed')
+    check(os.path.exists(cache_path(e, repo)), 'the lock file a finished or dead scan leaves does not block')
     # background scans: none within the hour of the root's last scan, one when stale, one when missing
     e.background = True
     marker = f'{e.root}/.cache/.scanned.json'
@@ -958,13 +989,10 @@ def sweep_skips_a_locked_repository_and_concurrent_scans_corrupt_nothing(e: Env)
     for i in range(30):
         e.make(mine, f'bulk{i}/f.txt', days=15)
         e.make(theirs, f'bulk{i}/f.txt', days=15)
-    lock = f'{e.root}/.cache/{os.path.basename(e.folder(there))}/scan.lock'
-    os.makedirs(lock)
-    os.utime(lock, (e.clock(),) * 2)  # fresh by the test clock
-    out = e.scratch('sweep', cwd=here)
+    with holding(scan_lock(e, there)):
+        out = e.scratch('sweep', cwd=here)
     check(out.returncode == 0 and os.path.exists(f'{theirs}/old') and not os.path.exists(f'{mine}/old'),
           f'a repository under its scan lock is skipped, the others swept: {out.stdout}{out.stderr}')
-    shutil.rmtree(lock)
     runs = [subprocess.Popen([sys.executable, '-B', SCRATCH, 'sweep'], cwd=here, env=e.environ(), stdout=subprocess.PIPE,
                              stderr=subprocess.PIPE, text=True) for _ in range(2)]
     results = [r.communicate(timeout=60) + (r.returncode,) for r in runs]
@@ -972,7 +1000,8 @@ def sweep_skips_a_locked_repository_and_concurrent_scans_corrupt_nothing(e: Env)
     trash = [(repo, n) for repo in os.listdir(f'{e.root}/.trash') for n in os.listdir(f'{e.root}/.trash/{repo}')]
     check(len(trash) == 62 and len(set(trash)) == 62, f'every idle entry is trashed once: {len(trash)}')
     locks = [str(p) for p in Path(f'{e.root}/.cache').glob('*/scan.lock*')]
-    check(not locks, f'no scan lock is left behind: {locks}')
+    check(not any(held(lock) for lock in locks) and all(Path(lock).name == 'scan.lock' for lock in locks),
+          f'no scan lock stays held, none is left under another name: {locks}')
     check(os.path.exists(f'{theirs}/recent/f.txt') and os.path.exists(f'{theirs}/fresh.txt'), 'recent entries stay')
 
 
@@ -1204,7 +1233,21 @@ if args[:2] == ['bd', 'export']:
     print(open(os.environ['FAKE_EXPORT']).read(), end='')
 elif args[:2] == ['bd', 'memories'] and '--json' in args:
     print(open(os.environ['FAKE_MEMORIES']).read())
-elif args[:2] in (['bd', 'update'], ['bd', 'remember']):
+elif args[:2] == ['field', 'export']:  # the board's field flow: one file per named field, the old text in it
+    rows = {r['id']: r for r in map(json.loads, open(os.environ['FAKE_EXPORT']).read().splitlines()) if 'id' in r}
+    names = [args[i + 1] for i, a in enumerate(args) if a == '--field']
+    folder = os.path.join(os.path.dirname(os.environ['FAKE_WRITES']), 'fields-' + args[2])
+    os.makedirs(folder, exist_ok=True)
+    for name in names:
+        path = os.path.join(folder, name + '.md')
+        open(path, 'w').write(rows[args[2]].get({'acceptance': 'acceptance_criteria'}.get(name, name)) or '')
+        print(path)
+elif args[:2] == ['field', 'apply']:
+    folder = os.path.join(os.path.dirname(os.environ['FAKE_WRITES']), 'fields-' + args[2])
+    names = [args[i + 1] for i, a in enumerate(args) if a == '--field']
+    with open(os.environ['FAKE_WRITES'], 'a') as f:
+        f.write(json.dumps(['field', 'apply', args[2], {name: open(os.path.join(folder, name + '.md')).read() for name in names}]) + '\\n')
+elif args[:4] == ['bd', '--raw', '--yes', 'remember']:
     with open(os.environ['FAKE_WRITES'], 'a') as f:
         f.write(json.dumps(args) + '\\n')
 else:
@@ -1238,7 +1281,7 @@ def rewrite_paths_maps_live_items_and_memories(e: Env):
     Path(f'{e.tmp}/export.jsonl').write_text(''.join(json.dumps(r) + '\n' for r in rows))
     Path(f'{e.tmp}/memories.json').write_text(json.dumps({'m1': 'evidence in .scratch/overhaul/plan.md', 'm2': 'no path', 'schema_version': 1}))
     board = f'{e.tmp}/rewrite-board'
-    Path(board).write_text(REWRITE_BOARD.format(python=sys.executable))
+    Path(board).write_text(REWRITE_BOARD.replace('{python}', sys.executable))
     os.chmod(board, 0o755)
     writes = f'{e.tmp}/writes.jsonl'
     env = e.environ(False, AGENT_BOARD_COMMAND=board, FAKE_EXPORT=f'{e.tmp}/export.jsonl',
@@ -1260,11 +1303,11 @@ def rewrite_paths_maps_live_items_and_memories(e: Env):
     applied = run('--apply')
     check(applied.returncode == 0, applied.stderr)
     done = [json.loads(line) for line in Path(writes).read_text().splitlines()]
-    by = {(w[2] if w[1] == 'update' else w[w.index('--key') + 1]): w for w in done}
-    fields = {k: dict(a[2:].split('=', 1) for a in w[3:]) for k, w in by.items() if w[1] == 'update'}
+    by = {(w[2] if w[0] == 'field' else w[w.index('--key') + 1]): w for w in done}
+    fields = {k: w[3] for k, w in by.items() if w[0] == 'field'}
     check(sorted(by) == ['m1', 'p-1', 'p-4'], f'writes only the live items and memories with paths: {done}')
     one = fields['p-1']
-    check(one.get('description') == f'see {new}/plan.md and `{new}`', f'relative and absolute forms, as flag=value: {by["p-1"]}')
+    check(one.get('description') == f'see {new}/plan.md and `{new}`', f'relative and absolute forms, through the field files: {by["p-1"]}')
     check(one.get('design') == f'{new}/plan.md', f'the ~ form: {one}')
     check(sorted(one) == ['description', 'design'], f'unchanged fields are not written (a longer name is no match): {one}')
     check(fields['p-4'].get('description') == 'record: ~/.local/share/agents/decisions/proj/r1.md', f'a second --moves log maps record moves: {fields["p-4"]}')
@@ -1289,7 +1332,7 @@ def rewrite_paths_resolves_a_relative_form_of_several_checkouts_by_what_exists(e
     Path(f'{e.tmp}/amb.jsonl').write_text(''.join(json.dumps(r) + '\n' for r in rows))
     Path(f'{e.tmp}/amb-mem.json').write_text('{}')
     board = f'{e.tmp}/amb-board'
-    Path(board).write_text(REWRITE_BOARD.format(python=sys.executable))
+    Path(board).write_text(REWRITE_BOARD.replace('{python}', sys.executable))
     os.chmod(board, 0o755)
     writes = f'{e.tmp}/amb-writes.jsonl'
     env = e.environ(False, AGENT_BOARD_COMMAND=board, FAKE_EXPORT=f'{e.tmp}/amb.jsonl', FAKE_MEMORIES=f'{e.tmp}/amb-mem.json', FAKE_WRITES=writes)
@@ -1301,7 +1344,7 @@ def rewrite_paths_resolves_a_relative_form_of_several_checkouts_by_what_exists(e
     check(run('--apply').returncode == 0, 'apply')
     done = [json.loads(line) for line in Path(writes).read_text().splitlines()]
     want = f'see {main_new}/only-main.md, .scratch/role/both.md and {tree_new}/y.md'
-    check(done == [['bd', 'update', 'a-1', f'--description={want}']],
+    check(done == [['field', 'apply', 'a-1', {'description': want}]],
           f'the path one target holds and the absolute form are rewritten, the ambiguous one left: {done}')
 
 
@@ -1314,7 +1357,7 @@ def rewrite_reports(e: Env, texts: list[str], moves: str, memory: str = '') -> d
     Path(f'{e.tmp}/rep-mem.json').write_text(json.dumps({'m': memory} if memory else {}))
     log, board = f'{e.tmp}/rep.log', f'{e.tmp}/rep-board'
     Path(log).write_text(moves)
-    Path(board).write_text(REWRITE_BOARD.format(python=sys.executable))
+    Path(board).write_text(REWRITE_BOARD.replace('{python}', sys.executable))
     os.chmod(board, 0o755)
     env = e.environ(False, AGENT_BOARD_COMMAND=board, FAKE_EXPORT=f'{e.tmp}/rep.jsonl', FAKE_MEMORIES=f'{e.tmp}/rep-mem.json',
                     FAKE_WRITES=f'{e.tmp}/rep-writes.jsonl')

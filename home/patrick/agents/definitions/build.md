@@ -13,9 +13,8 @@ codex-sandbox: workspace-write
 codex-model: gpt-6-luna
 ---
 
-Implement an agreed design, usually by following an established pattern. The
-brief supplies files, expected behavior, verification, and any reference
-pattern.
+Implement an agreed design, usually following an established pattern; the
+brief supplies files, expected behavior, verification and any reference pattern.
 
 - Follow current ratified sources and explicit, authorized brief overrides.
   Return source/brief conflicts and new information that warrants reconsidering
@@ -32,11 +31,11 @@ pattern.
   zone and return them to the invoker.
 - Run the agreed checks, repair regressions you introduced, and distinguish
   their results from pre-existing failures. Report counts when meaningful.
-- Test each behavior you add. Flag work needing a craft worker.
+- Test under Writing code in the global instructions. Flag work needing a craft worker.
 - Perform the implementation yourself.
 - Return changes, gate results and open questions.
 
-Commit only where your brief's protocol grants it; never otherwise commit or
-stage, alter another worker's files, or expand the task's scope.
+<!-- @include shared/limits-implementer.md -->
+Never expand the task's scope.
 
 <!-- @include shared/report.md -->

@@ -75,8 +75,8 @@ dispatched or claimable; the checkpoint file is current; the report is given.
    not apply.
 2. Block each open item the ruling changes on it
    (`board block <item>… --on <ruling> --reason "<what changes>"`); relate
-   items it only informs (`board bd dep relate <ruling> <item>`). Add the
-   ruling id and owner anchor to each item's `--design`.
+   items it only informs (`board link <ruling> <item> --type relates-to`). Add the
+   ruling id and owner anchor to each item's design.
    Create missing work items; when cutting them needs a design or spike first,
    create it, block the ruling on it and stop: the ruling returns to planning
    when it closes, and the design never waits on the ruling.
@@ -85,10 +85,10 @@ dispatched or claimable; the checkpoint file is current; the report is given.
 3. For a revision, update every consumer of the changed decision: related
    items, briefs, dependencies and active workers whose premise changed. Refresh questions written against
    the superseded state. Repoint duplicate dependents to the keeper before
-   `board bd duplicate <duplicate> --of <keeper>`.
+   `board bd --raw --yes duplicate <duplicate> --of <keeper>`.
 4. Undefer items the ruling resolves; clear superseded authority and resolve
    the gates it covers.
-5. Close: `board bd close <id> --reason "planned in <ids>"`.
+5. Close: `board close <id> --reason "planned in <ids>"`.
 
 ## Frame
 
@@ -107,8 +107,6 @@ Establish the outcome's contribution to its milestone:
   `topic:<topic-slug>`) under
   [Epics](../../shared/board-coordination.md#epics) and
   `$HOME/.agents/skills/shared/project-memory.md`.
-- Use `define-goal` when the milestone is unclear, purpose shifts, success is
-  contested or scope grows without value-path progress.
 - A slice is architecture-opening when it opens boundaries, public contracts,
   data flow, mechanisms or the clean end state.
 - Commission an `architect` before cutting work for an architecture-opening
@@ -140,14 +138,13 @@ Establish the outcome's contribution to its milestone:
 - Group items that sit in no CR into CRs per topic when they become due
   (items waiting on an open decision or design stay ungrouped until it is
   answered).
-- Set each CR's `look` and `view` only to override the project defaults;
-  name the reason on the CR,
-  in a line that mentions the setting. Order CRs by
-  dependencies: independent CRs run in parallel, overlapping work gets a
-  dependency edge (the later CR stacks on, or waits for, the earlier).
+- Set a CR's `look` or `view` only to override the defaults, naming the reason
+  on the CR in a line that mentions the setting. Order CRs by dependencies:
+  independent CRs run in parallel, overlapping work gets a dependency edge
+  (the later CR stacks on, or waits for, the earlier).
 - Write each item's expected behavior as short examples (input → result) in
-  its `--design`, and the tests worth writing (global instructions' Tests) in
-  its `--acceptance`.
+  its design, and the tests worth writing (global instructions' Writing code) in
+  its acceptance.
 - Item text states acceptance, not reviewer or review depth
   ([Review policy](../../shared/acceptance.md#review-policy)).
 - State each agent checkpoint the CR needs in the CR.
@@ -187,8 +184,7 @@ Establish the outcome's contribution to its milestone:
 ## Queue
 
 - Order work under [Milestones](../../shared/board-coordination.md#milestones);
-  rank by per-item [Priority](../../shared/board-core.md#priority),
-  including committed nonblocking consumers (`board holders`).
+  rank by per-item [Priority](../../shared/board-core.md#priority).
 - Scope a user's stop to the exact action, file, decision or effect it names;
   continue authorized work outside it. Distinguish source authoring,
   execution, review and final acceptance. A proposal grants no approval.
@@ -211,25 +207,20 @@ Establish the outcome's contribution to its milestone:
 - Give each worker one CR. Brief: the CR id, the protocol path for its kind
   (`$HOME/.agents/skills/role/SKILL.md`, claimed-item table) and only the
   deltas under [Brief](#brief).
-- Dispatch CR work only to artifact-writing agent types (global
-  Orchestration).
 - Send review to a session pulling `review` when one is active; otherwise
   dispatch a fresh-context worker that did not author the CR: `review`, or
   `deep-review` for an item a review escalated.
-- Work inline under the global instructions' Orchestration.
 - Dispatch dependency-ready waves of CRs; shared contracts are sequenced by
   dependency edges. Use native liveness, wait
   and resume. Run [Reassess](#reassess) before large fan-out.
 - Interpret control messages by their target: you, one change or workers.
   "Keep workers running" leaves them running until revoked.
-- Continue warm workers under the global Warm reuse. To re-dispatch a CR an
-  ended worker holds, brief a new worker with its id; its claim takes it
-  over.
-- Run destructive actions under the global Filesystem rule and its
-  Confirm-before-the-irreversible principle; relay that confirmation to a
-  worker only when orchestration preserves it as trusted. Inspect each CR's
-  worktree status after waves; attribute unexplained changes, possibly the
-  user's, and leave them in place.
+- To re-dispatch a CR an ended worker holds, brief a new worker with its id;
+  its claim takes it over.
+- Relay a destructive action's confirmation to a worker only when
+  orchestration preserves it as trusted. Inspect each CR's worktree status
+  after waves; attribute unexplained changes, possibly the user's, and leave
+  them in place.
 - Treat workers' returned choices and disclosed judgment calls as decisions
   under [Decision authority](../../shared/decision-protocol.md#decision-authority);
   repair mistakes with the warm worker. Inspect a contradictory STOP before

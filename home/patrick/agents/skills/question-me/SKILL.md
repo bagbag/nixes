@@ -13,9 +13,8 @@ Question me now. Under autopilot, first run Return in
 (lead or solo), run these steps through the decide protocol's Round in `protocol`
 (`$HOME/.agents/skills/role/protocols/decide.md`): resume the open round,
 abandon an open release (`protocol abandon`), or
-start one with `--discussion` and step 1's decisions as points; add
-`--no-board <dir>` when they concern a topic outside this repository's board
-or it has none. A list of items handed over runs under
+start one with `--discussion` and step 1's decisions as points, with the
+`--no-board` flag where Round names it. A list of items handed over runs under
 `$HOME/.agents/skills/round-intake/SKILL.md` instead.
 
 1. **Collect** every open decision in this discussion, plus related items

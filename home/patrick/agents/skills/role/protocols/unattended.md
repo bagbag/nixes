@@ -21,9 +21,10 @@ setup, run `/role autopilot` again.
   - **Entailed or other reversible:** `act`, a lean recommendation included.
     Compare options as if presenting them to the user and write the
     recommendation into its owner. Make its reversal executable without
-    remembered context or costly downstream rework. For a revision, run
-    `board ruling supersede` when recording it; its reversal runs
-    `board bd reopen <old>` and `board bd dep remove <old> <new>`.
+    remembered context or costly downstream rework. Record revisions under
+    board-coordination [Rulings](../../shared/board-coordination.md#rulings); a
+    reversal is a revision record, never an undo.
+  - **Revising a released ruling of the user's:** park every revision.
   - **Irreversible, outward-facing or scope-changing:** `park` as an unassigned
     question for the user with a recommendation (`board unclaim <id>` when you
     hold it outside a round). Parked questions form the user's next round;

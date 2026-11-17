@@ -23,6 +23,8 @@ export type ConsoleQuestion = {
   waitsFor: string | null
   /** The selected items (board ids or pasted point ids) this rule question settles with one answer; empty for a plain question. */
   settles: string[]
+  /** The board items this question holds up until it is answered (ids). */
+  holds: string[]
   overlaps: ConsoleOverlap[]
   answer: string | null
   answeredAt: string | null
@@ -33,6 +35,9 @@ export type ConsoleQuestion = {
   leanBecause: { cause: string; detail: string; flipsIf?: string } | null
   strongBecause: Record<string, string> | null
 }
+
+/** A retired point: its question id, the keys it covers, why it was entailed, and the session's ruling with its disclosure. */
+export type ConsoleRetired = { id: string; title: string; covers: string[]; reason: string; ruling: string; why: string; alternative: string; fails: string; evidence: string }
 
 export type ConsoleDialogQuestion = {
   question: string
@@ -87,24 +92,23 @@ export type ConsoleCr = {
   reviewState: 'current' | 'stale' | null
   /** The board's refresh work: the first non-waiting request of the accept queue whose check or review is not current (r24-q196). */
   refreshWork: boolean
-  /** Waiting for you and open at its current tip in the review tree: no refresh moves it until a deciding session claims it. */
-  heldByReviewTree: boolean
+  /** Open for your review (from Open until your Accept or Return): no refresh or agent step touches it meanwhile; null when it is not open. */
+  review: ConsoleReview | null
   /** Uncommitted paths in the target's checkout that the landing would touch (`land` refuses); null when none. */
   landBlocked: string[] | null
   /** Look-after child that passed review and lands with this base; null otherwise. */
   after: string | null
   /** The project setup failed in its worktree after the last claim or rebase; the holder keeps the claim. */
   setupFailed: boolean
+  /** A rebase, merge, cherry-pick, revert or bisect the board did not start is under way in the worktree: the request is out of the claim queue and its owner ends it. */
+  worktreeBlocked: 'rebase' | 'merge' | 'cherry-pick' | 'revert' | 'bisect' | null
 }
 
 /** A look-after landing's ratification item (`board console` `ratifications`): it waits for your look and blocks nothing. */
-export type ConsoleRatification = { id: string; cr: string; title: string; tip: string | null; baseTip: string | null }  // the range its request landed: Open shows it
+export type ConsoleRatification = { id: string; cr: string; title: string; tip: string | null; baseTip: string | null; review: ConsoleReview | null }  // the range its request landed: Open shows it
 
-/** The change request the review tree was last set to; what it holds is the tree's own marker (`ConsoleReviewTree`). */
-export type ConsoleReviewing = { cr: string }
-
-/** The review tree as the pane shows it: its change request and its marker (`refs/worktree/console-review-end`), read at each refresh. */
-export type ConsoleReviewTree = { cr: string; end: string | null }
+/** What a request or ratification open for your review holds (`board console` `crs[].review`, `ratifications[].review`): `opened` the tip it was opened at; `edited` you made commits after it or have uncommitted changes (null: the board cannot read it, e.g. an amended opened tip); `files` the paths that differ from `opened`. Null: it is not open for review. */
+export type ConsoleReview = { opened: string; edited: boolean | null; files: string[] }
 
 /** Where the round stands inside its step: Collect's items, points and classes, Select's candidates, the selection. */
 export type ConsoleProgress = { items: number; points: number; classified: number; candidates: number | null; selected: string[] }
@@ -155,6 +159,8 @@ export type ConsoleRound = {
   } | null
   pending: ConsolePending | null
   questions: ConsoleQuestion[]
+  /** The points a pass retired as entailed (r3-q18): each stays in `questions` as answered, by the session's disclosed ruling, not by you. */
+  retired: ConsoleRetired[]
   batch: ConsoleBatch | null
   counts: ConsoleCounts | null
   progress: ConsoleProgress | null
@@ -246,6 +252,7 @@ export type ConsoleOpened =
   | { kind: 'item'; id: string; from: string | null; phase: 'reading' | 'read' | 'failed'; text: string; slot: ConsoleItemSlot | null }  // `from`: the question whose overlaps listed it; `text`: the failure
   | { kind: 'overlaps'; question: string; overlaps: { id: string; title: string }[] }
   | { kind: 'settles'; question: string; ids: string[] }
+  | { kind: 'reason'; id: string }  // a ratification's Not OK field, open
   | { kind: 'suggestion'; key: string; leads: { id: string; title: string }[] }
 
 /** The command a compacting suggestion runs once its compaction succeeded (`title`: the proposal's, for the summary and the notice); it goes with the next compaction, typed prompt or round start. */
@@ -273,10 +280,6 @@ declare module 'claude-code' {
       /** The marker of the last batch the console sent the open-the-dialog message for: one message per marker until the person sends a message; null before the first. */
       askSent: string | null
       board: Shaped<ConsoleBoard | null>
-      /** The change request the review tree was last set to; null while none is open. */
-      reviewing: Shaped<ConsoleReviewing | null>
-      /** The review tree's marker as the last refresh read it (null without one); the pane's "in review tree" compares it with the tip. */
-      reviewEnd: string | null
       pass: Shaped<ConsolePassRun | null>
       queued: Shaped<ConsoleQueued>
       gate: Shaped<string[]>

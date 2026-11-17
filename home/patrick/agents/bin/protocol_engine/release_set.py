@@ -35,6 +35,12 @@ def in_set(ctx: Context) -> list[str]:
     return [rec['id'] for rec in ctx.round['set'] if rec['state'] in ('set', 'revised')]
 
 
+def ruling_changes(ctx: Context) -> list[str]:
+    """The records of the set whose own rulings changed after the user's answer (r7-q27)."""
+    kept = ctx.state.get('rulingChanges') or {}
+    return [rid for rid in in_set(ctx) if rid in kept]
+
+
 def scoped_records(ctx: Context) -> list[str]:
     """The revised records whose Decision text changed: only these get the scoped passes (r24-q102)."""
     return [rec['id'] for rec in ctx.round['set'] if rec['state'] == 'revised' and rec.get('decisionChanged', True)]
@@ -85,7 +91,7 @@ def start_release(ctx: Context, ids: list[str]) -> None:
         fail(f'only the person approves a release: {SWITCH_TO_SOLO}')
     if ctx.board is None:
         fail('a release needs a board: run it in the repository whose board holds the records; '
-             'records of a --no-board round: `protocol start release --no-board <dir> [<ids>]`')
+             'records of a --no-board round: `protocol start release --no-board [<ids>]`')
     source = None
     if not ids:
         source, ids = 'the session', default_set(ctx)
