@@ -8,7 +8,7 @@ import { COUNTS, NO_ROUND, PANE_PROPS, SESSION, world } from './fixture'
 import { CR_TREE, git, repo, sha } from './review-world'
 import type { Repo } from './review-world'
 import { parseBoardConsole, parseRound } from '../hooks/engine'
-import { canRefreshCr, consoleText, countText, crCheckText, crDetailsText, crFailuresText, crMarks, crPriorityHint, crRows, crUnblocksHint, crUnblocksText, fitText } from '../hooks/words'
+import { canUpdateCr, consoleText, countText, crCheckText, crDetailsText, crFailuresText, crMarks, crPriorityHint, crRows, crUnblocksHint, crUnblocksText, fitText } from '../hooks/words'
 import type { ConsoleBoard, ConsoleCr } from '../types'
 
 const PANE = { plugin: 'console', component: 'Pane', requestId: 'console', props: PANE_PROPS } as const
@@ -33,6 +33,8 @@ async function queued($: any, on: any, crs: Crs, r: Repo = repo(), init: Paramet
 }
 
 const WAITING = (): Crs => [cr({ id: 'p-cr1' })]
+const BLOCKED = (paths: string[]) => ({ kind: 'land-blocked', text: `land blocked: ${paths.join(', ')}`, next: { action: 'ask-user', paths } })
+const REFRESH = (id: string) => ({ kind: 'check', text: 'check stale', next: { action: 'refresh', command: `board cr refresh ${id}` } })
 const short = (n: number) => sha(n).slice(0, 7)
 
 describe('change request queue', () => {
@@ -83,24 +85,29 @@ describe('change request queue', () => {
     await ui.unmount()
   })
 
-  test('Refresh is a review session\'s press: absent in the lead console, absent where the checks are current', async ($, on) => {
-    const stale = cr({ id: 'p-cr1', refreshWork: true, check: { state: 'stale', tip: sha(2), baseTip: sha(1), at: null, result: 'pass' } })
-    const lead = await queued($, on, [stale])
-    expect(await lead.ui.find({ key: 'cr-refresh-p-cr1' })).toBeUndefined()
-    await lead.ui.unmount()
+  test('Update: a deciding session dispatches the refresh the board names; absent where the board names none', async ($, on) => {
+    const { ui, w, clock } = await queued($, on, [cr({ id: 'p-cr1', problems: [REFRESH('p-cr1')] }), cr({ id: 'p-cr2', problems: [{ ...REFRESH('p-cr2'), next: { action: 'wait' } }] })])
+    expect(await ui.find({ key: 'cr-update-p-cr2' })).toBeUndefined()
+    await ui.press({ key: 'cr-update-p-cr1' })
+    await clock.settle()
+    expect(w.prompts).toEqual(["Update p-cr1 (Title of p-cr1): its check stale; dispatch its refresh (`board cr refresh p-cr1`) under the review protocol's Refresh."])
+    await ui.unmount()
   })
 
-  test('a review-pulling session sees Refresh only on the request the board marks as refresh work', async ($, on) => {
-    const sessions = [{ session: SESSION, role: 'agent', actor: 'a1', pulls: ['review'], holds: 0, workers: null, state: 'active', idleSince: null, claimable: 0 }]
-    const { ui, w, clock } = await queued($, on, [
-      cr({ id: 'p-cr1', refreshWork: true, check: { state: 'conflict', tip: sha(2), baseTip: sha(1), at: null, result: 'pass' } }),
-      cr({ id: 'p-cr2', check: { state: 'stale', tip: sha(2), baseTip: sha(1), at: null, result: 'pass' } }),
-    ], repo(), { sessions, role: { session: SESSION, role: 'solo', actor: 'a1', tool: 'claude' } })
-    expect(await ui.find({ key: 'cr-refresh-p-cr1' })).toBeDefined()
-    expect(await ui.find({ key: 'cr-refresh-p-cr2' })).toBeUndefined()
-    await ui.press({ key: 'cr-refresh-p-cr1' })
+  const agent = (pulls: string[]) => ({ sessions: [{ session: SESSION, role: 'agent', actor: 'a1', pulls, holds: 0, workers: null, state: 'active', idleSince: null, claimable: 0 }],
+    role: { session: SESSION, role: 'agent', actor: 'a1', tool: 'claude' } })
+
+  test('a review-pulling session runs the refresh itself', async ($, on) => {
+    const { ui, w, clock } = await queued($, on, [cr({ id: 'p-cr1', problems: [REFRESH('p-cr1')] })], repo(), agent(['review']))
+    await ui.press({ key: 'cr-update-p-cr1' })
     await clock.settle()
     expect(w.prompts).toEqual(["Refresh p-cr1 under the review protocol's Refresh."])
+    await ui.unmount()
+  })
+
+  test('a session with another pull sees no Update', async ($, on) => {
+    const { ui } = await queued($, on, [cr({ id: 'p-cr1', problems: [REFRESH('p-cr1')] })], repo(), agent(['implement']))
+    expect(await ui.find({ key: 'cr-update-p-cr1' })).toBeUndefined()
     await ui.unmount()
   })
 })
@@ -638,11 +645,13 @@ describe('what holds a request up', () => {
     expect(crMarks(cr({ id: 'p-cr1' }) as unknown as ConsoleCr)).toEqual([])
   })
 
-  test('setup failed, land blocked (three paths at most) and lands-with read in that order', () => {
-    const marks = crMarks(cr({ id: 'p-cr1', setupFailed: true, landBlocked: ['a', 'b', 'c', 'd'], after: 'p-cr0' }) as unknown as ConsoleCr)
+  test('the board\'s problems in its order (land blocked: three paths at most, the check left to the check text), then a hold, then lands-with', () => {
+    const marks = crMarks(cr({ id: 'p-cr1', holder: 'b2c3', after: 'p-cr0', problems: [
+      { kind: 'setup-failed', text: 'setup failed', next: { action: 'claim' } }, REFRESH('p-cr1'),
+      { kind: 'land-blocked', text: 'land blocked: a, b, c, d', next: { action: 'ask-user', paths: ['a', 'b', 'c', 'd'] } }] }) as unknown as ConsoleCr)
     expect(marks).toEqual([
       { text: 'setup failed', isProblem: true }, { text: 'land blocked: a, b, c, …', isProblem: true },
-      { text: 'lands with p-cr0', isProblem: false },
+      { text: 'held by b2c3', isProblem: false, isWarning: true }, { text: 'lands with p-cr0', isProblem: false },
     ])
   })
 
@@ -653,7 +662,7 @@ describe('what holds a request up', () => {
   })
 
   test('problems stay on the request row; lands-with waits in the opened summary', async ($, on) => {
-    const { ui, clock } = await queued($, on, [cr({ id: 'p-cr1', landBlocked: ['src/x.ts'], setupFailed: true, reviewState: 'stale' }), cr({ id: 'p-cr2', status: 'in_review', base: 'p-cr1', parent: 'p-cr1', after: 'p-cr1' })])
+    const { ui, clock } = await queued($, on, [cr({ id: 'p-cr1', problems: [BLOCKED(['src/x.ts']), { kind: 'setup-failed', text: 'setup failed', next: { action: 'claim' } }, { kind: 'review-stale', text: 'review stale', next: { action: 'wait' } }] }), cr({ id: 'p-cr2', status: 'in_review', base: 'p-cr1', parent: 'p-cr1', after: 'p-cr1' })])
     const all = await texts(ui)
     for (const part of ['land blocked: src/x.ts', 'setup failed', 'review stale']) expect(all, part).toContain(part)
     expect(all).not.toContain('lands with p-cr1')
@@ -666,18 +675,17 @@ describe('what holds a request up', () => {
 })
 
 describe('a stale review', () => {
-  const stale = cr({ id: 'p-cr1', reviewState: 'stale', refreshWork: true }) as unknown as ConsoleCr
-
-  test('a request waiting for its Accept says so, and review pulls may refresh it though its check is current', () => {
+  test('a request waiting for its Accept says so; the board decides whether it is refresh work', () => {
+    const stale = cr({ id: 'p-cr1', problems: [{ kind: 'review-stale', text: 'review stale', next: { action: 'refresh', command: 'board cr refresh p-cr1' } }] }) as unknown as ConsoleCr
     expect(crMarks(stale)).toEqual([{ text: 'review stale', isProblem: true }])
-    expect(canRefreshCr(stale, ['review'])).toBe(true)
-    expect(canRefreshCr(stale, ['implement'])).toBe(false)
-    expect(canRefreshCr(cr({ id: 'p-cr1' }) as unknown as ConsoleCr, ['review'])).toBe(false)
-    expect(canRefreshCr(cr({ id: 'p-cr2', reviewState: 'stale' }) as unknown as ConsoleCr, ['review'])).toBe(false)  // stale, not the queue head
+    expect(canUpdateCr(stale, false, ['review'])).toBe(true)
+    expect(canUpdateCr(stale, true, [])).toBe(true)
+    expect(canUpdateCr(stale, false, ['implement'])).toBe(false)
+    expect(canUpdateCr(cr({ id: 'p-cr2', problems: [{ kind: 'review-stale', text: 'review stale', next: { action: 'wait' } }] }) as unknown as ConsoleCr, true, ['review'])).toBe(false)  // stale, not the queue head
   })
 
-  test('in review it is no mark: the reviewer passes it again', () => {
-    expect(crMarks(cr({ id: 'p-cr1', status: 'in_review', reviewState: 'stale' }) as unknown as ConsoleCr)).toEqual([])
+  test('a hold marks only a request waiting for the Accept', () => {
+    expect(crMarks(cr({ id: 'p-cr1', status: 'in_review', holder: 'b2c3' }) as unknown as ConsoleCr)).toEqual([])
   })
 })
 
@@ -750,7 +758,7 @@ describe('request rows', () => {
   })
 
   test('the title is bold, the milestone dim, Open is the accent and Accept and Return are dim', async ($, on) => {
-    const { ui } = await mounted($, on, [cr({ id: 'p-cr1', milestone: '1.0-beta' }), cr({ id: 'p-cr2', landBlocked: ['src/a.ts'] })], WIDE)
+    const { ui } = await mounted($, on, [cr({ id: 'p-cr1', milestone: '1.0-beta' }), cr({ id: 'p-cr2', problems: [BLOCKED(['src/a.ts'])] })], WIDE)
     const title = async (id: string) => (await ui.findAll({ type: 'Text' })).find(one => one.text === `Title of ${id}`)?.props
     for (const id of ['p-cr1', 'p-cr2']) expect((await title(id))?.bold, id).toBe(true)
     expect((await (await ui.findAll({ type: 'Text' })).find(one => one.text === '1.0-beta'))?.props.dimColor).toBe(true)
@@ -792,7 +800,7 @@ describe('request rows', () => {
 
   test('line two wraps when its facts do not fit; a cut milestone keeps its full title on hover', async ($, on) => {
     const long = 'A milestone with a title that is far longer than any narrow pane could ever show in one line'
-    const { ui } = await mounted($, on, [cr({ id: 'p-cr1', unblocks: 14, unblocksDirect: 7, milestone: long, landBlocked: ['src/aaaa.ts', 'src/bbbb.ts'] }), cr({ id: 'p-cr2', milestone: 'Short' })], { ...PANE_PROPS, bodyColumns: 90 })
+    const { ui } = await mounted($, on, [cr({ id: 'p-cr1', unblocks: 14, unblocksDirect: 7, milestone: long, problems: [BLOCKED(['src/aaaa.ts', 'src/bbbb.ts'])] }), cr({ id: 'p-cr2', milestone: 'Short' })], { ...PANE_PROPS, bodyColumns: 90 })
     expect((await ui.find({ key: 'cr-p-cr1-facts' }))?.props).toMatchObject({ flexWrap: 'wrap', flexGrow: 1 })
     const line = (await ui.find({ key: 'cr-p-cr1-line2' }))?.text ?? ''
     for (const part of ['unblocks 14', 'land blocked: src/aaaa.ts, src/bbbb.ts']) expect(line, part).toContain(part)
@@ -847,7 +855,7 @@ describe('request rows', () => {
 
   test('the right edge of line two holds the problem marks, then the new-failure count, then the check state, flush right; a current check is not shown', async ($, on) => {
     const check = (state: string, over: Record<string, unknown> = {}) => ({ state, kind: 'full', tip: sha(2), baseTip: sha(1), at: null, result: 'fail', newFailures: null, baseCount: null, tipCount: null, ...over })
-    const { ui } = await mounted($, on, [cr({ id: 'p-cr1', landBlocked: ['src/a.ts'], check: check('conflict', { newFailures: ['x TS1'] }) } as never), cr({ id: 'p-cr2', check: check('stale') } as never), cr({ id: 'p-cr3' })], WIDE)
+    const { ui } = await mounted($, on, [cr({ id: 'p-cr1', problems: [BLOCKED(['src/a.ts'])], check: check('conflict', { newFailures: ['x TS1'] }) } as never), cr({ id: 'p-cr2', check: check('stale') } as never), cr({ id: 'p-cr3' })], WIDE)
     const line = async (id: string) => (await ui.find({ key: `cr-${id}-line2` }))?.text ?? ''
     const [one, two, three] = [await line('p-cr1'), await line('p-cr2'), await line('p-cr3')]
     expect(one.indexOf('land blocked: src/a.ts')).toBeLessThan(one.indexOf('1 new'))

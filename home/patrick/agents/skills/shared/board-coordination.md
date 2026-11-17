@@ -62,8 +62,9 @@ milestones, recorded rulings and deferrals. The board model is
   [Change requests](../shared/change-requests.md#change-requests)).
 - **Check state** (`board queue`, `board health`, console): every live CR's
   check against the current refs.
-- **Refresh work:** the first CR of the accept queue that waits on no other CR
-  and whose check or review is not `current` is claimable by `review` pulls as
+- **Refresh work:** the first CR of the accept queue that lands (not a design
+  checkpoint), waits on no other CR and whose check or review is not
+  `current` is claimable by `review` pulls as
   kind `refresh` (the CR keeps its status); that CR only. Protocol: review.md
   [Refresh](../role/protocols/review.md#refresh).
 
@@ -71,10 +72,11 @@ milestones, recorded rulings and deferrals. The board model is
 
 - At decision time, write the record with `board ruling record <id> <file>`:
   it replaces the packet and sets status `decided` (autopilot: `--status
-  needs_ratification`). `--replaces <old>[,<old>]` closes the decided rulings
-  it replaces, links the released ones it revises, and reruns to finish after a
-  stop; `board ruling supersede <old> --with <new>` alone for one rule or by
-  hand. The file holds these `##` sections, which `board ruling record`
+  needs_ratification`). `--replaces <old>[,<old>]` links each ruling it
+  replaces, decided or released; each is superseded when the new ruling comes
+  into force: at its release, or at once for an autopilot record. Rerun it
+  after a stop; `board ruling supersede <old> --with <new>` alone for one rule
+  or by hand. The file holds these `##` sections, which `board ruling record`
   checks: `Question`, `Alternatives Considered`, `Decision`, `Rationale` (with
   provenance: user or the ruling session's role, and date) and `Rule owner`.
 - Record each ruling you make as "ruling — rejected: <alternative>, fails

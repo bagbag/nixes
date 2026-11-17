@@ -88,21 +88,19 @@ export type ConsoleCr = {
   /** The priority the board ranks it at (`priority`): the highest of its work unit (the request and its open items) and what waits on them; `ownPriority` is the request's own. `raisedBy` names what sets the higher one (a waiting item, or one of its own items); null when its own is the highest. */
   priority: number; ownPriority: number
   raisedBy: { id: string; isItem: boolean } | null
-  /** The agent review's verdict against the current (tip, base tip): `stale` after a base move until a refresh triage keeps or returns it; null before any review. */
-  reviewState: 'current' | 'stale' | null
-  /** The board's refresh work: the first non-waiting request of the accept queue whose check or review is not current (r24-q196). */
-  refreshWork: boolean
+  /** What holds it up, each with the step that clears it, as the board names it (the console maps, never derives): marks, and the Update button where `next.action` is `refresh`. */
+  problems: ConsoleProblem[]
   /** Open for your review (from Open until your Accept or Return): no refresh or agent step touches it meanwhile; null when it is not open. */
   review: ConsoleReview | null
-  /** Uncommitted paths in the target's checkout that the landing would touch (`land` refuses); null when none. */
-  landBlocked: string[] | null
   /** Look-after child that passed review and lands with this base; null otherwise. */
   after: string | null
-  /** The project setup failed in its worktree after the last claim or rebase; the holder keeps the claim. */
-  setupFailed: boolean
-  /** A rebase, merge, cherry-pick, revert or bisect the board did not start is under way in the worktree: the request is out of the claim queue and its owner ends it. */
-  worktreeBlocked: 'rebase' | 'merge' | 'cherry-pick' | 'revert' | 'bisect' | null
 }
+
+/**
+ * One problem of a request row (`board console` `crs[].problems`): `kind` setup-failed, git-state (a rebase, merge, … the board did not start), check (stale or conflict while waiting for you),
+ * review-stale, land-blocked; `text` the board's words; `next.action` refresh (only the queue head's refresh work, never on an open review), claim, merge (with you), owner, ask-user or wait.
+ */
+export type ConsoleProblem = { kind: string; text: string; next: { action: string; command: string | null; paths: string[] } }
 
 /** A look-after landing's ratification item (`board console` `ratifications`): it waits for your look and blocks nothing. */
 export type ConsoleRatification = { id: string; cr: string; title: string; tip: string | null; baseTip: string | null; review: ConsoleReview | null }  // the range its request landed: Open shows it
@@ -113,8 +111,8 @@ export type ConsoleReview = { opened: string; edited: boolean | null; files: str
 /** Where the round stands inside its step: Collect's items, points and classes, Select's candidates, the selection. */
 export type ConsoleProgress = { items: number; points: number; classified: number; candidates: number | null; selected: string[] }
 
-/** A release run's record: still in the set, revised (kept with a corrected record text), dropped (it left the set for a round), changed (it stopped the run) or released. */
-export type ConsoleRecord = { id: string; title: string; state: 'set' | 'revised' | 'dropped' | 'changed' | 'released'; reason: string | null }
+/** A release run's record: still in the set, revised (kept with a corrected record text), dropped (it left the set for a round), changed (it stopped the run), released, or replaced (a draft another record of the set revises: superseded, never released). */
+export type ConsoleRecord = { id: string; title: string; state: 'set' | 'revised' | 'dropped' | 'changed' | 'released' | 'replaced'; reason: string | null }
 
 /** One line of the round's recent history, in plain words; `at` is local HH:MM. */
 export type ConsoleLogLine = { at: string; text: string }

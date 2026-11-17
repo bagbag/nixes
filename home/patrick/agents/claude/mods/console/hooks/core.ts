@@ -11,7 +11,7 @@ import {
   setRound, setRoundError, stepPressing, takeContinueAsked, takeRefreshAgain, updateOpened, updateQueued,
 } from './state'
 import {
-  CONTINUE_NO_ROUND, keepStartText, startAbandonedText, continueInHandText, continueText, declineFailedNote, acceptText, isCrAccepting, isWalkCr, itemSlot, missingReportText, openDialogText, questionListLine, questionListText, PROTOCOL_ARGS_DESCRIPTION, PROTOCOL_STDIN_DESCRIPTION, PROTOCOL_TOOL_DESCRIPTION, refreshText, returnText, STALE_DROP, stuckPassText, walkText,
+  CONTINUE_NO_ROUND, keepStartText, startAbandonedText, continueInHandText, continueText, declineFailedNote, acceptText, isCrAccepting, isWalkCr, itemSlot, missingReportText, openDialogText, questionListLine, questionListText, PROTOCOL_ARGS_DESCRIPTION, PROTOCOL_STDIN_DESCRIPTION, PROTOCOL_TOOL_DESCRIPTION, refreshText, returnText, updateText, STALE_DROP, stuckPassText, walkText,
 } from './words'
 
 type $ = EngineInterface
@@ -964,7 +964,7 @@ export async function pressView($: $, agentId: string | undefined): Promise<void
 // Single flight (git works on one tree at a time), held in state so the pane marks the pressed button and its step from the press on.
 type Step = (step: string) => Promise<void>
 
-export const crPressKey = (kind: 'open' | 'accept' | 'return' | 'refresh' | 'ratify', id: string): string => kind === 'ratify' ? `ratify-${id}-open` : `cr-${kind}-${id}`
+export const crPressKey = (kind: 'open' | 'accept' | 'return' | 'update' | 'ratify', id: string): string => kind === 'ratify' ? `ratify-${id}-open` : `cr-${kind}-${id}`
 
 async function crPress($: $, pressed: { key: string; id: string; verb: string }, press: (step: Step) => Promise<string | null>): Promise<void> {
   const since = await $.clock.now()
@@ -1089,7 +1089,7 @@ export async function pressReturnCr($: $, cr: ConsoleCr): Promise<void> {
   })
 }
 
-/** Refresh: the request for a review session; the session runs `board cr refresh`. */
-export async function pressRefreshCr($: $, cr: ConsoleCr): Promise<void> {
-  await crPress($, { key: crPressKey('refresh', cr.id), id: cr.id, verb: 'Refresh' }, async () => sendRequest($, refreshText(cr)))
+/** Update: a deciding session dispatches the refresh the board names; a review session runs it (`board cr refresh`). */
+export async function pressUpdateCr($: $, cr: ConsoleCr, isDeciding: boolean): Promise<void> {
+  await crPress($, { key: crPressKey('update', cr.id), id: cr.id, verb: 'Update' }, async () => sendRequest($, isDeciding ? updateText(cr) : refreshText(cr)))
 }

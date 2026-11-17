@@ -115,11 +115,8 @@ On a shared board (`.beads/board-shared.json` exists):
   (`board route <person> <ids…>`, `board send <person> <ids…>` into their
   inbox); others ask a deciding session. File a find for another person with
   `board create --for <person>`; decide.md Inbox routes it.
-- **Holds:** ask the person of a hold marked `held elsewhere` instead of
-  freeing it.
-- **Sync:** a conflict where one side deleted the row resolves with `--all
-  --table issues`; other
-  work continues unless beads refuses the write.
+- **Sync:** run the fix a `board: sync …` line names; other work continues
+  unless beads refuses the write.
 - Raw bd never creates with `--id` or dotted child ids: parent.N ids stop sync.
 
 ### Work items

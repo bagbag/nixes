@@ -4,9 +4,11 @@
 from __future__ import annotations
 
 import ast
+import contextlib
 import faulthandler
 import hashlib
 import importlib.machinery
+import io
 import itertools
 import importlib.util
 import json
@@ -18,8 +20,10 @@ import subprocess
 import sys
 import tempfile
 import time
+import traceback
 import tomllib
 import types
+from unittest.mock import patch
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -2220,7 +2224,7 @@ def validate_shared_board(root: Path) -> None:
             expect(stale not in text, f"{name} still says {stale!r}")
     for name, needle in (("setup", "board share --yes"), ("setup", "board move <url>"), ("setup", "import"), ("setup", "BD_NO_REMOTE_ADOPT"),
                          ("core", "board route <person> <ids"), ("core", "board send <person> <ids"), ("core", "board create --for <person>"),
-                         ("core", "unrouted"), ("core", "held elsewhere"), ("decide", "inbox"), ("decide", "ever decide these alone")):
+                         ("core", "unrouted"), ("decide", "inbox"), ("decide", "ever decide these alone")):
         expect(needle in texts[name], f"{name} names {needle!r}")
     expect("git push <old url> --delete" not in texts["setup"].split("### History")[1].split("1.")[0], "the old data stays until everyone rejoined")
     # r38-q218: `board setup` owns the settings; the setup doc points to it, migrate runs it, nothing else lists them.
@@ -2969,11 +2973,19 @@ def validate_board(root: Path) -> None:
                 raise ValueError(f"a review pull did not take the queue head's refresh:\n{claimed}\n{fake.writes()}")
             # The console's Refresh follows the same mark: the stale queue head only (r27-q252).
             shown = json.loads(invoke(["console"], Fake(variant(**{"CR ready": waiting_cr, "CR design": waiting_cr})), "aaaa1111")[1])["crs"]
-            if [c["id"] for c in shown if c["refreshWork"]] != [shown[0]["id"]] or len(shown) < 2:
-                raise ValueError(f"board console refreshWork must mark the stale queue head (the list's first) only: {[(c['id'], c['refreshWork']) for c in shown]}")
-            rows = {c["id"]: c["refreshWork"] for c in json.loads(invoke(["console"], Fake(variant(**{"CR ready": current_cr})), "aaaa1111")[1])["crs"]}
+            if [c["id"] for c in shown if cr_refresh_work(c)] != [shown[0]["id"]] or len(shown) < 2 \
+                    or cr_problem(shown[0], "check")["next"] != {"action": "refresh", "command": f"board cr refresh {shown[0]['id']}"} \
+                    or cr_problem(shown[1], "check")["next"] != {"action": "wait"}:
+                raise ValueError(f"board console must offer the refresh at the stale queue head (the list's first) only: {[(c['id'], c['problems']) for c in shown]}")
+            rows = {c["id"]: cr_refresh_work(c) for c in json.loads(invoke(["console"], Fake(variant(**{"CR ready": current_cr})), "aaaa1111")[1])["crs"]}
             if rows.get("fx-ovo.c1") is not False:
-                raise ValueError(f"board console refreshWork marked a current change request: {rows}")
+                raise ValueError(f"board console offered the refresh on a current change request: {rows}")
+            # A hold is the row's holder, no problem; a design checkpoint's check holds nothing up (it lands nothing).
+            rows = {c["id"]: c for c in json.loads(invoke(["console"], Fake(variant(**{"CR ready": {**waiting_cr, "assignee": "bbbb2222"},
+                                                                                        "CR design": {**waiting_cr, "metadata": {"checkpoint": "user"}}})), "aaaa1111")[1])["crs"]}
+            if any(p["kind"] == "held" for c in rows.values() for p in c["problems"]) or rows["fx-ovo.c1"]["holder"] != "bbbb2222" \
+                    or cr_problem(rows["fx-ovo.c4"], "check") is not None:
+                raise ValueError(f"board console: no held problem, and no check problem on a design checkpoint: {[(c['id'], c['problems']) for c in rows.values()]}")
             fake = Fake(variant(**{"CR ready": waiting_cr}))
             invoke(["claim", "fx-ovo.c1"], fake, "lead0001")
             if fake.plain_writes() != [["update", "fx-ovo.c1", "--assignee", "lead0001", "--if-assignee", "", "--json"]]:
@@ -3471,6 +3483,19 @@ def validate_board(root: Path) -> None:
                 invoke(argv, counting, who)
                 if counting.registry_reads != 1:
                     raise ValueError(f"board {argv[0]} read the session registry {counting.registry_reads} times, expected 1")
+            # A shared board's hold by a session outside this machine's registry is freed only with its person's agreement, which is recorded.
+            elsewhere = variant(**{"Held task": {"assignee": "eeee9999"}})
+            stub = types.SimpleNamespace(before=lambda: None, after=lambda: None, report=lambda: None, moved=lambda: None)
+            with patch.object(board, "find_shared", lambda directory=None: stub), patch.object(board, "foreign_claim", lambda deck, item: None):  # routing has its own tests
+                for verb in ("take", "unclaim"):
+                    fake = Fake(elsewhere)
+                    code, _, refused = invoke([verb, ids["Held task"]], fake, "lead0001")
+                    if code != 1 or "held elsewhere by eeee9999" not in refused or f'board {verb} {ids["Held task"]} --agreed' not in refused or fake.writes():
+                        raise ValueError(f"board {verb} of a hold held elsewhere must refuse without --agreed and write nothing: {code} {refused!r} {fake.writes()}")
+                    fake = Fake(elsewhere)
+                    code, _, errors = invoke([verb, ids["Held task"], "--agreed", "anna: go ahead"], fake, "lead0001")
+                    if code or not any("(agreed: anna: go ahead)" in arg for w in fake.writes() for arg in w):
+                        raise ValueError(f"board {verb} --agreed must free the hold and record the agreement: {code} {errors!r} {fake.writes()}")
             # An unreadable registration is skipped alone, its warning reaches the caller once, and its session is then an unregistered
             # one: not marked gone, not allowed to move items (the other sessions are unaffected).
             solo_file = Path(state_dir, "0000-solo0001.json")
@@ -3533,8 +3558,8 @@ def validate_board(root: Path) -> None:
                 raise ValueError(f"board console counts: health's, with design and implement as position counts them: {console_counts}")
             if [c["id"] for c in crs_view] != ["fx-ovo.c2"] or ratifications_view != [] \
                     or set(crs_view[0]) != {"id", "title", "status", "stage", "holder", "look", "view", "checkpoint", "base", "branch", "worktree", "tip",
-                                            "baseTip", "check", "parent", "children", "baseSha", "landBlocked", "reviewState", "refreshWork", "review", "worktreeBlocked", "after",
-                                            "setupFailed", "unblocks", "unblocksDirect", "milestone", "priority", "ownPriority", "raisedBy"}:
+                                            "baseTip", "check", "parent", "children", "baseSha", "problems", "review", "after",
+                                            "unblocks", "unblocksDirect", "milestone", "priority", "ownPriority", "raisedBy"}:
                 raise ValueError(f"board console crs: {crs_view}")
             # The console's stub contract (tests/board-console-contract.ts) declares the CR row it reads: every key it declares must exist.
             contract_file = root / "claude" / "mods" / "console" / "tests" / "board-console-contract.ts"
@@ -3660,6 +3685,26 @@ def validate_board(root: Path) -> None:
                 code, _, errors = invoke(["ruling", "release", store], fake, "lead0001")
                 if code == 0 or f"{status}, not decided" not in errors or fake.writes():
                     raise ValueError(f"board ruling release accepted a {status} record")
+            # r9-q33: a decided draft another ruling of the release revises is superseded by it, never released.
+            draft_of = variant(**{"Open cache question": {"status": "decided", "dependencies": [
+                {"issue_id": ids["Open cache question"], "depends_on_id": store, "type": "tracks"}]}})
+            fake = Fake(draft_of)
+            code, output, errors = invoke(["ruling", "release", store, ids["Open cache question"]], fake, "lead0001")
+            if code or [stdin for args, stdin in fake.calls if args[0] == "batch" and "status=released" in stdin] != [f'update {ids["Open cache question"]} status=released assignee=""\n'] \
+                    or ["supersede", store, "--with", ids["Open cache question"]] not in fake.writes() or f"released {store}" in output:
+                raise ValueError(f"board ruling release must supersede a replaced draft, not release it: {code} {errors!r} {fake.writes()}\n{output}")
+            # Releasing that draft alone is held by its live reviser (health's blockedBy says the same, so the engine's drop step agrees).
+            fake = Fake(draft_of)
+            code, _, errors = invoke(["ruling", "release", store], fake, "lead0001")
+            if code != 1 or f'{ids["Open cache question"]} (revises it' not in errors or fake.writes() or ids["Open cache question"] not in decided_blocked(draft_of):
+                raise ValueError(f"a draft a live record revises must be held from release alone, in release and health: {code} {errors!r} {fake.writes()}")
+            # A record about to be superseded that another live session holds refuses the release before any write.
+            held_draft = variant(**{"Open cache question": {"status": "decided", "dependencies": [
+                {"issue_id": ids["Open cache question"], "depends_on_id": store, "type": "tracks"}]}, "Store choice": {"assignee": "aaaa1111"}})
+            fake = Fake(held_draft)
+            code, _, errors = invoke(["ruling", "release", ids["Open cache question"]], fake, "lead0001")
+            if code != 1 or "held by aaaa1111, another live session" not in errors or fake.writes():
+                raise ValueError(f"a release must refuse superseding a record another live session holds: {code} {errors!r} {fake.writes()}")
             fake = Fake(variant(**{"Open cache question": {"status": "decided"}}))
             code, _, _ = invoke(["ruling", "release", store, ids["Open cache question"]], fake, "lead0001")
             batch = [(args, stdin) for args, stdin in fake.calls if args[0] == "batch"]
@@ -3881,15 +3926,16 @@ def validate_board(root: Path) -> None:
                     code, _, errors = invoke(["ruling", "record", question, str(draft), "--replaces", bad], fake, "lead0001")
                     if code != 1 or word not in errors or fake.writes():
                         raise ValueError(f"board ruling record --replaces {bad} must be refused before any write ({word}): {code} {errors!r} {fake.writes()}")
-                # A pair that carries another link kind (bd keeps one edge per pair) refuses before the body is written, not mid-write.
+                # Another link kind on the pair (bd keeps one edge per pair) gives way to the revision link in the same batch: the supersede drops it anyway.
                 related = variant(**{"Open cache question": {"dependencies": [{"issue_id": question, "depends_on_id": released, "type": "relates-to"}]}})
                 fake = Fake(related)
                 code, _, errors = invoke(["ruling", "record", question, str(draft), "--replaces", released], fake, "lead0001")
-                if code != 1 or "linked already (relates-to)" not in errors or fake.writes():
-                    raise ValueError(f"board ruling record --replaces over a pair with another link must refuse before any write: {code} {errors!r} {fake.writes()}")
+                if code or [stdin for args, stdin in fake.calls if args[0] == "batch"] != [f"update {question} status=decided\ndep remove {question} {released}\ndep add {question} {released} tracks\n"]:
+                    raise ValueError(f"board ruling record --replaces must replace another link on the pair with the revision link: {code} {errors!r} {fake.calls}")
 
-                # --replaces closes the decided records it replaces, rerunnable from the board alone: every old is judged before the first write; a decided
-                # old closes (its revision link first, then the supersede), a closed one superseded by this record is done, a released one is only linked.
+                # --replaces (r9-q33): a decided record links what it replaces, superseded at its release; an away record (needs_ratification) is in force
+                # at once and closes them, rerunnable from the board alone: every old is judged before the first write; its revision link first, then the
+                # supersede; a closed one superseded by this record is done.
                 def dec(rid, status, *links, **extra):
                     return {"id": rid, "title": rid, "status": status, "issue_type": "decision", "priority": 2, "description": "x",
                             "dependencies": [{"issue_id": a, "depends_on_id": b, "type": kind} for a, b, kind in links], **extra}
@@ -3900,24 +3946,30 @@ def validate_board(root: Path) -> None:
                 tracks = lambda old: (question, old, "tracks")
                 fake = Fake(replacing(dec("fx-d1", "decided")))
                 code, output, errors = invoke(["ruling", "record", question, str(draft), "--replaces", "fx-d1"], fake, "lead0001")
-                if code or [w[0] for w in fake.writes()] != ["update", "batch", "supersede"] or fake.writes()[2] != ["supersede", "fx-d1", "--with", question] \
+                if code or [w[0] for w in fake.writes()] != ["update", "batch"] \
                         or [stdin for args, stdin in fake.calls if args[0] == "batch"] != [f"update {question} status=decided\ndep add {question} fx-d1 tracks\n"]:
-                    raise ValueError(f"board ruling record --replaces must link the decided record before it closes it: {code} {errors!r} {fake.calls}")
+                    raise ValueError(f"board ruling record --replaces must only link a decided record a decided record replaces: {code} {errors!r} {fake.calls}")
+                away = ["--status", "needs_ratification"]
+                fake = Fake(replacing(dec("fx-d1", "decided")))
+                code, output, errors = invoke(["ruling", "record", question, str(draft), "--replaces", "fx-d1", *away], fake, "lead0001")
+                if code or [w[0] for w in fake.writes()][:3] != ["update", "batch", "supersede"] or fake.writes()[2] != ["supersede", "fx-d1", "--with", question] \
+                        or [stdin for args, stdin in fake.calls if args[0] == "batch"] != [f"update {question} status=needs_ratification\ndep add {question} fx-d1 tracks\n"]:
+                    raise ValueError(f"an away board ruling record --replaces must link the decided record before it closes it: {code} {errors!r} {fake.calls}")
                 # A stop after the body and status write: the link is there, the record is still decided; the rerun closes it.
                 fake = Fake(replacing(dec("fx-d1", "decided", tracks("fx-d1")), **{"Open cache question": {"status": "decided", "assignee": "lead0001"}}))
-                code, _, errors = invoke(["ruling", "record", question, str(draft), "--replaces", "fx-d1"], fake, "lead0001")
-                if code or [w[0] for w in fake.writes()] != ["update", "batch", "batch", "supersede"] \
-                        or [stdin for args, stdin in fake.calls if args[0] == "batch"] != [f"update {question} status=decided\n", f"dep remove {question} fx-d1\n"]:
+                code, _, errors = invoke(["ruling", "record", question, str(draft), "--replaces", "fx-d1", *away], fake, "lead0001")
+                if code or [w[0] for w in fake.writes()][:4] != ["update", "batch", "batch", "supersede"] \
+                        or [stdin for args, stdin in fake.calls if args[0] == "batch"] != [f"update {question} status=needs_ratification\n", f"dep remove {question} fx-d1\n"]:
                     raise ValueError(f"board ruling record --replaces must finish a record whose status and links are written: {code} {errors!r} {fake.calls}")
                 # A stop after the first of two supersedes: the closed one (superseded by this record) is done, the other closes.
                 stopped = replacing(dec("fx-d1", "closed", ("fx-d1", question, "supersedes")), dec("fx-d2", "decided", tracks("fx-d2")))
                 fake = Fake(stopped)
-                code, _, errors = invoke(["ruling", "record", question, str(draft), "--replaces", "fx-d1,fx-d2"], fake, "lead0001")
+                code, _, errors = invoke(["ruling", "record", question, str(draft), "--replaces", "fx-d1,fx-d2", *away], fake, "lead0001")
                 if code or [w for w in fake.writes() if w[0] == "supersede"] != [["supersede", "fx-d2", "--with", question]]:
                     raise ValueError(f"board ruling record --replaces must skip a record closed by this one and close the rest: {code} {errors!r} {fake.writes()}")
                 done = replacing(dec("fx-d1", "closed", ("fx-d1", question, "supersedes")), dec("fx-d2", "closed", ("fx-d2", question, "supersedes")))
                 fake = Fake(done)
-                code, _, errors = invoke(["ruling", "record", question, str(draft), "--replaces", "fx-d1,fx-d2"], fake, "lead0001")
+                code, _, errors = invoke(["ruling", "record", question, str(draft), "--replaces", "fx-d1,fx-d2", *away], fake, "lead0001")
                 if code or any(w[0] in ("supersede", "take") for w in fake.writes()):
                     raise ValueError(f"board ruling record --replaces over records closed already must close nothing again: {code} {errors!r} {fake.writes()}")
                 # Refused before any write: a closed record this one did not supersede, a record in another status, a live session's hold, a pair link of another
@@ -3929,18 +3981,18 @@ def validate_board(root: Path) -> None:
                                       dec("fx-yr", "released")], "more than one record or rule")):
                     olds = [issue["id"] for issue in extra if issue["status"] != "released"]
                     fake = Fake(replacing(*extra))
-                    code, _, errors = invoke(["ruling", "record", question, str(draft), "--replaces", ",".join(olds)], fake, "lead0001")
+                    code, _, errors = invoke(["ruling", "record", question, str(draft), "--replaces", ",".join(olds), *away], fake, "lead0001")
                     if code != 1 or word not in errors or fake.writes():
                         raise ValueError(f"board ruling record --replaces {olds} must be refused before any write ({word}): {code} {errors!r} {fake.writes()}")
                 # One refused record among several refuses the whole call, the closable ones stay open.
                 fake = Fake(replacing(dec("fx-d1", "decided"), live))
-                code, _, errors = invoke(["ruling", "record", question, str(draft), "--replaces", "fx-d1,fx-live"], fake, "lead0001")
+                code, _, errors = invoke(["ruling", "record", question, str(draft), "--replaces", "fx-d1,fx-live", *away], fake, "lead0001")
                 if code != 1 or fake.writes():
                     raise ValueError(f"board ruling record --replaces must write nothing when one record is refused: {code} {errors!r} {fake.writes()}")
                 # A gone session's hold is taken, just before that record closes; the same session's own hold needs no take.
                 with patch.object(board.Board, "ended", lambda self: {"gone0001"}):
                     fake = Fake(replacing(dec("fx-g", "decided", assignee="gone0001"), dec("fx-m", "decided", assignee="lead0001")))
-                    code, _, errors = invoke(["ruling", "record", question, str(draft), "--replaces", "fx-g,fx-m"], fake, "lead0001")
+                    code, _, errors = invoke(["ruling", "record", question, str(draft), "--replaces", "fx-g,fx-m", *away], fake, "lead0001")
                     if code or [w for w in fake.writes() if w[:3] == ["update", "fx-g", "--assignee"]] != [["update", "fx-g", "--assignee", "lead0001", "--force", "--json"]] \
                             or [w[1] for w in fake.writes() if w[0] == "supersede"] != ["fx-g", "fx-m"] \
                             or any(w[:2] == ["update", "fx-m"] for w in fake.writes()) \
@@ -3948,8 +4000,8 @@ def validate_board(root: Path) -> None:
                         raise ValueError(f"board ruling record --replaces must take a gone session's hold before it closes the record: {code} {errors!r} {fake.writes()}")
                 # A link of another kind on a closing record's pair is replaced (the supersede drops it anyway), on a released one it is a clash.
                 fake = Fake(replacing(dec("fx-d1", "decided", (question, "fx-d1", "relates-to"))))
-                code, _, errors = invoke(["ruling", "record", question, str(draft), "--replaces", "fx-d1"], fake, "lead0001")
-                if code or [stdin for args, stdin in fake.calls if args[0] == "batch"][0] != f"update {question} status=decided\ndep remove {question} fx-d1\ndep add {question} fx-d1 tracks\n":
+                code, _, errors = invoke(["ruling", "record", question, str(draft), "--replaces", "fx-d1", *away], fake, "lead0001")
+                if code or [stdin for args, stdin in fake.calls if args[0] == "batch"][0] != f"update {question} status=needs_ratification\ndep remove {question} fx-d1\ndep add {question} fx-d1 tracks\n":
                     raise ValueError(f"board ruling record --replaces must replace another link on a closing record's pair: {code} {errors!r} {fake.calls}")
 
             # board block: relates-to gives way, the reason is a comment (no field rewrite); a review is not returned (an item has none).
@@ -4450,7 +4502,7 @@ def validate_board(root: Path) -> None:
                 raise ValueError(f"a chain carries the replaced record's own rule: {fake.writes()}\n{output}")
             fake = Fake(chain)
             code, _, errors = invoke(["ruling", "release", "fx-b"], fake, "lead0001")
-            if code != 1 or "fx-b: revised by fx-c" not in errors or fake.writes():
+            if code != 1 or "fx-b: waits on fx-c (revises it" not in errors or fake.writes():
                 raise ValueError(f"board ruling release must refuse a decided record a live question revises: {errors}\n{fake.writes()}")
             for allowed, args in ((chain, ["fx-b", "fx-c"]), ([*chain[:2], {**chain[2], "status": "closed"}], ["fx-b"])):
                 fake = Fake(allowed)
@@ -4795,6 +4847,11 @@ def validate_board(root: Path) -> None:
             gone = readiness(cr_issue("b", "closed"), cr_issue("w", blocks=("b",)), *item_of(cr_issue("w")), complete=True)["w"]
             if gone[0] != "implement" or gone[1] != ([], []):
                 raise ValueError(f"a landed (closed) blocker holds nothing: {gone}")
+            # A design checkpoint lands nothing: never refresh work, and it does not hold the queue head from the request behind it.
+            heads = readiness(cr_issue("dz", "needs_acceptance", checkpoint="user", since="2026-10-22T15:00:00Z"),
+                              cr_issue("lz", "needs_acceptance", since="2026-10-22T15:05:00Z"))
+            if heads["dz"][0] != "accept" or heads["lz"][0] != "refresh":
+                raise ValueError(f"a design checkpoint at the queue's front must stay an accept and pass the refresh to the next request: {heads}")
             # Item edges lift to their CRs; edges inside a CR order its own work only; a plain open blocker waits.
             lifted = readiness(cr_issue("b", "needs_acceptance"), cr_item("b.i", "b"),
                                cr_issue("w"), cr_item("w.i", "w", blocks=("b.i",)), cr_item("w.j", "w", blocks=("w.i",)))["w"]
@@ -5045,7 +5102,7 @@ def validate_board(root: Path) -> None:
                 waiting, waiting_tip, waiting_wt = make_cr("sl2", "sl2.txt", "2\n")
                 Path(target_wt, "sl2.txt").write_text("local edit\n", encoding="utf-8")
                 rows = json.loads(invoke(["console"], Fake([*landed, *waiting]), "lead0001")[1])["crs"]
-                if [c["id"] for c in rows] != ["sl2"] or rows[0]["landBlocked"] != ["sl2.txt"] or landed_wt.exists():
+                if [c["id"] for c in rows] != ["sl2"] or (cr_problem(rows[0], "land-blocked") or {}).get("next") != {"action": "ask-user", "paths": ["sl2.txt"]} or landed_wt.exists():
                     raise ValueError(f"board console after a settled landing must read the live worktrees: {rows} {landed_wt.exists()}")
                 git("worktree", "remove", "--force", str(waiting_wt))
                 git("worktree", "remove", "--force", str(target_wt))
@@ -5358,6 +5415,18 @@ def validate_board(root: Path) -> None:
                 if code or ["update", "rv", "--status", "in_review", "--assignee", "", "--if-assignee", "bbbb2222", "--json"] not in fake.writes() \
                         or "--unset-metadata review_tip" not in flat or "back to agent review" not in output:
                     raise ValueError(f"a handover of a CR waiting for its Accept must send it back to agent review: {code} {errors}\n{fake.writes()}")
+                # r11-q38: the refresh's gate option stores what ran: --no-gate no check (never a pass), --gate a targeted check of that tip.
+                for flags, stored, said in ((["--no-gate", "docs only"], ["check_kind=none", "check_reason=docs only"], "no check: docs only"),
+                                            (["--gate", "true"], ["check_kind=targeted", "check_command=true"], "targeted check passed: true")):
+                    issues, tip, wt = make_cr("ng", "ng.txt", "x\n")
+                    issues[0]["assignee"] = "bbbb2222"
+                    fake = Fake(issues)
+                    code, output, errors = invoke(["cr", "refresh", "ng", *flags], fake, "bbbb2222")
+                    written = [arg for w in fake.writes() for arg in w]
+                    if code or any(s not in written for s in stored) or said not in output + errors:
+                        raise ValueError(f"cr refresh {flags} must store and say what ran: {code} {output} {errors}\n{fake.writes()}")
+                    git("worktree", "remove", "--force", str(wt))
+                    git("branch", "-q", "-D", "cr/ng")
                 # The queue: a stack's base first, then priority, then age.
                 aq = [cr_issue("q-late", "needs_acceptance", priority=1, since="2026-10-22T15:09:00Z"), cr_issue("q-old", "needs_acceptance", priority=2, since="2026-10-22T15:00:00Z"),
                       cr_issue("q-urgent", "needs_acceptance", priority=0, since="2026-10-22T15:20:00Z"),
@@ -5843,7 +5912,7 @@ def validate_board(root: Path) -> None:
                     in_review_rt = [{**issues_rt[0], "status": "in_review"}]
                     review_kind = board.Board(in_review_rt, complete=False).claimable(in_review_rt[0])
                 rows_rt = {c["id"]: c for c in json.loads(invoke(["console"], Fake([*issues_rt, *issues_rt2]), "lead0001")[1])["crs"]}
-                if loose_kind != "refresh" or held_kind != "accept" or review_kind is not None or rows_rt["rt"]["refreshWork"] \
+                if loose_kind != "refresh" or held_kind != "accept" or review_kind is not None or cr_refresh_work(rows_rt["rt"]) \
                         or rows_rt["rt"]["review"] != {"opened": tip_rt, "edited": False, "files": []} or rows_rt["rt2"]["review"] is not None or "heldInReviewView" in rows_rt["rt"]:
                     raise ValueError(f"a CR open for review is no refresh work and claimable only for its Accept: {loose_kind} {held_kind} {review_kind} {rows_rt['rt']} {rows_rt['rt2']}")
                 code, output, errors = invoke(["cr", "refresh", "rt"], Fake(issues_rt), "aaaa1111")
@@ -5902,7 +5971,7 @@ def validate_board(root: Path) -> None:
                                                             *low_issues, *upr_issues]), "lead0001")[1])["crs"]
                 by_id = {c["id"]: c for c in rows}
                 if by_id["upr"]["after"] != "low" or by_id["upr"]["parent"] != "low" or by_id["low"]["children"] != ["upr"] or by_id["low"]["after"] is not None \
-                        or by_id["sf"]["setupFailed"] is not True or by_id["freshcr"]["setupFailed"] is not False \
+                        or cr_problem(by_id["sf"], "setup-failed") is None or cr_problem(by_id["freshcr"], "setup-failed") is not None \
                         or by_id["freshcr"]["baseSha"] != fresh_tip or by_id["freshcr"]["branch"] != "cr/freshcr" \
                         or by_id["freshcr"]["worktree"] != str(Path(repo_root, ".worktrees", "freshcr")) \
                         or "items" in by_id["freshcr"] or by_id["freshcr"]["check"]["state"] != "unchecked":
@@ -5960,6 +6029,15 @@ def validate_board(root: Path) -> None:
                     fake_ = Fake(issues)
                     code_, output_, errors_ = invoke(["cr", "edits", cr_id, "--tip", tip_, *extra], fake_, actor)
                     return code_, output_, errors_, fake_
+
+                def usage_error(cr_id, tip_, *extra, issues):
+                    """Whether argparse refuses the flags (exit 2) before anything is written."""
+                    fake_ = Fake(issues)
+                    try:
+                        invoke(["cr", "edits", cr_id, "--tip", tip_, *extra], fake_, "lead0001")
+                    except SystemExit as stop:
+                        return stop.code == 2 and not fake_.writes()
+                    return False
 
                 def user_commit(wt_, name, text, message="user commit"):
                     """A commit the user makes by hand in the review folder (VS Code's Commit)."""
@@ -6162,8 +6240,7 @@ def validate_board(root: Path) -> None:
                     raise ValueError(f"cr edits --commit without edits must only end the review: {code} {output} {errors} {fake.writes()}")
                 # --commit with uncommitted changes: the message is needed, an agent session may not, the gate flags exclude each other.
                 code, _, errors, fake = edits("ed1", tip, "--commit", issues=issues)
-                code_flags, _, errors_flags, _ = edits("ed1", tip, "--commit", "-m", "x", "--gate", "true", "--checks", issues=issues)
-                if code != 1 or "needs -m" not in errors or fake.writes() or code_flags != 1 or "exclude each other" not in errors_flags:
+                if code != 1 or "needs -m" not in errors or fake.writes() or not usage_error("ed1", tip, "--commit", "-m", "x", "--gate", "true", "--checks", issues=issues):
                     raise ValueError(f"board cr edits --commit needs a message when the review holds uncommitted changes: {code} {errors}")
                 code, _, errors, fake = edits("ed1", tip, "--commit", "-m", "Fix e", issues=issues, actor="aaaa1111")
                 if code != 1 or "only a lead or solo" not in errors or git("rev-parse", "refs/heads/cr/ed1") != tip or fake.writes():
@@ -6211,8 +6288,8 @@ def validate_board(root: Path) -> None:
                 crow = next(c for c in json.loads(invoke(["console"], Fake(landing), "lead0001")[1])["crs"] if c["id"] == "ed1")
                 _, queued, _ = invoke(["queue"], Fake(landing), "lead0001")
                 if crow["check"]["kind"] != "none" or crow["check"]["reason"] != "docs only" or crow["check"]["state"] != "current" \
-                        or crow["reviewState"] != "current" or "no check: docs only" not in queued or crow["review"] is not None:
-                    raise ValueError(f"a no-gate result must show as no check, with the review current: {crow['check']} {crow['reviewState']}\n{queued}")
+                        or cr_problem(crow, "review-stale") is not None or "no check: docs only" not in queued or crow["review"] is not None:
+                    raise ValueError(f"a no-gate result must show as no check, with the review current: {crow['check']} {crow['problems']}\n{queued}")
                 code, out, errors = invoke(["cr", "land", "ed1", "--tip", tip[:8]], Fake(landing), "lead0001")
                 if code != 1 or "branch moved" not in errors:
                     raise ValueError(f"landing must still refuse a tip other than the branch's: {code} {errors}")
@@ -6257,11 +6334,16 @@ def validate_board(root: Path) -> None:
                     raise ValueError(f"a gate that leaves files behind must record nothing: {code} {errors} {fake.writes()}")
                 Path(wt3, "stray.txt").unlink()
                 git("reset", "-q", "--hard", tip3, cwd=wt3)
-                # Return: commit only, no check stored.
+                # Without a gate flag the full checks run (r11-q38); a Return commits with --no-gate, which stores no check at all.
                 view_of("ed3", issues3)
                 code, output, errors, fake = edits("ed3", tip3, "--commit", "-m", "Edit", issues=issues3)
-                if code or git("rev-parse", "HEAD", cwd=wt3) == tip3 or any("check_" in a for a in flat(fake)):
-                    raise ValueError(f"board cr edits --commit without a gate must store no check: {code} {errors} {fake.writes()}")
+                if code or git("rev-parse", "HEAD", cwd=wt3) == tip3 or "check_result=pass" not in flat(fake) or any(a.startswith("check_kind=") for a in flat(fake)):
+                    raise ValueError(f"board cr edits --commit without a gate flag must store a full check: {code} {errors} {fake.writes()}")
+                git("reset", "-q", "--hard", tip3, cwd=wt3)
+                view_of("ed3", issues3)
+                code, output, errors, fake = edits("ed3", tip3, "--commit", "-m", "Edit", "--no-gate", "returned", issues=issues3)
+                if code or git("rev-parse", "HEAD", cwd=wt3) == tip3 or "check_kind=none" not in flat(fake) or "check_reason=returned" not in flat(fake):
+                    raise ValueError(f"board cr edits --no-gate must store no check, never a pass: {code} {errors} {fake.writes()}")
                 git("reset", "-q", "--hard", tip3, cwd=wt3)
                 # Return of an unedited review ends it; the edits' Return went through cr edits above.
                 view_of("ed3", issues3, edit=False)
@@ -6417,14 +6499,16 @@ def validate_board(root: Path) -> None:
                 code, output, errors = invoke(["cr", "refresh", "ed13", "--review-holds"], fake, "lead0001")
                 if code or "the review holds" not in output:
                     raise ValueError(f"a reviewed range holding a recorded edit commit must keep its review: {code} {output} {errors}")
-                # A moved base refuses a checked edit (the stored pair would name a base the branch is not on); the plain commit still works.
+                # A moved base: the edit commit rebases onto it, and the gate is stored for the rebased tip and the new base (r11-q38).
                 issues7, tip7, wt7 = make_cr("ed7", "e7.txt", "e\n")
                 commit(repo_root, "base-moves.txt", "b\n", "main moves under ed7")
                 view_of("ed7", issues7, edit=False)
                 Path(wt7, "e7.txt").write_text("changed\n", encoding="utf-8")
                 code, _, errors, fake = edits("ed7", tip7, "--commit", "-m", "Fix", "--no-gate", "docs", issues=issues7)
-                if code != 1 or "its base moved" not in errors or "board cr refresh ed7" not in errors or "--checks" not in errors or git("rev-parse", "refs/heads/cr/ed7") != tip7 or fake.writes():
-                    raise ValueError(f"a gate on a branch behind its base must be refused before committing anything, naming the steps that work: {code} {errors} {fake.writes()}")
+                rebased7, main7 = git("rev-parse", "refs/heads/cr/ed7"), git("rev-parse", "main", cwd=repo_root)
+                if code or git("merge-base", rebased7, main7) != main7 \
+                        or f"check_tip={rebased7}" not in flat(fake) or f"check_base_tip={main7}" not in flat(fake) or "check_kind=none" not in flat(fake):
+                    raise ValueError(f"an edit commit on a moved base must rebase and store its gate for the rebased tip: {code} {errors} {fake.writes()}")
                 # The trial run's deadlock (r6-q24): edits and a moved base reach the Accept. Open does not refresh, so the base moves under the
                 # open review; the Accept is the commands decide.md prints, each allowed at its point: record the edits (this ends the hold),
                 # refresh (rebase, setup, checks, triage), keep the review, land. Every step must succeed.
@@ -6445,10 +6529,10 @@ def validate_board(root: Path) -> None:
                 user_commit(wt_dl, "dl-user.txt", "u\n")
                 Path(wt_dl, "dl.txt").write_text("changed\n", encoding="utf-8")
                 commit(repo_root, "dl1-base.txt", "b\n", "main moves under dl1")
-                # Edits and a moved base: land names the moved-base path (decide.md Accept "Moved base"), not only the edits line.
+                # Edits and a moved base: land names the edits line alone, whose commit rebases and checks (r11-q38).
                 code, output, errors = invoke(["cr", "land", "dl1"], Fake(issues_dl), "lead0001")
-                if code != 1 or "your review holds edits" not in errors or "no gate flag" not in errors or "board cr refresh dl1" not in errors:
-                    raise ValueError(f"land on a review with edits and a moved base must name the edits line without a gate flag, then board cr refresh, then land: {code} {output} {errors}")
+                if code != 1 or "your review holds edits" not in errors or "board cr edits dl1" not in errors or "board cr refresh" in errors:
+                    raise ValueError(f"land on a review with edits and a moved base must name the edits line, which rebases: {code} {output} {errors}")
                 recorded_out, refreshed_out, held_out = accept_walk("dl1", issues_dl, (
                     ["cr", "edits", "dl1", "--tip", tip_dl, "--commit", "-m", "Fix dl"], ["cr", "refresh", "dl1"], ["cr", "refresh", "dl1", "--review-holds"]))
                 tip_dl_now = git("rev-parse", "cr/dl1")
@@ -6459,22 +6543,20 @@ def validate_board(root: Path) -> None:
                 accept_walk("dl1", issues_dl, (["cr", "land", "dl1", "--tip", tip_dl_now[:12]],))
                 if at_main() != tip_dl_now or git("show", f"{tip_dl_now}:dl.txt") != "changed" or git("show", f"{tip_dl_now}:dl-user.txt") != "u":
                     raise ValueError("the Accept walk must land the user's commit and their uncommitted change on the moved base")
-                # The trial run's deadlock: Accept with edits and a gate on a moved base. The gate is refused (its check would name a base the branch
-                # is not on), the refusal names the way out, nothing moved, and that way reaches the landing.
+                # The trial run's deadlock: Accept with edits and a gate on a moved base. The gated edit commit rebases onto the base and
+                # stores its gate for the rebased tip (r11-q38); keeping the review reaches the landing.
                 issues_d3, tip_d3, wt_d3 = make_cr("dl3", "dl3.txt", "d\n")
                 view_of("dl3", issues_d3, edit=False)
                 user_commit(wt_d3, "dl3-user.txt", "u\n")
-                tip_d3_user = git("rev-parse", "cr/dl3")
                 commit(repo_root, "dl3-base.txt", "b\n", "main moves under dl3")
-                fake_d3 = Fake(issues_d3)
-                code, _, errors = invoke(["cr", "edits", "dl3", "--tip", tip_d3, "--commit", "--no-gate", "docs only"], fake_d3, "lead0001")
-                if code != 1 or "without a gate" not in errors or "board cr refresh dl3" not in errors or fake_d3.writes() or git("rev-parse", "cr/dl3") != tip_d3_user:
-                    raise ValueError(f"a gate on a moved base must be refused, naming the steps that work, and change nothing: {code} {errors} {fake_d3.writes()}")
-                accept_walk("dl3", issues_d3, (["cr", "edits", "dl3", "--tip", tip_d3, "--commit"], ["cr", "refresh", "dl3"], ["cr", "refresh", "dl3", "--review-holds"]))
+                gated_out, _, _ = accept_walk("dl3", issues_d3, (["cr", "edits", "dl3", "--tip", tip_d3, "--commit", "--no-gate", "docs only"],
+                                                                ["cr", "refresh", "dl3"], ["cr", "refresh", "dl3", "--review-holds"]))
                 tip_d3_now = git("rev-parse", "cr/dl3")
+                if git("merge-base", tip_d3_now, at_main()) != at_main() or "no check: docs only" not in gated_out:
+                    raise ValueError(f"a gated edit commit on a moved base must rebase and say it stored no check: {gated_out}")
                 accept_walk("dl3", issues_d3, (["cr", "land", "dl3", "--tip", tip_d3_now[:12]],))
                 if at_main() != tip_d3_now or git("show", f"{tip_d3_now}:dl3-user.txt") != "u":
-                    raise ValueError("the Accept walk after a refused gate must land the user's commit on the moved base")
+                    raise ValueError("the Accept walk of a gated edit commit must land the user's commit on the moved base")
                 # The same without edits: land says what ends the hold (it names no step an open review refuses), then the walk runs.
                 issues_d2, tip_d2, wt_d2 = make_cr("dl2", "dl2.txt", "d\n")
                 view_of("dl2", issues_d2, edit=False)
@@ -6511,9 +6593,8 @@ def validate_board(root: Path) -> None:
                 code, _, errors, fake = edits("rat5", moved, issues=rows)
                 if code != 1 or tip5[:12] not in errors or moved[:12] not in errors or "was opened at" not in errors:
                     raise ValueError(f"a ratification edit against another tip must be refused, naming both: {code} {errors}")
-                code, _, errors, fake = edits("rat5", tip5, "--commit", "-m", "Ratify fix", "--gate", "true", "--checks", issues=rows)
-                if code != 1 or "exclude each other" not in errors or fake.writes():
-                    raise ValueError(f"a ratification edit takes one gate flag at most: {code} {errors}")
+                if not usage_error("rat5", tip5, "--commit", "-m", "Ratify fix", "--gate", "true", "--checks", issues=rows):
+                    raise ValueError("a ratification edit takes one gate flag at most")
 
                 def follow_row(fake, rat_id, status):
                     """The follow-up CR as a retry reads it from the board: the metadata the first run wrote, linked discovered-from the ratification."""
@@ -6617,12 +6698,12 @@ def validate_board(root: Path) -> None:
                         if "st2  cr-git-state" not in output or "mid merge the board did not start" not in output:
                             raise ValueError(f"board check must name a git state the board did not start: {code} {output} {errors}")
                         _, text, _ = invoke(["console"], Fake(accept_rows), "lead0001")
-                        if json.loads(text)["crs"][0]["worktreeBlocked"] != "merge":
-                            raise ValueError("the console JSON must carry worktreeBlocked per CR")
+                        if (cr_problem(json.loads(text)["crs"][0], "git-state") or {}).get("text") != "mid merge (not the board's)":
+                            raise ValueError("the console JSON must carry a CR's git state as a problem")
                         git_dir_of(Path(repo_root, ".worktrees", "st2")).joinpath("MERGE_HEAD").unlink()
                         _, text, _ = invoke(["console"], Fake(accept_rows), "lead0001")
-                        if json.loads(text)["crs"][0]["worktreeBlocked"] is not None:
-                            raise ValueError("a CR without a stuck state has worktreeBlocked null")
+                        if cr_problem(json.loads(text)["crs"][0], "git-state") is not None:
+                            raise ValueError("a CR without a stuck state has no git-state problem")
                     try:
                         board.open_worktree(bare_deck(rows_o), bare_deck(rows_o).by_id["st1"], Path(repo_root))
                     except board.BoardError as error:
@@ -6843,7 +6924,7 @@ def validate_board(root: Path) -> None:
                     kind_c = deck_c.claimable(deck_c.by_id["fx-new"])
                 _, text, _ = invoke(["console"], Fake([kept]), "lead0001")
                 row_c = json.loads(text)["crs"][0]
-                if kind_c != "accept" or row_c["refreshWork"] or row_c["status"] != "needs_acceptance":
+                if kind_c != "accept" or cr_refresh_work(row_c) or row_c["status"] != "needs_acceptance":
                     raise ValueError(f"a stopped follow-up is claimed for the Accept by a deciding session, never refresh work: {kind_c} {row_c}")
                 # Only a stop on the user's recorded edit commit goes to the deciding session: any other stopped commit stays refresh work.
                 other_c = {**kept, "metadata": {**kept["metadata"], "review_edits": "[]"}}
@@ -7511,7 +7592,7 @@ FAKE_BOARD = r'''#!/usr/bin/env python3
 import json, os, sys
 config = json.load(open(os.environ["FAKE_BOARD_CONFIG"]))
 args = sys.argv[1:]
-stdin = "" if sys.stdin.isatty() else sys.stdin.read()
+stdin = sys.stdin.read() if "-" in args else ""  # as the board: stdin only where an argument names it
 with open(config["log"], "a") as log:
     log.write(json.dumps({"args": args, "stdin": stdin, "actor": os.environ.get("BEADS_ACTOR"), "cwd": os.getcwd()}) + "\n")
 if args[:1] == ["ruling"]:
@@ -7570,9 +7651,9 @@ elif args[:1] in (["release"], ["supersede"]):
     closes = [args[at + 1] for at, arg in enumerate(args) if arg == "--closes"]
     named = args[1:args.index("--closes")] if closes else args[1:]
     if args[0] == "release":
-        for i in named:
+        for i in named:  # config "replacedDrafts": decided records another one of the release revises, superseded by it (r9-q33)
             if items.get(i, {}).get("status") == "decided":
-                items[i]["status"] = "released"
+                items[i]["status"] = "closed" if i in config.get("replacedDrafts", []) else "released"
         for q in closes:
             q = q.split("=")[0]
             if q not in config.get("blockedOpen", []):
@@ -7609,7 +7690,8 @@ elif args[:1] == ["revise"]:
         json.dump(config, open(os.environ["FAKE_BOARD_CONFIG"], "w"))
     print(item)
 elif args[:1] == ["record"]:
-    # `ruling record --replaces`: a decided old closes with the record, a closed or released one is left (done, or revised at its release);
+    # `ruling record --replaces` (r9-q33): every old is linked; an away record (`--status needs_ratification`) closes each decided or released
+    # old at once, any other record leaves them for its release;
     # a hold of a session the position does not mark gone refuses before any write. config "recordStop": an old whose close fails (exit 1, nothing
     # closed from it on); "supersedeFail": an old closed and then exit 1 (its waiting items not blocked).
     items = config.setdefault("items", {})
@@ -7622,12 +7704,12 @@ elif args[:1] == ["record"]:
         sys.exit(1)
     bad = False
     for old in olds:
-        if items.get(old, {}).get("status") != "decided":
-            continue
         if old in config.get("recordStop", []):
             json.dump(config, open(os.environ["FAKE_BOARD_CONFIG"], "w"))
             print(f"board: simulated stop before closing {old}", file=sys.stderr)
             sys.exit(1)
+        if "needs_ratification" not in args or items.get(old, {}).get("status") not in ("decided", "released"):
+            continue
         items[old]["status"] = "closed"
         bad = bad or old in config.get("supersedeFail", [])
     json.dump(config, open(os.environ["FAKE_BOARD_CONFIG"], "w"))
@@ -7640,6 +7722,15 @@ elif args[:1] == ["record"]:
 else:
     print("[]")
 '''
+
+
+def cr_refresh_work(row: dict) -> bool:
+    """Whether a console CR row offers the refresh as its next step (the console's Update)."""
+    return any(p["next"]["action"] == "refresh" for p in row["problems"])
+
+
+def cr_problem(row: dict, kind: str) -> dict | None:
+    return next((p for p in row["problems"] if p["kind"] == kind), None)
 
 
 # The checklist a strong recommendation carries.
@@ -8394,6 +8485,32 @@ def check_sets_problems(engine, words_ts: str) -> list[str]:
     return problems
 
 
+def board_in_process(engine_module, fake: Path) -> None:
+    """Runs the fake board inside this process for the in-process engine: a Python start per board call made each engine group
+    take minutes. Engine runs with `process=True` keep the subprocess boundary; any other board command runs as before."""
+    code_object, original = compile(FAKE_BOARD, str(fake), "exec"), engine_module.boards.Board.run
+
+    def run(self, *args: str, stdin: str | None = None) -> subprocess.CompletedProcess:
+        env = dict(engine_module.boards.env())
+        if env.get("PROTOCOL_BOARD") != str(fake):
+            return original(self, *args, stdin=stdin)
+        out, err = io.StringIO(), io.StringIO()
+        with patch.dict(os.environ, {**env, "BEADS_ACTOR": self.actor}, clear=True), contextlib.chdir(self.repo or os.getcwd()), \
+                patch.object(sys, "argv", [str(fake), *args]), patch.object(sys, "stdin", io.StringIO(stdin or "")), \
+                contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            try:
+                exec(code_object, {"__name__": "__main__"})
+                code = 0
+            except SystemExit as stop:
+                code = stop.code if isinstance(stop.code, int) else int(stop.code is not None)
+            except Exception:
+                traceback.print_exc()
+                code = 1
+        return subprocess.CompletedProcess([str(fake), *args], code, out.getvalue(), err.getvalue())
+
+    engine_module.boards.Board.run = run
+
+
 def load_engine(bin_dir: Path, name: str = "protocol_engine"):
     """bin/protocol's engine, the protocol_engine package beside it, under the module name `name` (a copied install
     loads its own copy under another) with every module imported (cli imports them all)."""
@@ -8629,6 +8746,7 @@ def validate_protocol(root: Path, part: str) -> None:
             return rows
 
         engine_module = load_engine(root / "bin")
+        board_in_process(engine_module, fake)
         cap_cycles = engine_module.base.CHECK_CAP  # check cycles before the cap dialog
         if cap_cycles != 10:
             raise ValueError(f"the check-loop cap is 10 cycles (r2-q8): {cap_cycles}")
@@ -8684,9 +8802,10 @@ def validate_protocol(root: Path, part: str) -> None:
             text = json.dumps(stdin) if isinstance(stdin, dict) else (stdin or "")
             if process:
                 result = subprocess.run([sys.executable, "-B", str(engine), *argv], input=text, text=True,
-                                        capture_output=True, cwd=cwd, env={**base, **(env or {})})
+                                        capture_output=True, cwd=cwd, env={**base, **(env or {})}, timeout=CALL_LIMIT)
             else:
-                code, out, err = engine_module.cli.run_cli(argv, {**base, **(env or {})}, Path(cwd), text)
+                with call_limit():
+                    code, out, err = engine_module.cli.run_cli(argv, {**base, **(env or {})}, Path(cwd), text)
                 result = subprocess.CompletedProcess(argv, code, out, err)
             if ok is not None and (result.returncode == 0) != ok:
                 raise ValueError(f"protocol {' '.join(args)} exited {result.returncode} (expected {'0' if ok else 'non-zero'}):"
@@ -9204,7 +9323,7 @@ def validate_protocol(root: Path, part: str) -> None:
                 raise ValueError(f"a challenge change at the last cycle must reach the cap: {cap}")
             proto("answer", "--origin", "dialog", cwd=repo, stdin={"marker": "round:r3:1", "answers": {cap["questions"][0]["question"]: "Ask now"}})
             batch = shown(cwd=repo)["batch"]
-            if batch["marker"] != "round:r3:2" or [q["question"] for q in batch["questions"]] != ["1. A?", "2. Pasted point? fx-old (Old ruling) is replaced at release."]:
+            if batch["marker"] != "round:r3:2" or [q["question"] for q in batch["questions"]] != ["1. A?", "2. Pasted point? It replaces fx-old (Old ruling) at release."]:
                 raise ValueError(f"protocol batch must leave held questions out: {batch}")
             result = json.loads(proto("answer", "--origin", "dialog", cwd=repo, stdin={
                 "marker": "round:r3:2", "answers": {"1. A?": "Keep"}, "annotations": {}, "response": "And mind the tenancy."}).stdout)
@@ -9214,12 +9333,12 @@ def validate_protocol(root: Path, part: str) -> None:
                 raise ValueError(f"protocol answer with a response: {result}")
             proto("step", stdin={}, cwd=repo)
             result = {"batch": shown(cwd=repo)["batch"]}
-            if result["batch"]["marker"] != "round:r3:3" or [q["question"] for q in result["batch"]["questions"]] != ["Pasted point? fx-old (Old ruling) is replaced at release."]:
+            if result["batch"]["marker"] != "round:r3:3" or [q["question"] for q in result["batch"]["questions"]] != ["Pasted point? It replaces fx-old (Old ruling) at release."]:
                 raise ValueError(f"protocol step after the reading must issue the held batch: {result}")
             declined = json.loads(proto("decline", "--origin", "dialog", cwd=repo,
-                                        stdin={"marker": "round:r3:3", "partial": {"Pasted point? fx-old (Old ruling) is replaced at release.": "Keep"}}).stdout)
+                                        stdin={"marker": "round:r3:3", "partial": {"Pasted point? It replaces fx-old (Old ruling) at release.": "Keep"}}).stdout)
             if declined["batch"] is not None or draft_q["id"] not in [q["id"] for q in declined["questions"] if q["status"] == "ready"] \
-                    or "'Pasted point? fx-old (Old ruling) is replaced at release.': 'Keep'" not in declined["note"]:
+                    or "'Pasted point? It replaces fx-old (Old ruling) at release.': 'Keep'" not in declined["note"]:
                 raise ValueError(f"protocol decline: {declined}")
             # Chat answers (R-B9): only with a quote the console relayed from the person this round.
             chat = {"question": draft_q["id"], "answer": "Keep", "quote": "keep   it,\nfinal"}
@@ -9394,13 +9513,13 @@ def validate_protocol(root: Path, part: str) -> None:
                 raise ValueError(f"protocol Record rerun must reuse the tagged record (re-applying its holds) and skip the recorded one: {tags}\n{[c['args'] for c in first + second]}\n{out}")
             configure()
 
-            # G: a question that replaces records (r12-q44): a decided record closes at Record, a released one is revised.
-            # Alpha: the dialog names the record, a record not naming it is refused, Record closes it and reports it.
+            # G: a question that replaces records (r12-q44, r9-q33): Record links each, the release supersedes them.
+            # Alpha: the dialog names the record, a record not naming it is refused, Record links it and reports it.
             qid = replacing("Alpha point", ["fx-u1"], {"fx-u1": "supersedes"}, items={"fx-u1": {**decided, "title": "Alpha store"}}, newIds=["fx-n1"])
-            if answered() != "Alpha point? Recording it closes fx-u1 (Alpha store).":
+            if answered() != "Alpha point? It replaces fx-u1 (Alpha store) at release.":
                 raise ValueError("the dialog must name the record the question closes")
             calls()
-            refused("step", stdin={"records": {qid: {"rationale": "R.", "ruleOwner": "o"}}}, needle="recording closes fx-u1; name each", cwd=repo)
+            refused("step", stdin={"records": {qid: {"rationale": "R.", "ruleOwner": "o"}}}, needle="replaces fx-u1: name each", cwd=repo)
             if [c for c in calls() if engine_verb(c) in ("revise", "claim", "record")] or shown(cwd=repo)["step"] != "record":
                 raise ValueError("a record that does not name the closed record must be refused before any board write")
             out = proto("step", stdin={"records": {qid: {"rationale": "Replaces fx-u1: the same store, now with a TTL.", "ruleOwner": "o"}}},
@@ -9412,10 +9531,9 @@ def validate_protocol(root: Path, part: str) -> None:
                 raise ValueError(f"Record must tag a revision with its session, round and question: {revise_args}")
             history = [json.loads(row) for row in (session_dir / "history.jsonl").read_text().splitlines()]
             if made != [["ruling", "revise", "fx-u1"], ["claim", "fx-n1"], ["ruling", "record", "fx-n1"]] \
-                    or [c["args"][-2:] for c in rows if c["args"][:2] == ["ruling", "record"]] != [["--replaces", "fx-u1"]] or item_status("fx-u1") != "closed" or "- " + qid + " → fx-n1, closed fx-u1" not in out \
-                    or "recorded " + qid + " · superseded fx-u1 by fx-n1 · round closed" not in out.splitlines()[0] \
-                    or not any(e["event"] == "superseded" and (e["question"], e["old"], e["new"]) == (qid, "fx-u1", "fx-n1") for e in history):
-                raise ValueError(f"Record must close the replaced decided record and report it: {made}\n{out}")
+                    or [c["args"][-2:] for c in rows if c["args"][:2] == ["ruling", "record"]] != [["--replaces", "fx-u1"]] or item_status("fx-u1") != "decided" or "- " + qid + " → fx-n1, replaces fx-u1" not in out \
+                    or any(e["event"] == "superseded" for e in history):
+                raise ValueError(f"Record must link the replaced decided record, leave it to the release and report it: {made}\n{out}")
             # Beta: a deferred question closes nothing and leaves the old record alone.
             qid = replacing("Beta point", ["fx-u2"], {"fx-u2": "supersedes"}, items={"fx-u2": decided})
             answered()
@@ -9452,7 +9570,7 @@ def validate_protocol(root: Path, part: str) -> None:
             qid = replacing("Gamma point", ["fx-u3", "fx-u4"], {"fx-u3": "supersedes", "fx-u4": "supersedes"},
                             items={"fx-u3": {**decided, "title": "Gamma three"}, "fx-u4": {**decided, "title": "Gamma four"}}, newIds=["fx-n3"])
             edit_state(lambda document: document.setdefault("settles", {}).update({"fx-u4": ["fx-set1"]}))
-            if answered() != "Gamma point? Recording it closes fx-u3 (Gamma three), fx-u4 (Gamma four).":
+            if answered() != "Gamma point? It replaces fx-u3 (Gamma three), fx-u4 (Gamma four) at release.":
                 raise ValueError("the dialog must name every record the question closes")
             calls()
             proto("step", stdin={"records": {qid: {"rationale": "Replaces fx-u3 and fx-u4.", "ruleOwner": "o"}}}, cwd=repo)
@@ -9461,29 +9579,29 @@ def validate_protocol(root: Path, part: str) -> None:
             if [engine_head(c) for c in rows if engine_verb(c) in ("revise", "supersede", "take")] != [["ruling", "revise", "fx-u3"]] \
                     or [c["args"][-2:] for c in rows if c["args"][:2] == ["ruling", "record"]] != [["--replaces", "fx-u3,fx-u4"]] \
                     or any(c["args"][:3] == ["bd", "--raw", "--yes"] for c in rows) \
-                    or item_status("fx-u3") != "closed" or item_status("fx-u4") != "closed" \
+                    or item_status("fx-u3") != "decided" or item_status("fx-u4") != "decided" \
                     or settles.get("fx-n3") != ["fx-set1"] or "fx-u4" in settles:
-                raise ValueError(f"Record must close several records and move their settled items: {rows}\n{settles}")
+                raise ValueError(f"Record must link several records and move their settled items: {rows}\n{settles}")
             # Gamma2: a close that failed after the first two of three replaced records closed; the rerun asks the one call again, with every record: the board skips what it closed.
             qid = replacing("Gammatwo point", ["fx-v3", "fx-v4", "fx-v5"], {"fx-v3": "supersedes", "fx-v4": "supersedes", "fx-v5": "supersedes"},
                             items={old: decided for old in ("fx-v3", "fx-v4", "fx-v5")}, newIds=["fx-n9"], recordStop=["fx-v5"])
             answered()
             calls()
             report = {"records": {qid: {"rationale": "Replaces fx-v3, fx-v4 and fx-v5.", "ruleOwner": "o"}}}
-            if "Not recorded" not in proto("step", stdin=report, cwd=repo).stdout or item_status("fx-v4") != "closed" or item_status("fx-v5") != "decided":
+            if "Not recorded" not in proto("step", stdin=report, cwd=repo).stdout or item_status("fx-v4") != "decided" or item_status("fx-v5") != "decided":
                 raise ValueError("the failed close of the last replaced record must leave the question unrecorded after the others closed")
             patch_config(recordStop=[])
             calls()
             out = proto("step", stdin=report, cwd=repo).stdout
             rows = calls()
-            if [c["args"][-2:] for c in rows if c["args"][:2] == ["ruling", "record"]] != [["--replaces", "fx-v3,fx-v4,fx-v5"]] or item_status("fx-v5") != "closed" \
+            if [c["args"][-2:] for c in rows if c["args"][:2] == ["ruling", "record"]] != [["--replaces", "fx-v3,fx-v4,fx-v5"]] or item_status("fx-v5") != "decided" \
                     or "Not recorded" in out or shown(cwd=repo)["round"] is not None:
                 raise ValueError(f"the rerun of Record must ask the one call again with every record it replaces: {[c['args'] for c in rows]}\n{out}")
             configure()
             # Delta: one released record (revised, replaced at its release) and one decided record (closed).
             qid = replacing("Delta point", ["fx-r0", "fx-u5"], {"fx-r0": "supersedes", "fx-u5": "supersedes"},
                             items={"fx-r0": {**released_record, "title": "Delta old"}, "fx-u5": {**decided, "title": "Delta five"}}, newIds=["fx-n4"])
-            if answered() != "Delta point? Recording it closes fx-u5 (Delta five); fx-r0 (Delta old) is replaced at release.":
+            if answered() != "Delta point? It replaces fx-u5 (Delta five), fx-r0 (Delta old) at release.":
                 raise ValueError("the dialog must name the closed and the revised record")
             calls()
             proto("step", stdin={"records": {qid: {"rationale": "Replaces fx-u5.", "ruleOwner": "o"}}}, cwd=repo)
@@ -9493,6 +9611,29 @@ def validate_protocol(root: Path, part: str) -> None:
                     or any(c["args"][:3] == ["bd", "--raw", "--yes"] for c in rows) \
                     or item_status("fx-r0") != "released":
                 raise ValueError(f"a released record is revised and a decided one closed: {rows}")
+            # r9-q33: an away record is in force at its Record, so it supersedes there every record it replaces, the released one it revises
+            # included (the gap that rule closed: nothing superseded a released ruling after a ratified away revision).
+            def away_record(point, hits, items, new, **cfg):
+                qid = replacing(point, hits, {hit: "supersedes" for hit in hits}, items=items, newIds=[new], **cfg)
+                answered()
+                edit_state(lambda document: next(q for q in document["round"]["questions"] if q["id"] == qid).update(origin="away"))
+                calls()
+                return qid, {"records": {qid: {"rationale": f"Replaces {', '.join(hits)}.", "ruleOwner": "o", "reversal": "board bd reopen x"}}}
+            qid, report = away_record("Deltaaway point", ["fx-r7", "fx-u7"], {"fx-r7": released_record, "fx-u7": decided}, "fx-n7a")
+            out = proto("step", stdin=report, cwd=repo).stdout
+            rows = [c["args"] for c in calls()]
+            history = [json.loads(row) for row in (session_dir / "history.jsonl").read_text().splitlines()]
+            recorded = next((a for a in rows if a[:2] == ["ruling", "record"]), [])
+            if "needs_ratification" not in recorded or recorded[-2:] != ["--replaces", "fx-u7,fx-r7"] \
+                    or item_status("fx-r7") != "closed" or item_status("fx-u7") != "closed" \
+                    or {e["old"] for e in history if e["event"] == "superseded" and e["question"] == qid} != {"fx-r7", "fx-u7"}:
+                raise ValueError(f"an away record must supersede the released record it revises and the decided one at Record: {rows}\n{out}")
+            # A supersede bd made before the record call exited 1 counts as done, and says so.
+            qid, report = away_record("Iota point", ["fx-u10"], {"fx-u10": decided}, "fx-n8", supersedeFail=["fx-u10"])
+            out = proto("step", stdin=report, cwd=repo).stdout
+            if "superseded the records it replaces but exited 1" not in out or item_status("fx-u10") != "closed" or shown(cwd=repo)["round"] is not None:
+                raise ValueError(f"an away record's supersede bd made before exiting 1 counts as done:\n{out}")
+            configure()
             # Two released records, or a revision to carry besides a released one, are refused at Related.
             released_tracked = {**decided, "dependencies": [{"issue_id": "fx-u7", "depends_on_id": "fx-r2", "type": "tracks"}]}
             for hits, items, needle in ((["fx-r0", "fx-r1"], {"fx-r0": released_record, "fx-r1": released_record}, "at most one released record"),
@@ -9511,7 +9652,7 @@ def validate_protocol(root: Path, part: str) -> None:
             calls()
             proto("step", stdin={"records": {qid: {"rationale": "Replaces fx-gone.", "ruleOwner": "o"}}}, cwd=repo)
             made = [engine_head(c) for c in calls() if engine_verb(c) in ("take", "supersede", "record")]
-            if made != [["ruling", "record", "fx-n5"]] or item_status("fx-gone") != "closed":
+            if made != [["ruling", "record", "fx-n5"]] or item_status("fx-gone") != "decided":
                 raise ValueError(f"Record must leave a gone session's hold to the board's one record call: {made}")
             # A hold taken by another live session after Related is refused at Record too.
             qid = replacing("Eta point", ["fx-u8"], {"fx-u8": "supersedes"}, items={"fx-u8": decided}, newIds=["fx-n6"], **held)
@@ -9536,14 +9677,14 @@ def validate_protocol(root: Path, part: str) -> None:
                 raise ValueError("a refused outcome must add no overlap")
             proto("step", stdin={"outcomes": {qid: {"fx-o1": "unrelated", "fx-u11": "supersedes"}}}, cwd=repo)
             converge(cwd=repo)
-            if answered() != "Nu point? Recording it closes fx-u11 (Nu old)." \
+            if answered() != "Nu point? It replaces fx-u11 (Nu old) at release." \
                     or [h["id"] for h in shown(cwd=repo)["questions"][0]["overlaps"]] != ["fx-o1", "fx-u11"]:
                 raise ValueError("the dialog must name the missed record by title")
             calls()
             proto("step", stdin={"records": {qid: {"rationale": "Replaces fx-u11.", "ruleOwner": "o"}}}, cwd=repo)
             made = [engine_head(c) for c in calls() if engine_verb(c) in ("revise", "claim", "record", "supersede")]
-            if made != [["ruling", "revise", "fx-u11"], ["claim", "fx-n11"], ["ruling", "record", "fx-n11"]] or item_status("fx-u11") != "closed":
-                raise ValueError(f"Record must close the missed record: {made}")
+            if made != [["ruling", "revise", "fx-u11"], ["claim", "fx-n11"], ["ruling", "record", "fx-n11"]] or item_status("fx-u11") != "decided":
+                raise ValueError(f"Record must link the missed record: {made}")
             configure()
             # Theta: a record call that failed is asked again on the rerun, without a second question item; a close the board made before it
             # exited 1 counts as done and says so.
@@ -9557,13 +9698,8 @@ def validate_protocol(root: Path, part: str) -> None:
             patch_config(fail=[])
             out = proto("step", stdin=report, cwd=repo).stdout
             made = [engine_head(c) for c in calls() if engine_verb(c) in ("revise", "record")]
-            if made != [["ruling", "revise", "fx-u9"], ["ruling", "record", "fx-n7"], ["ruling", "record", "fx-n7"]] or item_status("fx-u9") != "closed" or "Round r" not in out or shown(cwd=repo)["round"] is not None:
+            if made != [["ruling", "revise", "fx-u9"], ["ruling", "record", "fx-n7"], ["ruling", "record", "fx-n7"]] or item_status("fx-u9") != "decided" or "Round r" not in out or shown(cwd=repo)["round"] is not None:
                 raise ValueError(f"a failed close must be retried on the rerun without a second record: {made}\n{out}")
-            qid = replacing("Iota point", ["fx-u10"], {"fx-u10": "supersedes"}, items={"fx-u10": decided}, newIds=["fx-n8"], supersedeFail=["fx-u10"])
-            answered()
-            out = proto("step", stdin={"records": {qid: {"rationale": "Replaces fx-u10.", "ruleOwner": "o"}}}, cwd=repo).stdout
-            if "closed the records it replaces but exited 1" not in out or item_status("fx-u10") != "closed" or shown(cwd=repo)["round"] is not None:
-                raise ValueError(f"a close bd made before exiting 1 counts as done:\n{out}")
             configure()
 
             # F: evidence leans get one focused ground pass before challenge-rulings; a lean left unverified is flagged.
@@ -12425,6 +12561,21 @@ def validate_protocol(root: Path, part: str) -> None:
                     or "- closed fx-a: answered by released fx-new1" not in out or "- closed fx-b: answered by released fx-new1" not in out \
                     or "run `protocol next`" not in out:
                 raise ValueError(f"the release closes the settled items by the rule record: {made}\n{out}")
+            # r9-q33: a decided draft another record of the set revises is superseded by the board's release, never released: the run finishes.
+            patch_config(items={**board_items, "fx-n2": {"status": "decided", "issue_type": "decision", "title": "New store", "assignee": "rules001"},
+                                "fx-d2": {"status": "decided", "issue_type": "decision", "title": "Draft store", "assignee": "rules001"}}, replacedDrafts=["fx-d2"])
+            proto("start", "release", "fx-n2", "fx-d2", **rules)
+            proto("step", stdin={"records": {"fx-n2": "unchanged", "fx-d2": "unchanged"}}, **rules)
+            proto("step", stdin={"checks": {"fx-n2": no_hits, "fx-d2": no_hits}}, **rules)
+            proto("pass", "--origin", "composer", stdin={"command": "release-round", "args": "", "pending": None}, **rules)
+            proto("step", stdin={"rulings": []}, **rules)
+            calls()
+            out = proto("step", stdin={"owners": {rid: [{"none": {"reason": "covered"}}] for rid in ("fx-n2", "fx-d2")}}, **rules).stdout
+            done = [json.loads(row) for row in (state / f"{rules['session']}.protocol" / "history.jsonl").read_text().splitlines() if '"release-done"' in row]
+            if [c["args"] for c in calls() if engine_verb(c) == "release"] != [["ruling", "release", "fx-n2", "fx-d2"]] \
+                    or not done or done[-1]["records"] != ["fx-n2", "fx-d2"] or shown(**rules)["round"] is not None:
+                raise ValueError(f"a release must finish with a replaced draft superseded, not released:\n{out}\n{shown(**rules)}")
+            patch_config(replacedDrafts=[])
             if "Changed after the user's answer: the release asks the user about these rulings." not in recorded \
                     or "Both stores keep their answer." not in recorded or recorded.count("Changed after the user's answer") != 1:
                 raise ValueError(f"the changed ruling is in its record's Own rulings, marked; the other record is not:\n{recorded}")
@@ -13634,6 +13785,21 @@ def run_group(name: str, root: Path) -> None:
 
 GROUPS = ("core", "hooks", "board", "contract", "prepass", *(f"engine-{part}" for part in PROTOCOL_PARTS))
 GROUP_LIMIT = 600  # seconds; the slowest group takes about 210 alone, twice that under load
+CALL_LIMIT = 60  # seconds for one protocol call (each takes a few): a hang ends with every thread's stack instead of the group's limit
+GROUP_DEADLINE = [None]  # monotonic deadline of the group's limit, re-armed after each call's own
+
+
+@contextlib.contextmanager
+def call_limit():
+    """faulthandler keeps one timer: the call's limit replaces the group's for the call, then the group's is re-armed with what is left."""
+    faulthandler.dump_traceback_later(CALL_LIMIT, exit=True)
+    try:
+        yield
+    finally:
+        if GROUP_DEADLINE[0] is None:
+            faulthandler.cancel_dump_traceback_later()
+        else:
+            faulthandler.dump_traceback_later(max(1, GROUP_DEADLINE[0] - time.monotonic()), exit=True)
 
 
 def main() -> int:
@@ -13645,6 +13811,7 @@ def main() -> int:
     if group:
         # A hang (seen rarely, cause unknown) ends the group with every thread's stack instead of running on unseen.
         faulthandler.dump_traceback_later(GROUP_LIMIT, exit=True)
+        GROUP_DEADLINE[0] = time.monotonic() + GROUP_LIMIT
         run_group(group, root)
         return 0
     # The groups are independent: each runs as a child of this script, beside the others.

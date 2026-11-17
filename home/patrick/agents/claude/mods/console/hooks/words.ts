@@ -413,8 +413,8 @@ export const crRowCheckText = (cr: ConsoleCr): string | null => {
 /** The row's failure word: how many failures are new; null while no comparison ran and when none are new (the details say `0 new`). */
 export const crNewCountText = (cr: ConsoleCr): string | null => cr.check.newFailures === null || cr.check.newFailures.length === 0 ? null : `${cr.check.newFailures.length} new`
 
-/** What the row leaves out: marks that are no problem (lands with <id>). */
-export const crQuietMarks = (cr: ConsoleCr, prefix: string | null = null): string[] => crMarks(cr, prefix).filter(mark => !mark.isProblem).map(mark => mark.text)
+/** What the row leaves out: marks that are neither a problem nor a warning (lands with <id>). */
+export const crQuietMarks = (cr: ConsoleCr, prefix: string | null = null): string[] => crMarks(cr, prefix).filter(mark => !mark.isProblem && mark.isWarning !== true).map(mark => mark.text)
 
 /** The mark of a request or ratification open for your review (from the board's `review`): `in review`, `, edited` once you changed it; null while it is not open. */
 export const crTreeText = (item: { review: ConsoleReview | null }): string | null =>
@@ -447,14 +447,14 @@ export function crFailuresText(cr: ConsoleCr): string | null {
   return `${newFailures.length} new: ${named}${newFailures.length > 3 ? ', …' : ''}${counts}`
 }
 
-/** What holds the request up besides its check, each with its colour: setup failed, review stale (waiting for its Accept), land blocked (paths, first three), lands with its base. */
-export function crMarks(cr: ConsoleCr, prefix: string | null = null): { text: string; isProblem: boolean }[] {
-  const blocked = cr.landBlocked ?? []
+/** The board's problems as marks (the check state has its own word; `held` is a warning, not a problem), then `lands with <base>`. A land-blocked mark names its first three paths. */
+export function crMarks(cr: ConsoleCr, prefix: string | null = null): { text: string; isProblem: boolean; isWarning?: boolean }[] {
+  const said = (one: ConsoleCr['problems'][number]) => one.kind !== 'land-blocked' ? one.text
+    : `land blocked: ${one.next.paths.slice(0, 3).join(', ')}${one.next.paths.length > 3 ? ', …' : ''}`
   return [
-    ...(cr.setupFailed ? [{ text: 'setup failed', isProblem: true }] : []),
-    ...(cr.worktreeBlocked !== null ? [{ text: `mid ${cr.worktreeBlocked} (not the board's)`, isProblem: true }] : []),
-    ...(isCrAccepting(cr) && cr.reviewState === 'stale' ? [{ text: 'review stale', isProblem: true }] : []),
-    ...(blocked.length > 0 ? [{ text: `land blocked: ${blocked.slice(0, 3).join(', ')}${blocked.length > 3 ? ', …' : ''}`, isProblem: true }] : []),
+    ...cr.problems.filter(one => one.kind !== 'check').map(one => ({ text: said(one), isProblem: true })),
+    // Another session's hold on a request waiting for your Accept: you wait for it (its Accept is refused meanwhile).
+    ...(isCrAccepting(cr) && cr.holder !== null ? [{ text: `held by ${cr.holder}`, isProblem: false, isWarning: true }] : []),
     ...(cr.after !== null ? [{ text: `lands with ${displayId(cr.after, prefix)}`, isProblem: false }] : []),
   ]
 }
@@ -481,8 +481,9 @@ export function crRows(crs: readonly ConsoleCr[]): { cr: ConsoleCr; depth: numbe
 /** Whether the person can look at, accept or return it: the board waits for them. */
 export const isCrAccepting = (cr: ConsoleCr): boolean => cr.status === 'needs_acceptance'
 
-/** Refreshing is review work: offered only on the request the board marks as refresh work, in a session that pulls reviews. */
-export const canRefreshCr = (cr: ConsoleCr, pulls: readonly string[]): boolean => cr.refreshWork && pulls.includes('review')
+/** Update: where the board's next step is a refresh (its refresh work), in a deciding session, which dispatches it, or one that pulls reviews, which runs it. */
+export const canUpdateCr = (cr: ConsoleCr, isDeciding: boolean, pulls: readonly string[]): boolean =>
+  (isDeciding || pulls.includes('review')) && cr.problems.some(one => one.next.action === 'refresh')
 
 /** Your review edits a press carries: the worktree and the tip the review was opened at, which they are against. */
 export type ReviewEditsRef = { tree: string; tip: string }
@@ -498,12 +499,14 @@ export function acceptText(cr: ConsoleCr, tip: string | null, edits: ReviewEdits
   return `Accept ${cr.id} (${cr.title}) at ${short(tip ?? '')}: I edited it in the review folder ${edits.tree}: read my edits with \`${editsLine(cr, edits)}\`, check and commit them (\`--commit -m "<msg>"\` with a gate) as decide.md says, then land it with \`${land} <the tip it prints>\`.`
 }
 export const returnText = (cr: ConsoleCr, edits: ReviewEditsRef | null = null): string =>
-  edits === null ? `Return ${cr.id} (${cr.title}): ` : `Return ${cr.id} (${cr.title}) with my edits from the review folder ${edits.tree}, which you commit without a check (\`${editsLine(cr, edits)} --commit -m "<msg>"\`): `
+  edits === null ? `Return ${cr.id} (${cr.title}): ` : `Return ${cr.id} (${cr.title}) with my edits from the review folder ${edits.tree}, which you commit without a check (\`${editsLine(cr, edits)} --commit -m "<msg>" --no-gate "returned"\`): `
 
 /** Whether the walk-through is the way in: a design (no branch to open) or a result view. Code opens for your review in its worktree. */
 export const isWalkCr = (cr: ConsoleCr): boolean => cr.checkpoint === 'user' || cr.view === 'result'
 export const walkText = (cr: ConsoleCr): string => cr.checkpoint === 'user' ? `Walk me through ${cr.id}'s design (${cr.title}).` : `Walk me through ${cr.id}'s result (${cr.title}).`
 export const refreshText = (cr: ConsoleCr): string => `Refresh ${cr.id} under the review protocol's Refresh.`
+/** The deciding session's Update: it dispatches the refresh the board names, which then holds the row. */
+export const updateText = (cr: ConsoleCr): string => `Update ${cr.id} (${cr.title}): its ${cr.problems.filter(one => one.next.action === 'refresh').map(one => one.text).join(' and ')}; dispatch its refresh (\`${cr.problems.find(one => one.next.action === 'refresh')?.next.command ?? `board cr refresh ${cr.id}`}\`) under the review protocol's Refresh.`
 
 /** `unblocks 14` while open work waits on the request (directly or through others); null at none. */
 export const crUnblocksText = (cr: ConsoleCr): string | null => cr.unblocks > 0 ? `unblocks ${cr.unblocks}` : null

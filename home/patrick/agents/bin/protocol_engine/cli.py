@@ -5,7 +5,7 @@ per step. Protocols: `round`, the decide protocol's Round from Collect to Record
 (skills/role/protocols/decide.md#round, skills/shared/asking.md), and `release`, its Release
 (decide.md#release), in the same run slot. `next` lists the seed questions of the next round and the model's stored
 proposal (`next --set`), and what waits on the user. What a session was told (report formats, the question rows last printed, the open-item list, Durable owners)
-is `state['told']`, cleared by `compacted` (README). The console mod reads `show --json`, `pending` and `scope`; the state file stays internal. Contract: console-spec 1a plus the lead's contract rulings (version 1).
+is `state['told']`, cleared by `compacted` (docs/protocol-engine.md). The console mod reads `show --json`, `pending` and `scope`; the state file stays internal. Contract: console-spec 1a plus the lead's contract rulings (version 1).
 
 Approvals (answers, the check cap's "ask now") count only from the person: `answer` takes origin `dialog` (the
 console relays the dialog result of the batch out), `chat` (the model maps an answer the user typed, accepted only
@@ -13,7 +13,7 @@ when its quote appears in a message the console relayed with `say`), or `model-r
 console: the model records the user's quoted words). A release's approval is an engine-issued question answered the
 same ways, or a /release-round the person typed or pressed (`pass --origin composer|bridge|press`). Board writes run through `board`
 with the session's actor. While the session's registered role is autopilot (away, in Claude and Codex alike) Ask opens no batch:
-the model reports `act` or `park` per question (README, Away rounds).
+the model reports `act` or `park` per question (docs/protocol-engine.md, Away rounds).
 """
 from __future__ import annotations
 

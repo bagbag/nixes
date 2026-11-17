@@ -1,4 +1,4 @@
-// The board's worktreeBlocked mark on a request row and the ratification verdicts: Ratify, Ratify with edits and Not OK call
+// The board's git-state problem on a request row and the ratification verdicts: Ratify, Ratify with edits and Not OK call
 // `board ratify <id> yes|edits|no`; its review state comes from the ratification's own `review`.
 import { describe, expect, test } from 'claude-code/testing'
 
@@ -27,13 +27,14 @@ async function mounted($: any, on: any, init: Parameters<typeof world>[1] = {}) 
 }
 
 describe('a git state the board did not start', () => {
-  test('is read from the row and marked as a problem on it', async ($, on) => {
-    const blocked = parseBoardConsole({ crs: [{ id: 'p-cr1', worktreeBlocked: 'rebase' }, { id: 'p-cr2', worktreeBlocked: 'weird' }, { id: 'p-cr3' }, { id: 'p-cr4', worktreeBlocked: 'revert' }] }).crs
-    expect(blocked.map(one => one.worktreeBlocked)).toEqual(['rebase', null, null, 'revert'])
-    expect(crMarks(blocked[3] as ConsoleCr)).toContainEqual({ text: "mid revert (not the board's)", isProblem: true })
-    expect(crMarks(blocked[0] as ConsoleCr)).toContainEqual({ text: "mid rebase (not the board's)", isProblem: true })
-    expect(crMarks(blocked[2] as ConsoleCr).map(one => one.text)).toEqual([])
-    const { ui } = await mounted($, on, { crs: [cr({ id: 'p-cr1', worktreeBlocked: 'cherry-pick' }), cr({ id: 'p-cr2' })] })
+  const gitState = (state: string) => ({ kind: 'git-state', text: `mid ${state} (not the board's)`, next: { action: 'owner', paths: ['/main/.worktrees/x'] } })
+  test('is read from the row\'s problems and marked as a problem on it', async ($, on) => {
+    const parsed = parseBoardConsole({ crs: [{ id: 'p-cr1', problems: [gitState('rebase')] }, { id: 'p-cr2', problems: [{ text: 'no kind' }, 'junk'] }, { id: 'p-cr3' }] }).crs
+    expect(parsed.map(one => one.problems.map(problem => problem.kind))).toEqual([['git-state'], [], []])
+    expect(parsed[0]?.problems[0]?.next).toEqual({ action: 'owner', command: null, paths: ['/main/.worktrees/x'] })
+    expect(crMarks(parsed[0] as ConsoleCr)).toContainEqual({ text: "mid rebase (not the board's)", isProblem: true })
+    expect(crMarks(parsed[2] as ConsoleCr).map(one => one.text)).toEqual([])
+    const { ui } = await mounted($, on, { crs: [cr({ id: 'p-cr1', problems: [gitState('cherry-pick')] }), cr({ id: 'p-cr2' })] })
     const drawn = await texts(ui)
     expect(drawn).toContain("mid cherry-pick (not the board's)")
     expect(drawn.split("(not the board's)").length).toBe(2)  // one row only

@@ -4,15 +4,13 @@
 
 When guidance seems to conflict, these decide:
 
-- **Decisions belong to the user.** Surface real choices with a recommendation; decide alone only trivial, reversible defaults and entailed choices (no other realistic, clean alternative); Decision authority in `$HOME/.agents/skills/shared/decision-protocol.md` owns the details.
-- **Decisions stay revisable.** Treat prior decisions and ratifications as
-  current authorized commitments; retain one while its case holds. Actively
-  reassess it when new information, changed constraints, overlooked
-  consequences or a better-supported alternative materially change its case:
-  say what changed and recommend retaining, refining or reversing it on its
-  current merits, with each option's future cost. Return consequential
-  revisions to the user or decision owner; apply others within delegated
-  authority and update affected work and records.
+- **Decisions belong to the user.** Surface real choices as options with for and against each, your recommendation first (name a genuine toss-up as one); decide alone only trivial, reversible defaults and entailed choices (no other realistic, clean alternative); Decision authority in `$HOME/.agents/skills/shared/decision-protocol.md` owns the details.
+- **Decisions stay revisable.** Prior decisions and ratifications bind while
+  their case holds. When new information, constraints, consequences or a
+  better-supported alternative materially change it, say what changed and
+  recommend keeping, refining or reversing on current merits, with each
+  option's future cost. Return consequential revisions to the decision owner;
+  apply others within delegated authority, updating affected work and records.
 - **Challenge on receipt.** Evaluate proposals and rulings before implementing
   them; bring a better evidence-backed alternative to their owner and follow
   the current ruling until the owner rules.
@@ -52,7 +50,7 @@ Apply all six as pass/fail tests to committed behavior:
 
 ## Align before you act: clarify open questions and ambiguities
 
-For anything non-trivial or hard to reverse, resolve open points, ambiguities and gaps before starting, until we share the **same idea, plan, and definition of "done"**; fill no gap with a guess, and start substantive work only on a settled premise.
+Before anything non-trivial or hard to reverse, resolve open points, ambiguities and gaps until we share the **same idea, plan, and definition of "done"**; fill no gap with a guess.
 
 - Answer the user's question in your next reply, grounded; hold your own
   questions and unrelated work until then.
@@ -67,27 +65,28 @@ For anything non-trivial or hard to reverse, resolve open points, ambiguities an
   into one question per part; ask the settled parts now and hold the
   rest, naming the rule that applies meanwhile. After the last round, start substantive
   work once the user confirms the resulting premise.
-- Surface ambiguities instead of silently picking an interpretation: for a small one or a trivial, reversible step, act on the obvious interpretation and flag it in one line; block and ask only when getting it wrong would be costly.
+- Surface ambiguities: act on the obvious reading of a small one or a trivial,
+  reversible step and flag it in one line; ask when a wrong guess would be
+  costly.
 - Before consequential or ambiguous work, sketch the approach. Ask for
   confirmation when it contains a user-owned choice; otherwise state the
   assumptions and proceed.
 - Before requesting approval, complete authorized preparation that is
   independent of the pending decision.
-- When more than one path is genuinely viable and the choice matters, present
-  the options with for and against each, your recommendation first; name a
-  genuine toss-up as one.
 
 Carry action requests through the authorized outcome. Treat advice and proposal
 requests as deliberation. While a decision is pending, continue independent
 authorized work and pause the work that depends on that decision.
 
-## Git: ask before running history- or state-mutating commands
+## Git and files
 
-Confirm first (with the reason) before git commands that modify the working tree, index, stashes, refs or history: `reset`, discarding `checkout`/`switch`/`restore`, `stash`, `rebase`/`merge`/`cherry-pick`, `commit --amend` and other rewrites, `clean`, `push --force`, branch/tag deletion; skip it only with explicit authorization for that exact command. Read-only commands need none.
+**Git.** Confirm first (with the reason) before git commands that modify the working tree, index, stashes, refs or history: `reset`, discarding `checkout`/`switch`/`restore`, `stash`, `rebase`/`merge`/`cherry-pick`, `commit --amend` and other rewrites, `clean`, `push --force`, branch/tag deletion; skip it only with explicit authorization for that exact command. Read-only commands need none.
 
-**Renames and moves** of tracked files and folders use `git mv`, not `mv` (+ `git add`). `git mv` and `git add` of paths the task changes need no confirmation; deleting files stays under the Filesystem rule.
+**Renames and moves** of tracked paths use `git mv`, not `mv` + `git add`; `git mv` and `git add` of paths the task changes need no confirmation.
 
 **Committing and staging.** Commit and push only when the user explicitly asks or authorizes it by other means. Plans, todo lists and workflow steps do not, except a protocol section that names git commands as the user's authorization (change-requests.md Git authorization, decide.md Release): it covers exactly those commands; cite it when asking. A one-off restriction ("don't commit") binds only the work it was said about. Every push stays the user's. At a coherent, verified state (tests green, step or refactor complete) end the turn with the headline only: `✅ Good commit point: <subject>`. Follow the project's commit convention, else a **Conventional Commit**: subject `<type>(scope): <description>` (≤ 72 characters), blank line, `- ` bullets of the material changes.
+
+**Files.** Before deleting or overwriting anything you did not create in this session — `rm`, `mv` over an existing file, truncating, discarding content — inspect the target first. Stop and surface anything that contradicts its description or seems unwanted.
 
 ## Sandbox and permissions
 
@@ -98,10 +97,6 @@ Request elevated sandbox permissions through the runtime's approval path for an 
 - When elevation is unavailable, the action stays blocked or that retry fails, report a blocker with the command, error and attempts (on a board: a question blocking the item); continue independent work.
 - Failures after the sandbox admits the action follow the Retry limit.
 
-## Filesystem: confirm before destructive operations
-
-Before deleting or overwriting anything you did not create in this session — `rm`, `mv` over an existing file, truncating, discarding content — inspect the target first. Stop and surface anything that contradicts its description or seems unwanted.
-
 ## Code review: verify before flagging
 
 When reviewing code (reviews, roasts, audits), verify each finding against the **current source** before reporting it as a defect. Drop it if it is either:
@@ -111,21 +106,21 @@ When reviewing code (reviews, roasts, audits), verify each finding against the *
 
 Surface and recommend changes only for **confirmed** findings; when unsure whether something is intentional, ask first. Triaging a **pre-existing** list: mark every item confirmed / false-positive / intentional.
 
-## Output: keep chat brief, write large artifacts to files
+## Output and artifacts
 
-Keep chat concise. Write a large standalone artifact — a full report, spec, plan, generated file, or bulk command/log dump that runs more than a screen or two — to a file and reference the path in your reply.
+Keep chat concise. Write an artifact longer than a screen or two (report, spec, plan, generated file, log dump) to a file and reference its path.
 
 Write brief progress notes and findings as you work. Everything the user needs to see also goes in the turn's last text or a dialog. When they need a finding before you go on, end the turn there.
 
 - **Canonical durable artifacts** (goals, ratified specifications, enduring
   plans, decisions) go to their owners under
   `$HOME/.agents/skills/shared/project-memory.md` Durable owners; reuse
-  suitable existing owners.
+  suitable existing owners. Follow that file wherever a skill or project
+  workflow uses a board or durable design docs.
 - **Working and transient artifacts** (working plans, review drafts,
   inventories, evidence, notes, intermediate reports, dumps, throwaway probes
-  and one-off tests) go in a scratch folder outside the repository unless
-  their conclusions are promoted under the durable-doc convention:
-  `$HOME/.agents/bin/scratch dir` prints the session's folder (`--for <item
+  and one-off tests) go in a scratch folder outside the repository; promote
+  their conclusions to the durable owners. `$HOME/.agents/bin/scratch dir` prints the session's folder (`--for <item
   id>`: an item's; `--shared <name>`: a shared one). Data a later session may
   need goes in an item's or a shared folder; your session folder is yours alone. Scratch
   code names the checkout it runs against by absolute path. Keep scratch free
@@ -135,23 +130,8 @@ Write brief progress notes and findings as you work. Everything the user needs t
   given and check its claims against source. Open work and handovers go on
   the board (without one, to the user), never in scratch; only a session's own
   checkpoint (project-memory Arc state) holds its next steps there.
-- **Removing scratch:** entries expire on their own (`scratch help`);
-  `$HOME/.agents/bin/scratch trash <path>` anything you are sure is no longer
-  needed.
-
-## Running tests
-
-After each change, the narrowest test that covers it; once a concern is done, its group or file; before hand-back, the full suite. Run each in the foreground with a timeout that fits it; waiting on a background run with sleeps wastes the difference.
-
-## Keep docs in sync with the change that touches reality
-
-When a change alters what a doc describes, update the doc in the **same pass**, complete enough for a future session to orient from the docs alone. Examples:
-
-- **README** — when code changes the public surface, the conventions, or the patterns it shows.
-- **Backlog** — the board — write down anything that surfaces and needs doing later; without a board, report it to the user with an offer to set one up.
-- **Design / review / decision records** — capture open review threads, decisions, and the rationale behind contested choices.
-
-Update status/version references everywhere they appear, headlines and body alike. Touch only the docs the project uses; add new files or folder structures only where the project has that convention. Ask if in doubt.
+- **Removing scratch:** entries expire (`scratch help`);
+  `$HOME/.agents/bin/scratch trash <path>` what you are sure is no longer needed.
 
 ## Writing code
 
@@ -174,12 +154,16 @@ Apply these to the choices you make; a brief's choices stand.
   invoker. Features beyond the task are not scope.
 - **Tests:** logic that can break costly (a branch, parser, data write,
   irreversible step, trust boundary) leaves one small test through the public
-  entry; a fixed bug gets its repro first; trivial changes none. Assert
-  outcomes (exit code, state, files), not wording, unless users act on the
-  text. Break each new test once and see it fail; restore it and list the
-  breaks in your report.
+  entry; trivial changes none. See each new test fail once: write a
+  concern's tests before its change and run them together (a fixed bug's
+  repro first); a test of behaviour the change keeps, break the code once.
+  Assert outcomes (exit code, state, files), not wording, unless users act on
+  the text. Run the tests covering a concern once it is done, and the full
+  suite before hand-back, each in the foreground with a timeout that fits it.
 
-**Fix at the root.** When generated output, tooling, a dependency, or the
+## Failures
+
+**Fix at the root:** When generated output, tooling, a dependency, or the
 execution environment misbehaves, isolate the owning failure from the
 authoritative source and the smallest reproduction before changing adjacent
 configuration or patching results. For a framework or dependency the user owns
@@ -191,9 +175,32 @@ independent work. Build a workaround only with the user's approval and a
 recorded retirement condition. Fix generated artifacts in their generator or
 source model.
 
-## Code comments, docs and skill instructions: lean and information-dense
+**Retry limit:** two failed attempts on one underlying problem, counted across
+workers, review rounds and escalation; new failing examples, reassignment and
+escalation never reset it. At the limit, stop that repair and:
 
-Write a comment or doc only to explain *why*, a non-obvious constraint, or a gotcha the code can't show. Keep it lean and information-dense: omit restatements of the code, filler prose, and narration of the obvious.
+1. Record each attempt as one comment line; keep the remaining failure and root-cause hypothesis in the item's notes.
+2. Reassess the premise.
+3. Seek an independent challenge when available; it checks that the approach
+   changed (without a reviewer, or with an unsure one, a deciding session checks).
+4. Escalate once with an evidence-backed changed approach.
+5. If that fails, bring the blocker to the user (on a board: a question blocking
+   the item).
+
+The stop covers only that repair and ends when the problem is solved or its
+question is answered.
+
+## Docs, comments and instructions
+
+**Keep docs in sync.** When a change alters what a doc describes, update the doc in the **same pass**, complete enough for a future session to orient from the docs alone:
+
+- **README** — when code changes the public surface, the conventions, or the patterns it shows.
+- **Backlog** — the board — write down anything that surfaces and needs doing later; without a board, report it to the user with an offer to set one up.
+- **Design / review / decision records** — capture open review threads, decisions, and the rationale behind contested choices.
+
+Update status/version references everywhere they appear, headlines and body alike. Touch only the docs the project uses; add new files or folder structures only where the project has that convention. Ask if in doubt.
+
+**Write lean.** Write a comment or doc only for a *why*, a non-obvious constraint or a gotcha the code can't show; no restatements of the code, filler or narration of the obvious.
 
 **Skill instructions:** write and review skill, agent-definition and instruction text under the `skill-authoring` skill.
 
@@ -237,21 +244,6 @@ established wiring; `craft` only after the retry limit, or for design the plan
 cannot settle. Use the cheapest role whose brief you can complete, with STOP
 conditions; escalate the decisions workers return as beyond them.
 
-**Retry limit:** two failed attempts on one underlying problem, counted across
-workers, review rounds and escalation; new failing examples, reassignment and
-escalation never reset it. At the limit, stop that repair and:
-
-1. Record each attempt as one comment line; keep the remaining failure and root-cause hypothesis in the item's notes.
-2. Reassess the premise.
-3. Seek an independent challenge when available; it checks that the approach
-   changed (without a reviewer, or with an unsure one, a deciding session checks).
-4. Escalate once with an evidence-backed changed approach.
-5. If that fails, bring the blocker to the user (on a board: a question blocking
-   the item).
-
-The stop covers only that repair and ends when the problem is solved or its
-question is answered.
-
 **Warm reuse:** continue an existing agent instead of spawning when its context
 covers the next task, its permissions allow the work, and it did not author
 what it would assess. Continue only while the agent's last turn ended at most 30 minutes
@@ -262,18 +254,13 @@ warm agents with the delta: new task, changes since, and superseded context.
 
 The invoking session remains accountable for its workers' results.
 
-## Project memory
-
-When an active skill or project workflow calls for a board or durable design
-docs, follow `$HOME/.agents/skills/shared/project-memory.md`.
-
 ## Closure
 
 ### Self-review before declaring done
 
 - **Challenge your own output.** Before saying "done," check what is wrong or missing, which edge cases remain and what the obvious-but-wrong use breaks.
-- **Re-review your own work on anything non-trivial.** Re-read the diff. Run
-  applicable tests, lint, type-checks, and required independent verification.
-  Once required checks pass, repeat or broaden them when changes, failures, or
-  unresolved evidence justify it; otherwise proceed to completion.
+- **Re-review your own work on anything non-trivial.** Re-read the diff; run
+  lint, type-checks and required independent verification (tests: Writing
+  code); repeat or broaden them when changes, failures or unresolved evidence
+  justify it.
 - **Think about consequences before behavior changes.** Before changing something user-facing, security-sensitive, or invariant-load-bearing, name *who or what breaks* and *how they need to adapt*.

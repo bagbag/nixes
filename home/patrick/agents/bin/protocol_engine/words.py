@@ -367,8 +367,8 @@ def related_instructions(round_id: str) -> str:
         f"Round {round_id} · Related: each new draft's board hits need an outcome before asking:",
         '- duplicate or extend: the question takes that item over, in place (the same question answered again);',
         '- relate: link at Record;',
-        '- supersedes: a different question, or one replacing several records; Record closes each decided record it '
-        'replaces once the answer is recorded, and opens a released one as a revision, replaced at release; a change to '
+        '- supersedes: a different question, or one replacing several records; each record it replaces is superseded when '
+        'its ruling comes into force (at release; an away record at Record), a released one opened as a revision; a change to '
         'one clause is no replacement;',
         '- unrelated.',
         'Mark `supersedes` on any decided record the question replaces, a hit or '
@@ -400,8 +400,8 @@ def dialog_text(text: str, replaced: str, number: int | None) -> str:
 
 def replaced_text(closes: list[str], revised: str | None, named) -> str:
     """The records a question replaces, added to the dialog's question text; `named` gives an id with its title."""
-    return '; '.join(filter(None, [f"Recording it closes {', '.join(map(named, closes))}" if closes else '',
-                                   f"{named(revised)} is replaced at release" if revised else ''])) + ('.' if closes or revised else '')
+    replaced = [*map(named, closes), *([named(revised)] if revised else [])]
+    return f"It replaces {', '.join(replaced)} at release." if replaced else ''
 
 
 def not_asked(broken: dict[str, str]) -> str:
@@ -514,7 +514,7 @@ def record_row(q: dict, note: str | None, prior: str | None = None) -> str:
                + '\n'.join(f'    {line}' if line else '' for line in prior.strip().splitlines()) if prior else '')
             + (f"\n  rule question, settles {', '.join(q['settles'])}: name each in the rationale or decision with how the "
                'rule applies' if q.get('settles') else '')
-            + (f"\n  recording closes {', '.join(q['replaces'])}: name each in the rationale or decision with what the new "
+            + (f"\n  replaces {', '.join(q['replaces'])}: name each in the rationale or decision with what the new "
                'record keeps or changes' if q.get('replaces') else '')
             + ('\n  away answer: the record also needs `reversal`, the steps that undo it (a `## Reversal` section; the record is '
                'written as needs_ratification)' if q['origin'] == AWAY else ''))
@@ -586,7 +586,7 @@ def counts_unavailable(error) -> str:
 
 
 def record_exited(item: str, returncode: int, output: str) -> str:
-    return f"`board ruling record {item}` recorded it and closed the records it replaces but exited {returncode}: {output}"
+    return f"`board ruling record {item}` recorded it and superseded the records it replaces but exited {returncode}: {output}"
 
 
 def abandoned_records(kept: list[str]) -> str:
@@ -615,7 +615,7 @@ def closed_done(q: dict) -> str:
     if q['recorded'] == 'deferred':
         return f"- {q['id']} deferred" + (f" → {q['deferralItem']}" if q.get('deferralItem') else ' (no board: noted here only)')
     return (f"- {q['id']} → {q['recorded'] if q['recorded'] not in ('file',) else q['recordFile']}"
-            + (f", closed {', '.join(q['replaces'])}" if q.get('replaces') else ''))
+            + (f", replaces {', '.join(q['replaces'])}" if q.get('replaces') else ''))
 
 
 def closed_parked(q: dict) -> str:

@@ -4,7 +4,7 @@
 import type { EngineInterface } from 'claude-code'
 
 import type {
-  ConsoleAction, ConsoleAgent, ConsoleBoard, ConsoleBoardCounts, ConsoleReview, ConsoleRetired, ConsoleCheckState, ConsoleCount, ConsoleCounts, ConsoleCr, ConsoleDialogQuestion, ConsoleHeld, ConsoleItem, ConsolePassOrigin, ConsolePending, ConsoleProgress, ConsoleProposal, ConsoleQuestion,
+  ConsoleAction, ConsoleAgent, ConsoleBoard, ConsoleBoardCounts, ConsoleReview, ConsoleRetired, ConsoleCheckState, ConsoleCount, ConsoleCounts, ConsoleCr, ConsoleDialogQuestion, ConsoleHeld, ConsoleItem, ConsolePassOrigin, ConsolePending, ConsoleProblem, ConsoleProgress, ConsoleProposal, ConsoleQuestion,
   ConsoleRatification, ConsoleRecord, ConsoleRole, ConsoleRound, ConsoleSession,
 } from '../types'
 
@@ -348,7 +348,7 @@ function parseQuestion(value: unknown): ConsoleQuestion {
   }
 }
 
-const RECORD_STATES: readonly string[] = ['set', 'revised', 'dropped', 'changed', 'released']
+const RECORD_STATES: readonly string[] = ['set', 'revised', 'dropped', 'changed', 'released', 'replaced']
 
 function parseRecord(value: unknown): ConsoleRecord {
   const raw = record(value)
@@ -447,13 +447,17 @@ function parseCr(value: unknown): ConsoleCr {
     },
     parent: nullableText(raw.parent), children: list(raw.children).map(text).filter(id => id !== ''),
     unblocks: count(raw.unblocks), unblocksDirect: count(raw.unblocksDirect), milestone: nullableText(raw.milestone),
-    landBlocked: Array.isArray(raw.landBlocked) ? list(raw.landBlocked).map(text).filter(one => one !== '') : null,
-    after: nullableText(raw.after), setupFailed: raw.setupFailed === true,
+    after: nullableText(raw.after),
     priority: typeof raw.priority === 'number' ? raw.priority : 9, ownPriority: typeof raw.ownPriority === 'number' ? raw.ownPriority : 9,
     raisedBy: raw.raisedBy === null || raw.raisedBy === undefined || text(record(raw.raisedBy).id) === '' ? null : { id: text(record(raw.raisedBy).id), isItem: record(raw.raisedBy).isItem === true },
-    reviewState: oneOf(raw.reviewState, ['current', 'stale']), refreshWork: raw.refreshWork === true, review: parseReview(raw.review),
-    worktreeBlocked: oneOf(raw.worktreeBlocked, ['rebase', 'merge', 'cherry-pick', 'revert', 'bisect']),
+    problems: list(raw.problems).map(parseProblem).filter(one => one.kind !== ''), review: parseReview(raw.review),
   }
+}
+
+function parseProblem(value: unknown): ConsoleProblem {
+  const raw = record(value)
+  const next = record(raw.next)
+  return { kind: text(raw.kind), text: text(raw.text), next: { action: text(next.action), command: nullableText(next.command), paths: list(next.paths).map(text).filter(one => one !== '') } }
 }
 
 function parseRatification(value: unknown): ConsoleRatification {

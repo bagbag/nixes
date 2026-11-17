@@ -180,8 +180,12 @@ step goes in a change set and runs on the user's confirmation.
    [Change requests](../shared/change-requests.md#change-requests) Settings,
    then `board setup --target … --setup … --checks … --look … --view …`
    (`look` and `view`: ask the user). Make each tool that
-   scans from the repository root skip `.worktrees/`.
-   Output: the settings as stored.
+   scans from the repository root skip `.worktrees/`. A git commit hook that
+   runs the same checks: ask the user whether agents commit with
+   `--no-verify` or the hook skips `.worktrees/` (the board's checks cover
+   both, user review edits included), and record the answer in the project's
+   agent docs.
+   Output: the settings as stored; the hook answer.
 5. **Reconcile.** Wrap each design still waiting for the user's accept in a
    CR under its topic: the design its child, `checkpoint` `user`, status
    `needs_acceptance`. `board check --limit 0` clean but for user-accepted

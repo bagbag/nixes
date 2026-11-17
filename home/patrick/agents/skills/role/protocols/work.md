@@ -58,7 +58,8 @@ findings or stops.
    counts for tests.
 5. **Hand over.** With every item closed and complete evidence,
    `board handover <cr> "<evidence>"` under
-   [Hand-over and acceptance](../../shared/board-core.md#hand-over-and-acceptance).
+   [Hand-over and acceptance](../../shared/board-core.md#hand-over-and-acceptance);
+   for a CR the project checks cannot test (docs only), `--no-gate "<reason>"`.
    Map each addressed finding ID to its repaired scope, evidence and the gates
    its acceptor reproduces. Resolve a rebase conflict, or fix failed checks,
    and rerun it. With partial work, `board unclaim <cr>` with the remainder in

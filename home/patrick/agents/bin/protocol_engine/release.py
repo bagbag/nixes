@@ -274,12 +274,14 @@ def release_enter(ctx: Context) -> str | None:
     for rid in ids:
         if after[rid] == 'released':
             set_record(ctx, rid)['state'] = 'released'
+        elif after[rid] == 'closed' and now[rid] == 'decided' and not r['retry']:  # a replaced draft: its reviser's release superseded it (r9-q33)
+            set_record(ctx, rid)['state'] = 'replaced'
     for sup in r['supersedes']:
         if sup['partial'] is None and after.get(sup['old']) == 'closed' and f"{sup['old']}>{sup['new']}" not in r['done']:
             r['done'].append(f"{sup['old']}>{sup['new']}")
     r['outcome'] = {'closed': [q for q in r['closes'] if after[q] == 'closed'],
                     'open': [q for q in r['closes'] if after[q] != 'closed']}
-    finished = not r['retry'] and all(after[rid] == 'released' for rid in ids) and not r['outcome']['open'] \
+    finished = not r['retry'] and all(after[rid] == 'released' or set_record(ctx, rid)['state'] == 'replaced' for rid in ids) and not r['outcome']['open'] \
         and all(f"{sup['old']}>{sup['new']}" in r['done'] for sup in r['supersedes'])
     if not finished:
         ctx.messages.append(words.RELEASE_UNFINISHED)

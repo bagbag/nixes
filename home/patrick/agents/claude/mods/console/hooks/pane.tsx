@@ -5,10 +5,10 @@ import type { EngineInterface, RenderPropsOf } from 'claude-code'
 
 import type { ConsoleBoard, ConsoleCr, ConsoleItem, ConsoleRatification, ConsoleQuestion, ConsoleRecord, ConsoleRole, ConsoleRound, ConsoleSection, ConsoleSession, ConsoleSuggestion } from '../types'
 
-import { crPressKey, ratifyPressKey, pressAcceptCr, pressContinue, pressOpenCr, pressOpenItem, pressOpenOverlaps, pressOpenRatification, pressOpenReason, pressOpenSettles, pressOpenSuggestion, pressRatify, pressRefreshCr, pressReturnCr, pressRole, pressRun, pressStart, pressView, pressWorkers, queuedRuns, runKey } from './core'
+import { crPressKey, ratifyPressKey, pressAcceptCr, pressContinue, pressOpenCr, pressOpenItem, pressOpenOverlaps, pressOpenRatification, pressOpenReason, pressOpenSettles, pressOpenSuggestion, pressRatify, pressReturnCr, pressUpdateCr, pressRole, pressRun, pressStart, pressView, pressWorkers, queuedRuns, runKey } from './core'
 import { isRoundOpen, RELEASE_COMMAND, ROUND_ROLES, START_COMMAND } from './engine'
 import { getBoard, getExpanded, getLenses, getOpened, getPass, getPlaced, getPressing, getRole, getRound, getRoundError, getTurnRunning, toggleExpanded, updateLenses } from './state'
-import { answerText, canRefreshCr, COUNT_GROUPS, countText, crDetailsText, crFailureParts, crFileHref, crMarks, crNewCountText, crKind, crPriorityHint, crPriorityText, crRowCheckText, crRows, crRowStageText, crSummaryText, crTreeText, crUnblocksHint, crUnblocksText, displayId, displayIds, fitText, isCrAccepting, isWalkCr, GROUND, GROUND_BASE, lensArgs, LENS_SETS, plural, pullsText, recommendationMark, recommendationText, roleText, roundWords, runNoun, staleHolds, staleSessions, startHint, STEP_BACK_BASE, suggestionText, WHAT, WHERE } from './words'
+import { answerText, canUpdateCr, COUNT_GROUPS, countText, crDetailsText, crFailureParts, crFileHref, crMarks, crNewCountText, crKind, crPriorityHint, crPriorityText, crRowCheckText, crRows, crRowStageText, crSummaryText, crTreeText, crUnblocksHint, crUnblocksText, displayId, displayIds, fitText, isCrAccepting, isWalkCr, GROUND, GROUND_BASE, lensArgs, LENS_SETS, plural, pullsText, recommendationMark, recommendationText, roleText, roundWords, runNoun, staleHolds, staleSessions, startHint, STEP_BACK_BASE, suggestionText, WHAT, WHERE } from './words'
 import type { CrKind, Lens, LensCommand } from './words'
 
 type $ = EngineInterface
@@ -27,7 +27,7 @@ const STRIPE = 'rgb(50,50,50)'  // a fixed color a little darker than the dark t
 const PART_GAP = 2  // cells between the parts of line two
 const KIND_COLOR: Record<CrKind, string> = { design: 'planMode', code: 'claude', result: 'ide', 'in work': 'success' }  // the bar's color per kind; the legend reads the same map
 const BAR = '▌'  // the first cell of a request's title line: marks where it starts and shows the kind
-const CR_BUTTONS = { walk: 'Walk through', open: 'Open', accept: 'Accept', return: 'Return', refresh: 'Refresh' } as const
+const CR_BUTTONS = { walk: 'Walk through', open: 'Open', accept: 'Accept', return: 'Return', update: 'Update' } as const
 /** The cells a row of plain buttons takes (labels and the separators between): they sit at the right edge, so Return lines up on every row. */
 const buttonsWidth = (labels: readonly string[]): number => labels.reduce((sum, label) => sum + label.length, 0) + BUTTON_SEP.length * Math.max(0, labels.length - 1)
 const SESSION_ORDER: Record<string, number> = { active: 0, idle: 1, gone: 3 }
@@ -61,7 +61,7 @@ const WORKER_CHOICES: readonly number[] = [1, 2, 3, 4, 5, 6]
 const QUESTION_COLOR: Record<ConsoleQuestion['status'], string> = { answered: 'success', asked: 'suggestion', ready: 'claude', draft: 'subtle', held: 'warning', parked: 'warning' }
 const ITEM_COLOR: Record<string, string> = { open: 'claude', in_progress: 'suggestion', in_review: 'warning', decided: 'success', released: 'success', blocked: 'error' }
 const SESSION_COLOR: Record<string, string> = { active: 'success', idle: 'warning', stopped: 'error', gone: 'inactive' }
-const RECORD_COLOR: Record<ConsoleRecord['state'], string> = { set: 'claude', revised: 'suggestion', dropped: 'warning', changed: 'error', released: 'success' }
+const RECORD_COLOR: Record<ConsoleRecord['state'], string> = { set: 'claude', revised: 'suggestion', dropped: 'warning', changed: 'error', released: 'success', replaced: 'inactive' }
 
 // A lens press within DOUBLE_PRESS_MS of the same lens runs it alone; a reload forgetting it is harmless.
 let lastLensPress: { key: string; at: number } | undefined
@@ -732,9 +732,9 @@ export async function drawPane($: $, e: { surface: string; props: RenderPropsOf[
       const buttonsOf = (cr: ConsoleCr) => {
         const walkLabel = isWalkCr(cr) ? CR_BUTTONS.walk : CR_BUTTONS.open
         const accepting = isCrAccepting(cr)
-        const refreshing = canRefreshCr(cr, pulls)
+        const updating = canUpdateCr(cr, isRoundRole, pulls)
         return {
-          accepting, refreshing, width: buttonsWidth([...(accepting ? [walkLabel, CR_BUTTONS.accept, CR_BUTTONS.return] : []), ...(refreshing ? [CR_BUTTONS.refresh] : [])]),
+          accepting, updating, width: buttonsWidth([...(accepting ? [walkLabel, CR_BUTTONS.accept, CR_BUTTONS.return] : []), ...(updating ? [CR_BUTTONS.update] : [])]),
           walkLabel, walkHint: isWalkCr(cr) ? 'Sends the walk-through request' : `Opens ${shown(cr.id)} for your review in its worktree: its change as Outgoing Changes, your edits as Changes`,
         }
       }
@@ -754,7 +754,7 @@ export async function drawPane($: $, e: { surface: string; props: RenderPropsOf[
             hint.add(`item-${cr.id}`, `${shown(cr.id)}: open its summary here`)
             const check = crRowCheckText(cr)
             const count = crNewCountText(cr)
-            const marks = crMarks(cr).filter(mark => mark.isProblem)  // the quiet ones are the summary's
+            const marks = crMarks(cr).filter(mark => mark.isProblem || mark.isWarning === true)  // the quiet ones are the summary's
             const held = crTreeText(cr)
             const buttons = buttonsOf(cr)
             hint.add(`bar-${cr.id}`, crRowStageText(cr))
@@ -768,7 +768,7 @@ export async function drawPane($: $, e: { surface: string; props: RenderPropsOf[
             ]
             // the right group, flush against the right edge, in this order: the marks, the held word, the new-failure count and the check state
             const rest: { key: string; text: string; color: string }[] = [
-              ...marks.map(mark => ({ key: `mark-${mark.text}`, text: mark.text, color: 'error' })),
+              ...marks.map(mark => ({ key: `mark-${mark.text}`, text: mark.text, color: mark.isProblem ? 'error' : 'warning' })),
               ...(held === null ? [] : [{ key: 'held', text: held, color: 'warning' }]),
               ...(count === null ? [] : [{ key: 'new', text: count, color: 'error' }]),
               ...(check === null ? [] : [{ key: 'check', text: check, color: CHECK_COLOR[cr.check.state] }]),
@@ -780,7 +780,7 @@ export async function drawPane($: $, e: { surface: string; props: RenderPropsOf[
                 act(crPressKey('accept', cr.id), CR_BUTTONS.accept, () => pressAcceptCr($, cr), 'Sends the accept request; your session lands it', 'success', true),
                 act(crPressKey('return', cr.id), CR_BUTTONS.return, () => pressReturnCr($, cr), 'Puts the return request in your prompt, ready for your changes', undefined, true),
               ] : []),
-              ...(buttons.refreshing ? [act(crPressKey('refresh', cr.id), CR_BUTTONS.refresh, () => pressRefreshCr($, cr), 'Sends the refresh request: rebase, checks and the range-diff', 'suggestion')] : []),
+              ...(buttons.updating ? [act(crPressKey('update', cr.id), CR_BUTTONS.update, () => pressUpdateCr($, cr, isRoundRole), isRoundRole ? 'Sends the update request: your session dispatches the refresh' : 'Sends the refresh request: rebase, checks and the range-diff', 'suggestion')] : []),
             ]
             // line two: the milestone shrinks first, down to MILESTONE_MIN; what still does not fit wraps to a next line
             const room = e.props.bodyColumns - 1 - CR_INDENT * depth - crIdWidth - alignedWidth - (rest.length === 0 ? 0 : rightWidth + 1) - 1  // the bar, the id column, the columns, the right group with its gap and a spare cell

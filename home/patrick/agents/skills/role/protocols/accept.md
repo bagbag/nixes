@@ -39,11 +39,9 @@ Entry: [decide.md](decide.md#accept) Accept. Read `$HOME/.agents/skills/shared/c
      (`--checks`). Commit with that line plus `--commit -m "<msg>" <gate>`, then
      `board cr land <cr> --tip <new tip>`. A failing gate lands nothing: tell
      the user what `board` printed; the CR stays theirs.
-     **Moved base** (`land` refuses and names it): commit the edits with no gate
-     flag (`--commit -m "<msg>"`; the refresh checks them; `--gate` and
-     `--no-gate` store a check and are refused there), refresh under
-     [Refresh](review.md#refresh) steps 2-3 (a flagged change goes back to
-     agent review), show the user the range-diff, then land the new tip.
+     When the commit says the review is of the old base, triage under
+     [Refresh](review.md#refresh) steps 2-3, show the user the range-diff,
+     then land the new tip.
    - **Design checkpoint:** name the outcome the round's answers entail for
      one confirmation. Nothing changes the design: `board cr land <cr>
      --checkpoint --design <hash>` (the hash from step 2). Otherwise block the
@@ -54,7 +52,7 @@ Entry: [decide.md](decide.md#accept) Accept. Read `$HOME/.agents/skills/shared/c
    - **Changes wanted:** talk the root fix through with the user, then
      `board return <cr> "<findings>"`; add follow-up items to the CR.
      **Return with edits:** `board cr edits <cr> --tip <tip> --commit -m
-     "<msg>"` (no gate flag), then `board return <cr> "<findings>"`.
+     "<msg>" --no-gate "returned"`, then `board return <cr> "<findings>"`.
    - **Rejected:** `board cr reject <cr> "<reason>"`; delete branch `cr/<id>` and its worktree only on the user's
      confirmation (they hold the only copy).
    - **Ratification:** `board ratify <id> yes|edits|no` with the user's
@@ -95,7 +93,7 @@ follow-up the user wants (fix or revert).
 ## User review
 
 The user reviews an item in its own worktree on its own
-branch; the board owns opening, reading and recording it (mechanism: README,
+branch; the board owns opening, reading and recording it (mechanism: docs/board.md,
 the `board review open` paragraph). `board review open <item>` opens it at the tip it records; a ratification opens branch
 `ratify/<id>` at the landed tip. The user's edits are their commits after the opened tip
 plus uncommitted changes; Accept and Return commit the latter as the user's

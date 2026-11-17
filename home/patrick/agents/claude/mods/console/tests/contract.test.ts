@@ -84,7 +84,7 @@ describe('board console contract', () => {
   test('an unknown check state reads as unchecked, a missing check as nothing run', () => {
     const board = parseBoardConsole({ crs: [{ id: 'x', check: { state: 'weird' } }, { id: 'y' }] })
     expect(board.crs.map(one => one.check.state)).toEqual(['unchecked', 'unchecked'])
-    expect(board.crs[1]).toMatchObject({ holder: null, parent: null, children: [], reviewState: null, landBlocked: null, after: null, setupFailed: false, unblocks: 0, unblocksDirect: 0, milestone: null })
+    expect(board.crs[1]).toMatchObject({ holder: null, parent: null, children: [], problems: [], after: null, unblocks: 0, unblocksDirect: 0, milestone: null })
   })
 })
 

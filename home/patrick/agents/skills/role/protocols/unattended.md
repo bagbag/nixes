@@ -24,7 +24,9 @@ setup, run `/role autopilot` again.
     remembered context or costly downstream rework. Record revisions under
     board-coordination [Rulings](../../shared/board-coordination.md#rulings); a
     reversal is a revision record, never an undo.
-  - **Revising a released ruling of the user's:** park every revision.
+  - **Revising a released ruling of the user's:** `act` when new evidence or
+    a new problem the ruling did not weigh supports it, named in the record;
+    `park` a revision resting on preference or the same facts.
   - **Irreversible, outward-facing or scope-changing:** `park` as an unassigned
     question for the user with a recommendation (`board unclaim <id>` when you
     hold it outside a round). Parked questions form the user's next round;

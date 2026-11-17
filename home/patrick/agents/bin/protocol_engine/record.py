@@ -184,8 +184,8 @@ def board_item(ctx: Context, q: dict, path: Path, body: str | None = None, plain
     packet = path.with_suffix('.packet.md')
     packet.write_text(body or f"## Question\n{q['text']}\n\nOptions: " + '; '.join(o['label'] for o in q['options'])
                       + f"\n\nStaged in round {ctx.round['id']}.\n", encoding='utf-8')
-    # The released record it revises, else the first record it closes: the new question is linked to it (parent and topic
-    # labels come from it) until `ruling record --replaces` closes it, which links and closes the other records it replaces.
+    # The released record it revises, else the first record it replaces: the new question is linked to it (parent and topic
+    # labels come from it); `ruling record --replaces` links the other records it replaces.
     holds = ','.join(q.get('holds') or []) or 'none'
     revised = None if plain else q.get('revises') or next(iter(q.get('replaces') or []), None)
     if revised:
@@ -228,7 +228,7 @@ def inherited_blocks(ctx: Context, q: dict) -> list[str]:
 def link_record(ctx: Context, q: dict) -> None:
     """Relates the question's item to its `relate` hits and gives it the inherited blocks; retried on a rerun until it succeeded once
     (a pair already linked is left). bd keeps one edge per pair: a blocks link wins over a relate. The replaced records are not here:
-    `ruling record --replaces` links and closes them."""
+    `ruling record --replaces` links them."""
     if not q.get('linked'):
         item = q['board']
         blocks = inherited_blocks(ctx, q)
@@ -360,7 +360,7 @@ def record_accept(ctx: Context, report: dict) -> str:
                                'decision with how the rule applies')
             unsaid = [old for old in q.get('replaces') or [] if not names_id(said, old)]
             if unsaid:  # the closed record's reader finds its replacement here, and the reader of this record what it replaced
-                unnamed.append(f"records.{q['id']}: recording closes {', '.join(unsaid)}; name each in the rationale or "
+                unnamed.append(f"records.{q['id']}: replaces {', '.join(unsaid)}: name each in the rationale or "
                                'decision with what the new record keeps or changes')
     if unnamed:
         fail('; '.join(unnamed))
@@ -381,12 +381,15 @@ def record_accept(ctx: Context, report: dict) -> str:
             item = board_item(ctx, q, path)
             link_record(ctx, q)
             ctx.board.checked('claim', item)
-            replaces = q.get('replaces') or []
-            result = ctx.board.run('ruling', 'record', item, str(path), *(['--status', 'needs_ratification'] if q['origin'] == AWAY else []),
+            away = q['origin'] == AWAY
+            # Every record it replaces is linked; an away record is in force at once, so it supersedes them now, the released
+            # one it revises included; any other record supersedes them at its release (r9-q33).
+            replaces = list(dict.fromkeys([*(q.get('replaces') or []), *([q['revises']] if away and q.get('revises') else [])]))
+            result = ctx.board.run('ruling', 'record', item, str(path), *(['--status', 'needs_ratification'] if away else []),
                                    *(['--replaces', ','.join(replaces)] if replaces else []))
             if result.returncode != 0:
-                left = [old for old, status in statuses(ctx, replaces).items() if status != 'closed']
-                if left or not replaces:  # the record or a close did not happen: the rerun picks up what is left
+                left = [old for old, status in statuses(ctx, replaces).items() if status != 'closed'] if away else replaces
+                if left or not replaces:  # the record, a link or a close did not happen: the rerun picks up what is left
                     fail(f"`board ruling record {item}` exited {result.returncode}: {(result.stderr or result.stdout).strip()}")
                 ctx.messages.append(words.record_exited(item, result.returncode, (result.stderr or result.stdout).strip()))  # all closed: only the items waiting on the old ones are not blocked
             if q['origin'] == AWAY:
@@ -403,7 +406,8 @@ def record_accept(ctx: Context, report: dict) -> str:
         except ProtocolError as error:
             errors.append(f"{q['id']}: {error}")
         ctx.log('recorded', question=q['id'], board=q['board'], file=str(path), ok=bool(q.get('recorded')))
-        for old in [one for one in (q.get('replaces') or []) if q.get('recorded') and one not in q.setdefault('reported', [])]:  # after the record's own line
+        superseded = (q.get('replaces') or []) + ([q['revises']] if q.get('revises') else []) if q['origin'] == AWAY else []
+        for old in [one for one in superseded if q.get('recorded') and one not in q.setdefault('reported', [])]:  # after the record's own line
             q['reported'].append(old)
             ctx.log('superseded', question=q['id'], old=old, new=q['board'], partial=None)
         checkpoint(ctx)
