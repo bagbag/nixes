@@ -13,29 +13,18 @@ from .release_set import HIT_CLASSES, apply_changes, drop, in_set, ruling_change
 
 
 def board_check_enter(ctx: Context) -> str | None:
-    """The revisions the set's records name without a link (`board check --json`: a question missed them), read once on
-    entering the step and listed in its text. Record files have no board: the step is skipped, said in one line."""
+    """Record files have no board: the step is skipped, said in one line."""
     if ctx.board is None:
         ctx.messages.append(words.BOARD_CHECK_SKIPPED)
         return 'own-rulings'
-    found = []
-    try:
-        rows = ctx.board.json('check', '--json')
-        found = [row for row in (rows.get('unlinkedRevisions') if isinstance(rows, dict) else None) or []
-                 if row.get('id') in in_set(ctx) or row.get('other') in in_set(ctx)]
-    except ProtocolError as error:
-        ctx.messages.append(words.unlinked_unavailable(error))
-    ctx.round['unlinked'] = found
     return None
 
 
 def board_check_text(ctx: Context) -> str:
-    unlinked = ctx.round.get('unlinked') or []
     return lines(
         words.board_check_intro(ctx.round['id']),
         *(words.hit_class_row(name, meaning) for name, meaning in HIT_CLASSES.items()),
         *set_rows(ctx),
-        *([words.unlinked_revisions(unlinked)] if unlinked else []),
         *(words.prefilled(rid, settled) for rid, settled in settled_in_set(ctx).items()),
         *(words.not_closed(rid, items) for rid, items in settled_split(ctx)[1].items()),
         words.BOARD_CHECK_NAMES,

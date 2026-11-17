@@ -4430,28 +4430,19 @@ def validate_board(root: Path) -> None:
             code, _, errors = invoke(["ruling", "supersede", "fx-b", "--with", "fx-d"], fake, "lead0001")
             if code != 1 or "keeps one revision rule" not in errors or fake.writes():
                 raise ValueError(f"board ruling supersede must refuse a carry onto a record that revises another: {errors}\n{fake.writes()}")
-            # board check --json: the rows a Release Board check reads (no text parsing).
-            unlinked = [record("fx-a", "released"), record("fx-b", "decided", notes="This revises fx-a for the cache.")]
-            code, text, _ = invoke(["check", "--json"], Fake(unlinked))
-            found = json.loads(text)
-            if code or found["unlinkedRevisions"] != [{"id": "fx-b", "other": "fx-a", "word": "revises", "old": "fx-a", "new": "fx-b"}] \
-                    or set(found) != {"deviations", "unnamedBlockers", "unlinkedRevisions", "staleHolds", "forcedHolds"}:
+            # board check --json: deviations and flags only; a record's prose naming another ruling is no finding (the
+            # release Board check's `revises` class judges revisions).
+            prose = [record("fx-a", "released"), record("fx-b", "decided", notes="This revises fx-a for the cache.")]
+            code, text, _ = invoke(["check", "--json"], Fake(prose))
+            if code or set(json.loads(text)) != {"deviations", "unnamedBlockers", "staleHolds", "forcedHolds"}:
                 raise ValueError(f"board check --json: {text}")
 
-            # board check: an unlinked revision is a flag; a standalone review waiting on a blocker deviates no more (reviews do not wait).
+            # board check: a standalone review waiting on a blocker deviates no more (reviews do not wait); revision prose flags nothing.
             stuck = variant(**{"Handed task": {"dependencies": [{"issue_id": handed, "depends_on_id": question, "type": "blocks"}]},
                                "Store choice": {"notes": f"This revises {old} for the cache."}})
             code, report, _ = invoke(["check"], Fake(stuck))
-            if "review-blocked" in report or f"  {new}  unlinked-revision  revises {old}" not in report:
-                raise ValueError(f"board check dropped an unlinked revision or kept review-blocked:\n{report}")
-            # Rejected alternatives are no revision; a passive "revised by <id>" flags the reverse pair.
-            for notes, expected in ((f"## Alternatives Considered\n- Rejected: this revises {old}.\n## Decision\nx", None),
-                                    (f"(Revised by the superseding rulings: per {old} the cache stays.)",
-                                     f"  {new}  unlinked-revision  revised by {old} without a supersedes or revise link: "
-                                     f"board ruling supersede {new} --with {old}")):
-                report = invoke(["check"], Fake(variant(**{"Store choice": {"notes": notes}})))[1]
-                if ("unlinked-revision" in report) if expected is None else (expected not in report):
-                    raise ValueError(f"board check misread {notes!r}:\n{report}")
+            if "review-blocked" in report or "revis" in report:
+                raise ValueError(f"board check kept review-blocked or flagged revision prose:\n{report}")
             # A partial supersede by a closed record still adds the edge; a full one needs an open record.
             closed_new = variant(**{"Store choice": {"status": "closed"}})
             if invoke(["ruling", "supersede", old, "--with", new, "--partial", "Rule 2"], Fake(closed_new), "lead0001")[0] \
@@ -4463,11 +4454,6 @@ def validate_board(root: Path) -> None:
             if f"  {wire}  unnamed-blocker" not in invoke(["check"], Fake(variant(**waiting)))[1] or f"  {wire}  unnamed-blocker" in invoke(
                     ["check"], Fake(variant(**{"Wire caller": {**waiting["Wire caller"], "comments": [{"text": f"Blocked by {work}: r"}]}})))[1]:
                 raise ValueError("board check must read a wait's reason from the item's comments")
-            linked_revision = [{**issue, "dependencies": [*issue["dependencies"], {"issue_id": old, "depends_on_id": new,
-                                                                                    "type": "supersedes"}]}
-                               if issue["id"] == old else issue for issue in stuck]
-            if "unlinked-revision" in invoke(["check"], Fake(linked_revision))[1]:
-                raise ValueError("board check flagged a revision with its supersedes link")
 
             # Views: --limit everywhere (--all is --limit 0), a READ_BUDGET cut names a --limit that fits.
             many = fixture + [{**next(i for i in fixture if i["title"] == "CR ready"), "id": f"fx-wide{n:03}",
@@ -10502,18 +10488,13 @@ def validate_protocol(root: Path, part: str) -> None:
             if ["health", "--json", "--items", "decided"] not in [c["args"] for c in calls()] or shown(cwd=repo)["next"] != {"release": {"count": 2}}:
                 raise ValueError("protocol next must read the board and save the count")
             patch_config(items=items)
-            # Board check: a revision the set's texts name without a link is listed (board check --json), once, in the step's text.
-            patch_config(check={"unlinkedRevisions": [
-                {"id": "fx-d1", "other": "fx-old", "word": "revises", "old": "fx-old", "new": "fx-d1"},
-                {"id": "fx-elsewhere", "other": "fx-else", "word": "replaces", "old": "fx-else", "new": "fx-elsewhere"}]})
+            # Board check: the step reads no `board check` (revisions are its `revises` class, judged by meaning).
             proto("start", "release", "fx-d1", cwd=repo)
             calls()
             out = proto("step", stdin={"records": {"fx-d1": "unchanged"}}, cwd=repo).stdout
-            if ["check", "--json"] not in [c["args"] for c in calls()] \
-                    or "fx-d1 revises fx-old: `board ruling supersede fx-old --with fx-d1`" not in out or "fx-elsewhere" in out:
-                raise ValueError(f"the Board check must list the set's unlinked revisions:\n{out}")
+            if ["check", "--json"] in [c["args"] for c in calls()] or "- revises:" not in out:
+                raise ValueError(f"the Board check must list its hit classes without reading board check:\n{out}")
             proto("abandon", cwd=repo)
-            patch_config(check={})
             # Carried settled items: a rule record that closes another takes over the items it settled, and its release closes them.
             qid = replacing("Kappa point", ["fx-d5"], {"fx-d5": "supersedes"}, items={**items, "fx-d5": {**items["fx-d1"], "title": "D5"},
                                                                                      "fx-set1": {"status": "open", "issue_type": "decision"},

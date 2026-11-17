@@ -1817,46 +1817,6 @@ def dep_fix(item_id: str, blocker: str) -> str:
     return f'board unblock {item_id} --on {blocker}'
 
 
-# Passive forms first: "revised by <id>" means <id> revises this record.
-REVISION_WORDS = re.compile(r'\b(?:(?P<passive>(?:revised|superseded|replaced)\s+by)|'
-                            r'(?P<active>revis(?:es|ing|ion of)|supersed(?:es|ing)|replac(?:es|ing)))\b', re.IGNORECASE)
-ITEM_ID = re.compile(r'[A-Za-z0-9][\w-]*(?:\.[\w-]+)*')
-REJECTED = re.compile(r'^##\s+alternatives considered\b.*?(?=^##\s|\Z)', re.IGNORECASE | re.MULTILINE | re.DOTALL)
-WINDOW = 60  # characters after the verb searched for the record it names
-
-
-def unlinked_revision_rows(board: Board, root: str | None) -> list[dict]:
-    """One row per live decision whose editable text says it revises, supersedes or replaces another decision (or is
-    revised by one) without a supersedes or revise edge between them: {id, other, word, old, new}. Comments are
-    history (moved packets quote old records); rejected alternatives describe what the record does not do."""
-    flagged = []
-    for issue in board.scoped(root):
-        if issue['status'] == 'closed' or issue.get('issue_type') != 'decision':
-            continue
-        text = '\n'.join(REJECTED.sub('', str(issue.get(f) or '')) for f in ('title', 'description', 'design', 'notes'))
-        named: dict[str, tuple[str, bool]] = {}  # other id -> (verb, other revises this one)
-        covered = 0
-        for match in REVISION_WORDS.finditer(text):
-            if match.start() < covered:
-                continue  # inside the previous verb's window ("revised by the superseding rulings: <id>")
-            covered = match.end() + WINDOW
-            for other in ITEM_ID.findall(text[match.end():covered]):
-                if other != issue['id'] and board.by_id.get(other, {}).get('issue_type') == 'decision':
-                    named.setdefault(other, (' '.join(match.group(0).lower().split()), bool(match.group('passive'))))
-        for other, (word, passive) in named.items():
-            if not any(kind in ('supersedes', REVISES) for _, _, kind in board.between(issue['id'], other)):
-                old, new = (issue['id'], other) if passive else (other, issue['id'])
-                flagged.append({'id': issue['id'], 'other': other, 'word': word, 'old': old, 'new': new})
-    return flagged
-
-
-def unlinked_revisions(board: Board, root: str | None) -> list[tuple[str, str]]:
-    """(id, detail) per row of unlinked_revision_rows."""
-    return [(row['id'], f"{row['word']} {row['other']} without a supersedes or revise link: board ruling supersede "
-                        f"{row['old']} --with {row['new']} [--partial \"<rule>\"]")
-            for row in unlinked_revision_rows(board, root)]
-
-
 def unnamed_waits(board: Board, root: str | None) -> list[tuple[str, str]]:
     """(id, detail) per open blocker a live item's text does not name: a flag, never a deviation, because bd keeps
     no reason on the edge and legacy waits have none to recover."""
@@ -1884,7 +1844,6 @@ def check_json(board: Board, args) -> dict:
     stale, forced = hold_flags(board, args.root)
     return {'deviations': [{'id': item_id, 'class': kind, 'detail': detail} for item_id, kind, detail in deviations(board, args.root)],
             'unnamedBlockers': [{'id': item_id, 'detail': detail} for item_id, detail in unnamed_waits(board, args.root)],
-            'unlinkedRevisions': unlinked_revision_rows(board, args.root),
             'staleHolds': [{'id': item_id, 'detail': detail} for item_id, detail in stale],
             'forcedHolds': [{'id': item_id, 'detail': detail} for item_id, detail in forced]}
 
@@ -1900,8 +1859,6 @@ def check(board: Board, args) -> int:
             section(f'{name} ({doc_ref(anchor)})', rows, limit)
     section('flag, not a deviation: unnamed waits on open items (board-core.md#dependencies)',
             [f'  {item_id}  unnamed-blocker  {detail}' for item_id, detail in unnamed_waits(board, args.root)], limit)
-    section('flag, not a deviation: revisions without a supersedes or revise link (board-coordination.md#rulings)',
-            [f'  {item_id}  unlinked-revision  {detail}' for item_id, detail in unlinked_revisions(board, args.root)], limit)
     stale, forced = hold_flags(board, args.root)
     section(f'flag, not a deviation: stale holds, no update for {STALE_HOURS} h (board-core.md#hand-over-and-acceptance)',
             [f'  {item_id}  stale-hold  {detail}' for item_id, detail in stale], limit)
@@ -6914,7 +6871,7 @@ def run_command(argv: list[str]) -> int:
     sub.add_argument('--json', action='store_true', help='ready by kind, sessions with state, held items; every row')
     add('holders', 'items by open downstream work', holders, [scope, listing, queues])
     sub = add('check', 'deviations from the board conventions', check, [scope, listing])
-    sub.add_argument('--json', action='store_true', help='deviations and flags as rows, unlinked revisions with their old and new record')
+    sub.add_argument('--json', action='store_true', help='deviations and flags as rows')
     sub = add('related', 'items and doc lines mentioning terms', related, [scope, listing])
     sub.add_argument('terms', nargs='*')
 

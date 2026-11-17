@@ -1179,12 +1179,6 @@ def hit_class_row(name: str, meaning: str) -> str:
     return f'- {name}: {meaning}'
 
 
-def unlinked_revisions(unlinked: list[dict]) -> str:
-    return ("Unlinked revisions the set's texts name (`board check`; a question missed them): "
-            + '; '.join(f"{row['id']} {row['word']} {row['other']}: `board ruling supersede {row['old']} --with {row['new']}`"
-                        for row in unlinked) + '. Treat each as a `revises` hit of the record that replaces the other.')
-
-
 def prefilled(rid: str, settled: list[str]) -> str:
     return (f"Pre-filled: {rid} answers {', '.join(settled)} (the items its rule question settled): the engine adds the "
             f"answers and the closes.")
@@ -1205,10 +1199,6 @@ def board_check_example(first: str, names) -> dict:
                                'answers': [{'item': '<question>', 'action': 'answered: close'}]}},
             'supersedes': [{'old': '<record>', 'new': first, 'partial': '<rule, or leave out>'}],
             'closes': {'<question>': [first]}, 'changed': {}}
-
-
-def unlinked_unavailable(error) -> str:
-    return f'Unlinked revisions unavailable ({error}); run `board check`.'
 
 
 def own_rulings_intro(round_id: str) -> str:
