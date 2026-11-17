@@ -5151,7 +5151,7 @@ def validate_board(root: Path) -> None:
                             or ratified and ratifications[0].get("metadata") != {"ratification": "design"} \
                             or "passed the checkpoint" not in output:
                         raise ValueError(f"the agent's checkpoint pass in a look-{look} project: {code} {errors}\n{written}\n{output}")
-                empty_ratification_board = types.SimpleNamespace(by_id={}, children={"parent": []})
+                empty_ratification_board = types.SimpleNamespace(by_id={}, children={"parent": []}, _cr_items={"parent": []})
                 with patch.object(board, "create_item", return_value="rat-new") as create, patch.object(board, "bd_checked") as update:
                     made = board.cr_ratification(empty_ratification_board, {"id": "parent", "title": "CR title", "priority": 2}, "design")
                     if made != "rat-new" or create.call_args.args[1:3] != ("CR title", "task") \
@@ -5160,23 +5160,35 @@ def validate_board(root: Path) -> None:
                         raise ValueError(f"a design ratification must create a plain-title child with kind metadata and its ratification status: {create.call_args} {update.call_args}")
                 existing = {"id": "rat-old", "title": "CR title", "issue_type": "task", "status": "needs_ratification",
                             "metadata": {"ratification": "design"}}
-                existing_ratification_board = types.SimpleNamespace(by_id={"rat-old": existing}, children={"parent": ["rat-old"]})
+                existing_ratification_board = types.SimpleNamespace(by_id={"rat-old": existing}, children={"parent": ["rat-old"]},
+                                                                    _cr_items={"parent": [existing]})
                 with patch.object(board, "create_item") as create, patch.object(board, "bd_checked") as update:
                     made = board.cr_ratification(existing_ratification_board, {"id": "parent", "title": "CR title"}, "design")
                     if made is not None or create.called or update.called:
                         raise ValueError(f"a second ratification of the same parent and kind must not create another item: {made} {create.call_args} {update.call_args}")
                 partial = {**existing, "status": "open"}
-                partial_board = types.SimpleNamespace(by_id={"rat-old": partial}, children={"parent": ["rat-old"]})
+                partial_board = types.SimpleNamespace(by_id={"rat-old": partial}, children={"parent": ["rat-old"]},
+                                                      _cr_items={"parent": [partial]})
                 with patch.object(board, "create_item") as create, patch.object(board, "bd_checked") as update:
                     made = board.cr_ratification(partial_board, {"id": "parent", "title": "CR title"}, "design")
                     if made is not None or create.called or update.call_args.args != ("update", "rat-old", "--status", "needs_ratification", "--json"):
                         raise ValueError(f"a ratification left open after partial creation must be completed on retry: {made} {create.call_args} {update.call_args}")
                 completed = {**existing, "status": "closed"}
-                completed_board = types.SimpleNamespace(by_id={"rat-old": completed}, children={"parent": ["rat-old"]})
+                completed_board = types.SimpleNamespace(by_id={"rat-old": completed}, children={"parent": ["rat-old"]},
+                                                        _cr_items={"parent": [completed]})
                 with patch.object(board, "create_item") as create, patch.object(board, "bd_checked") as update:
                     made = board.cr_ratification(completed_board, {"id": "parent", "title": "CR title"}, "design")
                     if made is not None or create.called or update.called:
                         raise ValueError(f"a completed ratification stays closed on retry: {made} {create.call_args} {update.call_args}")
+                legacy_closed = {"id": "rat-legacy", "title": "Ratify design: historical", "issue_type": "task",
+                                 "status": "closed", "metadata": {}}
+                legacy_closed_board = types.SimpleNamespace(by_id={"rat-legacy": legacy_closed}, children={"parent": ["rat-legacy"]},
+                                                            _cr_items={"parent": [legacy_closed]})
+                with patch.object(board, "create_item") as create, patch.object(board, "bd_checked") as update:
+                    made = board.cr_ratification(legacy_closed_board, {"id": "parent", "title": "CR title"}, "design")
+                    if made is not None or create.called or update.called or legacy_closed != {
+                            "id": "rat-legacy", "title": "Ratify design: historical", "issue_type": "task", "status": "closed", "metadata": {}}:
+                        raise ValueError(f"a closed legacy ratification dedupes without rewriting its historical fields: {made} {legacy_closed}")
                 # r10-q50: a CR whose branch has no commits of its own lands when its review passes (nothing to merge), in either look,
                 # without a ratification and without the Accept; a design checkpoint is the exception.
                 def make_empty_cr(name, look, status="in_review", **extra):
