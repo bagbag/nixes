@@ -4175,15 +4175,19 @@ def cr_ratification(board: Board, cr: dict, kind: str) -> str | None:
     """The user's look at what landed or passed, once per parent CR and kind, with the kind stored as data."""
     if kind not in ('landing', 'design'):
         raise BoardError(f'unknown change-request ratification kind {kind!r}')
-    for child_id in board.children.get(cr['id'], []):
-        child = board.by_id.get(child_id, {})
+    for child in cr_closed_items(board, cr['id']):
+        child_id = child['id']
         if meta(child).get('ratification') == kind:
             if child.get('status') == 'open':
                 bd_checked('update', child_id, '--status', 'needs_ratification', '--json')
                 child['status'] = 'needs_ratification'
             return None
         legacy = legacy_ratification(child.get('title', ''))
-        if child.get('status') == 'needs_ratification' and child.get('issue_type') in WORK_TYPES and legacy and legacy[0] == kind:
+        if child.get('issue_type') in WORK_TYPES and legacy and legacy[0] == kind:
+            if child.get('status') == 'closed':
+                return None  # historical ratifications dedupe, but migration never rewrites closed records
+            if child.get('status') != 'needs_ratification':
+                continue
             bd_checked('update', child_id, '--title', legacy[1], '--set-metadata', f'ratification={kind}', '--json')
             child['title'] = legacy[1]
             child['metadata'] = {**meta(child), 'ratification': kind}
