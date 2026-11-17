@@ -106,7 +106,8 @@ Parts: **Tracker** (Target through Exit), [Upgrade](#upgrade) and
    baseline path; deviations by class.
 2. **Gap plan.** Triage live items first: list moot ones for closing with
    their reason. Map every remaining entry and deviation to its target owner or
-   to history, with source path or id. Write it to
+   to history, with source path or id; backlog work not yet due becomes a
+   deferred item, never a new CR. Write it to
    `board-migrate-plan.md` in `$HOME/.agents/bin/scratch dir --shared board-migrate`, with the rule
    findings and the order of changes. Write every command with its full text
    into one change-set file beside it. Have an independent `verify`
@@ -189,8 +190,8 @@ step goes in a change set and runs on the user's confirmation.
 5. **Reconcile.** Wrap each design still waiting for the user's accept in a
    CR under its topic: the design its child, `checkpoint` `user`, status
    `needs_acceptance`. `board check --limit 0` clean but for user-accepted
-   deviations; one `board claim` of a CR works end to end. Open items stay
-   ungrouped: the plan protocol groups them into CRs when they become due.
+   deviations; one `board claim` of a CR works end to end. Defer each open
+   work item not yet due; a plan pass groups the rest into CRs.
    Tell the user pulls may start.
    Output: check result.
 

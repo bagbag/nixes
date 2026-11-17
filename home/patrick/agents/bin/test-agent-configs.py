@@ -2895,6 +2895,17 @@ def validate_board(root: Path) -> None:
                 raise ValueError(f"board claim refused a no-code work item outside any change request: {code} {errors} {fake.writes()}")
             if f"{ids['Loose item']}  no-cr" in invoke(["check"], Fake(no_code))[1] or f"{ids['Loose item']}  no-cr" not in invoke(["check"], Fake(fixture))[1]:
                 raise ValueError("board check must flag a work item outside any CR, but not a no-code one")
+            # Deferred work is backlog (board-coordination.md Deferrals): no CR until planning takes it up; undeferred, it is flagged.
+            if f"{ids['Loose item']}  no-cr" in invoke(["check"], Fake(variant(**{"Loose item": {"status": "deferred"}})))[1]:
+                raise ValueError("board check must not flag a deferred work item outside any CR")
+            # Deferring takes a revisit condition, so creating an item deferred is refused for board defer.
+            with tempfile.TemporaryDirectory() as directory:
+                body = Path(directory, "body.md")
+                body.write_text("Backlog work, deferred later.\n", encoding="utf-8")
+                fake = Fake(fixture)
+                code, _, errors = invoke(["create", "Later", "--description-file", str(body), "--status", "deferred"], fake, "lead0001")
+            if code == 0 or fake.writes() or "board defer" not in errors:
+                raise ValueError(f"board create must refuse the deferred status and name board defer: {code} {errors} {fake.writes()}")
             held_cr = variant(**{"CR ready": {"status": "in_progress", "assignee": "lead0001"}})
             fake = Fake(held_cr)
             code, _, _ = invoke(["claim", ids["Ready task"]], fake, "lead0001/build-00000001")

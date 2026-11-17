@@ -1791,7 +1791,7 @@ def deviations(board: Board, root: str | None) -> list[tuple[str, str, str]]:
         if foreign:
             found.append((item_id, 'ruling-blocked', f"released ruling waits on {', '.join(foreign)}, work and not planning: "
                                                      f"{'; '.join(dep_fix(item_id, blocker) for blocker in foreign)}"))
-        if is_work_hold(issue) and board.cr_of(item_id) is None and issue['status'] != 'in_review' and not is_no_code(issue):
+        if is_work_hold(issue) and board.cr_of(item_id) is None and issue['status'] not in ('in_review', 'deferred') and not is_no_code(issue):
             found.append((item_id, 'no-cr', f'work item outside any change request: board update {item_id} --parent <change request>'))
     return found + cr_deviations(board, root)
 
@@ -6629,6 +6629,8 @@ def create_command(args) -> int:
         raise BoardError(refusal)
     if any(node.get('status') in ('closed', 'done') for node in nodes):
         raise BoardError('an item is not created closed: board close <id> --reason "<why>" closes it')
+    if any(node.get('status') == 'deferred' for node in nodes):
+        raise BoardError('an item is not created deferred: board defer <id> --reason "<revisit condition>" defers it')
     for node in nodes:  # the limit a plain create had: a work item's long fields, not a decision's record
         refusal = size_refusal({'id': node['key'], 'issue_type': node.get('type') or 'task'},
                                {field: str(node[field]) for field in ('description', 'design', 'acceptance_criteria', 'notes') if node.get(field)}, update=False)
