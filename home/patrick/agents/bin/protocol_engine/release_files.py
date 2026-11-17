@@ -47,7 +47,7 @@ def select_files(folder: Path, ids: list[str]) -> list[str]:
                        key=lambda stem: int(stem.rsplit('-q', 1)[1]))
         open_stems = [stem for stem in stems if not is_released(found[stem].read_text(encoding='utf-8'))]
         if not open_stems:
-            fail(f"no default set: " + (f"every record of the newest round {stems[0].split('-')[0]} in {folder} is released"
+            fail("no default set: " + (f"every record of the newest round {stems[0].split('-')[0]} in {folder} is released"
                                          if stems else f'{folder} holds no record files')
                  + '; name the ids: `protocol start release --no-board <id> …`')
         return open_stems

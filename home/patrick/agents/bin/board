@@ -1862,22 +1862,12 @@ def hold_flags(board: Board, root: str | None) -> tuple[list[tuple[str, str]], l
     return stale, forced
 
 
-def no_topic(board: Board, root: str | None) -> list[tuple[str, str]]:
-    """Open items outside any epic without a topic: label. Outcome epics (r21-q153): only an item serving an outcome belongs in
-    one; a stand-alone item carries a topic: label."""
-    return [(issue['id'], issue.get('title', '')) for issue in board.scoped(root)
-            if issue['status'] != 'closed' and issue.get('issue_type') not in ('epic', 'gate')
-            and not any(board.by_id.get(a, {}).get('issue_type') == 'epic' for a in board.ancestors(issue['id']))
-            and not any(label.startswith('topic:') for label in issue.get('labels') or [])]
-
-
 def check_json(board: Board, args) -> dict:
     """Every finding of `board check`, unbudgeted: deviations by class, then the flags."""
     stale, forced = hold_flags(board, args.root)
     return {'deviations': [{'id': item_id, 'class': kind, 'detail': detail} for item_id, kind, detail in deviations(board, args.root)],
             'unnamedBlockers': [{'id': item_id, 'detail': detail} for item_id, detail in unnamed_waits(board, args.root)],
             'unlinkedRevisions': unlinked_revision_rows(board, args.root),
-            'noTopic': [{'id': item_id, 'detail': title} for item_id, title in no_topic(board, args.root)],
             'staleHolds': [{'id': item_id, 'detail': detail} for item_id, detail in stale],
             'forcedHolds': [{'id': item_id, 'detail': detail} for item_id, detail in forced]}
 
@@ -1900,8 +1890,6 @@ def check(board: Board, args) -> int:
             [f'  {item_id}  stale-hold  {detail}' for item_id, detail in stale], limit)
     section('flag, not a deviation: holds past the worker cap (board claim --force)',
             [f'  {item_id}  forced-hold  {detail}' for item_id, detail in forced], limit)
-    section('flag, not a deviation: outside any epic, no topic: label (board-coordination.md)',
-            [f'  {item_id}  no-topic  {title}' for item_id, title in no_topic(board, args.root)], limit)
     return 1 if found else 0
 
 

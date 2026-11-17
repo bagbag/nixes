@@ -509,7 +509,7 @@ def approval_reasons(rulings: list[dict] | None, records: list[dict], changed: l
 def record_row(q: dict, note: str | None, prior: str | None = None) -> str:
     return (f"- {q['id']}{' ' + q['board'] if q['board'] else ' (draft)'}: {q['text']}\n  answer ({q['origin']}): "
             f"{q['answer']}" + (f"\n  note: {note}" if note else '')
-            + (f"\n  revises the record on its item in place: it keeps that record's Question and Alternatives; give `decision` "
+            + ("\n  revises the record on its item in place: it keeps that record's Question and Alternatives; give `decision` "
                "and `rationale` for the revised record. The record now:\n"
                + '\n'.join(f'    {line}' if line else '' for line in prior.strip().splitlines()) if prior else '')
             + (f"\n  rule question, settles {', '.join(q['settles'])}: name each in the rationale or decision with how the "

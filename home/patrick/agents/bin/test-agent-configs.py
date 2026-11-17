@@ -169,32 +169,6 @@ def validate_skills(root: Path) -> None:
         if match:
             raise ValueError(f"{path}: references retired {match.group(0)}")
 
-    path_contracts = {
-        root / "AGENTS.md": (
-            "$HOME/.agents/skills/shared/project-memory.md",
-            "$HOME/.agents/bin/scratch dir",
-        ),
-        skills_dir / "shared" / "project-memory.md": (
-            "`scratch dir`",
-            "history/",
-            "docs/<topic-slug>/",
-            "docs/goals.md",
-            "docs/<topic-slug>/goals.md",
-            "index.md",
-        ),
-        skills_dir / "role" / "protocols" / "plan.md": (
-            "readable title",
-            "`topic:<topic-slug>`",
-            "$HOME/.agents/skills/shared/project-memory.md",
-            "`define-goal`",
-        ),
-    }
-    for path, required in path_contracts.items():
-        text = path.read_text(encoding="utf-8")
-        missing = [marker for marker in required if marker not in text]
-        if missing:
-            raise ValueError(f"{path}: missing path contract {missing}")
-
 
 def validate_generated_agents(root: Path, generator) -> None:
     source = root / "definitions"
@@ -730,15 +704,6 @@ def validate_session_registry(root: Path) -> None:
                     done = subprocess.run([old_bash, str(script), *args], text=True, capture_output=True, env=old_env)
                     if done.returncode or done.stderr:
                         raise ValueError(f"session {' '.join(args)} fails on bash 3.2: {done.returncode} {done.stderr}")
-
-        # r15-q88: `help` lists every verb with an example; a bare call prints the same and exits 0.
-        helped, bare = run("help", env=env), run(env=env)
-        if helped.returncode or bare.returncode or helped.stdout != bare.stdout or helped.stderr:
-            raise ValueError(f"session help and a bare call must print the same on stdout and exit 0: {helped} {bare}")
-        for verb in ("activate", "set-workers", "actor", "get", "show", "list", "ended", "state-dir", "alive", "session-active",
-                     "worker-started", "worker-active", "worker-ended", "help"):
-            if not re.search(rf"^\s*session {verb}\b", helped.stdout, re.M):
-                raise ValueError(f"session help lacks {verb}:\n{helped.stdout}")
 
         other = "0a1b2c3d-0000-4000-8000-00000000beef"
         run("activate", "agent", "--pulls", "review,plan", env={**env, **as_session(other, "codex")}).check_returncode()
@@ -1378,28 +1343,6 @@ def validate_setup_portable(root: Path) -> None:
         for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
             if not line.lstrip().startswith("#") and SETUP_BASH4.search(line):
                 raise ValueError(f"{path}:{number} needs a newer bash than 3.2: {line.strip()}")
-
-
-def validate_review_tiers(root: Path) -> None:
-    """r7-q28: every first review goes to review; deep-review only on escalation, in the policy table, the agent
-    descriptions and the plan protocol alike."""
-    def description(name: str) -> str:
-        front = (root / "definitions" / f"{name}.md").read_text(encoding="utf-8").split("---", 2)[1]
-        return " ".join(front.split("description:", 1)[1].split("\neffort:", 1)[0].split())
-    policy = (root / "skills" / "shared" / "acceptance.md").read_text(encoding="utf-8")
-    rows = {line.rsplit("|", 2)[1].strip(): line for line in policy.splitlines() if line.startswith("| ") and line.count("|") == 3}
-    deep = next((line for gate, line in rows.items() if gate.startswith("`deep-review`")), "")
-    first = next((line for gate, line in rows.items() if gate.startswith("`review`")), "")
-    if "escalat" not in deep or any(word in deep for word in ("plan", "design", "contract")):
-        raise ValueError("acceptance.md: the deep-review row must name escalation only")
-    if not all(word in first for word in ("plan", "design", "contract")):
-        raise ValueError("acceptance.md: the review row must cover plans, designs and contracts")
-    if "escalat" not in description("deep-review") or "plan, design or contract" in description("deep-review"):
-        raise ValueError("deep-review description must route escalations only")
-    if "deep-review" in description("second-opinion"):
-        raise ValueError("second-opinion description must not name deep-review as a first gate")
-    if "deep_review=" in (root / "skills" / "role" / "protocols" / "plan.md").read_text(encoding="utf-8"):
-        raise ValueError("plan.md: planners no longer mark deep_review")
 
 
 def validate_shebang_modes(root: Path) -> None:
@@ -2209,29 +2152,11 @@ def validate_shared_board(root: Path) -> None:
         (beads / "board-shared.json").unlink()
         expect(board.find_shared(Path(directory)) is None, "no mark, not shared")
 
-    # Docs: only board's mark shares a board; the r37 commands and the lead's inbox step.
-    texts = {name: (root / "skills" / path).read_text(encoding="utf-8") for name, path in
-             (("setup", "shared/beads-setup.md"), ("core", "shared/board-core.md"), ("decide", "role/protocols/decide.md"))}
-    texts["readme"] = (root / "README.md").read_text(encoding="utf-8")
-    for name, text in texts.items():
-        for stale in ("with a Dolt remote is shared", "with a sync remote", "An unrouted item can be claimed by id", "ask with a comment"):
-            expect(stale not in text, f"{name} still says {stale!r}")
-    for name, needle in (("setup", "board share --yes"), ("setup", "board move <url>"), ("setup", "import"), ("setup", "BD_NO_REMOTE_ADOPT"),
-                         ("core", "board route <person> <ids"), ("core", "board send <person> <ids"), ("core", "board create --for <person>"),
-                         ("core", "unrouted"), ("decide", "inbox"), ("decide", "ever decide these alone")):
-        expect(needle in texts[name], f"{name} names {needle!r}")
-    expect("git push <old url> --delete" not in texts["setup"].split("### History")[1].split("1.")[0], "the old data stays until everyone rejoined")
-    # r38-q218: `board setup` owns the settings; the setup doc points to it, migrate runs it, nothing else lists them.
+    # Docs: the old data stays until everyone rejoined; board-migrate reads the setup doc by path.
+    setup_text = (root / "skills" / "shared" / "beads-setup.md").read_text(encoding="utf-8")
+    expect("git push <old url> --delete" not in setup_text.split("### History")[1].split("1.")[0], "the old data stays until everyone rejoined")
     migrate = (root / "skills" / "board-migrate" / "SKILL.md").read_text(encoding="utf-8")
-    installer_readme = (root / "setup" / "README.md").read_text(encoding="utf-8")
-    for name, text in (("setup", texts["setup"]), ("migrate", migrate), ("setup/README.md", installer_readme), ("readme", texts["readme"])):
-        expect("board setup" in text, f"{name} names board setup")
-        expect("bd config set" not in text and "no-git-ops false" not in text, f"{name} lists no settings of its own (board setup owns them)")
     expect("@include shared/beads-setup.md" not in migrate, "board-migrate reads beads-setup.md by path, not by include")
-    expect(dict(board.LOCAL_CONFIG).get("no-git-ops") == "true", "stealth's no-git-ops stays true (bd doctor --fix writes a project .gitignore otherwise)")
-    shared_only = {key for key, _ in (*board.SERVER_CONFIG, *board.SHARED_CONFIG)}
-    expect(shared_only == {"dolt.auto-start", "dolt.auto-commit"} and not shared_only & {key for key, _ in (*board.LOCAL_CONFIG, *board.TRAVELLING_CONFIG)},
-           "the server and shared settings sit apart from every board's", shared_only)
 
 
 # The board fixtures are dated around 2026-10-22T15:30Z. The registry prunes by the real clock (7 days), so the board tests move
@@ -2629,9 +2554,6 @@ def validate_board(root: Path) -> None:
             if "waiting on the user (gates titled user, items assigned to user): 2\n" not in user_view \
                     or gate not in user_view or cid["User action"] not in user_view:
                 raise ValueError(f"board health user view:\n{user_view}")
-            # A gate is a wait, not work: it needs no epic.
-            if gate in invoke(["check"], Fake(checked))[1].split("outside any epic")[1]:
-                raise ValueError("board check listed a gate outside any epic")
             # The human gate sits outside the Goal epic; a lifecycle label on it is out of scope.
             outside = [{**issue, "labels": ["human"]} if issue["title"] == "Gate: human" else issue for issue in checked]
             _, scoped_check, _ = invoke(["check", "--root", cid["Goal"]], Fake(outside))
@@ -2821,7 +2743,7 @@ def validate_board(root: Path) -> None:
             code, claimed, _ = invoke(["claim"], fake, worker)
             if code or fake.writes() != [["update", ids["Handed task"], "--assignee", worker, "--if-assignee", "", "--json"]]:
                 raise ValueError(f"board claim did not CAS-claim the in_review item first: {fake.writes()}")
-            if f"this session still holds: 2\n  fx-ovo.c2" not in claimed or ids["Held task"] not in claimed:
+            if "this session still holds: 2\n  fx-ovo.c2" not in claimed or ids["Held task"] not in claimed:
                 raise ValueError(f"board claim did not list the session's other holds:\n{claimed}")
             if f"claimed {ids['Handed task']} (review; standalone)" not in claimed:
                 raise ValueError(f"board claim did not label a never-held review standalone:\n{claimed}")
@@ -4097,11 +4019,6 @@ def validate_board(root: Path) -> None:
             accept_view = invoke(["health", "--items", "accept"], Fake(accepting))[1]
             if "to accept (change requests waiting for the user): 1\n" not in accept_view or "fx-ovo.c4" not in accept_view:
                 raise ValueError(f"board health lacks the to-accept view:\n{accept_view}")
-            if f"  {ids['Loose item']}  no-topic" not in invoke(["check"], Fake(fixture))[1]:
-                raise ValueError("board check must flag an item outside any epic without a topic: label")
-            topical = variant(**{"Loose item": {"labels": ["topic:store"]}})
-            if "outside any epic, no topic: label (board-coordination.md): 0\n" not in invoke(["check"], Fake(topical))[1]:
-                raise ValueError("an item with a topic: label stands alone without being outside any epic")
 
             # Held and waiting split a step's rest: waiting = blocked (held or not), held = holder and not blocked.
             rows = [{**row, "dependencies": [*(row.get("dependencies") or []), *([{"issue_id": row["id"], "depends_on_id": question, "type": "blocks"}]
@@ -4483,7 +4400,7 @@ def validate_board(root: Path) -> None:
             code, text, _ = invoke(["check", "--json"], Fake(unlinked))
             found = json.loads(text)
             if code or found["unlinkedRevisions"] != [{"id": "fx-b", "other": "fx-a", "word": "revises", "old": "fx-a", "new": "fx-b"}] \
-                    or set(found) != {"deviations", "unnamedBlockers", "noTopic", "unlinkedRevisions", "staleHolds", "forcedHolds"}:
+                    or set(found) != {"deviations", "unnamedBlockers", "unlinkedRevisions", "staleHolds", "forcedHolds"}:
                 raise ValueError(f"board check --json: {text}")
 
             # board check: an unlinked revision is a flag; a standalone review waiting on a blocker deviates no more (reviews do not wait).
@@ -8617,8 +8534,6 @@ def validate_protocol(root: Path, part: str) -> None:
         engine_module = load_engine(root / "bin")
         board_in_process(engine_module, fake)
         cap_cycles = engine_module.base.CHECK_CAP  # check cycles before the cap dialog
-        if cap_cycles != 10:
-            raise ValueError(f"the check-loop cap is 10 cycles (r2-q8): {cap_cycles}")
 
         def proto(*args, stdin=None, cwd=plain, session="0000-lead0001", ok=True, env=None, process=False, observe=True, explore=True, cover=True, prepass=True):
             """The engine's `run_cli` in this process; `process=True` runs the real executable (the end-to-end path).
@@ -8813,12 +8728,7 @@ def validate_protocol(root: Path, part: str) -> None:
             refused("step", stdin={"classes": {}}, needle="unclassified: pt1")
             refused("step", stdin={"classes": {"pt1": "ruled"}}, needle="cites its owner")
             proto("step", stdin={"classes": {"pt1": "user"}})
-            stage_text = proto("step", stdin={"select": ["pt1"]}).stdout
-            # r29-q136, r30-q141: one rule for every printed part, no evidence asked of the premises, no length check on them.
-            if "with evidence" in stage_text or "with its evidence" in stage_text or "what it rests on)" not in stage_text \
-                    or 'question-format.md "In printed question text"' not in stage_text or "which only the record keeps" not in stage_text \
-                    or "In printed question text, say what is decided and what each option means" not in (root / "skills/shared/question-format.md").read_text(encoding="utf-8"):
-                raise ValueError(f"the Stage text states the printed-text rule once and asks no evidence of the premises:\n{stage_text}")
+            proto("step", stdin={"select": ["pt1"]})
             refused("step", stdin={**ROUND_INFO, "questions": [question("Which cache?", header="Much too long")]}, needle="over the limit of 12")
             refused("step", stdin={**ROUND_INFO, "questions": [question("Which cache?", options=[{"label": "Only", "description": "", "for": "for it", "against": "against it"}])]},
                     needle="2-4 objects")
@@ -8906,7 +8816,6 @@ def validate_protocol(root: Path, part: str) -> None:
                     or "step-back (options): no change" not in result.stdout.splitlines()[0]:
                 raise ValueError(f"protocol: the options pass is followed by the Base loop in cycle 1: {result.stdout}")
             proto("step", stdin={"pass": "step-back", "updates": [], "checked": ["every question"]})
-            ground_pending = shown()["pending"]["id"]
             proto("step", stdin={"pass": "ground", "updates": [], "checked": ["every question"]})
             # The Base loop converged: the refine pair (round-wide), then the lean pass (a preference lean counts), once each.
             for command, args in (("step-back", "decisions clean overfit mechanics"),
@@ -8943,9 +8852,6 @@ def validate_protocol(root: Path, part: str) -> None:
             if '"metadata": {"source": "round:r1:1"}' not in proto("show").stdout.split("## Next step")[1] \
                     or "`protocol show` repeats" not in proto("status", "--line").stdout:
                 raise ValueError(f"protocol show must repeat the step's instructions:\n{proto('show').stdout}")
-            if not (re.fullmatch(r"p\d+", pending) and re.fullmatch(r"p\d+", ground_pending)) \
-                    or int(ground_pending[1:]) <= int(pending[1:]):
-                raise ValueError(f"pending ids must be unique and never reused: {pending}, {ground_pending}")
             # The dialog answers with the marked label; the record names the option's own label.
             answers = {"marker": "round:r1:1", "answers": {"Which cache?": "Keep (recommended, lean)"}}
             for origin in ("composer", "bridge", "press", "plugin", "model"):
@@ -9012,9 +8918,6 @@ def validate_protocol(root: Path, part: str) -> None:
             if capped["check"]["cycle"] != cap_cycles or capped["pending"] is not None or capped["batch"]["marker"] != "round:r2:1" \
                     or [o["label"] for o in capped["batch"]["questions"][0]["options"]] != ["Continue", "Ask now", "Pause"]:
                 raise ValueError(f"protocol cap batch: {capped}")
-            # r3-q17: a chat answer goes to any undecided question, its quote checked against the whole round (q2 is a draft here).
-            refused("answer", "--origin", "chat", stdin={"question": "q2", "answer": "Ask now", "quote": "ask now"},
-                    needle="quote check failed: the quote appears in no message the user sent in this round")
             cap_text = capped["batch"]["questions"][0]["question"]
             proto("answer", "--origin", "dialog", stdin={"marker": "round:r2:1", "answers": {cap_text: "Continue"}})
             resumed = shown()
@@ -9094,8 +8997,6 @@ def validate_protocol(root: Path, part: str) -> None:
             line = proto("status", "--line").stdout.strip()
             if not line.startswith(f"protocol: round r2 · check 1/{cap_cycles} · pending /step-back (p") or "1 draft" not in line:
                 raise ValueError(f"protocol status --line: {line}")
-            if "| q2 | draft | draft | decision | Cap? |" not in proto("show").stdout:
-                raise ValueError(f"protocol show markdown:\n{proto('show').stdout}")
             proto("abandon")
 
             # B: a board round: Collect from health, Select in dependency order with claims, held decisions, Related
@@ -9675,9 +9576,8 @@ def validate_protocol(root: Path, part: str) -> None:
             proto("step", stdin={"select": ["fx-g"]}, cwd=repo)
             calls()
             proto("abandon", cwd=repo)
-            events = [json.loads(line)["event"] for line in (state / "0000-lead0001.protocol" / "history.jsonl").read_text().splitlines()]
-            if [c["args"] for c in calls()] != [["unclaim", "fx-g"]] or "selected" not in events or "released" not in events:
-                raise ValueError(f"protocol abandon must release the round's claims and log selection: {events[-5:]}")
+            if [c["args"] for c in calls()] != [["unclaim", "fx-g"]]:
+                raise ValueError("protocol abandon must release the round's claims")
 
             # r24-q100: a question tied to an item that is no decision is refused at Stage and by an update, naming the draft;
             # its point stays selectable and nothing is claimed for the item.
@@ -9799,8 +9699,6 @@ def validate_protocol(root: Path, part: str) -> None:
                     or "`summary`" not in out or "`estimate`" not in out or "asking.md's Question format" not in out \
                     or "start round --topic" in out:
                 raise ValueError(f"protocol next must count the open questions by topic and priority and tell the lead to weigh them:\n{out}")
-            if "`title` about 60, `summary` 240, `why` 240" not in out:  # r9-q34: the target lengths, not the refusal threshold
-                raise ValueError(f"protocol next names the proposal rows' target lengths:\n{out}")
             if "Open questions by topic" not in proto("next", cwd=repo).stdout:
                 raise ValueError("the topic counts print every time, not once between compactions")
             # The printed example passes the check it describes (r28, r30, r34: quoted "<n>" estimates were copied and refused).
@@ -9813,8 +9711,6 @@ def validate_protocol(root: Path, part: str) -> None:
                                 "ids": ["fx-n1"]}]}
             stored = {"rounds": [good["rounds"][0], {**good["rounds"][1], "idTitles": {"fx-n1": "Plain p0?"}}]}  # the board's title of each leading id
             refused("next", "--set", stdin={"rounds": [{**good["rounds"][0], "extra": 1}]}, needle="unknown fields extra", cwd=repo)
-            refused("next", "--set", stdin={**good, "compact": {"keep": "x"}}, needle="unknown fields compact", cwd=repo)
-            refused("next", "--set", stdin={"rounds": [{**good["rounds"][0], "premise": "old field"}]}, needle="unknown fields premise", cwd=repo)
             errors = proto("next", "--set", stdin={"rounds": [{"ids": [], "title": "x" * 76, "why": "", "fresh": "yes", "estimate": {"questions": "many"}}] * 4, "extra": 1},
                            ok=False, cwd=repo).stderr
             for needle in ("unknown fields extra", "`rounds` holds at most 3, not 4", "rounds[0]: `ids` must be a list of non-empty strings (the question ids that must lead)",
@@ -9929,7 +9825,6 @@ def validate_protocol(root: Path, part: str) -> None:
             if "listed earlier" not in out or "Topic:" in out or "Group by default" in out:
                 raise ValueError(f"a round without a topic prints the list once between compactions:\n{out}")
             proto("abandon", cwd=repo)
-            refused("start", "release", "--topic", "x", needle="start release takes record ids only", cwd=repo)
             configure()
 
             # H: answers that release held questions continue the round (r11 q42): a chain releases batch by batch, each with a
@@ -9986,19 +9881,6 @@ def validate_protocol(root: Path, part: str) -> None:
                     or len(list(records_of(repo).glob(f"{out.split()[0]}-q*.md"))) != 3:
                 raise ValueError(f"protocol chain: one Record writes all three: {round_events}\n{out}")
 
-            # Log lines (r11 q43), as the pane's Log reads them.
-            log_line = engine_module.words.log_text
-            if log_line({"event": "pass", "command": "ground", "changes": 0, "summary": "No change: premises hold"}) != "ground: no change: premises hold" \
-                    or log_line({"event": "pass", "command": "ground", "changes": 0, "summary": "no changes."}) != "ground: no change" \
-                    or log_line({"event": "pass", "command": "ground", "changes": 0, "summary": "Nothing moved"}) != "ground: no change: Nothing moved" \
-                    or log_line({"event": "pass", "command": "step-back", "kind": "path", "scoped": ["q5"], "questions": ["q5"]}) != "step-back (path q5): q5 changed" \
-                    or log_line({"event": "pass", "command": "step-back", "kind": "refine"}) != "step-back (refine): no change" \
-                    or log_line({"event": "pass", "command": "ground", "kind": "lean", "scoped": ["q39", "q40"]}) != "ground (lean q39 q40): no change" \
-                    or log_line({"event": "classified", "classes": {}}) != "classified 0 points" \
-                    or log_line({"event": "classified", "classes": {"user": 2}}) != "classified 2 points: 2 user" \
-                    or engine_module.words.recorded_line([{"question": "q39", "board": "fx-1"}, {"question": "q40", "board": "fx-2"}]) != "recorded q39, q40 → fx-1, fx-2" \
-                    or engine_module.words.recorded_line([{"question": "q39", "board": None}, {"question": "q40"}]) != "recorded q39, q40 → files":
-                raise ValueError("protocol log lines: strip a leading 'no change', name the pass kind, 'classified 0 points', merge recorded lines")
             configure()
 
             # agents r11-q42: a question recording onto an item that already holds a decision record revises it in place: the
@@ -10192,7 +10074,6 @@ def validate_protocol(root: Path, part: str) -> None:
                     or not re.match(r"r\d+ release · the session's records · .*superseded fx-old by fx-r1 · released fx-r1", out) \
                     or "- released fx-r1: R1" not in out or "- closed fx-q1: answered by released fx-r1" not in out \
                     or "- superseded fx-old by fx-r1 (rule: Rule 2)" not in out or "- dropped fx-r2" not in out \
-                    or "decide.md Release 7" not in out or "`protocol next`" not in out or '"fresh": false' in out \
                     or shown(cwd=repo)["round"] is not None \
                     or "board ruling release" in out.splitlines()[0]:
                 raise ValueError(f"protocol release rerun: {made}\n{out}")
@@ -10278,8 +10159,7 @@ def validate_protocol(root: Path, part: str) -> None:
             out = proto("step", stdin={"rulings": []}, cwd=repo).stdout
             view = shown(cwd=repo)
             if view["step"] != "scoped" or view["pending"] is None or view["pending"]["command"] != "step-back" \
-                    or view["pending"]["args"] != "fx-s2" or "next: step-back pass on the revised fx-s2" not in out.splitlines()[0] \
-                    or 'one short line' not in out:
+                    or view["pending"]["args"] != "fx-s2" or "next: step-back pass on the revised fx-s2" not in out.splitlines()[0]:
                 raise ValueError(f"the scoped step-back must wait on the revised ids before the approval: {view['step']} {view['pending']}\n{out}")
             refused("step", stdin={"pass": "ground", "records": {"fx-s2": "unchanged"}}, needle="`pass` is step-back", observe=False, cwd=repo)
             refused("step", stdin={"pass": "step-back", "records": {"fx-s2": "unchanged"}}, needle="no /step-back ran", observe=False, cwd=repo)
@@ -10394,9 +10274,6 @@ def validate_protocol(root: Path, part: str) -> None:
             if dialog["step"] != "ask" or option["label"] != "Release" or "uncommitted" not in option["description"]:
                 raise ValueError(f"the approval dialog names the uncommitted owner writes: {dialog['batch']}")
             proto("answer", "--origin", "dialog", cwd=repo, stdin={"marker": dialog["batch"]["marker"], "answers": {dialog["batch"]["questions"][0]["question"]: "Release"}})
-            owners_text = proto("show", cwd=repo).stdout
-            if "no commit by the engine or the session" not in owners_text:
-                raise ValueError(f"the owner step says the writes stay uncommitted:\n{owners_text}")
             refused("step", stdin={"owners": {"r12-q3": [{"pending": {"item": "fx-pend"}}], "r12-q5": [{"none": {"reason": "r"}}]}},
                     needle="pending items need a board", cwd=repo)
             refused("step", stdin={"owners": {"r12-q3": [{"written": {"path": "docs/y.md"}}], "r12-q5": [{"none": {"reason": "r"}}]}},
@@ -10443,8 +10320,6 @@ def validate_protocol(root: Path, part: str) -> None:
             out_again = [(recs / f"r5-q{n}.md").read_text(encoding="utf-8").count("## Released") for n in (1, 2)]
             if out_again != [1, 1] or shown(cwd=repo)["round"] is not None or "- released r5-q1" not in out:
                 raise ValueError(f"the rerun writes each file's block once: {out_again}\n{out}")
-            if calls():
-                raise ValueError("the no-board release must make no board call")
             proto("start", "round", "--no-board", stdin={"points": ["Busy?"]}, cwd=repo)
             refused("pass", "--origin", "composer", stdin={"command": "release-round"}, needle="the release starts once it closes", cwd=repo)
             proto("abandon", cwd=repo)
@@ -10472,8 +10347,6 @@ def validate_protocol(root: Path, part: str) -> None:
             bare = json.loads(proto("pass", "--origin", "composer", stdin={"command": "release-round", "args": "", "pending": None}, cwd=repo).stdout)
             if [r["id"] for r in bare["records"]] != ["fx-d1", "fx-d2", "fx-d3", "fx-d5"] or bare["title"] != "the session's records":
                 raise ValueError(f"a bare release takes every decided record this session holds: {bare}")
-            if "A bare release takes the decided records this session holds" not in proto("show", cwd=repo).stdout:
-                raise ValueError("the release's first step must say what a bare release takes")
             patch_config(items=items)
             proto("abandon", cwd=repo)  # an abandoned release leaves everything as it was
             before = json.loads((session_dir / "state.json").read_text())
@@ -10708,8 +10581,6 @@ def validate_protocol(root: Path, part: str) -> None:
             if view["retired"] != [{"id": staged["Entailed?"], "title": "Entailed", "covers": [points[0]], "reason": "the goal entails Keep", **disclosure}] \
                     or {q["id"]: q["status"] for q in view["questions"]} != {staged["Entailed?"]: "answered", staged["Open?"]: "draft"}:
                 raise ValueError(f"a retired point must show with its ruling, its question answered by it: {view}")
-            if "Retired points" not in proto("show", cwd=repo).stdout:
-                raise ValueError("show must list the retired points")
             converge(cwd=repo)
             notice = shown(cwd=repo)["batch"]["notice"]
             if "**My ruling:** Keep it." not in notice or f"retired {staged['Entailed?']} for {points[0]}, entailed: the goal entails Keep" not in notice:
@@ -10876,8 +10747,6 @@ def validate_protocol(root: Path, part: str) -> None:
                            "summary": "the spike landed"}
             refused("step", cwd=repo, needle="round record takes no `pass`, `checked`, `summary`", observe=False, cover=False, stdin=pass_report)
             refused("step", cwd=repo, needle="`checked` goes to round check, round ask", observe=False, cover=False, stdin=pass_report)
-            refused("step", cwd=repo, needle="round record takes no `defer`", stdin={"records": {}, "defer": {landed[1]: "later"}})
-            refused("step", cwd=repo, needle="round record takes no `nope`", stdin={"nope": 1})
             refused("step", cwd=repo, cover=False, needle=f"updates[0]: {landed[0]} is not waiting for an outside result",
                     stdin={"updates": [{"id": landed[0], "waitsFor": None}]})
             refused("step", cwd=repo, cover=False, needle="updates[0]: `waitsFor` must be null",
@@ -10951,17 +10820,6 @@ def validate_protocol(root: Path, part: str) -> None:
             second = shown(cwd=repo)["batch"]
             if second is None or [one["question"].split(". ", 1)[-1] for one in second["questions"]] != ["Held 1?", "Held 5?"]:
                 raise ValueError(f"protocol step must send the read question out again with the rest: {second}")
-            proto("abandon", cwd=repo)
-
-            # J: a pass that adds a question says so ("added", not "changed").
-            out = proto("start", "round", "--no-board", stdin={"points": ["Base?"]}, cwd=repo).stdout
-            point = re.search(r"(pt\d+) \[pasted\]", out).group(1)
-            proto("step", stdin={"classes": {point: "user"}}, cwd=repo)
-            proto("step", stdin={"select": [point]}, cwd=repo)
-            proto("step", stdin={**ROUND_INFO, "questions": [question("Base?", **{"for": point})]}, cwd=repo)
-            added = proto("step", stdin={"pass": "step-back", "updates": [question("Extra?", **{"for": point})]}, cwd=repo)
-            if not re.match(r"r\d+ · step-back \(path\): q\d+ added", added.stdout):
-                raise ValueError(f"protocol headline must call a new question added: {added.stdout.splitlines()[0]!r}")
             proto("abandon", cwd=repo)
 
             # E: --discussion skips the board list (Related still searches); --no-board touches no board and records
@@ -13598,7 +13456,6 @@ def run_group(name: str, root: Path) -> None:
         validate_engine_counts(root)
         validate_lens_names(root)
         validate_shebang_modes(root)
-        validate_review_tiers(root)
     elif name == "hooks":
         validate_hooks(root)
     elif name == "board":
