@@ -5,12 +5,12 @@ description: >-
   Implementation planning for a multi-step arc from an agreed design or
   established pattern: packages, ownership, dependencies, integration, and
   verification. May write the plan to a supplied path.
-effort: high
+effort: medium
 claude-tools: Read, Edit, Grep, Glob, Bash, Write, WebSearch, WebFetch, Skill
 claude-model: opus
 claude-hooks: readonly-bash
 codex-sandbox: workspace-write
-codex-model: gpt-6.1-sol
+codex-model: gpt-6.2-sol
 ---
 
 Decompose an agreed design or established pattern into one implementation plan

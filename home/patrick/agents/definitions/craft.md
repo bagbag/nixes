@@ -8,7 +8,7 @@ description: >-
 effort: medium
 claude-model: opus
 codex-sandbox: workspace-write
-codex-model: gpt-6.1-sol
+codex-model: gpt-6.2-sol
 ---
 
 Implement work that requires design judgment within the agreed scope.

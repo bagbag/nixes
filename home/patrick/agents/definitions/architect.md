@@ -9,7 +9,7 @@ claude-tools: Agent, Read, Edit, Grep, Glob, Bash, Write, WebSearch, WebFetch, S
 claude-model: opus
 claude-hooks: readonly-bash
 codex-sandbox: workspace-write
-codex-model: gpt-6.1-sol
+codex-model: gpt-6.2-sol
 ---
 
 Design from the brief's goal, scope, constraints, lenses and source pointers.
