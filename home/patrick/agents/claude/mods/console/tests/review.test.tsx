@@ -48,7 +48,7 @@ describe('change request queue', () => {
   test('a stack: the child stands under its parent with stage, check state and look', async ($, on) => {
     const { ui } = await queued($, on, [...BOARD_CONSOLE_CONTRACT.crs] as unknown as Crs, repo(), { ratifications: [...BOARD_CONSOLE_CONTRACT.ratifications] })
     const drawn = await texts(ui)
-    for (const part of ['Change requests', 'Remove the legacy cache', 'Drop the cache config', 'code', '2 new', 'checkpoint review', 'stale', 'to ratify', 'Ratify: Move the clock']) {
+    for (const part of ['Change requests', 'Remove the legacy cache', 'Drop the cache config', 'code', '2 new', 'checkpoint review', 'stale', 'to ratify', 'Move the clock']) {
       expect(drawn, part).toContain(part)
     }
     expect(drawn).not.toContain('checks current')  // the normal state stays off the row
@@ -197,7 +197,7 @@ describe('Open', () => {
 
   test('a ratification row presses `board review open` for its own id, and has no Open without a landed range', async ($, on) => {
     const r = repo()
-    const ratifications = [{ id: 'p-rat1', cr: 'p-cr0', title: 'Ratify: Move the clock', tip: sha(6), baseTip: sha(5), review: null }, { id: 'p-rat2', cr: '', title: 'Ratify: unknown', tip: null, baseTip: null, review: null }]
+    const ratifications = [{ id: 'p-rat1', cr: 'p-cr0', title: 'Move the clock', tip: sha(6), baseTip: sha(5), review: null }, { id: 'p-rat2', cr: '', title: 'unknown', tip: null, baseTip: null, review: null }]
     const { ui, clock, w } = await queued($, on, [cr({ id: 'p-cr1' })], r, { ratifications })
     expect(await ui.find({ key: 'ratify-p-rat2-open' })).toBeUndefined()
     await ui.press({ key: 'ratify-p-rat1-open' })
@@ -210,7 +210,7 @@ describe('Open', () => {
 
   test('the board\'s refusal is the toast, as it said it; nothing opens', async ($, on) => {
     const r = repo()
-    const ratifications = [{ id: 'p-rat1', cr: 'p-cr0', title: 'Ratify: Move the clock', tip: sha(6), baseTip: sha(5), review: null }]
+    const ratifications = [{ id: 'p-rat1', cr: 'p-cr0', title: 'Move the clock', tip: sha(6), baseTip: sha(5), review: null }]
     const { ui, clock, w } = await queued($, on, WAITING(), r, { ratifications })
     w.reviewOpen = { exit: 1, stdout: '', stderr: 'p-cr1: held by a1b2, an agent session at work in its worktree (a refresh): open it once that session releases it\n' }
     await ui.press({ key: 'cr-open-p-cr1' })
@@ -270,7 +270,7 @@ describe('Open', () => {
   })
 
   test('after any press the board refreshes once the action is done (r3-q14)', async ($, on) => {
-    const ratifications = [{ id: 'p-rat1', cr: 'p-cr0', title: 'Ratify: Move the clock', tip: sha(6), baseTip: sha(5), review: null }]
+    const ratifications = [{ id: 'p-rat1', cr: 'p-cr0', title: 'Move the clock', tip: sha(6), baseTip: sha(5), review: null }]
     const { w, ui, clock } = await queued($, on, [cr({ id: 'p-cr1' }), cr({ id: 'p-cr2', view: 'result' })], repo(), { ratifications })
     for (const key of ['cr-open-p-cr1', 'cr-accept-p-cr1', 'cr-return-p-cr1', 'cr-open-p-cr2', 'ratify-p-rat1-open', 'ratify-p-rat1-yes']) {
       const before = boardReads(w)
@@ -316,7 +316,7 @@ describe('Open', () => {
   })
 
   test('a pressed ratification Open shows its step in its hover hint: the row gains nothing', async ($, on) => {
-    const ratifications = [{ id: 'p-rat1', cr: 'p-cr0', title: 'Ratify: Move the clock', tip: sha(6), baseTip: sha(5), review: null }]
+    const ratifications = [{ id: 'p-rat1', cr: 'p-cr0', title: 'Move the clock', tip: sha(6), baseTip: sha(5), review: null }]
     const { w, ui, clock } = await queued($, on, [], repo(), { ratifications })
     const rowChildren = async () => ((await ui.find({ key: 'ratify-p-rat1' })) as { children?: unknown[] }).children?.length
     const calm = await rowChildren()
@@ -326,7 +326,7 @@ describe('Open', () => {
     await clock.settle()
     const drawn = (await texts(ui)).split('\n')
     expect(drawn).toContain('Open · opening your review…')  // the button's hover hint, at the pane's bottom
-    expect(drawn[drawn.indexOf('Ratify: Move the clock') + 1]).not.toContain('opening your review')
+    expect(drawn[drawn.indexOf('Move the clock') + 1]).not.toContain('opening your review')
     expect(await rowChildren()).toBe(calm)
     release()
     w.hold = null
@@ -612,7 +612,7 @@ describe('change requests in the /console text', () => {
     expect(out).toContain('Change requests')
     expect(out).toContain('  p-cr1  Remove the legacy cache · to accept · P2 · unblocks 14 · 1.0-beta scope · checks current · 0 new (base 3012, tip 2972) · look before · code')
     expect(out).toContain('    p-cr2  Drop the cache config · checkpoint review · P2 · stale · 2 new: src/a.ts TS2322, src/b.ts TS2345 (base 3012, tip 3014) · look after · result · held by a1b2')
-    expect(out).toContain('To ratify\n  p-rat1  Ratify: Move the clock · landed in p-cr0')
+    expect(out).toContain('To ratify\n  p-rat1  Move the clock · landed in p-cr0')
     expect(out.split('\n').filter(line => line.includes('p-cr')).join('\n')).not.toMatch(PRESSES)
   })
 
@@ -924,7 +924,7 @@ describe('request rows', () => {
   })
 
   test('the to-ratify list folds the same way, and holds its own toggle', async ($, on) => {
-    const ratifications = [1, 2, 3, 4].map(n => ({ id: `p-rat${n}`, cr: 'p-cr0', title: `Ratify: ${n}` }))
+    const ratifications = [1, 2, 3, 4].map(n => ({ id: `p-rat${n}`, cr: 'p-cr0', title: `${n}` }))
     const { ui } = await mounted($, on, [cr({ id: 'p-cr1' })], WIDE, { ratifications })
     expect(await ui.find({ key: 'ratify-p-rat3-show' })).toBeDefined()
     expect(await ui.find({ key: 'ratify-p-rat4-show' })).toBeUndefined()
@@ -998,7 +998,7 @@ describe('priority, waiting on answers and the board prefix', () => {
   })
 
   test('the pane leaves the board prefix off ids, presses keep the full id, another prefix stays', async ($, on) => {
-    const { ui, clock, w } = await queued($, on, [cr({ id: 'p-cr1', title: 'Long', children: ['p-cr2'] }), cr({ id: 'p-cr2', parent: 'p-cr1', base: 'p-cr1' }), cr({ id: 'o-cr7' })], repo(), { prefix: 'p', ratifications: [{ id: 'p-rat1', cr: 'p-cr0', title: 'Ratify: it' }] })
+    const { ui, clock, w } = await queued($, on, [cr({ id: 'p-cr1', title: 'Long', children: ['p-cr2'] }), cr({ id: 'p-cr2', parent: 'p-cr1', base: 'p-cr1' }), cr({ id: 'o-cr7' })], repo(), { prefix: 'p', ratifications: [{ id: 'p-rat1', cr: 'p-cr0', title: 'it' }] })
     const drawn = (await texts(ui)).split('\n')
     for (const id of ['cr1', 'cr2', 'rat1', 'o-cr7']) expect(drawn, id).toContain(id)
     expect(drawn).not.toContain('p-cr1')

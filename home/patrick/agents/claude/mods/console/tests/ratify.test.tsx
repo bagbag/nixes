@@ -9,7 +9,7 @@ import { crMarks } from '../hooks/words'
 import type { ConsoleCr } from '../types'
 
 const PANE = { plugin: 'console', component: 'Pane', requestId: 'console', props: PANE_PROPS } as const
-const RATIFICATION = { id: 'p-rat1', cr: 'p-cr0', title: 'Ratify: Move the clock', tip: sha(6), baseTip: sha(5), review: null }
+const RATIFICATION = { id: 'p-rat1', cr: 'p-cr0', title: 'Move the clock', tip: sha(6), baseTip: sha(5), review: null }
 /** The ratification as the board lists it, with its review (open for you since the landed tip). */
 const rat = (review: Record<string, unknown> | null) => ({ ...RATIFICATION, review })
 const view = (over: Record<string, unknown> = {}) => ({ opened: sha(6), edited: false, files: [], ...over })

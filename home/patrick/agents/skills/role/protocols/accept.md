@@ -23,7 +23,7 @@ Entry: [decide.md](decide.md#accept) Accept. Read `$HOME/.agents/skills/shared/c
    Code's Outgoing Changes, or the range-diff of a refresh); `result`, the outcome itself. A user
    checkpoint: a [Round](decide.md#round) (`start round --discussion --subject <cr>`);
    its pre-pass report is the walkthrough (verdict and findings first, then the
-   design). A ratification: the
+   design). A ratification (`ratification=landing` or `ratification=design`): the
    landed result, in its user review or at the result. If the refresh changed
    the CR meanwhile, show the range-diff before continuing. Open with the
    defaults its hand-over lists; the user keeps or changes each.

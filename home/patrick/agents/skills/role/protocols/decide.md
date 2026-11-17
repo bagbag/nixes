@@ -199,7 +199,7 @@ reported.
 ## Accept
 
 **Entry:** a CR in `needs_acceptance` (finished, or at a user design checkpoint), a
-`needs_ratification` item (`Ratify: <CR title>`), a ready milestone, or a
+`needs_ratification` landing or design ratification titled after its CR, a ready milestone, or a
 finished epic whose acceptance names the user (`board position`). The CR queue
 is in order, bases first
 ([Change-request queue](../../shared/board-coordination.md#change-request-queue)).

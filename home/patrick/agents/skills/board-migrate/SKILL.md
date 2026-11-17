@@ -187,7 +187,14 @@ step goes in a change set and runs on the user's confirmation.
    both, user review edits included), and record the answer in the project's
    agent docs.
    Output: the settings as stored; the hook answer.
-5. **Reconcile.** Wrap each design still waiting for the user's accept in a
+5. **Ratifications.** If the board may contain prefixed landing or design
+   ratifications, preview them from the project root with
+   `python3 ~/.agents/skills/board-migrate/scripts/migrate-ratification-kinds.py`.
+   Review the listed items with the user before rerunning with `--apply`; this
+   stores `landing` or `design` metadata and removes each title prefix. The
+   migration is safe to rerun.
+   Output: the converted count, or none.
+6. **Reconcile.** Wrap each design still waiting for the user's accept in a
    CR under its topic: the design its child, `checkpoint` `user`, status
    `needs_acceptance`. `board check --limit 0` clean but for user-accepted
    deviations; one `board claim` of a CR works end to end. Defer each open

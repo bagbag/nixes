@@ -4163,14 +4163,37 @@ def open_item_refusal(board: Board, cr: dict) -> str | None:
     return f"{cr['id']}: items still open: {', '.join(i['id'] for i in items)}; close them (board close <item> --reason \"<sha>: …\") or move them out" if items else None
 
 
-def cr_ratification(board: Board, cr: dict, title: str) -> str | None:
-    """The item for the user's look at what already landed or passed (blocks nothing), once per title."""
-    if any(board.by_id.get(c, {}).get('title') == title for c in board.children.get(cr['id'], [])):
-        return None
+def legacy_ratification(title: str) -> tuple[str, str] | None:
+    """Kind and plain title for the two legacy prefixes on landed-change and design ratifications."""
+    for prefix, kind in (('Ratify design: ', 'design'), ('Ratify: ', 'landing')):
+        if title.startswith(prefix):
+            return kind, title[len(prefix):]
+    return None
+
+
+def cr_ratification(board: Board, cr: dict, kind: str) -> str | None:
+    """The user's look at what landed or passed, once per parent CR and kind, with the kind stored as data."""
+    if kind not in ('landing', 'design'):
+        raise BoardError(f'unknown change-request ratification kind {kind!r}')
+    for child_id in board.children.get(cr['id'], []):
+        child = board.by_id.get(child_id, {})
+        if meta(child).get('ratification') == kind:
+            if child.get('status') == 'open':
+                bd_checked('update', child_id, '--status', 'needs_ratification', '--json')
+                child['status'] = 'needs_ratification'
+            return None
+        legacy = legacy_ratification(child.get('title', ''))
+        if child.get('status') == 'needs_ratification' and child.get('issue_type') in WORK_TYPES and legacy and legacy[0] == kind:
+            bd_checked('update', child_id, '--title', legacy[1], '--set-metadata', f'ratification={kind}', '--json')
+            child['title'] = legacy[1]
+            child['metadata'] = {**meta(child), 'ratification': kind}
+            return None
+    title = cr.get('title', '')
     made = create_item(board, title, 'task', parent=cr['id'], priority=cr.get('priority', 2),
-                       description=f"Look at {cr.get('title', '')} ({cr['id']}): branch {cr_branch(cr['id'])}. Close when ratified; "
+                       metadata={'ratification': kind},
+                       description=f"Look at {title} ({cr['id']}): branch {cr_branch(cr['id'])}. Close when ratified; "
                                    'a "no" becomes a follow-up change request.')
-    bd_checked('update', made, '--status', 'needs_ratification', '--set-metadata', 'ratification=1', '--json')
+    bd_checked('update', made, '--status', 'needs_ratification', '--json')
     return made
 
 
@@ -4195,7 +4218,7 @@ def finish_landing(board: Board, cr: dict, tip: str, name: str, main: Path) -> l
     cid, notes = cr['id'], []
     look = cr_look(board, cr)
     if look == 'after' and not no_own_commits(main, cr, tip):  # nothing landed, nothing to ratify (r10-q50)
-        made = cr_ratification(board, cr, f"Ratify: {cr.get('title', '')}")
+        made = cr_ratification(board, cr, 'landing')
         notes += [f'ratification {made}'] if made else []
     if cr['status'] != 'closed':
         bd_checked('close', cid, '--reason', f'landed {tip[:12]} on {name} from {cr_branch(cid)}', '--force')
@@ -4386,7 +4409,7 @@ def handover(board: Board, args) -> None:
     if m.get('checkpoint') == 'agent':  # the agent's design checkpoint passed: the CR goes to planning
         bd_checked('update', args.id, '--status', 'open', '--assignee', '', *expect, '--json')
         put_meta(cr, checkpoint=None, since=None)
-        made = cr_ratification(board, cr, f"Ratify design: {cr.get('title', '')}") if look == 'after' else None
+        made = cr_ratification(board, cr, 'design') if look == 'after' else None
         print(f'passed the checkpoint of {args.id}: open for planning' + (f'; ratification {made}' if made else ''))
         return
     base = cr_base(board, cr, main)[0]

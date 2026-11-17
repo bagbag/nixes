@@ -109,9 +109,11 @@ queue order and refresh work: [Board coordination](board-coordination.md).
   without the Accept and without a ratification. Plan work that changes no
   code as a no-code task ([Work items](../shared/board-core.md#work-items)).
 - **Ratification:** after a `look` `after` landing, or an agent design
-  checkpoint pass in such a project, the child task `Ratify: <CR title>` sits
-  in `needs_ratification` under the closed CR and blocks nothing; the user's
-  verdict goes through `board ratify` (accept.md Ratification).
+  checkpoint pass in such a project, a child task titled `<CR title>` sits in
+  `needs_ratification` under the CR and blocks nothing. Metadata
+  `ratification=landing|design` identifies what the user reviews. The board
+  creates at most one child per parent CR and kind; the user's verdict goes
+  through `board ratify` (accept.md Ratification).
 - **User review:** from `board review open` until the user's Accept or Return
   (ratification: verdict), refresh and agent steps leave the item alone; Open
   does not refresh it. Opening, reading and recording edits: accept.md User

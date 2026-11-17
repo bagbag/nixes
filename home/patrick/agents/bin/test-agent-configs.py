@@ -2891,13 +2891,15 @@ def validate_board(root: Path) -> None:
             # r10-q50: a ratification row carries the landed range of its CR (tip: landing, else the checked tip; baseTip: the check's base tip).
             landed = [{**fixture[0], "id": "rt-cr", "title": "Landed CR", "issue_type": "change-request", "status": "closed", "dependencies": [],
                        "metadata": {"landing": "a" * 40, "check_tip": "a" * 40, "check_base_tip": "b" * 40}},
-                      {**fixture[0], "id": "rt-1", "title": "Ratify: Landed CR", "issue_type": "task", "status": "needs_ratification", "assignee": None,
+                      {**fixture[0], "id": "rt-1", "title": "Landed CR", "issue_type": "task", "status": "needs_ratification", "assignee": None,
+                       "metadata": {"ratification": "landing"},
                        "dependencies": [{"issue_id": "rt-1", "depends_on_id": "rt-cr", "type": "parent-child"}]},
-                      {**fixture[0], "id": "rt-2", "title": "Ratify: unknown range", "issue_type": "task", "status": "needs_ratification", "assignee": None,
+                      {**fixture[0], "id": "rt-2", "title": "unknown range", "issue_type": "task", "status": "needs_ratification", "assignee": None,
+                       "metadata": {"ratification": "landing"},
                        "dependencies": []}]
             rows = json.loads(invoke(["console"], Fake([*fixture, *landed]), "aaaa1111")[1])["ratifications"]
-            if rows != [{"id": "rt-1", "cr": "rt-cr", "title": "Ratify: Landed CR", "tip": "a" * 40, "baseTip": "b" * 40, "review": None},
-                        {"id": "rt-2", "cr": "", "title": "Ratify: unknown range", "tip": None, "baseTip": None, "review": None}]:
+            if rows != [{"id": "rt-1", "cr": "rt-cr", "title": "Landed CR", "tip": "a" * 40, "baseTip": "b" * 40, "review": None},
+                        {"id": "rt-2", "cr": "", "title": "unknown range", "tip": None, "baseTip": None, "review": None}]:
                 raise ValueError(f"board console ratifications carry the landed range of their CR: {rows}")
             # A work item is claimed by id inside a change request its session holds (a worker of it); outside one it is refused.
             fake = Fake(fixture)
@@ -5094,8 +5096,10 @@ def validate_board(root: Path) -> None:
                 y_issues[0]["metadata"].update(look="after", review_tip=y_tip, review_base_tip=x_tip)
                 fake = Fake([*x_issues, *y_issues])
                 code, output, errors = invoke(["cr", "land", "lx", "--tip", x_tip[:8]], fake, "lead0001")
+                ratifications = [node for graph in fake.graphs for node in graph["nodes"] if node.get("title") == "CR ly"]
                 if code or at_main() != y_tip or not any(w[:2] == ["close", "ly"] for w in fake.writes()) or y_wt.exists() \
-                        or not any(w[0] == "create" and "Ratify: CR ly" in w for w in fake.writes()) or "(after lx)" not in output:
+                        or len(ratifications) != 1 or ratifications[0].get("metadata") != {"ratification": "landing"} \
+                        or "(after lx)" not in output:
                     raise ValueError(f"landing a base must land the look-after CR waiting for it: {code} {errors}\n{output}\n{fake.writes()}")
                 # ...and leaves it as refresh work when its check is no longer current.
                 x_issues, x_tip, x_wt = make_cr("lx2", "lx2.txt", "x\n")
@@ -5140,10 +5144,39 @@ def validate_board(root: Path) -> None:
                     fake = Fake(issues)
                     code, output, errors = invoke(["handover", f"cp{look}", "design reads well"], fake, "bbbb2222")
                     written = fake.writes()
+                    ratifications = [node for graph in fake.graphs for node in graph["nodes"] if node.get("title") == f"CR cp{look}"]
                     if code or ["update", f"cp{look}", "--status", "open", "--assignee", "", "--if-assignee", "bbbb2222", "--json"] not in written \
                             or not any(w[:2] == ["update", f"cp{look}"] and "checkpoint" in w for w in written) \
-                            or any(w[0] == "create" and f"Ratify design: CR cp{look}" in w for w in written) != ratified or "passed the checkpoint" not in output:
+                            or len(ratifications) != int(ratified) \
+                            or ratified and ratifications[0].get("metadata") != {"ratification": "design"} \
+                            or "passed the checkpoint" not in output:
                         raise ValueError(f"the agent's checkpoint pass in a look-{look} project: {code} {errors}\n{written}\n{output}")
+                empty_ratification_board = types.SimpleNamespace(by_id={}, children={"parent": []})
+                with patch.object(board, "create_item", return_value="rat-new") as create, patch.object(board, "bd_checked") as update:
+                    made = board.cr_ratification(empty_ratification_board, {"id": "parent", "title": "CR title", "priority": 2}, "design")
+                    if made != "rat-new" or create.call_args.args[1:3] != ("CR title", "task") \
+                            or create.call_args.kwargs.get("metadata") != {"ratification": "design"} \
+                            or update.call_args.args != ("update", "rat-new", "--status", "needs_ratification", "--json"):
+                        raise ValueError(f"a design ratification must create a plain-title child with kind metadata and its ratification status: {create.call_args} {update.call_args}")
+                existing = {"id": "rat-old", "title": "CR title", "issue_type": "task", "status": "needs_ratification",
+                            "metadata": {"ratification": "design"}}
+                existing_ratification_board = types.SimpleNamespace(by_id={"rat-old": existing}, children={"parent": ["rat-old"]})
+                with patch.object(board, "create_item") as create, patch.object(board, "bd_checked") as update:
+                    made = board.cr_ratification(existing_ratification_board, {"id": "parent", "title": "CR title"}, "design")
+                    if made is not None or create.called or update.called:
+                        raise ValueError(f"a second ratification of the same parent and kind must not create another item: {made} {create.call_args} {update.call_args}")
+                partial = {**existing, "status": "open"}
+                partial_board = types.SimpleNamespace(by_id={"rat-old": partial}, children={"parent": ["rat-old"]})
+                with patch.object(board, "create_item") as create, patch.object(board, "bd_checked") as update:
+                    made = board.cr_ratification(partial_board, {"id": "parent", "title": "CR title"}, "design")
+                    if made is not None or create.called or update.call_args.args != ("update", "rat-old", "--status", "needs_ratification", "--json"):
+                        raise ValueError(f"a ratification left open after partial creation must be completed on retry: {made} {create.call_args} {update.call_args}")
+                completed = {**existing, "status": "closed"}
+                completed_board = types.SimpleNamespace(by_id={"rat-old": completed}, children={"parent": ["rat-old"]})
+                with patch.object(board, "create_item") as create, patch.object(board, "bd_checked") as update:
+                    made = board.cr_ratification(completed_board, {"id": "parent", "title": "CR title"}, "design")
+                    if made is not None or create.called or update.called:
+                        raise ValueError(f"a completed ratification stays closed on retry: {made} {create.call_args} {update.call_args}")
                 # r10-q50: a CR whose branch has no commits of its own lands when its review passes (nothing to merge), in either look,
                 # without a ratification and without the Accept; a design checkpoint is the exception.
                 def make_empty_cr(name, look, status="in_review", **extra):
@@ -5661,7 +5694,7 @@ def validate_board(root: Path) -> None:
                     raise ValueError(f"F9: a return must clear the review pair: {fake.writes()}")
                 # F10: reject reopens work, never a ratification.
                 rej = [cr_issue("rej10", "needs_acceptance"), cr_item("rej10.i", "rej10", "closed"),
-                       {**cr_item("rej10.r", "rej10", "closed"), "title": "Ratify design: CR rej10", "metadata": {"ratification": "1"}}]
+                       {**cr_item("rej10.r", "rej10", "closed"), "title": "CR rej10", "metadata": {"ratification": "design"}}]
                 fake = Fake(rej)
                 invoke(["cr", "reject", "rej10", "no"], fake, "lead0001")
                 reopened = [w[1] for w in fake.writes() if w[:1] == ["update"] and "--status" in w and "open" in w]

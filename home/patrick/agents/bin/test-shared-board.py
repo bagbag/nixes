@@ -32,6 +32,7 @@ import time
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
+RATIFICATION_MIGRATION = HERE.parent / 'skills' / 'board-migrate' / 'scripts' / 'migrate-ratification-kinds.py'
 parser = argparse.ArgumentParser()
 parser.add_argument('--board', default=str(HERE / 'board'))
 parser.add_argument('--only', default='')
@@ -957,13 +958,52 @@ def t_cr() -> None:
     to_review(b)
     before = git('rev-parse', target, cwd=side).strip()
     rc, out, err = review_pass(b)
-    ratify = [row for row in items('a').values() if row['title'] == 'Ratify: change request B']
+    ratify = [row for row in items('a').values()
+              if row['title'] == 'change request B' and row['status'] == 'needs_ratification']
     check(rc == 0 and git('rev-parse', target, cwd=side).strip() != before and items('a')[b]['status'] == 'closed'
-          and len(ratify) == 1 and ratify[0]['status'] == 'needs_ratification' and ratify[0]['issue_type'] == 'task',
-          'cr: a look-after pass lands and opens a ratification under the closed CR', err + out)
+          and len(ratify) == 1 and ratify[0]['status'] == 'needs_ratification' and ratify[0]['issue_type'] == 'task'
+          and (ratify[0].get('metadata') or {}).get('ratification') == 'landing',
+          'cr: a look-after pass lands and opens a ratification under the closed CR', {"ratifications": ratify, "output": err + out})
     _, console, _, _ = run('a', 'console')
     check([r['id'] for r in json.loads(console)['ratifications']] == [ratify[0]['id']] and json.loads(console)['ratifications'][0]['cr'] == b,
           'cr: board console lists the ratification with its CR', console[-300:])
+
+    legacy = task(b, 'Ratify design: legacy design')
+    rc, out, err, _ = raw('a', 'update', legacy, '--status', 'needs_ratification', '--set-metadata', 'ratification=1', '--json')
+    check(rc == 0, 'cr: a legacy prefixed ratification is prepared', err + out)
+
+    def migrate(*args):
+        env = base_env('a')
+        env['CLAUDE_CODE_SESSION_ID'] = session('a', 'lead')
+        return subprocess.run([sys.executable, '-B', str(RATIFICATION_MIGRATION), '--board', BOARD, *args],
+                              cwd=side, capture_output=True, text=True, timeout=30, env=env)
+
+    preview = migrate()
+    check(preview.returncode == 0 and 'legacy design' in preview.stdout
+          and items('a')[legacy]['title'] == 'Ratify design: legacy design'
+          and str((items('a')[legacy].get('metadata') or {}).get('ratification')) == '1',
+          'cr: ratification migration previews legacy items without changing them', preview.stderr + preview.stdout)
+    applied = migrate('--apply')
+    migrated = items('a')[legacy]
+    check(applied.returncode == 0 and migrated['title'] == 'legacy design'
+          and (migrated.get('metadata') or {}).get('ratification') == 'design',
+          'cr: ratification migration stores the kind and removes its legacy prefix', applied.stderr + applied.stdout)
+    repeated = migrate('--apply')
+    check(repeated.returncode == 0 and items('a')[legacy]['title'] == 'legacy design'
+          and (items('a')[legacy].get('metadata') or {}).get('ratification') == 'design',
+          'cr: ratification migration is idempotent', repeated.stderr + repeated.stdout)
+
+    design = create('a', 'design checkpoint C', '--metadata', 'look=after', '--metadata', 'checkpoint=agent')
+    design_item = task(design, 'C design')
+    run('a', 'claim', design, role='agent')
+    worker_pass(design, design_item, 'design.txt')
+    to_review(design)
+    rc, out, err = review_pass(design)
+    design_ratifications = [row for row in items('a').values()
+                            if row['title'] == 'design checkpoint C' and row['status'] == 'needs_ratification']
+    check(rc == 0 and items('a')[design]['status'] == 'open' and len(design_ratifications) == 1
+          and (design_ratifications[0].get('metadata') or {}).get('ratification') == 'design',
+          'cr: an agent-passed design opens a design ratification with an unprefixed title', err + out)
 
     base_cr, child_cr = create('a', 'stack base P'), create('a', 'stack child C')
     p1, c1 = task(base_cr, 'P item'), task(child_cr, 'C item')
