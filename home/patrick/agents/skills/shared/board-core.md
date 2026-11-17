@@ -68,7 +68,7 @@ shared board, the user an unshared one (`bd dolt push`/`pull`).
 | Type | Kind |
 |---|---|
 | `task`, `bug`, `spike` | Work item; lives in a CR, unless deferred ([backlog](../shared/board-coordination.md#deferrals-and-environment-facts)), waiting on a decision, design or spike until it closes, or marked no-code ([Work items](#work-items)). |
-| `design` | Design item: architecture, package graph and needed decisions for a slice. |
+| `design` | Design item: the architecture and package graph a slice still needs, and the decisions they raise. |
 | `decision` | Question, later the ruling's record ([Questions and rulings](#questions-and-rulings)). |
 | `change-request` | The claimed, reviewed and landed unit ([Change requests](../shared/change-requests.md#change-requests)). |
 | `epic` | Topic or outcome, never claimed ([Epics](../shared/board-coordination.md#epics)). |

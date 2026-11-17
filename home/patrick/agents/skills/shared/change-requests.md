@@ -107,8 +107,8 @@ queue order and refresh work: [Board coordination](board-coordination.md).
   it. Uncommitted changes alone keep a CR claimable.
 - **Shared append-lists:** design away files that parallel CRs would each add
   entries to (changelogs, registries, catalogs, route or export lists): each
-  change adds its own file, found by naming convention or composed by a
-  generator in the project's build or release. Ordinary code edited often and
+  change adds its own file to one folder; a generator composes the files
+  only where a program needs them as one file. Ordinary code edited often and
   generated files (lockfiles) are not such lists. A review flags a new one.
 - **Nothing to merge:** a CR whose branch holds no commit of its own and is
   at no design checkpoint lands when its review passes, in either `look`,
