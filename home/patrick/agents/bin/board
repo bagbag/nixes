@@ -5572,30 +5572,51 @@ def missing_sections(text: str, sections=RECORD_SECTIONS) -> list[str]:
 
 
 def record(board: Board, args) -> int:
+    if args.status == 'needs_ratification':
+        raise BoardError('--status needs_ratification is no longer supported; use --unratified')
     actor = caller()
     issue = held(board, args.id, actor)
     if issue.get('issue_type') != 'decision':
         raise BoardError(f'{args.id}: {issue.get("issue_type")}, not a decision')
-    if issue['status'] not in ('open', 'in_progress', 'decided', 'needs_ratification'):
+    allowed_statuses = ('open', 'in_progress', 'decided', 'needs_ratification')
+    if issue['status'] not in allowed_statuses and not (args.unratified and issue['status'] == 'released'):
         raise BoardError(f"{args.id}: {issue['status']}; a released record changes through board ruling revise")
     try:
         text = Path(args.file).read_text(encoding='utf-8')
     except (OSError, UnicodeDecodeError) as error:
         raise BoardError(f'cannot read {args.file}: {error}') from None
-    # Autopilot's unratified rulings carry how to reverse them (unattended protocol).
-    required = RECORD_SECTIONS + (('Reversal',) if args.status == 'needs_ratification' else ())
+    # An unratified ruling carries how to reverse it (unattended protocol).
+    required = RECORD_SECTIONS + (('Reversal',) if args.unratified else ())
     missing = missing_sections(text, required)
     if missing:
         raise BoardError(f"{args.file} lacks the record section(s) {', '.join('## ' + name for name in missing)}")
     replaces = list(dict.fromkeys(args.replaces))
-    closing, taking, operations = replaced_checks(board, args.id, replaces, actor, args.status == 'needs_ratification')  # every refusal before the first write
+    status = 'released' if args.unratified else 'decided'
+    closing, taking, operations = replaced_checks(board, args.id, replaces, actor, args.unratified)  # every refusal before the first write
+    if args.unratified:
+        title = f"Keep or revise {issue.get('title', '')}?"
+        related_questions = [board.by_id[related] for related in board.related.get(args.id, set())
+                             if related in board.by_id and board.by_id[related].get('issue_type') == 'decision'
+                             and str(board.by_id[related].get('title') or '').startswith('Keep or revise ')]
+        if len(related_questions) > 1:
+            raise BoardError(f'{args.id}: more than one related Keep or revise question; resolve the duplicate before rerunning')
+        if not related_questions:
+            original_question = section_text({'description': text}, 'description', 'Question').partition('\n')[2].strip()
+            alternatives = section_text({'description': text}, 'description', 'Alternatives Considered').partition('\n')[2].strip()
+            decision = section_text({'description': text}, 'description', 'Decision').partition('\n')[2].strip()
+            reversal = section_text({'description': text}, 'description', 'Reversal').partition('\n')[2].strip()
+            packet = (f'## Question\n{title}\n\n## Alternatives Considered\n{alternatives}\n\n'
+                      f'## Decision\n{decision}\n\n## Reversal\n{reversal}\n\n'
+                      f'## Current ruling question\n{original_question}\n')
+            create_item(board, title, 'decision', parent=board.parent.get(args.id), deps=[('relates-to', args.id)],
+                        description=packet, priority=issue.get('priority', 2))
     bd_checked('update', args.id, '--body-file', args.file, '--json')
     # Revision links before the supersedes: `ruling release` refuses an old a live record revises, so a stop before the end leaves a visible state the rerun finishes.
-    bd_checked('batch', '-m', f'board ruling record {args.id}', '--json', stdin='\n'.join([f'update {args.id} status={args.status}', *operations]) + '\n')
+    bd_checked('batch', '-m', f'board ruling record {args.id}', '--json', stdin='\n'.join([f'update {args.id} status={status}', *operations]) + '\n')
     lint = json.loads(bd_checked('lint', args.id, '--json') or '{}')
     unlinted = [', '.join(result.get('missing') or []) for result in lint.get('results') or [] if result.get('missing')]
     if unlinted:
-        raise BoardError(f"{args.id}: recorded ({args.status}), but bd lint reports missing {'; '.join(unlinted)}")
+        raise BoardError(f"{args.id}: recorded ({status}), but bd lint reports missing {'; '.join(unlinted)}")
     failed = []
     for old in closing:
         if old in taking:
@@ -5603,9 +5624,9 @@ def record(board: Board, args) -> int:
         board = Board.load('all')  # the links just written and the earlier olds' supersedes are in the snapshot
         _, lost = supersede_pair(board, old, args.id, None, actor, carry=True, closing=frozenset(closing))
         failed += lost
-    if args.status == 'needs_ratification':  # an unratified autopilot record waits unheld for the user; last, so a stop before it leaves the record held and rerunnable
+    if args.unratified:  # unclaim last, so any earlier stop leaves the record held and rerunnable
         bd_checked('update', args.id, '--assignee', '', '--json')
-    print(f"recorded {args.id} ({args.status}): {issue.get('title', '')}")
+    print(f"recorded {args.id} ({status}): {issue.get('title', '')}")
     if failed:
         print(f"{', '.join(failed)}: replaced, but items waiting on it are not blocked on {args.id}: board block <item> --on {args.id}", file=sys.stderr)
     return 1 if failed else 0
@@ -6771,7 +6792,7 @@ EXAMPLES = {
     'comment': 'board comment <id> <id> -m "tests green: 412 passed"  |  board comment <id> -f note.txt',
     'close': 'board close <id> <id> --reason "superseded by the cache ruling" [--force: blocked item, epic with open children]',
     'claim': 'board claim [<id>] [--force "waits on the cache ruling"]',
-    'ruling record': 'board ruling record <id> record.md [--status needs_ratification] [--replaces <old>,<old>]',
+    'ruling record': 'board ruling record <id> record.md [--unratified] [--replaces <old>,<old>]',
     'update': 'board update <id> <id> --title "New title" --priority 1 --label topic:x --unlabel topic:y --parent <id>',
     'link': 'board link <a> <b> --type related',
     'unlink': 'board unlink <a> <b>',
@@ -7026,14 +7047,16 @@ def run_command(argv: list[str]) -> int:
     sub.add_argument('ids', nargs='*', type=board_id)
     sub.add_argument('--force', metavar='REASON', type=nonempty,
                      help="hold a work item past your worker cap, flagged with this reason in position and check")
-    sub = add('record', 'write the decision record you hold from a file and set it decided', record, group='ruling')
+    sub = add('record', 'write the decision record you hold from a file and set it decided, or released with --unratified', record, group='ruling')
     sub.add_argument('id', type=board_id)
     sub.add_argument('file')
-    sub.add_argument('--status', choices=('decided', 'needs_ratification'), default='decided',
-                     help='needs_ratification: a ruling taken without the user (autopilot, or a standing two-way default); requires ## Reversal and frees the hold')
+    record_mode = sub.add_mutually_exclusive_group()
+    record_mode.add_argument('--unratified', action='store_true',
+                             help='release a ruling taken without the user (autopilot, or a standing two-way default), require ## Reversal, and file a Keep or revise question')
+    record_mode.add_argument('--status', choices=('decided', 'needs_ratification'), help=argparse.SUPPRESS)
     sub.add_argument('--replaces', action=Values, default=[], metavar='ID[,ID...]',
                      help='the rulings this record replaces, rerunnable after a stop: each decided or released one gets a pending revision link and is superseded when '
-                          'this record comes into force (its release; with --status needs_ratification at once); one already superseded by it is done; anything else refuses before any write (repeatable)')
+                          'this record comes into force (its release; with --unratified at once); one already superseded by it is done; anything else refuses before any write (repeatable)')
     sub = add('update', 'change items: title, priority, labels (not queue: or for:), parent', update_command)
     sub.add_argument('ids', nargs='+', type=board_id)
     sub.add_argument('--title', type=nonempty)

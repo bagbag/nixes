@@ -3844,17 +3844,44 @@ def validate_board(root: Path) -> None:
                     fake = Fake(fixture)
                     if invoke(["ruling", "record", refused, str(draft)], fake, actor)[0] != 1 or fake.writes():
                         raise ValueError(f"board ruling record wrote {refused} for {actor}")
-                # Autopilot: needs_ratification requires ## Reversal and frees the hold.
+                # An unratified ruling is released and files a non-blocking question for a later round.
                 fake = Fake(fixture)
-                if invoke(["ruling", "record", question, str(draft), "--status", "needs_ratification"], fake, "lead0001")[0] != 1 \
+                if invoke(["ruling", "record", question, str(draft), "--unratified"], fake, "lead0001")[0] != 1 \
                         or fake.writes():
-                    raise ValueError("board ruling record --status needs_ratification accepted a record without ## Reversal")
+                    raise ValueError("board ruling record --unratified accepted a record without ## Reversal")
                 draft.write_text(draft.read_text(encoding="utf-8") + "## Reversal\nrevert x\n", encoding="utf-8")
                 fake = Fake(fixture)
-                code, _, _ = invoke(["ruling", "record", question, str(draft), "--status", "needs_ratification"], fake, "lead0001")
-                if code or [stdin for args, stdin in fake.calls if args[0] == "batch"] != [f"update {question} status=needs_ratification\n"] \
-                        or fake.writes()[-1] != ["update", question, "--assignee", "", "--json"]:
-                    raise ValueError(f"board ruling record --status needs_ratification: {fake.writes()}")
+                code, output, errors = invoke(["ruling", "record", question, str(draft), "--unratified"], fake, "lead0001")
+                graphs = fake.graphs
+                if code or [stdin for args, stdin in fake.calls if args[0] == "batch"] != [f"update {question} status=released\n"] \
+                        or fake.writes()[-1] != ["update", question, "--assignee", "", "--json"] or len(graphs) != 1:
+                    raise ValueError(f"board ruling record --unratified releases and unclaims the record, creating its question: {fake.writes()} {errors}")
+                question_node = graphs[0]["nodes"][0]
+                if question_node.get("type") != "decision" or question_node.get("title") != "Keep or revise Open cache question?" \
+                        or question_node.get("parent_id") != ids["Goal"] or question_node.get("deps") != [{"target": question, "type": "relates-to"}] \
+                        or question_node.get("description", "").find("## Reversal\nrevert x") < 0 \
+                        or question_node.get("description", "").find("## Decision\nd") < 0 \
+                        or question_node.get("description", "").find("## Current ruling question\nq") < 0 \
+                        or not output.endswith("(released): Open cache question\n"):
+                    raise ValueError(f"board ruling record --unratified must create the adjacent question with the ruling packet: {question_node} {output}")
+                released_record = variant(**{"Open cache question": {"status": "released", "assignee": None}})
+                baseline_plan = json.loads(invoke(["position", "--json"], Fake(fixture), "lead0001")[1])["ready"]["plan"]["ready"]
+                released_plan = json.loads(invoke(["position", "--json"], Fake(released_record), "lead0001")[1])["ready"]["plan"]["ready"]
+                if released_plan != baseline_plan + 1:
+                    raise ValueError(f"the released record must be ready for planning: {baseline_plan} -> {released_plan}")
+                prior_question = {"id": "fx-new", "title": question_node["title"], "status": "open", "issue_type": "decision",
+                                  "description": question_node["description"], "dependencies": [
+                                      {"issue_id": "fx-new", "depends_on_id": ids["Goal"], "type": "parent-child"},
+                                      {"issue_id": "fx-new", "depends_on_id": question, "type": "relates-to"}]}
+                released = variant(**{"Open cache question": {"status": "released", "description": draft.read_text(encoding="utf-8")}})
+                fake = Fake([*released, prior_question])
+                code, _, errors = invoke(["ruling", "record", question, str(draft), "--unratified"], fake, "lead0001")
+                if code or fake.graphs or any(args[0] == "create" for args, _ in fake.calls):
+                    raise ValueError(f"board ruling record --unratified rerun must reuse its linked question without creating another: {fake.calls} {errors}")
+                fake = Fake(fixture)
+                code, _, errors = invoke(["ruling", "record", question, str(draft), "--status", "needs_ratification"], fake, "lead0001")
+                if code != 1 or "use --unratified" not in errors or fake.writes():
+                    raise ValueError(f"the obsolete --status needs_ratification must be refused naming --unratified: {code} {errors} {fake.writes()}")
                 # --replaces: the pending revision links go in the batch of the status update, through the link rules; a link already there is left,
                 # and what is no decided or released ruling is refused before anything is written.
                 released, older = ids["Released ruling"], ids["Old store ruling"]
@@ -3879,7 +3906,7 @@ def validate_board(root: Path) -> None:
                 if code or [stdin for args, stdin in fake.calls if args[0] == "batch"] != [f"update {question} status=decided\ndep remove {question} {released}\ndep add {question} {released} tracks\n"]:
                     raise ValueError(f"board ruling record --replaces must replace another link on the pair with the revision link: {code} {errors!r} {fake.calls}")
 
-                # --replaces (r9-q33): a decided record links what it replaces, superseded at its release; an away record (needs_ratification) is in force
+                # --replaces (r9-q33): a decided record links what it replaces, superseded at its release; an unratified record releases at once
                 # at once and closes them, rerunnable from the board alone: every old is judged before the first write; its revision link first, then the
                 # supersede; a closed one superseded by this record is done.
                 def dec(rid, status, *links, **extra):
@@ -3895,17 +3922,18 @@ def validate_board(root: Path) -> None:
                 if code or [w[0] for w in fake.writes()] != ["update", "batch"] \
                         or [stdin for args, stdin in fake.calls if args[0] == "batch"] != [f"update {question} status=decided\ndep add {question} fx-d1 tracks\n"]:
                     raise ValueError(f"board ruling record --replaces must only link a decided record a decided record replaces: {code} {errors!r} {fake.calls}")
-                away = ["--status", "needs_ratification"]
+                away = ["--unratified"]
                 fake = Fake(replacing(dec("fx-d1", "decided")))
                 code, output, errors = invoke(["ruling", "record", question, str(draft), "--replaces", "fx-d1", *away], fake, "lead0001")
-                if code or [w[0] for w in fake.writes()][:3] != ["update", "batch", "supersede"] or fake.writes()[2] != ["supersede", "fx-d1", "--with", question] \
-                        or [stdin for args, stdin in fake.calls if args[0] == "batch"] != [f"update {question} status=needs_ratification\ndep add {question} fx-d1 tracks\n"]:
+                if code or [w[0] for w in fake.writes() if w[0] != "create"] != ["update", "batch", "supersede", "update"] \
+                        or ["supersede", "fx-d1", "--with", question] not in fake.writes() \
+                        or [stdin for args, stdin in fake.calls if args[0] == "batch"] != [f"update {question} status=released\ndep add {question} fx-d1 tracks\n"]:
                     raise ValueError(f"an away board ruling record --replaces must link the decided record before it closes it: {code} {errors!r} {fake.calls}")
-                # A stop after the body and status write: the link is there, the record is still decided; the rerun closes it.
+                # A stop after the body and status write: the link is there; the rerun completes the replacement.
                 fake = Fake(replacing(dec("fx-d1", "decided", tracks("fx-d1")), **{"Open cache question": {"status": "decided", "assignee": "lead0001"}}))
                 code, _, errors = invoke(["ruling", "record", question, str(draft), "--replaces", "fx-d1", *away], fake, "lead0001")
-                if code or [w[0] for w in fake.writes()][:4] != ["update", "batch", "batch", "supersede"] \
-                        or [stdin for args, stdin in fake.calls if args[0] == "batch"] != [f"update {question} status=needs_ratification\n", f"dep remove {question} fx-d1\n"]:
+                if code or [w[0] for w in fake.writes() if w[0] != "create"] != ["update", "batch", "batch", "supersede", "update"] \
+                        or [stdin for args, stdin in fake.calls if args[0] == "batch"] != [f"update {question} status=released\n", f"dep remove {question} fx-d1\n"]:
                     raise ValueError(f"board ruling record --replaces must finish a record whose status and links are written: {code} {errors!r} {fake.calls}")
                 # A stop after the first of two supersedes: the closed one (superseded by this record) is done, the other closes.
                 stopped = replacing(dec("fx-d1", "closed", ("fx-d1", question, "supersedes")), dec("fx-d2", "decided", tracks("fx-d2")))
@@ -3947,7 +3975,7 @@ def validate_board(root: Path) -> None:
                 # A link of another kind on a closing record's pair is replaced (the supersede drops it anyway), on a released one it is a clash.
                 fake = Fake(replacing(dec("fx-d1", "decided", (question, "fx-d1", "relates-to"))))
                 code, _, errors = invoke(["ruling", "record", question, str(draft), "--replaces", "fx-d1", *away], fake, "lead0001")
-                if code or [stdin for args, stdin in fake.calls if args[0] == "batch"][0] != f"update {question} status=needs_ratification\ndep remove {question} fx-d1\ndep add {question} fx-d1 tracks\n":
+                if code or [stdin for args, stdin in fake.calls if args[0] == "batch"][0] != f"update {question} status=released\ndep remove {question} fx-d1\ndep add {question} fx-d1 tracks\n":
                     raise ValueError(f"board ruling record --replaces must replace another link on a closing record's pair: {code} {errors!r} {fake.calls}")
 
             # board block: relates-to gives way, the reason is a comment (no field rewrite); a review is not returned (an item has none).
@@ -7797,7 +7825,7 @@ elif args[:1] == ["revise"]:
         json.dump(config, open(os.environ["FAKE_BOARD_CONFIG"], "w"))
     print(item)
 elif args[:1] == ["record"]:
-    # `ruling record --replaces` (r9-q33): every old is linked; an away record (`--status needs_ratification`) closes each decided or released
+    # `ruling record --replaces` (r9-q33): every old is linked; an unratified record (`--unratified`) closes each decided or released
     # old at once, any other record leaves them for its release;
     # a hold of a session the position does not mark gone refuses before any write. config "recordStop": an old whose close fails (exit 1, nothing
     # closed from it on); "supersedeFail": an old closed and then exit 1 (its waiting items not blocked).
@@ -7815,7 +7843,7 @@ elif args[:1] == ["record"]:
             json.dump(config, open(os.environ["FAKE_BOARD_CONFIG"], "w"))
             print(f"board: simulated stop before closing {old}", file=sys.stderr)
             sys.exit(1)
-        if "needs_ratification" not in args or items.get(old, {}).get("status") not in ("decided", "released"):
+        if "--unratified" not in args or items.get(old, {}).get("status") not in ("decided", "released"):
             continue
         items[old]["status"] = "closed"
         bad = bad or old in config.get("supersedeFail", [])
@@ -9681,7 +9709,7 @@ def validate_protocol(root: Path, part: str) -> None:
                     or any(c["args"][:3] == ["bd", "--raw", "--yes"] for c in rows) \
                     or item_status("fx-r0") != "released":
                 raise ValueError(f"a released record is revised and a decided one closed: {rows}")
-            # r9-q33: an away record is in force at its Record, so it supersedes there every record it replaces, the released one it revises
+            # r9-q33: an away record is released at its Record, so it supersedes there every record it replaces, the released one it revises
             # included (the gap that rule closed: nothing superseded a released ruling after a ratified away revision).
             def away_record(point, hits, items, new, **cfg):
                 qid = replacing(point, hits, {hit: "supersedes" for hit in hits}, items=items, newIds=[new], **cfg)
@@ -9694,7 +9722,7 @@ def validate_protocol(root: Path, part: str) -> None:
             rows = [c["args"] for c in calls()]
             history = [json.loads(row) for row in (session_dir / "history.jsonl").read_text().splitlines()]
             recorded = next((a for a in rows if a[:2] == ["ruling", "record"]), [])
-            if "needs_ratification" not in recorded or recorded[-2:] != ["--replaces", "fx-u7,fx-r7"] \
+            if "--unratified" not in recorded or recorded[-2:] != ["--replaces", "fx-u7,fx-r7"] \
                     or item_status("fx-r7") != "closed" or item_status("fx-u7") != "closed" \
                     or {e["old"] for e in history if e["event"] == "superseded" and e["question"] == qid} != {"fx-r7", "fx-u7"}:
                 raise ValueError(f"an away record must supersede the released record it revises and the decided one at Record: {rows}\n{out}")
@@ -13428,10 +13456,10 @@ def validate_protocol(root: Path, part: str) -> None:
             out = proto("step", stdin={"records": {q1: {"rationale": "Took fx-a.", "ruleOwner": "docs/x.md", "reversal": "board bd reopen fx-a"}}}, **away).stdout
             recorded = records_file.read_text(encoding="utf-8")
             made = [c["args"] for c in calls()]
-            if not any(args[:3] == ["ruling", "record", "fx-a"] and args[4:] == ["--status", "needs_ratification"] for args in made) \
+            if not any(args[:3] == ["ruling", "record", "fx-a"] and args[4:] == ["--unratified"] for args in made) \
                     or "\n## Reversal\nboard bd reopen fx-a\n" not in recorded or "\nAway round (autopilot took the recommendation; no person answered), " not in recorded \
                     or "User (" in recorded or "Round r" not in out or f"- {q2} parked → fx-b: open and unassigned for the person" not in out:
-                raise ValueError(f"an away answer is recorded as needs_ratification with its reversal, from an away round:\n{recorded}\n{made}\n{out}")
+                raise ValueError(f"an away answer is recorded as an unratified ruling with its reversal, from an away round:\n{recorded}\n{made}\n{out}")
 
             # B: a draft (no board item) becomes an open decision carrying its parts; nothing waits for the dialog.
             configure(related={}, newIds=["fx-park1"])

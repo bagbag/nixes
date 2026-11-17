@@ -244,6 +244,10 @@ keeps `--limit` per list) for the engine and the console; text output stays
 unchanged. `board console` prints the console pane's JSON (health counts,
 `mine` items, `position` sessions and holds with their marks) from one
 snapshot.
+`board ruling record <id> <file> --unratified` writes an away or standing two-way ruling directly as `released`, requires `## Reversal`, and files one
+related, non-blocking decision question titled `Keep or revise <ruling title>?` under the same parent. The question carries the ruling's Question,
+Alternatives Considered, Decision and Reversal for the user's next regular round; rerunning reuses the linked question. `--status needs_ratification`
+is rejected with an error naming `--unratified`. `--replaces` supersedes prior rulings at once for this command.
 `board ruling release <ids> --closes <question>=<record>[,<record>]` releases the
 decided rulings (already released ones count as done, so a rerun retries only
 a failed revise supersede), then closes the answered questions in dependency

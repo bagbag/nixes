@@ -363,10 +363,10 @@ def record_accept(ctx: Context, report: dict) -> str:
             link_record(ctx, q)
             ctx.board.checked('claim', item)
             away = q['origin'] == AWAY
-            # Every record it replaces is linked; an away record is in force at once, so it supersedes them now, the released
+            # Every record it replaces is linked; an unratified record is released at once, so it supersedes them now, the released
             # one it revises included; any other record supersedes them at its release (r9-q33).
             replaces = list(dict.fromkeys([*(q.get('replaces') or []), *([q['revises']] if away and q.get('revises') else [])]))
-            result = ctx.board.run('ruling', 'record', item, str(path), *(['--status', 'needs_ratification'] if away else []),
+            result = ctx.board.run('ruling', 'record', item, str(path), *(['--unratified'] if away else []),
                                    *(['--replaces', ','.join(replaces)] if replaces else []))
             if result.returncode != 0:
                 left = [old for old, status in statuses(ctx, replaces).items() if status != 'closed'] if away else replaces

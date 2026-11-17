@@ -50,7 +50,7 @@ Never decide these alone.
 - Record a concern you raised beside the user's kept choice. Reconsider pushback on its merits. Own an error and
   correct your framing with the user.
 - When a stricter protocol arrives mid-session, list earlier unilateral calls
-  for ratification.
+  for the user's next regular round.
 - Codify new user conventions in the most specific durable layer; record
   retrofits as items.
 - Create a `design` item blocking a slice's items at the user's request;

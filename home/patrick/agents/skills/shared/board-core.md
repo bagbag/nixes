@@ -101,7 +101,7 @@ no role; follow these rules yourself:
   and an `open` CR with no open items or marked for replanning (returned from
   an agent checkpoint, or a child of a rejected CR).
 - A session with the decide set (lead, solo) claims by id its round's open
-  decisions, `needs_ratification` records, CRs in `needs_acceptance`, passed
+  decisions, `needs_ratification` ratification tasks, CRs in `needs_acceptance`, passed
   `look` `after` children marked `after <base>` and ready milestones, and
   closes finished epics whose acceptance names the user.
 
@@ -159,8 +159,7 @@ On a shared board (`.beads/board-shared.json` exists):
 | `open` | Unanswered and unclaimed. Blocks its dependents. |
 | `in_progress` | Unanswered; claimed by the session running its round. Blocks its dependents. |
 | `decided` | Answered, release pending. Still blocks. |
-| `released` | Binding. Blocks the open items it changes until a `plan` session plans it and closes it; planning unblocks a design or spike once its text carries the ruling. Waits only on what its planning needs: a live decision, a `user <date>` gate, a design or a spike. Holds no decided record resting on it. |
-| `needs_ratification` | Ruling in force taken without the user (autopilot, or a standing two-way default), awaiting the user's ratification through a deciding session. Blocks nothing. |
+| `released` | Binding. Blocks the open items it changes until a `plan` session plans it and closes it; planning unblocks a design or spike once its text carries the ruling. Waits only on what its planning needs: a live decision, a `user <date>` gate, a design or a spike. Holds no decided record resting on it. An unratified ruling is released with a related, non-blocking `Keep or revise <ruling>` question for a regular round. |
 | closed | Planned, superseded or withdrawn. A reversal is a revision record (`board ruling revise <id>`, [Rulings](../shared/board-coordination.md#rulings)). |
 
 - Withdraw a question the user drops with

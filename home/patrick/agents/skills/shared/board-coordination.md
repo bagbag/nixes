@@ -71,14 +71,14 @@ milestones, recorded rulings and deferrals. The board model is
 ### Rulings
 
 - At decision time, write the record with `board ruling record <id> <file>`:
-  it replaces the packet and sets status `decided` (autopilot, or a standing two-way default: `--status
-  needs_ratification`). `--replaces <old>[,<old>]` links each ruling it
+  it replaces the packet and sets status `decided` (an autopilot ruling or a standing two-way default uses `--unratified`, which releases it at once and files one related, non-blocking decision question `Keep or revise <ruling title>?` under the same parent for a regular round). That question carries the record's `Question`, `Alternatives Considered`, `Decision` and `Reversal`; a rerun reuses it. `--replaces <old>[,<old>]` links each ruling it
   replaces, decided or released; each is superseded when the new ruling comes
-  into force: at its release, or at once for an autopilot record. Rerun it
+  into force: at its release, or at once with `--unratified`. Rerun it
   after a stop; `board ruling supersede <old> --with <new>` alone for one rule
   or by hand. The file holds these `##` sections, which `board ruling record`
   checks: `Question`, `Alternatives Considered`, `Decision`, `Rationale` (with
-  provenance: user or the ruling session's role, and date) and `Rule owner`.
+  provenance: user or the ruling session's role, and date) and `Rule owner`;
+  `--unratified` also requires `Reversal`.
 - Record each ruling you make as "ruling — rejected: <alternative>, fails
   <cleanliness test, principle or correctness property>". For a consequential
   ruling without a question, create and answer one at once.
@@ -88,9 +88,8 @@ milestones, recorded rulings and deferrals. The board model is
   record restates the rule in full. `board ruling release` supersedes a released
   old record. A revision
   question blocks only the work items whose part it would change.
-- On the user's ratification, the claiming deciding session closes a
-  `needs_ratification` record with the ratification as reason; a reversal
-  becomes a revision record.
+- The regular round records the user's `Keep or revise` choice; choosing
+  `Revise` opens a ruling revision record.
 - Owner text contradicting a newer released ruling is a missed owner write:
   the ruling binds; fix the owner.
 - Write each rule into its owner under project-memory

@@ -14,9 +14,10 @@ setup, run `/role autopilot` again.
 
 - Decide under
   [Decision authority](../../shared/decision-protocol.md#decision-authority),
-  adapted for the user's absence. Run every ruling that would become
-  `needs_ratification` through a decide round, grouped by shared premise; skip
-  it for a trivial default. In its Ask, report `act` or `park` by these classes.
+  adapted for the user's absence. For each ruling that needs the user's later
+  judgment, record it with `board ruling record --unratified`; its related
+  `Keep or revise <ruling>` question stays open for a regular round. Skip the
+  question for a trivial default. In its Ask, report `act` or `park` by these classes.
   - **Trivial:** decide; record relevant defaults.
   - **Entailed or two-way door:** `act`, a lean recommendation included.
     Compare options as if presenting them to the user and write the
@@ -103,7 +104,8 @@ findings or stops.
    Output: recovered position and remaining authority.
 4. **Return** at the done criteria or budget boundary, when the user says they
    are back, or when the user asks for a round: report verified
-   outcomes with actual gate numbers; ratification items and parked decisions
+   outcomes with actual gate numbers; ratification tasks, `Keep or revise`
+   questions and parked decisions
    with recommendations
    (`board health --root <epic> --items ratification,questions`);
    failure and park diagnoses; and the CRs and epics waiting for the user's
