@@ -2898,15 +2898,15 @@ def validate_board(root: Path) -> None:
             # Deferred work is backlog (board-coordination.md Deferrals): no CR until planning takes it up; undeferred, it is flagged.
             if f"{ids['Loose item']}  no-cr" in invoke(["check"], Fake(variant(**{"Loose item": {"status": "deferred"}})))[1]:
                 raise ValueError("board check must not flag a deferred work item outside any CR")
-            # Items waiting on an open decision or design stay ungrouped until it is answered (plan.md Cut work), directly or through a chain.
+            # Items waiting on an open decision, design or spike stay ungrouped until it closes (plan.md Cut work), directly or through a chain.
             loose, question, ready = ids["Loose item"], ids["Open cache question"], ids["Ready task"]
             for waiting in ({"Loose item": {"dependencies": [{"issue_id": loose, "depends_on_id": question, "type": "blocks"}]}},
                             {"Loose item": {"dependencies": [{"issue_id": loose, "depends_on_id": ready, "type": "blocks"}]},
                              "Ready task": {"dependencies": [{"issue_id": ready, "depends_on_id": question, "type": "blocks"}]}},
-                            {"Loose item": {"dependencies": [{"issue_id": loose, "depends_on_id": ready, "type": "blocks"}]},
-                             "Ready task": {"issue_type": "design"}}):
+                            *({"Loose item": {"dependencies": [{"issue_id": loose, "depends_on_id": ready, "type": "blocks"}]},
+                               "Ready task": {"issue_type": kind}} for kind in ("design", "spike"))):
                 if f"{loose}  no-cr" in invoke(["check"], Fake(variant(**waiting)))[1]:
-                    raise ValueError(f"board check must not flag a work item waiting on an open decision: {waiting}")
+                    raise ValueError(f"board check must not flag a work item waiting on an open decision, design or spike: {waiting}")
             # Deferring takes a revisit condition, so creating an item deferred is refused for board defer.
             with tempfile.TemporaryDirectory() as directory:
                 body = Path(directory, "body.md")

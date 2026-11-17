@@ -73,7 +73,8 @@ dispatched or claimable; the checkpoint file is current; the report is given.
    are evidence and hints are planning input; a supersession is an authorized
    revision. Act on each `fix:` line the claim prints, or state why it does
    not apply.
-2. Block each open item the ruling changes on it, except designs and spikes
+2. Block each open work item the ruling changes on it, except designs and
+   spikes, and never a CR, which waits on its items' blockers
    (`board block <item>… --on <ruling> --reason "<what changes>"`); relate
    items it only informs (`board link <ruling> <item> --type relates-to`). Add the
    ruling id and owner anchor to each item's design, then unblock the designs
@@ -139,7 +140,7 @@ Establish the outcome's contribution to its milestone:
   [Waiting and stacks](../../shared/change-requests.md#change-requests);
   design-only dependents read the accepted design on its branch.
 - Group items that sit in no CR into CRs per topic when they become due
-  (items waiting on a decision or design stay ungrouped until it closes).
+  (items waiting on a decision, design or spike stay ungrouped until it closes).
 - Set a CR's `look` or `view` only to override the defaults, naming the reason
   on the CR in a line that mentions the setting. Order CRs by dependencies:
   independent CRs run in parallel, overlapping work gets a dependency edge
@@ -266,7 +267,9 @@ Before large fan-out, at milestones, after containment and when evidence or
 cumulative changes affect the frame, scope or boundaries: assess the combined
 end state for missing general mechanisms, asymmetric cases, duplicate owners,
 silent failures, dead weight and doc drift; name the next executable outcome
-and blockers. Close each finished epic `board position`
+and blockers. When the next run is set or changes, defer each open item of the
+outcome it does not need (revisit: after that run), undefer the deferred ones
+it needs, and list both in the report. Close each finished epic `board position`
 lists under board-coordination [Epics](../../shared/board-coordination.md#epics);
 list in the report the ones left open for the user's acceptance. Bring
 material changes to the decider before dependent dispatch. End rethinking

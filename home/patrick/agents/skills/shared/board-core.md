@@ -67,7 +67,7 @@ shared board, the user an unshared one (`bd dolt push`/`pull`).
 
 | Type | Kind |
 |---|---|
-| `task`, `bug`, `spike` | Work item; lives in a CR, unless deferred ([backlog](../shared/board-coordination.md#deferrals-and-environment-facts)), waiting on a decision or design until it closes, or marked no-code ([Work items](#work-items)). |
+| `task`, `bug`, `spike` | Work item; lives in a CR, unless deferred ([backlog](../shared/board-coordination.md#deferrals-and-environment-facts)), waiting on a decision, design or spike until it closes, or marked no-code ([Work items](#work-items)). |
 | `design` | Design item: architecture, package graph and needed decisions for a slice. |
 | `decision` | Question, later the ruling's record ([Questions and rulings](#questions-and-rulings)). |
 | `change-request` | The claimed, reviewed and landed unit ([Change requests](../shared/change-requests.md#change-requests)). |
@@ -156,7 +156,7 @@ On a shared board (`.beads/board-shared.json` exists):
 | `open` | Unanswered and unclaimed. Blocks its dependents. |
 | `in_progress` | Unanswered; claimed by the session running its round. Blocks its dependents. |
 | `decided` | Answered, release pending. Still blocks. |
-| `released` | Binding. Blocks the open items it changes until a `plan` session plans it and closes it; planning unblocks a design or spike once its text carries the ruling. Waits only on what its planning needs: a live decision, a `user <date>` gate, a design or a spike. Holds no decided record resting on it. |
+| `released` | Binding. Blocks the open work items it changes (never a CR: it waits on its items' blockers) until a `plan` session plans it and closes it; planning unblocks a design or spike once its text carries the ruling. Waits only on what its planning needs: a live decision, a `user <date>` gate, a design or a spike. Holds no decided record resting on it. |
 | `needs_ratification` | Ruling in force taken without the user (autopilot, or a standing two-way default), awaiting the user's ratification through a deciding session. Blocks nothing. |
 | closed | Planned, superseded or withdrawn. A reversal is a revision record (`board ruling revise <id>`, [Rulings](../shared/board-coordination.md#rulings)). |
 

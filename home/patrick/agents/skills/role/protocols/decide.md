@@ -41,9 +41,9 @@ Never decide these alone.
   items for decided work) and report it in one line; ask only when it changes
   scope, milestone membership or an item another session holds. Read
   `$HOME/.agents/skills/shared/board-core.md` before direct board writes.
-- Decide in the round every contract consumers see: API shape, names,
-  defaults, error and failure behavior, limits. Leave only internals and
-  sequencing to work items.
+- Ask in the round the choices
+  [Decision authority](../../shared/decision-protocol.md#decision-authority)
+  leaves to the user; leave the rest to work items.
 - Brief subagents with one question's scope and a stop condition; weigh their
   results under the decision protocol's
   [Others' input](../../shared/decision-protocol.md#others-input).

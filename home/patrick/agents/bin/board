@@ -1061,13 +1061,13 @@ class Board:
                 if self.is_open(blocker)
                 or (self.complete and blocker not in self.by_id and not blocker.startswith('external:'))]
 
-    def waits_on_decision_or_design(self, item_id: str, seen: set[str] | None = None) -> bool:
-        """An open decision or design holds it, directly or through open blockers: it stays out of a CR until answered."""
+    def waits_on_decision_design_or_spike(self, item_id: str, seen: set[str] | None = None) -> bool:
+        """An open decision, design or spike holds it, directly or through open blockers: it stays out of a CR until that closes."""
         seen = set() if seen is None else seen
         for blocker in self.open_blockers(item_id):
             if blocker not in seen:
                 seen.add(blocker)
-                if self.by_id.get(blocker, {}).get('issue_type') in ('decision', 'design') or self.waits_on_decision_or_design(blocker, seen):
+                if self.by_id.get(blocker, {}).get('issue_type') in ('decision', 'design', 'spike') or self.waits_on_decision_design_or_spike(blocker, seen):
                     return True
         return False
 
@@ -1802,7 +1802,7 @@ def deviations(board: Board, root: str | None) -> list[tuple[str, str, str]]:
             found.append((item_id, 'ruling-blocked', f"released ruling waits on {', '.join(foreign)}, work and not planning: "
                                                      f"{'; '.join(dep_fix(item_id, blocker) for blocker in foreign)}"))
         if is_work_hold(issue) and board.cr_of(item_id) is None and issue['status'] not in ('in_review', 'deferred') and not is_no_code(issue) \
-                and not board.waits_on_decision_or_design(item_id):
+                and not board.waits_on_decision_design_or_spike(item_id):
             found.append((item_id, 'no-cr', f'work item outside any change request: board update {item_id} --parent <change request>'))
     return found + cr_deviations(board, root)
 
