@@ -2363,7 +2363,9 @@ def validate_board(root: Path) -> None:
                 expected = ["export", "export"]  # and the board read again after the create, which holds the new question
         elif argv[:2] == ["ruling", "record"]:
             expected = fake.reads() if fake.reads() and set(fake.reads()) == {"export"} else ["export"]  # the export again before each supersede (the links just written)
-        elif argv[0] in ("claim", "take", "wait") and fake.reads()[:1] == ["list"] and set(fake.reads()[1:]) <= {"show", "list"}:
+        elif argv[0] in ("claim", "take", "wait") and (
+                fake.reads()[:1] == ["list"] and set(fake.reads()[1:]) <= {"show", "list"}
+                or fake.reads()[:2] == ["export", "list"] and set(fake.reads()[2:]) <= {"show", "list"}):
             # claim reads hand-over comments of in_review items, the comments of the session's other holds (staleness), and the
             # blockers a change request lifts (the closed items in a list, shows): after the one list
             expected = fake.reads()
@@ -2564,21 +2566,45 @@ def validate_board(root: Path) -> None:
             legacy = {"id": "fx-unrat", "title": "Legacy cache ruling", "description":
                       "## Question\nShould we cache?\n\n## Alternatives Considered\n- No cache\n\n## Decision\nCache it.\n\n"
                       "## Rationale\nPreviously accepted.\n\n## Rule owner\ndocs/cache.md\n\n## Reversal\nRemove cache if stale.\n",
-                      "status": "needs_ratification", "priority": 2, "issue_type": "decision", "assignee": "lead0001"}
+                      "status": "needs_ratification", "priority": 2, "issue_type": "decision", "assignee": None}
             legacy_board = Fake([legacy])
             code, flagged, _ = invoke(["check"], legacy_board)
-            if code != 1 or "unratified-ruling" not in flagged or "board ruling record fx-unrat <record-file> --unratified" not in flagged:
+            if code != 1 or "unratified-ruling" not in flagged or "lead or solo must first run board claim fx-unrat" not in flagged \
+                    or "board ruling record fx-unrat <record-file> --unratified" not in flagged:
                 raise ValueError(f"board check did not expose the legacy ruling repair: {code} {flagged}")
             with tempfile.TemporaryDirectory() as directory:
                 record_file = Path(directory, "legacy.md")
                 record_file.write_text(legacy["description"], encoding="utf-8")
+                code, claimed, errors = invoke(["claim", "fx-unrat"], legacy_board, "lead0001")
+                if code or "claimed fx-unrat" not in claimed \
+                        or legacy_board.writes()[-1] != ["update", "fx-unrat", "--assignee", "lead0001", "--if-assignee", "", "--json"]:
+                    raise ValueError(f"a lead must claim the unassigned legacy ruling before recording it: {code} {claimed} {errors} {legacy_board.writes()}")
+                legacy["assignee"] = "lead0001"  # bd applies the successful --claim atomically.
+                legacy_board.calls.clear()  # isolate the record command's reads; the claim was asserted above.
+                legacy_board.graphs.clear()
+                legacy_board.graph_at.clear()
                 code, _, errors = invoke(["ruling", "record", "fx-unrat", str(record_file), "--unratified"], legacy_board, "lead0001")
-                if code or legacy_board.writes()[-1] != ["update", "fx-unrat", "--assignee", "", "--json"]:
-                    raise ValueError(f"the board check repair did not release and free the legacy ruling: {code} {errors} {legacy_board.writes()}")
-            released_board = Fake([{**legacy, "status": "released", "assignee": None}])
-            code, clean_report, _ = invoke(["check"], released_board)
+                release = next((input for args, input in legacy_board.calls if args[:2] == ["batch", "-m"]), None)
+                if code or "update fx-unrat status=released" not in (release or "") \
+                        or legacy_board.writes()[-1] != ["update", "fx-unrat", "--assignee", "", "--json"] \
+                        or len(legacy_board.graphs) != 1 or "Keep or revise Legacy cache ruling?" not in legacy_board.graphs[0]["nodes"][0]["title"]:
+                    raise ValueError(f"the board check repair did not release and free the legacy ruling with its question: {code} {errors} {legacy_board.writes()}")
+            legacy.update(status="released", assignee=None)  # bd committed the record and the final unclaim.
+            legacy_board.calls.clear()
+            code, clean_report, _ = invoke(["check"], legacy_board)
             if code or "unratified-ruling" in clean_report or "convention deviations: 0" not in clean_report:
                 raise ValueError(f"board check still flagged the released legacy ruling: {code} {clean_report}")
+            board_docs = (root / "docs" / "board.md").read_text(encoding="utf-8")
+            migrate_docs = (root / "skills" / "board-migrate" / "SKILL.md").read_text(encoding="utf-8")
+            unattended_docs = (root / "skills" / "role" / "protocols" / "unattended.md").read_text(encoding="utf-8")
+            protocol_docs = (root / "docs" / "protocol-engine.md").read_text(encoding="utf-8")
+            if "lead or solo" not in board_docs or "board claim <id>" not in board_docs \
+                    or "lead or solo" not in migrate_docs or "board claim <id>" not in migrate_docs \
+                    or "Keep-or-revise question" not in unattended_docs or "--unratified" not in unattended_docs \
+                    or "--status needs_ratification" in protocol_docs \
+                    or "runs `board ruling record … --unratified`" not in protocol_docs \
+                    or "files a related non-blocking Keep-or-revise question" not in protocol_docs:
+                raise ValueError("board migration and away-ruling docs must describe claiming legacy rulings and the released question flow")
             # The user view lists gates titled with the user's words and items assigned to the user.
             waiting = [{**issue, "title": "user 2026-10-23: 'wait for my go'"} if issue["title"] == "Gate: human" else issue
                        for issue in checked]
@@ -13420,7 +13446,7 @@ def validate_protocol(root: Path, part: str) -> None:
 
         if part == "away":
             # r28-q126..q128, r29: the registered role autopilot means away. Ask opens no batch, dialog or print: the model reports
-            # `act` (the recommendation is the answer; Record writes needs_ratification with a reversal) or `park` per question.
+            # `act` (the recommendation is the answer; Record releases it with a reversal) or `park` per question.
             def activate(role, session, tool):
                 subprocess.run(["bash", str(registry), "activate", role], check=True,
                                env={**os.environ, **session_env(str(state)), **as_session(session, tool)})
@@ -13475,7 +13501,7 @@ def validate_protocol(root: Path, part: str) -> None:
             if shown(**away)["step"] != "record":
                 raise ValueError(f"Record follows the acted answer: {shown(**away)}")
             asking = proto("show", **away).stdout
-            if "answer (away): Keep" not in asking or "away answer: the record also needs `reversal`" not in asking:
+            if "answer (away): Keep" not in asking or "`board ruling record --unratified` releases it and files a related Keep-or-revise question" not in asking:
                 raise ValueError(f"Record asks the reversal of an away answer:\n{asking}")
             refused("step", stdin={"records": {q1: {"rationale": "Took fx-a.", "ruleOwner": "docs/x.md"}}}, needle="an away answer needs a `reversal`", **away)
             refused("step", stdin={"records": {q1: {"rationale": "Took fx-a.", "ruleOwner": "docs/x.md", "reversal": ["undo it"]}}}, needle="`reversal` must be a string", **away)
@@ -13486,7 +13512,7 @@ def validate_protocol(root: Path, part: str) -> None:
             if not any(args[:3] == ["ruling", "record", "fx-a"] and args[4:] == ["--unratified"] for args in made) \
                     or "\n## Reversal\nboard bd reopen fx-a\n" not in recorded or "\nAway round (autopilot took the recommendation; no person answered), " not in recorded \
                     or "User (" in recorded or "Round r" not in out or f"- {q2} parked → fx-b: open and unassigned for the person" not in out:
-                raise ValueError(f"an away answer is recorded as an unratified ruling with its reversal, from an away round:\n{recorded}\n{made}\n{out}")
+                raise ValueError(f"an away answer is released with its reversal through --unratified, from an away round:\n{recorded}\n{made}\n{out}")
 
             # B: a draft (no board item) becomes an open decision carrying its parts; nothing waits for the dialog.
             configure(related={}, newIds=["fx-park1"])
@@ -13553,8 +13579,11 @@ def validate_protocol(root: Path, part: str) -> None:
             proto("step", stdin={"records": {rule: {"rationale": "Took it, for fx-a and fx-b.", "ruleOwner": "docs/x.md", "reversal": "Revise the ruling."}}}, **away)
             acted = [c["args"] for c in calls()]
             reversal = records_file.read_text(encoding="utf-8")
-            closes = [args[1] for args in acted if args[:1] == ["close"]]
-            if closes != ["fx-a", "fx-b"] or "`board reopen fx-a fx-b`" not in reversal \
+            close_calls = [args for args in acted if args[:1] == ["close"]]
+            closes = [args[1] for args in close_calls]
+            if closes != ["fx-a", "fx-b"] \
+                    or any(args[args.index("--reason") + 1] != "Settled by released away ruling fx-rule" for args in close_calls) \
+                    or "`board reopen fx-a fx-b`" not in reversal \
                     or any(args[0] == "unclaim" and ("fx-a" in args or "fx-b" in args) for args in acted):
                 raise ValueError(f"an away ruling closes what it settles, and its reversal reopens them:\n{acted}\n{reversal}")
 

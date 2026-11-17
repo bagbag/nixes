@@ -238,7 +238,7 @@ def close_settled_away(ctx: Context, q: dict, item: str) -> None:
     done = q.setdefault('closedSettled', [])
     for key in board_keys(q.get('settles')):
         if key not in done:
-            ctx.board.checked('close', key, '--reason', f'Settled by away ruling {item}, awaiting ratification')
+            ctx.board.checked('close', key, '--reason', f'Settled by released away ruling {item}')
             done.append(key)
 
 

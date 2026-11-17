@@ -34,9 +34,9 @@ setup, run `/role autopilot` again.
     their dependents wait. Continue independent tracks.
 - Accept in the user's place a CR at a `user` checkpoint: the
   decide protocol's Accept with the walkthrough as a written assessment,
-  recorded as a `needs_ratification` decision with its `## Reversal`. A finished CR
-  (`look` `before`) in `needs_acceptance` and a finished epic whose acceptance
-  names the user stay parked for the user.
+  recorded through the board's design-ratification flow. A finished CR
+  (`look` `before`) in `needs_acceptance` and finished epics whose acceptance
+  names the user stay open for the user's Accept.
 - Treat public contracts, durable design and substantial downstream work as
   costly to reverse. Before non-trivial action, resolve facts and obtain
   independent assessment; review findings authorize no expansion. Assess scope

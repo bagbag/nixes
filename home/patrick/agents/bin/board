@@ -1819,7 +1819,8 @@ def deviations(board: Board, root: str | None) -> list[tuple[str, str, str]]:
             found.append((item_id, 'release-gate', 'release gate title'))
         if kind == 'decision' and issue['status'] == 'needs_ratification':
             found.append((item_id, 'unratified-ruling',
-                          f'legacy ruling still awaits ratification; export its description, ensure it has a ## Reversal section, then run '
+                          f'legacy unratified ruling; if unassigned, a lead or solo must first run board claim {item_id}; export its description, '
+                          f'ensure it has a ## Reversal section, then run '
                           f'board ruling record {item_id} <record-file> --unratified'))
         labels = sorted(set(issue.get('labels') or []) & set(LIFECYCLE_LABELS))
         if labels:

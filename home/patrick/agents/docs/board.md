@@ -137,9 +137,10 @@ exits 3 at the timeout and 1 when the session's registration is gone. Run it wit
 conventions mechanically; change both in the same change, so drifted boards
 surface in `board health` and move through `/board-migrate`.
 It flags a live `decision` in the legacy `needs_ratification` status as
-`unratified-ruling`, with a suggested `board ruling record <id> <record-file>
---unratified` command. Preserve its description, add `## Reversal` if missing,
-run that command, then rerun `board check` to confirm the conversion.
+`unratified-ruling`. For an unassigned record, a lead or solo must first run
+`board claim <id>`. Preserve its description, add `## Reversal` if missing,
+then run `board ruling record <id> <record-file> --unratified` and rerun
+`board check` to confirm the conversion.
 `board create` / `create --graph` node metadata are refused when the value equals the
 project default (an unreadable default lets bd answer); `board setup` that changes `look` or `view` prints, under the
 `old -> new` line, the open CRs keeping their own value, each with the first line of its description, design or notes naming the

@@ -17,9 +17,9 @@ decide what to say; error and refusal messages and the CLI help stay where
 they are raised or defined. Its protocols are `round` (the decide protocol's
 Round from the pre-pass to Record) and `release` (its Release).
 A reversal is a revision record: a superseded ruling is put back only by recording a new revision (`board ruling revise <id>`); `board reopen` refuses a superseded ruling and says so. A question whose Related outcome supersedes a record links it at Record
-(`board ruling record --replaces`); the record is superseded when the new ruling comes into force (r9-q33): at its release, or at
-Record for an away (`needs_ratification`) record, the released record it revises included; waiting items and a pending revision move to
-the new record, the engine moves the settled items; the dialog names it by id and title. Related may mark any decided record this way,
+(`board ruling record --replaces`); the old record is superseded when the new ruling comes into force (r9-q33): at release for a
+decided ruling, or at Record for an away ruling written with `--unratified`. Waiting items and a pending revision move to the new
+record, the engine moves the settled items; the dialog names it by id and title. Related may mark any decided record this way,
 a hit or not, by naming its id under `outcomes` (only a recorded ruling; a
 record another live session holds is refused). `board ruling record <id> <file> [--replaces <old>[,<old>]...]` writes the record and no comment copies of
 the replaced text. `--replaces` is one rerunnable command for what the record replaces: it judges every old before the first write (a decided or released one is linked, one closed and superseded by it is done, anything else is refused; for an away record a live other session's hold is refused, a gone session's taken), writes the revision links with the status, then, for an away record only, supersedes each old (`board ruling supersede`'s effects); a rerun after a stop derives what is done from the board alone. `board ruling release` supersedes every old the released record revises; a replaced decided draft named in the same release is superseded, not released, and releasing it alone while a live record revises it is refused. `board ruling supersede` stays for a rule (`--partial`) and by hand. The engine's Record makes this one call with every record the question closes; the board's history (`board bd history`) keeps earlier versions (r16-q95).
@@ -346,7 +346,8 @@ A round:
   solo` for a person who is back. `act` takes the recommendation as the answer
   (origin `away`, which no verb accepts from a caller, so no person origin can pass as
   it): Record then asks `reversal` beside the rationale and rule owner, writes a
-  `## Reversal` section, runs `board ruling record … --status needs_ratification`, and the
+  `## Reversal` section, runs `board ruling record … --unratified`, which releases the
+  ruling and files a related non-blocking Keep-or-revise question, and the
   record's source line reads `Away round (autopilot took the recommendation; no
   person answered), <date>: "<option>"`. `park` leaves the question an open, unassigned
   decision on the board: an existing item is unclaimed and gets the question's parts
