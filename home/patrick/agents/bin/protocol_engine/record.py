@@ -5,7 +5,7 @@ import json
 import re
 from pathlib import Path
 
-from .base import AWAY, ProtocolError, lines, utcnow
+from .base import AWAY, ProtocolError, lines, taken_over, utcnow
 from . import schema, words
 from .boards import held_decided, read_counts, statuses
 from .engine import Context, by_id, fail, questions
@@ -42,8 +42,8 @@ def deferrals(ctx: Context) -> dict[str, dict]:
 
 
 def record_target(q: dict) -> str | None:
-    """The existing item a question records onto: its own, else the hit Record takes over (board_item)."""
-    return q['board'] or next((h['id'] for h in q.get('overlaps') or [] if h['outcome'] in ('duplicate', 'extend')), None)
+    """The existing item a question records onto: its `board`, its own or the hit it took over at Related."""
+    return q['board']
 
 
 def section(text: str, name: str) -> str:
@@ -148,15 +148,12 @@ def board_item(ctx: Context, q: dict, path: Path, body: str | None = None, plain
     """The board id the record goes to: the question's item, else the draft created (or opened as a revision); `body`: the
     new item's text (a parked question's parts), else the question and its options; `plain`: a new decision item, never a revision
     of a record (a deferred question closes nothing and takes over only an open item)."""
-    if q['board']:
-        return q['board']
-    takeover = next((h['id'] for h in q['overlaps'] if h['outcome'] in ('duplicate', 'extend')), None)
-    if takeover and plain:  # a deferral never moves a decided, released or closed record: only an open item is taken over
-        status = (ctx.board.json('show', takeover, '--json', '--field', 'status').get(takeover) or {}).get('status')
-        takeover = takeover if status in ('open', 'in_progress') else None
-    if takeover:
-        q['board'] = takeover
-        return takeover
+    item = q['board']
+    if item and plain and taken_over(q):  # a deferral never moves a decided, released or closed record: only an open item is taken over
+        status = (ctx.board.json('show', item, '--json', '--field', 'status').get(item) or {}).get('status')
+        item = item if status in ('open', 'in_progress') else None
+    if item:
+        return item
     tag = record_tag(ctx, q)
     if found := tagged_item(ctx, tag):
         q['board'] = found

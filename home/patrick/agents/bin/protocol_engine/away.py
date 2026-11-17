@@ -52,7 +52,7 @@ def park(ctx: Context, q: dict) -> None:
     folder.mkdir(parents=True, exist_ok=True)
     path = folder / f"{ctx.round['id']}-{q['id']}.md"
     text = parked_text(ctx, q)
-    existing = q['board'] or next((h['id'] for h in q['overlaps'] if h['outcome'] in ('duplicate', 'extend')), None)
+    existing = q['board']
     item = board_item(ctx, q, path, text)
     if existing:  # the item exists already; the parts go in as a comment
         packet = path.with_suffix('.packet.md')

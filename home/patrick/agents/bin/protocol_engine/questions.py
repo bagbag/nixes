@@ -5,7 +5,7 @@ import re
 
 from .base import (
     DESCRIPTION_LIMIT, DESCRIPTION_MAX, HEADER_MAX, KINDS, MAY_NOT_APPLY, ProtocolError, STAGED_KINDS, STRENGTHS,
-    STRONG_CRITERIA, SUMMARY_MAX, TEXT_LIMIT, TEXT_MAX, TITLE_LIMIT, TITLE_MAX, band_warning, utcnow
+    STRONG_CRITERIA, SUMMARY_MAX, TEXT_LIMIT, TEXT_MAX, TITLE_LIMIT, TITLE_MAX, band_warning, taken_over, utcnow
 )
 from . import schema
 from .schema import CONTENT, PRESENTATION, SCHEDULING
@@ -236,7 +236,9 @@ def shared_board_errors(ctx: Context) -> list[str]:
     for q in ctx.round['questions']:
         item = q.get('board')
         if item and owner.setdefault(item, q['id']) != q['id']:
-            errors.append(f"{q['id']}: board {item} is already {owner[item]}'s item; stage it as a draft (`board`: null, "
+            errors.append(f"{q['id']}: {item} is already {owner[item]}'s item, and a second record on it would replace the first: "
+                          f"relate it, or merge the two questions if they are one decision" if taken_over(q) else
+                          f"{q['id']}: board {item} is already {owner[item]}'s item; stage it as a draft (`board`: null, "
                           f'`for`: "{item}")')
     return errors
 

@@ -9368,6 +9368,41 @@ def validate_protocol(root: Path, part: str) -> None:
             if any(a[:1] == ["defer"] and a[1] == "fx-u12" for a in rows) or ["defer", "fx-n12"] != next((a[:2] for a in rows if a[:1] == ["defer"]), None) \
                     or item_status("fx-u12") != "released":
                 raise ValueError(f"a deferred question must defer a new item, not the released record it would extend: {rows}")
+            # Beta4 (r14-q64/q65): a question takes over only an item no other round question records onto; the takeover is its
+            # `board` from Related on, so the one-record-per-item rule refuses it there, before any write, and relate still works.
+            configure(health={"counts": counts, "items": {"questions": [
+                {"id": "fx-own", "status": "open", "type": "decision", "title": "Own?", "priority": 1, "blockedBy": []}]}},
+                      related={"Shared": ["fx-own"]}, items={"fx-own": {"status": "open", "issue_type": "decision"}})
+            out = proto("start", "round", stdin={"points": ["Shared point"]}, cwd=repo).stdout
+            pasted = re.search(r"(pt\d+) \[pasted\]", out).group(1)
+            proto("step", stdin={"classes": {"fx-own": "user", pasted: "user"}}, cwd=repo)
+            proto("step", stdin={"select": ["fx-own", pasted]}, cwd=repo)
+            proto("step", stdin={**ROUND_INFO, "questions": [question("Own?", board="fx-own"), question("Shared point?", **{"for": pasted})]}, cwd=repo)
+            own, shared = [q["id"] for q in shown(cwd=repo)["questions"]]
+            calls()
+            refused("step", stdin={"outcomes": {shared: {"fx-own": "extend"}}}, needle=f"fx-own is already {own}'s item", cwd=repo)
+            if calls() or shown(cwd=repo)["questions"][1]["board"] is not None or shown(cwd=repo)["step"] != "related":
+                raise ValueError("Related must refuse a takeover of another round question's item before any write")
+            proto("step", stdin={"outcomes": {shared: {"fx-own": "relate"}}}, cwd=repo)
+            if shown(cwd=repo)["step"] == "related" or shown(cwd=repo)["questions"][1]["board"] is not None:
+                raise ValueError("Related must accept relating another round question's item")
+            proto("abandon", cwd=repo)
+            configure()
+            # Beta5: a takeover is the question's `board` from Related on: the item joins the round, claimed like a selected one,
+            # and only once the report passes: a report missing an outcome claims nothing.
+            qid = replacing("Betafive point", ["fx-u13", "fx-u14"], None, items={"fx-u13": {"status": "open", "issue_type": "decision"}})
+            calls()
+            refused("step", stdin={"outcomes": {qid: {"fx-u13": "extend"}}}, needle="outcomes missing", cwd=repo)
+            if calls():
+                raise ValueError("Related must claim a taken-over item only after the whole report passes")
+            proto("step", stdin={"outcomes": {qid: {"fx-u13": "extend", "fx-u14": "unrelated"}}}, cwd=repo)
+            converge(cwd=repo)
+            view = shown(cwd=repo)
+            if view["questions"][0]["board"] != "fx-u13" or "fx-u13" not in view["progress"]["selected"] \
+                    or ["claim", "fx-u13"] not in [c["args"][:2] for c in calls()]:
+                raise ValueError(f"a takeover must be the question's board from Related, joined and claimed: {view['questions'][0]}")
+            proto("abandon", cwd=repo)
+            configure()
             # Gamma: several records close; the first is revised (parent and labels), the others stay linked until closed; the
             # items a closed record settles move to the new record.
             qid = replacing("Gamma point", ["fx-u3", "fx-u4"], {"fx-u3": "supersedes", "fx-u4": "supersedes"},

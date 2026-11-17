@@ -33,6 +33,7 @@ CLASSES = ('ruled', 'planning', 'own', 'user')  # decide.md Collect
 KINDS = ('decision', 'confirm-own-rulings')  # every kind a round question can have; only release approval is `confirm-own-rulings`
 STAGED_KINDS = ('decision',)  # what a model stages: a lead's own rulings are ordinary questions (r22-q168), the approval is the engine's
 OUTCOMES = ('duplicate', 'extend', 'relate', 'supersedes', 'unrelated')
+TAKEOVER = ('duplicate', 'extend')  # the Related outcomes that make the hit the question's `board`
 REVISES, REVISES_RULE = 'tracks', 'board.revises_rule'  # bin/board: the pending-revision link and its partial rule (the validator compares them)
 PASSES = ('step-back', 'ground', 'challenge-rulings')
 # Origins (contract rulings R-B2, R-B9-R-B11): the console stamps them; the model's tool stamps chat on answer and
@@ -142,6 +143,11 @@ STRONG_CRITERIA = {
 }
 MAY_NOT_APPLY = ('consumerWalk', 'rulingsChallenged')
 THINK_MORE = 'Think more'  # a lean question's extra dialog choice: no answer, its checks rerun (r34-q171)
+
+
+def taken_over(q: dict) -> bool:
+    """Whether the question's `board` is a hit it took over at Related, not an item it came with."""
+    return any(h['id'] == q.get('board') and h['outcome'] in TAKEOVER for h in q.get('overlaps') or [])
 
 
 def recommended_suffix(q: dict) -> str:

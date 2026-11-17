@@ -1,7 +1,7 @@
 """The round's Stage and Related steps."""
 from __future__ import annotations
 
-from .base import OUTCOMES, ProtocolError, REVISES, REVISES_RULE, lines
+from .base import OUTCOMES, ProtocolError, TAKEOVER, REVISES, REVISES_RULE, lines
 from . import schema, words
 from .boards import related_hits, split_holds
 from .engine import Context, by_id, fail, premise_status, unresolved
@@ -136,11 +136,14 @@ def related_accept(ctx: Context, report: dict) -> str:
             if outcome not in OUTCOMES:
                 fail(f"outcomes.{qid}.{hit_id}: outcome must be one of {', '.join(OUTCOMES)}")
             hit['outcome'] = outcome
-        takeover = [h['id'] for h in q['overlaps'] if h['outcome'] in ('duplicate', 'extend')]
+        takeover = [h['id'] for h in q['overlaps'] if h['outcome'] in TAKEOVER]
         if len(takeover) > 1 or (takeover and any(h['outcome'] == 'supersedes' for h in q['overlaps'])):
             fail(f'{qid}: one question takes over at most one item, and not while it supersedes another')
         resolve_replaced(ctx, q)
+        q['board'] = takeover[0] if takeover else None  # the item it records onto from here on: one place holds it
+    refuse_all(shared_board_errors(ctx))
     missing = unresolved(ctx)
     if missing:
         fail('outcomes missing: ' + ', '.join(f"{q['id']}→{hit['id']}" for q, hit in missing))
+    join_outside(ctx)  # after every refusal: a taken-over item joins the round, claimed, as a selected one does
     return gate_ask(ctx) if ctx.round['check'].get('converged') else 'check'
