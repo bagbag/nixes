@@ -1551,7 +1551,7 @@ def health(board: Board, args) -> None:
     found = deviations(board, args.root)
     if found:
         fixed = sum(1 for _, kind, _ in found if kind in COMMAND_FIXED)  # fixed by a board command, not a migration
-        hints = (['run /board-migrate'] if fixed < len(found) else []) + ([f'{fixed} ruling waits wrongly: board check'] if fixed else [])
+        hints = (['run /board-migrate'] if fixed < len(found) else []) + ([f'wrong waits: {fixed} (board check)'] if fixed else [])
         print(f"convention deviations: {len(found)} — {'; '.join(hints)}")
     queue_rows(board, args.root, 'health')
 
@@ -1759,6 +1759,7 @@ CHECK_CLASSES = {  # class -> board-core anchor
     'release-gate': 'kinds',
     'label-status': 'statuses-and-labels',
     'ruling-blocked': 'statuses-and-labels',
+    'decision-blocks-cr': 'questions-and-rulings',
     'no-cr': 'change-requests',
     'cr-settings': 'change-requests',
     'cr-worktree': 'change-requests',
@@ -1774,7 +1775,7 @@ def doc_ref(anchor: str) -> str:
 
 
 # Deviations a board command fixes, which /board-migrate does not.
-COMMAND_FIXED = ('ruling-blocked',)
+COMMAND_FIXED = ('ruling-blocked', 'decision-blocks-cr')
 
 
 def deviations(board: Board, root: str | None) -> list[tuple[str, str, str]]:
@@ -1801,6 +1802,11 @@ def deviations(board: Board, root: str | None) -> list[tuple[str, str, str]]:
         if foreign:
             found.append((item_id, 'ruling-blocked', f"released ruling waits on {', '.join(foreign)}, work and not planning: "
                                                      f"{'; '.join(dep_fix(item_id, blocker) for blocker in foreign)}"))
+        if kind == CR_TYPE:
+            held = [b for b in board.open_blockers(item_id) if board.by_id.get(b, {}).get('issue_type') == 'decision']
+            if held:
+                found.append((item_id, 'decision-blocks-cr', f"decision blocks a change request, which waits on its items' blockers: "
+                                                             f"{'; '.join(dep_fix(item_id, b) for b in held)}, then hold its work items"))
         if is_work_hold(issue) and board.cr_of(item_id) is None and issue['status'] not in ('in_review', 'deferred') and not is_no_code(issue) \
                 and not board.waits_on_decision_design_or_spike(item_id):
             found.append((item_id, 'no-cr', f'work item outside any change request: board update {item_id} --parent <change request>'))
@@ -5349,6 +5355,9 @@ def link_rules(board: Board | None, links: list[tuple[str, str, str]], verb: str
         if not blocking(kind):
             if kind == 'parent-child' and waiting not in new and board and other not in board.parents.get(waiting, []) and (refusal :=parent_move_refusal(board, [waiting], other if other in board.by_id else None)):
                 raise BoardError(refusal)
+        elif refusal := cr_hold_refusal(waiting, new[waiting] if waiting in new else (board.by_id.get(waiting, {}).get('issue_type') if board else None),
+                                        other, new[other] if other in new else (board.by_id.get(other, {}).get('issue_type') if board else None)):
+            raise BoardError(refusal)
         elif other in new:
             if waiting in new:
                 if new[other] == 'decision':  # between new work items bd writes the edge itself
@@ -5615,12 +5624,22 @@ def reason_optional(issue: dict, record: dict) -> bool:
     return record.get('issue_type') in ('decision', 'gate') or issue.get('issue_type') == 'milestone'
 
 
+def cr_hold_refusal(waiting: str, waiting_type: str | None, blocker: str, blocker_type: str | None) -> str | None:
+    """A decision holds work items, never a CR, which waits on its items' blockers (board-core.md Questions and rulings)."""
+    if blocker_type == 'decision' and waiting_type == CR_TYPE:
+        return (f"{waiting} is a change request: unblock it from its decisions (board check lists them) and block its work items "
+                f"on {blocker} instead (board block <item> --on {blocker})")
+    return None
+
+
 def block_one(board: Board, item_id: str, blocker: str, reason: str | None, actor: str) -> tuple[str, bool]:
     """Blocks one whole item; its reason is commented on it (none when the blocker or the item makes the reason optional and none
     is given). (result line, False). The holder's own block hands the item back (r21-q144): the hold is freed; a change request
     keeps its worktree."""
     issue = board.by_id[item_id]
     record = board.by_id.get(blocker, {})
+    if refusal := cr_hold_refusal(item_id, issue.get('issue_type'), blocker, record.get('issue_type')):
+        raise BoardError(refusal)
     if not reason and not reason_optional(issue, record):
         raise BoardError(f'{item_id}: a work item waits with a reason: board block {item_id} --on {blocker} --reason "<why it waits>" '
                          '(optional only when the blocker is a decision or a gate, or the waiting item a milestone)')

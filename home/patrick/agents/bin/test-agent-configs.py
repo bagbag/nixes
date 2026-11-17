@@ -2907,6 +2907,17 @@ def validate_board(root: Path) -> None:
                                "Ready task": {"issue_type": kind}} for kind in ("design", "spike"))):
                 if f"{loose}  no-cr" in invoke(["check"], Fake(variant(**waiting)))[1]:
                     raise ValueError(f"board check must not flag a work item waiting on an open decision, design or spike: {waiting}")
+            # A decision holds work items, never a CR, which waits on its items' blockers (board-core.md Questions and rulings).
+            cr = ids["CR ready"]
+            for decision in (question, ids["Released ruling"]):
+                held = variant(**{"CR ready": {"dependencies": [{"issue_id": cr, "depends_on_id": "fx-ovo", "type": "parent-child"},
+                                                                {"issue_id": cr, "depends_on_id": decision, "type": "blocks"}]}})
+                report = invoke(["check"], Fake(held))[1]
+                if f"  {cr}  decision-blocks-cr" not in report or f"board unblock {cr} --on {decision}" not in report:
+                    raise ValueError(f"board check must flag a decision blocking a CR:\n{report}")
+            fake = Fake(fixture)
+            if invoke(["block", cr, "--on", question], fake, "lead0001")[0] == 0 or fake.writes():
+                raise ValueError("board block must refuse a decision blocking a CR")
             # Deferring takes a revisit condition, so creating an item deferred is refused for board defer.
             with tempfile.TemporaryDirectory() as directory:
                 body = Path(directory, "body.md")
@@ -4018,7 +4029,7 @@ def validate_board(root: Path) -> None:
                 raise ValueError(f"board check lacks ruling-blocked:\n{report}")
             if "ruling-blocked" in invoke(["check"], Fake(designed))[1].replace("ruling-blocked (", ""):
                 raise ValueError("board check flagged a ruling waiting on a design")
-            if "1 ruling waits wrongly: board check" not in invoke(["health"], Fake(stuck))[1]:
+            if "wrong waits: 1 (board check)" not in invoke(["health"], Fake(stuck))[1]:
                 raise ValueError("board health lacks the hint for command-fixed deviations")
 
             # Counts: ready = can be taken now, waiting = the rest of the step.
@@ -4173,6 +4184,10 @@ def validate_board(root: Path) -> None:
             node = fake.graphs[-1]["nodes"][0] if fake.graphs else {}
             if node.get("priority") != 1 or node.get("parent_id") != goal or node.get("labels") != ["topic:a", "topic:b"] or "metadata" in node:
                 raise ValueError(f"board ruling revise ignored -p/--parent/-l or set metadata without --partial: {fake.graphs}")
+            fake = Fake(fixture)
+            if invoke(["ruling", "revise", ids["Released ruling"], "--title", "t", "--body-file", "p.md", "--holds", ids["CR ready"]], fake, "lead0001")[0] == 0 \
+                    or fake.writes():
+                raise ValueError("a decision must not hold a CR")
             fake = Fake(topical)
             fake.settings["issue_prefix"] = "fx"
             board._prefix.clear()

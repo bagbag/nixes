@@ -95,7 +95,10 @@ Follow the engine's output; the steps below add the judgment it leaves to you.
 
 1. **Pre-pass.** Step back over the whole point set: the direction, points
    that are off or rest on an unclear premise (ask those first), and the cut
-   under [Question format](../../shared/question-format.md). With `--subject`,
+   under [Question format](../../shared/question-format.md). Defer each
+   question its topic's next run ([Frame](plan.md#frame)) does not need
+   (revisit: after that run); for a topic without one, propose planning first.
+   With `--subject`,
    assess it, not only its source claims: a design's reviews and open points
    first (each unresolved one is a finding), then spec and board agreement,
    unowned open points and source drift; review anew only without a review or

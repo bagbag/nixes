@@ -156,7 +156,7 @@ On a shared board (`.beads/board-shared.json` exists):
 | `open` | Unanswered and unclaimed. Blocks its dependents. |
 | `in_progress` | Unanswered; claimed by the session running its round. Blocks its dependents. |
 | `decided` | Answered, release pending. Still blocks. |
-| `released` | Binding. Blocks the open work items it changes (never a CR: it waits on its items' blockers) until a `plan` session plans it and closes it; planning unblocks a design or spike once its text carries the ruling. Waits only on what its planning needs: a live decision, a `user <date>` gate, a design or a spike. Holds no decided record resting on it. |
+| `released` | Binding. Blocks the open items it changes until a `plan` session plans it and closes it; planning unblocks a design or spike once its text carries the ruling. Waits only on what its planning needs: a live decision, a `user <date>` gate, a design or a spike. Holds no decided record resting on it. |
 | `needs_ratification` | Ruling in force taken without the user (autopilot, or a standing two-way default), awaiting the user's ratification through a deciding session. Blocks nothing. |
 | closed | Planned, superseded or withdrawn. A reversal is a revision record (`board ruling revise <id>`, [Rulings](../shared/board-coordination.md#rulings)). |
 
@@ -171,7 +171,8 @@ On a shared board (`.beads/board-shared.json` exists):
 - One decision per record. While open, the description holds the
   [Decision packet](#decision-packet).
 - Name the items a question or ruling holds up when you create it, creating
-  missing ones first: `--holds <ids>` (shorthand for blocking links; also
+  missing ones first, never a CR (it waits on its items' blockers):
+  `--holds <ids>` (shorthand for blocking links; also
   `--deps blocks:<id>` on `board create --type decision` and `board ruling
   revise`; a plan's links from its decision node; in a round, the question's
   `holds`, which Record passes) or `--holds none`. Depend on each open question its options

@@ -73,8 +73,8 @@ dispatched or claimable; the checkpoint file is current; the report is given.
    are evidence and hints are planning input; a supersession is an authorized
    revision. Act on each `fix:` line the claim prints, or state why it does
    not apply.
-2. Block each open work item the ruling changes on it, except designs and
-   spikes, and never a CR, which waits on its items' blockers
+2. Block each open item the ruling changes on it, except designs, spikes and
+   CRs ([Questions and rulings](../../shared/board-core.md#questions-and-rulings))
    (`board block <item>… --on <ruling> --reason "<what changes>"`); relate
    items it only informs (`board link <ruling> <item> --type relates-to`). Add the
    ruling id and owner anchor to each item's design, then unblock the designs
