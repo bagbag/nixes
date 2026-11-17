@@ -3610,6 +3610,15 @@ def validate_board(root: Path) -> None:
             code, _, errors = invoke(["ruling", "release", ids["Open cache question"]], fake, "lead0001")
             if code != 1 or "held by aaaa1111, another live session" not in errors or fake.writes():
                 raise ValueError(f"a release must refuse superseding a record another live session holds: {code} {errors!r} {fake.writes()}")
+            # A closed record (planned) keeps its planner as assignee: history, not a hold, so its revision releases.
+            fake = Fake(variant(**{"Open cache question": {"status": "decided", "dependencies": [
+                {"issue_id": ids["Open cache question"], "depends_on_id": store, "type": "tracks"}]}, "Store choice": {"status": "closed", "assignee": "aaaa1111"}}))
+            code, _, errors = invoke(["ruling", "release", ids["Open cache question"]], fake, "lead0001")
+            if code or ["supersede", store, "--with", ids["Open cache question"]] not in fake.writes():
+                raise ValueError(f"a closed record's assignee must not hold its revision's release: {code} {errors!r} {fake.writes()}")
+            _, output, _ = invoke(["show", store], Fake(variant(**{"Store choice": {"status": "closed", "assignee": "aaaa1111"}})), "lead0001")
+            if "last held by aaaa1111" not in output.splitlines()[0]:
+                raise ValueError(f"show must label a closed item's assignee as history: {output.splitlines()[:1]}")
             fake = Fake(variant(**{"Open cache question": {"status": "decided"}}))
             code, _, _ = invoke(["ruling", "release", store, ids["Open cache question"]], fake, "lead0001")
             batch = [(args, stdin) for args, stdin in fake.calls if args[0] == "batch"]

@@ -939,7 +939,7 @@ class Board:
 
     def held_ids(self) -> list[str]:
         """Held items: `last_activity` needs their comments (comments do not bump updated_at)."""
-        return [issue['id'] for issue in self.issues if issue['status'] != 'closed' and issue.get('assignee')]
+        return [issue['id'] for issue in self.issues if holder(issue)]
 
     def finished_epic(self, issue: dict) -> bool:
         """An epic with children, none of them open (needs `hydrate` of childless epics on a status read)."""
@@ -1251,9 +1251,14 @@ class Board:
         return '\n'.join(parts)
 
 
+def holder(issue: dict) -> str | None:
+    """Who holds the item now: its assignee while it is not closed. A closed item's assignee is history, not a hold."""
+    return issue.get('assignee') or None if issue.get('status') != 'closed' else None
+
+
 def held_by_a_session(issue: dict) -> bool:
     """'held' in every view: a session holds the item. An item assigned to the user waits on the person (r22-q171)."""
-    return bool(issue.get('assignee')) and issue['assignee'] != USER_HOLD
+    return holder(issue) not in (None, USER_HOLD)
 
 
 def line(issue: dict, *extra: str) -> str:
@@ -1833,7 +1838,7 @@ def unnamed_waits(board: Board, root: str | None) -> list[tuple[str, str]]:
 
 def hold_flags(board: Board, root: str | None) -> tuple[list[tuple[str, str]], list[tuple[str, str]]]:
     """(stale holds, forced holds) as (id, detail) among the held work items in scope."""
-    held = [issue for issue in board.scoped(root) if issue['status'] != 'closed' and issue.get('assignee') and is_work_hold(issue)]
+    held = [issue for issue in board.scoped(root) if holder(issue) and is_work_hold(issue)]
     stale = [(issue['id'], f"{issue['assignee']}: no update for {age(since)}") for issue in held if (since := stale_since(board, issue))]
     forced = [(issue['id'], f"{issue['assignee']}: {reason}") for issue in held if (reason := forced_reason(issue)) is not None]
     return stale, forced
@@ -2131,7 +2136,7 @@ def show(board: Board, args) -> int:
         item_id = issue['id']
         q = shlex.quote
         header = [item_id, issue['status'], issue.get('issue_type', ''), f"p{issue.get('priority', '?')}",
-                  issue.get('assignee') or 'unassigned']
+                  holder(issue) or (f"last held by {issue['assignee']}" if issue.get('assignee') else 'unassigned')]
         if item_id in board.parent:
             header.append(f'parent {board.parent[item_id]}')
         if issue.get('labels'):
@@ -2494,8 +2499,7 @@ STALE_LEGEND = (f'  STALE = no update to the item for {STALE_HOURS} h: find out 
 
 def held_by_session(board: Board, actor: str) -> list[dict]:
     session = session_actor(actor)
-    return sorted((issue for issue in board.issues if issue['status'] != 'closed' and issue.get('assignee')
-                   and (issue['assignee'] == session or issue['assignee'].startswith(session + '/'))),
+    return sorted((issue for issue in board.issues if (held := holder(issue)) and (held == session or held.startswith(session + '/'))),
                   key=by_priority)
 
 
@@ -2645,7 +2649,7 @@ def mark_forced(issue: dict, actor: str, reason: str | None) -> None:
 def held_skips(board: Board, scoped: list[dict], kinds: list[str], actor: str) -> list[str]:
     """What a bare claim passed over: items of its kinds that another session holds, with holder, state and age
     (an empty queue is not a held item)."""
-    skipped = [issue for issue in scoped if issue['status'] != 'closed' and held_by_a_session(issue)
+    skipped = [issue for issue in scoped if held_by_a_session(issue)
                and session_actor(issue['assignee']) != session_actor(actor)
                and board.step_kind(issue) in kinds and not board.waits_of(issue)]
     board.hydrate([issue['id'] for issue in skipped])
@@ -5545,11 +5549,11 @@ def record(board: Board, args) -> int:
 def hold_refusal(board: Board, issue: dict, actor: str) -> str | None:
     """Whether a record about to be superseded is held by another session: None (free or this session's), 'gone' (a gone
     session's hold, taken first), else the refusal."""
-    holder = issue.get('assignee')
-    if not holder or session_actor(holder) == session_actor(actor):
+    held = holder(issue)
+    if not held or session_actor(held) == session_actor(actor):
         return None
-    if not holder_gone(board, board.registry(), holder):
-        return f'held by {holder}, another live session; ask it to hand it off (board unclaim), then run this again'
+    if not holder_gone(board, board.registry(), held):
+        return f'held by {held}, another live session; ask it to hand it off (board unclaim), then run this again'
     return foreign_claim(board, issue['id']) or 'gone'
 
 
