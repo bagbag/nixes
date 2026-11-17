@@ -2285,14 +2285,17 @@ def field_apply_one(board: Board, item_id: str, names: list[str] | None) -> list
     chosen = exported if names is None else names
     absent = [name for name in chosen if name not in exported]
     if absent or not chosen:
-        raise BoardError(f"{item_id}: no export of {', '.join(absent) or 'any field'}: board field export {item_id}" + ''.join(f' --field {name}' for name in absent))
+        flags = ''.join(f' --field {name}' for name in absent)
+        raise BoardError(f"{item_id}: no export of {', '.join(absent) or 'any field'}: re-export with board field export {item_id}{flags} "
+                         f"or discard with board field discard {item_id}{flags}")
     issue, lines, changes = board.by_id[item_id], [], {}
     texts = {}
     for name in chosen:
         try:
             texts[name] = folder.path(name).read_text(encoding='utf-8')
         except (OSError, UnicodeDecodeError) as error:
-            raise BoardError(f'{item_id}: cannot read the export of {name} ({error}); board field export {item_id} --field {name}') from None
+            raise BoardError(f'{item_id}: cannot read the export of {name} ({error}); re-export with board field export {item_id} --field {name} '
+                             f'or discard with board field discard {item_id} --field {name}') from None
     edited = [name for name in chosen if field_digest(texts[name]) != folder.base[name]]
     moved = [name for name in edited if field_digest(issue.get(FIELDS[name]) or '') != folder.base[name]]  # an unedited field is not written: it may move
     if moved:

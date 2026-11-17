@@ -2724,9 +2724,30 @@ def validate_board(root: Path) -> None:
                 field(["discard", "fx-fld"], Fake(held))
                 for args, word in ((["export", "fx-fld", "--field", "title"], "unknown field"), (["export", "fx-nope"], "unknown fx-nope"),
                                    (["apply", "fx-fld"], "no export of"), (["apply", "fx-fld", "--field", "notes"], "no export of notes")):
-                    code, _, errors = field(args, Fake(held))
+                    fake = Fake(held)
+                    before = held[0]["notes"]
+                    code, _, errors = field(args, fake)
                     if code != 2 or word not in errors:
                         raise ValueError(f"board field {args}: {code} {errors!r}")
+                    if args[0] == "apply" and (f"board field export fx-fld" not in errors or "or discard with board field discard fx-fld" not in errors
+                                                or fake.writes() or held[0]["notes"] != before):
+                        raise ValueError(f"board field apply refusal must offer re-export and discard without changing the board: {errors!r}")
+
+                # A lost chosen file has the same recoveries and cannot change the board value.
+                fake = Fake(held)
+                exported(["fx-fld", "--field", "notes"], fake)
+                Path(folder, "fx-fld", "notes.md").unlink()
+                before = held[0]["notes"]
+                code, _, errors = field(["apply", "fx-fld", "--field", "notes"], fake)
+                if code != 2 or "board field export fx-fld --field notes" not in errors \
+                        or "board field discard fx-fld --field notes" not in errors or fake.writes() or held[0]["notes"] != before:
+                    raise ValueError(f"board field apply must offer both recoveries for a missing export without changing the board: {code} {errors!r}")
+                exported(["fx-fld", "--field", "notes"], fake)
+                Path(folder, "fx-fld", "notes.md").write_bytes(b"\xff")
+                code, _, errors = field(["apply", "fx-fld", "--field", "notes"], fake)
+                if code != 2 or "board field export fx-fld --field notes" not in errors \
+                        or "board field discard fx-fld --field notes" not in errors or fake.writes() or held[0]["notes"] != before:
+                    raise ValueError(f"board field apply must offer both recoveries for an unreadable export without changing the board: {code} {errors!r}")
 
             with tempfile.TemporaryDirectory() as docs:
                 Path(docs, "design.md").write_text("Intro.\nTenancy owns membership.\n", encoding="utf-8")
