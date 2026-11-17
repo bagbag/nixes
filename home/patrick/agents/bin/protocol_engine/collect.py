@@ -149,7 +149,7 @@ def select_accept(ctx: Context, report: dict) -> str:
     return 'stage'
 
 
-OPEN_VIEWS = ('decided', 'questions', 'ratification', 'toAccept', 'toReview', 'forUser')  # `board health --json` item views Collect offers
+OPEN_VIEWS = ('decided', 'questions', 'toAccept', 'toReview', 'forUser')  # `board health --json` item views Collect offers
 
 
 def read_open(ctx: Context) -> tuple[dict, dict]:

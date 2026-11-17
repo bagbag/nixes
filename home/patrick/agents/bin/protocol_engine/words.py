@@ -217,7 +217,7 @@ def prepass_instructions(round_id: str, subject: str | None, codex: bool, args: 
 
 VIEW_LABELS = {  # the views Collect offers, in listing order: heading, name in the counts
     'decided': ('decided, awaiting release', 'decided'), 'questions': ('open questions', 'open questions'),
-    'ratification': ('awaiting ratification', 'awaiting ratification'), 'toAccept': ('to accept (designs in review)', 'to accept'),
+    'toAccept': ('to accept (designs in review)', 'to accept'),
     'toReview': ('to review (work in review)', 'to review'),
     'forUser': ('waiting on the user', 'waiting on the user'), 'readyMilestone': ('ready milestones', 'ready milestones'),
     'finishedEpic': ('finished epics (close one whose acceptance names the user)', 'finished epics'),

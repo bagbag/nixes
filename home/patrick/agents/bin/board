@@ -1364,7 +1364,7 @@ def claim_order(board: Board, issue: dict):
 
 # Views
 
-HEALTH_VIEWS = ('questions', 'decided', 'ratification', 'ratify', 'released', 'review', 'accept', 'user', 'ready', 'held', 'blocked')
+HEALTH_VIEWS = ('questions', 'decided', 'ratify', 'released', 'review', 'accept', 'user', 'ready', 'held', 'blocked')
 LIFECYCLE_LABELS = ('human', 'decided', 'review', 'needs-ratification', 'waiting')
 
 
@@ -1376,7 +1376,6 @@ def health_views(board: Board, root: str | None) -> dict[str, tuple[str, list[di
     return {
         'questions': ('open questions', [i for i in decisions if i['status'] in ('open', 'in_progress')]),
         'decided': ('decided, not released', [i for i in decisions if i['status'] == 'decided']),
-        'ratification': ('awaiting ratification', [i for i in items if i['status'] == 'needs_ratification' and i.get('issue_type') not in WORK_TYPES]),
         'ratify': ('ratifications of landed change requests and agent-passed designs (block nothing)',
                    [i for i in items if i['status'] == 'needs_ratification' and i.get('issue_type') in WORK_TYPES]),
         'released': ('released rulings to plan', [i for i in decisions if i['status'] == 'released']),
@@ -1573,7 +1572,7 @@ def health(board: Board, args) -> None:
     found = deviations(board, args.root)
     if found:
         fixed = sum(1 for _, kind, _ in found if kind in COMMAND_FIXED)  # fixed by a board command, not a migration
-        hints = (['run /board-migrate'] if fixed < len(found) else []) + ([f'wrong waits: {fixed} (board check)'] if fixed else [])
+        hints = (['run /board-migrate'] if fixed < len(found) else []) + ([f'board fixes: {fixed} (board check)'] if fixed else [])
         print(f"convention deviations: {len(found)} — {'; '.join(hints)}")
     queue_rows(board, args.root, 'health')
 
@@ -1781,6 +1780,7 @@ CHECK_CLASSES = {  # class -> board-core anchor
     'release-gate': 'kinds',
     'label-status': 'statuses-and-labels',
     'ruling-blocked': 'statuses-and-labels',
+    'unratified-ruling': 'questions-and-rulings',
     'decision-blocks-cr': 'questions-and-rulings',
     'no-cr': 'change-requests',
     'cr-settings': 'change-requests',
@@ -1797,7 +1797,7 @@ def doc_ref(anchor: str) -> str:
 
 
 # Deviations a board command fixes, which /board-migrate does not.
-COMMAND_FIXED = ('ruling-blocked', 'decision-blocks-cr')
+COMMAND_FIXED = ('ruling-blocked', 'decision-blocks-cr', 'unratified-ruling')
 
 
 def deviations(board: Board, root: str | None) -> list[tuple[str, str, str]]:
@@ -1817,6 +1817,10 @@ def deviations(board: Board, root: str | None) -> list[tuple[str, str, str]]:
             found.append((item_id, 'title-prefix', f'title starts with {prefix}'))
         if kind == 'gate' and title.startswith('[Gate] Release'):
             found.append((item_id, 'release-gate', 'release gate title'))
+        if kind == 'decision' and issue['status'] == 'needs_ratification':
+            found.append((item_id, 'unratified-ruling',
+                          f'legacy ruling still awaits ratification; export its description, ensure it has a ## Reversal section, then run '
+                          f'board ruling record {item_id} <record-file> --unratified'))
         labels = sorted(set(issue.get('labels') or []) & set(LIFECYCLE_LABELS))
         if labels:
             found.append((item_id, 'label-status', f"labels {', '.join(labels)}"))

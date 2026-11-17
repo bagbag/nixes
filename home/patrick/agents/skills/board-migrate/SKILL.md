@@ -192,6 +192,10 @@ step goes in a change set and runs on the user's confirmation.
    `needs_acceptance`. `board check --limit 0` clean but for user-accepted
    deviations; one `board claim` of a CR works end to end. Defer each open
    backlog work item; a plan pass groups the rest into CRs as they become due.
+   For a legacy live decision at `needs_ratification`, export its description,
+   ensure it has `## Reversal`, run the command printed by `board check`
+   (`board ruling record <id> <record-file> --unratified`), then rerun the
+   check.
    Tell the user pulls may start.
    Output: check result.
 

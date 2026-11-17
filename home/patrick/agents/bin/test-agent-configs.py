@@ -2511,6 +2511,10 @@ def validate_board(root: Path) -> None:
             # board check: one line per deviation with its class and board-core anchor.
             checked = [json.loads(line) for line in
                        (root / "bin" / "fixtures" / "board-check-export.jsonl").read_text(encoding="utf-8").splitlines()]
+            checked.append({"id": "fx-unrat", "title": "Legacy cache ruling", "description":
+                            "## Question\nShould we cache?\n\n## Alternatives Considered\n- No cache\n\n## Decision\nCache it.\n\n"
+                            "## Reversal\nRemove cache if stale.\n", "status": "needs_ratification", "priority": 2,
+                            "issue_type": "decision", "created_at": "2026-10-22T16:33:25Z", "updated_at": "2026-10-22T16:33:25Z"})
             cid = {issue["title"]: issue["id"] for issue in checked}
             gate = next(issue["id"] for issue in checked if issue["title"] == "Gate: human")
             code, report, _ = invoke(["check"], Fake(checked))
@@ -2521,12 +2525,14 @@ def validate_board(root: Path) -> None:
                 (cid["[Gate] Release: round 3"], "title-prefix", "kinds"),
                 (cid["[Gate] Release: round 3"], "release-gate", "kinds"),
                 (cid["Labelled status"], "label-status", "statuses-and-labels"),
+                ("fx-unrat", "unratified-ruling", "questions-and-rulings"),
             ]
             for item_id, name, anchor in expected_lines:
                 if f"  {item_id}  {name}  board-core.md#{anchor}" not in report:
                     raise ValueError(f"board check missed {name} on {item_id}:\n{report}")
             deviation_lines = [row for row in report.splitlines() if "  board-core.md#" in row]
-            if code != 1 or len(deviation_lines) != len(expected_lines) or "convention deviations: 5\n" not in report:
+            if code != 1 or len(deviation_lines) != len(expected_lines) or "convention deviations: 6\n" not in report \
+                    or "board ruling record fx-unrat <record-file> --unratified" not in report:
                 raise ValueError(f"board check reported extra deviations or the wrong exit code {code}:\n{report}")
             # Gate blockers carry their own reason; closed dependents of a released ruling block nothing.
             # A human gate on a question is the user's go, not a release gate; records are linted at release only.
@@ -2553,8 +2559,26 @@ def validate_board(root: Path) -> None:
             unnamed = report.split("flag, not a deviation")[1]
             if f"  {cid['Unnamed wait']}  unnamed-blocker" not in unnamed or f"  {cid['Old milestone']}  " in unnamed:
                 raise ValueError(f"board check missed or misplaced the unnamed-wait flag:\n{report}")
-            if "convention deviations: 5 — run /board-migrate" not in health_check:
+            if "convention deviations: 6 — run /board-migrate; board fixes: 1 (board check)" not in health_check:
                 raise ValueError("board health lacks the deviation hint")
+            legacy = {"id": "fx-unrat", "title": "Legacy cache ruling", "description":
+                      "## Question\nShould we cache?\n\n## Alternatives Considered\n- No cache\n\n## Decision\nCache it.\n\n"
+                      "## Rationale\nPreviously accepted.\n\n## Rule owner\ndocs/cache.md\n\n## Reversal\nRemove cache if stale.\n",
+                      "status": "needs_ratification", "priority": 2, "issue_type": "decision", "assignee": "lead0001"}
+            legacy_board = Fake([legacy])
+            code, flagged, _ = invoke(["check"], legacy_board)
+            if code != 1 or "unratified-ruling" not in flagged or "board ruling record fx-unrat <record-file> --unratified" not in flagged:
+                raise ValueError(f"board check did not expose the legacy ruling repair: {code} {flagged}")
+            with tempfile.TemporaryDirectory() as directory:
+                record_file = Path(directory, "legacy.md")
+                record_file.write_text(legacy["description"], encoding="utf-8")
+                code, _, errors = invoke(["ruling", "record", "fx-unrat", str(record_file), "--unratified"], legacy_board, "lead0001")
+                if code or legacy_board.writes()[-1] != ["update", "fx-unrat", "--assignee", "", "--json"]:
+                    raise ValueError(f"the board check repair did not release and free the legacy ruling: {code} {errors} {legacy_board.writes()}")
+            released_board = Fake([{**legacy, "status": "released", "assignee": None}])
+            code, clean_report, _ = invoke(["check"], released_board)
+            if code or "unratified-ruling" in clean_report or "convention deviations: 0" not in clean_report:
+                raise ValueError(f"board check still flagged the released legacy ruling: {code} {clean_report}")
             # The user view lists gates titled with the user's words and items assigned to the user.
             waiting = [{**issue, "title": "user 2026-10-23: 'wait for my go'"} if issue["title"] == "Gate: human" else issue
                        for issue in checked]
@@ -3375,7 +3399,7 @@ def validate_board(root: Path) -> None:
             # --json views (contract-rulings R-A1, R-B5): unbudgeted JSON, every row, no capacity line after it.
             code, text, _ = invoke(["health", "--json", "--items", "questions,ready", "--limit", "1"], Fake(fixture))
             health_json = json.loads(text)
-            if code or health_json["counts"] != {"questions": {"ready": 0, "held": 1, "waiting": 0}, "decided": {"ready": 1, "held": 0, "waiting": 0}, "ratification": 0, "toRatify": {"ready": 0, "held": 0, "waiting": 0},
+            if code or health_json["counts"] != {"questions": {"ready": 0, "held": 1, "waiting": 0}, "decided": {"ready": 1, "held": 0, "waiting": 0}, "toRatify": {"ready": 0, "held": 0, "waiting": 0},
                                                  "toPlan": {"ready": 2, "held": 0, "waiting": 0}, "toReview": {"ready": 1, "held": 0, "waiting": 0},
                                                  "toAccept": {"ready": 0, "held": 0, "waiting": 0}, "forUser": {"ready": 0, "held": 0, "waiting": 0},
                                                  "ready": 5, "held": 3, "blocked": 3} \
@@ -4098,7 +4122,7 @@ def validate_board(root: Path) -> None:
                 raise ValueError(f"board check lacks ruling-blocked:\n{report}")
             if "ruling-blocked" in invoke(["check"], Fake(designed))[1].replace("ruling-blocked (", ""):
                 raise ValueError("board check flagged a ruling waiting on a design")
-            if "wrong waits: 1 (board check)" not in invoke(["health"], Fake(stuck))[1]:
+            if "board fixes: 1 (board check)" not in invoke(["health"], Fake(stuck))[1]:
                 raise ValueError("board health lacks the hint for command-fixed deviations")
 
             # Counts: ready = can be taken now, waiting = the rest of the step.
@@ -8642,6 +8666,9 @@ def validate_engine_counts(root: Path) -> None:
     challenge re-derives only the strong marks of questions still unanswered."""
     engine = load_engine(root / "bin")
     words, check, boards = sys.modules[f"{engine.__name__}.words"], sys.modules[f"{engine.__name__}.check"], sys.modules[f"{engine.__name__}.boards"]
+    collect = sys.modules[f"{engine.__name__}.collect"]
+    if "ratification" in engine.base.COLLECT_VIEWS.split(",") or "ratification" in collect.OPEN_VIEWS or "ratification" in words.VIEW_LABELS:
+        raise ValueError("Collect must not offer the legacy ruling ratification view")
     if boards.COUNT_KEYS != ("questions", "decided", "toPlan", "toReview", "toAccept", "forUser"):
         raise ValueError(f"the engine reads the counts keys of r21-q141/q146: {boards.COUNT_KEYS}")
     counts = {key: {"ready": n, "waiting": 0} for n, key in enumerate(boards.COUNT_KEYS)}
@@ -9000,7 +9027,7 @@ def validate_protocol(root: Path, part: str) -> None:
             refused("step", stdin={}, needle="no open round")
 
             # r22-q158: a view or count the board's health JSON lacks is named, not read as no items or a zero count.
-            for key, omitted, needle in (("omitItems", "ratification", "no items view `ratification`"), ("omitItems", "toAccept", "no items view `toAccept`"),
+            for key, omitted, needle in (("omitItems", "toAccept", "no items view `toAccept`"),
                                          ("omitItems", "forUser", "no items view `forUser`"), ("omitCounts", "toPlan", "no count `toPlan`"),
                                          ("omitCounts", "questions", "no count `questions`")):
                 patch_config(**{key: [omitted]})
@@ -9305,7 +9332,7 @@ def validate_protocol(root: Path, part: str) -> None:
                                                      "priority": 1, "blockedBy": []}], "finishedEpics": []})
             out = proto("start", "round", stdin={"points": ["Pasted point"]}, cwd=repo, prepass=False).stdout
             first_calls = calls()
-            if [c["args"] for c in first_calls] != [["health", "--json", "--items", "decided,questions,ratification,accept,review,user"],
+            if [c["args"] for c in first_calls] != [["health", "--json", "--items", "decided,questions,accept,review,user"],
                                                     ["position", "--json"]] \
                     or first_calls[0]["actor"] != "lead0001" or Path(first_calls[0]["cwd"]).resolve() != repo.resolve() \
                     or "decided, awaiting release · decided (1):\n- fx-d: D" not in out \
@@ -10218,16 +10245,16 @@ def validate_protocol(root: Path, part: str) -> None:
             # and Alternatives with the reported Decision.
             prior = ("## Question\nAccept the grid design with six choices?\n\n## Alternatives Considered\n- Hold it\n\n"
                      "## Decision\nAccept, six choices.\n\n## Rationale\nReviewed.\n\n## Rule owner\ndocs/x.md\n")
-            configure(health={"counts": counts, "items": {"ratification": [
-                {"id": "fx-p", "status": "needs_ratification", "type": "decision", "title": "Grid design", "priority": 1, "blockedBy": []}]}},
-                      items={"fx-p": {"status": "needs_ratification", "issue_type": "decision", "title": "Grid design", "description": prior}})
+            configure(health={"counts": counts, "items": {"decided": [
+                {"id": "fx-p", "status": "decided", "type": "decision", "title": "Grid design", "priority": 1, "blockedBy": []}]}},
+                      items={"fx-p": {"status": "decided", "issue_type": "decision", "title": "Grid design", "description": prior}})
             proto("start", "round", cwd=repo)
             proto("step", stdin={"classes": {"fx-p": "user"}}, cwd=repo)
             proto("step", stdin={"select": ["fx-p"]}, cwd=repo)
-            proto("step", stdin={**ROUND_INFO, "questions": [question("Ratify the grid design?", board="fx-p")]}, cwd=repo)
+            proto("step", stdin={**ROUND_INFO, "questions": [question("Keep the grid decision?", board="fx-p")]}, cwd=repo)
             converge(cwd=repo)
             asked = shown(cwd=repo)
-            proto("answer", "--origin", "dialog", stdin={"marker": asked["batch"]["marker"], "answers": {"Ratify the grid design?": "Keep"}}, cwd=repo)
+            proto("answer", "--origin", "dialog", stdin={"marker": asked["batch"]["marker"], "answers": {"Keep the grid decision?": "Keep"}}, cwd=repo)
             qid = asked["questions"][0]["id"]
             if shown(cwd=repo)["step"] != "record":
                 proto("step", stdin={"pass": "challenge-rulings", "updates": [], "checked": {qid: "held"}, "rulings": []}, cwd=repo)

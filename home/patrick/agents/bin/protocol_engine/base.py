@@ -111,7 +111,7 @@ VERBS = (
          example='protocol help step', stdin=()),
 )
 VERB_ORIGINS = {verb.name: verb.origins for verb in VERBS if verb.origins}
-COLLECT_VIEWS = 'decided,questions,ratification,accept,review,user'
+COLLECT_VIEWS = 'decided,questions,accept,review,user'
 LIST_COMMAND = f'board health --items {COLLECT_VIEWS}'  # lists the open items Collect offers, but for the ready milestones and finished epics `board position` lists
 SCOPED_PASSES = ('step-back', 'ground')  # once per release on the revised records, before the approval (r8-q36)
 REACHES = ('contained', 'spreads')  # no "unsure": unsure is spreads (r4-q14, fails closed)
