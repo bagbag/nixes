@@ -191,7 +191,7 @@ step goes in a change set and runs on the user's confirmation.
    CR under its topic: the design its child, `checkpoint` `user`, status
    `needs_acceptance`. `board check --limit 0` clean but for user-accepted
    deviations; one `board claim` of a CR works end to end. Defer each open
-   work item not yet due; a plan pass groups the rest into CRs.
+   backlog work item; a plan pass groups the rest into CRs as they become due.
    Tell the user pulls may start.
    Output: check result.
 

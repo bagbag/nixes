@@ -73,10 +73,11 @@ dispatched or claimable; the checkpoint file is current; the report is given.
    are evidence and hints are planning input; a supersession is an authorized
    revision. Act on each `fix:` line the claim prints, or state why it does
    not apply.
-2. Block each open item the ruling changes on it
+2. Block each open item the ruling changes on it, except designs and spikes
    (`board block <item>… --on <ruling> --reason "<what changes>"`); relate
    items it only informs (`board link <ruling> <item> --type relates-to`). Add the
-   ruling id and owner anchor to each item's design.
+   ruling id and owner anchor to each item's design, then unblock the designs
+   and spikes (`board unblock <item> --on <ruling>`).
    Create missing work items; when cutting them needs a design or spike first,
    create it, block the ruling on it and stop: the ruling returns to planning
    when it closes, and the design never waits on the ruling.
@@ -138,8 +139,7 @@ Establish the outcome's contribution to its milestone:
   [Waiting and stacks](../../shared/change-requests.md#change-requests);
   design-only dependents read the accepted design on its branch.
 - Group items that sit in no CR into CRs per topic when they become due
-  (items waiting on an open decision or design stay ungrouped until it is
-  answered).
+  (items waiting on a decision or design stay ungrouped until it closes).
 - Set a CR's `look` or `view` only to override the defaults, naming the reason
   on the CR in a line that mentions the setting. Order CRs by dependencies:
   independent CRs run in parallel, overlapping work gets a dependency edge
