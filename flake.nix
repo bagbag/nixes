@@ -23,6 +23,7 @@
     nstdl = {
       url = "github:bagbag/nstdl";
       inputs.nixpkgs.follows = "nixpkgs";
+      inputs.nixpkgs-unstable.follows = "nixpkgs";
       inputs.flake-parts.follows = "flake-parts";
       inputs.disko.follows = "disko";
     };
