@@ -23,7 +23,6 @@ import contextlib
 import fcntl
 import hashlib
 import io
-import itertools
 import json
 import math
 import os
@@ -347,6 +346,16 @@ class Shared:
         temporary = self.path(f'state.{os.getpid()}.tmp')
         temporary.write_text(json.dumps({**self.state(), **fields}), encoding='utf-8')
         temporary.replace(self.path('state.json'))
+
+    def hold_wait(self):
+        """The wait lock, held until closed: a running wait finishes its send first, and no new one starts."""
+        wait = self.path('wait.lock').open('w')
+        try:
+            fcntl.flock(wait, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            print('board: waiting for the pending sync to finish', file=sys.stderr)
+            fcntl.flock(wait, fcntl.LOCK_EX)
+        return wait
 
     def lock(self, name: str, tries: int = 1):
         """The named lock, or None when another process holds it; released when the file closes or the process dies."""
@@ -684,7 +693,7 @@ def parse_time(value) -> datetime | None:
     if not isinstance(value, str) or not value:
         return None
     try:
-        moment = datetime.fromisoformat(value.replace('Z', '+00:00'))
+        moment = datetime.fromisoformat(value)
     except ValueError:
         return None
     return moment if moment.tzinfo is not None else moment.replace(tzinfo=timezone.utc)
@@ -1323,8 +1332,7 @@ def claim_order(board: Board, issue: dict):
 
 # Views
 
-HEALTH_VIEWS = ('questions', 'decided', 'ratification', 'ratify', 'released', 'review', 'accept', 'user', 'ready', 'held', 'blocked',
-                'outside', 'labels')
+HEALTH_VIEWS = ('questions', 'decided', 'ratification', 'ratify', 'released', 'review', 'accept', 'user', 'ready', 'held', 'blocked')
 LIFECYCLE_LABELS = ('human', 'decided', 'review', 'needs-ratification', 'waiting')
 
 
@@ -1332,9 +1340,6 @@ def health_views(board: Board, root: str | None) -> dict[str, tuple[str, list[di
     """view -> (heading, open items), the counts `board health` prints."""
     items = [issue for issue in board.listed(root) if issue['status'] != 'closed' and issue.get('issue_type') != 'epic']
     decisions = [issue for issue in items if issue.get('issue_type') == 'decision']
-
-    def epic_of(issue):
-        return next((a for a in board.ancestors(issue['id']) if board.by_id.get(a, {}).get('issue_type') == 'epic'), None)
 
     return {
         'questions': ('open questions', [i for i in decisions if i['status'] in ('open', 'in_progress')]),
@@ -1351,12 +1356,6 @@ def health_views(board: Board, root: str | None) -> dict[str, tuple[str, list[di
         'ready': ('claimable now (unassigned, unblocked)', [i for i in items if board.claimable(i)]),
         'held': ('held (assigned to a session, not closed)', [i for i in items if held_by_a_session(i)]),
         'blocked': ('waiting on open blockers', [i for i in items if board.open_blockers(i['id'])]),
-        # Outcome epics (r21-q153): only an item serving an outcome belongs in one; a stand-alone item carries a topic: label.
-        'outside': ('outside any epic, no topic: label',
-                    [i for i in items if epic_of(i) is None and i.get('issue_type') != 'gate'
-                     and not any(label.startswith('topic:') for label in i.get('labels') or [])]),
-        'labels': ('lifecycle labels (use statuses, assignment or blocks)',
-                   [i for i in items if set(i.get('labels') or []) & set(LIFECYCLE_LABELS)]),
     }
 
 
@@ -1766,16 +1765,6 @@ def doc_ref(anchor: str) -> str:
 
 # Deviations a board command fixes, which /board-migrate does not.
 COMMAND_FIXED = ('ruling-blocked',)
-# Squashed text (words run together): a flag, never a deviation. Calibrated on
-# the retro's samples (tools/ctx): clean board text 0 per 1,000 words, prompt
-# text 8.8, squashed board text 210.
-SQUASH_PER_1K = 50
-SQUASH_MIN_HITS = 2
-WORD_LIST = Path('/usr/share/dict/words')
-EXTRA_WORDS = {'lint', 'typecheck', 'json', 'readonly', 'repo', 'config', 'dms', 'orm', 'api', 'ai', 'auth', 'pass',
-               'fronts', 'checkpoint', 'workers', 'worker', 'diagnostics', 'integration', 'preexisting', 'canonical',
-               'held', 'scoped', 'errors', 'queue', 'install', 'workaround', 'workarounds'}
-SUFFIXES = ('s', 'es', 'ed', 'd', 'ing', 'ly', 'ized', 'ised', 'ation', 'ations', 'ies')
 
 
 def deviations(board: Board, root: str | None) -> list[tuple[str, str, str]]:
@@ -1865,73 +1854,6 @@ def unnamed_waits(board: Board, root: str | None) -> list[tuple[str, str]]:
     return flagged
 
 
-def word_list() -> set[str]:
-    try:
-        words = {w.strip().lower() for w in WORD_LIST.read_text(encoding='utf-8', errors='ignore').split() if len(w.strip()) >= 3}
-    except OSError:
-        words = set()
-    return words | EXTRA_WORDS
-
-
-class Squash:
-    """Port of the retro's detect.py: letter-digit runs and long lowercase
-    tokens that split into dictionary words. Without a word list only the
-    letter-digit runs count."""
-
-    def __init__(self, words: set[str]):
-        self.words = words
-        self.cache: dict[tuple[str, int], bool] = {}
-
-    def split(self, text: str, depth: int = 0) -> bool:
-        key = (text, depth)
-        if key not in self.cache:
-            if text in self.words and depth > 0:
-                result = True
-            elif depth >= 3:
-                result = False
-            else:
-                result = any(text[:i] in self.words and self.split(text[i:], depth + 1) for i in range(3, len(text) - 2))
-            self.cache[key] = result
-        return self.cache[key]
-
-    def squashed(self, token: str) -> bool:
-        if re.fullmatch(r'[A-Za-z]+\d+[A-Za-z]{3,}|\d+[a-z]{4,}[A-Z]*|[a-z]{3,}\d+[a-z]*', token):
-            return True
-        if not self.words or not re.fullmatch(r'[A-Z]?[a-z]{10,}', token):
-            return False
-        lower = token.lower()
-        if lower in self.words or any(lower.endswith(x) and lower[:-len(x)] in self.words for x in SUFFIXES) \
-                or (lower.endswith('ies') and lower[:-3] + 'y' in self.words):
-            return False
-        return self.split(lower)
-
-    def score(self, texts: list[str]) -> tuple[int, int, list[str]]:
-        words, hits = 0, []
-        for text in texts:
-            for token in re.split(r'[\s,;:()\[\]"\'→=+]+', re.sub(r'`[^`]*`', '', text)):
-                token = token.strip('.!?')
-                if not token:
-                    continue
-                words += 1
-                if not any(c in token for c in '/._-') and self.squashed(token):
-                    hits.append(token)
-        return words, len(hits), hits
-
-
-def squash_flags(board: Board, root: str | None, words: set[str]) -> list[tuple[str, str]]:
-    squash = Squash(words)
-    flagged = []
-    for issue in board.scoped(root):
-        if issue['status'] == 'closed':
-            continue
-        # Editable fields only: comments are history.
-        texts = [str(issue.get(f) or '') for f in ('title', 'description', 'design', 'acceptance_criteria', 'notes')]
-        total, hits, examples = squash.score(texts)
-        if hits >= SQUASH_MIN_HITS and 1000 * hits / max(total, 1) > SQUASH_PER_1K:
-            flagged.append((issue['id'], f"{1000 * hits / total:.0f} squashed per 1,000 words, e.g. {', '.join(examples[:3])}"))
-    return flagged
-
-
 def hold_flags(board: Board, root: str | None) -> tuple[list[tuple[str, str]], list[tuple[str, str]]]:
     """(stale holds, forced holds) as (id, detail) among the held work items in scope."""
     held = [issue for issue in board.scoped(root) if issue['status'] != 'closed' and issue.get('assignee') and is_work_hold(issue)]
@@ -1940,24 +1862,24 @@ def hold_flags(board: Board, root: str | None) -> tuple[list[tuple[str, str]], l
     return stale, forced
 
 
-def old_review_folder(board: Board) -> list[str]:
-    """The shared `<main>-review` folder the review on its own branch replaced (accept.md User review): the board never deletes it, the
-    user removes it. At most one line."""
-    try:
-        old = Path(f'{main_of(board)}-review')
-    except BoardError:
-        return []
-    return [f'{old} is the old shared review folder, which nothing uses now: remove it when you no longer need it (git worktree remove {old})'] if old.exists() else []
+def no_topic(board: Board, root: str | None) -> list[tuple[str, str]]:
+    """Open items outside any epic without a topic: label. Outcome epics (r21-q153): only an item serving an outcome belongs in
+    one; a stand-alone item carries a topic: label."""
+    return [(issue['id'], issue.get('title', '')) for issue in board.scoped(root)
+            if issue['status'] != 'closed' and issue.get('issue_type') not in ('epic', 'gate')
+            and not any(board.by_id.get(a, {}).get('issue_type') == 'epic' for a in board.ancestors(issue['id']))
+            and not any(label.startswith('topic:') for label in issue.get('labels') or [])]
 
 
 def check_json(board: Board, args) -> dict:
     """Every finding of `board check`, unbudgeted: deviations by class, then the flags."""
+    stale, forced = hold_flags(board, args.root)
     return {'deviations': [{'id': item_id, 'class': kind, 'detail': detail} for item_id, kind, detail in deviations(board, args.root)],
-            'squashed': [{'id': item_id, 'detail': detail} for item_id, detail in squash_flags(board, args.root, word_list())],
             'unnamedBlockers': [{'id': item_id, 'detail': detail} for item_id, detail in unnamed_waits(board, args.root)],
             'unlinkedRevisions': unlinked_revision_rows(board, args.root),
-            'staleHolds': [{'id': item_id, 'detail': detail} for item_id, detail in hold_flags(board, args.root)[0]],
-            'forcedHolds': [{'id': item_id, 'detail': detail} for item_id, detail in hold_flags(board, args.root)[1]]}
+            'noTopic': [{'id': item_id, 'detail': title} for item_id, title in no_topic(board, args.root)],
+            'staleHolds': [{'id': item_id, 'detail': detail} for item_id, detail in stale],
+            'forcedHolds': [{'id': item_id, 'detail': detail} for item_id, detail in forced]}
 
 
 def check(board: Board, args) -> int:
@@ -1969,11 +1891,6 @@ def check(board: Board, args) -> int:
                 for item_id, kind, detail in found if kind == name]
         if rows:
             section(f'{name} ({doc_ref(anchor)})', rows, limit)
-    words = word_list()
-    flags = squash_flags(board, args.root, words)
-    note = '' if len(words) > len(EXTRA_WORDS) else f'; no word list at {WORD_LIST}, letter-digit runs only'
-    section(f'flag, not a deviation: squashed text on open items{note}',
-            [f'  {item_id}  squashed  {detail}' for item_id, detail in flags], limit)
     section('flag, not a deviation: unnamed waits on open items (board-core.md#dependencies)',
             [f'  {item_id}  unnamed-blocker  {detail}' for item_id, detail in unnamed_waits(board, args.root)], limit)
     section('flag, not a deviation: revisions without a supersedes or revise link (board-coordination.md#rulings)',
@@ -1983,7 +1900,8 @@ def check(board: Board, args) -> int:
             [f'  {item_id}  stale-hold  {detail}' for item_id, detail in stale], limit)
     section('flag, not a deviation: holds past the worker cap (board claim --force)',
             [f'  {item_id}  forced-hold  {detail}' for item_id, detail in forced], limit)
-    section('flag, not a deviation: old review folder', [f'  {detail}' for detail in old_review_folder(board)], limit)
+    section('flag, not a deviation: outside any epic, no topic: label (board-coordination.md)',
+            [f'  {item_id}  no-topic  {title}' for item_id, title in no_topic(board, args.root)], limit)
     return 1 if found else 0
 
 
@@ -2233,9 +2151,7 @@ def review_line(held: dict) -> str:
 
 
 def show(board: Board, args) -> int:
-    missing = [item_id for item_id in args.ids if item_id not in board.by_id]
-    if missing:
-        raise BoardError(f"unknown {', '.join(missing)}")
+    known_items(board, args.ids)
     issues = [board.by_id[item_id] for item_id in args.ids]
     known = {key for issue in board.issues for key in issue} | ITEM_FIELDS
     unknown = [field for field in args.fields if field not in known]
@@ -2375,9 +2291,7 @@ def field_export(board: Board, args) -> int:
     """`board field export <id>... [--field F]...`: each field's text in a scratch file to edit in place, never rewrite from memory.
     An export edited since and not applied is never overwritten (apply or discard it); an untouched one is refreshed."""
     names = field_names(args.fields)
-    missing = [item_id for item_id in args.ids if item_id not in board.by_id]
-    if missing:
-        raise BoardError(f"unknown {', '.join(missing)}")
+    known_items(board, args.ids)
     folders = {item_id: FieldFolder(item_id) for item_id in dict.fromkeys(args.ids)}
     kept = [(item_id, name) for item_id, folder in folders.items() for name in names if folder.edited(name)]
     if kept:
@@ -2776,9 +2690,7 @@ def held_skips(board: Board, scoped: list[dict], kinds: list[str], actor: str) -
     known = board.registry()
     lines = []
     for issue in skipped:
-        holder = session_actor(issue['assignee'])
-        entry = known.get(holder)
-        gone = liveness(entry) == 'GONE' or (entry is None and holder in board.ended())
+        gone = holder_gone(board, known, issue['assignee'])
         lines.append(f"  held: {issue['id']} {issue['status']}, held by {issue['assignee']} ({'gone' if gone else 'live'}), "
                      f"updated {age(board.last_activity(issue))} ago")
     return lines
@@ -2821,8 +2733,8 @@ def claim_candidates(board: Board, scoped: list[dict], kinds: tuple[str, ...], a
     """What a bare claim tries, in claim order: claimable in the session's kinds, minus its own hand-overs (lazily, the
     authorship lookup reads history)."""
     for issue in sorted((i for i in scoped if board.claimable(i) in kinds), key=lambda i: claim_order(board, i)):
-        if issue['status'] == 'in_review' and board.claimable(issue) == 'review' and authorship(board, issue)[0] \
-                and session_actor(authorship(board, issue)[0]) == session_actor(actor):
+        if issue['status'] == 'in_review' and board.claimable(issue) == 'review' and (author := authorship(board, issue)[0]) \
+                and session_actor(author) == session_actor(actor):
             continue  # your own hand-over needs another reviewer
         yield issue
 
@@ -3022,8 +2934,8 @@ def take(board: Board, args) -> int:
         refusal = foreign_claim(board, issue['id']) or elsewhere_refusal(board, issue, 'take', args.agreed)
         if refusal:
             raise BoardError(refusal)
-        if board.is_cr(issue['id']) and issue['status'] == 'in_review' and authorship(board, issue)[0] \
-                and session_actor(authorship(board, issue)[0]) == session_actor(actor):
+        if board.is_cr(issue['id']) and issue['status'] == 'in_review' and (author := authorship(board, issue)[0]) \
+                and session_actor(author) == session_actor(actor):
             raise BoardError(f"{issue['id']}: your own hand-over needs another reviewer")
         previous = issue.get('assignee') or 'nobody'
         if previous == actor:
@@ -3189,12 +3101,16 @@ def cr_worktree(main: Path, cr_id: str) -> Path:
 
 def exclude_worktrees(main: Path) -> None:
     """Adds `/.worktrees/` to the repository's local exclude file (never a committed ignore line) before a worktree is added."""
-    exclude, line = git_exclude(main), f'/{WORKTREES}/'
+    exclude_line(git_exclude(main), f'/{WORKTREES}/')
+
+
+def exclude_line(exclude: Path, line: str, why: str = '') -> None:
+    """Adds `line` (after a `# why` comment) to a local exclude file once."""
     text = exclude.read_text(encoding='utf-8') if exclude.is_file() else ''
     if line not in text.splitlines():
         exclude.parent.mkdir(parents=True, exist_ok=True)
         with exclude.open('a', encoding='utf-8') as out:  # append: keeps lines another writer added meanwhile
-            out.write(('\n' if text and not text.endswith('\n') else '') + line + '\n')
+            out.write(('\n' if text and not text.endswith('\n') else '') + (f'# {why}\n' if why else '') + line + '\n')
 
 
 class GitView(NamedTuple):
@@ -5778,7 +5694,7 @@ def update_command(board: Board, args) -> int:
         changes += ['--title', args.title]
     if args.priority is not None:
         changes += ['--priority', str(args.priority)]
-    labels, unlabels = comma_list(args.label), comma_list(args.unlabel)
+    labels, unlabels = args.label, args.unlabel
     if refusal := label_refusal([*labels, *unlabels]):
         raise BoardError(refusal)
     changes += [flag for label in labels for flag in ('--add-label', label)] + [flag for label in unlabels for flag in ('--remove-label', label)]
@@ -5906,7 +5822,7 @@ def revise(board: Board, args) -> int:
     if old['status'] in ('open', 'in_progress'):
         raise BoardError(f"{args.old}: {old['status']}, not yet a ruling; amend the question instead")
     parent = args.parent or board.parent.get(args.old)
-    labels = comma_list(args.label) if args.label \
+    labels = args.label if args.label \
         else [label for label in old.get('labels') or [] if label.startswith('topic:')]
     new = create_item(board, args.title, 'decision', parent=parent, labels=labels, holds=holds, verb='ruling', priority=args.priority if args.priority is not None else old.get('priority', 2),
                       description=read_text_arg(args.body_file), external_ref=args.external_ref or None,
@@ -6226,12 +6142,17 @@ def hiding_excludes() -> list[str]:
 KEPT_EMBEDDED = '.beads.before-server-'  # an embedded board's folder, kept beside the server board made from it
 
 
+def exported() -> list[dict]:
+    """Every row of `bd export` (issues, then the other record kinds)."""
+    return [json.loads(row) for row in bd_checked('export').splitlines() if row.strip()]
+
+
 def to_server(beads: Path) -> None:
     """`board setup --server` on an embedded board: bd's backup into a new server board, restored whole (Dolt history
     included), the old folder kept beside it. A failure removes what it made and puts the old folder back."""
     root, exclude = beads.parent, git_exclude()
     database = json.loads((beads / 'metadata.json').read_text(encoding='utf-8')).get('dolt_database') or default_prefix(root)
-    before = {json.loads(row)['id'] for row in bd_checked('export').splitlines() if row.strip()}
+    before = {row['id'] for row in exported()}
     saved = exclude.read_bytes() if exclude.exists() else None
     kept = root / f"{KEPT_EMBEDDED}{utcnow().strftime('%Y%m%d-%H%M%S')}"
     with tempfile.TemporaryDirectory(prefix='board-to-server-') as store:
@@ -6246,7 +6167,7 @@ def to_server(beads: Path) -> None:
             bd_checked('init', '--server', '--stealth', '--prefix', database, '--skip-hooks', '--skip-agents', stdin='')
             bd_checked('backup', 'restore', '--force', store)
             bd_checked('backup', 'remove')  # the restore registers the temporary backup for future syncs
-            lost = before - {json.loads(row)['id'] for row in bd_checked('export').splitlines() if row.strip()}
+            lost = before - {row['id'] for row in exported()}
             if lost:
                 raise BoardError(f"the server board lacks {', '.join(sorted(lost))}; nothing converted")
         except BaseException:
@@ -6257,10 +6178,7 @@ def to_server(beads: Path) -> None:
                 exclude.write_bytes(saved)
             bd('backup', 'remove')
             raise
-    pattern = f'/{KEPT_EMBEDDED}*/'
-    if pattern not in (exclude.read_text(encoding='utf-8') if exclude.exists() else '').splitlines():
-        with exclude.open('a', encoding='utf-8') as handle:
-            handle.write(f"\n# board setup --server: an embedded board's old folder\n{pattern}\n")
+    exclude_line(exclude, f'/{KEPT_EMBEDDED}*/', "board setup --server: an embedded board's old folder")
     print(f'converted the board to server mode, {len(before)} items; the embedded board is kept in {kept}')
 
 
@@ -6401,7 +6319,7 @@ def share(args) -> int:
     labelled = 0
     if not config_value(SHARED_BY):
         # Closed items too: an open child takes its queue from a closed parent.
-        issues = [json.loads(row) for row in bd_checked('export').splitlines() if row.strip()]
+        issues = exported()
         top = [issue['id'] for issue in issues if issue.get('_type', 'issue') == 'issue' and not queue_labels(issue.get('labels') or [])
                and not any(dep.get('type') == 'parent-child' for dep in issue.get('dependencies') or [])]
         for start in range(0, len(top), 200):
@@ -6488,14 +6406,8 @@ def rejoin(sharing: Shared, url: str) -> None:
     """A moved board: keep the old folder as a copy, join the new board, list what the new one lacks. A failed join puts
     the old folder back."""
     root, beads = sharing.root, sharing.beads
-    wait = sharing.path('wait.lock').open('w')  # a running wait finishes its send first, and no new one starts
-    try:
-        fcntl.flock(wait, fcntl.LOCK_EX | fcntl.LOCK_NB)
-    except OSError:
-        print('board: waiting for the pending sync to finish', file=sys.stderr)
-        fcntl.flock(wait, fcntl.LOCK_EX)
-    with wait:
-        old = [json.loads(row) for row in bd_checked('export').splitlines() if row.strip()]
+    with sharing.hold_wait():
+        old = exported()
         stop_server(root)
         kept = root / f"{KEPT}{utcnow().strftime('%Y%m%d-%H%M%S')}"
         beads.rename(kept)
@@ -6504,13 +6416,9 @@ def rejoin(sharing: Shared, url: str) -> None:
         except BaseException:
             kept.rename(beads)
             raise
-    exclude = git_exclude()
-    pattern = f'/{KEPT}*/'
-    if pattern not in (exclude.read_text(encoding='utf-8') if exclude.exists() else '').splitlines():
-        with exclude.open('a', encoding='utf-8') as handle:
-            handle.write(f'\n# board join: a moved board\'s old folder\n{pattern}\n')
+    exclude_line(git_exclude(), f'/{KEPT}*/', "board join: a moved board's old folder")
     (kept / 'board-export.jsonl').write_text(''.join(json.dumps(row) + '\n' for row in old), encoding='utf-8')
-    present = {json.loads(row)['id'] for row in bd_checked('export').splitlines() if row.strip()}
+    present = {row['id'] for row in exported()}
     missing = [row for row in old if row.get('_type', 'issue') == 'issue' and row['id'] not in present]
     print(f'joined {url}; the board before the move is kept in {kept}.')
     if missing:
@@ -6540,13 +6448,7 @@ def move(args) -> int:
     refs = readable_remote(url)
     if refs and 'refs/dolt/data' in refs:
         raise BoardError(f'{url} already holds board data: name a fresh repository')
-    wait = shared.path('wait.lock').open('w')
-    try:
-        fcntl.flock(wait, fcntl.LOCK_EX | fcntl.LOCK_NB)
-    except OSError:
-        print('board: waiting for the pending sync to finish', file=sys.stderr)
-        fcntl.flock(wait, fcntl.LOCK_EX)
-    with wait:
+    with shared.hold_wait():
         bd('dolt', 'commit', '-m', 'before the move')  # nothing to commit when the wait just sent
         sent = bd('sync', '--remote', shared.remote)
         if sent.returncode != 0:
@@ -6629,7 +6531,7 @@ def send(board: Board, args) -> int:
         flags += ['--add-label', target] if target not in labels else []
         flags += ['--assignee', ''] if issue.get('assignee') == USER_HOLD else []
         # Every send stamps the time, a pass-on and a repeat included: the inbox shows how long an item waited there (r38-q217).
-        bd_checked('update', issue['id'], *flags, '--set-metadata', f"{SENT_AT}={utcnow().strftime('%Y-%m-%dT%H:%M:%SZ')}", '--json')
+        bd_checked('update', issue['id'], *flags, '--set-metadata', f"{SENT_AT}={stamp()}", '--json')
         print(f"sent {issue['id']} to {args.person}'s inbox")
     return 0
 
@@ -6640,11 +6542,6 @@ def read_text_arg(path: str) -> str:
         return sys.stdin.read() if path == '-' else Path(path).read_text(encoding='utf-8')
     except (OSError, UnicodeDecodeError) as error:
         raise BoardError(f'cannot read {path}: {error}') from None
-
-
-def comma_list(values: list[str]) -> list[str]:
-    """Repeated and comma-separated option values as one list."""
-    return [part.strip() for value in values for part in value.split(',') if part.strip()]
 
 
 def flag_node(args) -> tuple[dict, list[dict]]:
@@ -6664,7 +6561,7 @@ def flag_node(args) -> tuple[dict, list[dict]]:
     for flag, key in (('description_file', 'description'), ('design_file', 'design'), ('acceptance_file', 'acceptance_criteria')):
         if getattr(args, flag) is not None:
             node[key] = read_text_arg(getattr(args, flag))
-    labels = comma_list(args.label)
+    labels = args.label
     if args.parent:
         parents = bd_show([args.parent], comments=False)
         if not parents:
@@ -6679,7 +6576,7 @@ def flag_node(args) -> tuple[dict, list[dict]]:
             raise BoardError('--metadata takes key=value')
         node['metadata'] = {key: value for key, _, value in pairs}
     edges, deps = [], []
-    for dep in comma_list(args.deps):
+    for dep in args.deps:
         kind, sep, target = dep.partition(':')
         kind, target = (kind, target) if sep else ('blocked-by', dep)
         if not target:
@@ -6752,7 +6649,7 @@ def create_command(args) -> int:
     metadata = [(key, str(value)) for node in nodes for key, value in (node.get('metadata') or {}).items()]
     if refusal := default_look_refusal(metadata):
         raise BoardError(refusal)
-    given = comma_list(args.holds)
+    given = args.holds
     holds_value = ','.join(given) if args.holds else None
     decides = any(node.get('type') == 'decision' for node in nodes)
     if holds_value is not None and not decides:
@@ -7003,9 +6900,9 @@ def run_command(argv: list[str]) -> int:
 
     def draft(value: str) -> str:
         try:
-            return sys.stdin.read() if value == '-' else Path(value).read_text(encoding='utf-8')
-        except (OSError, UnicodeDecodeError) as error:
-            raise argparse.ArgumentTypeError(f'cannot read {value}: {error}') from None
+            return read_text_arg(value)
+        except BoardError as error:
+            raise argparse.ArgumentTypeError(str(error)) from None
 
     sub.add_argument('--like', type=draft, metavar='FILE|-', help=f'terms from a draft: its {LIKE_TERMS} rarest board words')
     sub.add_argument('--docs', action=Values, default=[], metavar='PATH[,PATH...]',
@@ -7016,8 +6913,7 @@ def run_command(argv: list[str]) -> int:
               wait_command, [scope, queues])
     sub.add_argument('--timeout', type=float, metavar='SECONDS', help='give up with exit 3 after this long (default: never)')
     sub.add_argument('--interval', type=float, metavar='SECONDS', help=f'gap between reads (default {WAIT_SECONDS})')
-    sub = add('mine', 'items held by this session and its workers', mine, [scope, listing])
-    sub.add_argument('--json', action='store_true', help='{session, actor, items}; every row')
+    add('mine', 'items held by this session and its workers', mine, [scope, listing])
     sub = add('console', 'JSON for the console pane from one snapshot: {counts, items (mine), sessions, held (position)}',
               console, [scope])
     sub.set_defaults(items=set(), limit=0)
@@ -7258,7 +7154,7 @@ def run_command(argv: list[str]) -> int:
         except BoardError as error:
             print(f'board: {error}', file=sys.stderr)
             return refused
-    JSON_VIEWS = {health: health_json, position: position_json, mine: mine_json, related: related_json, check: check_json}
+    JSON_VIEWS = {health: health_json, position: position_json, related: related_json, check: check_json}
     try:
         # Status views read non-closed items. These read closed items too (check: closed decisions named in text;
         # block, revise, release, supersede: a closed blocker or old record) or comments (related, check).

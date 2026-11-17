@@ -3,13 +3,13 @@ from __future__ import annotations
 
 import copy
 
-from .base import ProtocolError, lines
+from .base import SCOPED_PASSES, ProtocolError, lines
 from . import schema, words
-from .boards import statuses, view_rows
+from .boards import session_of, statuses, view_rows
 from .engine import Context, fail
 from .questions import disclosure_error
 from .told import report_hint
-from .release_set import HIT_CLASSES, SCOPED_PASSES, apply_changes, drop, in_set, ruling_changes, scoped_records, set_rows, stop
+from .release_set import HIT_CLASSES, apply_changes, drop, in_set, ruling_changes, scoped_records, set_rows, stop
 
 
 def board_check_enter(ctx: Context) -> str | None:
@@ -166,7 +166,7 @@ def board_targets(ctx: Context, closes: list[str], olds: list[str]) -> list[str]
                                'issue_type', '--field', 'assignee')
     except ProtocolError as error:
         return [f'closes and supersedes: {error}']
-    me = ctx.board.actor.split('/', 1)[0]
+    me = session_of(ctx.board.actor)
     problems = []
     for question in closes:
         row = found.get(question) or {}
@@ -174,7 +174,7 @@ def board_targets(ctx: Context, closes: list[str], olds: list[str]) -> list[str]
             continue  # closed already: the release skips it
         if row.get('issue_type') != 'decision' or row.get('status') not in ('open', 'in_progress'):
             problems.append(f"closes.{question}: {row.get('status')} {row.get('issue_type')}, not an open question")
-        elif row.get('assignee') and row['assignee'].split('/', 1)[0] != me:
+        elif row.get('assignee') and session_of(row['assignee']) != me:
             problems.append(f"closes.{question}: held by {row['assignee']}; hand it off first (comment, or ask its "
                             'session), or leave it out')
     return problems

@@ -68,6 +68,19 @@ class Store:
             self.pending = []
 
 
+def new_round(**fields) -> dict:
+    """A round's state: the keys the shared views and the ask machinery read, then the protocol's own."""
+    return {'items': [], 'points': [], 'classes': {}, 'selected': [], 'questions': [], 'check': {}, 'pending': None,
+            'observed': {}, 'batch': None, 'batchSeq': 0, 'messages': [], **fields}
+
+
+def new_release(state: dict, **fields) -> dict:
+    """A release run's state (decide.md Release), from the board (`source`) or from record files (`records`)."""
+    return new_round(id=next_id(state, 'round', 'r'), protocol='release', step='recheck', scope='release', title=None, summary=None,
+                     checks={}, supersedes=[], closes={}, rulings=None, conditional=None, approval=None, owners={}, done=[],
+                     retry=False, stopped=None, outcome=None, scoped={'done': []}, **fields)
+
+
 def next_id(state: dict, kind: str, prefix: str) -> str:
     state['seq'][kind] = state['seq'].get(kind, 0) + 1
     return f'{prefix}{state["seq"][kind]}'

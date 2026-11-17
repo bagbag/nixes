@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from .base import BATCH, ProtocolError, THINK_MORE, TITLE_MAX, cut, lines, recommended_suffix
 from . import words
-from .engine import Context, PROTOCOLS, by_id, fail, premise_status, questions
+from .engine import Context, PROTOCOLS, by_id, clear_reading, fail, premise_status, questions
 from .questions import check_question
 from .release_set import ruling_changes
 from .told import first_time, report_hint
@@ -191,13 +191,10 @@ def ask_accept(ctx: Context, report: dict) -> str:
         return away_settle(ctx, report)
     if ctx.round['batch'] and not report.get('pass'):
         fail(f"waiting on the user's answer to {ctx.round['batch']['marker']}; a pass report updates its questions")
-    for q in questions(ctx):
-        q.pop('typed', None)  # read: the step or pass report sends them out again
-    ctx.round.pop('reading', None)
+    clear_reading(ctx)  # read: the step or pass report sends them out again
     if report.get('pass'):
         if ctx.round['batch']:
-            ctx.log('batch-withdrawn', marker=ctx.round['batch']['marker'], reason='pass report')
-            batch_back(ctx)
+            withdraw_batch(ctx, 'pass report')
         _, changes, _ = record_pass(ctx, report)
         if changes:
             waiting = take_unchecked(ctx)
@@ -215,6 +212,12 @@ def approval_reasons(ctx: Context) -> list[str]:
 
 def approval_question(ctx: Context) -> dict | None:
     return next((q for q in ctx.round['questions'] if q['kind'] == 'confirm-own-rulings'), None)
+
+
+def withdraw_batch(ctx: Context, reason: str) -> None:
+    """The open batch goes back unanswered: a change to its questions withdraws it."""
+    ctx.log('batch-withdrawn', marker=ctx.round['batch']['marker'], reason=reason)
+    batch_back(ctx)
 
 
 def batch_back(ctx: Context) -> None:

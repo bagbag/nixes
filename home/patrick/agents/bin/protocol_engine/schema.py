@@ -4,12 +4,11 @@ Validation (`problems`, `needs`), refusal text and `protocol help` (`render`) re
 Prose (words.py) and rules across fields or against the round's state stay code at the call sites. No `from __future__ import
 annotations`: field types are read at run time."""
 import contextvars
-import dataclasses
 from dataclasses import MISSING, dataclass, field, fields
 from types import NoneType, UnionType
 from typing import Literal, Union, get_args, get_origin
 
-from .base import DROP_KINDS, EXPLORED_VERDICTS, KINDS, LEAN_CAUSES, PASSES, REACHES, SCOPED_PASSES, STAGED_KINDS, STRENGTHS, TOUCHES, VERBS, ProtocolError
+from .base import DROP_KINDS, EXPLORED_VERDICTS, LEAN_CAUSES, PASSES, REACHES, SCOPED_PASSES, STAGED_KINDS, STRENGTHS, TOUCHES, VERBS, ProtocolError
 
 
 class Text(str):
@@ -282,7 +281,6 @@ class Answer:
     annotations: dict = opt('question text to {"notes"}')
     response: str | None = opt()
     followUp: bool = opt()
-    afkTimeoutMs: float = opt('set when the dialog timed out')
 
 
 @form('answer-chat', where='answer --origin chat')

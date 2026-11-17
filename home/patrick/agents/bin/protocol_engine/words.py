@@ -7,7 +7,7 @@ from __future__ import annotations
 import re
 
 from .base import (
-    ALL_LENSES, AWAY, BATCH, CHECK_CAP, CHECKED_MAX, DESCRIPTION_MAX, HEADER_MAX, LIST_COMMAND, PROPOSAL_ROUNDS, SEEDS, STRONG_CRITERIA, SUMMARY_MAX,
+    AWAY, BATCH, CHECK_CAP, CHECKED_MAX, DESCRIPTION_MAX, HEADER_MAX, LIST_COMMAND, PROPOSAL_ROUNDS, SEEDS, STRONG_CRITERIA, SUMMARY_MAX,
     TEXT_LIMIT, TEXT_MAX, THINK_MORE, TITLE_MAX, cut, json_block, lines, plural
 )
 
@@ -666,8 +666,8 @@ def chat_recorded(qid: str) -> str:
     return f'Recorded the chat answer to {qid} with its quote.'
 
 
-def declined_note(marker: str, reason: str, partial: dict, cap: bool) -> str:
-    note = f"Batch {marker} {reason}: nothing recorded; its questions are back to ready."
+def declined_note(marker: str, partial: dict, cap: bool) -> str:
+    note = f"Batch {marker} declined: nothing recorded; its questions are back to ready."
     if partial:
         note += (' Answers given inside the declined batch (confirm them in the next batch, do not record them): '
                  + '; '.join(f'{text!r}: {answer!r}' for text, answer in partial.items()))
@@ -889,18 +889,6 @@ def status_line(r: dict | None) -> str:
         parts.append('records ' + ', '.join(f'{n} {state}' for state, n in states.items()))
     parts.append("`protocol show` repeats the step's instructions")
     return 'protocol: ' + ' · '.join(parts)
-
-
-def history_none() -> str:
-    return 'no protocol history'
-
-
-def history_row(session, round_id, s: dict) -> str:
-    def counts(table):
-        return ', '.join(f'{k} {v}' for k, v in sorted(table.items())) or 'none'
-    return (f"{session} {round_id}: passes {counts(s['passes'])}; changed something {counts(s['changed'])}; "
-            f"answers {counts(s['answers'])}; declines {s['declines']}; "
-            f"restarts {'; '.join(s['restarts']) or 'none'}; cap {', '.join(s['caps']) or 'not reached'}")
 
 
 NEXT_RELEASE = 'release (/release-round or ask)'
@@ -1279,20 +1267,18 @@ def approx(n: int, word: str) -> str:
     return f"~{n} {word}{'' if n == 1 else 's'}"
 
 
-def proposal_estimate(estimate) -> str:
-    """The model's estimates of a stored row; a row stored before they existed has none."""
-    if not isinstance(estimate, dict):
-        return ''
-    return f" · {approx(estimate.get('questions', 0), 'question')} · unblocks {approx(estimate.get('unblocks', 0), 'item')}"
+def proposal_estimate(estimate: dict) -> str:
+    """The model's estimates of a stored row."""
+    return f" · {approx(estimate['questions'], 'question')} · unblocks {approx(estimate['unblocks'], 'item')}"
 
 
 def proposal_text(rows: list[dict] | None) -> list[str]:
-    """A stored proposal's rows (`rows` None: none stored); a stored row may lack fields a later version wrote (a read never fails on it)."""
+    """A stored proposal's rows (`rows` None: none stored)."""
     if rows is None:
         return ['No proposal stored.']
-    rows = [f"{index}. {r.get('title', '')}" + proposal_estimate(r.get('estimate')) + (f" · {r['summary']}" if r.get('summary') else '')
+    rows = [f"{index}. {r['title']}" + proposal_estimate(r['estimate']) + f" · {r['summary']}"
             + (f" · leads with {' '.join(r['ids'])}" if r.get('ids') else '')
-            + f" · {'wants a fresh context' if r.get('fresh') else 'keeps the context'} · {r.get('why', '')}"
+            + f" · {'wants a fresh context' if r['fresh'] else 'keeps the context'} · {r['why']}"
             for index, r in enumerate(rows, 1)]
     return ['Stored proposal' + (' (the first row is the recommended one):' if rows else ' (no rounds: the console offers a compaction when the context is large):'),
             *rows]
@@ -1344,8 +1330,8 @@ def next_recommend() -> str:
 
 
 def proposal_topic(row: dict) -> str:
-    """A proposal row's round topic: its title and summary (a row stored before summaries has the title alone)."""
-    return f"{row['title']}: {row['summary']}" if row.get('summary') else row['title']
+    """A proposal row's round topic: its title and summary."""
+    return f"{row['title']}: {row['summary']}"
 
 
 def proposal_stored(rows: list[dict]) -> str:

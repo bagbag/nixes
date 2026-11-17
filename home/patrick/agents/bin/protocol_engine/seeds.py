@@ -170,11 +170,8 @@ def set_proposal(ctx: Context, report: dict) -> str:
 
 
 def proposal_rows(proposal: dict | None) -> list[dict] | None:
-    """The rows of a stored proposal that show and start, in the order `show --json` exposes them and the console numbers them
-    (a row without a title shows nowhere); None when no proposal is stored."""
-    if not proposal:
-        return None
-    return [one for one in proposal.get('rounds') or [] if isinstance(one, dict) and str(one.get('title') or '').strip()]
+    """The rows of a stored proposal, in the order `show --json` exposes them and the console numbers them; None when no proposal is stored."""
+    return proposal['rounds'] if proposal else None
 
 
 def proposal_row(ctx: Context, number: int, topic: str | None, ids: list[str]) -> dict:

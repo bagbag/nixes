@@ -81,22 +81,6 @@ def record_text(ctx: Context) -> str:
     )
 
 
-TOPIC_LINE = re.compile(r'\ATopic: (.*)\n')
-
-
-def record_topic(path: Path) -> str | None:
-    """The topic a record file's header names; a file of an old topic folder has the folder's name."""
-    head = path.read_text(encoding='utf-8')[:2000]
-    return found[1] if (found := TOPIC_LINE.match(head)) else None
-
-
-def topic_records(folder: Path, topic: str) -> list[Path]:
-    """The record files of `topic` in the records folder, archive subfolders included (read-only: each names its topic by its folder)."""
-    wanted = ' '.join(topic.split())
-    files = sorted(path for path in folder.rglob('*.md') if path.is_file()) if folder.is_dir() else []
-    return [path for path in files if (path.relative_to(folder).parts[0] if path.parent != folder else record_topic(path)) == wanted]
-
-
 def write_record(q: dict, path: Path, text: str) -> None:
     """A record file is created, never overwritten; only the rerun of a Record that wrote this question's file already rewrites it.
     A file holding the very text is done: a crash between the write and the state save left it, and the rerun goes on."""
@@ -465,9 +449,8 @@ def closed_enter(ctx: Context) -> None:
     r = ctx.round
     r['pending'], r['batch'] = None, None
     release_claims(ctx)
-    r['closedAt'] = utcnow()
     if ctx.board and refresh_board(ctx):
-        r['countsAt'] = r['closedAt']
+        r['countsAt'] = utcnow()
     ctx.log('closed', recorded=[q['id'] for q in r['questions'] if q.get('recorded')])
 
 

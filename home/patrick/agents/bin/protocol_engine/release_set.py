@@ -4,10 +4,10 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from .base import SCOPED_PASSES, lines
+from .base import lines
 from . import schema, words
-from .store import next_id
-from .boards import held_decided
+from .store import new_release
+from .boards import held_decided, split_holds
 from .engine import Context, fail
 from .told import report_hint
 from .away import SWITCH_TO_SOLO
@@ -103,31 +103,18 @@ def start_release(ctx: Context, ids: list[str]) -> None:
     if undecided:
         fail('not decided records: ' + ', '.join(f"{rid} ({rows[rid].get('status')} {rows[rid].get('issue_type')})"
                                                   for rid in undecided))
-    me = ctx.board.actor.split('/', 1)[0]
-    foreign = [rid for rid in ids if rows[rid].get('assignee') and rows[rid]['assignee'].split('/', 1)[0] != me]
-    gone = []
-    if foreign:
-        marks = {h['id']: h.get('mark') for h in ctx.board.json('position', '--json').get('held') or []}
-        live = [rid for rid in foreign if marks.get(rid) != 'gone']
-        if live:
-            fail('held by another live session: ' + ', '.join(f"{rid} ({rows[rid]['assignee']})" for rid in live)
-                 + '; ask it to hand them off, or name other ids')
-        gone = foreign
+    live, gone_holds = split_holds(ctx, {rid: rows[rid].get('assignee') or '' for rid in ids})
+    if live:
+        fail('held by another live session: ' + ', '.join(f'{rid} ({holder})' for rid, holder in live.items())
+             + '; ask it to hand them off, or name other ids')
+    gone = list(gone_holds)
     claim = [rid for rid in ids if rid not in gone and rows[rid].get('assignee') != ctx.board.actor]
     if gone:
         ctx.board.checked('take', *gone)
     if claim:
         ctx.board.checked('claim', *claim)
-    ctx.state['round'] = {
-        'id': next_id(ctx.state, 'round', 'r'), 'protocol': 'release', 'step': 'recheck',
-        'repo': ctx.board.repo, 'scope': 'release', 'source': source, 'title': None, 'summary': None,
-        # the round keys the shared views and the ask machinery read
-        'records': None, 'items': [], 'points': [], 'classes': {}, 'selected': [], 'questions': [], 'check': {},
-        'pending': None, 'observed': {}, 'batch': None, 'batchSeq': 0, 'messages': [],
-        'set': [{'id': rid, 'title': rows[rid].get('title') or '', 'state': 'set', 'reason': None} for rid in ids],
-        'checks': {}, 'supersedes': [], 'closes': {}, 'rulings': None, 'conditional': None, 'approval': None,
-        'owners': {}, 'done': [], 'retry': False, 'stopped': None, 'outcome': None, 'scoped': {'done': []},
-    }
+    ctx.state['round'] = new_release(ctx.state, repo=ctx.board.repo, source=source, records=None,
+                                     set=[{'id': rid, 'title': rows[rid].get('title') or '', 'state': 'set', 'reason': None} for rid in ids])
     ctx.round['title'] = release_label(ctx)
     ctx.log('start', protocol='release', repo=ctx.board.repo, records=ids, taken=gone, source=source)
     ctx.go('recheck')

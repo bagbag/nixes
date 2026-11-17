@@ -29,10 +29,10 @@ from pathlib import Path
 
 from .base import BIN, CHECK_CAP, Call, ProtocolError, VERBS, VERB_ORIGINS, Verb, _call, lines, utcnow
 from .session import resolve_session
-from .store import Store, next_id, next_records_round
+from .store import Store, new_round, next_id, next_records_round
 from .boards import Board, board_root
 from .engine import Context, PROTOCOLS, fail
-from .record import abandon_note, refresh_board, release_claims, topic_records
+from .record import abandon_note, refresh_board, release_claims
 from .away import SWITCH_TO_SOLO
 from .check import next_cycle, pending_view, refused_formats, start_scope
 from .ask import batch_back, withdraw_away
@@ -42,7 +42,7 @@ from .release_files import start_files
 from .release import stamp_release
 from .seeds import next_text, proposal_row, set_proposal
 from .views import (
-    headline, history_events, history_text, instructions, show_json, show_markdown, show_questions, status_line
+    headline, instructions, show_json, show_markdown, show_questions, status_line
 )
 from .verbs import answer, answered_line, decline, defer_round, drop_report, edit_round, nudge_report, prune, require_origin, restart
 
@@ -109,15 +109,12 @@ def start(ctx: Context, name: str, report: dict, scope: str = 'board', records: 
     if ctx.board is None and records is None:
         fail('no board here: `start round --no-board` records the round as files in the records folder (`protocol records`)')
     ctx.state.pop('proposal', None)  # a round starts from its proposal or without one: the next proposal is made after it
-    ctx.state['round'] = {'id': next_records_round(records, ctx.state) if records else next_id(ctx.state, 'round', 'r'), 'protocol': name, 'step': 'prepass',
-                          'subject': (subject or '').strip() or None, 'first': [],
-                          'repo': ctx.board.repo if ctx.board else None, 'scope': scope,
-                          'records': str(records.resolve()) if records else None, 'items': [],
-                          'named': list(dict.fromkeys(ids or [])), 'topic': (topic or '').strip() or None,
-                          'points': [], 'classes': {}, 'selected': [], 'questions': [], 'check': {}, 'pending': None,
-                          'observed': {}, 'batch': None, 'batchSeq': 0, 'messages': []}
+    ctx.state['round'] = new_round(id=next_records_round(records, ctx.state) if records else next_id(ctx.state, 'round', 'r'), protocol=name,
+                                   step='prepass', subject=(subject or '').strip() or None, first=[],
+                                   repo=ctx.board.repo if ctx.board else None, scope=scope, records=str(records.resolve()) if records else None,
+                                   named=list(dict.fromkeys(ids or [])), topic=(topic or '').strip() or None)
     if row:
-        ctx.round.update(title=row['title'].strip(), **({'summary': row['summary'].strip()} if row.get('summary') else {}))
+        ctx.round.update(title=row['title'], summary=row['summary'])
     ctx.log('start', protocol=name, repo=ctx.state['round']['repo'], scope=scope, named=ctx.round['named'] or None,
             topic=ctx.round['topic'], subject=ctx.round['subject'])
     for point in report.get('points') or []:
@@ -224,7 +221,7 @@ def cli(argv: list[str]) -> int:
     sub.add_argument('--no-board', action='store_true',
                      help="a topic outside this repository's board: no board reads or writes; records are files in the repo's records folder "
                           "(`protocol records`), which a release takes the ids from")
-    verb('records').add_argument('--topic', metavar='TEXT', help="list the record files of this topic (also the archive's topic folders) instead of the folder")
+    verb('records')
     sub = verb('restart')
     sub.add_argument('ids', nargs='+')
     sub.add_argument('--reason')
@@ -235,9 +232,6 @@ def cli(argv: list[str]) -> int:
     sub.add_argument('--json', action='store_true')
     sub = verb('status')
     sub.add_argument('--line', action='store_true', required=True)
-    sub = verb('history')
-    sub.add_argument('--all', action='store_true', help='every session in the state dir')
-    sub.add_argument('--json', action='store_true', help='the raw events')
     verb('help').add_argument('verb', nargs='?', choices=list(subs), metavar='verb', help='the verb to print in full: arguments, example and stdin forms')
     args = parser.parse_args(argv or ['help'])
     if args.command == 'help':
@@ -246,7 +240,7 @@ def cli(argv: list[str]) -> int:
     if args.command == 'records':
         try:
             folder = default_records()
-            _call.get().stdout.append(''.join(f'{path}\n' for path in topic_records(folder, args.topic)) if args.topic else f'{folder}\n')
+            _call.get().stdout.append(f'{folder}\n')
             return 0
         except ProtocolError as error:
             _call.get().stderr.append(f'protocol: {error}\n')
@@ -258,7 +252,7 @@ def cli(argv: list[str]) -> int:
     try:
         session, entry = resolve_session(args.session)
         store = Store(session)
-        write = args.command not in ('show', 'pending', 'status', 'history', 'scope')  # `next` saves the board's release count
+        write = args.command not in ('show', 'pending', 'status', 'scope')  # `next` saves the board's release count
         with store.locked(write):
             state = store.load()
             open_round = state.get('round') if (state.get('round') or {}).get('step') not in (None, 'closed') else None
@@ -271,8 +265,6 @@ def cli(argv: list[str]) -> int:
             board = Board(repo, entry.get('actor') or session[-8:]) if repo else None
             ctx = Context(store, state, entry, board)
             if args.command == 'start':
-                if args.no_board and any('/' in rid for rid in args.ids or []):  # the old form `--no-board <dir>`
-                    fail('--no-board takes no folder: the records go to the records folder (`protocol records`)')
                 args.no_board = default_records() if args.no_board else None
             require_origin(ctx, args.command, args.origin)
             output = run(ctx, args)
@@ -321,9 +313,6 @@ def run(ctx: Context, args) -> str:
         return words.COMPACTED
     if command == 'status':
         return status_line(ctx)
-    if command == 'history':
-        events = history_events(ctx.store, args.all)
-        return '\n'.join(json.dumps(e, ensure_ascii=False) for e in events) if args.json else history_text(events)
     if command == 'next' and not args.set:
         if ctx.board:
             refresh_board(ctx)
@@ -386,9 +375,9 @@ def run(ctx: Context, args) -> str:
         r['messages'].append({'text': report['text'], 'origin': args.origin, 'at': utcnow()})
         return json.dumps({**show_json(ctx), 'note': None}, indent=1, ensure_ascii=False)
     if command in ('answer', 'decline'):
-        batch = r['batch'] if command == 'answer' and not report.get('afkTimeoutMs') else None
+        batch = r['batch'] if command == 'answer' else None
         try:
-            note = answer(ctx, report, args.origin) if command == 'answer' else decline(ctx, report, args.origin, 'declined')
+            note = answer(ctx, report, args.origin) if command == 'answer' else decline(ctx, report, args.origin)
         except ProtocolError as error:
             raise ProtocolError(str(error), formats=words.CHAT_FORMAT if args.origin == 'chat' else '') from None
         ctx.messages.insert(0, note)
@@ -423,11 +412,10 @@ def run(ctx: Context, args) -> str:
         r['pending'] = None
         ctx.log('abandoned', step=r['step'])
         if r['protocol'] == 'release':  # the records stay decided and held
-            r['step'], r['closedAt'] = 'closed', utcnow()
+            r['step'] = 'closed'
             return words.release_abandoned(headline(ctx), ctx.messages, r['id'], ctx.board is not None)
         release_claims(ctx)
         r['step'] = 'closed'
-        r['closedAt'] = utcnow()
         if ctx.board and any(q.get('recorded') not in (None, 'deferred', 'file') for q in r['questions']):
             refresh_board(ctx)  # records written before the abandon are decided and held
         return words.round_abandoned(headline(ctx), ctx.messages, r['id'], abandon_note(r['questions']))

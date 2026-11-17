@@ -7,8 +7,6 @@ from datetime import datetime, timezone
 
 from .base import CHECK_CAP, VERSION
 from . import words
-from .session import state_root
-from .store import Store
 from .engine import Context, PROTOCOLS, by_id, fail
 from .record import release_next
 from .check import options_ids, pending_view, rescope_ids
@@ -66,7 +64,7 @@ def next_run(ctx: Context) -> dict | None:
     proposal = ctx.state.get('proposal')
     release = release_next(ctx)
     found = {**({'release': release} if release else {}),
-             **({'rounds': proposal_rows(proposal) or []} if isinstance(proposal, dict) else {})}
+             **({'rounds': proposal_rows(proposal)} if proposal else {})}
     return found or None
 
 
@@ -119,43 +117,6 @@ def show_questions(ctx: Context, ids: list[str]) -> str:
 
 def status_line(ctx: Context) -> str:
     return words.status_line(ctx.round)
-
-
-def history_events(store: Store, everywhere: bool) -> list[dict]:
-    files = sorted(state_root().glob('*.protocol/history.jsonl')) if everywhere else [store.dir / 'history.jsonl']
-    events = []
-    for path in files:
-        with contextlib.suppress(FileNotFoundError):
-            events += [json.loads(row) for row in path.read_text(encoding='utf-8').splitlines() if row.strip()]
-    return events
-
-
-def history_text(events: list[dict]) -> str:
-    rounds: dict[tuple, dict] = {}
-    for event in events:
-        key = (event.get('session'), event.get('round'))
-        if key[1] is None:
-            continue
-        summary = rounds.setdefault(key, {'passes': {}, 'changed': {}, 'restarts': [], 'declines': 0, 'caps': [],
-                                          'answers': {}})
-        kind = event['event']
-        if kind == 'pass':
-            origin = event.get('origin', 'model')
-            summary['passes'][origin] = summary['passes'].get(origin, 0) + 1
-            if event.get('changes'):
-                summary['changed'][origin] = summary['changed'].get(origin, 0) + 1
-        elif kind == 'restart':
-            summary['restarts'].append(f"{','.join(event.get('questions', []))}" + (f" ({event['reason']})" if event.get('reason') else ''))
-        elif kind == 'decline':
-            summary['declines'] += 1
-        elif kind == 'cap-decision':
-            summary['caps'].append(event.get('choice'))
-        elif kind == 'answered':
-            origin = event.get('origin')
-            summary['answers'][origin] = summary['answers'].get(origin, 0) + len(event.get('questions', []))
-    if not rounds:
-        return words.history_none()
-    return '\n'.join(words.history_row(session, round_id, s) for (session, round_id), s in rounds.items())
 
 
 def next_words(ctx: Context) -> str | None:

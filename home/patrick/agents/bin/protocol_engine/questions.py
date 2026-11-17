@@ -10,7 +10,7 @@ from .base import (
 from . import schema
 from .schema import CONTENT, PRESENTATION, SCHEDULING
 from .store import next_id
-from .boards import claim_items, split_holds
+from .boards import split_holds, take_and_claim
 from .engine import Context, by_id, fail, premise_status, questions, touch
 
 
@@ -223,11 +223,7 @@ def join_outside(ctx: Context) -> None:
     live, gone = split_holds(ctx, {key: (rows.get(key) or {}).get('assignee') or '' for key in outside})
     errors += [f'{key} is held by {holder}, a live session, so it cannot join the round' for key, holder in live.items()]
     refuse_all(errors)
-    if gone:
-        ctx.board.checked('take', *gone)
-        r['claimed'] = [*r.get('claimed', []), *gone]
-    if free := [key for key in outside if key not in gone]:
-        claim_items(ctx, free)
+    take_and_claim(ctx, list(gone), [key for key in outside if key not in gone])
     r['selected'] = [*r['selected'], *outside]
     r['items'] = [*r['items'], *({'id': key, 'title': rows[key].get('title') or '', 'status': rows[key].get('status')} for key in outside)]
     ctx.log('joined', items=outside)

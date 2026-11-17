@@ -263,7 +263,7 @@ export const stuckPassText = (command: string, args: string): string => `The rou
 
 export const PROTOCOL_TOOL_DESCRIPTION = [
   "Runs the protocol engine for this session's round (`protocol <args>`): one call per step, per-question updates as JSON on stdin; the output is the next step.",
-  'Read: ["show","--json"], ["show"], ["show","q3"] (that question whole), ["status","--line"], ["history"], ["next"], ["help"] (every verb with an example).',
+  'Read: ["show","--json"], ["show"], ["show","q3"] (that question whole), ["status","--line"], ["next"], ["help"] (every verb with an example).',
   'Each `quote` is the user\'s exact words.',
   'Record an answer the user typed in chat: ["answer"] with stdin {"question","answer","quote"}.',
   'Apply a change the user asked for to the questions: ["edit"] with stdin {"updates","quote"}.',

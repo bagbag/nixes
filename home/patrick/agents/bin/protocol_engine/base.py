@@ -103,11 +103,9 @@ VERBS = (
     # the console's read of the pending pass: no origin
     Verb(name='pending', audience='console', origins=(), summary='the pending pass as JSON, or null', example='protocol pending', stdin=()),
     Verb(name='status', audience='session', origins=(), summary='one recovery line', example='protocol status --line', stdin=()),
-    Verb(name='history', audience='session', origins=(), summary='passes by origin, answers, declines, restarts per round',
-         example='protocol history --all', stdin=()),
     Verb(name='records', audience='session', origins=(),
-         summary="this repository's records folder for rounds without a board, or --topic <text>: the record files of that topic; needs no session",
-         example='protocol records --topic "Cache: pick one"', stdin=()),
+         summary="this repository's records folder for rounds without a board; needs no session",
+         example='protocol records', stdin=()),
     Verb(name='help', audience='session', origins=(), summary='every verb with an example, or one verb in full (a call with no arguments prints the list too)',
          example='protocol help step', stdin=()),
 )

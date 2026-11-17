@@ -4,7 +4,7 @@ from __future__ import annotations
 from .base import CLASSES, COLLECT_VIEWS, ProtocolError, lines
 from . import schema, words
 from .store import next_id
-from .boards import claim_items, foreign_holds, read_counts, view_rows
+from .boards import foreign_holds, read_counts, session_of, take_and_claim, view_rows
 from .engine import Context, fail
 from .told import first_time, report_hint
 
@@ -142,11 +142,8 @@ def select_accept(ctx: Context, report: dict) -> str:
         return 'closed'
     claims = [key for key in chosen if pool[key]['source'] == 'board']
     taken = [key for key in claims if pool[key].get('heldBy')]  # a gone session's hold: take it over, as the release does
-    if taken and ctx.board:
-        ctx.board.checked('take', *taken)
-        ctx.round['claimed'] = [*ctx.round.get('claimed', []), *taken]
-    if claims and ctx.board and [key for key in claims if key not in taken]:
-        claim_items(ctx, [key for key in claims if key not in taken])
+    if ctx.board:
+        take_and_claim(ctx, taken, [key for key in claims if key not in taken])
     ctx.log('selected', selected=chosen, claimed=claims if ctx.board else [])
     ctx.round['selected'] = list(chosen)
     return 'stage'
@@ -183,7 +180,7 @@ def open_items(ctx: Context, found: dict, position: dict) -> tuple[list[dict], d
         if holder == 'user':
             waiting.append(seen[rid])
         else:
-            elsewhere.setdefault(holder.split('/', 1)[0], []).append(rid)
+            elsewhere.setdefault(session_of(holder), []).append(rid)
         del seen[rid]
     return list(seen.values()), elsewhere, waiting
 

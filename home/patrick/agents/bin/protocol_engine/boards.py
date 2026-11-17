@@ -70,13 +70,17 @@ def read_counts(found: dict) -> dict[str, dict]:
     return {key: counts[key] for key in COUNT_KEYS}
 
 
+def session_of(actor: str) -> str:
+    """A holder's or actor's session: a worker `<session>/<role>-<id>` acts for its session."""
+    return actor.split('/', 1)[0]
+
+
 def held_decided(board: Board, found: dict | None = None) -> list[str]:
     """The decided records this session holds, a worker's holds included (r13 q50): `board health --items decided`
     rows carry their `holder`."""
     found = found if found is not None else board.json('health', '--json', '--items', 'decided')
-    me = board.actor.split('/', 1)[0]
     return [row['id'] for row in view_rows(found, 'decided')
-            if row.get('holder') and str(row['holder']).split('/', 1)[0] == me]
+            if row.get('holder') and session_of(str(row['holder'])) == session_of(board.actor)]
 
 
 def claim_items(ctx: Context, items: list[str]) -> None:
@@ -87,10 +91,18 @@ def claim_items(ctx: Context, items: list[str]) -> None:
     ctx.round['claimed'] = [*ctx.round.get('claimed', []), *(item for item in items if item not in before)]
 
 
+def take_and_claim(ctx: Context, gone: list[str], free: list[str]) -> None:
+    """Takes over the gone sessions' holds and claims the free items, both for the round to release."""
+    if gone:
+        ctx.board.checked('take', *gone)
+        ctx.round['claimed'] = [*ctx.round.get('claimed', []), *gone]
+    if free:
+        claim_items(ctx, free)
+
+
 def split_holds(ctx: Context, holders: dict[str, str]) -> tuple[dict[str, str], dict[str, str]]:
     """(live, gone) among the records another session holds (id -> holder), by the board's mark for the holder."""
-    me = ctx.board.actor.split('/', 1)[0]
-    foreign = {rid: holder for rid, holder in holders.items() if holder and holder.split('/', 1)[0] != me}
+    foreign = {rid: holder for rid, holder in holders.items() if holder and session_of(holder) != session_of(ctx.board.actor)}
     if not foreign:
         return {}, {}
     return foreign_holds(ctx, [{'id': rid, 'holder': holder} for rid, holder in foreign.items()], ctx.board.json('position', '--json'))
@@ -99,9 +111,8 @@ def split_holds(ctx: Context, holders: dict[str, str]) -> tuple[dict[str, str], 
 def foreign_holds(ctx: Context, items: list[dict], position: dict) -> tuple[dict[str, str], dict[str, str]]:
     """(live, gone): item id -> holder of the items another session holds, split by the board's mark for the holder
     (`board position` `held`): a gone session's hold can be taken over, a live one's cannot be claimed."""
-    me = ctx.board.actor.split('/', 1)[0]
     holders = {item['id']: str(item['holder']) for item in items
-               if item.get('holder') and str(item['holder']).split('/', 1)[0] != me}
+               if item.get('holder') and session_of(str(item['holder'])) != session_of(ctx.board.actor)}
     marks = {h['id']: h.get('mark') for h in position.get('held') or []} if holders else {}
     return ({rid: holder for rid, holder in holders.items() if marks.get(rid) != 'gone'},
             {rid: holder for rid, holder in holders.items() if marks.get(rid) == 'gone'})

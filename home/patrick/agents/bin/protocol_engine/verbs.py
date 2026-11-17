@@ -10,11 +10,11 @@ from .base import CAP_CHOICES, CHECK_CAP, PASSES, PRUNE_DAYS, THINK_MORE, VERB_O
 from . import schema, words
 from .session import state_root
 from .store import Store
-from .engine import Context, answered, by_id, fail, premise_status, questions, touch
+from .engine import Context, answered, by_id, clear_reading, fail, premise_status, questions, touch
 from .questions import apply_updates
 from .render import batch_seen
 from .check import gate_ask, leave_check, next_cycle, nothing_to_check, rescope_check
-from .ask import batch_back, hand_over, take_unchecked, unchecked
+from .ask import batch_back, hand_over, take_unchecked, unchecked, withdraw_batch
 from .told import first_time
 
 
@@ -161,11 +161,8 @@ def edit_round(ctx: Context, report: dict) -> str:
     updates, quote = report['updates'], report['quote']
     quote_check(ctx, 'edit', quote)
     if r['batch'] and not all(isinstance(u, dict) and 'id' not in u for u in updates):
-        ctx.log('batch-withdrawn', marker=r['batch']['marker'], reason='edit')
-        batch_back(ctx)
-    for q in questions(ctx):
-        q.pop('typed', None)
-    r.pop('reading', None)
+        withdraw_batch(ctx, 'edit')
+    clear_reading(ctx)
     before = {q['id']: (recommended_index(q), q.get('strength')) for q in questions(ctx)}
     apply_updates(ctx, updates)
     mark_unchecked(ctx, before)
@@ -224,8 +221,7 @@ def defer_round(ctx: Context, report: dict) -> str:
                 group[other['id']] = qid
                 grew = True
     if r['batch'] and set(group) & set(r['batch']['ids']):
-        ctx.log('batch-withdrawn', marker=r['batch']['marker'], reason='defer')
-        batch_back(ctx)
+        withdraw_batch(ctx, 'defer')
     quote, until = quote.strip(), until.strip() if until else None
     for other_id, with_ in group.items():
         q = by_id(ctx, other_id)
@@ -254,16 +250,16 @@ def open_batch(ctx: Context, marker) -> dict:
     return r['batch']
 
 
-def decline(ctx: Context, report: dict, origin: str, reason: str) -> str:
+def decline(ctx: Context, report: dict, origin: str) -> str:
     batch = open_batch(ctx, report.get('marker'))
     schema.require(schema.Decline, report, 'partial')
     partial = report.get('partial') or {}
     batch_seen(ctx, batch)
     batch_back(ctx)
-    ctx.log('decline', marker=batch['marker'], origin=origin, reason=reason, partial=partial or None)
+    ctx.log('decline', marker=batch['marker'], origin=origin, partial=partial or None)
     if batch['cap']:
         ctx.round['check']['paused'] = True  # nothing decided: the loop waits for the user
-    return words.declined_note(batch['marker'], reason, partial, batch['cap'])
+    return words.declined_note(batch['marker'], partial, batch['cap'])
 
 
 def cap_decision(ctx: Context, answer: str, origin: str) -> str:
@@ -328,8 +324,6 @@ def answered_line(ctx: Context, batch: dict, report: dict) -> str:
 def answer(ctx: Context, report: dict, origin: str) -> str:
     if origin == 'chat':
         return chat_answer(ctx, report)
-    if report.get('afkTimeoutMs'):
-        return decline(ctx, {'marker': report.get('marker'), 'partial': None}, origin, 'resolved itself (timeout)')
     batch = open_batch(ctx, report.get('marker'))
     schema.require(schema.Answer, report, 'answers')
     answers = report.get('answers') or {}

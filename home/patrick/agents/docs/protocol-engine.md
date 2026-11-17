@@ -34,8 +34,7 @@ A round:
   folder's newest round when no ids are named, which may be another session's).
   Such a round's id comes from a counter in that folder, so sessions never share
   one; a record file is created, never overwritten; `--topic` heads each record
-  (`Topic: …`) and `protocol records --topic <text>` lists the files of that topic,
-  the archive's old topic subfolders (named by topic) included. Items another live session holds
+  (`Topic: …`). Items another live session holds
   stay out, named in one line; a gone session's hold is offered, marked.
   `start round <ids>` names the open items to look at first (an id that is closed,
   held by another live session or no item a round offers is refused by name);

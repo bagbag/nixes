@@ -61,6 +61,13 @@ def questions(ctx: Context, *statuses: str) -> list[dict]:
     return [q for q in ctx.round['questions'] if not statuses or q['status'] in statuses]
 
 
+def clear_reading(ctx: Context) -> None:
+    """The questions go out again: what the model read of them is unread."""
+    for q in questions(ctx):
+        q.pop('typed', None)
+    ctx.round.pop('reading', None)
+
+
 def by_id(ctx: Context, qid: str) -> dict:
     found = next((q for q in ctx.round['questions'] if q['id'] == qid), None)
     return found or fail(f'unknown question {qid}')

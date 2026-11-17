@@ -6,9 +6,9 @@ import re
 import tempfile
 from pathlib import Path
 
-from .base import _call, lines
+from .base import _call
 from . import words
-from .store import next_id
+from .store import new_release
 from .engine import Context, fail
 from .away import SWITCH_TO_SOLO
 
@@ -77,17 +77,9 @@ def start_files(ctx: Context, folder: Path, ids: list[str]) -> None:
         fail(f'{folder} is no folder of records')
     stems = select_files(folder, ids)
     files = record_files(folder)
-    ctx.state['round'] = {
-        'id': next_id(ctx.state, 'round', 'r'), 'protocol': 'release', 'step': 'recheck',
-        'repo': None, 'scope': 'release', 'source': None, 'title': None, 'summary': None,
-        'records': str(folder), 'cwd': str(_call.get().cwd),
-        'items': [], 'points': [], 'classes': {}, 'selected': [], 'questions': [], 'check': {},
-        'pending': None, 'observed': {}, 'batch': None, 'batchSeq': 0, 'messages': [],
-        'set': [{'id': stem, 'title': question_title(files[stem].read_text(encoding='utf-8'), stem), 'state': 'set',
-                 'reason': None, 'file': str(files[stem])} for stem in stems],
-        'checks': {}, 'supersedes': [], 'closes': {}, 'rulings': None, 'conditional': None, 'approval': None,
-        'owners': {}, 'done': [], 'retry': False, 'stopped': None, 'outcome': None, 'scoped': {'done': []},
-    }
+    ctx.state['round'] = new_release(ctx.state, repo=None, source=None, records=str(folder), cwd=str(_call.get().cwd),
+                                     set=[{'id': stem, 'title': question_title(files[stem].read_text(encoding='utf-8'), stem), 'state': 'set',
+                                           'reason': None, 'file': str(files[stem])} for stem in stems])
     ctx.round['title'] = words.release_label(False, stems)
     ctx.log('start', protocol='release', repo=None, records=stems, taken=[], source=None)
     ctx.go('recheck')

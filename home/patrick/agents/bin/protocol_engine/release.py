@@ -10,7 +10,7 @@ from .base import ProtocolError, TITLE_MAX, env, lines, utcnow
 from . import schema, words
 from .store import next_id
 from .boards import statuses
-from .engine import Context, PROTOCOLS, Protocol, Step, fail, questions
+from .engine import Context, PROTOCOLS, Protocol, Step, clear_reading, fail
 from .told import first_time, report_hint
 from .record import refresh_board
 from .release_files import release_files_enter
@@ -81,9 +81,7 @@ def approval_text(ctx: Context) -> str:
 def release_ask_accept(ctx: Context, report: dict) -> str:
     if ctx.round['batch']:
         fail(f"waiting on the user's answer to {ctx.round['batch']['marker']}")
-    for q in questions(ctx):
-        q.pop('typed', None)  # read: the question goes out again
-    ctx.round.pop('reading', None)
+    clear_reading(ctx)
     return 'ask'
 
 
@@ -305,7 +303,6 @@ def release_closed_enter(ctx: Context) -> None:
     gets here never."""
     r = ctx.round
     r['pending'], r['batch'] = None, None
-    r['closedAt'] = utcnow()
     reasons = ctx.state.setdefault('dropReasons', {}) if ctx.board else {}  # the default set of record files is read from the files
     stopped = r.get('stopped') or {'reason': None, 'ids': []}
     held_back = [] if stopped.get('hold') else stopped['ids']
@@ -315,7 +312,7 @@ def release_closed_enter(ctx: Context) -> None:
         elif rec['state'] == 'dropped' or rec['id'] in held_back:
             reasons[rec['id']] = rec['reason'] if rec['state'] == 'dropped' else stopped['reason']
     if ctx.board and refresh_board(ctx):
-        r['countsAt'] = r['closedAt']
+        r['countsAt'] = utcnow()
     ctx.log('closed', protocol='release', released=[rec['id'] for rec in r['set'] if rec['state'] == 'released'])
 
 

@@ -167,8 +167,7 @@ offers no review or refresh for it (`cr_claimable`; no refresh work). The user's
 changes (tracked and new, not ignored files, staged or not, through a throwaway index: `review_edits_tree`); `review_read` reads them live. The
 opened tip must still be an ancestor of the branch, and `opened..tip` must hold no merge commit and no commit of the base branch (a merging or fast-forwarding Pull brought them in; they are never the user's edits): otherwise `board cr land`, `board return`, `board cr edits`, `ratify` and `board show` (which prints the reason) refuse with the way back, `git -C <worktree> reset --hard <opened sha>` (it drops the user's commits after it, so they re-apply them), so a rewrite of reviewed work never passes as the user's edit. `board return` and `board cr land` end an unedited review
 (`opened_tip` cleared) and refuse one holding edits, naming the `cr edits --commit` line, and `land` on a stale check names `cr edits … --commit`
-before `cr refresh`, since a refresh refuses an open review. `board check` names a `<main>-review` folder (the old shared review folder, never
-deleted by tooling) in one line (a flag, not a deviation; no `check --json` row).
+before `cr refresh`, since a refresh refuses an open review.
 `board cr edits <cr> --tip <sha> [--commit -m <msg> [--gate '<cmd>' | --no-gate '<reason>' | --checks]]` works on an item open for review
 (r15-q75..q79, r6-q24, r6-q25); `<sha>` is the tip it was opened at (`opened`). Without `--commit` it prints the edits (the commits after it and the
 uncommitted changes, against `<sha>`) and refuses another tip or an item not open. `--commit` records every commit after the opened tip in the CR's
@@ -236,7 +235,7 @@ problems with their step. A rebase the board started and stopped on a conflict s
 --commit`) refuses while unmerged paths remain and otherwise runs `git rebase --continue` with `GIT_EDITOR=true` itself (r1-q2, q4).
 Board-made commits and branch moves (`commit-tree`, `rebase --onto`/`--continue`, `merge --ff-only`) run no git hooks; what a hook
 enforces belongs in `custom.board.checks` (r11-q39); board-migrate step 4 asks per project about a commit hook running the same checks (r11-q40).
-`health`, `mine`, `position` and `related` take `--json` (every row; `related`
+`health`, `position` and `related` take `--json` (every row; `related`
 keeps `--limit` per list) for the engine and the console; text output stays
 unchanged. `board console` prints the console pane's JSON (health counts,
 `mine` items, `position` sessions and holds with their marks) from one
