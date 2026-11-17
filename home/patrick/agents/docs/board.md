@@ -182,7 +182,7 @@ that tip (`check_kind=targeted`, `check_command`, output); `--no-gate` stores `c
 land only for that tip. A full check (`handover`, `refresh`) clears the kind. The review stays current past its tip while
 every later commit is a recorded edit commit or its replay (`edits_only`, `is_replay`: replaying the recorded change onto the commit's
 parent by 3-way merge gives exactly its tree, so a rebase keeps it, and a copied message, a reindent or the same change at another place
-does not; `refresh --review-holds` drops such commits from the new range before comparing patch-ids with the reviewed one). A
+does not; `refresh --review-holds` skips such commits and requires every reviewed commit to be such a replay too, `replays`). A
 failing gate leaves the commit, stores the failure and the CR waiting for the user. A CR with no stored review whose own commits (base
 tip..tip) are all recorded edit commits is reviewed (`review_current`), so it lands on that Accept without an agent review.
 A conflict on a recorded edit commit (a rebase of any such request, a follow-up's included) is no special path: the request stays an

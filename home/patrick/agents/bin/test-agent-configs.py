@@ -5352,6 +5352,41 @@ def validate_board(root: Path) -> None:
                 flat = " ".join(" ".join(w) for w in fake.writes())
                 if code or f"review_tip={new_tip}" not in flat or f"review_base_tip={at_main()}" not in flat or "the review holds" not in output:
                     raise ValueError(f"F1: refresh --review-holds must re-stamp the review of the same changes: {code} {errors}\n{output}\n{fake.writes()}")
+                # A clean rebase that only moved the context around the CR's change keeps the review (the patch-id changed, the change did not).
+                ten = "".join(f"{n}\n" for n in range(1, 11))
+                commit(repo_root, "ctx.txt", ten, "ctx: shared file")
+                issues, tip, wt = make_cr("ctx", "ctx.txt", ten.replace("5\n", "5\nNEW\n"))
+                commit(repo_root, "ctx.txt", ten.replace("3\n", "X\n"), "ctx: main edits a context line")
+                _, output, _ = invoke(["cr", "refresh", "ctx"], Fake(issues), "lead0001")
+                new_tip = git("rev-parse", "HEAD", cwd=wt)
+                if "replay: clean" not in output:
+                    raise ValueError(f"a context-only shift must print a clean replay:\n{output}")
+                issues[0]["metadata"].update(triaged_tip=new_tip, triaged_base_tip=at_main(), base_sha=at_main())
+                fake = Fake(issues)
+                code, output, errors = invoke(["cr", "refresh", "ctx", "--review-holds"], fake, "lead0001")
+                if code or f"review_tip={new_tip}" not in " ".join(" ".join(w) for w in fake.writes()):
+                    raise ValueError(f"a context-only shift must keep the review: {code} {errors}\n{output}")
+                # A conflict resolved by hand keeping the CR's own line is no clean replay; neither is a commit the rebase dropped as upstream.
+                commit(repo_root, "cfl.txt", ten, "cfl: shared file")
+                issues, tip, wt = make_cr("cfl", "cfl.txt", ten.replace("5\n", "5\nNEW\n"))
+                commit(repo_root, "cfl.txt", ten.replace("5\n", "5\nOTHER\n"), "cfl: main inserts at the same place")
+                subprocess.run(["git", "rebase", "-q", "main"], cwd=wt, capture_output=True)
+                Path(wt, "cfl.txt").write_text(ten.replace("5\n", "5\nOTHER\nNEW\n"), encoding="utf-8")
+                git("add", "cfl.txt", cwd=wt)
+                subprocess.run(["git", "-c", "core.editor=true", "rebase", "--continue"], cwd=wt, capture_output=True, check=True)
+                issues[0]["metadata"].update(base_sha=at_main())
+                _, output, _ = invoke(["cr", "refresh", "cfl"], Fake(issues), "lead0001")
+                issues[0]["metadata"].update(triaged_tip=git("rev-parse", "HEAD", cwd=wt), triaged_base_tip=at_main())
+                code, _, errors = invoke(["cr", "refresh", "cfl", "--review-holds"], Fake(issues), "lead0001")
+                if "replay: not clean" not in output or code != 1 or "no longer the reviewed changes" not in errors:
+                    raise ValueError(f"a resolved conflict must not keep the review: {code} {errors}\n{output}")
+                issues, tip, wt = make_cr("upd", "upd.txt", "u\n")
+                commit(repo_root, "upd.txt", "u\n", "upd: main lands the same change")
+                invoke(["cr", "refresh", "upd"], Fake(issues), "lead0001")
+                issues[0]["metadata"].update(triaged_tip=git("rev-parse", "HEAD", cwd=wt), triaged_base_tip=at_main(), base_sha=at_main())
+                code, _, errors = invoke(["cr", "refresh", "upd", "--review-holds"], Fake(issues), "lead0001")
+                if code != 1 or "no longer the reviewed changes" not in errors:
+                    raise ValueError(f"a reviewed commit the rebase dropped must not keep the review: {code} {errors}")
                 # Two refreshes without a verdict: the second still shows what changed since the review, B1..B2 included.
                 issues, tip, wt = make_cr("tri", "tri.txt", "x\n")
                 commit(repo_root, "tri-b2.txt", "b2\n", "tri: base change one")
@@ -6276,7 +6311,7 @@ def validate_board(root: Path) -> None:
                 code, output, errors = invoke(["cr", "edits", "ed18", "--tip", tip18, "--commit", "-m", "Fix", "--checks"], fake, "lead0001")
                 if code or "board cr refresh ed18 --review-holds" not in output or "; land with" in output:
                     raise ValueError(f"a passing --checks that moved the base must name the review triage, not the landing: {code} {output} {errors}")
-                # refresh --review-holds compares by patch-id: the reviewed commits plus the recorded edit commits keep the review; a changed
+                # refresh --review-holds compares by clean replay: the reviewed commits plus the recorded edit commits keep the review; a changed
                 # edit commit (an amend, a conflict fix) or any other commit stales it.
                 issues8, tip8, wt8 = make_cr("ed8", "e8.txt", "e\n")
                 edit8 = commit(wt8, "e8.txt", "edited\n", "edit")
@@ -6343,7 +6378,9 @@ def validate_board(root: Path) -> None:
                 Path(wt14, "e14.txt").write_text("0\n1\n2\n3\n4\n5\n6\n9\n1\n2\n3\nNEW\n4\n5\n6\n9\n", encoding="utf-8")
                 git("commit", "-q", "-a", "-m", "Fix", cwd=wt14)
                 moved14 = git("rev-parse", "HEAD", cwd=wt14)
-                if board.patch_ids(wt14, tip14, edit14) != board.patch_ids(wt14, tip14, moved14) or not board.edits_only(Path(repo_root), cr14, tip14, edit14) \
+                patch_id = lambda c: subprocess.run(["git", "patch-id", "--verbatim"], input=git("show", c, cwd=wt14) + "\n", text=True,
+                                                    capture_output=True, cwd=wt14).stdout.split()[:1]
+                if patch_id(edit14) != patch_id(moved14) or not board.edits_only(Path(repo_root), cr14, tip14, edit14) \
                         or board.edits_only(Path(repo_root), cr14, tip14, moved14):
                     raise ValueError("the recorded change at another place (same patch-id) must not keep the review")
                 # The branch moves by compare-and-swap: a branch that moved meanwhile commits nothing and leaves the view as it was.

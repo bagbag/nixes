@@ -3671,8 +3671,9 @@ def edit_entries(cr: dict) -> list[dict]:
 
 
 def is_replay(root: Path, recorded: str, commit: str) -> bool:
-    """`commit` is the recorded edit commit or a faithful replay of it: replaying the recorded change onto `commit`'s parent (a 3-way
-    merge from the recorded parent) gives exactly `commit`'s tree. Exact in content and place, unlike a patch-id (r16 N5)."""
+    """`commit` is the recorded commit or a clean replay of it: replaying the recorded change onto `commit`'s parent (a 3-way merge
+    from the recorded parent, as git's rebase does) gives exactly `commit`'s tree. Exact in content and place, unlike a patch-id
+    (r16 N5); unlike one, it also holds when only the context around the change moved, and fails on a resolved conflict."""
     if commit == recorded:
         return True
     parents = git_text(root, 'rev-list', '--parents', '-n', '1', commit).split() if rev(root, commit) else []
@@ -4424,11 +4425,17 @@ def reject(board: Board, args) -> int:
     return 0
 
 
-def patch_ids(wt: Path, base: str, tip: str) -> list[str]:
-    """The patch-id of each commit in base..tip, oldest first: equal lists mean the same changes, however they were rebased."""
-    log = git(wt, 'log', '--reverse', '-p', '--binary', '--no-color', f'{base}..{tip}', check=False).stdout
-    out = subprocess.run(['git', 'patch-id', '--verbatim'], cwd=wt, input=log, capture_output=True).stdout.decode()
-    return [row.split()[0] for row in out.splitlines() if row.strip()]
+def replays(wt: Path, cr: dict, old_base: str, old_tip: str, base: str, tip: str) -> bool:
+    """base..tip holds the commits of old_base..old_tip, each a clean replay of its counterpart in order (`is_replay`), plus only
+    recorded edit commits: what a rebase git did unaided leaves. A resolved conflict, an edit, a dropped or a new commit fails."""
+    old = git_text(wt, 'rev-list', '--reverse', f'{old_base}..{old_tip}').split()
+    at = 0
+    for commit, is_edit in zip(git_text(wt, 'rev-list', '--reverse', f'{base}..{tip}').split(), edit_commits(wt, cr, base, tip)):
+        if at < len(old) and is_replay(wt, old[at], commit):
+            at += 1
+        elif not is_edit:
+            return False
+    return at == len(old)
 
 
 def refresh(board: Board, args) -> int:
@@ -4458,6 +4465,10 @@ def refresh(board: Board, args) -> int:
     if since_review or result['moved'] or result['tip'] != old_tip:
         ranges = git(wt, 'range-diff', f'{from_base}..{from_tip}', f"{result['baseTip']}..{result['tip']}", check=False).stdout.decode('utf-8', 'replace')
         print(f"range-diff {'review' if since_review else 'old'}..new:\n" + ranges.rstrip())
+        if cr['status'] == ACCEPT:  # the verdict --review-holds enforces; elsewhere new commits are expected work
+            print('replay: clean, the reviewed commits are unchanged (what moved around them shows above)'
+                  if replays(wt, cr, from_base, from_tip, result['baseTip'], result['tip'])
+                  else 'replay: not clean (a conflict resolution, an edit, a dropped or a new commit)')
     incoming = git_text(wt, 'diff', '--name-only', from_base, result['baseTip']).splitlines() if from_base != result['baseTip'] else []
     print(f'incoming files ({from_base[:12]}..{result["baseTip"][:12]}{", since the review" if since_review else ""}): {len(incoming)}' + ''.join(f'\n  {path}' for path in incoming))
     if cr['status'] == ACCEPT:
@@ -4472,10 +4483,8 @@ def refresh(board: Board, args) -> int:
                 raise BoardError(f'{args.id}: the check is not passing, so the review cannot be kept; board handover {args.id} "<why>" sends it back to review')
             if not reviewed or not reviewed_base or rev(wt, reviewed) is None or rev(wt, reviewed_base) is None:
                 raise BoardError(f'{args.id}: no reviewed range is recorded; board handover {args.id} "<why>" sends it back to review')
-            held = patch_ids(wt, reviewed_base, reviewed)  # edit commits the reviewed range already holds stay in the comparison
-            new = zip(patch_ids(wt, result['baseTip'], result['tip']), edit_commits(wt, cr, result['baseTip'], result['tip']))
-            if held != [one for one, is_edit in new if not is_edit or one in held]:  # a changed edit commit is no recorded one
-                raise BoardError(f'{args.id}: its commits are no longer the reviewed changes (a conflict resolution, or new commits); '
+            if not replays(wt, cr, reviewed_base, reviewed, result['baseTip'], result['tip']):
+                raise BoardError(f'{args.id}: its commits are no longer the reviewed changes (a conflict resolution, an edit, a dropped or a new commit); '
                                  f'board handover {args.id} "<why>" sends it back to review')
             if triaged != (result['tip'], result['baseTip']):  # the base or the tip moved after the triage: that change is untriaged
                 raise BoardError(f'{args.id}: the base or the tip moved since the last refresh; the incoming list above is untriaged; '

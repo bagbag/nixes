@@ -154,9 +154,9 @@ Apply these to the choices you make; a brief's choices stand.
   invoker. Features beyond the task are not scope.
 - **Tests:** logic that can break costly (a branch, parser, data write,
   irreversible step, trust boundary) leaves one small test through the public
-  entry; trivial changes none. See each new test fail once: write a
-  concern's tests before its change and run them together (a fixed bug's
-  repro first); a test of behaviour the change keeps, break the code once.
+  entry; trivial changes none. See a test fail once only where its pass alone
+  proves nothing: a fixed bug's repro, a setup that may not reach the code, an
+  assertion another path satisfies.
   Assert outcomes (exit code, state, files), not wording, unless users act on
   the text. Run the tests covering a concern once it is done, and the full
   suite before hand-back, each in the foreground with a timeout that fits it.
