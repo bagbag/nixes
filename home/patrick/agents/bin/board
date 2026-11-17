@@ -6229,6 +6229,8 @@ def project_pairs(args) -> list[tuple[str, str]]:
             first = shlex.split(value)[0] if value else ''
             if '/' in first and not (Path(first).is_absolute() and Path(first).exists() or (Path.cwd() / first).exists()):
                 raise BoardError(f'--{name}: {first} does not exist (settings name project scripts)')
+            if '/' not in first and (Path.cwd() / first).is_file() and shutil.which(first) is None:
+                raise BoardError(f'--{name}: {first} is a project file but is not on PATH; use ./{first}')
         pairs.append((SETTINGS[name], value))
     return pairs
 

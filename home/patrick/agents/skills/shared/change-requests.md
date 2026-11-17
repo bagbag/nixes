@@ -24,7 +24,11 @@ queue order and refresh work: [Board coordination](board-coordination.md).
   `setup_sha`, `check` and `review` = {tip, baseTip, result, at}.
 - **Settings** (project bd config): `target`, `setup`, `checks`, `look`,
   `view`, set only through `board setup --target … --setup … --checks … --look
-  … --view …`. `setup` and `checks` name scripts kept in the project. A new
+  … --view …`. `setup` establishes every prerequisite used by `checks`, and fails
+  when one is missing; `checks` only checks. A setup or checks project file is
+  named with a path such as `./board-checks.sh`, or as a bare command when it is
+  available on `PATH`. A bare name matching a project file that is not on `PATH`
+  is refused with the `./` correction. A new
   CR takes the defaults; its own `look` or `view` only overrides them (clear
   the ones a changing `board setup` lists); a bad or missing
   value fails closed where used; `board check` lists them. The `checks` exit
