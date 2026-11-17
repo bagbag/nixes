@@ -66,8 +66,7 @@ findings or stops.
    Output: `handed over <cr> to <status>` or `kept <cr> open: <remainder>`.
 6. **Remainders.** Record every gap and follow-up as a new item (in this CR
    when it belongs to the change, else a new CR) or question discovered from
-   it; planning sessions (plan protocol Entry) place them under
-   [Milestones](../../shared/board-coordination.md#milestones).
+   it.
    Output: new ids, or `none`.
 
 ## Item worker
@@ -99,8 +98,7 @@ report to the session. It does not hand over, rebase or land.
   consequence on the CR.
 - The retry limit: follow it, recording in the CR's `notes`.
 
-When a blocker holds one item, block the item on it and continue the rest; planning moves a waiting part to
-another CR. When it holds the whole CR, block the CR and `board unclaim` it.
+When a blocker holds one item, block the item on it and continue the rest. When it holds the whole CR, block the CR and `board unclaim` it.
 A failed setup: fix it or raise the blocker as a question, then claim the CR
 again to rerun setup.
 

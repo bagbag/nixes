@@ -3005,7 +3005,7 @@ def take(board: Board, args) -> int:
             raise BoardError(refusal)
         if board.is_cr(issue['id']) and issue['status'] == 'in_review' and authorship(board, issue)[0] \
                 and session_actor(authorship(board, issue)[0]) == session_actor(actor):
-            raise BoardError(f"{issue['id']}: your own hand-over needs another reviewer; the session that handed it over cannot take its review")
+            raise BoardError(f"{issue['id']}: your own hand-over needs another reviewer")
         previous = issue.get('assignee') or 'nobody'
         if previous == actor:
             print(f"{issue['id']}: already held by {actor}")
@@ -4239,7 +4239,7 @@ def land_core(board: Board, cr: dict, main: Path, tip: str | None = None) -> lis
     cid = cr['id']
     base, _ = cr_base(board, cr, main)
     if board.is_cr(base):
-        raise BoardError(f'{cid}: stacked on {base}, which has not landed: board cr land {base} first (it then lands this one when its check is current)')
+        raise BoardError(f'{cid}: stacked on {base}, which has not landed: board cr land {base} first')
     refusal = open_item_refusal(board, cr)
     if refusal:
         raise BoardError(refusal)
@@ -4544,7 +4544,7 @@ def refresh(board: Board, args) -> int:
                 raise BoardError(f'{args.id}: its commits are no longer the reviewed changes (a conflict resolution, or new commits); '
                                  f'board handover {args.id} "<why>" sends it back to review')
             if triaged != (result['tip'], result['baseTip']):  # the base or the tip moved after the triage: that change is untriaged
-                raise BoardError(f'{args.id}: the base or the tip moved since the last refresh, so the incoming list above is new and untriaged; '
+                raise BoardError(f'{args.id}: the base or the tip moved since the last refresh; the incoming list above is untriaged; '
                                  f'triage it, then run board cr refresh {args.id} --review-holds again (or board handover {args.id} "<flag>")')
             put_meta(cr, review_tip=result['tip'], review_base_tip=result['baseTip'])
             print(f'{args.id}: the review holds for tip {result["tip"][:12]} on base {result["baseTip"][:12]}; board unclaim {args.id}')
@@ -4757,7 +4757,7 @@ def cr_edits(board: Board, args) -> int:
         raise BoardError(f'{args.id}: is not open for your review: board review open {args.id} first')
     opened = review['opened']
     if opened != expect:
-        raise BoardError(f'{args.id}: your review was opened at {opened[:12]}, not {expect[:12]}: the edits are against the opened tip')
+        raise BoardError(f'{args.id}: your review was opened at {opened[:12]}, not {expect[:12]}')
     if review['edited'] is None:
         raise BoardError(f"{args.id}: your review cannot be read: {review['why']}")
     branch = review_branch(board, issue)
@@ -4788,7 +4788,7 @@ def cr_edits(board: Board, args) -> int:
     cr, new_tip = issue, commit or review['tip']
     base_tip = rev(main, cr_base(board, cr, main)[1])
     if (args.gate or args.no_gate) and not is_ancestor(main, base_tip, review['tip']):  # --checks rebases itself
-        raise BoardError(f'{args.id}: its base moved ({base_tip[:12]}): a check of the edits would name a base the branch is not on; commit them without a gate '
+        raise BoardError(f'{args.id}: its base moved ({base_tip[:12]}): commit the edits without a gate '
                          f'(that ends your review), then board cr refresh {args.id}, or use --checks, which rebases itself')
     before = edit_entries(cr)
     recorded = [*review['commits'], *([commit] if commit else [])]
@@ -5101,8 +5101,8 @@ def comment_refusal(size: int) -> str | None:
     """Why a comment a session writes is refused: a comment is a one-line event, so it stays within FIELD_LIMIT characters."""
     if size <= FIELD_LIMIT:
         return None
-    return (f'comment is {size} characters, over the {FIELD_LIMIT} limit. A comment is a one-line event; '
-            'long material belongs in a doc the item links.')
+    return (f'comment is {size} characters, over the {FIELD_LIMIT} limit. '
+            'Long material belongs in a doc the item links.')
 
 
 def comment_command(args) -> int:
@@ -6252,9 +6252,9 @@ def setup(args) -> int:
     else:
         mode = json.loads((beads / 'metadata.json').read_text(encoding='utf-8')).get('dolt_mode') or 'embedded'
         if args.embedded and mode != 'embedded':
-            raise BoardError(f'this board is {mode}; --embedded applies only to a new board, and board setup never converts one back')
+            raise BoardError(f'this board is {mode}; --embedded applies to a new board only')
         if args.prefix:
-            raise BoardError('this project already has a board, which keeps its prefix: drop --prefix')
+            raise BoardError('this project already has a board: drop --prefix')
         os.chdir(beads.parent)
         if args.server and mode == 'embedded':
             to_server(beads)

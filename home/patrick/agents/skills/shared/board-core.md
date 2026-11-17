@@ -2,7 +2,7 @@
 
 **Commands:** `board` in every skill command is `$HOME/.agents/bin/board`
 (not on `PATH`): type `$HOME/.agents/bin/board show <id>`, never bare `board`
-or bare `bd`. `board help [<verb>]` lists every verb with an example. Board
+or bare `bd`. `board help [<verb>]` lists every verb. Board
 verbs own every write. `board bd <args>` runs bd with `--readonly`: reads pass
 and bd refuses a write, naming the board command (it does not catch every
 write: `import`, `rename`, `config set` and `dolt remote add` pass on a server
@@ -29,8 +29,7 @@ before relying on the missing part.
 Without `.beads/`: a project with existing trackers or backlog files moves onto
 the board through `/board-migrate`; otherwise run `$HOME/.agents/bin/board
 setup` with the user's confirmation
-(`$HOME/.agents/skills/shared/beads-setup.md`). Leave `bd setup` unrun; session
-hooks supply agent guidance. Share or join a board only on the user's request
+(`$HOME/.agents/skills/shared/beads-setup.md`). Leave `bd setup` unrun. Share or join a board only on the user's request
 ([Shared boards](../shared/beads-setup.md#shared-boards)); `board` syncs a
 shared board, the user an unshared one (`bd dolt push`/`pull`).
 
@@ -38,7 +37,7 @@ shared board, the user an unshared one (`bd dolt push`/`pull`).
 
 - **Actor:** the last 8 characters of the session id; a worker's actor is
   `<session actor>/<last 8 of its agent id>`. `board` derives it; Claude
-  workers get theirs from bd-guard (their scripts act as the session).
+  workers get theirs from bd-guard.
 - **Hold:** an item's assignee is the doer holding it. A session holds a
   whole [change request](../shared/change-requests.md#change-requests);
   the CR's items go to its workers. Each doer claims, hands over
@@ -49,7 +48,7 @@ shared board, the user an unshared one (`bd dolt push`/`pull`).
   (named). Claiming a named item held within your own session (your
   actor or one of your workers) takes it over.
 - Finish, hand over or unclaim each hold you still have.
-- Nothing frees a hold automatically. Free another doer's hold only with
+- Free another doer's hold only with
   `board take <id>` (reassign to you with a comment) or
   `board unclaim <id>`. Take an item from a gone holder (`board position` or
   the claim report marks it gone) whenever your role could claim it; free any
@@ -119,14 +118,14 @@ On a shared board (`.beads/board-shared.json` exists):
 - **Holds:** ask the person of a hold marked `held elsewhere` instead of
   freeing it.
 - **Sync:** a conflict where one side deleted the row resolves with `--all
-  --table issues` (`--all` alone fails when a dependency row conflicts); other
+  --table issues`; other
   work continues unless beads refuses the write.
 - Raw bd never creates with `--id` or dotted child ids: parent.N ids stop sync.
 
 ### Work items
 
 - Cut one item per outcome a dependent could need, sized for one worker pass
-  (the CR is the reviewed and landed unit). Keep parts that must land together
+  Keep parts that must land together
   in one item (atomic rename, contract plus its only caller).
   Move a part with a different blocker or dependent to its own item in another
   CR (planning decides); items do not split inside a CR.
@@ -220,9 +219,8 @@ with `blocks`.
 
 ### Dependencies
 
-Use the first matching row. Beads allows one edge kind per pair:
-`board block` and the `board ruling` verbs replace an existing link; before
-adding another edge by hand, remove the pair's `relates-to` edge. When order
+Use the first matching row. `board block` and the `board ruling` verbs replace an existing link; by hand,
+first remove the pair's `relates-to` edge. When order
 and context coincide, keep `blocks`.
 
 | Relation | Use |
@@ -271,7 +269,7 @@ and context coincide, keep `blocks`.
 ### Views
 
 `board check` lists deviations from these conventions on live
-items, each naming the section it breaks; a board with deviations moves through
+items; a board with deviations moves through
 `/board-migrate`.
 
 Other queries: `board bd query`, `search`, `blocked`, `lint`, `dep tree`; the

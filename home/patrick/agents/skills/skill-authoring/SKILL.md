@@ -32,8 +32,7 @@ for skills (inventory, layout, validators) add to these.
   clause of purpose, then the moments and the user's words (symbols, verbs,
   phrases) that trigger it; keep the triggers from overlapping a close
   sibling's, and add "not for" only where they cannot be kept apart or a skip
-  condition exists. The procedure stays in the body, since the description
-  loads into every session.
+  condition exists. The procedure stays in the body.
 - Manual-only: one sentence of menu help from the user's view; put argument
   hints in `argument-hint` (Claude; Codex ignores it).
 - Reword a description only to sharpen its trigger or purpose without losing

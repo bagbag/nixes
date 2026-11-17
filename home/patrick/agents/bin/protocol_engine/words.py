@@ -210,7 +210,7 @@ def prepass_instructions(round_id: str, subject: str | None, codex: bool, args: 
         if items_listed else '- The point set is empty: a finding or a missing point is a new one.',
         *rows,
         '- `points` entries: no `id` adds a point; a pasted point\'s `id` rewords it (`text`) or drops it (`drop`, `reason`); a split '
-        'rewords one part and adds the others; `first` marks a pasted point or open item to ask first.')
+        'rewords one part and adds the others; `first` asks a point or open item first.')
 
 
 # Collect and Select (collect.py).
@@ -314,17 +314,15 @@ def stage_instructions(round_id: str, selected: list[str], has_board: bool, prop
         '- Cut under question-format.md: the first part keeps the item in `board`, the others are drafts (`for`: the item or point id); '
         'a detail `waitsOn` the direction it rests on.',
         *([f"- Asked first (the pre-pass): {', '.join(first)}; the questions resting on them wait on theirs."] if first else []),
-        '- Each question carries the parts the '
-        'engine prints before its dialog, in your own words. Printed parts say what is decided and what each option means for the person '
-        '(what they would see, what it costs), each thing once, in plain words; how it was found (sources, measurements beyond the deciding '
-        'number, who said what) and how it gets built go to the record.',
+        '- Each question carries the parts the engine prints before its dialog, in your own words, under question-format.md '
+        '"In printed question text".',
         '- Required: `problem` (what is decided and why now), `root` (record-only, never printed: "<cause>; <end state>" from the decision protocol\'s '
         'Root fix and End state, found before you frame the question; "does not apply: <why>" for a preference or naming question) and per option `for` and `against`; '
         'on every option of a code, API, naming or shape choice, an `example`: a few lines of the code as written under that option, printed below it (question-format.md).',
         '- Optional, printed only when present: `cases` (the concrete cases that must and must not work), `premises` (what it rests on), '
         '`rulings` (each ruling of yours with why it meets the goals without a material trade-off, its strongest alternative, what that fails and the evidence, which only the record keeps) and `note` (a term to define, anything else); '
         'a round may carry one `overview` line across '
-        'its questions. A rule question\'s `premises` says how the rule applies to each settled item; the engine prints each item\'s id and title.',
+        'its questions. A rule question\'s `premises` says how the rule applies to each settled item.',
         '- Mark each recommendation '
         'under decision-protocol.md Recommendation strength: strong sets `strongBecause` '
         f"{', '.join(STRONG_CRITERIA)} each to \"true: <evidence>\" (\"does-not-apply: <reason>\" for consumerWalk "
@@ -1330,7 +1328,7 @@ def next_recommend() -> str:
             'Propose topics, not question sets. '
             'Rank the rows by priority and by how many questions each settles, and state the trade in `why`; a follow-up that '
             'reuses what was just read goes first, and milestone members stay ahead of the rest. '
-            'Write `title` and `summary` for a reader who was not in the discussion: plain words, no code names, no board or question '
+            'Write `title` and `summary` in plain words, no code names, no board or question '
             'ids; `summary` is one sentence on what the round decides and what its questions share. '
             f'Lengths to keep to in characters: `title` about {TITLE_MAX}, `summary` {SUMMARY_MAX}, `why` {TEXT_LIMIT}. '  # r9-q34
             '`estimate`: the questions the round settles and the board items that wait on its answers, downstream included. '

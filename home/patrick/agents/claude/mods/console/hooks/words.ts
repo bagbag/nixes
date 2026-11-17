@@ -264,9 +264,10 @@ export const stuckPassText = (command: string, args: string): string => `The rou
 export const PROTOCOL_TOOL_DESCRIPTION = [
   "Runs the protocol engine for this session's round (`protocol <args>`): one call per step, per-question updates as JSON on stdin; the output is the next step.",
   'Read: ["show","--json"], ["show"], ["show","q3"] (that question whole), ["status","--line"], ["history"], ["next"], ["help"] (every verb with an example).',
-  'Record an answer the user typed in chat: ["answer"] with stdin {"question","answer","quote"}, the quote being the user\'s exact words.',
-  'Apply a change the user asked for to the questions: ["edit"] with stdin {"updates","quote"}, the quote being the user\'s exact words.',
-  'Defer a question the user asked to put off: ["defer"] with stdin {"question","quote","until"?}, the quote being the user\'s exact words; its dependents go with it.',
+  'Each `quote` is the user\'s exact words.',
+  'Record an answer the user typed in chat: ["answer"] with stdin {"question","answer","quote"}.',
+  'Apply a change the user asked for to the questions: ["edit"] with stdin {"updates","quote"}.',
+  'Defer a question the user asked to put off: ["defer"] with stdin {"question","quote","until"?}; its dependents go with it.',
 ].join(' ')
 export const PROTOCOL_ARGS_DESCRIPTION = 'The verb and its arguments, e.g. ["start","round"], ["step"] or ["show","--json"]'
 export const PROTOCOL_STDIN_DESCRIPTION = 'JSON text for the verb (per-question updates), when it reads stdin'

@@ -84,7 +84,7 @@ milestones, recorded rulings and deferrals. The board model is
   `board ruling revise <old> --title "<question>" --body-file <packet> --holds <ids>|none`; for one rule
   of a record add `--partial "<rule>"`, and the rest stays in force. Its
   record restates the rule in full. `board ruling release` supersedes a released
-  old record and refuses a decided record a live revision names. A revision
+  old record. A revision
   question blocks only the work items whose part it would change.
 - On the user's ratification, the claiming deciding session closes a
   `needs_ratification` record with the ratification as reason; a reversal
@@ -99,5 +99,5 @@ milestones, recorded rulings and deferrals. The board model is
 
 | Item | Lifecycle |
 |---|---|
-| Deferral | `board defer <id> --reason "<revisit condition>"`, plus `--until <date>` for a date condition (bd undefers it then); `board undefer` other conditions on named new evidence. Deferred items are the project backlog. |
+| Deferral | `board defer <id> --reason "<revisit condition>"`, plus `--until <date>` for a date condition; `board undefer` other conditions on named new evidence. Deferred items are the project backlog. |
 | Environment fact | `board bd --raw --yes remember --key <key>` (no board command) for temporary repository-wide facts needed by every current session, a user's broad stop (area, paths, kind of action) included with its words and date; state a removal condition; remove with `board bd --raw --yes forget`. |

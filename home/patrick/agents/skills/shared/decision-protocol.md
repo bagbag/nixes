@@ -16,7 +16,7 @@ per step for a local, reversible choice.
    whether an upstream owner can produce the right result at its source; a
    mechanism whose need disappears is the root fix. For a proposed guard or
    check, show the concrete failure it catches (code and error) and fix what it
-   finds at the cause; the guard only prevents recurrence. A failure an option
+   finds at the cause. A failure an option
    triggers (compiler depth limit, crash, performance cliff) is a clue to a
    defect: name its suspected cause, propose tracking the root-cause search (a
    board item where one exists) and still weigh it against the option.

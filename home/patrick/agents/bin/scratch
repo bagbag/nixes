@@ -57,13 +57,9 @@ HELP = """scratch: scratch folders outside the checkout (one tree per repository
       scratch restore ~/.local/state/agents/scratch/-repo/sessions/<actor>/dump
   scratch list [--all] [--json]        entries (owner, size, last change, idle days when the next scan trashes it); --all: every repo folder
                                        an item's entry idle 14 days is kept while the item is open (the board is read) or unreachable
-      scratch list --json
   scratch status [--line]              totals; --line: what the trash holds (empty when nothing)
-      scratch status --line
   scratch sweep                        run the expiry scan now over every repository (14-day rule; open items' entries stay) and print what it trashed
-      scratch sweep
   scratch migrate                      one-time move of every .scratch folder's entries (any depth) into shared/<name>/, then the expiry scan
-      scratch migrate
   scratch help                         this text
 """
 

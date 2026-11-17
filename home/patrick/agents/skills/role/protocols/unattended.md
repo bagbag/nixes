@@ -33,8 +33,7 @@ setup, run `/role autopilot` again.
   whose acceptance names the user: the
   decide protocol's Accept with the walkthrough as a written assessment,
   recorded as a `needs_ratification` decision with its `## Reversal`. A finished CR
-  (`look` `before`) in `needs_acceptance` stays parked for the user: landing is a merge into the
-  target.
+  (`look` `before`) in `needs_acceptance` stays parked for the user.
 - Treat public contracts, durable design and substantial downstream work as
   costly to reverse. Before non-trivial action, resolve facts and obtain
   independent assessment; review findings authorize no expansion. Assess scope

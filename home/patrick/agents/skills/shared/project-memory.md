@@ -15,8 +15,7 @@
 
 - Reuse suitable owners; organize by product or technical boundary. Use one
   document for small projects or topics. Each level adds specificity and links
-  its parent; entry points link owners. Execution topics may reference owners
-  elsewhere; directory symmetry is optional.
+  its parent; entry points link owners.
 - Keep commitments and milestones understandable without scratch. Separate
   product non-goals, milestone exclusions, committed deferrals, eventual
   outcomes, approved checkpoints and currently authorized work.

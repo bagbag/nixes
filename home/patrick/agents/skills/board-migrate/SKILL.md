@@ -17,8 +17,7 @@ only findings and stops.
 ## Start
 
 Parts: **Tracker** (Target through Exit), [Upgrade](#upgrade) and
-[Scratch](#scratch). A one-time switch-over lives only here, not in protocols
-or other skills.
+[Scratch](#scratch).
 
 1. **Scan.** Read-only, a few commands:
    - trackers: `TODO.md`, `REVIEW.md`, Markdown boards, `docs/` backlogs;
@@ -181,8 +180,7 @@ step goes in a change set and runs on the user's confirmation.
    [Change requests](../shared/change-requests.md#change-requests) Settings,
    then `board setup --target … --setup … --checks … --look … --view …`
    (`look` and `view`: ask the user). Make each tool that
-   scans from the repository root skip `.worktrees/` (oxlint and oxfmt
-   honor `.git/info/exclude`).
+   scans from the repository root skip `.worktrees/`.
    Output: the settings as stored.
 5. **Reconcile.** Wrap each design still waiting for the user's accept in a
    CR under its topic: the design its child, `checkpoint` `user`, status
@@ -225,7 +223,7 @@ log in `$HOME/.agents/bin/scratch dir`.
   otherwise choose other ids. On retry, import only missing entries.
 - Import skips a dependency whose target is missing and still succeeds:
   resolve every `Skipped dependency` it reports.
-- Import file uses the `board bd export` schema (`board bd import --help`; imports run as `board bd --raw --yes import`); an
+- Import file uses the `board bd export` schema (`board bd import --help`); an
   omitted `priority` means P0; labels are not inherited from epics; set
   `external_ref` to the old id and `source_system` to the source file; add
   `parent-child` dependencies explicitly.

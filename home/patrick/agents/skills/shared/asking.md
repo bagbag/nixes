@@ -14,7 +14,7 @@ approval. Give each step's output compactly.
    the planning session's call.
    Output: the round's decisions; the instance list where one was flagged.
 2. **Check.** In a round run through `protocol` (decide protocol Round), the
-   engine sequences the passes and caps the loop: follow its output and report
+   engine sequences the passes: follow its output and report
    each pass's changes in its pass report. Otherwise invoke the
    step-back and ground skills on the whole set, in that order; invoke
    challenge-rulings last, before the questions or the approval request.

@@ -7,11 +7,10 @@ shared; `--prefix` overrides the origin repository's name), then the settings;
 an existing board keeps its mode and prefix and gets missing and differing
 settings set. `--server` converts an existing embedded board in place, keeping
 the old folder as `.beads.before-server-<time>/`; pause the sessions writing to
-it first. `bin/board` owns the settings.
+it first.
 
-- Initialize a board only through `board setup` or `board join`: their stealth
-  init keeps exclusions in `.git/info/exclude`, while plain `bd init` stages
-  agent files and replaces `core.hooksPath`.
+- Initialize a board only through `board setup` or `board join`, never plain
+  `bd init` (it stages agent files and replaces `core.hooksPath`).
 - Remove the exclude lines setup reports as matching tracked project files
   (1.3 adds `*.db`), unless new files like them should stay hidden.
 - On a shared board, the settings in the database travel by sync; each person
@@ -33,7 +32,7 @@ git origin itself.
 - Both are safe to repeat and need the person: `git config [--global]
   agents.person <name>`, labels `queue:<name>`.
 - `board` commits and syncs by itself about 60 seconds after a write, in a
-  detached process (ending the session needs no sync), and pulls before
+  detached process, and pulls before
   commands; `board bd --raw --yes sync` syncs at once.
 
 ### History

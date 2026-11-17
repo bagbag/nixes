@@ -8824,8 +8824,8 @@ def validate_protocol(root: Path, part: str) -> None:
             stage_text = proto("step", stdin={"select": ["pt1"]}).stdout
             # r29-q136, r30-q141: one rule for every printed part, no evidence asked of the premises, no length check on them.
             if "with evidence" in stage_text or "with its evidence" in stage_text or "what it rests on)" not in stage_text \
-                    or "Printed parts say what is decided and what each option means for the person (what they would see, what it costs), each thing once, in plain words" not in stage_text \
-                    or "go to the record" not in stage_text or "which only the record keeps" not in stage_text:
+                    or 'question-format.md "In printed question text"' not in stage_text or "which only the record keeps" not in stage_text \
+                    or "In printed question text, say what is decided and what each option means" not in (root / "skills/shared/question-format.md").read_text(encoding="utf-8"):
                 raise ValueError(f"the Stage text states the printed-text rule once and asks no evidence of the premises:\n{stage_text}")
             refused("step", stdin={**ROUND_INFO, "questions": [question("Which cache?", header="Much too long")]}, needle="over the limit of 12")
             refused("step", stdin={**ROUND_INFO, "questions": [question("Which cache?", options=[{"label": "Only", "description": "", "for": "for it", "against": "against it"}])]},

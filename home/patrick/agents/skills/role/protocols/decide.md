@@ -119,7 +119,7 @@ Follow the engine's output; the steps below add the judgment it leaves to you.
    and end state) included.
 6. **Related.** Extend an open item or decided record on the same decision, in
    place, instead of adding one. Relate a record the answer changes by one
-   clause; the release's Re-check corrects it.
+   clause.
 7. **Ask** under [Asking the user](../../shared/asking.md#asking-the-user),
    from its Check step.
    Output: the questions.
@@ -144,8 +144,7 @@ date. An outside result a held question waits on (`waitsFor`) that lands
 before Record is reported: clear it in that step's report (at Record too); the
 question is checked again and asked in this round. After the answers, the
 challenge pass may change only your own rulings on answered questions; the
-release asks the user about each such change. Each step's report takes only
-its own fields; the engine refuses others.
+release asks the user about each such change.
 
 **Stop:** an answer states a criterion, or a later step changes the premise:
 restart the affected questions under the decision protocol's
@@ -160,8 +159,7 @@ at Record while it waits on an outside result.
 `/release-round`, or asks; nothing starts by itself).
 
 Run the release through `protocol` like a round: `start release [<ids>]`. Follow
-the engine's output; only the person approves. The steps below add the judgment it leaves to
-you. Without a board, `start release [<ids>] --no-board` takes the round's
+the engine's output; only the person approves. Without a board, `start release [<ids>] --no-board` takes the round's
 record files from the records folder (name the ids: without them it takes the
 folder's newest round, which may be another session's; old topic subfolders are not
 released), skips the board check and appends the Released line; name their
@@ -174,7 +172,7 @@ user.
 4. **Approval.** The engine asks it. Mark each owner write in the approval:
    `write` (no CR, no look) or `show` (its diff joins the approval; the user
    can switch a mark). Draft every `show` write uncommitted in the project's
-   main tree before the approval: the engine prints its diff in the approval.
+   main tree before the approval.
    After the yes, commit the set's owner writes on the target branch without
    asking: the approval is your explicit authorization.
 5. **Owner writes.** Move superseded text to `history/` under project-memory.
@@ -190,8 +188,7 @@ user.
 - A contained change to the user's decision (or an unsure one) or an open
   premise: only that record goes to a round, its reason shown at that round's
   Stage.
-- A question for the user during an open release: `protocol abandon`; nothing
-  releases and `start release` takes the same records again.
+- A question for the user during an open release: `protocol abandon`.
 
 **Exit:** the set is released, each rule sits in its owner, and the counts are
 reported.

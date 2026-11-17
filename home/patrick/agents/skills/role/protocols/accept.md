@@ -58,7 +58,7 @@ Entry: [decide.md](decide.md#accept) Accept. Read `$HOME/.agents/skills/shared/c
    - **Rejected:** `board cr reject <cr> "<reason>"`; delete branch `cr/<id>` and its worktree only on the user's
      confirmation (they hold the only copy).
    - **Ratification:** `board ratify <id> yes|edits|no` with the user's
-     verdict (the pane's buttons send it). `edits`: read the edits first, as
+     verdict. `edits`: read the edits first, as
      for an Accept, and pick the gate the same way; the follow-up CR it starts
      waits for the user's Accept and lands with `board cr land` like any CR.
      `no`: ask what the user wants (fix or revert); `board ratify` files it as
@@ -82,11 +82,9 @@ members.
 
 ## Ratification
 
-After a `look` `after` landing, or an agent design
-checkpoint pass in such a project, the child task `Ratify: <CR title>` sits
-in `needs_ratification` under the closed CR and blocks nothing. The user's
-verdict goes through `board ratify` (the pane's Ratify, Ratify with edits and
-Not OK buttons call it): `yes` closes it (a default reason names the CR) and
+The `Ratify: <CR title>` task
+([Change requests](../../shared/change-requests.md#change-requests)) takes the
+user's verdict through `board ratify`: `yes` closes it (a default reason names the CR) and
 removes its review worktree and `ratify/<id>` branch, refused while they
 hold the user's edits; `edits` makes them the follow-up CR's (branch renamed
 to `cr/<follow-up>`), commits uncommitted edits as the user's, rebased
@@ -98,24 +96,17 @@ follow-up the user wants (fix or revert).
 
 The user reviews an item in its own worktree on its own
 branch; the board owns opening, reading and recording it (mechanism: README,
-the `board review open` paragraph). `board review open <item>` (the pane's
-Open) opens it at the tip it records; a ratification opens branch
-`ratify/<id>` at the landed tip. From Open until the user's Accept or Return
-(ratification: verdict), refresh and agent steps leave the item alone; Open
-does not refresh it. The user's edits are their commits after the opened tip
+the `board review open` paragraph). `board review open <item>` opens it at the tip it records; a ratification opens branch
+`ratify/<id>` at the landed tip. The user's edits are their commits after the opened tip
 plus uncommitted changes; Accept and Return commit the latter as the user's
 and record all as the user's edits. Accept on a moved base rebases, checks
 and triages like a refresh, then lands; a flagged change returns the CR to
 agent review. `board show <item>` names whether it is open for review and
-whether the user edited it; the pane reads the same and refreshes the board
-after each press. Tooling never deletes an old shared `<main>-review`;
-`board check` names it until the user removes it.
+whether the user edited it.
 
 ## Commands
 
 | Command | Effect |
 |---|---|
 | `board cr land <cr> --checkpoint --design <hash>` | The user's design checkpoint accept: `open`, checkpoint cleared, to planning; nothing lands. `<hash>` is the `design hash` `board claim <cr>` printed, still matching the design items' description, design, acceptance and notes. |
-| `board review open <item>` | Opens the item for the user's review (User review above) and prints the folder to open. |
 | `board cr edits <cr> --tip <sha> [--commit …]` | Prints, or with `--commit` commits and records as the user's, the user's edits in the CR's review; flags and gates: `board cr edits --help`. A failing gate keeps the commit and the CR waits for the user. |
-| `board ratify <item> yes\|edits\|no [-m "<msg>"] [gate]` | The user's ratification verdict (Ratification above); `edits` takes the `board cr edits` gate flags. |

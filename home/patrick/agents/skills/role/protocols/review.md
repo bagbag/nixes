@@ -21,9 +21,8 @@ findings or stops. A challenge follows [Challenge](#challenge) in place of
 steps 3-7.
 
 1. **Claim.** `board claim` for your pull or `board claim <id>` for a named
-   CR or item. It prints the author doer, `author unknown (<holder>)` (a
-   retired role holder) or `standalone` (a standalone review no one held):
-   you are independent unless you are that doer; a fresh-context worker of
+   CR or item. It prints the author doer, `author unknown (<holder>)` or
+   `standalone`: you are independent unless you are that doer; a fresh-context worker of
    the same session suffices. Review a CR in its worktree as the author left
    it.
    Output: `claimed <id>; author <actor>; independent`, or
@@ -54,8 +53,7 @@ steps 3-7.
    Output: each fix with its commit, or `no fixes`; gate reruns.
 7. **Pass or return.** Pass only when certain everything is clean and every
    required gate passed (your fixes included, listed in the verdict):
-   `board handover <cr> "<verdict>"`; when it prints a range instead (the tip
-   moved since you looked), review that range and hand over again. Otherwise
+   `board handover <cr> "<verdict>"`; otherwise
    return it with verdict,
    confirmed defects, open questions, executed checks and next action:
    `board return <cr> "<findings>"`.
@@ -119,8 +117,7 @@ its command: the `board cr refresh` row of
    - A confirmed flag: `board handover <cr> "<confirmed flags>"` sends the CR
      back to `in_review`. Hand over the same way after a resolved conflict
      (the commits changed).
-   - None: `board cr refresh <cr> --review-holds`. When it refuses on a base
-     that moved after your triage, triage the new incoming files and rerun.
+   - None: `board cr refresh <cr> --review-holds`.
    Output: flags with verdicts.
 4. **Release.** `board unclaim <cr>`.
    Output: `refreshed <cr>: <state>` or `sent back to review`.
