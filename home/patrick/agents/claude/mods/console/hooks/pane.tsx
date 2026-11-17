@@ -8,7 +8,7 @@ import type { ConsoleBoard, ConsoleCr, ConsoleItem, ConsoleRatification, Console
 import { crPressKey, ratifyPressKey, pressAcceptCr, pressContinue, pressOpenCr, pressOpenItem, pressOpenOverlaps, pressOpenRatification, pressOpenReason, pressOpenSettles, pressOpenSuggestion, pressRatify, pressReturnCr, pressUpdateCr, pressRole, pressRun, pressStart, pressView, pressWorkers, queuedRuns, runKey } from './core'
 import { isRoundOpen, RELEASE_COMMAND, ROUND_ROLES, START_COMMAND } from './engine'
 import { getBoard, getExpanded, getLenses, getOpened, getPass, getPlaced, getPressing, getRole, getRound, getRoundError, getTurnRunning, toggleExpanded, updateLenses } from './state'
-import { answerText, canUpdateCr, COUNT_GROUPS, countText, crDetailsText, crFailureParts, crFileHref, crMarks, crNewCountText, crKind, crPriorityHint, crPriorityText, crRowCheckText, crRows, crRowStageText, crSummaryText, crTreeText, crUnblocksHint, crUnblocksText, displayId, displayIds, fitText, isCrAccepting, isWalkCr, GROUND, GROUND_BASE, lensArgs, LENS_SETS, plural, pullsText, recommendationMark, recommendationText, roleText, roundWords, runNoun, staleHolds, staleSessions, startHint, STEP_BACK_BASE, suggestionText, WHAT, WHERE } from './words'
+import { answerText, canUpdateCr, COUNT_GROUPS, countText, crDetailsText, crFailureParts, crFileHref, crMarks, crNewCountText, crKind, crPriorityHint, crPriorityText, crRowCheckText, crRows, crRowStageText, crSummaryText, crTreeText, crUnblocksHint, crUnblocksText, displayId, displayIds, fitText, canAcceptCr, isCrAccepting, isWalkCr, GROUND, GROUND_BASE, lensArgs, LENS_SETS, plural, pullsText, recommendationMark, recommendationText, roleText, roundWords, runNoun, staleHolds, staleSessions, startHint, STEP_BACK_BASE, suggestionText, WHAT, WHERE } from './words'
 import type { CrKind, Lens, LensCommand } from './words'
 
 type $ = EngineInterface
@@ -732,9 +732,10 @@ export async function drawPane($: $, e: { surface: string; props: RenderPropsOf[
       const buttonsOf = (cr: ConsoleCr) => {
         const walkLabel = isWalkCr(cr) ? CR_BUTTONS.walk : CR_BUTTONS.open
         const accepting = isCrAccepting(cr)
+        const landing = canAcceptCr(cr)
         const updating = canUpdateCr(cr, isRoundRole, pulls)
         return {
-          accepting, updating, width: buttonsWidth([...(accepting ? [walkLabel, CR_BUTTONS.accept, CR_BUTTONS.return] : []), ...(updating ? [CR_BUTTONS.update] : [])]),
+          accepting, landing, updating, width: buttonsWidth([...(accepting ? [walkLabel, ...(landing ? [CR_BUTTONS.accept] : []), CR_BUTTONS.return] : []), ...(updating ? [CR_BUTTONS.update] : [])]),
           walkLabel, walkHint: isWalkCr(cr) ? 'Sends the walk-through request' : `Opens ${shown(cr.id)} for your review in its worktree: its change as Outgoing Changes, your edits as Changes`,
         }
       }
@@ -777,7 +778,7 @@ export async function drawPane($: $, e: { surface: string; props: RenderPropsOf[
             const actions = [
               ...(buttons.accepting ? [
                 act(crPressKey('open', cr.id), buttons.walkLabel, () => pressOpenCr($, cr, buttons.walkLabel), buttons.walkHint, 'suggestion'),
-                act(crPressKey('accept', cr.id), CR_BUTTONS.accept, () => pressAcceptCr($, cr), 'Sends the accept request; your session lands it', 'success', true),
+                ...(buttons.landing ? [act(crPressKey('accept', cr.id), CR_BUTTONS.accept, () => pressAcceptCr($, cr), 'Sends the accept request; your session lands it', 'success', true)] : []),
                 act(crPressKey('return', cr.id), CR_BUTTONS.return, () => pressReturnCr($, cr), 'Puts the return request in your prompt, ready for your changes', undefined, true),
               ] : []),
               ...(buttons.updating ? [act(crPressKey('update', cr.id), CR_BUTTONS.update, () => pressUpdateCr($, cr, isRoundRole), isRoundRole ? 'Sends the update request: your session dispatches the refresh' : 'Sends the refresh request: rebase, checks and the range-diff', 'suggestion')] : []),

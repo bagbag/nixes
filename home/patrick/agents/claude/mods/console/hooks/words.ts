@@ -356,10 +356,11 @@ export const displayId = (id: string, prefix: string | null): string => prefix !
 export const displayIds = (value: string, prefix: string | null): string =>
   prefix === null || prefix === '' ? value : value.replace(new RegExp(`(?<![\\w-])${prefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}-(?=\\w)`, 'g'), '')
 
-/** The change requests block's banner: `3 to accept · 2 in work · 5 wait on your answers · 97 queued`, zero parts left out. */
+/** The change requests block's banner: `3 to accept · 1 waits to land · 2 in work · 5 wait on your answers · 97 queued`, zero parts left out. */
 export function crSummaryText(board: Pick<ConsoleBoard, 'crs' | 'queued' | 'waitingOnYou'>): string {
-  const accepting = board.crs.filter(isCrAccepting).length
-  return [[accepting, 'to accept'], [board.crs.length - accepting, 'in work'], [board.waitingOnYou, 'wait on your answers'], [board.queued, 'queued']].filter(([n]) => n !== 0).map(([n, word]) => `${n} ${word}`).join(' · ')
+  const accepting = board.crs.filter(canAcceptCr).length
+  const held = board.crs.filter(isCrAccepting).length - accepting
+  return [[accepting, 'to accept'], [held, held === 1 ? 'waits to land' : 'wait to land'], [board.crs.length - accepting - held, 'in work'], [board.waitingOnYou, 'wait on your answers'], [board.queued, 'queued']].filter(([n]) => n !== 0).map(([n, word]) => `${n} ${word}`).join(' · ')
 }
 
 /** `<ready>` plus ` (k wait)` when items of that step wait (r21-q141). */
@@ -480,6 +481,9 @@ export function crRows(crs: readonly ConsoleCr[]): { cr: ConsoleCr; depth: numbe
 
 /** Whether the person can look at, accept or return it: the board waits for them. */
 export const isCrAccepting = (cr: ConsoleCr): boolean => cr.status === 'needs_acceptance'
+
+/** Whether Accept can land it: waiting for you, and no parent or blocker it waits on (the board's `waits` problems). Return still can. */
+export const canAcceptCr = (cr: ConsoleCr): boolean => isCrAccepting(cr) && !cr.problems.some(one => one.kind === 'waits')
 
 /** Update: where the board's next step is a refresh (its refresh work), in a deciding session, which dispatches it, or one that pulls reviews, which runs it. */
 export const canUpdateCr = (cr: ConsoleCr, isDeciding: boolean, pulls: readonly string[]): boolean =>

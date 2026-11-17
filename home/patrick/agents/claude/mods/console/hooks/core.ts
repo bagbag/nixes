@@ -11,7 +11,7 @@ import {
   setRound, setRoundError, stepPressing, takeContinueAsked, takeRefreshAgain, updateOpened, updateQueued,
 } from './state'
 import {
-  CONTINUE_NO_ROUND, keepStartText, startAbandonedText, continueInHandText, continueText, declineFailedNote, acceptText, isCrAccepting, isWalkCr, itemSlot, missingReportText, openDialogText, questionListLine, questionListText, PROTOCOL_ARGS_DESCRIPTION, PROTOCOL_STDIN_DESCRIPTION, PROTOCOL_TOOL_DESCRIPTION, refreshText, returnText, updateText, STALE_DROP, stuckPassText, walkText,
+  CONTINUE_NO_ROUND, keepStartText, startAbandonedText, continueInHandText, continueText, declineFailedNote, acceptText, canAcceptCr, isWalkCr, itemSlot, missingReportText, openDialogText, questionListLine, questionListText, PROTOCOL_ARGS_DESCRIPTION, PROTOCOL_STDIN_DESCRIPTION, PROTOCOL_TOOL_DESCRIPTION, refreshText, returnText, updateText, STALE_DROP, stuckPassText, walkText,
 } from './words'
 
 type $ = EngineInterface
@@ -594,7 +594,7 @@ async function claimEpisode($: $, marker: string, episode: string, session: stri
   return String(await $.fs.read(marker)) === claim
 }
 
-const acceptingIds = (board: ConsoleBoard | null): Set<string> => new Set((board?.crs ?? []).filter(isCrAccepting).map(one => one.id))
+const acceptingIds = (board: ConsoleBoard | null): Set<string> => new Set((board?.crs ?? []).filter(canAcceptCr).map(one => one.id))
 
 /**
  * Notifies once across consoles per request newly waiting to accept: absent from this console's previous read, so none at its

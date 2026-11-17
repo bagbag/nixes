@@ -5315,6 +5315,28 @@ def validate_board(root: Path) -> None:
                       cr_issue("q-child", "needs_acceptance", priority=0, since="2026-10-22T15:01:00Z", base="q-old")]
                 if [i["id"] for i in board.accept_queue(bare_deck(aq, complete=False))] != ["q-old", "q-child", "q-urgent", "q-late"]:  # the child (P0, oldest of the P0s) pulls its base before it
                     raise ValueError(f"accept queue order: {[i['id'] for i in board.accept_queue(bare_deck(aq, complete=False))]}")
+                # A child's Accept waits for every unlanded parent (its landing would refuse); its Return does not.
+                p_issues, _, _ = make_cr("awp", "awp.txt", "p\n")
+                c_issues, _, _ = make_cr("awc", "awc.txt", "c\n", base="awp")
+                c_issues[0]["dependencies"] = [{"issue_id": "awc", "depends_on_id": "awp", "type": "blocks"}]  # the stack's edge, as planning leaves it
+                p_issues[0]["status"] = "open"  # returned
+                fake = Fake([*p_issues, *c_issues])
+                code, output, errors = invoke(["claim", "awc"], fake, "lead0001")
+                if code or "claimed awc" not in output:
+                    raise ValueError(f"a named claim must take a child whose parent was returned, to return or reject it: {code} {output} {errors}")
+                held_child = [{**c_issues[0], "assignee": "lead0001"}, *c_issues[1:]]
+                code, _, errors = invoke(["return", "awc", "rework with its parent"], Fake([*p_issues, *held_child]), "lead0001")
+                if code:
+                    raise ValueError(f"the held child must be returnable: {code} {errors}")
+                for status, said in (("needs_acceptance", "lands after awp (accept it first)"), ("open", "waits on awp (returned)")):
+                    p_issues[0]["status"] = status
+                    deck = bare_deck([*p_issues, *c_issues], complete=False)
+                    child = deck.by_id["awc"]
+                    texts = [one["text"] for one in board.cr_problems(deck, child, board.cr_info(deck, child), None) if one["kind"] == "waits"]
+                    if board.accept_waits(deck, child) != ["awp"] or texts != [said] or board.cr_claimable(deck, child, "accept") is not None:
+                        raise ValueError(f"a child waiting on {status} awp: waits {board.accept_waits(deck, child)}, {texts}, claimable {board.cr_claimable(deck, child, 'accept')}")
+                if board.accept_waits(deck, deck.by_id["awp"]) or [o for o in board.cr_problems(deck, deck.by_id["awp"], board.cr_info(deck, deck.by_id["awp"]), None) if o["kind"] == "waits"]:
+                    raise ValueError("a request on the target waits on nothing to land")
                 # A failed setup is rerun by claiming the CR again (q222).
                 held = [{**cr_issue("rerun", "in_progress", assignee="lead0001", base="main", base_sha=at_main()), }]
                 subprocess.run(["git", "worktree", "add", "-q", "-b", "cr/rerun", str(Path(repo_root, ".worktrees", "rerun")), "main"], check=True, capture_output=True)

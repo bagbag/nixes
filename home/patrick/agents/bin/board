@@ -2763,6 +2763,8 @@ def claim(board: Board, args) -> int:
                         failed.append(item_id)
                         print(f'{item_id}: not claimed: {message}', file=sys.stderr)
                     continue
+                if kind is None and board.kind(issue) == 'accept' and accept_waits(board, issue) and not cr_worktree_state(board, issue):
+                    kind = 'accept'  # named: the Accept protocol may still return or reject it; landing refuses while it waits
                 if kind is None:
                     failed.append(item_id)
                     waits = board.cr_waits(issue)[0] if board.kind(issue) in ('plan', 'design', 'implement') else []
@@ -3632,9 +3634,18 @@ def user_edit_entry(main: Path, cr: dict, commit: str) -> dict | None:
                  or (rev(main, one['commit']) and author_stamp(main, one['commit']) == author_stamp(main, commit))), None)
 
 
+def accept_waits(board: Board, cr: dict) -> list[str]:
+    """What a change request waiting for its Accept waits on before it can land and no session clears at the Accept: its
+    unlanded parent, in any state, and the waits `cr_waits` lifts. Return and Reject wait on none of them."""
+    parent = live_parent(board, cr)
+    return list(dict.fromkeys([*([parent] if parent else []), *board.cr_waits(cr)[0]]))
+
+
 def cr_claimable(board: Board, cr: dict, kind: str) -> str | None:
     if board.cr_waits(cr)[0]:
-        return None  # includes a review whose base was returned (q206)
+        return None  # includes a review whose base was returned (q206); a named Accept claim takes one anyway (`claim`)
+    if kind == 'accept' and accept_waits(board, cr):
+        return None  # nothing of it can land yet: the next claim passes it
     if kind != 'plan' and cr_worktree_state(board, cr):
         return None  # a git state the board did not start: claim refuses it, so the queue does not offer it (board check names it)
     if kind not in ('plan', 'accept') and opened_tip(cr):
@@ -3774,6 +3785,13 @@ def cr_problems(board: Board, cr: dict, info: dict, refresh_id: str | None) -> l
     if state:
         out.append({'kind': 'git-state', 'text': f"mid {state} (not the board's)", 'next': {'action': 'owner', 'paths': [info['worktree']]}})
     if cr['status'] == ACCEPT and m.get('checkpoint') != 'user':  # a design checkpoint lands nothing: its check and review hold nothing up
+        parent = live_parent(board, cr)
+        for wait in accept_waits(board, cr):
+            status = board.by_id.get(wait, {}).get('status', 'unknown')
+            # a parent left the Accept only by a return (open, then rework) or a re-review: it never stacks in another state
+            said = {'open': 'returned', 'in_progress': 'in rework', 'in_review': 'in review'}.get(status, status) if wait == parent else status
+            text = f'lands after {wait} (accept it first)' if status == ACCEPT else f'waits on {wait} ({said})'
+            out.append({'kind': 'waits', 'text': text, 'next': {'action': 'wait'}})
         if info['state'] != 'current':  # every state needs_refresh counts
             out.append({'kind': 'check', 'text': f"check {info['state']}", 'next': stale_next})
         if m.get('review_tip') and not review_current(cr, info):

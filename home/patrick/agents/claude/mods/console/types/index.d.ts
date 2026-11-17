@@ -98,7 +98,7 @@ export type ConsoleCr = {
 
 /**
  * One problem of a request row (`board console` `crs[].problems`): `kind` setup-failed, git-state (a rebase, merge, … the board did not start), check (stale or conflict while waiting for you),
- * review-stale, land-blocked; `text` the board's words; `next.action` refresh (only the queue head's refresh work, never on an open review), claim, merge (with you), owner, ask-user or wait.
+ * review-stale, waits (an unlanded parent or a blocker its Accept waits on), land-blocked; `text` the board's words; `next.action` refresh (only the queue head's refresh work, never on an open review), claim, merge (with you), owner, ask-user or wait.
  */
 export type ConsoleProblem = { kind: string; text: string; next: { action: string; command: string | null; paths: string[] } }
 

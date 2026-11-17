@@ -229,7 +229,8 @@ lists it as `cr-git-state`, and `board console` gives the row a `git-state` prob
 Each `crs[]` row's `problems` lists what holds the request up with the step that clears it, `{kind, text, next: {action, command?, paths?}}`
 (`cr_problems`): `setup-failed` (claim again), `git-state` (its owner ends it), `check` (any state but current) and `review-stale` while it waits for the
 Accept, never for a design checkpoint, which lands nothing (`refresh` with the command on the refresh work only, `merge` when stopped on the user's
-edit commit, else `wait`), `land-blocked` (`ask-user`, the paths). A hold is no problem: the row's `holder` says it, and the console marks it while
+edit commit, else `wait`), `waits` (`wait`) for each unlanded parent and lifted wait of a request waiting for its Accept (`accept_waits`: the
+console hides its Accept, the next claim passes it, a named claim still takes it to return or reject), `land-blocked` (`ask-user`, the paths). A hold is no problem: the row's `holder` says it, and the console marks it while
 the request waits for the Accept. The console maps the problems to marks and the Update button; `board queue` and `board show` print the same
 problems with their step. A rebase the board started and stopped on a conflict stays claimable: `sync_branch` (handover, `cr refresh`, `cr edits
 --commit`) refuses while unmerged paths remain and otherwise runs `git rebase --continue` with `GIT_EDITOR=true` itself (r1-q2, q4).

@@ -89,7 +89,8 @@ queue order and refresh work: [Board coordination](board-coordination.md).
   the rest. Parents in agent review, at any checkpoint, `open` or in work are
   waited for, so in `look` `after` projects children wait for the landing.
   Closed means landed. A returned parent holds its children: they cannot
-  land and their reviews wait.
+  land and their reviews wait. A child's Accept waits until its parent has
+  landed; its Return and Reject do not.
 - **Rebase:** always `rebase --onto <current base tip> <base_sha>`. A child
   follows a rebased parent through its own holder or refresher, never the
   parent's. A rebase the board started and stopped on a conflict stays the

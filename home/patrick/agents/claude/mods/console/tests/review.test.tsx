@@ -85,6 +85,17 @@ describe('change request queue', () => {
     await ui.unmount()
   })
 
+  test('a request whose landing waits on a parent shows the wait and no Accept; Open and Return stay', async ($, on) => {
+    const WAITS = { kind: 'waits', text: 'waits on p-cr0 (returned)', next: { action: 'wait' } }
+    const { ui } = await queued($, on, [cr({ id: 'p-cr1', problems: [WAITS] }), cr({ id: 'p-cr2' })])
+    expect(await ui.find({ key: 'cr-accept-p-cr1' })).toBeUndefined()
+    for (const key of ['cr-open-p-cr1', 'cr-return-p-cr1', 'cr-accept-p-cr2']) expect(await ui.find({ key }), key).toBeDefined()
+    const drawn = await texts(ui)
+    expect(drawn).toContain('waits on p-cr0 (returned)')
+    expect(drawn).toContain('1 to accept · 1 waits to land')
+    await ui.unmount()
+  })
+
   test('Update: a deciding session dispatches the refresh the board names; absent where the board names none', async ($, on) => {
     const { ui, w, clock } = await queued($, on, [cr({ id: 'p-cr1', problems: [REFRESH('p-cr1')] }), cr({ id: 'p-cr2', problems: [{ ...REFRESH('p-cr2'), next: { action: 'wait' } }] })])
     expect(await ui.find({ key: 'cr-update-p-cr2' })).toBeUndefined()

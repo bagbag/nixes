@@ -806,6 +806,16 @@ describe('accept notification', () => {
     expect(w.notified).toEqual(['p-d is ready to accept (design): Design Y'])
   })
 
+  test('a request that waits on its parent notifies once the wait is gone', async ($, on) => {
+    const { w, clock } = await start($, on, [])
+    w.crs = [cr({ id: 'p-c', title: 'Child', problems: [{ kind: 'waits', text: 'lands after p-p (accept it first)', next: { action: 'wait' } }] })]
+    await clock.advance(62_000)
+    expect(w.notified).toEqual([])
+    w.crs = [cr({ id: 'p-c', title: 'Child' })]
+    await clock.advance(62_000)
+    expect(w.notified).toEqual(['p-c is ready to accept: Child'])
+  })
+
   test('returned and then waiting again, it notifies again', async ($, on) => {
     const { w, clock } = await start($, on, [])
     w.crs = [cr({ id: 'p-cr1', title: 'X' })]
