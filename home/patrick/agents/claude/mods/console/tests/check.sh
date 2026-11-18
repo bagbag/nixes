@@ -4,5 +4,5 @@
 set -e
 cd "$(dirname "$0")/.."
 claude plugin test .
-./.claude-plugin/types/node_modules/.bin/tsc --noEmit -p .
+tsc --noEmit -p .
 claude plugin validate .
