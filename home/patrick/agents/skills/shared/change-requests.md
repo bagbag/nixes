@@ -43,20 +43,11 @@ queue order and refresh work: [Board coordination](board-coordination.md).
   on the user's direct ask; never `ExitWorktree` with remove. A worktree
   resolves packages missing from its install from `<main>/node_modules`:
   when a CR drops a dependency, check that nothing still imports it.
-- **Git authorization:** the user's explicit authorization, for a session
-  holding a CR (and its workers) under the work, review or decide protocol,
-  and only for these commands:
-  - in that CR's worktree on `cr/<id>`: `git mv`, `git add`, one commit per
-    pass, and resolving the files of a conflict that `board handover` or
-    `board cr refresh` stops on (edit, `git add`), then rerunning that command,
-    which continues the rebase;
-  - the git steps of `board claim`, and of `handover` and `board cr refresh` on the
-    held CR; `board cr land` only in a deciding session's Accept. A reviewer's
-    passing `handover` of a `look` `after` CR also lands it;
-  - in a deciding session, with the user: the git steps of `board review
-    open`, `board cr edits` (`--commit`, and `--merged` after the user
-    confirms a conflict merge on their edit commit) and `board ratify`, and
-    resolving such a conflict with the user.
+- **Git authorization:** AGENTS.md Authorized workflows. Resolve a conflict
+  that `board handover` or `board cr refresh` stops on in the worktree (edit,
+  `git add`), then rerun that command, which continues the rebase. `board cr
+  edits --merged` follows the user's confirmation of a conflict merge on their
+  edit commit; resolve such a conflict with the user.
   Removing an unlanded CR's worktree or branch needs the user's confirmation.
   A land refused for the user's uncommitted edits (`land blocked`): ask the user to commit or move them;
   never restore, stash or commit them yourself.

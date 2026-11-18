@@ -177,7 +177,7 @@ user.
    can switch a mark). Draft every `show` write uncommitted in the project's
    main tree before the approval.
    After the yes, commit the set's owner writes on the target branch without
-   asking: the approval is your explicit authorization.
+   asking (AGENTS.md Authorized workflows).
 5. **Owner writes.** Move superseded text to `history/` under project-memory.
    Write a rule a project's convention owners (coding style, module authoring)
    state now; only READMEs, other skills and source wait for their work. For a

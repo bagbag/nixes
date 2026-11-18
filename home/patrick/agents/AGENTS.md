@@ -80,11 +80,16 @@ authorized work and pause the work that depends on that decision.
 
 ## Git and files
 
-**Git.** Confirm first (with the reason) before git commands that modify the working tree, index, stashes, refs or history: `reset`, discarding `checkout`/`switch`/`restore`, `stash`, `rebase`/`merge`/`cherry-pick`, `commit --amend` and other rewrites, `clean`, `push --force`, branch/tag deletion; skip it only with explicit authorization for that exact command. Read-only commands need none.
+**Git.** Confirm first (with the reason) before git commands that modify the working tree, index, stashes, refs or history: `reset`, discarding `checkout`/`switch`/`restore`, `stash`, `rebase`/`merge`/`cherry-pick`, `commit --amend` and other rewrites, `clean`, `push --force`, branch/tag deletion; skip it only with explicit authorization for that exact command or under an [authorized workflow](#authorized-workflows). Read-only commands need none.
 
 **Renames and moves** of tracked paths use `git mv`, not `mv` + `git add`; `git mv` and `git add` of paths the task changes need no confirmation.
 
-**Committing and staging.** Commit and push only when the user explicitly asks or authorizes it by other means. Plans, todo lists and workflow steps do not, except a protocol section that names git commands as the user's authorization (change-requests.md Git authorization, decide.md Release): it covers exactly those commands; cite it when asking. A one-off restriction ("don't commit") binds only the work it was said about. Every push stays the user's. At a coherent, verified state (tests green, step or refactor complete) end the turn with the headline only: `✅ Good commit point: <subject>`. Follow the project's commit convention, else a **Conventional Commit**: subject `<type>(scope): <description>` (≤ 72 characters), blank line, `- ` bullets of the material changes.
+**Committing and staging.** Commit and push only when the user explicitly asks or authorizes it by other means. Plans, todo lists and workflow steps do not, except the [authorized workflows](#authorized-workflows); cite the one you act under. A one-off restriction ("don't commit") binds only the work it was said about. Every push stays the user's. At a coherent, verified state (tests green, step or refactor complete) end the turn with the headline only: `✅ Good commit point: <subject>`. Follow the project's commit convention, else a **Conventional Commit**: subject `<type>(scope): <description>` (≤ 72 characters), blank line, `- ` bullets of the material changes.
+
+**Authorized workflows.** The user's standing authorization for exactly these git steps:
+
+- **Holding a change request** (its session and workers): the git steps of `board claim`, `board handover` and `board cr refresh` on its `cr/<id>` branch and worktree, rebases and conflict resolution included, and `git add`, `git mv` and one commit per pass there; a reviewer's passing `handover` of a `look` `after` CR also lands it.
+- **Deciding session:** `board cr land` in the user's Accept; with the user, the git steps of `board review open`, `board cr edits` and `board ratify`; committing a release's owner writes after the user approves the release.
 
 **Files.** Before deleting or overwriting anything you did not create in this session — `rm`, `mv` over an existing file, truncating, discarding content — inspect the target first. Stop and surface anything that contradicts its description or seems unwanted.
 
