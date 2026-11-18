@@ -64,6 +64,11 @@ describe('change request queue', () => {
     expect(rows.map(one => `${one.depth}${one.cr.id}`)).toEqual(['0x', '0p', '1c'])
   })
 
+  test('stacked rows draw a tree: a sibling that follows keeps the rail, the last one closes it', () => {
+    const rows = crRows([cr({ id: 'p' }), cr({ id: 'a', parent: 'p' }), cr({ id: 'g', parent: 'a' }), cr({ id: 'b', parent: 'p' }), cr({ id: 'q' })] as unknown as ConsoleCr[])
+    expect(rows.map(one => `${one.cr.id}|${one.branch}|${one.rail}`)).toEqual(['p||', 'a|├ |│ ', 'g|│ └ |│   ', 'b|└ |  ', 'q||'])
+  })
+
   test('a parent cycle still lists its members once', () => {
     const rows = crRows([cr({ id: 'a', parent: 'b' }), cr({ id: 'b', parent: 'a' })] as unknown as ConsoleCr[])
     expect(rows.map(one => one.cr.id).sort()).toEqual(['a', 'b'])
@@ -666,9 +671,11 @@ describe('what holds a request up', () => {
     ])
   })
 
-  test('lands-with names the short id under the board prefix', () => {
+  test('marks name short ids under the board prefix', () => {
     const one = cr({ id: 'p-cr2', after: 'p-cr1' }) as unknown as ConsoleCr
     expect(crMarks(one, 'p')).toEqual([{ text: 'lands with cr1', isProblem: false }])
+    const stacked = cr({ id: 'p-cr3', problems: [{ kind: 'waits', text: 'lands after p-cr2 (accept it first)', next: { action: 'wait', paths: [] } }] }) as unknown as ConsoleCr
+    expect(crMarks(stacked, 'p')).toEqual([{ text: 'lands after cr2 (accept it first)', isProblem: true }])
     expect(crDetailsText(one, 'p')).toContain('lands with cr1')
   })
 

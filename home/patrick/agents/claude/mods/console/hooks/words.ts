@@ -450,7 +450,7 @@ export function crFailuresText(cr: ConsoleCr): string | null {
 
 /** The board's problems as marks (the check state has its own word; `held` is a warning, not a problem), then `lands with <base>`. A land-blocked mark names its first three paths. */
 export function crMarks(cr: ConsoleCr, prefix: string | null = null): { text: string; isProblem: boolean; isWarning?: boolean }[] {
-  const said = (one: ConsoleCr['problems'][number]) => one.kind !== 'land-blocked' ? one.text
+  const said = (one: ConsoleCr['problems'][number]) => one.kind !== 'land-blocked' ? displayIds(one.text, prefix)
     : `land blocked: ${one.next.paths.slice(0, 3).join(', ')}${one.next.paths.length > 3 ? ', …' : ''}`
   return [
     ...cr.problems.filter(one => one.kind !== 'check').map(one => ({ text: said(one), isProblem: true })),
@@ -463,8 +463,12 @@ export function crMarks(cr: ConsoleCr, prefix: string | null = null): { text: st
 /** `look · view` as the board holds them; null when neither is set. */
 export const crLookText = (cr: ConsoleCr): string | null => cr.look === null && cr.view === null ? null : [cr.look === null ? null : `look ${cr.look}`, cr.view].filter(part => part !== null).join(' · ')
 
-/** The stack as rows: the queue's order, each child directly under its parent; a child whose parent is not queued stands at the top. */
-export function crRows(crs: readonly ConsoleCr[]): { cr: ConsoleCr; depth: number }[] {
+/**
+ * The stack as rows: the queue's order, each child directly under its parent; a child whose parent is not queued stands at the top.
+ * `branch` leads a child's title line (`├ ` while a sibling follows, else `└ `, after `│ ` or blanks for each outer level), `rail` its
+ * second line; both are empty at the top. A sibling behind `show more` still draws `├ `: more follow.
+ */
+export function crRows(crs: readonly ConsoleCr[]): { cr: ConsoleCr; depth: number; branch: string; rail: string }[] {
   const ids = new Set(crs.map(one => one.id))
   const rows: { cr: ConsoleCr; depth: number }[] = []
   const seen = new Set<string>()
@@ -476,7 +480,17 @@ export function crRows(crs: readonly ConsoleCr[]): { cr: ConsoleCr; depth: numbe
   }
   for (const cr of crs.filter(one => one.parent === null || !ids.has(one.parent))) add(cr, 0)
   for (const cr of crs) add(cr, 0)  // a parent cycle would otherwise hide its members
-  return rows
+  // whether a later row continues `level` below row `at`: one at that depth before any shallower row
+  const continues = (at: number, level: number): boolean => {
+    const next = rows.slice(at + 1).find(one => one.depth <= level)
+    return next !== undefined && next.depth === level
+  }
+  return rows.map((row, at) => {
+    const levels = Array.from({ length: row.depth }, (_, i) => continues(at, i + 1))
+    const outer = levels.slice(0, -1).map(more => more ? '│ ' : '  ').join('')
+    const last = levels.at(-1)
+    return { ...row, branch: last === undefined ? '' : `${outer}${last ? '├ ' : '└ '}`, rail: levels.map(more => more ? '│ ' : '  ').join('') }
+  })
 }
 
 /** Whether the person can look at, accept or return it: the board waits for them. */

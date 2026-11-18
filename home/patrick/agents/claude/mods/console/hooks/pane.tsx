@@ -19,7 +19,6 @@ const ANSWERED_SHOWN = 2
 const LOG_SHOWN = 10  // the newest log lines; the rest of the round's log folds behind +N more
 const BOARD_ROWS_SHOWN = 10
 const CR_ROWS_SHOWN = 3  // change requests, ratifications and items for you: the head of what waits on the person
-const CR_INDENT = 2  // cells a stacked request steps in
 const ID_GAP = 2  // cells between an id column and what follows
 const MILESTONE_MIN = 8  // cells the milestone title keeps however narrow the pane
 const BUTTON_SEP = ' • '  // between a row's buttons, as in Decide and Actions
@@ -751,11 +750,11 @@ export async function drawPane($: $, e: { surface: string; props: RenderPropsOf[
               <Box key={`cr-legend-${kind}`} flexDirection="row"><Text color={KIND_COLOR[kind]}>{BAR}</Text><Text color="inactive"> {kind}</Text></Box>
             ))}
           </Box>
-          {queue.shown.map(({ cr, depth }, index) => {
+          {queue.shown.map(({ cr, branch, rail }, index) => {
             hint.add(`item-${cr.id}`, `${shown(cr.id)}: open its summary here`)
             const check = crRowCheckText(cr)
             const count = crNewCountText(cr)
-            const marks = crMarks(cr).filter(mark => mark.isProblem || mark.isWarning === true)  // the quiet ones are the summary's
+            const marks = crMarks(cr, boardPrefix).filter(mark => mark.isProblem || mark.isWarning === true)  // the quiet ones are the summary's
             const held = crTreeText(cr)
             const buttons = buttonsOf(cr)
             hint.add(`bar-${cr.id}`, crRowStageText(cr))
@@ -784,7 +783,7 @@ export async function drawPane($: $, e: { surface: string; props: RenderPropsOf[
               ...(buttons.updating ? [act(crPressKey('update', cr.id), CR_BUTTONS.update, () => pressUpdateCr($, cr, isRoundRole), isRoundRole ? 'Sends the update request: your session dispatches the refresh' : 'Sends the refresh request: rebase, checks and the range-diff', 'suggestion')] : []),
             ]
             // line two: the milestone shrinks first, down to MILESTONE_MIN; what still does not fit wraps to a next line
-            const room = e.props.bodyColumns - 1 - CR_INDENT * depth - crIdWidth - alignedWidth - (rest.length === 0 ? 0 : rightWidth + 1) - 1  // the bar, the id column, the columns, the right group with its gap and a spare cell
+            const room = e.props.bodyColumns - 1 - rail.length - crIdWidth - alignedWidth - (rest.length === 0 ? 0 : rightWidth + 1) - 1  // the bar, the id column, the columns, the right group with its gap and a spare cell
             const barColor = KIND_COLOR[crKind(cr)]
             const milestone = cr.milestone === null ? null : fitText(cr.milestone, Math.max(MILESTONE_MIN, room))
             if (cr.milestone !== null && milestone !== cr.milestone) hint.add(`milestone-${cr.id}`, `${shown(cr.id)} belongs to: ${cr.milestone}`)
@@ -806,14 +805,14 @@ export async function drawPane($: $, e: { surface: string; props: RenderPropsOf[
               <Box key={`cr-${cr.id}`} flexDirection="column">
                 <Box key={`cr-${cr.id}-lines`} flexDirection="column" {...(index % 2 === 1 ? { backgroundColor: STRIPE } : {})}>
                   <Box key={`cr-${cr.id}-line1`} flexDirection="row">
+                    {branch !== '' && <Box key={`cr-${cr.id}-branch`} width={branch.length} flexShrink={0}><Text color="inactive">{branch}</Text></Box>}
                     <Box key={`cr-${cr.id}-bar1`} width={1} flexShrink={0} hover={{ scope: `bar-${cr.id}` }}><Text color={barColor}>{BAR}</Text></Box>
-                    <Box width={CR_INDENT * depth} flexShrink={0}><Text> </Text></Box>
                     <Box key={`cr-${cr.id}-title`} flexGrow={1} flexShrink={1} minWidth={0}><Text bold wrap="truncate-end">{cr.title}</Text></Box>
                     {actions.length > 0 && <Box key={`cr-${cr.id}-buttons`} width={buttons.width} marginLeft={1} flexShrink={0} flexDirection="row">{actions.flatMap((one, i) => i === 0 ? [one] : [<Text key={`cr-${cr.id}-sep-${i}`} color="inactive">{BUTTON_SEP}</Text>, one])}</Box>}
                   </Box>
                   <Box key={`cr-${cr.id}-line2`} flexDirection="row">
+                    {rail !== '' && <Box key={`cr-${cr.id}-rail`} width={rail.length} flexShrink={0}><Text color="inactive">{rail}</Text></Box>}
                     <Box key={`cr-${cr.id}-bar2`} width={1} flexShrink={0}><Text> </Text></Box>
-                    <Box width={CR_INDENT * depth} flexShrink={0}><Text> </Text></Box>
                     <Box key={`cr-${cr.id}-idbox`} width={crIdWidth} flexShrink={0} hover={{ scope: `item-${cr.id}` }}>
                       <Button key={`cr-${cr.id}-show`} plain onPress={() => pressOpenItem($, cr.id)}>{dimId(cr.id)}</Button>
                     </Box>
