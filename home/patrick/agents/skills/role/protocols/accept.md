@@ -81,7 +81,7 @@ members.
 
 ## Ratification
 
-The `Ratify: <CR title>` task
+The landing or design ratification task
 ([Change requests](../../shared/change-requests.md#change-requests)) takes the
 user's verdict through `board ratify`: `yes` closes it (a default reason names the CR) and
 removes its review worktree and `ratify/<id>` branch, refused while they
