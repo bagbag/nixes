@@ -5543,7 +5543,7 @@ def create_item(board: Board, title: str, kind: str, parent: str | None = None, 
     A parent is a plain hash id plus a link (a dotted child id stops sync when two clones create under one parent); bd copies none of the
     parent's labels, so they are copied here, the queue label excepted (the child inherits its queue). `deps` are (type, id) links the new item
     holds; `holds` are items that wait on it (their effects are the caller's: record_holds). `verb` is who writes the links (link_rules).
-    When an initial status is required, native `bd create` writes it with the item, parent and metadata atomically. `board` spares a read when it holds the parent."""
+    When an initial status is required, native `bd create` writes it with the item and parent edge atomically. `board` spares a read when it holds the parent."""
     node: dict = {'key': 'item', 'title': title, 'type': kind, **{key: value for key, value in fields.items() if value is not None}}
     labels = list(labels)
     if parent:
@@ -5566,11 +5566,11 @@ def create_item(board: Board, title: str, kind: str, parent: str | None = None, 
     if initial_status is not None:
         if deps or holds:
             raise BoardError('native create with an initial status cannot add dependency edges')
-        # bd create persists status, parent, metadata, and labels in the same write. Its graph
-        # route does not reliably persist an initial status on server boards.
+        # Native create persists status and the parent edge together. `--parent` allocates a dotted
+        # hierarchical id on shared boards, so use the plain-id parent-child dependency instead.
         args = ['create', title, '--type', kind, '--status', initial_status, '--silent', '--no-inherit-labels']
         if parent:
-            args += ['--parent', parent]
+            args += ['--deps', f'parent-child:{parent}']
         if fields.get('priority') is not None:
             args += ['--priority', str(fields['priority'])]
         if fields.get('description') is not None:

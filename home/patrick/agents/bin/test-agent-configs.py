@@ -2007,7 +2007,7 @@ def validate_shared_board(root: Path) -> None:
                                  metadata={"ratification": "design"}, initial_status="needs_ratification")
         args = native_create.call_args.args
         expect(made == "fx-rat" and args[:7] == ("create", "Rat", "--type", "task", "--status", "needs_ratification", "--silent")
-               and "--parent" in args and "fx-p" in args and "--no-inherit-labels" in args
+               and "--deps" in args and "parent-child:fx-p" in args and "--parent" not in args and "--no-inherit-labels" in args
                and "--labels" in args and "topic:a" in args and "queue:ben" not in args
                and "--metadata" in args and '{"ratification":"design"}' in args
                and not graph_create.called, "an initial-status child is created atomically with parent, kind and non-queue labels", args)
@@ -5109,7 +5109,8 @@ def validate_board(root: Path) -> None:
                 ratifications = [write for write in fake.writes() if write[:2] == ["create", "CR ly"]]
                 if code or at_main() != y_tip or not any(w[:2] == ["close", "ly"] for w in fake.writes()) or y_wt.exists() \
                         or len(ratifications) != 1 or "--status" not in ratifications[0] or "needs_ratification" not in ratifications[0] \
-                        or '{"ratification":"landing"}' not in ratifications[0] or "--parent" not in ratifications[0] \
+                        or '{"ratification":"landing"}' not in ratifications[0] or "--deps" not in ratifications[0] \
+                        or f"parent-child:ly" not in ratifications[0] or "--parent" in ratifications[0] \
                         or "(after lx)" not in output:
                     raise ValueError(f"landing a base must land the look-after CR waiting for it: {code} {errors}\n{output}\n{fake.writes()}")
                 # ...and leaves it as refresh work when its check is no longer current.
@@ -5160,7 +5161,9 @@ def validate_board(root: Path) -> None:
                             or not any(w[:2] == ["update", f"cp{look}"] and "checkpoint" in w for w in written) \
                             or len(ratifications) != int(ratified) \
                             or ratified and ("--status" not in ratifications[0] or "needs_ratification" not in ratifications[0]
-                                            or '{"ratification":"design"}' not in ratifications[0]) \
+                                            or '{"ratification":"design"}' not in ratifications[0]
+                                            or "--deps" not in ratifications[0] or f"parent-child:cp{look}" not in ratifications[0]
+                                            or "--parent" in ratifications[0]) \
                             or "passed the checkpoint" not in output:
                         raise ValueError(f"the agent's checkpoint pass in a look-{look} project: {code} {errors}\n{written}\n{output}")
                 empty_ratification_board = types.SimpleNamespace(by_id={}, children={"parent": []}, _cr_items={"parent": []})

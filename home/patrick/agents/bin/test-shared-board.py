@@ -347,6 +347,22 @@ def t_share_join() -> None:
 def t_child_ids() -> None:
     epic = create('a', 'ids epic', '-l', 'topic:x')
     settle('a', 'b')
+    rc, out, err, _ = raw('a', 'create', 'atomic status child', '--type', 'task', '--status', 'needs_ratification',
+                          '--description', 'x', '--metadata', '{"ratification":"design"}', '--deps', f'parent-child:{epic}',
+                          '--no-inherit-labels', '--labels', 'topic:x', '--silent')
+    atomic_id = out.strip()
+    atomic = items('a').get(atomic_id, {})
+    check(rc == 0 and atomic_id and '.' not in atomic_id and atomic.get('status') == 'needs_ratification'
+          and (atomic.get('metadata') or {}).get('ratification') == 'design'
+          and any(dep.get('type') == 'parent-child' and dep.get('depends_on_id') == epic for dep in atomic.get('dependencies', [])),
+          'child ids: native --deps creates a plain id with parent edge, kind and status in one write', {"id": atomic_id, "row": atomic, "error": err})
+    check('topic:x' in atomic.get('labels', []) and not any(label.startswith('queue:') for label in atomic.get('labels', [])),
+          'child ids: atomic linked child keeps non-queue parent labels and inherits queue through ancestry', atomic.get('labels'))
+    settle('a', 'b')
+    synced_atomic = items('b').get(atomic_id, {})
+    check(bool(synced_atomic) and synced_atomic.get('status') == 'needs_ratification'
+          and any(dep.get('type') == 'parent-child' and dep.get('depends_on_id') == epic for dep in synced_atomic.get('dependencies', [])),
+          'child ids: atomic plain-id child syncs to the other clone', synced_atomic)
     made = [create('a', 'a child', '--parent', epic), create('b', 'b child', f'--parent={epic}')]
     check(all('.' not in item for item in made), 'child ids: --parent on both sides makes plain ids', made)
     settle('a', 'b')
@@ -966,9 +982,9 @@ def t_cr() -> None:
     ratify = [row for row in items('a').values()
               if row['title'] == 'change request B' and row['status'] == 'needs_ratification']
     check(rc == 0 and git('rev-parse', target, cwd=side).strip() != before and items('a')[b]['status'] == 'closed'
-          and len(ratify) == 1 and ratify[0]['status'] == 'needs_ratification' and ratify[0]['issue_type'] == 'task'
+          and len(ratify) == 1 and '.' not in ratify[0]['id'] and ratify[0]['status'] == 'needs_ratification' and ratify[0]['issue_type'] == 'task'
           and (ratify[0].get('metadata') or {}).get('ratification') == 'landing',
-          'cr: a look-after pass lands and opens a ratification under the closed CR', {"ratifications": ratify, "output": err + out})
+          'cr: a look-after pass lands and creates an active plain-id ratification under the closed CR', {"ratifications": ratify, "output": err + out})
     queue_labels = [label for label in items('a')[b].get('labels', []) if label.startswith('queue:')]
     ratify_parent = [edge.get('depends_on_id') for edge in ratify[0].get('dependencies', [])
                      if edge.get('type') == 'parent-child'] if ratify else []
