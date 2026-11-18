@@ -5279,54 +5279,61 @@ def validate_board(root: Path) -> None:
 
                 # Settings through board setup are validated before anything changes (q223, q238).
                 for flags, needle in ((["--target", "nope"], "not a local branch"), (["--look", "sometimes"], "not one of"), (["--view", "x"], "not one of"),
-                                      (["--setup", "./missing.sh"], "does not exist"), (["--checks", " "], "empty")):
+                                      (["--setup", "./missing.sh"], "cannot be resolved by /bin/sh"), (["--checks", " "], "empty")):
                     fake = Fake([])
                     code, _, errors = invoke(["setup", *flags], fake, "lead0001")
                     if code != 1 or needle not in errors or fake.writes():
                         raise ValueError(f"board setup {flags} must be refused before changing anything: {code} {errors} {fake.writes()}")
 
-                # A bare project script is only valid when the shell can find it on PATH.
+                # Setup resolves only the setting's first word as /bin/sh does; it never runs the setting.
                 with tempfile.TemporaryDirectory() as directory:
                     root_dir = Path(directory)
                     (root_dir / ".beads").mkdir()
                     (root_dir / ".beads" / "metadata.json").write_text('{"dolt_mode":"embedded"}', encoding="utf-8")
-                    script = root_dir / "board-setup-test"
-                    script.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+                    subdir = root_dir / "subdir"
+                    subdir.mkdir()
+                    executable = root_dir / "exec"
+                    executable.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+                    executable.chmod(0o755)
+                    (root_dir / "noexec").write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+                    (root_dir / "bare-file").write_text("not a command\n", encoding="utf-8")
                     original_cwd = os.getcwd()
+                    real_run = subprocess.run
 
                     def setup_fake(command, **kwargs):
                         if command == ["git", "rev-parse", "--show-toplevel"]:
                             return subprocess.CompletedProcess(command, 0, f"{directory}\n", "")
+                        if command[:3] == ["/bin/sh", "-c", 'command -v "$1"']:
+                            return real_run(command, **kwargs)
                         return fake(command, **kwargs)
 
-                    def run_setup(flags, path):
+                    def run_setup(flags, path, cwd):
                         setup_output, setup_errors = io.StringIO(), io.StringIO()
                         with patch.object(board.subprocess, "run", setup_fake), patch.object(board, "beads_dir", lambda *_: root_dir / ".beads"), \
                                 patch.object(board, "has_board", lambda: True), patch.object(board, "ensure_server", lambda *_: None), \
                                 patch.object(board, "hiding_excludes", lambda: []), patch.dict(os.environ, {"PATH": path}), \
                                 contextlib.redirect_stdout(setup_output), contextlib.redirect_stderr(setup_errors):
                             try:
+                                os.chdir(cwd)
                                 return board.main(["setup", *flags]), setup_output.getvalue(), setup_errors.getvalue()
                             finally:
                                 os.chdir(original_cwd)
 
+                    cases = (("./exec", True, None), ("git", True, None), ("eval", True, None), ("if", True, None),
+                             ("./noexec", False, None), ("./missing", False, None), ("bare-file", False, "use ./bare-file"),
+                             ("typo", False, None), ("NAME=value", False, None))
                     for setting in ("--setup", "--checks"):
-                        fake = Fake([])
-                        before = fake.settings.copy()
-                        code, _, errors = run_setup([setting, script.name], "/usr/bin:/bin")
-                        if code != 1 or "./board-setup-test" not in errors or fake.writes() or fake.settings != before:
-                            raise ValueError(f"board setup must refuse bare project file {setting} before changing settings: {code} {errors} {fake.writes()}")
-
-                    fake = Fake([])
-                    code, _, errors = run_setup(["--setup", "./" + script.name], "/usr/bin:/bin")
-                    if code != 0 or errors or (["config", "set", "custom.board.setup", "./" + script.name] not in [call[0] for call in fake.calls]):
-                        raise ValueError(f"board setup must accept an explicit project path: {code} {errors} {fake.calls}")
-
-                    script.chmod(0o755)
-                    fake = Fake([])
-                    code, _, errors = run_setup(["--setup", script.name], f"{directory}:/usr/bin:/bin")
-                    if code != 0 or errors or (["config", "set", "custom.board.setup", script.name] not in [call[0] for call in fake.calls]):
-                        raise ValueError(f"board setup must keep accepting a bare command found on PATH: {code} {errors} {fake.calls}")
+                        for command, accepted, correction in cases:
+                            fake = Fake([])
+                            before = fake.settings.copy()
+                            code, _, errors = run_setup([setting, command], "/usr/bin:/bin", subdir)
+                            if accepted:
+                                expected = ["config", "set", f"custom.board.{setting[2:]}", command]
+                                if code != 0 or errors or expected not in [call[0] for call in fake.calls]:
+                                    raise ValueError(f"board setup must resolve {command!r} for {setting}: {code} {errors} {fake.calls}")
+                            elif code != 1 or "cannot be resolved by /bin/sh" not in errors or (correction and correction not in errors) \
+                                    or fake.writes() or fake.settings != before:
+                                raise ValueError(f"board setup must refuse {command!r} before changing {setting}: {code} {errors} {fake.writes()}")
 
                 # r10-q52: after a switch of the project's look or view, setup lists the open CRs that keep their own, with their reason line.
                 own = [{**cr_issue("own-a", look="after"), "description": "Needs care.\nThe look is after because the work is internal."},

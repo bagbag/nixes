@@ -6210,8 +6210,7 @@ def to_server(beads: Path) -> None:
 
 
 def project_pairs(args) -> list[tuple[str, str]]:
-    """The project settings board setup was given, validated before anything changes (q223, q238): the target is a local
-    branch, look and view are of their kinds, setup and checks name a command (a path in it must exist)."""
+    """Validate the project settings board setup was given before anything changes (q223, q238)."""
     pairs = []
     for name in SETTINGS:
         value = getattr(args, name, None)
@@ -6227,10 +6226,12 @@ def project_pairs(args) -> list[tuple[str, str]]:
             raise BoardError(f"--{name} {value!r} is not one of {', '.join({'look': LOOKS, 'view': VIEWS}[name])}")
         if name in ('setup', 'checks'):
             first = shlex.split(value)[0] if value else ''
-            if '/' in first and not (Path(first).is_absolute() and Path(first).exists() or (Path.cwd() / first).exists()):
-                raise BoardError(f'--{name}: {first} does not exist (settings name project scripts)')
-            if '/' not in first and (Path.cwd() / first).is_file() and shutil.which(first) is None:
-                raise BoardError(f'--{name}: {first} is a project file but is not on PATH; use ./{first}')
+            resolved = subprocess.run(['/bin/sh', '-c', 'command -v "$1"', 'board', first],
+                                      cwd=Path.cwd(), capture_output=True, text=True)
+            if resolved.returncode != 0:
+                if '/' not in first and (Path.cwd() / first).is_file():
+                    raise BoardError(f'--{name}: {first} cannot be resolved by /bin/sh; use ./{first}')
+                raise BoardError(f'--{name}: {first} cannot be resolved by /bin/sh')
         pairs.append((SETTINGS[name], value))
     return pairs
 
