@@ -5558,8 +5558,8 @@ def create_plan(plan: dict) -> dict[str, str]:
 
 
 def create_item(board: Board, title: str, kind: str, parent: str | None = None, deps: list[tuple[str, str]] = (), holds: list[str] = (),
-                labels: list[str] = (), verb: str = 'create', **fields) -> str:
-    """The board's own single-item creates (a follow-up, a ratification, a revision), using `board create`'s field and link checks.
+                labels: list[str] = (), verb: str = 'create', dry_run: bool = False, **fields) -> str:
+    """The board's own single-item creates (a follow-up, a ratification, a revision), using `board create`'s field and link checks through one plan node.
     A parent is a plain hash id plus a link (a dotted child id stops sync when two clones create under one parent); bd copies none of the
     parent's labels, so they are copied here, the queue label excepted (the child inherits its queue). `deps` are (type, id) links the new item
     holds; `holds` are items that wait on it (their effects are the caller's: record_holds). `verb` is who writes the links (link_rules).
@@ -5583,7 +5583,7 @@ def create_item(board: Board, title: str, kind: str, parent: str | None = None, 
     if holds:
         plan['edges'] = [{'from_id': one, 'to_key': 'item', 'type': 'blocks'} for one in holds]
     plan_with_queue(plan)
-    return create_plan(plan)['item']
+    return '' if dry_run else create_plan(plan)['item']  # dry_run: the checks above, no write
 
 
 def missing_sections(text: str, sections=RECORD_SECTIONS) -> list[str]:
@@ -5594,14 +5594,17 @@ def missing_sections(text: str, sections=RECORD_SECTIONS) -> list[str]:
 def create_ruling_revision(board: Board, old: str, title: str, description: str, holds: list[str] = (),
                            parent: str | None = None, labels: list[str] | None = None,
                            priority: int | None = None, external_ref: str | None = None,
-                           partial: str | None = None) -> str:
+                           partial: str | None = None, dry_run: bool = False) -> str:
     issue = board.by_id[old]
     parent = parent or board.parent.get(old)
     labels = labels if labels is not None else [label for label in issue.get('labels') or [] if label.startswith('topic:')]
     new = create_item(board, title, 'decision', parent=parent, labels=labels, holds=holds, verb='ruling',
                       priority=priority if priority is not None else issue.get('priority', 2),
                       description=description, external_ref=external_ref or None,
-                      metadata={REVISES_RULE: partial} if partial is not None else None, deps=[(REVISES, old)])
+                      metadata={REVISES_RULE: partial} if partial is not None else None, deps=[(REVISES, old)],
+                      dry_run=dry_run)
+    if dry_run:
+        return new
     failed = record_holds(Board.load('all'), new, holds) if holds else []
     if failed:
         raise BoardError(f"{new} created, but {', '.join(failed)} are not blocked on it: board block {' '.join(failed)} --on {new}")
@@ -6041,30 +6044,12 @@ def revise(board: Board, args) -> int:
     parent = args.parent or board.parent.get(args.old)
     labels = args.label if args.label \
         else [label for label in old.get('labels') or [] if label.startswith('topic:')]
-    description = read_text_arg(args.body_file)
-    metadata = {REVISES_RULE: args.partial} if args.partial is not None else None
+    new = create_ruling_revision(board, args.old, args.title, read_text_arg(args.body_file), holds=holds,
+                                 parent=parent, labels=labels, priority=args.priority,
+                                 external_ref=args.external_ref, partial=args.partial, dry_run=args.dry_run)
     if args.dry_run:
-        node = {key: value for key, value in {'key': 'item', 'title': args.title, 'type': 'decision', 'description': description,
-                'priority': args.priority if args.priority is not None else old.get('priority', 2),
-                'external_ref': args.external_ref or None, 'metadata': metadata,
-                'deps': [{'target': args.old, 'type': REVISES}]}.items() if value is not None}
-        if parent:
-            parent_issue = board.by_id.get(parent)
-            if not parent_issue:
-                raise BoardError(f'unknown parent {parent}')
-            node['parent_id'] = parent
-            labels += [label for label in parent_issue.get('labels') or [] if label.startswith(QUEUE_PREFIX) and label not in labels]
-        if labels:
-            node['labels'] = labels
-        plan = validate_plan({'nodes': [node]})
-        plan_links_found, plan_types = plan_links(plan)
-        link_rules(board, plan_links_found, 'ruling', plan_types)
-        plan_with_queue(plan)
         print('valid')
         return 0
-    new = create_ruling_revision(board, args.old, args.title, description, holds=holds,
-                                 parent=parent, labels=labels, priority=args.priority,
-                                 external_ref=args.external_ref, partial=args.partial)
     print(new)
     return 0
 
