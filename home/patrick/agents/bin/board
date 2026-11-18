@@ -4445,6 +4445,12 @@ def return_item(board: Board, args) -> None:
     review = review_read(board, cr)
     if review:  # the user's Return: an unedited review ends with it, one with edits is recorded first
         refuse_unrecorded(args.id, review, f'{edits_line(args.id, review["opened"])} --no-gate "returned" records them, then return')
+    checkpoint = meta(cr).get('checkpoint')
+    if (cr['status'] == ACCEPT and checkpoint == 'user') or (cr['status'] == 'in_review' and checkpoint == 'agent'):
+        designs = [item['id'] for item in cr_closed_items(board, cr['id'])
+                   if item.get('issue_type') == 'design' and item.get('status') == 'closed']
+        if designs:
+            bd_checked('reopen', *designs)
     bd_checked('update', args.id, '--status', 'open', '--assignee', '', '--json')
     put_meta(cr, since=None, review_tip=None, review_base_tip=None, reviewing_tip=None, **({OPENED: None} if review else {}))
     comment(args.id, f'board return: {args.findings}')
@@ -5355,7 +5361,8 @@ def record_holds(board: Board, new_id: str, holds: list[str], reason: str | None
     if not holds:
         return []
     with contextlib.redirect_stdout(sys.stderr):  # stdout stays what the create printed: the protocol engine reads its id or JSON
-        _, failed = block_items(board, holds, new_id, reason.format(new=new_id) if reason else None, derived_actor() or '')
+        _, failed = block_items(board, holds, new_id, reason.format(new=new_id) if reason else None, derived_actor() or '',
+                                allow_checkpoint_design=reason == DECISION_HOLD_REASON)
     return failed
 
 
@@ -5427,7 +5434,7 @@ def link_rules(board: Board | None, links: list[tuple[str, str, str]], verb: str
             if waiting in new:
                 if new[other] == 'decision':  # between new work items bd writes the edge itself
                     waits[other][1].append(waiting)
-            elif board is None or not board.is_open(waiting):
+            elif board is None or (not board.is_open(waiting) and not (new[other] == 'decision' and user_checkpoint_design(board, waiting))):
                 raise BoardError(f'unknown or closed: {waiting}')
             elif new[other] == 'decision' or reason_optional(board.by_id[waiting], {'issue_type': new[other]}):
                 waits[other][0].append(waiting)
@@ -5800,6 +5807,16 @@ def cr_hold_refusal(waiting: str, waiting_type: str | None, blocker: str, blocke
     return None
 
 
+def user_checkpoint_design(board: Board, item_id: str) -> bool:
+    """A closed design may be held while its owning CR awaits the user's checkpoint decision."""
+    cr_id = board.cr_of(item_id)
+    cr = board.by_id.get(cr_id) if cr_id else None
+    if not cr or cr['status'] != ACCEPT or meta(cr).get('checkpoint') != 'user':
+        return False
+    return any(item['id'] == item_id and item.get('issue_type') == 'design' and item.get('status') == 'closed'
+               for item in cr_closed_items(board, cr_id))
+
+
 def block_one(board: Board, item_id: str, blocker: str, reason: str | None, actor: str) -> tuple[str, bool]:
     """Blocks one whole item; its reason is commented on it (none when the blocker or the item makes the reason optional and none
     is given). (result line, False). The holder's own block hands the item back (r21-q144): the hold is freed; a change request
@@ -5837,14 +5854,16 @@ def block_one(board: Board, item_id: str, blocker: str, reason: str | None, acto
     return result, False
 
 
-def block_items(board: Board, ids: list[str], blocker: str, reason: str | None, actor: str) -> tuple[list[str], list[str]]:
+def block_items(board: Board, ids: list[str], blocker: str, reason: str | None, actor: str,
+                allow_checkpoint_design: bool = False) -> tuple[list[str], list[str]]:
     """Blocks each item, one result line each; (returned from review, failed)."""
     returned, failed = [], []
     for item_id in ids:
         try:
             if item_id == blocker:
                 raise BoardError(f'{item_id}: cannot block an item on itself')
-            require_open(board, [item_id])
+            if not (allow_checkpoint_design and user_checkpoint_design(board, item_id)):
+                require_open(board, [item_id])
             result, back = block_one(board, item_id, blocker, reason, actor)
             print(result)
             returned += [item_id] if back else []

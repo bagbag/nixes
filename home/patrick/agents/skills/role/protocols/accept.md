@@ -45,13 +45,8 @@ Entry: [decide.md](decide.md#accept) Accept. Read `$HOME/.agents/skills/shared/c
      then land the new tip.
    - **Design checkpoint:** name the outcome the round's answers entail for
      one confirmation. Nothing changes the design: `board cr land <cr>
-     --checkpoint --design <hash>` (the hash from step 2). Otherwise block the
-     affected design item on each round record that changes it (`board block <item> --on <record>
-     --reason "<what changes>"`, one call per record) and
-     `board return <cr> "<records>"`; its author reworks the
-     design once they are released. Decision records hold work items, never a
-     change-request. If no design item exists, create or reopen the intended
-     item before blocking it. The return comment names the records.
+     --checkpoint --design <hash>` (the hash from step 2). Otherwise
+     `board return <cr> "<records>"`.
    - **Changes wanted:** talk the root fix through with the user, then
      `board return <cr> "<findings>"`; add follow-up items to the CR.
      **Return with edits:** `board cr edits <cr> --tip <tip> --commit -m

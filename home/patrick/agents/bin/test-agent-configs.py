@@ -2362,7 +2362,7 @@ def validate_board(root: Path) -> None:
         elif argv[0] in ("related", "check", "block", "update", "link", "unlink", "unblock", "reopen") or argv[:2] in (["ruling", "check-replaces"], ["ruling", "revise"], ["ruling", "release"], ["ruling", "supersede"]):
             expected = ["export"]
             if argv[:2] == ["ruling", "revise"] and (("--holds" in argv and argv[argv.index("--holds") + 1] != "none") or any(a.startswith("blocks:") for a in argv)):
-                expected = ["export", "export"]  # and the board read again after the create, which holds the new question
+                expected = ["export", "show"] if "fx-nowhere" in argv else ["export", "export"]  # unknown targets are checked before creation; otherwise read after to block the new question
         elif argv[:2] == ["ruling", "record"]:
             expected = fake.reads() if fake.reads() and set(fake.reads()) == {"export"} else ["export"]  # the export again before each supersede (the links just written)
         elif argv[0] in ("claim", "take", "wait") and (
@@ -2371,6 +2371,9 @@ def validate_board(root: Path) -> None:
             # claim reads hand-over comments of in_review items, the comments of the session's other holds (staleness), and the
             # blockers a change request lifts (the closed items in a list, shows): after the one list
             expected = fake.reads()
+        elif argv[0] == "return" and any(i.get("issue_type") == "change-request" and i["status"] == "needs_acceptance"
+                                           and i.get("metadata", {}).get("checkpoint") == "user" for i in fake.issues):
+            expected = ["list"]  # the closed children are read separately, outside the status view
         elif argv[0] in ("position", "console") and (held or childless) or argv[0] == "mine" and held:
             expected = ["list", "show"]
         else:
@@ -4396,6 +4399,63 @@ def validate_board(root: Path) -> None:
             if code or output != "fx-new\n" or len(created_bd) != 1 or "--holds" in created_bd[0] or ready in created_bd[0] or len(batch) != 1 \
                     or f"dep add {ready} fx-new blocks" not in batch[0] or [i for i, (a, _) in enumerate(fake.calls) if a[0] == "create"] > [i for i, (a, _) in enumerate(fake.calls) if a[0] == "batch"]:
                 raise ValueError(f"board bd create --type decision --holds must create, then block the held items, never passing --holds to bd: {code} {output} {errors} {fake.calls}")
+            def checkpoint_pair(cr_id):
+                parent = {"id": cr_id, "title": f"CR {cr_id}", "issue_type": "change-request", "status": "needs_acceptance", "priority": 2,
+                          "description": "d", "created_at": "2026-10-22T15:29:00Z", "updated_at": "2026-10-22T15:29:00Z",
+                          "metadata": {"checkpoint": "user"}, "dependencies": []}
+                design = {"id": f"{cr_id}.d", "title": f"design {cr_id}", "issue_type": "design", "status": "closed", "priority": 2,
+                          "description": "d", "created_at": "2026-10-22T15:29:00Z", "updated_at": "2026-10-22T15:29:00Z",
+                          "dependencies": [{"issue_id": f"{cr_id}.d", "depends_on_id": cr_id, "type": "parent-child"}]}
+                return parent, design
+            checkpoint, checkpoint_design = checkpoint_pair("cp-hold")
+            class CheckpointWorkflow(Creating):
+                def __call__(self, command, **kwargs):
+                    done_cmd = super().__call__(command, **kwargs)
+                    if command[0] != "bd":
+                        return done_cmd
+                    if command[1] == "batch":
+                        for line in (kwargs.get("input") or "").splitlines():
+                            words = line.split()
+                            if words[:2] == ["dep", "add"]:
+                                next(i for i in self.issues if i["id"] == words[2])["dependencies"].append(
+                                    {"issue_id": words[2], "depends_on_id": words[3], "type": words[4]})
+                    elif command[1] == "reopen":
+                        for item_id in command[2:]:
+                            next(i for i in self.issues if i["id"] == item_id)["status"] = "open"
+                    elif command[1] == "update" and "--status" in command:
+                        target = next(i for i in self.issues if i["id"] == command[2])
+                        target["status"] = command[command.index("--status") + 1]
+                    return done_cmd
+            workflow = CheckpointWorkflow([*topical, checkpoint, checkpoint_design])
+            code, output, errors, fake = bd_create("--holds", checkpoint_design["id"], deck=workflow)
+            edge = {"issue_id": checkpoint_design["id"], "depends_on_id": "fx-new", "type": "blocks"}
+            held = next(i for i in fake.issues if i["id"] == checkpoint_design["id"])
+            if code or output != "fx-new\n" or edge not in held["dependencies"] or held["status"] != "closed" \
+                    or any(args[0] == "reopen" for args, _ in fake.calls):
+                raise ValueError(f"Record must hold a closed design of the active user checkpoint without reopening it: {code} {errors} {fake.calls}")
+            non_design = {**checkpoint_design, "id": "cp-hold.t", "title": "task cp-hold", "issue_type": "task",
+                          "dependencies": [{"issue_id": "cp-hold.t", "depends_on_id": "cp-hold", "type": "parent-child"}]}
+            code, _, errors, fake = bd_create("--holds", non_design["id"], deck=Creating([*topical, checkpoint, non_design]))
+            if code == 0 or any(args[0] == "create" for args, _ in fake.calls):
+                raise ValueError(f"the closed-item exception must not allow a non-design child: {code} {errors} {fake.calls}")
+            workflow.calls = []
+            code, output, errors = invoke(["return", "cp-hold", "fx-new"], workflow, "lead0001")
+            if code or held["status"] != "open" or edge not in held["dependencies"] \
+                    or not any(args == ["reopen", "cp-hold.d"] for args, _ in workflow.calls) \
+                    or any(args[0] == "dep" and args[1] == "remove" for args, _ in workflow.calls):
+                raise ValueError(f"Return must reopen the held design and preserve its blocker edge: {code} {errors} {workflow.calls}")
+            plain_checkpoint, plain_design = checkpoint_pair("cp-plain")
+            fake = Fake([plain_checkpoint, plain_design])
+            code, output, errors = invoke(["return", "cp-plain", "Changes wanted"], fake, "lead0001")
+            if code or fake.writes()[:2] != [["reopen", "cp-plain.d"], ["update", "cp-plain", "--status", "open", "--assignee", "", "--json"]] \
+                    or any(args[:2] == ["dep", "add"] for args in fake.writes()):
+                raise ValueError(f"plain checkpoint Return must reopen its design without adding a blocker: {code} {errors} {fake.writes()}")
+            agent_checkpoint, agent_design = checkpoint_pair("cp-agent")
+            agent_checkpoint.update(status="in_review", assignee="lead0001", metadata={"checkpoint": "agent"})
+            fake = Fake([agent_checkpoint, agent_design])
+            code, output, errors = invoke(["return", "cp-agent", "Changes wanted"], fake, "lead0001")
+            if code or fake.writes()[:2] != [["reopen", "cp-agent.d"], ["update", "cp-agent", "--status", "open", "--assignee", "", "--json"]]:
+                raise ValueError(f"agent checkpoint Return must reopen its closed design: {code} {errors} {fake.writes()}")
             code, _, errors, fake = bd_create("--holds", ready, deck=Creating(list(mine_rows)))
             if code or not any(w[:2] == ["unclaim", ready] for w in fake.writes()):
                 raise ValueError(f"board bd create --holds blocks on the board read after the create: the creator's claimed item is handed back: {code} {errors} {fake.writes()}")
@@ -9260,9 +9320,9 @@ def validate_protocol(root: Path, part: str) -> None:
             if [c["args"][-2:] for c in writes if c["args"][:2] == ["create", "--graph"]] != [["--holds", "fx-design"]]:
                 raise ValueError(f"the decision record must hold its design work item: {[c['args'] for c in writes]}")
             accept = (root / "skills" / "role" / "protocols" / "accept.md").read_text(encoding="utf-8")
-            if "board block <item> --on <record>" not in accept or "board return <cr> \"<records>\"" not in accept \
-                    or "Decision records hold work items, never a" not in accept:
-                raise ValueError("Accept must return a design checkpoint through its affected work item and name the records")
+            if 'board return <cr> "<records>"' not in accept or "board block <item> --on <record>" in accept \
+                    or "create or reopen" in accept or "Decision records hold work items" in accept:
+                raise ValueError("Accept must rely on round holds and return a design checkpoint directly")
 
             # r22-q158: a view or count the board's health JSON lacks is named, not read as no items or a zero count.
             for key, omitted, needle in (("omitItems", "toAccept", "no items view `toAccept`"),
@@ -11828,6 +11888,8 @@ def validate_protocol(root: Path, part: str) -> None:
             if "on every option of a code, API, naming or shape choice, an `example`" not in stage_text \
                     or "'<code under A>'" not in stage_text.replace('"', "'") or "'<code under B>'" not in stage_text.replace('"', "'") or "preview" in stage_text:
                 raise ValueError(f"the Stage text asks for an example on every option of a code choice: {stage_text}")
+            if "never a change-request" in stage_text:
+                raise ValueError(f"Stage relies on its refusal to explain the CR hold-target rule: {stage_text}")
             if "`overview` 160" not in stage_text:  # r9-q47: the Stage text states the overview target
                 raise ValueError(f"the Stage text states the overview length: {stage_text}")
             if "`root` (record-only, never printed:" not in stage_text or '"root": "<cause>; <end state>"' not in stage_text.replace("'", '"'):
