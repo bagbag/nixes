@@ -2,11 +2,15 @@
 
 Reference for `claude/mods/console/`; the README links here.
 
-`claude/mods/console/` is the Claude Code console mod, linked out of store as
-`~/.claude/mods/console` and loaded through `CLAUDE_CODE_PLUGIN_DIRS` in
-`~/.claude/settings.json`, so its edits hot-reload (Claude lays the API types
-into its `.claude-plugin/types/`, ignored by Git). It registers the `protocol`
-tool (`mcp__console__protocol`, stamping session and origin; it refuses the model the verbs the console relays,
+`claude/mods/console/` is the Claude Code console mod, built into the Nix store
+and linked at `~/.claude/mods/console`; it is loaded through
+`CLAUDE_CODE_PLUGIN_DIRS` in `~/.claude/settings.json`. `./board-setup.sh`
+generates the installed Claude Code API declarations into the ignored
+`.claude-plugin/types/` directory by loading a hook-free stub in watched,
+headless mode, and provisions the pinned TypeScript compiler there. Run setup
+before the console check when working outside the board runner. It registers
+the `protocol` tool (`mcp__console__protocol`, stamping session and origin; it
+refuses the model the verbs the console relays,
 `pending` since the console runs the next pass (r8-q28), and `scope` since the console appends its line to a starting pass's text (r9-q36)), runs the
 engine's pending pass and the issued batch's question text (`/console-questions`) at each turn's end, gates and captures round dialogs,
 runs a built-in command sent during a turn (`/compact`, which Claude Code delivers to the model as text) when the turn ends,
@@ -18,7 +22,7 @@ with the error and that it may have run in part (read `protocol show` before run
 A press only claims its run: its engine, board, git and VS Code work runs after the press returns (the host cuts a
 press hook off after 10 s; a call can wait that long on an embedded board or the session lock a Record step holds).
 A change-request or ratification press acts on the request in the row you clicked, with no lookup of its own (land and your session re-check every consequence, and say when it no longer waits; r1-q5, r9-q29).
-The one check command: `claude/mods/console/tests/check.sh` (plugin tests, `tsc --noEmit`, `claude plugin validate`; the tests folder is stripped from the installed mod).
+The one check command: `claude/mods/console/tests/check.sh` (plugin tests, local `tsc --noEmit`, `claude plugin validate`; the tests folder is stripped from the installed mod).
 Esc at a turn end stops the pass loop; a successful compaction right after reruns the stopped pass once (not a skipped or precompute
 one; a pass given up as stuck is never rerun). `/console-continue` (r7-q24) runs the turn-end decision on demand: it queues the pending pass (a stopped, asked-for or noted
 run of it included) unless a run of it is queued already (a run the host refused counts as none), reopens the issued batch past the

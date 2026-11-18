@@ -72,8 +72,9 @@ in
   home.file.".claude/statusline-command.sh".source =
     config.lib.file.mkOutOfStoreSymlink "${claudeSrc}/statusline-command.sh";
 
-  # Console mod, loaded through CLAUDE_CODE_PLUGIN_DIRS. The store folder is read-only (probed: a session
-  # loads it fine); develop it with `claude --plugin-dir` on the repo folder.
+  # Console mod, built into the store and loaded through CLAUDE_CODE_PLUGIN_DIRS.
+  # board-setup.sh generates current API types with a hook-free watched stub;
+  # use the repository checkout for development because the store copy is read-only.
   home.file.".claude/mods/console".source = "${agentArtifacts}/mods/console";
 
   # Skills are rendered from the shared source tree so included instructions
