@@ -9224,6 +9224,46 @@ def validate_protocol(root: Path, part: str) -> None:
                 raise ValueError(f"protocol without a round: {empty}")
             refused("step", stdin={}, needle="no open round")
 
+            # Decision holds name work items, never their containing change-request. Catch a CR at Stage, before the
+            # round can reach Ask/Record; unknown ids retain the existing staging path.
+            hold_case = {"session": "0000-cdx00001"}
+            configure(items={"fx-cr": {"status": "open", "issue_type": "change-request", "title": "Design CR"},
+                             "fx-design": {"status": "open", "issue_type": "design", "title": "Design item"}})
+            pasted = re.search(r"(pt\d+) \[pasted\]", proto("start", "round", stdin={"points": ["Update design?"]}, cwd=repo, **hold_case).stdout)[1]
+            proto("step", stdin={"classes": {pasted: "user"}}, cwd=repo, **hold_case)
+            proto("step", stdin={"select": [pasted]}, cwd=repo, **hold_case)
+            refused("step", stdin={**ROUND_INFO, "questions": [question("Update design?", holds=["fx-cr"], **{"for": pasted})]},
+                    needle="fx-cr is a change-request, not a work item", cwd=repo, **hold_case)
+            view = shown(cwd=repo, **hold_case)
+            if view["step"] != "stage" or view["questions"] or view["batch"] is not None or any(
+                    c["args"][:2] == ["create", "--graph"] for c in calls()):
+                raise ValueError(f"a CR hold target must fail before a round or record is staged: {view}")
+            # Unknown hold ids are not reclassified by the new guard.
+            proto("step", stdin={**ROUND_INFO, "questions": [question("Update design?", holds=["fx-missing"], **{"for": pasted})]}, cwd=repo, **hold_case)
+            if shown(cwd=repo, **hold_case)["step"] != "check":
+                raise ValueError("an unknown hold id keeps the existing stage behavior")
+            proto("abandon", cwd=repo, **hold_case)
+
+            pasted = re.search(r"(pt\d+) \[pasted\]", proto("start", "round", stdin={"points": ["Update design?"]}, cwd=repo, **hold_case).stdout)[1]
+            proto("step", stdin={"classes": {pasted: "user"}}, cwd=repo, **hold_case)
+            proto("step", stdin={"select": [pasted]}, cwd=repo, **hold_case)
+            proto("step", stdin={**ROUND_INFO, "questions": [question("Update design?", holds=["fx-design"], **{"for": pasted})]}, cwd=repo, **hold_case)
+            converge(cwd=repo, **hold_case)
+            batch = shown(cwd=repo, **hold_case)["batch"]
+            proto("answer", "--origin", "dialog", cwd=repo, **hold_case,
+                  stdin={"marker": batch["marker"], "answers": {batch["questions"][0]["question"]: "Keep"}})
+            after_answers(cwd=repo, **hold_case)
+            qid = shown(cwd=repo, **hold_case)["questions"][0]["id"]
+            calls()
+            proto("step", stdin={"records": {qid: {"rationale": "R.", "ruleOwner": "o"}}}, cwd=repo, **hold_case)
+            writes = calls()
+            if [c["args"][-2:] for c in writes if c["args"][:2] == ["create", "--graph"]] != [["--holds", "fx-design"]]:
+                raise ValueError(f"the decision record must hold its design work item: {[c['args'] for c in writes]}")
+            accept = (root / "skills" / "role" / "protocols" / "accept.md").read_text(encoding="utf-8")
+            if "board block <item> --on <record>" not in accept or "board return <cr> \"<records>\"" not in accept \
+                    or "Decision records hold work items, never a" not in accept:
+                raise ValueError("Accept must return a design checkpoint through its affected work item and name the records")
+
             # r22-q158: a view or count the board's health JSON lacks is named, not read as no items or a zero count.
             for key, omitted, needle in (("omitItems", "toAccept", "no items view `toAccept`"),
                                          ("omitItems", "forUser", "no items view `forUser`"), ("omitCounts", "toPlan", "no count `toPlan`"),

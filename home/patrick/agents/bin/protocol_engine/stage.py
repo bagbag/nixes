@@ -45,6 +45,12 @@ def stage_accept(ctx: Context, report: dict) -> str:
         ctx.round['questions'].append(q)
         keys[item.get('key') or q['id']] = q['id']
     refuse_all(errors)
+    if ctx.board:
+        held = list(dict.fromkeys(item for q in ctx.round['questions'] for item in q.get('holds') or []))
+        if held:
+            rows = ctx.board.json('show', *held, '--json', '--field', 'issue_type')
+            refuse_all([f"{item} is a change-request, not a work item: decision records hold work items; name the affected design item"
+                        for item in held if (rows.get(item) or {}).get('issue_type') == 'change-request'])
     describe(ctx, report.get('round'), 'stage', required=not titled(ctx))
     resolve_waits(ctx, keys)
     unique_texts(ctx)
