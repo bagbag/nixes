@@ -31,11 +31,11 @@ setup, run `/role autopilot` again.
     question for the user with a recommendation (`board unclaim <id>` when you
     hold it outside a round). Parked questions form the user's next round;
     their dependents wait. Continue independent tracks.
-- Accept in the user's place a CR at a `user` checkpoint and finished epics
-  whose acceptance names the user: the
+- Accept in the user's place a CR at a `user` checkpoint: the
   decide protocol's Accept with the walkthrough as a written assessment,
   recorded as a `needs_ratification` decision with its `## Reversal`. A finished CR
-  (`look` `before`) in `needs_acceptance` stays parked for the user.
+  (`look` `before`) in `needs_acceptance` and a finished epic whose acceptance
+  names the user stay parked for the user.
 - Treat public contracts, durable design and substantial downstream work as
   costly to reverse. Before non-trivial action, resolve facts and obtain
   independent assessment; review findings authorize no expansion. Assess scope
@@ -106,7 +106,8 @@ findings or stops.
    outcomes with actual gate numbers; ratification items and parked decisions
    with recommendations
    (`board health --root <epic> --items ratification,questions`);
-   failure and park diagnoses; and the CRs waiting for the user's Accept.
+   failure and park diagnoses; and the CRs and epics waiting for the user's
+   Accept.
    Keep incompleteness explicit.
    Then run `$HOME/.agents/bin/session activate solo`. Stay on
    autopilot through a passing message that does not end the run.
