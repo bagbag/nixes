@@ -11451,6 +11451,22 @@ def validate_protocol(root: Path, part: str) -> None:
                 'if sys.argv[1] == "export":\n    print(*map(json.dumps, rows), sep="\\n")\n'
                 'elif sys.argv[1] == "list":\n'
                 '    print(json.dumps([{k: v for k, v in r.items() if k not in ("comments", "_type")} for r in rows if r["status"] != "closed"]))\n'
+                'elif sys.argv[1] == "show":\n'
+                '    ids = sys.argv[sys.argv.index("--") + 1:]\n'
+                '    shown = []\n'
+                '    for item_id in ids:\n'
+                '        item = next((dict(r) for r in rows if r["id"] == item_id), None)\n'
+                '        if item is None:\n            continue\n'
+                '        outgoing, incoming = [], []\n'
+                '        for source in rows:\n'
+                '            for dep in source.get("dependencies") or []:\n'
+                '                if dep["issue_id"] == item_id:\n'
+                '                    outgoing.append({"id": dep["depends_on_id"], "dependency_type": dep["type"]})\n'
+                '                elif dep["depends_on_id"] == item_id:\n'
+                '                    incoming.append({"id": dep["issue_id"], "dependency_type": dep["type"]})\n'
+                '        item["dependencies"], item["dependents"] = outgoing, incoming\n'
+                '        shown.append(item)\n'
+                '    print(json.dumps(shown))\n'
                 'else:\n    print("[]")\n', encoding="utf-8")
             (fake_bin / "bd").chmod(0o755)
             env = {"PROTOCOL_BOARD": "", "PATH": f"{fake_bin}:{os.environ['PATH']}"}
