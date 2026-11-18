@@ -39,12 +39,13 @@ steps 3-7.
 4. **Evidence.** Apply [Evidence and gates](../../shared/acceptance.md#evidence-and-gates) to every
    required gate.
    Output: one line per gate: command, result, accepted or reproduced.
-5. **Assess.** Check correctness, the Cleanliness tests and the
-   decision protocol's
+5. **Assess.** Check correctness; invoke `step-back root-fix bloat clean` on
+   the diff; check the decision protocol's
    [End-state criteria](../../shared/decision-protocol.md#end-state-criteria);
    triage the author's disclosed judgment calls; classify scope growth under
    [Expansion findings](#expansion-findings).
-   Output: verdict; then each confirmed defect, risk and open question.
+   Output: verdict; one line per Cleanliness test; then each confirmed
+   defect, risk and open question.
 6. **Fix.** Unless the brief forbids assessor fixes, fix wording, doc,
    comment and local design findings yourself, and fix a code finding when
    the fix is the only clean option and stays within a few lines, as
