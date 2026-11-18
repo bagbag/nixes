@@ -119,7 +119,7 @@ changed on the board since its export or an edited file is empty; an unedited fi
 Export never overwrites an export edited since and not applied (it names apply and discard); an untouched one is refreshed.
 `board field discard <id>...` removes the exports. The flow replaces rewriting a field from memory. Reading stays `board show --field`; `board show <ids> --json` without `--field` prints whole items `{id: item}` with comments.
 `board create [<title>] [--type T] [--parent ID] [--label L]... [--priority N] [--description-file F|-] [--design-file F] [--acceptance-file F]
-[--deps type:ID]... [--holds ID|none]... [--metadata k=v]... [--status S] [--assignee A] [--for PERSON]` builds one node of a bd graph plan; `--graph <plan.json>`
+[--deps type:ID]... [--holds ID|none]... [--metadata k=v]... [--status S] [--assignee A] [--for PERSON] [--dry-run]` builds one node of a bd graph plan; `--graph <plan.json>`
 takes a whole plan (no node flags beside it). Both pass the plan checks (types, a change request's look or view equal to the project default,
 decisions naming what they hold up, queue labels, `--for`: top-level nodes, your queue, held for you, a shared board only, the size
 limit of a work item's long fields) and go to `bd create --graph --json`; the ids print (`key id` per node for `--graph`). Node field names are
@@ -226,7 +226,10 @@ however made (r3-q16): `--holds <id>[,<id>…]` (the shorthand), `--deps blocks:
 a decision node. `board` reads them before creating: a decision with none needs `--holds none` (which stands alone, refused beside a link),
 the held items must exist and be open, and after the create every link gets the effects of `board block <item> --on <question>` (the wait
 commented, the creator's claimed item handed back); bd never sees `--holds`, and `--holds` ids with a plan are held by every decision of
-it. `board ruling revise` takes `--holds` or `--deps blocks:<id>` (no graph). Rounds pass their questions' `holds` to the same step (Record).
+it. `board ruling revise` takes `--holds` or `--deps blocks:<id>` (no graph).
+`board create` and `board ruling revise` accept `--dry-run` to validate fields,
+links and holds without creating records or updating the shared board. Rounds
+pass their questions' `holds` to the same step (Record).
 A CR whose worktree is mid a rebase, merge, cherry-pick, revert or bisect the board did not start (marker files `rebase-merge`,
 `rebase-apply`, `MERGE_HEAD`, `CHERRY_PICK_HEAD`, `REVERT_HEAD`, `BISECT_START` in the worktree's git dir, read by file existence; a rebase is the
 board's when its `onto` equals the CR's `rebase_onto`) leaves the claim queue (`cr_claimable`), `board claim` refuses it, `board check`

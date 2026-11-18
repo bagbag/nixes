@@ -4445,8 +4445,7 @@ def return_item(board: Board, args) -> None:
     review = review_read(board, cr)
     if review:  # the user's Return: an unedited review ends with it, one with edits is recorded first
         refuse_unrecorded(args.id, review, f'{edits_line(args.id, review["opened"])} --no-gate "returned" records them, then return')
-    checkpoint = meta(cr).get('checkpoint')
-    if (cr['status'] == ACCEPT and checkpoint == 'user') or (cr['status'] == 'in_review' and checkpoint == 'agent'):
+    if cr_at_design_checkpoint(cr):
         designs = [item['id'] for item in cr_closed_items(board, cr['id'])
                    if item.get('issue_type') == 'design' and item.get('status') == 'closed']
         if designs:
@@ -5356,13 +5355,14 @@ def parse_holds(value: str | None) -> list[str]:
 DECISION_HOLD_REASON = '{new} holds it up until answered or its ruling is planned.'
 
 
-def record_holds(board: Board, new_id: str, holds: list[str], reason: str | None = DECISION_HOLD_REASON) -> list[str]:
+def record_holds(board: Board, new_id: str, holds: list[str], reason: str | None = DECISION_HOLD_REASON,
+                 decision_hold: bool = False) -> list[str]:
     """The held items wait on the new question, like `board block <item> --on <new>`; the ids that could not be blocked."""
     if not holds:
         return []
     with contextlib.redirect_stdout(sys.stderr):  # stdout stays what the create printed: the protocol engine reads its id or JSON
         _, failed = block_items(board, holds, new_id, reason.format(new=new_id) if reason else None, derived_actor() or '',
-                                allow_checkpoint_design=reason == DECISION_HOLD_REASON)
+                                allow_checkpoint_design=decision_hold)
     return failed
 
 
@@ -5434,7 +5434,7 @@ def link_rules(board: Board | None, links: list[tuple[str, str, str]], verb: str
             if waiting in new:
                 if new[other] == 'decision':  # between new work items bd writes the edge itself
                     waits[other][1].append(waiting)
-            elif board is None or (not board.is_open(waiting) and not (new[other] == 'decision' and user_checkpoint_design(board, waiting))):
+            elif board is None or (not board.is_open(waiting) and not (new[other] == 'decision' and checkpoint_design(board, waiting))):
                 raise BoardError(f'unknown or closed: {waiting}')
             elif new[other] == 'decision' or reason_optional(board.by_id[waiting], {'issue_type': new[other]}):
                 waits[other][0].append(waiting)
@@ -5479,7 +5479,8 @@ def apply_waits(made: dict[str | None, str], waits: Waits, types: dict[str, str]
     problems = []
     for key, (ids, keys) in todo.items():
         new_id = made[key]
-        failed = record_holds(after, new_id, [*ids, *(made[k] for k in keys if k in made)], DECISION_HOLD_REASON if types[key] == 'decision' else None)
+        failed = record_holds(after, new_id, [*ids, *(made[k] for k in keys if k in made)],
+                              DECISION_HOLD_REASON if types[key] == 'decision' else None, decision_hold=types[key] == 'decision')
         if failed:
             problems.append(f"{new_id} created, but {', '.join(failed)} are not blocked on it: board block {' '.join(failed)} --on {new_id}")
     for problem in problems:
@@ -5807,11 +5808,17 @@ def cr_hold_refusal(waiting: str, waiting_type: str | None, blocker: str, blocke
     return None
 
 
-def user_checkpoint_design(board: Board, item_id: str) -> bool:
-    """A closed design may be held while its owning CR awaits the user's checkpoint decision."""
+def cr_at_design_checkpoint(cr: dict) -> bool:
+    """Whether a CR is at the design checkpoint awaiting its user or agent review."""
+    checkpoint = meta(cr).get('checkpoint')
+    return (checkpoint == 'user' and cr.get('status') == ACCEPT) or (checkpoint == 'agent' and cr.get('status') == 'in_review')
+
+
+def checkpoint_design(board: Board, item_id: str) -> bool:
+    """A closed design may be held while its owning CR awaits its design checkpoint."""
     cr_id = board.cr_of(item_id)
     cr = board.by_id.get(cr_id) if cr_id else None
-    if not cr or cr['status'] != ACCEPT or meta(cr).get('checkpoint') != 'user':
+    if not cr or not cr_at_design_checkpoint(cr):
         return False
     return any(item['id'] == item_id and item.get('issue_type') == 'design' and item.get('status') == 'closed'
                for item in cr_closed_items(board, cr_id))
@@ -5862,7 +5869,7 @@ def block_items(board: Board, ids: list[str], blocker: str, reason: str | None, 
         try:
             if item_id == blocker:
                 raise BoardError(f'{item_id}: cannot block an item on itself')
-            if not (allow_checkpoint_design and user_checkpoint_design(board, item_id)):
+            if not (allow_checkpoint_design and checkpoint_design(board, item_id)):
                 require_open(board, [item_id])
             result, back = block_one(board, item_id, blocker, reason, actor)
             print(result)
@@ -6034,7 +6041,28 @@ def revise(board: Board, args) -> int:
     parent = args.parent or board.parent.get(args.old)
     labels = args.label if args.label \
         else [label for label in old.get('labels') or [] if label.startswith('topic:')]
-    new = create_ruling_revision(board, args.old, args.title, read_text_arg(args.body_file), holds=holds,
+    description = read_text_arg(args.body_file)
+    metadata = {REVISES_RULE: args.partial} if args.partial is not None else None
+    if args.dry_run:
+        node = {key: value for key, value in {'key': 'item', 'title': args.title, 'type': 'decision', 'description': description,
+                'priority': args.priority if args.priority is not None else old.get('priority', 2),
+                'external_ref': args.external_ref or None, 'metadata': metadata,
+                'deps': [{'target': args.old, 'type': REVISES}]}.items() if value is not None}
+        if parent:
+            parent_issue = board.by_id.get(parent)
+            if not parent_issue:
+                raise BoardError(f'unknown parent {parent}')
+            node['parent_id'] = parent
+            labels += [label for label in parent_issue.get('labels') or [] if label.startswith(QUEUE_PREFIX) and label not in labels]
+        if labels:
+            node['labels'] = labels
+        plan = validate_plan({'nodes': [node]})
+        plan_links_found, plan_types = plan_links(plan)
+        link_rules(board, plan_links_found, 'ruling', plan_types)
+        plan_with_queue(plan)
+        print('valid')
+        return 0
+    new = create_ruling_revision(board, args.old, args.title, description, holds=holds,
                                  parent=parent, labels=labels, priority=args.priority,
                                  external_ref=args.external_ref, partial=args.partial)
     print(new)
@@ -6876,6 +6904,9 @@ def create_command(args) -> int:
     if args.for_:
         for_person(plan, args.for_)
     plan_with_queue(plan)
+    if args.dry_run:
+        print('valid')
+        return 0
     made = create_plan(plan)
     for key, item_id in made.items():
         print(item_id if not args.graph else f'{key} {item_id}')
@@ -6889,7 +6920,7 @@ EXAMPLES = {
     'move': 'board move git@github.com:me/project-board.git',
     'route': 'board route ben <id> <id>',
     'send': 'board send ben <id>',
-    'create': 'board create "Login fails on Safari" -t bug --description-file report.md [--for ben] [--parent <id>] [--label a,b]  |  board create --graph plan.json',
+    'create': 'board create "Login fails on Safari" -t bug --description-file report.md [--for ben] [--parent <id>] [--label a,b] [--dry-run]  |  board create --graph plan.json [--dry-run]',
     'health': 'board health --items ready,blocked',
     'position': 'board position --limit 20  (--limit 0: every row)',
     'holders': 'board holders --root <epic>',
@@ -6927,7 +6958,7 @@ EXAMPLES = {
     'cr edits': 'board cr edits <cr> --tip <sha> [--commit -m "fix typo" (--no-gate "docs only" | --gate "<cmd>" | --checks)] | board cr edits <cr> --merged <commit>',
     'review open': 'board review open <cr or ratification>',
     'review': 'board review open <cr or ratification>',
-    'ruling revise': 'board ruling revise <old> --title "May X replace Y?" --body-file packet.md --partial "Rule 2" --holds <id>,<id>  (or --deps blocks:<id>)',
+    'ruling revise': 'board ruling revise <old> --title "May X replace Y?" --body-file packet.md --partial "Rule 2" --holds <id>,<id> [--dry-run]  (or --deps blocks:<id>)',
     'ruling release': 'board ruling release <id> <id> --closes <question>=<id> --closes <question>=<id>,<id>',
     'ruling supersede': 'board ruling supersede <old> --with <new> --partial "Rule 2"',
     'cr': 'board cr land <cr> --tip <sha>',
@@ -6963,6 +6994,8 @@ def bd_word(argv: list[str]) -> str:
 
 def writes(argv: list[str]) -> bool:
     """Whether a command may write: the window opens after it, and a moved board refuses it. `field export` and `discard` touch only scratch."""
+    if '--dry-run' in argv and (argv[:1] == ['create'] or argv[:2] == ['ruling', 'revise']):
+        return False
     if argv[:2] in (['field', 'export'], ['field', 'discard'], ['ruling', 'check-replaces']):
         return False
     if argv[:1] == ['bd']:
@@ -6991,8 +7024,9 @@ def main(argv: list[str] | None = None) -> int:
             print(f'board: sync step skipped: {error}', file=sys.stderr)
 
     word = bd_word(argv) if argv[:1] == ['bd'] else (argv[0] if argv else '')
+    dry_run = '--dry-run' in argv and (argv[:1] == ['create'] or argv[:2] == ['ruling', 'revise'])
     bare = bool({'-h', '--help'} & set(argv)) or argv in (['cr'], ['ruling'], ['review'])  # a bare group only lists its verbs
-    if not bare and word not in (BD_NO_PULL if argv[:1] == ['bd'] else NO_PULL):
+    if not bare and not dry_run and word not in (BD_NO_PULL if argv[:1] == ['bd'] else NO_PULL):
         quietly(shared.before)
     if not bare and shared.moved() and (writes(argv) or argv[:1] in (['share'], ['move'])):
         print(f'board: {moved_refusal(shared.moved())}', file=sys.stderr)
@@ -7001,8 +7035,10 @@ def main(argv: list[str] | None = None) -> int:
         return run_command(argv)
     finally:
         if not bare and (writes(argv) or settled):  # a read that finished a landing wrote
-            quietly(shared.after)
-        quietly(shared.report)
+            if not dry_run:
+                quietly(shared.after)
+        if not dry_run:
+            quietly(shared.report)
 
 
 def pointer_for(word: str, rest: list[str], groups: dict) -> str | None:
@@ -7250,6 +7286,7 @@ def run_command(argv: list[str]) -> int:
     sub.add_argument('--external-ref', metavar='REF', help='tag the new question with an external reference')
     sub.add_argument('--holds', action=Values, default=[], metavar='ID[,ID...]|none', help='the items this revision holds up (they wait on it); none: it holds nothing up; repeatable; needed unless --deps names a blocks: link')
     sub.add_argument('--deps', action=Values, default=[], metavar='blocks:ID[,blocks:ID...]', help='a blocking link: this revision holds the item up (like --holds; repeatable)')
+    sub.add_argument('--dry-run', action='store_true', help='validate the revision and its holds without writing')
     sub = add('release', 'release decided rulings in one bd batch; supersedes the records they revise, then closes '
               'the questions they answer', release, group='ruling')
     sub.add_argument('ids', nargs='+', type=board_id)
@@ -7315,6 +7352,7 @@ def run_command(argv: list[str]) -> int:
     sub.add_argument('-a', '--assignee', help='the assignee (not with --for, which holds the item for you)')
     sub.add_argument('--for', dest='for_', metavar='PERSON',
                      help='a find for another person on a shared board: top-level, in your queue, held for you (user), labelled for:<person>')
+    sub.add_argument('--dry-run', action='store_true', help='validate the plan and its links without writing')
     sub = add('setup', 'create this project\'s board, or bring an existing one to the current settings (safe to rerun)', setup)
     modes = sub.add_mutually_exclusive_group()
     modes.add_argument('--server', action='store_true', help='convert an existing embedded board to server mode (a new board is one already)')

@@ -101,7 +101,7 @@ report to the session. It does not hand over, rebase or land.
   consequence on the CR.
 - The retry limit: follow it, recording in the CR's `notes`.
 
-When a blocker holds one item, block the item on it and continue the rest. When it holds the whole CR, block the CR.
+Questions hold the affected work items; they never block the CR. Other blockers may still block the CR. When a non-question blocker holds one item, block that item and continue the rest; when it holds the whole CR, block the CR and unclaim it.
 A failed setup: fix it or raise the blocker as a question, then claim the CR
 again to rerun setup.
 

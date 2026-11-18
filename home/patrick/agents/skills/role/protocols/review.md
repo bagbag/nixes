@@ -59,7 +59,8 @@ steps 3-7.
    return it with verdict,
    confirmed defects, open questions, executed checks and next action:
    `board return <cr> "<findings>"`.
-   Raise a choice that needs a decision as a question blocking the CR. A
+   Raise a choice that needs a decision as a question holding the affected
+   work items. At a design checkpoint, hold the design. A
    standalone review closes with `board close <id> --reason "<verdict>"`,
    recording each finding as a new item discovered from it
    (`--deps discovered-from:<id>`).

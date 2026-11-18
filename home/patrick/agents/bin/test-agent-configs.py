@@ -4315,6 +4315,16 @@ def validate_board(root: Path) -> None:
             Path("p.md").write_text("The revised question.\n", encoding="utf-8")  # the body file is read for the size limit (cwd: the scratch repository)
             topical = variant(**{"Released ruling": {"labels": ["topic:store", "area"]}})
             fake = Fake(topical)
+            code, output, errors = invoke(["ruling", "revise", ids["Released ruling"], "--title", "t", "--body-file", "p.md",
+                                           "--holds", "none", "--dry-run"], fake, "lead0001")
+            if code or output != "valid\n" or fake.writes() or fake.graphs:
+                raise ValueError(f"ruling revise dry-run validates without writing: {code} {output} {errors} {fake.writes()} {fake.graphs}")
+            fake = Fake(topical)
+            code, _, errors = invoke(["ruling", "revise", ids["Released ruling"], "--title", "t", "--body-file", "p.md",
+                                      "--holds", "fx-nowhere", "--dry-run"], fake, "lead0001")
+            if code == 0 or "unknown or closed" not in errors or fake.writes() or fake.graphs:
+                raise ValueError(f"ruling revise dry-run validates holds before writes: {code} {errors} {fake.writes()}")
+            fake = Fake(topical)
             code, output, errors = invoke(["ruling", "revise", ids["Released ruling"], "--title", "May B replace A?", "--body-file", "p.md",
                                       "--partial", "Rule 2", "--holds", "none"], fake, "lead0001")
             node = fake.graphs[-1]["nodes"][0] if fake.graphs else {}
@@ -4399,6 +4409,15 @@ def validate_board(root: Path) -> None:
             if code or output != "fx-new\n" or len(created_bd) != 1 or "--holds" in created_bd[0] or ready in created_bd[0] or len(batch) != 1 \
                     or f"dep add {ready} fx-new blocks" not in batch[0] or [i for i, (a, _) in enumerate(fake.calls) if a[0] == "create"] > [i for i, (a, _) in enumerate(fake.calls) if a[0] == "batch"]:
                 raise ValueError(f"board bd create --type decision --holds must create, then block the held items, never passing --holds to bd: {code} {output} {errors} {fake.calls}")
+            code, output, errors, fake = bd_create("--holds", "none", "--dry-run")
+            if code or output != "valid\n" or fake.writes() or any(args[0] == "create" for args, _ in fake.calls):
+                raise ValueError(f"board create dry-run validates without writes: {code} {output} {errors} {fake.calls}")
+            if board.writes(["create", "--graph", "plan.json", "--dry-run"]) \
+                    or board.writes(["ruling", "revise", "fx-old", "--dry-run"]):
+                raise ValueError("dry-run create and revise must skip shared-board write/sync hooks")
+            code, _, errors, fake = bd_create("--holds", "fx-nowhere", "--dry-run")
+            if code == 0 or "unknown or closed" not in errors or fake.writes() or any(args[0] == "create" for args, _ in fake.calls):
+                raise ValueError(f"board create dry-run validates held ids before writes: {code} {errors} {fake.calls}")
             def checkpoint_pair(cr_id):
                 parent = {"id": cr_id, "title": f"CR {cr_id}", "issue_type": "change-request", "status": "needs_acceptance", "priority": 2,
                           "description": "d", "created_at": "2026-10-22T15:29:00Z", "updated_at": "2026-10-22T15:29:00Z",
@@ -4444,6 +4463,20 @@ def validate_board(root: Path) -> None:
                     or not any(args == ["reopen", "cp-hold.d"] for args, _ in workflow.calls) \
                     or any(args[0] == "dep" and args[1] == "remove" for args, _ in workflow.calls):
                 raise ValueError(f"Return must reopen the held design and preserve its blocker edge: {code} {errors} {workflow.calls}")
+            agent_checkpoint, agent_design = checkpoint_pair("cp-agent-hold")
+            agent_checkpoint.update(status="in_review", assignee="lead0001", metadata={"checkpoint": "agent"})
+            workflow = CheckpointWorkflow([*topical, agent_checkpoint, agent_design])
+            code, output, errors, fake = bd_create("--holds", agent_design["id"], "--dry-run", deck=workflow)
+            if code or output != "valid\n" or fake.writes() or any(a[0] == "create" for a, _ in fake.calls):
+                raise ValueError(f"an agent checkpoint design hold validates without writes: {code} {output} {errors} {fake.calls}")
+            code, output, errors, fake = bd_create("--holds", agent_design["id"], deck=workflow)
+            held = next(i for i in fake.issues if i["id"] == agent_design["id"])
+            edge = {"issue_id": agent_design["id"], "depends_on_id": "fx-new", "type": "blocks"}
+            workflow.calls = []
+            code, _, errors = invoke(["return", "cp-agent-hold", "Changes wanted"], workflow, "lead0001")
+            if code or edge not in held["dependencies"] or held["status"] != "open" \
+                    or not any(args == ["reopen", "cp-agent-hold.d"] for args, _ in workflow.calls):
+                raise ValueError(f"an agent checkpoint hold must survive Return as an open design: {code} {errors} {workflow.calls}")
             plain_checkpoint, plain_design = checkpoint_pair("cp-plain")
             fake = Fake([plain_checkpoint, plain_design])
             code, output, errors = invoke(["return", "cp-plain", "Changes wanted"], fake, "lead0001")
@@ -7629,6 +7662,20 @@ items = [{{"id": "fx-" + name, "title": name, "status": "open", "issue_type": "t
          for name in ("a", "b", "p", "x", "y")] + [{{"id": "fx-cr", "title": "cr", "status": "open", "issue_type": "change-request", "priority": 2}}]
 if args[:2] == ["config", "get"]:
     print(json.dumps({{"value": "before" if args[-1].endswith("look") else "code"}}))
+elif args[:2] == ["create", "--graph"] and "--dry-run" in args:
+    plan = json.load(open(args[2]))
+    holds_at = args.index("--holds") if "--holds" in args else None
+    holds = [] if holds_at is None or args[holds_at + 1] == "none" else args[holds_at + 1].split(",")
+    by_id = {{item["id"]: item for item in items}}
+    for held in holds:
+        row = by_id.get(held)
+        if row and row.get("issue_type") == "change-request":
+            print(f"board: {{held}} is a change request: unblock it from its decisions (board check lists them) and block its work items on question instead (board block <item> --on question)", file=sys.stderr)
+            sys.exit(2)
+        if not row or row.get("status") == "closed":
+            print(f"board: unknown or closed: {{held}}", file=sys.stderr)
+            sys.exit(2)
+    print("valid")
 elif args[:2] == ["create", "--graph"]:
     print(json.dumps({{"ids": {{node["key"]: "fx-" + node["key"] + "-new" for node in plan["nodes"]}}}}))
 elif args[:1] == ["show"]:
@@ -7976,6 +8023,20 @@ elif args[:1] in (["release"], ["supersede"]):
         sys.exit(1)
 elif args[:1] == ["check"]:
     print(json.dumps(config.get("check", {})))
+elif args[:2] == ["create", "--graph"] and "--dry-run" in args:
+    plan = json.load(open(args[2]))
+    holds_at = args.index("--holds") if "--holds" in args else None
+    holds = [] if holds_at is None or args[holds_at + 1] == "none" else args[holds_at + 1].split(",")
+    items = config.get("items", {})
+    for held in holds:
+        row = items.get(held)
+        if row and row.get("issue_type") == "change-request":
+            print(f"board: {held} is a change request: unblock it from its decisions (board check lists them) and block its work items on question instead (board block <item> --on question)", file=sys.stderr)
+            sys.exit(2)
+        if not row or row.get("status") == "closed":
+            print(f"board: unknown or closed: {held}", file=sys.stderr)
+            sys.exit(2)
+    print("valid")
 elif args[:2] == ["create", "--graph"]:
     item = new_id("fx-new1")
     node = json.load(open(args[2]))["nodes"][0]
@@ -7991,6 +8052,19 @@ elif args[:2] == ["create", "--graph"]:
         print(node["key"], item)
 elif args[:2] == ["bd", "list"] and "--external-ref" in args:
     print(json.dumps([{"id": item, "created_at": "2026-11-07T00:00:00Z"} for item in config.get("tags", {}).get(args[args.index("--external-ref") + 1], [])]))
+elif args[:1] == ["revise"] and "--dry-run" in args:
+    old = args[1]
+    row = config.get("items", {}).get(old)
+    if not row or row.get("issue_type") != "decision" or row.get("status") in ("open", "in_progress"):
+        print(f"board: {old}: unknown or not a decision", file=sys.stderr)
+        sys.exit(1)
+    holds_at = args.index("--holds") if "--holds" in args else None
+    holds = [] if holds_at is None or args[holds_at + 1] == "none" else args[holds_at + 1].split(",")
+    for held in holds:
+        if held not in config.get("items", {}) or config["items"][held].get("status") == "closed":
+            print(f"board: unknown or closed: {held}", file=sys.stderr)
+            sys.exit(1)
+    print("valid")
 elif args[:1] == ["revise"]:
     item = new_id("fx-rev1")
     if "--external-ref" in args:
@@ -9293,15 +9367,16 @@ def validate_protocol(root: Path, part: str) -> None:
             proto("step", stdin={"classes": {pasted: "user"}}, cwd=repo, **hold_case)
             proto("step", stdin={"select": [pasted]}, cwd=repo, **hold_case)
             refused("step", stdin={**ROUND_INFO, "questions": [question("Update design?", holds=["fx-cr"], **{"for": pasted})]},
-                    needle="fx-cr is a change-request, not a work item", cwd=repo, **hold_case)
+                    needle="fx-cr is a change request", cwd=repo, **hold_case)
             view = shown(cwd=repo, **hold_case)
             if view["step"] != "stage" or view["questions"] or view["batch"] is not None or any(
-                    c["args"][:2] == ["create", "--graph"] for c in calls()):
+                    c["args"][:2] == ["create", "--graph"] and "--dry-run" not in c["args"] for c in calls()):
                 raise ValueError(f"a CR hold target must fail before a round or record is staged: {view}")
-            # Unknown hold ids are not reclassified by the new guard.
-            proto("step", stdin={**ROUND_INFO, "questions": [question("Update design?", holds=["fx-missing"], **{"for": pasted})]}, cwd=repo, **hold_case)
-            if shown(cwd=repo, **hold_case)["step"] != "check":
-                raise ValueError("an unknown hold id keeps the existing stage behavior")
+            # Stage asks the board's create validation to reject unknown holds before asking.
+            refused("step", stdin={**ROUND_INFO, "questions": [question("Update design?", holds=["fx-missing"], **{"for": pasted})]},
+                    needle="unknown or closed: fx-missing", cwd=repo, **hold_case)
+            if shown(cwd=repo, **hold_case)["step"] != "stage" or shown(cwd=repo, **hold_case)["questions"]:
+                raise ValueError("an unknown hold id is refused by board dry-run before staging")
             proto("abandon", cwd=repo, **hold_case)
 
             pasted = re.search(r"(pt\d+) \[pasted\]", proto("start", "round", stdin={"points": ["Update design?"]}, cwd=repo, **hold_case).stdout)[1]
@@ -9662,10 +9737,13 @@ def validate_protocol(root: Path, part: str) -> None:
             related_state = shown(cwd=repo)
             held_q = next(q for q in related_state["questions"] if q["board"] == "fx-b")
             draft_q = next(q for q in related_state["questions"] if q["board"] is None)
+            board_calls = calls()
             if related_state["step"] != "related" or held_q["status"] != "held" or held_q["waitsOn"] != ["q3"] \
                     or draft_q["overlaps"] != [{"id": "fx-old", "title": "Old ruling", "outcome": None},
                                                {"id": "fx-rel", "title": "", "outcome": None}] \
-                    or [c["args"][:4] for c in calls() if c["args"][0] != "show"] != [["related", "--like", "-", "--json"]]:
+                    or [c["args"][:4] for c in board_calls if c["args"][0] != "show" and "--dry-run" not in c["args"]] \
+                    != [["related", "--like", "-", "--json"]] \
+                    or sum(c["args"][:2] == ["create", "--graph"] and "--dry-run" in c["args"] for c in board_calls) != 3:
                 raise ValueError(f"protocol Related: {related_state}")
             refused("step", cwd=repo, stdin={"outcomes": {draft_q["id"]: {"fx-old": "supersedes"}}}, needle="outcomes missing")
             refused("step", cwd=repo, stdin={"outcomes": {draft_q["id"]: {"fx-old": "maybe"}}}, needle="outcome must be one of")
@@ -9869,7 +9947,8 @@ def validate_protocol(root: Path, part: str) -> None:
             # never arrived): the first record's progress is saved, the rerun with the same report skips it, finds the second by
             # its tag instead of creating it again and creates only the third.
             points = ["Tag one", "Tag two", "Tag three"]
-            configure(tags={}, dieAfterCreates=1, newIds=["fx-m1", "fx-m2", "fx-m3"])
+            configure(tags={}, dieAfterCreates=1, newIds=["fx-m1", "fx-m2", "fx-m3"],
+                      items={"fx-held": {"status": "open", "issue_type": "task"}})
             out = proto("start", "round", stdin={"points": points}, cwd=repo).stdout
             pasted = re.findall(r"(pt\d+) \[pasted\]", out)
             proto("step", stdin={"classes": {pt: "user" for pt in pasted}}, cwd=repo)

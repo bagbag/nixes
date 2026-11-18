@@ -1,6 +1,9 @@
 """The round's Stage and Related steps."""
 from __future__ import annotations
 
+import tempfile
+from pathlib import Path
+
 from .base import OUTCOMES, ProtocolError, TAKEOVER, lines
 from . import schema, words
 from .boards import related_hits
@@ -11,6 +14,7 @@ from .questions import (
 )
 from .told import report_hint
 from .check import gate_ask
+from .record import record_board_command
 
 
 def titled(ctx: Context) -> bool:
@@ -26,6 +30,18 @@ def stage_text(ctx: Context) -> str:
         *(words.stage_dropped(dropped) if dropped else []),
         report_hint(ctx, 'stage', words.stage_example(r['selected'][0] if r['selected'] else None)),
     )
+
+
+def validate_record_commands(ctx: Context, questions: list[dict], revisions_only: bool = False) -> None:
+    """Ask the board to validate each staged create or now-known revision without writing."""
+    if not ctx.board:
+        return
+    with tempfile.TemporaryDirectory(prefix='protocol-stage-') as directory:
+        for index, q in enumerate(questions):
+            revised = q.get('revises') or next(iter(q.get('replaces') or []), None)
+            if revisions_only and not revised:
+                continue
+            ctx.board.checked(*record_board_command(ctx, q, Path(directory) / str(index), dry_run=True))
 
 
 def stage_accept(ctx: Context, report: dict) -> str:
@@ -45,12 +61,7 @@ def stage_accept(ctx: Context, report: dict) -> str:
         ctx.round['questions'].append(q)
         keys[item.get('key') or q['id']] = q['id']
     refuse_all(errors)
-    if ctx.board:
-        held = list(dict.fromkeys(item for q in ctx.round['questions'] for item in q.get('holds') or []))
-        if held:
-            rows = ctx.board.json('show', *held, '--json', '--field', 'issue_type')
-            refuse_all([f"{item} is a change-request, not a work item: decision records hold work items; name the affected design item"
-                        for item in held if (rows.get(item) or {}).get('issue_type') == 'change-request'])
+    validate_record_commands(ctx, ctx.round['questions'])
     describe(ctx, report.get('round'), 'stage', required=not titled(ctx))
     resolve_waits(ctx, keys)
     unique_texts(ctx)
@@ -133,6 +144,7 @@ def related_accept(ctx: Context, report: dict) -> str:
             fail(f'{qid}: one question takes over at most one item, and not while it supersedes another')
         resolve_replaced(ctx, q)
         q['board'] = takeover[0] if takeover else None  # the item it records onto from here on: one place holds it
+    validate_record_commands(ctx, ctx.round['questions'], revisions_only=True)
     refuse_all(shared_board_errors(ctx))
     missing = unresolved(ctx)
     if missing:

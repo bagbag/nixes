@@ -144,6 +144,25 @@ def tagged_item(ctx: Context, tag: str) -> str | None:
     return min(rows, key=lambda row: (row.get('created_at') or '', row['id']))['id'] if rows else None
 
 
+def record_board_command(ctx: Context, q: dict, path: Path, body: str | None = None, plain: bool = False,
+                        dry_run: bool = False) -> list[str]:
+    """Build the board command that creates or revises this question's decision record."""
+    packet = path.with_suffix('.packet.md')
+    packet.write_text(body or f"## Question\n{q['text']}\n\nOptions: " + '; '.join(o['label'] for o in q['options'])
+                      + f"\n\nStaged in round {ctx.round['id']}.\n", encoding='utf-8')
+    tag = record_tag(ctx, q)
+    holds = ','.join(q.get('holds') or []) or 'none'
+    revised = None if plain else q.get('revises') or next(iter(q.get('replaces') or []), None)
+    suffix = ['--dry-run'] if dry_run else []
+    if revised:
+        return ['ruling', 'revise', revised, '--title', q['title'], '--body-file', str(packet), '--external-ref', tag,
+                '--holds', holds, *suffix]
+    plan = packet.with_suffix('.plan.json')
+    plan.write_text(json.dumps({'nodes': [{'key': 'question', 'title': q['title'], 'type': 'decision', 'external_ref': tag,
+                                           'description': packet.read_text(encoding='utf-8')}]}), encoding='utf-8')
+    return ['create', '--graph', str(plan), '--holds', holds, *suffix]
+
+
 def board_item(ctx: Context, q: dict, path: Path, body: str | None = None, plain: bool = False) -> str:
     """The board id the record goes to: the question's item, else the draft created (or opened as a revision); `body`: the
     new item's text (a parked question's parts), else the question and its options; `plain`: a new decision item, never a revision
@@ -162,21 +181,11 @@ def board_item(ctx: Context, q: dict, path: Path, body: str | None = None, plain
         if held:
             ctx.board.checked('block', *held, '--on', found, '--reason', f'{found} holds it up until answered or its ruling is planned.')
         return found
-    packet = path.with_suffix('.packet.md')
-    packet.write_text(body or f"## Question\n{q['text']}\n\nOptions: " + '; '.join(o['label'] for o in q['options'])
-                      + f"\n\nStaged in round {ctx.round['id']}.\n", encoding='utf-8')
     # The released record it revises, else the first record it replaces: the new question is linked to it (parent and topic
     # labels come from it); `ruling record --replaces` links the other records it replaces.
-    holds = ','.join(q.get('holds') or []) or 'none'
     revised = None if plain else q.get('revises') or next(iter(q.get('replaces') or []), None)
-    if revised:
-        new = ctx.board.checked('ruling', 'revise', revised, '--title', q['title'], '--body-file', str(packet), '--external-ref', tag, '--holds', holds).strip()
-    else:
-        plan = packet.with_suffix('.plan.json')
-        plan.write_text(json.dumps({'nodes': [{'key': 'question', 'title': q['title'], 'type': 'decision', 'external_ref': tag,
-                                               'description': packet.read_text(encoding='utf-8')}]}), encoding='utf-8')
-        ctx.board.checked('create', '--graph', str(plan), '--holds', holds)
-        new = tagged_item(ctx, tag)  # by the tag, as a rerun after a cut create finds it: the create's output is not parsed
+    output = ctx.board.checked(*record_board_command(ctx, q, path, body, plain))
+    new = output.strip() if revised else tagged_item(ctx, tag)  # the create output is not parsed, so find its id by tag
     if not new:
         fail(f"{q['id']}: the board returned no id for the new question")
     q['board'] = new
