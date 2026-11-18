@@ -47,7 +47,10 @@ shared board, the user an unshared one (`bd dolt push`/`pull`).
   session under [Routing](#routing)) or `board claim <ids>`
   (named). Claiming a named item held within your own session (your
   actor or one of your workers) takes it over.
-- Finish, hand over or unclaim each hold you still have.
+- Finish, hand over or unclaim each hold you still have. Hand back your
+  unfinished work with `board block <id> --on <blocker> --reason "<why it
+  waits>"` while it waits on something, else `board unclaim <id> --resume
+  "<next action>"`.
 - Free another doer's hold only with
   `board take <id>` (reassign to you with a comment) or
   `board unclaim <id>`. Take an item from a gone holder (`board position` or

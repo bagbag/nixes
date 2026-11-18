@@ -93,7 +93,8 @@ Give each step's output as one line.
    [Dispatch](protocols/plan.md#dispatch), each running
    its protocol from the table above through its Exit, and refill as it says.
    Without workers in the runtime, `board claim` one CR, run its protocol through its Exit,
-   skipping its Claim step, and claim again. When `board claim` finds nothing and no
+   skipping its Claim step, and claim again. Take readiness from the queue:
+   claim what it lists rather than judging it yourself. When `board claim` finds nothing and no
    worker runs, report the session's results and stop; when the user asked you to keep watching, run
    `board wait` in the background instead (exit 0 names a candidate: claim again; a claim that fails twice on the same
    id is a blocker to report, not to wait out).

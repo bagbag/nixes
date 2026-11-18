@@ -47,11 +47,6 @@ findings or stops.
   revision; pause dependent work.
 - Scope or authority would expand, or an irreversible or outward-facing action
   needs confirmation: bring it to the decider; continue independent work.
-- Nothing seems ready: before declaring the goal blocked, cross-check every
-  open item across its branches with full ready, list and dependency views;
-  name each candidate's next action, authority and exact blocker. Establish
-  exhaustion from action-specific blockers, not from unchanged queue ids or
-  counts.
 - Accepted work or a reversed decision proves wrong: run
   [Containment](#containment).
 - The next authorized work recorded in the checkpoint file is done, or no

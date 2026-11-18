@@ -63,9 +63,10 @@ findings or stops.
    for a CR the project checks cannot test (docs only), `--no-gate "<reason>"`.
    Map each addressed finding ID to its repaired scope, evidence and the gates
    its acceptor reproduces. Resolve a rebase conflict, or fix failed checks,
-   and rerun it. With partial work, `board unclaim <cr>` with the remainder in
-   `notes`.
-   Output: `handed over <cr> to <status>` or `kept <cr> open: <remainder>`.
+   and rerun it. With partial work, hand the CR back under
+   [Actors and holds](../../shared/board-core.md#actors-and-holds).
+   Output: `handed over <cr> to <status>`, `blocked <cr> on <id>` or
+   `kept <cr> open: <next action>`.
 6. **Remainders.** Record every gap and follow-up as a new item (in this CR
    when it belongs to the change, else a new CR) or question discovered from
    it.
@@ -100,11 +101,11 @@ report to the session. It does not hand over, rebase or land.
   consequence on the CR.
 - The retry limit: follow it, recording in the CR's `notes`.
 
-When a blocker holds one item, block the item on it and continue the rest. When it holds the whole CR, block the CR and `board unclaim` it.
+When a blocker holds one item, block the item on it and continue the rest. When it holds the whole CR, block the CR.
 A failed setup: fix it or raise the blocker as a question, then claim the CR
 again to rerun setup.
 
 ## Exit
 
-The CR is handed over, kept open with its remainder, or blocked by a question,
+The CR is handed over, kept open with its next action, or blocked,
 and no longer held by you; remainders are recorded.

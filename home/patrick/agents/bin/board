@@ -2466,6 +2466,12 @@ def is_work_hold(issue: dict) -> bool:
     return issue.get('issue_type') in WORK_HOLD_TYPES
 
 
+def in_hand(issue: dict, actor: str) -> bool:
+    """In progress under the actor's session: its own hold or one of its workers'."""
+    holder = issue.get('assignee')
+    return bool(holder) and issue['status'] == 'in_progress' and session_actor(holder) == session_actor(actor)
+
+
 def counted_holds(board: Board, actor: str) -> list[dict]:
     """The work items a worker cap counts for this actor: in progress, held by exactly this actor (a worker's holds
     are not its session's). Decisions and in-review items an acceptor or reviewer holds are not work in hand."""
@@ -2837,6 +2843,8 @@ def claim(board: Board, args) -> int:
         print(f"claimed {issue['id']} ({kind}{by}{counts_as}): {issue.get('title', '')}")
         if kind == 'refresh':
             print(f"  refresh work: board cr refresh {issue['id']}, then board unclaim {issue['id']}")
+        if resume := last_resume(board, issue['id']):
+            print(f'  resume: {resume}')
         if kind == 'accept' and meta(issue).get('checkpoint') == 'user':
             pin, designs = design_pin(board, issue)
             print(f"  design hash {pin} ({', '.join(designs) or 'no design item'}); accept it with board cr land {issue['id']} --checkpoint --design {pin}")
@@ -2945,6 +2953,9 @@ def take(board: Board, args) -> int:
     return 1 if failed else 0
 
 
+RESUME = 'board unclaim: resume: '  # the next action of work handed back unfinished; board claim prints the latest
+
+
 def unclaim(board: Board, args) -> int:
     actor = caller()
     failed = False
@@ -2956,6 +2967,16 @@ def unclaim(board: Board, args) -> int:
         refusal = elsewhere_refusal(board, issue, 'unclaim', args.agreed)
         if refusal:
             print(refusal, file=sys.stderr)
+            failed = True
+            continue
+        own_work = in_hand(issue, actor) and (board.is_cr(issue['id']) or is_work_hold(issue))
+        if own_work and not args.resume:
+            print(f"{issue['id']}: your work in progress: if it waits on something, board block {issue['id']} --on <id> --reason \"<why it waits>\" "
+                  f"hands it back blocked; otherwise board unclaim {issue['id']} --resume \"<next action>\"", file=sys.stderr)
+            failed = True
+            continue
+        if args.resume and not own_work:
+            print(f"{issue['id']}: --resume hands back your own work in progress; {holder} holds it {issue['status']}", file=sys.stderr)
             failed = True
             continue
         reason = f"board unclaim: {actor} released {holder}'s hold" + (f' (agreed: {args.agreed})' if args.agreed else '') + '.'
@@ -2973,8 +2994,22 @@ def unclaim(board: Board, args) -> int:
             # in_review and released items keep their status for the next claimer.
             bd_checked('update', issue['id'], '--assignee', '', '--json')
             comment(issue['id'], reason)
+        if args.resume:  # after the release: a failed one leaves no next action behind
+            comment(issue['id'], RESUME + args.resume)
         print(f"unclaimed {issue['id']} from {holder} ({issue['status']})")
     return 1 if failed else 0
+
+
+def last_resume(board: Board, item_id: str) -> str | None:
+    """The next action the latest unfinished hand-back left, unless a hand-over, return or block came after it."""
+    board.hydrate([item_id])
+    for entry in reversed(board.by_id[item_id].get('comments') or []):
+        text = entry.get('text') or ''
+        if text.startswith(RESUME):
+            return text[len(RESUME):]
+        if text.startswith(('board handover', 'board return', 'board block', 'Blocked by ')):
+            return None
+    return None
 
 
 def held(board: Board, item_id: str, actor: str, status: str | None = None) -> dict:
@@ -5664,7 +5699,7 @@ def block_one(board: Board, item_id: str, blocker: str, reason: str | None, acto
     operations = [f'dep remove {a} {b}' for a, b, kind in edges if kind in ('relates-to', 'related')]
     operations += [] if waits else [f'dep add {item_id} {blocker} blocks']
     holder = issue.get('assignee')
-    own = holder == actor and board.is_open(blocker) and issue['status'] == 'in_progress'
+    own = in_hand(issue, actor) and board.is_open(blocker)
     if operations:
         bd_checked('batch', '-m', f'board block {item_id} --on {blocker}', '--json', stdin='\n'.join(operations) + '\n')
     # The comment names the wait for board check (unnamed waits read comments too); an append to a field would
@@ -5673,7 +5708,7 @@ def block_one(board: Board, item_id: str, blocker: str, reason: str | None, acto
         comment(item_id, block_comment(blocker, reason))
     result = f'blocked {item_id} on {blocker}'
     if own:
-        bd_checked('unclaim', item_id, '--reason', f'board block: {actor} handed the item back, waiting on {blocker}.')
+        bd_checked('unclaim', item_id, '--reason', f'board block: {actor} handed the item back, waiting on {blocker}.', *(['--force'] if holder != actor else []))
         result += '; handed back to the queue'
     return result, False
 
@@ -7097,6 +7132,9 @@ def run_command(argv: list[str]) -> int:
         sub = add(name, text, run)
         sub.add_argument('ids', nargs='+', type=board_id)
         sub.add_argument('--agreed', metavar='TEXT', type=nonempty, help="a hold held elsewhere on a shared board: what its person said when they agreed")
+        if name == 'unclaim':
+            sub.add_argument('--resume', metavar='TEXT', type=nonempty,
+                             help='hand back your own work in progress unfinished, with its next action (work that waits on something: board block)')
         if name == 'take':
             sub.add_argument('--force', metavar='REASON', type=nonempty,
                              help="take a work item past your worker cap, flagged with this reason in position and check")

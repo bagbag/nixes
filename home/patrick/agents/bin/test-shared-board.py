@@ -469,7 +469,7 @@ def t_queues() -> None:
     check(rc != 0 and 'board claim' in err, 'bd update --claim is refused read-only, naming board claim', err)
     rc, out, _, _ = run('a', 'claim', role='agent')
     check(rc == 0 and ben not in out and 'claimed' in out, 'bare claim: mine only', out)
-    run('a', 'unclaim', out.split()[1], role='agent') if rc == 0 else None
+    run('a', 'unclaim', out.split()[1], '--resume', 'claim it again', role='agent') if rc == 0 else None
     # A blocker in another queue, always listed.
     blocked = create('a', 'anna waits')
     bd('a', 'dep', 'add', blocked, ben)
@@ -498,7 +498,7 @@ def t_queues() -> None:
           'route: several items in one command, replacing their queue label', err + out)
     rc, out, err, _ = run('a', 'claim', mixed, role='agent')
     check(rc == 0, 'a routed item claims', err)
-    run('a', 'unclaim', mixed, role='agent')
+    run('a', 'unclaim', mixed, '--resume', 'claim it again', role='agent')
     rc, _, err, _ = run('a', 'route', 'ben', ben, role='solo')
     check(rc == 0 and 'queue:ben' in items('a')[ben]['labels'], 'route: solo moves', err)
     # Moving an epic moves its children.
@@ -785,7 +785,7 @@ def t_held_elsewhere() -> None:
     settle('a', 'b')
     rc, _, err, _ = run('a', 'claim', item)
     check(rc == 1 and 'held elsewhere' in err and 'board take' not in err, 'held elsewhere: a claim in my own queue says so, offering no take', err)
-    run('b', 'unclaim', item)
+    run('b', 'unclaim', item, '--resume', 'claim it again')
     settle('a', 'b')
 
 

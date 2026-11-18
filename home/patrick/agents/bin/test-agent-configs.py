@@ -4183,9 +4183,10 @@ def validate_board(root: Path) -> None:
             if "claimed plain (implement):" not in out:
                 raise ValueError(f"a claim at its own priority names nothing: {out}")
 
-            # A holder's own block hands the item back; another session's block leaves the hold (q144, only the holder's own).
+            # The holder's own block hands the item back, its session's too (it owns its workers' holds); another session's
+            # block leaves the hold (q144).
             held_rows = variant(**{"Held task": {"notes": "Waits on the cache."}})
-            for actor, handed_back in (("aaaa1111/build-12345678", True), ("lead0001", False)):
+            for actor, handed_back in (("aaaa1111/build-12345678", True), ("aaaa1111", True), ("lead0001", False)):
                 fake = Fake(held_rows)
                 code, output, errors = invoke(["block", held_task, "--on", question, "--reason", "needs the cache"], fake, actor)
                 unclaims = [w for w in fake.writes() if w[0] == "unclaim"]
@@ -4647,6 +4648,27 @@ def validate_board(root: Path) -> None:
                     or writes[1] != ["update", ids["Released ruling"], "--assignee", "", "--json"] \
                     or writes[2][:3] != ["comments", "add", ids["Released ruling"]]:
                 raise ValueError(f"board unclaim: {writes}")
+
+            # Own work in progress (a worker's included) hands back blocked (board block) or with its next action (--resume),
+            # never plainly; --resume is for that hand-back only. board claim shows the latest next action.
+            fake = Fake(fixture)
+            code, _, errors = invoke(["unclaim", ids["Held task"]], fake, "aaaa1111")
+            if code != 1 or fake.writes() or f"board block {ids['Held task']} --on" not in errors:
+                raise ValueError(f"board unclaim of the session's own work in progress must ask for block or --resume: {fake.writes()}\n{errors}")
+            fake = Fake(fixture)
+            invoke(["unclaim", ids["Held task"], "--resume", "rerun the probe"], fake, "aaaa1111")
+            writes = fake.writes()
+            if writes[0][:2] != ["unclaim", ids["Held task"]] or writes[1] != ["comments", "add", ids["Held task"], board.RESUME + "rerun the probe"]:
+                raise ValueError(f"board unclaim --resume: {writes}")
+            fake = Fake(fixture)
+            code, _, errors = invoke(["unclaim", ids["Held task"], "--resume", "x"], fake, "lead0001")
+            if code != 1 or fake.writes():
+                raise ValueError(f"--resume must refuse another session's hold: {fake.writes()}\n{errors}")
+            resumed = types.SimpleNamespace(hydrate=lambda ids: None, by_id={"fx-r": {"comments": [{"text": board.RESUME + "old"}, {"text": "note"},
+                                                                                             {"text": board.RESUME + "rerun the probe"}]},
+                                                                       "fx-h": {"comments": [{"text": board.RESUME + "old"}, {"text": "board handover: done"}]}})
+            if board.last_resume(resumed, "fx-r") != "rerun the probe" or board.last_resume(resumed, "fx-h") is not None:
+                raise ValueError("board claim must show the latest next action, and none after a later hand-over")
 
             # handover (change request): the holding session only; refuses open items, uncommitted changes and failing checks; then a
             # compare-and-set to in_review at its stage, the stage metadata and the evidence comment.
