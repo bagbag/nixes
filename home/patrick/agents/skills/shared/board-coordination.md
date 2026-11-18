@@ -71,7 +71,7 @@ milestones, recorded rulings and deferrals. The board model is
 ### Rulings
 
 - At decision time, write the record with `board ruling record <id> <file>`:
-  it replaces the packet and sets status `decided` (an autopilot ruling or a standing two-way default uses `--unratified`, which releases it at once and files one related, non-blocking decision question `Keep or revise <ruling title>?` under the same parent for a regular round). That question carries the record's `Question`, `Alternatives Considered`, `Decision` and `Reversal`; a rerun reuses it. `--replaces <old>[,<old>]` links each ruling it
+  it replaces the packet and sets status `decided` (an autopilot ruling or a standing two-way default uses `--unratified`, which releases it at once). `--replaces <old>[,<old>]` links each ruling it
   replaces, decided or released; each is superseded when the new ruling comes
   into force: at its release, or at once with `--unratified`. Rerun it
   after a stop; `board ruling supersede <old> --with <new>` alone for one rule
@@ -88,8 +88,6 @@ milestones, recorded rulings and deferrals. The board model is
   record restates the rule in full. `board ruling release` supersedes a released
   old record. A revision
   question blocks only the work items whose part it would change.
-- The regular round records the user's `Keep or revise` choice; choosing
-  `Revise` opens a ruling revision record.
 - Owner text contradicting a newer released ruling is a missed owner write:
   the ruling binds; fix the owner.
 - Write each rule into its owner under project-memory

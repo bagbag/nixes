@@ -347,7 +347,7 @@ A round:
   (origin `away`, which no verb accepts from a caller, so no person origin can pass as
   it): Record then asks `reversal` beside the rationale and rule owner, writes a
   `## Reversal` section, runs `board ruling record … --unratified`, which releases the
-  ruling and files a related non-blocking Keep-or-revise question, and the
+  ruling and creates a linked revision question, and the
   record's source line reads `Away round (autopilot took the recommendation; no
   person answered), <date>: "<option>"`. `park` leaves the question an open, unassigned
   decision on the board: an existing item is unclaimed and gets the question's parts

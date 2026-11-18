@@ -137,10 +137,7 @@ exits 3 at the timeout and 1 when the session's registration is gone. Run it wit
 conventions mechanically; change both in the same change, so drifted boards
 surface in `board health` and move through `/board-migrate`.
 It flags a live `decision` in the legacy `needs_ratification` status as
-`unratified-ruling`. For an unassigned record, a lead or solo must first run
-`board claim <id>`. Preserve its description, add `## Reversal` if missing,
-then run `board ruling record <id> <record-file> --unratified` and rerun
-`board check` to confirm the conversion.
+`unratified-ruling`; follow `/board-migrate` step 5 to repair it.
 `board create` / `create --graph` node metadata are refused when the value equals the
 project default (an unreadable default lets bd answer); `board setup` that changes `look` or `view` prints, under the
 `old -> new` line, the open CRs keeping their own value, each with the first line of its description, design or notes naming the
@@ -249,9 +246,8 @@ keeps `--limit` per list) for the engine and the console; text output stays
 unchanged. `board console` prints the console pane's JSON (health counts,
 `mine` items, `position` sessions and holds with their marks) from one
 snapshot.
-`board ruling record <id> <file> --unratified` writes an away or standing two-way ruling directly as `released`, requires `## Reversal`, and files one
-related, non-blocking decision question titled `Keep or revise <ruling title>?` under the same parent. The question carries the ruling's Question,
-Alternatives Considered, Decision and Reversal for the user's next regular round; rerunning reuses the linked question. `--status needs_ratification`
+`board ruling record <id> <file> --unratified` writes an away or standing two-way ruling directly as `released`, requires `## Reversal`, and creates a
+non-blocking revision question under the same parent, linked to the ruling by `tracks`. A rerun reuses that linked revision. The deciding round records the user's choice as a revision; its release supersedes the unratified ruling. `--status needs_ratification`
 is rejected with an error naming `--unratified`. `--replaces` supersedes prior rulings at once for this command.
 `board ruling release <ids> --closes <question>=<record>[,<record>]` releases the
 decided rulings (already released ones count as done, so a rerun retries only

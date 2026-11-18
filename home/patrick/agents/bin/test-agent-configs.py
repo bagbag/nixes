@@ -2534,7 +2534,7 @@ def validate_board(root: Path) -> None:
                     raise ValueError(f"board check missed {name} on {item_id}:\n{report}")
             deviation_lines = [row for row in report.splitlines() if "  board-core.md#" in row]
             if code != 1 or len(deviation_lines) != len(expected_lines) or "convention deviations: 6\n" not in report \
-                    or "board ruling record fx-unrat <record-file> --unratified" not in report:
+                    or "/board-migrate step 5" not in report:
                 raise ValueError(f"board check reported extra deviations or the wrong exit code {code}:\n{report}")
             # Gate blockers carry their own reason; closed dependents of a released ruling block nothing.
             # A human gate on a question is the user's go, not a release gate; records are linted at release only.
@@ -2569,8 +2569,7 @@ def validate_board(root: Path) -> None:
                       "status": "needs_ratification", "priority": 2, "issue_type": "decision", "assignee": None}
             legacy_board = Fake([legacy])
             code, flagged, _ = invoke(["check"], legacy_board)
-            if code != 1 or "unratified-ruling" not in flagged or "lead or solo must first run board claim fx-unrat" not in flagged \
-                    or "board ruling record fx-unrat <record-file> --unratified" not in flagged:
+            if code != 1 or "unratified-ruling" not in flagged or "/board-migrate step 5" not in flagged:
                 raise ValueError(f"board check did not expose the legacy ruling repair: {code} {flagged}")
             with tempfile.TemporaryDirectory() as directory:
                 record_file = Path(directory, "legacy.md")
@@ -2587,8 +2586,9 @@ def validate_board(root: Path) -> None:
                 release = next((input for args, input in legacy_board.calls if args[:2] == ["batch", "-m"]), None)
                 if code or "update fx-unrat status=released" not in (release or "") \
                         or legacy_board.writes()[-1] != ["update", "fx-unrat", "--assignee", "", "--json"] \
-                        or len(legacy_board.graphs) != 1 or "Keep or revise Legacy cache ruling?" not in legacy_board.graphs[0]["nodes"][0]["title"]:
-                    raise ValueError(f"the board check repair did not release and free the legacy ruling with its question: {code} {errors} {legacy_board.writes()}")
+                        or len(legacy_board.graphs) != 1 \
+                        or legacy_board.graphs[0]["nodes"][0].get("deps") != [{"target": "fx-unrat", "type": "tracks"}]:
+                    raise ValueError(f"the board check repair did not release and free the legacy ruling with a linked revision: {code} {errors} {legacy_board.writes()}")
             legacy.update(status="released", assignee=None)  # bd committed the record and the final unclaim.
             legacy_board.calls.clear()
             code, clean_report, _ = invoke(["check"], legacy_board)
@@ -2598,13 +2598,13 @@ def validate_board(root: Path) -> None:
             migrate_docs = (root / "skills" / "board-migrate" / "SKILL.md").read_text(encoding="utf-8")
             unattended_docs = (root / "skills" / "role" / "protocols" / "unattended.md").read_text(encoding="utf-8")
             protocol_docs = (root / "docs" / "protocol-engine.md").read_text(encoding="utf-8")
-            if "lead or solo" not in board_docs or "board claim <id>" not in board_docs \
+            if "board claim <id>" in board_docs or "/board-migrate` step 5" not in board_docs \
                     or "lead or solo" not in migrate_docs or "board claim <id>" not in migrate_docs \
-                    or "Keep-or-revise question" not in unattended_docs or "--unratified" not in unattended_docs \
+                    or "run it through a decide round, grouped by shared premise" not in unattended_docs or "--unratified" not in unattended_docs \
                     or "--status needs_ratification" in protocol_docs \
                     or "runs `board ruling record … --unratified`" not in protocol_docs \
-                    or "files a related non-blocking Keep-or-revise question" not in protocol_docs:
-                raise ValueError("board migration and away-ruling docs must describe claiming legacy rulings and the released question flow")
+                    or "creates a linked revision question" not in protocol_docs:
+                raise ValueError("migration and away-ruling docs must keep legacy repair in board-migrate and describe linked revisions")
             # The user view lists gates titled with the user's words and items assigned to the user.
             waiting = [{**issue, "title": "user 2026-10-23: 'wait for my go'"} if issue["title"] == "Gate: human" else issue
                        for issue in checked]
@@ -3894,7 +3894,7 @@ def validate_board(root: Path) -> None:
                     fake = Fake(fixture)
                     if invoke(["ruling", "record", refused, str(draft)], fake, actor)[0] != 1 or fake.writes():
                         raise ValueError(f"board ruling record wrote {refused} for {actor}")
-                # An unratified ruling is released and files a non-blocking question for a later round.
+                # An unratified ruling is released and creates one linked, non-blocking revision question.
                 fake = Fake(fixture)
                 if invoke(["ruling", "record", question, str(draft), "--unratified"], fake, "lead0001")[0] != 1 \
                         or fake.writes():
@@ -3905,29 +3905,36 @@ def validate_board(root: Path) -> None:
                 graphs = fake.graphs
                 if code or [stdin for args, stdin in fake.calls if args[0] == "batch"] != [f"update {question} status=released\n"] \
                         or fake.writes()[-1] != ["update", question, "--assignee", "", "--json"] or len(graphs) != 1:
-                    raise ValueError(f"board ruling record --unratified releases and unclaims the record, creating its question: {fake.writes()} {errors}")
+                    raise ValueError(f"board ruling record --unratified releases and unclaims the record, creating its revision: {fake.writes()} {errors}")
                 question_node = graphs[0]["nodes"][0]
                 if question_node.get("type") != "decision" or question_node.get("title") != "Keep or revise Open cache question?" \
-                        or question_node.get("parent_id") != ids["Goal"] or question_node.get("deps") != [{"target": question, "type": "relates-to"}] \
-                        or question_node.get("description", "").find("## Reversal\nrevert x") < 0 \
-                        or question_node.get("description", "").find("## Decision\nd") < 0 \
-                        or question_node.get("description", "").find("## Current ruling question\nq") < 0 \
+                        or question_node.get("parent_id") != ids["Goal"] or question_node.get("deps") != [{"target": question, "type": "tracks"}] \
+                        or question_node.get("description", "").find("## Reversal\n") >= 0 \
+                        or question_node.get("description", "").find("## Decision\n") >= 0 \
+                        or question_node.get("description", "").find("Should we use cache?") >= 0 \
+                        or question_node.get("description", "").find("## Question\nKeep the linked ruling in force, or revise it?") < 0 \
                         or not output.endswith("(released): Open cache question\n"):
-                    raise ValueError(f"board ruling record --unratified must create the adjacent question with the ruling packet: {question_node} {output}")
+                    raise ValueError(f"board ruling record --unratified must create a linked revision without copying the ruling packet: {question_node} {output}")
                 released_record = variant(**{"Open cache question": {"status": "released", "assignee": None}})
                 baseline_plan = json.loads(invoke(["position", "--json"], Fake(fixture), "lead0001")[1])["ready"]["plan"]["ready"]
                 released_plan = json.loads(invoke(["position", "--json"], Fake(released_record), "lead0001")[1])["ready"]["plan"]["ready"]
                 if released_plan != baseline_plan + 1:
                     raise ValueError(f"the released record must be ready for planning: {baseline_plan} -> {released_plan}")
-                prior_question = {"id": "fx-new", "title": question_node["title"], "status": "open", "issue_type": "decision",
+                prior_question = {"id": "fx-new", "title": "A different revision title", "status": "open", "issue_type": "decision",
                                   "description": question_node["description"], "dependencies": [
                                       {"issue_id": "fx-new", "depends_on_id": ids["Goal"], "type": "parent-child"},
-                                      {"issue_id": "fx-new", "depends_on_id": question, "type": "relates-to"}]}
+                                      {"issue_id": "fx-new", "depends_on_id": question, "type": "tracks"}]}
                 released = variant(**{"Open cache question": {"status": "released", "description": draft.read_text(encoding="utf-8")}})
                 fake = Fake([*released, prior_question])
                 code, _, errors = invoke(["ruling", "record", question, str(draft), "--unratified"], fake, "lead0001")
                 if code or fake.graphs or any(args[0] == "create" for args, _ in fake.calls):
                     raise ValueError(f"board ruling record --unratified rerun must reuse its linked question without creating another: {fake.calls} {errors}")
+                waiting_task = {"id": "fx-wait", "title": "Waiting task", "status": "open", "issue_type": "task",
+                                "dependencies": [{"issue_id": "fx-wait", "depends_on_id": "fx-new", "type": "blocks"}]}
+                fake = Fake([*released, prior_question, waiting_task])
+                code, _, errors = invoke(["ruling", "record", question, str(draft), "--unratified"], fake, "lead0001")
+                if code != 1 or "linked revision fx-new holds work" not in errors or fake.writes():
+                    raise ValueError(f"board ruling record --unratified must not reuse a revision holding work: {code} {errors} {fake.writes()}")
                 fake = Fake(fixture)
                 code, _, errors = invoke(["ruling", "record", question, str(draft), "--status", "needs_ratification"], fake, "lead0001")
                 if code != 1 or "use --unratified" not in errors or fake.writes():
@@ -13501,7 +13508,7 @@ def validate_protocol(root: Path, part: str) -> None:
             if shown(**away)["step"] != "record":
                 raise ValueError(f"Record follows the acted answer: {shown(**away)}")
             asking = proto("show", **away).stdout
-            if "answer (away): Keep" not in asking or "`board ruling record --unratified` releases it and files a related Keep-or-revise question" not in asking:
+            if "answer (away): Keep" not in asking or "`board ruling record --unratified` releases it and creates a linked revision question" not in asking:
                 raise ValueError(f"Record asks the reversal of an away answer:\n{asking}")
             refused("step", stdin={"records": {q1: {"rationale": "Took fx-a.", "ruleOwner": "docs/x.md"}}}, needle="an away answer needs a `reversal`", **away)
             refused("step", stdin={"records": {q1: {"rationale": "Took fx-a.", "ruleOwner": "docs/x.md", "reversal": ["undo it"]}}}, needle="`reversal` must be a string", **away)

@@ -60,7 +60,7 @@ uncertain.
 |---|---|
 | Trivial: reversible, consumer-invisible, sets no convention | Decide; mention in one line. |
 | Entailed (the only realistic clean option): meets ratified goals, constraints and principles without material residual trade-off; every other realistic option fails a cleanliness test, principle or correctness property (a preference is no failure) | Decide; report with one-line reason. In a round, ask it as a question with your pick as its recommendation. |
-| Two-way door: any other choice a code change alone fixes after the next run | Take the simplest correct option that fails safe and keep going. List it in its CR (the choice, the alternative not taken); a standing rule other work builds on, or a choice outside any CR, gets an unratified ruling record and a non-blocking `Keep or revise <ruling>` question for a regular round. |
+| Two-way door: any other choice a code change alone fixes after the next run | Take the simplest correct option that fails safe and keep going. List it in its CR (the choice, the alternative not taken); a standing rule other work builds on, or a choice outside any CR, gets an unratified ruling record. |
 | One-way door (fixing it after the next run takes more than a code change: a migration of real data, changes outside the repository, effects already happened; always security and isolation, money, public contracts, privacy and legal) or scope-changing | Ask the decider; act only on confirmation. |
 
 Reviewer agreement is evidence, not authority; it settles no product, semantic,

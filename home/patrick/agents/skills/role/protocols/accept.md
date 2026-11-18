@@ -2,10 +2,6 @@
 
 Entry: [decide.md](decide.md#accept) Accept. Read `$HOME/.agents/skills/shared/change-requests.md` for Git authorization and the CR model.
 
-Ruling records made without the user receive a `Keep or revise <ruling>`
-question. Handle it through a regular round in
-[decide.md](decide.md#round).
-
 1. **Claim** a CR, ratification or milestone: `board claim <id>`.
    Output: `claimed <cr> (look <look>, view <view>, checkpoint <c>); author
    <actor>`, `claimed <id> (milestone)`, or `epic <id>`.
