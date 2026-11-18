@@ -188,9 +188,8 @@ Establish the outcome's contribution to its milestone:
 
 - Order work under [Milestones](../../shared/board-coordination.md#milestones);
   rank by per-item [Priority](../../shared/board-core.md#priority).
-- Scope a user's stop to the exact action, file, decision or effect it names;
-  continue authorized work outside it. Distinguish source authoring,
-  execution, review and final acceptance. A proposal grants no approval.
+- Distinguish source authoring, execution, review and final acceptance. A
+  proposal grants no approval.
 - Track every remainder as an item, a `blocks` edge or a deferral with its
   revisit condition; re-check remainders after planning rulings.
 - Commission a plan or inventory only for a named executable result and the
@@ -198,11 +197,8 @@ Establish the outcome's contribution to its milestone:
 
 ## Dispatch
 
-- Dispatch CRs that advance the approved checkpoint, remove demonstrated
-  blockers or serve authorized parallel tracks, within authority and
-  priority. Among equally ready CRs, prefer needed patterns, then smaller
-  ones. Repairs name the work they unblock; return there at closure.
-- Keep a worker on every independent ready CR up to the session's worker cap
+- Repairs name the work they unblock; return there at closure.
+- Keep a worker on every CR `board queue` lists for your pulls, up to the session's worker cap
   (`board position`: `workers <active>/<cap>`).
   When a worker ends, finish the bookkeeping the next dispatch depends on (its
   hand-over, the board state a new worker relies on), integrate its result

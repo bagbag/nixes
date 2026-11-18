@@ -7517,9 +7517,28 @@ else:
         result, seen = run_board("bd", "ready")
         if seen != "9999aaaa dolt start\n9999aaaa --readonly ready\n":
             raise ValueError(f"board bd did not start the stopped server first: {seen!r}")
+        server_info = Path(repo) / ".beads" / "dolt" / ".dolt" / "sql-server.info"
+        server_info.parent.mkdir(parents=True)
+        server_info.write_text(f"{os.getpid()}:1:uuid", encoding="utf-8")  # a reused pid: no sql-server runs under it
+        result, seen = run_board("bd", "ready")
+        if seen != "9999aaaa dolt start\n9999aaaa --readonly ready\n":
+            raise ValueError(f"board bd took a stale server record for a live server: {seen!r}")
+        server = subprocess.Popen(["bash", "-c", 'exec -a "dolt sql-server" /bin/sleep 60'])
+        try:
+            server_info.write_text(f"{server.pid}:1:uuid", encoding="utf-8")
+            result, seen = run_board("bd", "ready")
+        finally:
+            server.kill()
+            server.wait()
+        if result.returncode != 1 or "holds the database" not in result.stderr or seen:
+            raise ValueError(f"board bd restarted a live but unanswering server: {result.returncode} {result.stderr!r} {seen!r}")
+        server_info.unlink()
         result, seen = run_board("bd", "ready", CODEX_SANDBOX="seatbelt")
         if result.returncode != 1 or "elevated" not in result.stderr or seen:
             raise ValueError(f"board bd started a server inside the Codex sandbox: {result.stderr!r} {seen!r}")
+        result, seen = run_board("bd", "where", CODEX_SANDBOX="seatbelt")
+        if result.returncode != 7 or seen != "9999aaaa --readonly where\n" or result.stderr:
+            raise ValueError(f"board bd where needs no server, also inside the Codex sandbox: {result.stderr!r} {seen!r}")
         result, seen = run_board("bd", "dolt", "start")
         if result.returncode != 1 or seen:
             raise ValueError("board bd ran an agent's dolt start")

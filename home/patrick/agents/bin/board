@@ -182,6 +182,7 @@ def ensure_server(start: Path | None = None) -> None:
     if beads is None:
         return
     root = beads.parent
+    port = None
     try:
         if json.loads((beads / 'metadata.json').read_text(encoding='utf-8')).get('dolt_mode') != 'server':
             return
@@ -192,14 +193,30 @@ def ensure_server(start: Path | None = None) -> None:
         pass
     if os.environ.get('CODEX_SANDBOX'):
         raise BoardError('the board server is unreachable from this sandbox: rerun with elevated sandbox permissions')
+    holder = server_holding(beads)
+    if holder is not None:  # a slow server is not a dead one: a second start fails on the lock after bd rewrote the port file
+        raise BoardError(f'the board server (pid {holder[0]}, port {holder[1]}) holds the database but did not answer on port {port}: '
+                         'retry; if it persists, tell the user')
     subprocess.run(['bd', 'dolt', 'start'], cwd=root, capture_output=True, env=bd_env())
+
+
+def server_holding(beads: Path) -> tuple[int, str] | None:
+    """(pid, port) of the running sql-server Dolt records as holding the board's database, else None. A crash or reboot
+    can leave the record behind with its pid reused, so the pid must still run a sql-server."""
+    try:
+        pid, port = (beads / 'dolt' / '.dolt' / 'sql-server.info').read_text(encoding='utf-8').split(':')[:2]
+        args = subprocess.run([shutil.which('ps') or '/bin/ps', '-o', 'args=', '-p', str(int(pid))], capture_output=True, text=True).stdout
+    except (OSError, ValueError):
+        return None
+    return (int(pid), port) if 'sql-server' in args else None
 
 
 BD_GLOBALS: list[str] = []  # bd's global flags (-C, --actor, --db …) of the `board bd` call being run, for the reads and writes it makes
 
 
-def bd(*args: str, stdin: str | None = None) -> subprocess.CompletedProcess:
-    ensure_server()
+def bd(*args: str, stdin: str | None = None, server: bool = True) -> subprocess.CompletedProcess:
+    if server:
+        ensure_server()
     for retry in range(1, WRITE_RETRIES + 2):
         result = subprocess.run(['bd', *BD_GLOBALS, *args], input=stdin, capture_output=True, text=True, env=bd_env())
         if result.returncode == 0 or shared is None or retry > WRITE_RETRIES or WRITE_RETRY_ERROR not in result.stdout + result.stderr:
@@ -5185,7 +5202,8 @@ def passthrough(argv: list[str]) -> int:
         return 2
     directory = next((argv[i + 1] for i, arg in enumerate(argv[:-1]) if arg in ('-C', '--directory')),
                      next((arg.split('=', 1)[1] for arg in argv if arg.startswith('--directory=')), None))
-    ensure_server(Path(directory) if directory else None)
+    if command not in BD_NO_DATABASE:
+        ensure_server(Path(directory) if directory else None)
     argv = [*argv[:at], *([command] if command else []), *rest]
     return run_bd(argv if raw else ['--readonly', *argv], flags, command, rest, readonly=not raw)
 
@@ -5196,7 +5214,7 @@ def run_bd(argv: list[str], flags: set[str], command: str, rest: list[str], read
     if sys.stdin.isatty() or flags & {'--watch', '-w'}:
         return subprocess.run(['bd', *argv], env=bd_env()).returncode
     reads_stdin = argv[:1] == ['batch'] or any(arg in ('-', '--stdin') or arg.endswith('=-') for arg in argv)
-    result = bd(*argv, stdin=sys.stdin.read() if reads_stdin else None)
+    result = bd(*argv, stdin=sys.stdin.read() if reads_stdin else None, server=command not in BD_NO_DATABASE)
     sys.stdout.write(result.stdout)
     sys.stderr.write(result.stderr)
     if readonly and result.returncode != 0 and 'read-only' in result.stdout + result.stderr:
@@ -6742,6 +6760,8 @@ EXAMPLES = {
 
 # Commands that say nothing about the board, or that fix or run sync themselves: no pull first.
 NO_PULL = {'help', '-h', '--help', 'share', 'join', 'move'}
+# bd verbs that never open the database: no server needed, so they also run inside a sandbox that cannot reach it.
+BD_NO_DATABASE = {'where', 'version', 'help'}
 BD_NO_PULL = {'dolt', 'sync', 'init', 'conflicts', 'sql', 'rename', 'flatten', 'vc', 'version', 'where', 'help', 'bootstrap'}
 # Commands that write nothing: a wrong entry costs a late sync, a missing one a cheap check.
 READS = {'health', 'position', 'holders', 'check', 'related', 'queue', 'wait', 'mine', 'console', 'show', 'help', '-h', '--help', 'share', 'join',

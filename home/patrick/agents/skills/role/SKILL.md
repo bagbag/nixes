@@ -88,12 +88,12 @@ Give each step's output as one line.
 6. **Continue** the current task under the loaded protocols; with none,
    report and wait. Run the claim loop only when the user asks for it (in
    words, or a loop command such as `/goal`). With
-   pulls beyond the decide set, loop: dispatch ready CRs of your pulls, in
-   `board claim` order, to workers in parallel under the plan protocol's
+   pulls beyond the decide set, loop: dispatch the CRs `board queue` lists for your
+   pulls, in its order, to workers in parallel under the plan protocol's
    [Dispatch](protocols/plan.md#dispatch), each running
    its protocol from the table above through its Exit, and refill as it says.
    Without workers in the runtime, `board claim` one CR, run its protocol through its Exit,
-   skipping its Claim step, and claim again. When nothing is claimable and no
+   skipping its Claim step, and claim again. When `board claim` finds nothing and no
    worker runs, report the session's results and stop; when the user asked you to keep watching, run
    `board wait` in the background instead (exit 0 names a candidate: claim again; a claim that fails twice on the same
    id is a blocker to report, not to wait out).
@@ -102,6 +102,12 @@ Give each step's output as one line.
 ## Stop
 
 - Registration fails: report the error and stop.
+- The user tells you to stop: scope the stop to the exact action, file,
+  decision or effect it names and continue authorized work outside it; a stop
+  on your work (wind down, pause, restart) binds only you: keep it in your
+  checkpoint ([Arc state](../shared/project-memory.md#arc-state)). Record a
+  stop on the board only when the user aims it at specific items or at every
+  session ([Deferrals and environment facts](../shared/board-coordination.md#deferrals-and-environment-facts)).
 
 ## Exit
 
