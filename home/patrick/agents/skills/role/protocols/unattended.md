@@ -15,9 +15,12 @@ setup, run `/role autopilot` again.
 - Decide under
   [Decision authority](../../shared/decision-protocol.md#decision-authority),
   adapted for the user's absence. For each ruling that needs the user's later
-  judgment, run it through a decide round, grouped by shared premise. Record
-  it with `board ruling record --unratified`. Skip the round for a trivial
-  default. In its Ask, report `act` or `park` by these classes.
+  judgment, record it with `board ruling record --unratified`; this releases
+  the ruling and files a related `Confirm or revise` question. A trivial
+  default may skip the round that chooses the rule, but its later confirmation
+  question still goes to the user. The lead asks these ordinary questions in a
+  decide round, grouped by shared premise. In its Ask, report `act` or `park`
+  by these classes.
   - **Trivial:** decide; record relevant defaults.
   - **Entailed or two-way door:** `act`, a lean recommendation included.
     Compare options as if presenting them to the user and write the
@@ -32,11 +35,10 @@ setup, run `/role autopilot` again.
     question for the user with a recommendation (`board unclaim <id>` when you
     hold it outside a round). Parked questions form the user's next round;
     their dependents wait. Continue independent tracks.
-- Accept in the user's place a CR at a `user` checkpoint: the
-  decide protocol's Accept with the walkthrough as a written assessment,
-  recorded through the board's design-ratification flow. A finished CR
-  (`look` `before`) in `needs_acceptance` and finished epics whose acceptance
-  names the user stay open for the user's Accept.
+- At a user design checkpoint, use the board's design-ratification flow. Leave
+  finished epics whose acceptance names the user open for the user's Accept
+  and report them at Return. A finished CR (`look` `before`) in
+  `needs_acceptance` stays parked for the user.
 - Treat public contracts, durable design and substantial downstream work as
   costly to reverse. Before non-trivial action, resolve facts and obtain
   independent assessment; review findings authorize no expansion. Assess scope

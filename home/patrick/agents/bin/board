@@ -1819,7 +1819,7 @@ def deviations(board: Board, root: str | None) -> list[tuple[str, str, str]]:
             found.append((item_id, 'release-gate', 'release gate title'))
         if kind == 'decision' and issue['status'] == 'needs_ratification':
             found.append((item_id, 'unratified-ruling',
-                          f'legacy unratified ruling; follow /board-migrate step 5'))
+                          'legacy unratified ruling; follow /board-migrate Upgrade/Reconcile'))
         labels = sorted(set(issue.get('labels') or []) & set(LIFECYCLE_LABELS))
         if labels:
             found.append((item_id, 'label-status', f"labels {', '.join(labels)}"))
@@ -5591,19 +5591,27 @@ def create_ruling_revision(board: Board, old: str, title: str, description: str,
     return new
 
 
-def unratified_revision_packet() -> str:
-    return ("## Question\nKeep the linked ruling in force, or revise it?\n\n"
-            "## Consumer scenarios\nThe linked ruling describes the consumers and behavior it governs.\n\n"
-            "## Root cause and end state\nThe released ruling remains in force unless a revision is released.\n\n"
-            "## Prior rulings\nThe linked released ruling is the current rule.\n\n"
-            "## Premises and evidence\nUse the linked ruling as the source for its current rule and rationale.\n\n"
-            "## Options\nKeep the current rule, or revise it by recording the replacement rule in full.\n\n"
-            "## Recommendation\nKeep the ruling unless its premises or evidence have changed.\n")
+def unratified_confirmation(board: Board, issue: dict, reversal: str) -> str:
+    """The ordinary question for a released ruling taken without the user's judgment."""
+    item_id = issue['id']
+    title = f"Confirm or revise: {issue.get('title', '')}?"
+    description = f"## Question\nConfirm ruling {item_id} or revise it?\n\n{reversal.strip()}\n"
+    related = board.related.get(item_id, set())
+    questions = [board.by_id[other] for other in related
+                 if other in board.by_id and board.by_id[other].get('issue_type') == 'decision'
+                 and board.by_id[other].get('description') == description]
+    if len(questions) > 1:
+        raise BoardError(f'{item_id}: more than one related Confirm-or-revise question; resolve the duplicate before rerunning')
+    if questions:
+        return questions[0]['id']
+    parent = board.parent.get(item_id)
+    labels = [label for label in issue.get('labels') or [] if label.startswith('topic:')]
+    return create_item(board, title, 'decision', parent=parent, labels=labels, verb='ruling',
+                       priority=issue.get('priority', 2), description=description,
+                       deps=[('relates-to', item_id)])
 
 
 def record(board: Board, args) -> int:
-    if args.status == 'needs_ratification':
-        raise BoardError('--status needs_ratification is no longer supported; use --unratified')
     actor = caller()
     issue = held(board, args.id, actor)
     if issue.get('issue_type') != 'decision':
@@ -5623,15 +5631,10 @@ def record(board: Board, args) -> int:
     replaces = list(dict.fromkeys(args.replaces))
     status = 'released' if args.unratified else 'decided'
     closing, taking, operations = replaced_checks(board, args.id, replaces, actor, args.unratified)  # every refusal before the first write
+    confirmation = None
     if args.unratified:
-        revisions = board.revised_by(args.id)
-        if len(revisions) > 1:
-            raise BoardError(f'{args.id}: more than one revision already linked; resolve the duplicate before rerunning')
-        if revisions and board.holds(revisions[0]) != (0, 0):
-            raise BoardError(f'{args.id}: linked revision {revisions[0]} holds work; resolve it before rerunning')
-        if not revisions:
-            create_ruling_revision(board, args.id, f"Keep or revise {issue.get('title', '')}?",
-                                   unratified_revision_packet())
+        reversal = section_text({'description': text}, 'description', 'Reversal')
+        confirmation = unratified_confirmation(board, issue, reversal)
     bd_checked('update', args.id, '--body-file', args.file, '--json')
     # Revision links before the supersedes: `ruling release` refuses an old a live record revises, so a stop before the end leaves a visible state the rerun finishes.
     bd_checked('batch', '-m', f'board ruling record {args.id}', '--json', stdin='\n'.join([f'update {args.id} status={status}', *operations]) + '\n')
@@ -5649,6 +5652,8 @@ def record(board: Board, args) -> int:
     if args.unratified:  # unclaim last, so any earlier stop leaves the record held and rerunnable
         bd_checked('update', args.id, '--assignee', '', '--json')
     print(f"recorded {args.id} ({status}): {issue.get('title', '')}")
+    if confirmation:
+        print(f'confirmation question: {confirmation}')
     if failed:
         print(f"{', '.join(failed)}: replaced, but items waiting on it are not blocked on {args.id}: board block <item> --on {args.id}", file=sys.stderr)
     return 1 if failed else 0
@@ -5680,8 +5685,20 @@ def replaced_checks(board: Board, new: str, replaces: list[str], actor: str, in_
         elif old == new or issue.get('issue_type') != 'decision':
             problems.append(f'--replaces {old}: not another decision ruling')
         elif issue['status'] == 'closed':
-            if new not in superseding(board, old):
-                problems.append(f'--replaces {old}: closed, and not superseded by {new}')
+            if new in superseding(board, old):
+                continue
+            if superseding(board, old):
+                problems.append(f'--replaces {old}: closed and already superseded')
+            elif missing_sections(str(issue.get('description') or '')):
+                problems.append(f'--replaces {old}: closed question, not a planned ruling')
+            else:
+                operations += [f'dep remove {a} {b}' for a, b, kind in board.between(new, old)
+                               if kind != 'parent-child' and (a, b, kind) != (new, old, REVISES)]
+                operations += link_rules(board, [(new, old, REVISES)], 'ruling')[0]
+                if in_force:
+                    closing.append(old)
+                else:
+                    later.append(old)
         elif issue['status'] not in ('decided', 'released'):
             problems.append(f"--replaces {old}: {issue['status']}, not decided or released")
         else:
@@ -5935,6 +5952,11 @@ def revise(board: Board, args) -> int:
         raise BoardError(f'{args.old}: unknown or not a decision')
     if old['status'] in ('open', 'in_progress'):
         raise BoardError(f"{args.old}: {old['status']}, not yet a ruling; amend the question instead")
+    if old['status'] == 'closed':
+        if superseding(board, args.old):
+            raise BoardError(f"{args.old}: closed and already superseded, not a planned ruling")
+        if missing_sections(str(old.get('description') or '')):
+            raise BoardError(f"{args.old}: closed question, not a planned ruling")
     parent = args.parent or board.parent.get(args.old)
     labels = args.label if args.label \
         else [label for label in old.get('labels') or [] if label.startswith('topic:')]
@@ -7066,13 +7088,12 @@ def run_command(argv: list[str]) -> int:
     sub.add_argument('ids', nargs='*', type=board_id)
     sub.add_argument('--force', metavar='REASON', type=nonempty,
                      help="hold a work item past your worker cap, flagged with this reason in position and check")
-    sub = add('record', 'write the decision record you hold from a file and set it decided, or released with --unratified', record, group='ruling')
+    sub = add('record', 'write the decision record you hold from a file and set it decided, or release it with --unratified', record, group='ruling')
     sub.add_argument('id', type=board_id)
     sub.add_argument('file')
     record_mode = sub.add_mutually_exclusive_group()
     record_mode.add_argument('--unratified', action='store_true',
-                             help='release a ruling taken without the user (autopilot, or a standing two-way default), require ## Reversal, and create a linked revision question')
-    record_mode.add_argument('--status', choices=('decided', 'needs_ratification'), help=argparse.SUPPRESS)
+                             help='release a ruling taken without the user (autopilot, or a standing two-way default), require ## Reversal, and create a related confirmation question')
     sub.add_argument('--replaces', action=Values, default=[], metavar='ID[,ID...]',
                      help='the rulings this record replaces, rerunnable after a stop: each decided or released one gets a pending revision link and is superseded when '
                           'this record comes into force (its release; with --unratified at once); one already superseded by it is done; anything else refuses before any write (repeatable)')

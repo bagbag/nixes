@@ -137,7 +137,7 @@ exits 3 at the timeout and 1 when the session's registration is gone. Run it wit
 conventions mechanically; change both in the same change, so drifted boards
 surface in `board health` and move through `/board-migrate`.
 It flags a live `decision` in the legacy `needs_ratification` status as
-`unratified-ruling`; follow `/board-migrate` step 5 to repair it.
+`unratified-ruling`; follow `/board-migrate` Upgrade/Reconcile to repair it.
 `board create` / `create --graph` node metadata are refused when the value equals the
 project default (an unreadable default lets bd answer); `board setup` that changes `look` or `view` prints, under the
 `old -> new` line, the open CRs keeping their own value, each with the first line of its description, design or notes naming the
@@ -247,8 +247,7 @@ unchanged. `board console` prints the console pane's JSON (health counts,
 `mine` items, `position` sessions and holds with their marks) from one
 snapshot.
 `board ruling record <id> <file> --unratified` writes an away or standing two-way ruling directly as `released`, requires `## Reversal`, and creates a
-non-blocking revision question under the same parent, linked to the ruling by `tracks`. A rerun reuses that linked revision. The deciding round records the user's choice as a revision; its release supersedes the unratified ruling. `--status needs_ratification`
-is rejected with an error naming `--unratified`. `--replaces` supersedes prior rulings at once for this command.
+non-blocking `Confirm or revise: <title>?` decision under the same parent, linked to the ruling by `relates-to`. Its description names the ruling id and carries its Reversal. A rerun reuses the question found through that link. A confirmation records an ordinary answer and leaves the ruling in force. To revise, the deciding round marks the ruling as replaced, and `--replaces` supersedes it when the new ruling is released. `--replaces` also accepts a closed planned ruling that is not already superseded.
 `board ruling release <ids> --closes <question>=<record>[,<record>]` releases the
 decided rulings (already released ones count as done, so a rerun retries only
 a failed revise supersede), then closes the answered questions in dependency

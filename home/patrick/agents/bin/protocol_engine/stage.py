@@ -1,6 +1,8 @@
 """The round's Stage and Related steps."""
 from __future__ import annotations
 
+import re
+
 from .base import OUTCOMES, ProtocolError, TAKEOVER, REVISES, REVISES_RULE, lines
 from . import schema, words
 from .boards import related_hits, split_holds
@@ -60,12 +62,21 @@ def stage_accept(ctx: Context, report: dict) -> str:
 
 def related_enter(ctx: Context) -> str | None:
     for q in ctx.round['questions']:
-        if q['board'] is None and not q['searched'] and q['status'] != 'answered':
+        if not q['searched'] and q['status'] != 'answered':
             if ctx.board:
                 known = {hit['id'] for hit in q['overlaps']}
-                hits = related_hits(ctx.board, f"{q['title']}\n{q['text']}")
-                q['overlaps'] += [{'id': hit, 'title': title, 'outcome': None} for hit, title in hits if hit not in known]
-                ctx.log('related', question=q['id'], hits=[hit for hit, _ in hits])
+                if q['board']:
+                    rows = ctx.board.json('show', q['board'], '--json', '--field', 'dependencies')
+                    linked = {(dep['issue_id'], dep['depends_on_id']) for row in rows.values()
+                              for dep in (row or {}).get('dependencies') or []
+                              if dep.get('type') in ('relates-to', 'related')}
+                    hits = sorted({b if a == q['board'] else a for a, b in linked})
+                    titles = ctx.board.json('show', *hits, '--json', '--field', 'title') if hits else {}
+                    found = [(hit, (titles.get(hit) or {}).get('title') or '') for hit in hits]
+                else:
+                    found = related_hits(ctx.board, f"{q['title']}\n{q['text']}")
+                q['overlaps'] += [{'id': hit, 'title': title, 'outcome': None} for hit, title in found if hit not in known]
+                ctx.log('related', question=q['id'], hits=[hit for hit, _ in found])
             q['searched'] = True
     if unresolved(ctx):
         return None
@@ -91,13 +102,27 @@ def resolve_replaced(ctx: Context, q: dict) -> None:
     if not hits:
         return
     rows = ctx.board.json('show', *hits, '--json', '--field', 'status', '--field', 'issue_type', '--field', 'assignee',
-                          '--field', 'dependencies', '--field', 'metadata', '--field', 'title')
+                          '--field', 'dependencies', '--field', 'metadata', '--field', 'title', '--field', 'description')
     for hit in q['overlaps']:  # the dialog names each record it replaces by its title
         if hit['id'] in hits:
             hit['title'] = (rows.get(hit['id']) or {}).get('title') or hit['title']
     problems = [f"{hit} is {(rows.get(hit) or {}).get('status')} {(rows.get(hit) or {}).get('issue_type')}, not a ruling"
                 for hit in hits if (rows.get(hit) or {}).get('issue_type') != 'decision'
                 or (rows.get(hit) or {}).get('status') in (None, 'open', 'in_progress')]
+    for hit in hits:
+        row = rows.get(hit) or {}
+        if row.get('status') != 'closed':
+            continue
+        superseded = any(dep.get('issue_id') == hit and dep.get('type') == 'supersedes'
+                         for dep in row.get('dependencies') or [])
+        headings = {match.group(1).strip().lower() for match in re.finditer(
+            r'^##\s+(.+?)\s*$', str(row.get('description') or ''), re.MULTILINE)}
+        missing = [section for section in ('Question', 'Alternatives Considered', 'Decision', 'Rationale', 'Rule owner', 'Reversal')
+                   if not any(heading.startswith(section.lower()) for heading in headings)]
+        if superseded:
+            problems.append(f'{hit} is closed and already superseded')
+        elif missing:
+            problems.append(f"{hit} is a closed question, not a planned ruling (missing {', '.join(missing)})")
     if problems:
         fail(f"{q['id']}: supersedes needs a recorded ruling: " + '; '.join(problems))
     replaces = [hit for hit in hits if rows[hit]['status'] == 'decided']

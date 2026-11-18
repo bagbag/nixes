@@ -220,7 +220,7 @@ VIEW_LABELS = {  # the views Collect offers, in listing order: heading, name in 
     'toAccept': ('to accept (designs in review)', 'to accept'),
     'toReview': ('to review (work in review)', 'to review'),
     'forUser': ('waiting on the user', 'waiting on the user'), 'readyMilestone': ('ready milestones', 'ready milestones'),
-    'finishedEpic': ('finished epics (close one whose acceptance names the user)', 'finished epics'),
+    'finishedEpic': ('finished epics (user Accept)', 'finished epics'),
 }
 
 
@@ -517,7 +517,7 @@ def record_row(q: dict, note: str | None, prior: str | None = None) -> str:
             + (f"\n  replaces {', '.join(q['replaces'])}: name each in the rationale or decision with what the new "
                'record keeps or changes' if q.get('replaces') else '')
             + ('\n  away answer: the record also needs `reversal`, the steps that undo it (a `## Reversal` section; '
-               '`board ruling record --unratified` releases it and creates a linked revision question)' if q['origin'] == AWAY else ''))
+               '`board ruling record --unratified` releases it and files a related `Confirm or revise` question)' if q['origin'] == AWAY else ''))
 
 
 def waits_on_deferred(premise: str, reason: str, kind: str) -> str:

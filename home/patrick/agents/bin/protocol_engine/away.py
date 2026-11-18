@@ -12,7 +12,7 @@ from .record import board_item
 
 
 # Away rounds (r28-q126, q128, r29): while the role is autopilot nobody can answer, so Ask opens no batch, dialog or print; the
-# model reports `act` (the recommendation is the answer; Record writes it as needs_ratification with its reversal) or `park`
+# model reports `act` (the recommendation is the answer; Record releases it with its reversal) or `park`
 # (an open, unassigned decision on the board) per question. unattended.md Authority owns which question gets which.
 
 SWITCH_TO_SOLO = 'run `session activate solo` first'
