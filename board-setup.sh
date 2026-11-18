@@ -12,12 +12,11 @@ command -v timeout >/dev/null || { echo 'board-setup: timeout is required to bou
 
 tmp=$(mktemp -d "$console/.claude-plugin/.setup.XXXXXX")
 trap 'rm -rf "$tmp"' EXIT
-stage="$tmp/types"
 stub="$tmp/stub"
 
 # The empty hook module triggers Claude Code's watched declaration generation
 # without loading the console's session hooks or writing user configuration.
-mkdir -p "$stage" "$stub/.claude-plugin" "$stub/hooks"
+mkdir -p "$stub/.claude-plugin" "$stub/hooks"
 cat > "$stub/.claude-plugin/plugin.json" <<'EOF'
 {"name":"console-types"}
 EOF
@@ -30,7 +29,7 @@ EOF
 
 if ! (cd "$stub" && timeout 45 env -u CLAUDE_CODE_PLUGIN_DIRS \
   CLAUDE_CODE_PLUGIN_DIR_WATCH=1 claude -p --setting-sources project \
-  --no-session-persistence --plugin-dir "$stub" /cost); then
+  --no-session-persistence --plugin-dir "$stub" /cost >/dev/null); then
   echo 'board-setup: Claude type generation failed or exceeded 45 seconds' >&2
   exit 1
 fi
@@ -46,7 +45,5 @@ for declaration in \
     exit 1
   fi
 done
-cp -R "$generated/." "$stage/"
-
 rm -rf "$types"
-mv "$stage" "$types"
+mv "$generated" "$types"
