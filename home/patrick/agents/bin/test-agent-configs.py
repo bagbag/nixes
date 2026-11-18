@@ -12846,6 +12846,8 @@ def validate_protocol(root: Path, part: str) -> None:
                     {"issue_id": "fx-b", "depends_on_id": "fx-y", "type": "blocks"},      # open: blocks the record
                     {"issue_id": "fx-b", "depends_on_id": "fx-a", "type": "blocks"}]},
                 "fx-c": {"status": "open", "issue_type": "decision", "title": "C", "assignee": "rules001"},
+                "fx-w": {"status": "open", "issue_type": "task", "title": "Waiting work"},
+                "fx-y": {"status": "open", "issue_type": "task", "title": "Blocked work"},
                 "fx-k": {"status": "closed"},
                 "fx-dd": {"status": "decided", "issue_type": "decision", "title": "DD", "assignee": "rules001"}}
             open_questions = [{"id": i, "status": "open", "type": "decision", "title": f"{i}?", "priority": 1, "blockedBy": []}
@@ -12894,7 +12896,7 @@ def validate_protocol(root: Path, part: str) -> None:
             rule_q = next(q for q in staged["questions"] if q["settles"])
             store_c = next(q for q in staged["questions"] if q["board"] == "fx-c")
             if staged["step"] != "related" or rule_q["settles"] != ["fx-a", "fx-b"] or store_c["settles"] != [] \
-                    or [c["args"][0] for c in calls() if c["args"][0] != "show"] != ["related"]:
+                    or [c["args"][0] for c in calls() if c["args"][0] != "show" and "--dry-run" not in c["args"]] != ["related"]:
                 raise ValueError(f"a rule question settling two selected items stages: {staged}")
             proto("step", stdin={"outcomes": {rule_q["id"]: {"fx-rel": "relate", "fx-w": "relate"}}}, **rules)
             # Coverage after every update set: a remove that leaves a selected key uncovered is refused, all keys named, and
