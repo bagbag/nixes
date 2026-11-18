@@ -2001,16 +2001,14 @@ def validate_shared_board(root: Path) -> None:
         board.create_item(None, "t", "decision", description="d", deps=[("revises", "fx-o")], holds=["fx-h"], assignee=None)
         expect(made_plans[-1]["nodes"][0]["deps"] == [{"target": "fx-o", "type": "revises"}] and "assignee" not in made_plans[-1]["nodes"][0]
                and made_plans[-1]["edges"] == [{"from_id": "fx-h", "to_key": "item", "type": "blocks"}], "links the item holds, and items waiting on it", made_plans[-1])
-    with patch.object(board, "bd_show", lambda ids, *flags, **kw: parent), patch.object(board, "shared", None), \
-            patch.object(board, "bd_checked", return_value="fx-rat\n") as native_create, patch.object(board, "create_plan") as graph_create:
+    with patch.object(board, "bd_show", lambda ids, *flags, **kw: parent), patch.object(board, "shared", None), patch.object(board, "create_plan", fake_plan):
         made = board.create_item(None, "Rat", "task", description="why", parent="fx-p", priority=1,
-                                 metadata={"ratification": "design"}, initial_status="needs_ratification")
-        args = native_create.call_args.args
-        expect(made == "fx-rat" and args[:7] == ("create", "Rat", "--type", "task", "--status", "needs_ratification", "--silent")
-               and "--deps" in args and "parent-child:fx-p" in args and "--parent" not in args and "--no-inherit-labels" in args
-               and "--labels" in args and "topic:a" in args and "queue:ben" not in args
-               and "--metadata" in args and '{"ratification":"design"}' in args
-               and not graph_create.called, "an initial-status child is created atomically with parent, kind and non-queue labels", args)
+                                 metadata={"ratification": "design"}, status="needs_ratification")
+        node = made_plans[-1]["nodes"][0]
+        expect(made == "fx-new" and node == {"key": "item", "title": "Rat", "type": "task", "description": "why",
+                                             "priority": 1, "metadata": {"ratification": "design"}, "status": "needs_ratification",
+                                             "parent_id": "fx-p", "labels": ["topic:a"]},
+               "an initial-status child is created atomically in the graph with parent, kind and non-queue labels", node)
     with patch.object(board, "bd_show", lambda ids, *flags, **kw: []), patch.object(board, "shared", None), patch.object(board, "create_plan", fake_plan):
         try:
             board.create_item(None, "t", "task", description="d", parent="fx-none")
@@ -5106,11 +5104,11 @@ def validate_board(root: Path) -> None:
                 y_issues[0]["metadata"].update(look="after", review_tip=y_tip, review_base_tip=x_tip)
                 fake = Fake([*x_issues, *y_issues])
                 code, output, errors = invoke(["cr", "land", "lx", "--tip", x_tip[:8]], fake, "lead0001")
-                ratifications = [write for write in fake.writes() if write[:2] == ["create", "CR ly"]]
+                ratifications = [node for graph in fake.graphs for node in graph["nodes"]
+                                 if node.get("title") == "CR ly" and node.get("metadata", {}).get("ratification") == "landing"]
                 if code or at_main() != y_tip or not any(w[:2] == ["close", "ly"] for w in fake.writes()) or y_wt.exists() \
-                        or len(ratifications) != 1 or "--status" not in ratifications[0] or "needs_ratification" not in ratifications[0] \
-                        or '{"ratification":"landing"}' not in ratifications[0] or "--deps" not in ratifications[0] \
-                        or f"parent-child:ly" not in ratifications[0] or "--parent" in ratifications[0] \
+                        or len(ratifications) != 1 or ratifications[0].get("status") != "needs_ratification" \
+                        or ratifications[0].get("parent_id") != "ly" \
                         or "(after lx)" not in output:
                     raise ValueError(f"landing a base must land the look-after CR waiting for it: {code} {errors}\n{output}\n{fake.writes()}")
                 # ...and leaves it as refresh work when its check is no longer current.
@@ -5156,14 +5154,13 @@ def validate_board(root: Path) -> None:
                     fake = Fake(issues)
                     code, output, errors = invoke(["handover", f"cp{look}", "design reads well"], fake, "bbbb2222")
                     written = fake.writes()
-                    ratifications = [write for write in fake.writes() if write[:2] == ["create", f"CR cp{look}"]]
+                    ratifications = [node for graph in fake.graphs for node in graph["nodes"]
+                                     if node.get("title") == f"CR cp{look}" and node.get("metadata", {}).get("ratification") == "design"]
                     if code or ["update", f"cp{look}", "--status", "open", "--assignee", "", "--if-assignee", "bbbb2222", "--json"] not in written \
                             or not any(w[:2] == ["update", f"cp{look}"] and "checkpoint" in w for w in written) \
                             or len(ratifications) != int(ratified) \
-                            or ratified and ("--status" not in ratifications[0] or "needs_ratification" not in ratifications[0]
-                                            or '{"ratification":"design"}' not in ratifications[0]
-                                            or "--deps" not in ratifications[0] or f"parent-child:cp{look}" not in ratifications[0]
-                                            or "--parent" in ratifications[0]) \
+                            or ratified and (ratifications[0].get("status") != "needs_ratification"
+                                            or ratifications[0].get("parent_id") != f"cp{look}") \
                             or "passed the checkpoint" not in output:
                         raise ValueError(f"the agent's checkpoint pass in a look-{look} project: {code} {errors}\n{written}\n{output}")
                 empty_ratification_board = types.SimpleNamespace(by_id={}, children={"parent": []}, _cr_items={"parent": []})
@@ -5171,7 +5168,7 @@ def validate_board(root: Path) -> None:
                     made = board.cr_ratification(empty_ratification_board, {"id": "parent", "title": "CR title", "priority": 2}, "design")
                     if made != "rat-new" or create.call_args.args[1:3] != ("CR title", "task") \
                             or create.call_args.kwargs.get("metadata") != {"ratification": "design"} \
-                            or create.call_args.kwargs.get("initial_status") != "needs_ratification" or update.called:
+                            or create.call_args.kwargs.get("status") != "needs_ratification" or update.called:
                         raise ValueError(f"a design ratification must create a plain-title child atomically with kind metadata and its status: {create.call_args} {update.call_args}")
                 existing = {"id": "rat-old", "title": "CR title", "issue_type": "task", "status": "needs_ratification",
                             "metadata": {"ratification": "design"}}

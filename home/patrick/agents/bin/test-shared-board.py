@@ -32,7 +32,6 @@ import time
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-RATIFICATION_MIGRATION = HERE.parent / 'skills' / 'board-migrate' / 'scripts' / 'migrate-ratification-kinds.py'
 parser = argparse.ArgumentParser()
 parser.add_argument('--board', default=str(HERE / 'board'))
 parser.add_argument('--only', default='')
@@ -363,6 +362,10 @@ def t_child_ids() -> None:
     check(bool(synced_atomic) and synced_atomic.get('status') == 'needs_ratification'
           and any(dep.get('type') == 'parent-child' and dep.get('depends_on_id') == epic for dep in synced_atomic.get('dependencies', [])),
           'child ids: atomic plain-id child syncs to the other clone', synced_atomic)
+    rc, out, err, _ = bd('a', 'close', atomic_id, '--reason', 'close test-only active status row', '--json')
+    check(rc == 0 and items('a')[atomic_id].get('status') == 'closed',
+          'child ids: close the temporary active ratification after checking its status and sync', err + out)
+    settle('a', 'b')
     made = [create('a', 'a child', '--parent', epic), create('b', 'b child', f'--parent={epic}')]
     check(all('.' not in item for item in made), 'child ids: --parent on both sides makes plain ids', made)
     settle('a', 'b')
@@ -997,31 +1000,6 @@ def t_cr() -> None:
     _, console, _, _ = run('a', 'console')
     check([r['id'] for r in json.loads(console)['ratifications']] == [ratify[0]['id']] and json.loads(console)['ratifications'][0]['cr'] == b,
           'cr: board console lists the ratification with its CR', console[-300:])
-
-    legacy = task(b, 'Ratify design: legacy design')
-    rc, out, err, _ = raw('a', 'update', legacy, '--status', 'needs_ratification', '--set-metadata', 'ratification=1', '--json')
-    check(rc == 0, 'cr: a legacy prefixed ratification is prepared', err + out)
-
-    def migrate(*args):
-        env = base_env('a')
-        env['CLAUDE_CODE_SESSION_ID'] = session('a', 'lead')
-        return subprocess.run([sys.executable, '-B', str(RATIFICATION_MIGRATION), '--board', BOARD, *args],
-                              cwd=side, capture_output=True, text=True, timeout=30, env=env)
-
-    preview = migrate()
-    check(preview.returncode == 0 and 'legacy design' in preview.stdout
-          and items('a')[legacy]['title'] == 'Ratify design: legacy design'
-          and str((items('a')[legacy].get('metadata') or {}).get('ratification')) == '1',
-          'cr: ratification migration previews legacy items without changing them', preview.stderr + preview.stdout)
-    applied = migrate('--apply')
-    migrated = items('a')[legacy]
-    check(applied.returncode == 0 and migrated['title'] == 'legacy design'
-          and (migrated.get('metadata') or {}).get('ratification') == 'design',
-          'cr: ratification migration stores the kind and removes its legacy prefix', applied.stderr + applied.stdout)
-    repeated = migrate('--apply')
-    check(repeated.returncode == 0 and items('a')[legacy]['title'] == 'legacy design'
-          and (items('a')[legacy].get('metadata') or {}).get('ratification') == 'design',
-          'cr: ratification migration is idempotent', repeated.stderr + repeated.stdout)
 
     design = create('a', 'design checkpoint C', '--metadata', 'look=after', '--metadata', 'checkpoint=agent')
     design_item = task(design, 'C design')

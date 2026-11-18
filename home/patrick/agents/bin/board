@@ -4175,7 +4175,7 @@ def cr_ratification(board: Board, cr: dict, kind: str) -> str | None:
     made = create_item(board, title, 'task', parent=cr['id'], priority=cr.get('priority', 2),
                        metadata={'ratification': kind},
                        description=f"Look at {title} ({cr['id']}): branch {cr_branch(cr['id'])}. Close when ratified; "
-                                   'a "no" becomes a follow-up change request.', initial_status='needs_ratification')
+                                   'a "no" becomes a follow-up change request.', status='needs_ratification')
     return made
 
 
@@ -5538,12 +5538,12 @@ def create_plan(plan: dict) -> dict[str, str]:
 
 
 def create_item(board: Board, title: str, kind: str, parent: str | None = None, deps: list[tuple[str, str]] = (), holds: list[str] = (),
-                labels: list[str] = (), verb: str = 'create', initial_status: str | None = None, **fields) -> str:
+                labels: list[str] = (), verb: str = 'create', **fields) -> str:
     """The board's own single-item creates (a follow-up, a ratification, a revision), using `board create`'s field and link checks.
     A parent is a plain hash id plus a link (a dotted child id stops sync when two clones create under one parent); bd copies none of the
     parent's labels, so they are copied here, the queue label excepted (the child inherits its queue). `deps` are (type, id) links the new item
     holds; `holds` are items that wait on it (their effects are the caller's: record_holds). `verb` is who writes the links (link_rules).
-    When an initial status is required, native `bd create` writes it with the item and parent edge atomically. `board` spares a read when it holds the parent."""
+    `board` spares a read when it holds the parent."""
     node: dict = {'key': 'item', 'title': title, 'type': kind, **{key: value for key, value in fields.items() if value is not None}}
     labels = list(labels)
     if parent:
@@ -5563,26 +5563,6 @@ def create_item(board: Board, title: str, kind: str, parent: str | None = None, 
     if holds:
         plan['edges'] = [{'from_id': one, 'to_key': 'item', 'type': 'blocks'} for one in holds]
     plan_with_queue(plan)
-    if initial_status is not None:
-        if deps or holds:
-            raise BoardError('native create with an initial status cannot add dependency edges')
-        # Native create persists status and the parent edge together. `--parent` allocates a dotted
-        # hierarchical id on shared boards, so use the plain-id parent-child dependency instead.
-        args = ['create', title, '--type', kind, '--status', initial_status, '--silent', '--no-inherit-labels']
-        if parent:
-            args += ['--deps', f'parent-child:{parent}']
-        if fields.get('priority') is not None:
-            args += ['--priority', str(fields['priority'])]
-        if fields.get('description') is not None:
-            args += ['--description', fields['description']]
-        if node.get('labels'):
-            args += ['--labels', ','.join(node['labels'])]
-        if fields.get('metadata'):
-            args += ['--metadata', json.dumps(fields['metadata'], separators=(',', ':'))]
-        made = bd_checked(*args).strip()
-        if not made:
-            raise BoardError('created, but bd printed no id')
-        return made
     return create_plan(plan)['item']
 
 
