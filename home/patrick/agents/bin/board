@@ -6226,8 +6226,7 @@ def project_pairs(args) -> list[tuple[str, str]]:
             raise BoardError(f"--{name} {value!r} is not one of {', '.join({'look': LOOKS, 'view': VIEWS}[name])}")
         if name in ('setup', 'checks'):
             first = shlex.split(value)[0] if value else ''
-            resolved = subprocess.run(['/bin/sh', '-c', 'command -v "$1"', 'board', first],
-                                      cwd=Path.cwd(), capture_output=True, text=True)
+            resolved = subprocess.run(['/bin/sh', '-c', 'command -v "$1"', 'board', first], capture_output=True, text=True)
             if resolved.returncode != 0:
                 if '/' not in first and (Path.cwd() / first).is_file():
                     raise BoardError(f'--{name}: {first} cannot be resolved by /bin/sh; use ./{first}')
