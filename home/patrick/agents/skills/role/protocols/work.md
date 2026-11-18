@@ -38,8 +38,11 @@ findings or stops.
      [Question format](../../shared/question-format.md#question-format); no
      implementation. Before raising the questions and again before handing
      over, invoke `step-back`, then `ground`, on the design; repeat until a
-     pass changes nothing. A CR with `checkpoint` set holds only its design:
-     implementation items arrive after the checkpoint passes.
+     pass changes nothing. At a CR checkpoint, the open design items move to
+     `in_review` and stay open until the checkpoint passes; questions hold
+     affected design items under
+     [Questions and rulings](../../shared/board-core.md#questions-and-rulings).
+     Implementation items arrive after the checkpoint passes.
    - Implementation items: tests alongside the change; changelog and doc
      duties are in the item's acceptance.
    - Choices: decide what

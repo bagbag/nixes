@@ -60,7 +60,9 @@ steps 3-7.
    confirmed defects, open questions, executed checks and next action:
    `board return <cr> "<findings>"`.
    Raise a choice that needs a decision as a question holding the affected
-   work items. At a design checkpoint, hold the design. A
+   work items under [Questions and rulings](../../shared/board-core.md#questions-and-rulings).
+   At a design checkpoint the open design items remain in review until the
+   checkpoint passes. A
    standalone review closes with `board close <id> --reason "<verdict>"`,
    recording each finding as a new item discovered from it
    (`--deps discovered-from:<id>`).

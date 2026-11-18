@@ -4422,7 +4422,7 @@ def validate_board(root: Path) -> None:
                 parent = {"id": cr_id, "title": f"CR {cr_id}", "issue_type": "change-request", "status": "needs_acceptance", "priority": 2,
                           "description": "d", "created_at": "2026-10-22T15:29:00Z", "updated_at": "2026-10-22T15:29:00Z",
                           "metadata": {"checkpoint": "user"}, "dependencies": []}
-                design = {"id": f"{cr_id}.d", "title": f"design {cr_id}", "issue_type": "design", "status": "closed", "priority": 2,
+                design = {"id": f"{cr_id}.d", "title": f"design {cr_id}", "issue_type": "design", "status": "open", "priority": 2,
                           "description": "d", "created_at": "2026-10-22T15:29:00Z", "updated_at": "2026-10-22T15:29:00Z",
                           "dependencies": [{"issue_id": f"{cr_id}.d", "depends_on_id": cr_id, "type": "parent-child"}]}
                 return parent, design
@@ -4442,53 +4442,64 @@ def validate_board(root: Path) -> None:
                         for item_id in command[2:]:
                             next(i for i in self.issues if i["id"] == item_id)["status"] = "open"
                     elif command[1] == "update" and "--status" in command:
-                        target = next(i for i in self.issues if i["id"] == command[2])
-                        target["status"] = command[command.index("--status") + 1]
+                        status = command[command.index("--status") + 1]
+                        for item_id in command[2:command.index("--status")]:
+                            target = next(i for i in self.issues if i["id"] == item_id)
+                            target["status"] = status
+                    elif command[1] == "close":
+                        for item_id in command[2:command.index("--reason")]:
+                            next(i for i in self.issues if i["id"] == item_id)["status"] = "closed"
                     return done_cmd
-            workflow = CheckpointWorkflow([*topical, checkpoint, checkpoint_design])
-            code, output, errors, fake = bd_create("--holds", checkpoint_design["id"], deck=workflow)
+            user_workflow = CheckpointWorkflow([*topical, checkpoint, checkpoint_design])
+            code, output, errors, fake = bd_create("--holds", checkpoint_design["id"], deck=user_workflow)
             edge = {"issue_id": checkpoint_design["id"], "depends_on_id": "fx-new", "type": "blocks"}
             held = next(i for i in fake.issues if i["id"] == checkpoint_design["id"])
-            if code or output != "fx-new\n" or edge not in held["dependencies"] or held["status"] != "closed" \
-                    or any(args[0] == "reopen" for args, _ in fake.calls):
-                raise ValueError(f"Record must hold a closed design of the active user checkpoint without reopening it: {code} {errors} {fake.calls}")
+            if code or output != "fx-new\n" or edge not in held["dependencies"] or held["status"] != "open":
+                raise ValueError(f"Record must hold open work in the active user checkpoint: {code} {errors} {fake.calls}")
+            user_design_item = held
             non_design = {**checkpoint_design, "id": "cp-hold.t", "title": "task cp-hold", "issue_type": "task",
+                          "status": "closed",
                           "dependencies": [{"issue_id": "cp-hold.t", "depends_on_id": "cp-hold", "type": "parent-child"}]}
             code, _, errors, fake = bd_create("--holds", non_design["id"], deck=Creating([*topical, checkpoint, non_design]))
             if code == 0 or any(args[0] == "create" for args, _ in fake.calls):
-                raise ValueError(f"the closed-item exception must not allow a non-design child: {code} {errors} {fake.calls}")
-            workflow.calls = []
-            code, output, errors = invoke(["return", "cp-hold", "fx-new"], workflow, "lead0001")
-            if code or held["status"] != "open" or edge not in held["dependencies"] \
-                    or not any(args == ["reopen", "cp-hold.d"] for args, _ in workflow.calls) \
-                    or any(args[0] == "dep" and args[1] == "remove" for args, _ in workflow.calls):
-                raise ValueError(f"Return must reopen the held design and preserve its blocker edge: {code} {errors} {workflow.calls}")
+                raise ValueError(f"a question must not hold a closed work item: {code} {errors} {fake.calls}")
+            # Questions can hold a design while a reviewer is assessing the agent checkpoint.
             agent_checkpoint, agent_design = checkpoint_pair("cp-agent-hold")
             agent_checkpoint.update(status="in_review", assignee="lead0001", metadata={"checkpoint": "agent"})
+            agent_design["status"] = "in_review"
             workflow = CheckpointWorkflow([*topical, agent_checkpoint, agent_design])
-            code, output, errors, fake = bd_create("--holds", agent_design["id"], "--dry-run", deck=workflow)
-            if code or output != "valid\n" or fake.writes() or any(a[0] == "create" for a, _ in fake.calls):
-                raise ValueError(f"an agent checkpoint design hold validates without writes: {code} {output} {errors} {fake.calls}")
             code, output, errors, fake = bd_create("--holds", agent_design["id"], deck=workflow)
             held = next(i for i in fake.issues if i["id"] == agent_design["id"])
-            edge = {"issue_id": agent_design["id"], "depends_on_id": "fx-new", "type": "blocks"}
-            workflow.calls = []
-            code, _, errors = invoke(["return", "cp-agent-hold", "Changes wanted"], workflow, "lead0001")
-            if code or edge not in held["dependencies"] or held["status"] != "open" \
-                    or not any(args == ["reopen", "cp-agent-hold.d"] for args, _ in workflow.calls):
-                raise ValueError(f"an agent checkpoint hold must survive Return as an open design: {code} {errors} {workflow.calls}")
+            if code or held["status"] != "in_review" or not any("dep add cp-agent-hold.d fx-new blocks" in (stdin or "")
+                                                                    for args, stdin in fake.calls if args[0] == "batch"):
+                raise ValueError(f"Record must block an in-review design on its question: {code} {errors} {fake.calls}")
+            # A closed design is never a valid question hold target, even during another checkpoint.
+            checkpoint_design["status"] = "closed"
+            code, _, errors, fake = bd_create("--holds", checkpoint_design["id"], deck=Creating([*topical, checkpoint, checkpoint_design]))
+            if code == 0 or any(args[0] == "create" for args, _ in fake.calls):
+                raise ValueError(f"a question must not hold a closed design: {code} {errors} {fake.calls}")
+            checkpoint_design["status"] = "open"
+            user_workflow.calls = []
+            user_design_item["status"] = "in_review"
+            code, output, errors = invoke(["return", "cp-hold", "fx-new"], user_workflow, "lead0001")
+            if code or user_design_item["status"] != "open" \
+                    or not any(args == ["update", "cp-hold.d", "--status", "open", "--json"] for args, _ in user_workflow.calls) \
+                    or any(args[0] == "dep" and args[1] == "remove" for args, _ in user_workflow.calls):
+                raise ValueError(f"Return must reopen the in-review design and preserve its blocker edge: {code} {errors} {user_workflow.calls}")
             plain_checkpoint, plain_design = checkpoint_pair("cp-plain")
+            plain_design["status"] = "in_review"
             fake = Fake([plain_checkpoint, plain_design])
             code, output, errors = invoke(["return", "cp-plain", "Changes wanted"], fake, "lead0001")
-            if code or fake.writes()[:2] != [["reopen", "cp-plain.d"], ["update", "cp-plain", "--status", "open", "--assignee", "", "--json"]] \
+            if code or fake.writes()[:2] != [["update", "cp-plain.d", "--status", "open", "--json"], ["update", "cp-plain", "--status", "open", "--assignee", "", "--json"]] \
                     or any(args[:2] == ["dep", "add"] for args in fake.writes()):
-                raise ValueError(f"plain checkpoint Return must reopen its design without adding a blocker: {code} {errors} {fake.writes()}")
+                raise ValueError(f"plain checkpoint Return must reopen its in-review design without adding a blocker: {code} {errors} {fake.writes()}")
             agent_checkpoint, agent_design = checkpoint_pair("cp-agent")
             agent_checkpoint.update(status="in_review", assignee="lead0001", metadata={"checkpoint": "agent"})
+            agent_design["status"] = "in_review"
             fake = Fake([agent_checkpoint, agent_design])
             code, output, errors = invoke(["return", "cp-agent", "Changes wanted"], fake, "lead0001")
-            if code or fake.writes()[:2] != [["reopen", "cp-agent.d"], ["update", "cp-agent", "--status", "open", "--assignee", "", "--json"]]:
-                raise ValueError(f"agent checkpoint Return must reopen its closed design: {code} {errors} {fake.writes()}")
+            if code or fake.writes()[:2] != [["update", "cp-agent.d", "--status", "open", "--json"], ["update", "cp-agent", "--status", "open", "--assignee", "", "--json"]]:
+                raise ValueError(f"agent checkpoint Return must reopen its in-review design: {code} {errors} {fake.writes()}")
             code, _, errors, fake = bd_create("--holds", ready, deck=Creating(list(mine_rows)))
             if code or not any(w[:2] == ["unclaim", ready] for w in fake.writes()):
                 raise ValueError(f"board bd create --holds blocks on the board read after the create: the creator's claimed item is handed back: {code} {errors} {fake.writes()}")
@@ -4936,11 +4947,46 @@ def validate_board(root: Path) -> None:
                     or not any("check_result=pass" in args and f"check_base_tip={main_tip}" in args and f"check_tip={cr_tip}" in args for args in fake.writes()):
                 raise ValueError(f"board handover: {code} {fake.writes()} {errors}")
             # A checkpoint set to the agent sends the hand-over to the checkpoint stage, a user checkpoint through review.
+            class CheckpointHandover(Fake):
+                def __call__(self, command, **kwargs):
+                    result = super().__call__(command, **kwargs)
+                    if command[0] != "bd":
+                        return result
+                    if command[1] == "update" and "--status" in command:
+                        status = command[command.index("--status") + 1]
+                        for item_id in command[2:command.index("--status")]:
+                            target = next((issue for issue in self.issues if issue["id"] == item_id), None)
+                            if target:
+                                target["status"] = status
+                    elif command[1] == "close" and "--reason" in command:
+                        for item_id in command[2:command.index("--reason")]:
+                            target = next((issue for issue in self.issues if issue["id"] == item_id), None)
+                            if target:
+                                target["status"] = "closed"
+                    return result
+
             for checkpoint, status in (("agent", "in_review"), ("user", "needs_acceptance")):
-                fake = Fake(variant(**{"CR held": {"metadata": {**ready_cr["CR held"]["metadata"], "checkpoint": checkpoint}}, **done_item}))
+                fake = CheckpointHandover(variant(**{"CR held": {"metadata": {**ready_cr["CR held"]["metadata"], "checkpoint": checkpoint}}, **done_item}))
                 invoke(["handover", "fx-ovo.c2", "ok"], fake, "aaaa1111")
                 if not any(args[:4] == ["update", "fx-ovo.c2", "--status", status] for args in fake.writes()):
                     raise ValueError(f"board handover with checkpoint {checkpoint} must go to {status}: {fake.writes()}")
+                design = {"id": "fx-ovo.c2.d", "title": "design checkpoint", "issue_type": "design", "status": "open", "priority": 2,
+                          "description": "d", "created_at": "2026-10-22T15:29:00Z", "updated_at": "2026-10-22T15:29:00Z",
+                          "dependencies": [{"issue_id": "fx-ovo.c2.d", "depends_on_id": "fx-ovo.c2", "type": "parent-child"}]}
+                fake = CheckpointHandover([*variant(**{"CR held": {"metadata": {**ready_cr["CR held"]["metadata"], "checkpoint": checkpoint}}, **done_item}), design])
+                invoke(["handover", "fx-ovo.c2", "ok"], fake, "aaaa1111")
+                if design["status"] != "in_review" or ["update", design["id"], "--status", "in_review", "--json"] not in fake.writes():
+                    raise ValueError(f"board handover at checkpoint {checkpoint} must move its open design to in_review: {fake.writes()}")
+            agent_design = {"id": "fx-ovo.c2.d", "title": "design checkpoint", "issue_type": "design", "status": "in_review", "priority": 2,
+                            "description": "d", "created_at": "2026-10-22T15:29:00Z", "updated_at": "2026-10-22T15:29:00Z",
+                            "dependencies": [{"issue_id": "fx-ovo.c2.d", "depends_on_id": "fx-ovo.c2", "type": "parent-child"}]}
+            reviewing_checkpoint = {"status": "in_review", "assignee": "bbbb2222",
+                                    "metadata": {**ready_cr["CR held"]["metadata"], "checkpoint": "agent", "reviewing_tip": cr_tip}}
+            fake = CheckpointHandover([*variant(**{"CR held": reviewing_checkpoint, **done_item}), agent_design])
+            code, output, errors = invoke(["handover", "fx-ovo.c2", "checkpoint passed"], fake, "bbbb2222")
+            if code or agent_design["status"] != "closed" or ["close", agent_design["id"], "--reason", "fx-ovo.c2: passed agent design checkpoint"] not in fake.writes() \
+                    or not any(args[:4] == ["update", "fx-ovo.c2", "--status", "open"] for args in fake.writes()):
+                raise ValueError(f"review pass must close its design and return the CR to planning: {code} {errors} {fake.writes()}")
             # The reviewer's pass: look before goes to accept (the user's Accept), the holder released; a returned item goes back to open.
             reviewing = {"CR held": {"status": "in_review", "assignee": "bbbb2222", "metadata": {**ready_cr["CR held"]["metadata"], "reviewing_tip": cr_tip}}}
             fake = Fake(variant(**reviewing, **done_item))
@@ -5478,8 +5524,11 @@ def validate_board(root: Path) -> None:
                         or ["update", "cpuser", "--status", "open", "--assignee", "", "--json"] not in fake.writes() or not wt.exists():
                     raise ValueError(f"board cr land --checkpoint must open the CR for planning and land nothing: {code} {errors} {fake.writes()}")
                 # The design pin: the claim prints a hash of the design item's text; `--design <hash>` accepts only that text.
-                design = {**cr_item("cpuser.d", "cpuser", "closed", kind="design"), "design": "the design", "acceptance_criteria": "ac", "notes": "n"}
-                pinned = [*issues, design]
+                design = {**cr_item("cpuser.d", "cpuser", "in_review", kind="design"), "design": "the design", "acceptance_criteria": "ac", "notes": "n"}
+                consumer = cr_item("cpuser.consumer", "cpuser", kind="task", blocks=("cpuser.d",))
+                pinned = [*issues, design, consumer]
+                if not board.Board(pinned).waits_on_decision_design_or_spike(consumer["id"]):
+                    raise ValueError("a dependent must stay blocked while its checkpoint design is in review")
                 code, output, errors = invoke(["claim", "cpuser"], Fake(pinned), "lead0001")
                 found = re.search(r"design hash (\w+) \(cpuser\.d\)", output)
                 if code or found is None:
@@ -5492,9 +5541,12 @@ def validate_board(root: Path) -> None:
                     code, _, errors = invoke(["cr", "land", "cpuser", "--checkpoint", "--design", pin], fake, "lead0001")
                     if code != 1 or "design changed" not in errors or fake.writes():
                         raise ValueError(f"board cr land --checkpoint --design must refuse a changed design ({edit}): {code} {errors} {fake.writes()}")
-                fake = Fake(pinned)
+                fake = CheckpointWorkflow(json.loads(json.dumps(pinned)))
                 code, output, errors = invoke(["cr", "land", "cpuser", "--checkpoint", "--design", pin], fake, "lead0001")
-                if code or ["update", "cpuser", "--status", "open", "--assignee", "", "--json"] not in fake.writes():
+                accepted_design = next(i for i in fake.issues if i["id"] == "cpuser.d")
+                if code or accepted_design["status"] != "closed" or board.Board(fake.issues).waits_on_decision_design_or_spike(consumer["id"]) \
+                        or ["close", "cpuser.d", "--reason", "cpuser: accepted design checkpoint"] not in fake.writes() \
+                        or ["update", "cpuser", "--status", "open", "--assignee", "", "--json"] not in fake.writes():
                     raise ValueError(f"board cr land --checkpoint --design with the claimed hash must accept: {code} {errors} {fake.writes()}")
                 code, _, errors = invoke(["cr", "land", "cpuser", "--design", pin], Fake(pinned), "lead0001")
                 if code != 1 or "--checkpoint" not in errors:
@@ -5502,9 +5554,9 @@ def validate_board(root: Path) -> None:
                 # A CR made around an existing design item (waiting in review under the old model) is accepted like a native one.
                 legacy = cr_issue("legacycp", "needs_acceptance", checkpoint="user", since="2026-10-22T15:00:00Z")
                 legacy_design = cr_item("legacycp.d", "legacycp", "in_review", kind="design")
-                fake = Fake([legacy, legacy_design])
+                fake = CheckpointWorkflow([legacy, legacy_design])
                 code, output, errors = invoke(["cr", "land", "legacycp", "--checkpoint", "--design", design_hash([legacy, legacy_design])], fake, "lead0001")
-                if code or ["update", "legacycp", "--status", "open", "--assignee", "", "--json"] not in fake.writes() or "accepted the design checkpoint" not in output:
+                if code or legacy_design["status"] != "closed" or ["update", "legacycp", "--status", "open", "--assignee", "", "--json"] not in fake.writes() or "accepted the design checkpoint" not in output:
                     raise ValueError(f"land --checkpoint of a CR around a legacy design item: {code} {errors} {fake.writes()}")
                 if invoke(["cr", "land", "lx2", "--checkpoint", "--design", "0" * 12], Fake([*x_issues]), "lead0001")[0] != 1:
                     raise ValueError("board cr land --checkpoint without a pending user checkpoint must refuse")

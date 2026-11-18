@@ -4171,7 +4171,16 @@ def claim_cr(board: Board, cr: dict, actor: str, kind: str) -> tuple[bool, str]:
 
 def open_item_refusal(board: Board, cr: dict) -> str | None:
     items = board.cr_items(cr['id'])
+    if ((cr['status'] == 'in_progress' and meta(cr).get('checkpoint') in ('user', 'agent'))
+            or cr_at_design_checkpoint(cr)):
+        items = [item for item in items if item.get('issue_type') != 'design']
     return f"{cr['id']}: items still open: {', '.join(i['id'] for i in items)}; close them (board close <item> --reason \"<sha>: …\") or move them out" if items else None
+
+
+def checkpoint_design_items(board: Board, cr_id: str, status: str | None = None) -> list[str]:
+    """The design items in a checkpoint CR, optionally limited to one status."""
+    return [item['id'] for item in cr_closed_items(board, cr_id)
+            if item.get('issue_type') == 'design' and (status is None or item.get('status') == status)]
 
 
 def cr_ratification(board: Board, cr: dict, kind: str) -> str | None:
@@ -4389,10 +4398,17 @@ def handover(board: Board, args) -> None:
     if author:
         put_meta(cr, review_tip=None, review_base_tip=None, reviewing_tip=None)  # a new hand-over starts a new review (F9)
         if m.get('checkpoint') == 'user':  # a design for the user goes straight to the user's Accept
+            designs = checkpoint_design_items(board, cr['id'], 'open')
+            if designs:
+                bd_checked('update', *designs, '--status', 'in_review', '--json')
             waiting_for_user(cr, holder)
             comment(args.id, HANDOVER + args.evidence)
             print(f'handed over {args.id}: its design checkpoint waits for you ({check_said(args)} on {result["tip"][:12]})')
             return
+        if m.get('checkpoint') == 'agent':
+            designs = checkpoint_design_items(board, cr['id'], 'open')
+            if designs:
+                bd_checked('update', *designs, '--status', 'in_review', '--json')
         bd_checked('update', args.id, '--status', 'in_review', '--assignee', '', *expect, '--json')
         comment(args.id, HANDOVER + args.evidence)
         print(f'handed over {args.id} for {"checkpoint " if m.get("checkpoint") == "agent" else ""}review ({check_said(args)} on {result["tip"][:12]})')
@@ -4400,6 +4416,9 @@ def handover(board: Board, args) -> None:
     comment(args.id, f'board pass: {args.evidence}')
     put_meta(cr, review_tip=result['tip'], review_base_tip=result['baseTip'])  # the verdict holds for this (tip, base tip) pair (q236)
     if m.get('checkpoint') == 'agent':  # the agent's design checkpoint passed: the CR goes to planning
+        designs = checkpoint_design_items(board, cr['id'], 'in_review')
+        if designs:
+            bd_checked('close', *designs, '--reason', f'{args.id}: passed agent design checkpoint')
         bd_checked('update', args.id, '--status', 'open', '--assignee', '', *expect, '--json')
         put_meta(cr, checkpoint=None, since=None)
         made = cr_ratification(board, cr, 'design') if look == 'after' else None
@@ -4446,10 +4465,9 @@ def return_item(board: Board, args) -> None:
     if review:  # the user's Return: an unedited review ends with it, one with edits is recorded first
         refuse_unrecorded(args.id, review, f'{edits_line(args.id, review["opened"])} --no-gate "returned" records them, then return')
     if cr_at_design_checkpoint(cr):
-        designs = [item['id'] for item in cr_closed_items(board, cr['id'])
-                   if item.get('issue_type') == 'design' and item.get('status') == 'closed']
+        designs = checkpoint_design_items(board, cr['id'], 'in_review')
         if designs:
-            bd_checked('reopen', *designs)
+            bd_checked('update', *designs, '--status', 'open', '--json')
     bd_checked('update', args.id, '--status', 'open', '--assignee', '', '--json')
     put_meta(cr, since=None, review_tip=None, review_base_tip=None, reviewing_tip=None, **({OPENED: None} if review else {}))
     comment(args.id, f'board return: {args.findings}')
@@ -4460,7 +4478,7 @@ DESIGN_FIELDS = ('description', 'design', 'acceptance_criteria', 'notes')
 
 
 def design_pin(board: Board, cr: dict) -> tuple[str, list[str]]:
-    """(hash, ids) of a design checkpoint's design items (its children of type design, closed ones included): the text the user
+    """(hash, ids) of a design checkpoint's design items (its children of type design, any status): the text the user
     is walked through. `board cr land --checkpoint --design <hash>` accepts only that text."""
     designs = sorted((i for i in cr_closed_items(board, cr['id']) if i.get('issue_type') == 'design'), key=lambda i: i['id'])
     text = json.dumps([[i['id'], *(i.get(field) or '' for field in DESIGN_FIELDS)] for i in designs])
@@ -4487,6 +4505,9 @@ def land(board: Board, args) -> int:
             raise BoardError(f'{args.id}: no user checkpoint is pending')
         if (pin := design_pin(board, cr)[0]) != args.design:
             raise BoardError(f'{args.id}: the design changed since the claim (hash {pin}, not {args.design}); walk through it again, then land with --design {pin}')
+        designs = checkpoint_design_items(board, cr['id'], 'in_review')
+        if designs:
+            bd_checked('close', *designs, '--reason', f'{args.id}: accepted design checkpoint')
         put_meta(cr, checkpoint=None, since=None)
         bd_checked('update', args.id, '--status', 'open', '--assignee', '', '--json')
         comment(args.id, f'board cr land --checkpoint: {caller_actor} accepted the design; nothing landed, the planner adds the items.')
@@ -5355,14 +5376,12 @@ def parse_holds(value: str | None) -> list[str]:
 DECISION_HOLD_REASON = '{new} holds it up until answered or its ruling is planned.'
 
 
-def record_holds(board: Board, new_id: str, holds: list[str], reason: str | None = DECISION_HOLD_REASON,
-                 decision_hold: bool = False) -> list[str]:
+def record_holds(board: Board, new_id: str, holds: list[str], reason: str | None = DECISION_HOLD_REASON) -> list[str]:
     """The held items wait on the new question, like `board block <item> --on <new>`; the ids that could not be blocked."""
     if not holds:
         return []
     with contextlib.redirect_stdout(sys.stderr):  # stdout stays what the create printed: the protocol engine reads its id or JSON
-        _, failed = block_items(board, holds, new_id, reason.format(new=new_id) if reason else None, derived_actor() or '',
-                                allow_checkpoint_design=decision_hold)
+        _, failed = block_items(board, holds, new_id, reason.format(new=new_id) if reason else None, derived_actor() or '')
     return failed
 
 
@@ -5434,7 +5453,7 @@ def link_rules(board: Board | None, links: list[tuple[str, str, str]], verb: str
             if waiting in new:
                 if new[other] == 'decision':  # between new work items bd writes the edge itself
                     waits[other][1].append(waiting)
-            elif board is None or (not board.is_open(waiting) and not (new[other] == 'decision' and checkpoint_design(board, waiting))):
+            elif board is None or not board.is_open(waiting):
                 raise BoardError(f'unknown or closed: {waiting}')
             elif new[other] == 'decision' or reason_optional(board.by_id[waiting], {'issue_type': new[other]}):
                 waits[other][0].append(waiting)
@@ -5480,7 +5499,7 @@ def apply_waits(made: dict[str | None, str], waits: Waits, types: dict[str, str]
     for key, (ids, keys) in todo.items():
         new_id = made[key]
         failed = record_holds(after, new_id, [*ids, *(made[k] for k in keys if k in made)],
-                              DECISION_HOLD_REASON if types[key] == 'decision' else None, decision_hold=types[key] == 'decision')
+                              DECISION_HOLD_REASON if types[key] == 'decision' else None)
         if failed:
             problems.append(f"{new_id} created, but {', '.join(failed)} are not blocked on it: board block {' '.join(failed)} --on {new_id}")
     for problem in problems:
@@ -5817,16 +5836,6 @@ def cr_at_design_checkpoint(cr: dict) -> bool:
     return (checkpoint == 'user' and cr.get('status') == ACCEPT) or (checkpoint == 'agent' and cr.get('status') == 'in_review')
 
 
-def checkpoint_design(board: Board, item_id: str) -> bool:
-    """A closed design may be held while its owning CR awaits its design checkpoint."""
-    cr_id = board.cr_of(item_id)
-    cr = board.by_id.get(cr_id) if cr_id else None
-    if not cr or not cr_at_design_checkpoint(cr):
-        return False
-    return any(item['id'] == item_id and item.get('issue_type') == 'design' and item.get('status') == 'closed'
-               for item in cr_closed_items(board, cr_id))
-
-
 def block_one(board: Board, item_id: str, blocker: str, reason: str | None, actor: str) -> tuple[str, bool]:
     """Blocks one whole item; its reason is commented on it (none when the blocker or the item makes the reason optional and none
     is given). (result line, False). The holder's own block hands the item back (r21-q144): the hold is freed; a change request
@@ -5864,16 +5873,14 @@ def block_one(board: Board, item_id: str, blocker: str, reason: str | None, acto
     return result, False
 
 
-def block_items(board: Board, ids: list[str], blocker: str, reason: str | None, actor: str,
-                allow_checkpoint_design: bool = False) -> tuple[list[str], list[str]]:
+def block_items(board: Board, ids: list[str], blocker: str, reason: str | None, actor: str) -> tuple[list[str], list[str]]:
     """Blocks each item, one result line each; (returned from review, failed)."""
     returned, failed = [], []
     for item_id in ids:
         try:
             if item_id == blocker:
                 raise BoardError(f'{item_id}: cannot block an item on itself')
-            if not (allow_checkpoint_design and checkpoint_design(board, item_id)):
-                require_open(board, [item_id])
+            require_open(board, [item_id])
             result, back = block_one(board, item_id, blocker, reason, actor)
             print(result)
             returned += [item_id] if back else []

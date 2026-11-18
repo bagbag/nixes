@@ -180,6 +180,9 @@ On a shared board (`.beads/board-shared.json` exists):
   `holds`, which Record passes) or `--holds none`. Depend on each open question its options
   assume (`board block <id> --on <other>`; no reason line when the blocker is a
   question).
+- A question holds open work whose answer changes, never a change request or
+  a closed item. Design items at a checkpoint are `in_review` and remain open
+  until the checkpoint passes.
 - Implementation steps, file lists and test lists become work items, never
   ruling text.
 - Answer provenance questions from the record (`board show`,
