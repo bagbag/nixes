@@ -3478,10 +3478,11 @@ def validate_board(root: Path) -> None:
                 raise ValueError(f"board console: noBoard false, the board's prefix, and the 3 waiting requests split into waiting on your answers and queued: {text[:300]}")
             console_counts = console_json.pop("counts")
             position_ready = position_view["ready"]
-            if {k: v for k, v in console_counts.items() if k not in ("toDesign", "toImplement")} != json.loads(health_text)["counts"] \
-                    or any(console_counts[name] != {k: position_ready[kind][k] for k in ("ready", "held", "waiting")}
-                           for name, kind in (("toDesign", "design"), ("toImplement", "implement"))):
-                raise ValueError(f"board console counts: health's, with design and implement as position counts them: {console_counts}")
+            steps = {"toPlan": ("plan",), "toDesign": ("design",), "toImplement": ("implement",), "toReview": ("review", "refresh")}
+            if {k: v for k, v in console_counts.items() if k not in steps} != {k: v for k, v in json.loads(health_text)["counts"].items() if k not in steps} \
+                    or any(console_counts[name] != {k: sum(position_ready[kind][k] for kind in kinds) for k in ("ready", "held", "waiting")}
+                           for name, kinds in steps.items()):
+                raise ValueError(f"board console counts: health's, with the agents' steps as position counts what a claim gives each pull: {console_counts}")
             if [c["id"] for c in crs_view] != ["fx-ovo.c2"] or ratifications_view != [] \
                     or set(crs_view[0]) != {"id", "title", "status", "stage", "holder", "look", "view", "checkpoint", "base", "branch", "worktree", "tip",
                                             "baseTip", "check", "parent", "children", "baseSha", "problems", "review", "after",
@@ -7140,6 +7141,10 @@ def validate_board(root: Path) -> None:
                 raise ValueError(f"position --json must mark a gone session: {states['gone0001']}")
             if states["work0001"]["workers"] != {"active": 1 if now.startswith("2026-10-22T15") else 0, "cap": 3}:
                 raise ValueError(f"position --json workers: {states['work0001']}")
+            # A gone session handles nothing: the kinds count only the others.
+            handling = json.loads(invoke(["position", "--json"], Fake(crowd), now=now)[1])["ready"]["question"]["sessions"]
+            if own_start and handling != sum(1 for e in states.values() if e["state"] != "gone" and "question" in e["handles"]):
+                raise ValueError(f"position must not count gone sessions as handling a kind: {handling} of {states}")
 
         # item -> (mark at 15:30, IDLE at 17:30)
         expected = {"fx-gone": ("GONE", False), "fx-stale": ("GONE", False), "fx-ended": ("", True),

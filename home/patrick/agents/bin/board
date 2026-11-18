@@ -1645,7 +1645,7 @@ def position_data(board: Board, args) -> dict:
     kinds = {kind: {'ready': sum(1 for issue in ready if board.claimable(issue) == kind),
                     'held': sum(1 for issue in items if board.step_kind(issue) == kind and held_by_a_session(issue) and not board.waits_of(issue)),
                     'waiting': sum(1 for issue in items if board.kind(issue) == kind and board.waits_of(issue)),
-                    'sessions': sum(1 for entry in sessions if kind in session_kinds(entry, ROLE_HANDLES))}
+                    'sessions': sum(1 for entry in sessions if kind in session_kinds(entry, ROLE_HANDLES) and liveness(entry) != 'GONE')}
              for kind in KINDS}
     holds = []
     for issue in held:
@@ -2542,13 +2542,17 @@ def mine_data(board: Board, args) -> tuple[str, list[tuple[dict, bool]]]:
 
 
 def console_counts(board: Board, views: dict, position: dict) -> dict:
-    """The health counts with the design and implement steps between plan and review, counted as `board position` counts them."""
+    """The health counts, the agents' steps (plan, design, implement, review) as `board position` counts what a claim gives
+    each pull: a review pull takes refresh work too."""
     counts = health_counts(board, views)
-    step = lambda kind: {name: position['ready'][kind][name] for name in ('ready', 'held', 'waiting')}
+    step = lambda *kinds: {name: sum(position['ready'][kind][name] for kind in kinds) for name in ('ready', 'held', 'waiting')}
     ordered: dict = {}
     for name, value in counts.items():
+        if name == 'toPlan':
+            value = step('plan')
         if name == 'toReview':
             ordered |= {'toDesign': step('design'), 'toImplement': step('implement')}
+            value = step('review', 'refresh')
         ordered[name] = value
     return ordered
 
