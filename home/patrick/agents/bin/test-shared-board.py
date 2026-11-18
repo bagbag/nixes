@@ -969,6 +969,13 @@ def t_cr() -> None:
           and len(ratify) == 1 and ratify[0]['status'] == 'needs_ratification' and ratify[0]['issue_type'] == 'task'
           and (ratify[0].get('metadata') or {}).get('ratification') == 'landing',
           'cr: a look-after pass lands and opens a ratification under the closed CR', {"ratifications": ratify, "output": err + out})
+    queue_labels = [label for label in items('a')[b].get('labels', []) if label.startswith('queue:')]
+    ratify_parent = [edge.get('depends_on_id') for edge in ratify[0].get('dependencies', [])
+                     if edge.get('type') == 'parent-child'] if ratify else []
+    check(len(queue_labels) == 1 and ratify_parent == [b]
+          and not any(label.startswith('queue:') for label in ratify[0].get('labels', [])),
+          'cr: the ratification inherits its parent CR queue through the parent link',
+          {"parent_queue": queue_labels, "ratification": ratify[0] if ratify else None})
     check({key: items('a')[old_design].get(key) for key in old_design_before} == old_design_before,
           'cr: landing creates a distinct kind and leaves closed legacy design history unchanged', items('a')[old_design])
     _, console, _, _ = run('a', 'console')
@@ -1005,17 +1012,19 @@ def t_cr() -> None:
     run('a', 'claim', design, role='agent')
     worker_pass(design, design_item, 'design.txt')
     to_review(design)
-    closed_design = task(design, 'Ratify design: historical checkpoint')
+    closed_design = create('a', 'historical checkpoint', '-t', 'task', '--description', 'x',
+                           '--metadata', 'ratification=design', '--parent', design)
     rc, _, err, _ = bd('a', 'close', closed_design, '--reason', 'historical checkpoint', '--json')
     check(rc == 0, f'{design}: a historical design ratification closes', err)
     closed_design_before = {key: items('a')[closed_design].get(key) for key in ('title', 'status', 'metadata')}
     rc, out, err = review_pass(design)
     design_ratifications = [row for row in items('a').values()
                             if row['title'] == 'design checkpoint C' and row['status'] == 'needs_ratification']
-    check(rc == 0 and items('a')[design]['status'] == 'open' and not design_ratifications,
-          'cr: an agent-passed design recognizes a closed legacy ratification without creating a duplicate', err + out)
+    check(rc == 0 and items('a')[design]['status'] == 'open' and len(design_ratifications) == 1
+          and (design_ratifications[0].get('metadata') or {}).get('ratification') == 'design',
+          'cr: a closed same-kind ratification allows a new design ratification with its initial status', err + out)
     check({key: items('a')[closed_design].get(key) for key in closed_design_before} == closed_design_before,
-          'cr: a repeated design checkpoint preserves the closed legacy ratification', items('a')[closed_design])
+          'cr: a repeated design checkpoint preserves the closed historical ratification', items('a')[closed_design])
 
     base_cr, child_cr = create('a', 'stack base P'), create('a', 'stack child C')
     p1, c1 = task(base_cr, 'P item'), task(child_cr, 'C item')

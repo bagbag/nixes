@@ -2001,6 +2001,16 @@ def validate_shared_board(root: Path) -> None:
         board.create_item(None, "t", "decision", description="d", deps=[("revises", "fx-o")], holds=["fx-h"], assignee=None)
         expect(made_plans[-1]["nodes"][0]["deps"] == [{"target": "fx-o", "type": "revises"}] and "assignee" not in made_plans[-1]["nodes"][0]
                and made_plans[-1]["edges"] == [{"from_id": "fx-h", "to_key": "item", "type": "blocks"}], "links the item holds, and items waiting on it", made_plans[-1])
+    with patch.object(board, "bd_show", lambda ids, *flags, **kw: parent), patch.object(board, "shared", None), \
+            patch.object(board, "bd_checked", return_value="fx-rat\n") as native_create, patch.object(board, "create_plan") as graph_create:
+        made = board.create_item(None, "Rat", "task", description="why", parent="fx-p", priority=1,
+                                 metadata={"ratification": "design"}, initial_status="needs_ratification")
+        args = native_create.call_args.args
+        expect(made == "fx-rat" and args[:7] == ("create", "Rat", "--type", "task", "--status", "needs_ratification", "--silent")
+               and "--parent" in args and "fx-p" in args and "--no-inherit-labels" in args
+               and "--labels" in args and "topic:a" in args and "queue:ben" not in args
+               and "--metadata" in args and '{"ratification":"design"}' in args
+               and not graph_create.called, "an initial-status child is created atomically with parent, kind and non-queue labels", args)
     with patch.object(board, "bd_show", lambda ids, *flags, **kw: []), patch.object(board, "shared", None), patch.object(board, "create_plan", fake_plan):
         try:
             board.create_item(None, "t", "task", description="d", parent="fx-none")
@@ -5096,9 +5106,10 @@ def validate_board(root: Path) -> None:
                 y_issues[0]["metadata"].update(look="after", review_tip=y_tip, review_base_tip=x_tip)
                 fake = Fake([*x_issues, *y_issues])
                 code, output, errors = invoke(["cr", "land", "lx", "--tip", x_tip[:8]], fake, "lead0001")
-                ratifications = [node for graph in fake.graphs for node in graph["nodes"] if node.get("title") == "CR ly"]
+                ratifications = [write for write in fake.writes() if write[:2] == ["create", "CR ly"]]
                 if code or at_main() != y_tip or not any(w[:2] == ["close", "ly"] for w in fake.writes()) or y_wt.exists() \
-                        or len(ratifications) != 1 or ratifications[0].get("metadata") != {"ratification": "landing"} \
+                        or len(ratifications) != 1 or "--status" not in ratifications[0] or "needs_ratification" not in ratifications[0] \
+                        or '{"ratification":"landing"}' not in ratifications[0] or "--parent" not in ratifications[0] \
                         or "(after lx)" not in output:
                     raise ValueError(f"landing a base must land the look-after CR waiting for it: {code} {errors}\n{output}\n{fake.writes()}")
                 # ...and leaves it as refresh work when its check is no longer current.
@@ -5144,11 +5155,12 @@ def validate_board(root: Path) -> None:
                     fake = Fake(issues)
                     code, output, errors = invoke(["handover", f"cp{look}", "design reads well"], fake, "bbbb2222")
                     written = fake.writes()
-                    ratifications = [node for graph in fake.graphs for node in graph["nodes"] if node.get("title") == f"CR cp{look}"]
+                    ratifications = [write for write in fake.writes() if write[:2] == ["create", f"CR cp{look}"]]
                     if code or ["update", f"cp{look}", "--status", "open", "--assignee", "", "--if-assignee", "bbbb2222", "--json"] not in written \
                             or not any(w[:2] == ["update", f"cp{look}"] and "checkpoint" in w for w in written) \
                             or len(ratifications) != int(ratified) \
-                            or ratified and ratifications[0].get("metadata") != {"ratification": "design"} \
+                            or ratified and ("--status" not in ratifications[0] or "needs_ratification" not in ratifications[0]
+                                            or '{"ratification":"design"}' not in ratifications[0]) \
                             or "passed the checkpoint" not in output:
                         raise ValueError(f"the agent's checkpoint pass in a look-{look} project: {code} {errors}\n{written}\n{output}")
                 empty_ratification_board = types.SimpleNamespace(by_id={}, children={"parent": []}, _cr_items={"parent": []})
@@ -5156,8 +5168,8 @@ def validate_board(root: Path) -> None:
                     made = board.cr_ratification(empty_ratification_board, {"id": "parent", "title": "CR title", "priority": 2}, "design")
                     if made != "rat-new" or create.call_args.args[1:3] != ("CR title", "task") \
                             or create.call_args.kwargs.get("metadata") != {"ratification": "design"} \
-                            or update.call_args.args != ("update", "rat-new", "--status", "needs_ratification", "--json"):
-                        raise ValueError(f"a design ratification must create a plain-title child with kind metadata and its ratification status: {create.call_args} {update.call_args}")
+                            or create.call_args.kwargs.get("initial_status") != "needs_ratification" or update.called:
+                        raise ValueError(f"a design ratification must create a plain-title child atomically with kind metadata and its status: {create.call_args} {update.call_args}")
                 existing = {"id": "rat-old", "title": "CR title", "issue_type": "task", "status": "needs_ratification",
                             "metadata": {"ratification": "design"}}
                 existing_ratification_board = types.SimpleNamespace(by_id={"rat-old": existing}, children={"parent": ["rat-old"]},
@@ -5166,29 +5178,33 @@ def validate_board(root: Path) -> None:
                     made = board.cr_ratification(existing_ratification_board, {"id": "parent", "title": "CR title"}, "design")
                     if made is not None or create.called or update.called:
                         raise ValueError(f"a second ratification of the same parent and kind must not create another item: {made} {create.call_args} {update.call_args}")
+                with patch.object(board, "create_item", return_value="rat-new") as create, patch.object(board, "bd_checked") as update:
+                    made = board.cr_ratification(existing_ratification_board, {"id": "parent", "title": "CR title"}, "landing")
+                    if made != "rat-new" or not create.called or create.call_args.kwargs.get("metadata") != {"ratification": "landing"} or update.called:
+                        raise ValueError(f"an active ratification of another kind does not block this one: {made} {create.call_args} {update.call_args}")
                 partial = {**existing, "status": "open"}
                 partial_board = types.SimpleNamespace(by_id={"rat-old": partial}, children={"parent": ["rat-old"]},
                                                       _cr_items={"parent": [partial]})
                 with patch.object(board, "create_item") as create, patch.object(board, "bd_checked") as update:
                     made = board.cr_ratification(partial_board, {"id": "parent", "title": "CR title"}, "design")
-                    if made is not None or create.called or update.call_args.args != ("update", "rat-old", "--status", "needs_ratification", "--json"):
-                        raise ValueError(f"a ratification left open after partial creation must be completed on retry: {made} {create.call_args} {update.call_args}")
+                    if made is None or not create.called or update.called:
+                        raise ValueError(f"an open same-kind child does not block a new ratification or get repaired: {made} {create.call_args} {update.call_args}")
                 completed = {**existing, "status": "closed"}
                 completed_board = types.SimpleNamespace(by_id={"rat-old": completed}, children={"parent": ["rat-old"]},
                                                         _cr_items={"parent": [completed]})
                 with patch.object(board, "create_item") as create, patch.object(board, "bd_checked") as update:
                     made = board.cr_ratification(completed_board, {"id": "parent", "title": "CR title"}, "design")
-                    if made is not None or create.called or update.called:
-                        raise ValueError(f"a completed ratification stays closed on retry: {made} {create.call_args} {update.call_args}")
+                    if made is None or not create.called or update.called:
+                        raise ValueError(f"a closed same-kind ratification allows a fresh review: {made} {create.call_args} {update.call_args}")
                 legacy_closed = {"id": "rat-legacy", "title": "Ratify design: historical", "issue_type": "task",
                                  "status": "closed", "metadata": {}}
                 legacy_closed_board = types.SimpleNamespace(by_id={"rat-legacy": legacy_closed}, children={"parent": ["rat-legacy"]},
                                                             _cr_items={"parent": [legacy_closed]})
                 with patch.object(board, "create_item") as create, patch.object(board, "bd_checked") as update:
                     made = board.cr_ratification(legacy_closed_board, {"id": "parent", "title": "CR title"}, "design")
-                    if made is not None or create.called or update.called or legacy_closed != {
+                    if made is None or not create.called or update.called or legacy_closed != {
                             "id": "rat-legacy", "title": "Ratify design: historical", "issue_type": "task", "status": "closed", "metadata": {}}:
-                        raise ValueError(f"a closed legacy ratification dedupes without rewriting its historical fields: {made} {legacy_closed}")
+                        raise ValueError(f"a legacy title prefix does not affect ratification identity or rewrite history: {made} {legacy_closed}")
                 # r10-q50: a CR whose branch has no commits of its own lands when its review passes (nothing to merge), in either look,
                 # without a ratification and without the Accept; a design checkpoint is the exception.
                 def make_empty_cr(name, look, status="in_review", **extra):

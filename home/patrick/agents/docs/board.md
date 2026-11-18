@@ -148,7 +148,8 @@ Metadata `no_code=1`, set at creation (`create --metadata` or a graph node), mar
 is refused. A CR whose branch has no commits of its own lands on its passed review in either look, with no
 ratification and no Accept (a stacked one with its base); a design checkpoint is the exception.
 Landing and design ratifications are child tasks titled after their change request. Their metadata
-(`ratification=landing|design`) identifies the kind, and the board deduplicates by parent and kind.
+(`ratification=landing|design`) identifies the kind. The board creates one only when no child of that kind
+is currently `needs_ratification`; a closed ratification does not block a later review.
 `board review open <cr|ratification>` opens the item for the user's review in its own worktree (`<main>/.worktrees/<id>`), on its own branch
 (r6-q24, r6-q25; accept.md User review) and prints the folder to open on stdout (the worktree's single root `*.code-workspace` file,
 else the folder). It refuses (lead, solo or person only) a request not waiting for its Accept (`needs_acceptance`: in work, in agent review or

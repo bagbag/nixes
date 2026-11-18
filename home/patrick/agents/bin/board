@@ -4163,41 +4163,19 @@ def open_item_refusal(board: Board, cr: dict) -> str | None:
     return f"{cr['id']}: items still open: {', '.join(i['id'] for i in items)}; close them (board close <item> --reason \"<sha>: …\") or move them out" if items else None
 
 
-def legacy_ratification(title: str) -> tuple[str, str] | None:
-    """Kind and plain title for the two legacy prefixes on landed-change and design ratifications."""
-    for prefix, kind in (('Ratify design: ', 'design'), ('Ratify: ', 'landing')):
-        if title.startswith(prefix):
-            return kind, title[len(prefix):]
-    return None
-
-
 def cr_ratification(board: Board, cr: dict, kind: str) -> str | None:
-    """The user's look at what landed or passed, once per parent CR and kind, with the kind stored as data."""
+    """The user's look at what landed or passed, while no same-kind ratification is active."""
     if kind not in ('landing', 'design'):
         raise BoardError(f'unknown change-request ratification kind {kind!r}')
     for child in cr_closed_items(board, cr['id']):
-        child_id = child['id']
-        if meta(child).get('ratification') == kind:
-            if child.get('status') == 'open':
-                bd_checked('update', child_id, '--status', 'needs_ratification', '--json')
-                child['status'] = 'needs_ratification'
-            return None
-        legacy = legacy_ratification(child.get('title', ''))
-        if child.get('issue_type') in WORK_TYPES and legacy and legacy[0] == kind:
-            if child.get('status') == 'closed':
-                return None  # historical ratifications dedupe, but migration never rewrites closed records
-            if child.get('status') != 'needs_ratification':
-                continue
-            bd_checked('update', child_id, '--title', legacy[1], '--set-metadata', f'ratification={kind}', '--json')
-            child['title'] = legacy[1]
-            child['metadata'] = {**meta(child), 'ratification': kind}
+        if (child.get('issue_type') in WORK_TYPES and child.get('status') == 'needs_ratification'
+                and meta(child).get('ratification') == kind):
             return None
     title = cr.get('title', '')
     made = create_item(board, title, 'task', parent=cr['id'], priority=cr.get('priority', 2),
                        metadata={'ratification': kind},
                        description=f"Look at {title} ({cr['id']}): branch {cr_branch(cr['id'])}. Close when ratified; "
-                                   'a "no" becomes a follow-up change request.')
-    bd_checked('update', made, '--status', 'needs_ratification', '--json')
+                                   'a "no" becomes a follow-up change request.', initial_status='needs_ratification')
     return made
 
 
@@ -5560,12 +5538,12 @@ def create_plan(plan: dict) -> dict[str, str]:
 
 
 def create_item(board: Board, title: str, kind: str, parent: str | None = None, deps: list[tuple[str, str]] = (), holds: list[str] = (),
-                labels: list[str] = (), verb: str = 'create', **fields) -> str:
-    """The board's own creates (a follow-up, a ratification, a revision): one plan node through create_plan, the same path as `board create`.
+                labels: list[str] = (), verb: str = 'create', initial_status: str | None = None, **fields) -> str:
+    """The board's own single-item creates (a follow-up, a ratification, a revision), using `board create`'s field and link checks.
     A parent is a plain hash id plus a link (a dotted child id stops sync when two clones create under one parent); bd copies none of the
     parent's labels, so they are copied here, the queue label excepted (the child inherits its queue). `deps` are (type, id) links the new item
     holds; `holds` are items that wait on it (their effects are the caller's: record_holds). `verb` is who writes the links (link_rules).
-    `board` spares a read when it holds the parent."""
+    When an initial status is required, native `bd create` writes it with the item, parent and metadata atomically. `board` spares a read when it holds the parent."""
     node: dict = {'key': 'item', 'title': title, 'type': kind, **{key: value for key, value in fields.items() if value is not None}}
     labels = list(labels)
     if parent:
@@ -5585,6 +5563,26 @@ def create_item(board: Board, title: str, kind: str, parent: str | None = None, 
     if holds:
         plan['edges'] = [{'from_id': one, 'to_key': 'item', 'type': 'blocks'} for one in holds]
     plan_with_queue(plan)
+    if initial_status is not None:
+        if deps or holds:
+            raise BoardError('native create with an initial status cannot add dependency edges')
+        # bd create persists status, parent, metadata, and labels in the same write. Its graph
+        # route does not reliably persist an initial status on server boards.
+        args = ['create', title, '--type', kind, '--status', initial_status, '--silent', '--no-inherit-labels']
+        if parent:
+            args += ['--parent', parent]
+        if fields.get('priority') is not None:
+            args += ['--priority', str(fields['priority'])]
+        if fields.get('description') is not None:
+            args += ['--description', fields['description']]
+        if node.get('labels'):
+            args += ['--labels', ','.join(node['labels'])]
+        if fields.get('metadata'):
+            args += ['--metadata', json.dumps(fields['metadata'], separators=(',', ':'))]
+        made = bd_checked(*args).strip()
+        if not made:
+            raise BoardError('created, but bd printed no id')
+        return made
     return create_plan(plan)['item']
 
 

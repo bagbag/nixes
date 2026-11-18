@@ -112,8 +112,9 @@ queue order and refresh work: [Board coordination](board-coordination.md).
   checkpoint pass in such a project, a child task titled `<CR title>` sits in
   `needs_ratification` under the CR and blocks nothing. Metadata
   `ratification=landing|design` identifies what the user reviews. The board
-  creates at most one child per parent CR and kind; the user's verdict goes
-  through `board ratify` (accept.md Ratification).
+  creates one only when no child of that kind is currently `needs_ratification`;
+  a closed child does not block a later review. The user's verdict goes through
+  `board ratify` (accept.md Ratification).
 - **User review:** from `board review open` until the user's Accept or Return
   (ratification: verdict), refresh and agent steps leave the item alone; Open
   does not refresh it. Opening, reading and recording edits: accept.md User
