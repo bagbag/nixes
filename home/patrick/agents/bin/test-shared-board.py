@@ -1020,6 +1020,27 @@ def t_cr() -> None:
     check({key: items('a')[closed_design].get(key) for key in closed_design_before} == closed_design_before,
           'cr: a repeated design checkpoint preserves the closed historical ratification', items('a')[closed_design])
 
+    for role, look, ratified in (("autopilot", "before", True), ("autopilot", "after", True), ("lead", "after", False)):
+        look_metadata = ['--metadata', f'look={look}'] if look != 'before' else []
+        user_checkpoint = create('a', f'{role} user checkpoint {look}', '--status', 'needs_acceptance',
+                                 *look_metadata, '--metadata', 'checkpoint=user')
+        create('a', f'{user_checkpoint} design', '--parent', user_checkpoint, kind='design')
+        rc, claimed, err, _ = run('a', 'claim', user_checkpoint, role=role)
+        pin = re.search(r'design hash ([0-9a-f]+)', claimed)
+        check(rc == 0 and pin is not None, f'{user_checkpoint}: {role} claims the user design checkpoint', err + claimed)
+        if not pin:
+            continue
+        rc, output, err, _ = run('a', 'cr', 'land', user_checkpoint, '--checkpoint', '--design', pin[1], role=role)
+        settle('a', 'b')
+        children = [row for row in items('a').values() if (row.get('metadata') or {}).get('ratification') == 'design'
+                    and any(edge.get('depends_on_id') == user_checkpoint for edge in row.get('dependencies') or [])
+                    and row['status'] == 'needs_ratification']
+        parent = items('a')[user_checkpoint]
+        check(rc == 0 and items('a')[user_checkpoint]['status'] == 'open' and 'checkpoint' not in meta_of(user_checkpoint)
+              and len(children) == int(ratified) and ('ratification ' in output) == ratified,
+              f'{user_checkpoint}: {role} accepts a user checkpoint in look-{look} with the correct ratification',
+              err + output + f"\nparent={parent}\nratifications={[row for row in items('a').values() if (row.get('metadata') or {}).get('ratification') == 'design']}")
+
     base_cr, child_cr = create('a', 'stack base P'), create('a', 'stack child C')
     p1, c1 = task(base_cr, 'P item'), task(child_cr, 'C item')
     bd('a', 'dep', 'add', child_cr, base_cr)

@@ -4455,9 +4455,12 @@ def design_pin(board: Board, cr: dict) -> tuple[str, list[str]]:
 
 
 def land(board: Board, args) -> int:
-    caller_actor = derived_actor() or 'user'
+    actor = derived_actor()
+    caller_actor = actor or 'user'
+    entry = board.registry().get(actor) if actor and actor == session_actor(actor) else None
+    autopilot = bool(entry and entry.get('role') == 'autopilot')
     cr = cr_arg(board, args.id, 'land')
-    if not may_move(board):
+    if not may_move(board) and not (args.checkpoint and autopilot):
         raise BoardError('only a lead or solo session, or a person, lands a change request (the Accept)')
     m = meta(cr)
     if cr['status'] != ACCEPT:
@@ -4477,7 +4480,8 @@ def land(board: Board, args) -> int:
         put_meta(cr, checkpoint=None, since=None)
         bd_checked('update', args.id, '--status', 'open', '--assignee', '', '--json')
         comment(args.id, f'board cr land --checkpoint: {caller_actor} accepted the design; nothing landed, the planner adds the items.')
-        print(f'accepted the design checkpoint of {args.id}: open for planning')
+        made = cr_ratification(board, cr, 'design') if autopilot else None
+        print(f'accepted the design checkpoint of {args.id}: open for planning' + (f'; ratification {made}' if made else ''))
         return 0
     if m.get('checkpoint') == 'user':
         raise BoardError(f'{args.id}: a design checkpoint is pending: board cr land {args.id} --checkpoint')
