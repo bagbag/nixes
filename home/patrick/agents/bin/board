@@ -88,7 +88,7 @@ SHOW_FIELDS = TEXT_FIELDS[1:]
 # Fields `board show --field` accepts besides those on the shown items (a read of few items would otherwise hide
 # the ones its items leave unset; bd omits an empty `labels` and a root's `parent`).
 ITEM_FIELDS = {*TEXT_FIELDS, 'comments', 'assignee', 'metadata', 'closed_at', 'started_at', 'external_ref', 'source_system', 'spec_id',
-               'lease_expires_at', 'heartbeat_at', 'await_type', 'labels', 'parent'}
+               'lease_expires_at', 'heartbeat_at', 'await_type', 'labels', 'parent', 'holds', 'holdsAll'}
 # A decision record's `##` sections (board-coordination.md#rulings). bd lint accepts the words anywhere in the text,
 # so board checks the headings itself.
 RECORD_SECTIONS = ('Question', 'Alternatives Considered', 'Decision', 'Rationale', 'Rule owner')
@@ -2159,8 +2159,18 @@ def show(board: Board, args) -> int:
         raise BoardError(f"unknown field {', '.join(unknown)}; fields: {', '.join(sorted(known - {'_type'}))}")
     if args.json:
         # Whole items without --field: the fields the board holds plus the comments, as the --field form shapes them.
-        print(json.dumps({issue['id']: {field: comment_list(issue) if field == 'comments' else issue.get(field) for field in args.fields}
-                          if args.fields else {**{key: value for key, value in issue.items() if not key.startswith('_')}, 'comments': comment_list(issue)}
+        has_reach = not args.fields or any(field in ('holds', 'holdsAll') for field in args.fields)
+        reach_board = Board.load('status') if has_reach else None  # show's id snapshot has only direct neighbors; reach is transitive.
+
+        def fields_json(issue, fields):
+            reach = reach_board.holds(issue['id']) if any(field in ('holds', 'holdsAll') for field in fields) else None
+            return {field: (comment_list(issue) if field == 'comments' else
+                            reach[0] if field == 'holds' else reach[1] if field == 'holdsAll' else issue.get(field))
+                    for field in fields}
+
+        print(json.dumps({issue['id']: fields_json(issue, args.fields) if args.fields else
+                          {**{key: value for key, value in issue.items() if not key.startswith('_')},
+                           **fields_json(issue, ('holds', 'holdsAll')), 'comments': comment_list(issue)}
                           for issue in issues}, indent=2, ensure_ascii=False))
         return 0
     budget = Budget(None if args.full else READ_BUDGET)

@@ -2354,8 +2354,11 @@ def validate_board(root: Path) -> None:
             if set(expected) - {"show"}:
                 raise ValueError(f"board field must only read the item: {expected}")
         elif argv[0] == "show":
-            # a second show only fetches the metadata of a pending revision's new record
-            expected = fake.reads() if fake.reads() in (["show"], ["show", "show"]) else ["show"]
+            fields = [argv[at + 1] for at, arg in enumerate(argv[:-1]) if arg == "--field"]
+            reach = "--json" in argv and ("--field" not in argv or any(field in ("holds", "holdsAll") for field in fields))
+            # A second show fetches pending revision metadata; item reach uses the full open-item graph.
+            expected = fake.reads() if fake.reads() in (["show"], ["show", "show"], ["show", "list"], ["show", "show", "list"]) \
+                else ["show", "list"] if reach else ["show"]
         elif argv[0] in ("comment", "close", "create", "defer", "undefer", "gate"):
             expected = fake.reads()  # reads only what it needs (none, the items it closes, a parent)
         elif argv[0] == "health":
@@ -3807,8 +3810,13 @@ def validate_board(root: Path) -> None:
             notes = [{"author": f"a{n}", "created_at": f"2026-10-2{n}T00:00:00Z", "text": f"note {n}"} for n in range(7)]
             notes[6]["text"] = "y" * 2500  # the newest comment is long
             shown = variant(**{"Store choice": {"description": big, "comments": notes, "metadata": {"deep_review": "a wrong cache hides"}},
-                               "Ready task": {"dependencies": [{"issue_id": ready, "depends_on_id": new, "type": "blocks"}]}},
+                               "Ready task": {"dependencies": [{"issue_id": ready, "depends_on_id": new, "type": "blocks"}]},
+                               },
                             **{"Old store ruling": {"description": "x" * 34000}})
+            shown += [{"id": "fx-test-milestone", "title": "Holds milestone", "status": "open", "issue_type": "milestone",
+                       "dependencies": [{"issue_id": "fx-test-milestone", "depends_on_id": new, "type": "blocks"}]},
+                      {"id": "fx-test-downstream", "title": "Holds downstream task", "status": "open", "issue_type": "task",
+                       "dependencies": [{"issue_id": "fx-test-downstream", "depends_on_id": "fx-test-milestone", "type": "blocks"}]}]
             shown.append({"id": "fx-rev", "title": "Revise the store", "status": "open", "issue_type": "decision",
                           "priority": 2, "metadata": {"board.revises_rule": "Rule 2"},
                           "dependencies": [{"issue_id": "fx-rev", "depends_on_id": new, "type": "tracks"}]})
@@ -3845,6 +3853,9 @@ def validate_board(root: Path) -> None:
             _, text, _ = invoke(["show", new, "--comments"], Fake(shown))
             if text.count("--- a") != 7 or "older" in text or f"comments only: board show {new} --full prints the whole item" not in text:
                 raise ValueError(f"board show --comments must print every comment and say the rest is left out:\n{text}")
+            _, text, _ = invoke(["show", new, "--json", "--field", "holds", "--field", "holdsAll"], Fake(shown))
+            if json.loads(text) != {new: {"holds": 3, "holdsAll": 4}}:
+                raise ValueError(f"board show --json must expose its live downstream reach: {text}")
             _, text, _ = invoke(["show", new], Fake(shown))
             if "comments only" in text:
                 raise ValueError(f"board show without --comments prints the whole item, so no note:\n{text}")
@@ -3862,7 +3873,8 @@ def validate_board(root: Path) -> None:
             code, text, errors = invoke(["show", new, old, "--json"], Fake(shown))
             whole = json.loads(text)
             if code or list(whole) != [new, old] or whole[new]["comments"] != shift_dates(notes) or whole[new]["status"] != "decided" \
-                    or whole[new]["title"] != next(i for i in shown if i["id"] == new)["title"] or any(key.startswith("_") for key in whole[new]):
+                    or whole[new]["title"] != next(i for i in shown if i["id"] == new)["title"] \
+                    or (whole[new]["holds"], whole[new]["holdsAll"]) != (3, 4) or any(key.startswith("_") for key in whole[new]):
                 raise ValueError(f"board show --json without --field must print whole items with comments: {code} {text[:500]} {errors}")
             if invoke(["show", "fx-nope"], Fake(shown))[0] != 1 or invoke(["show", new, "--field", "desc"], Fake(shown))[0] != 1:
                 raise ValueError("board show must refuse unknown ids and unknown fields")
@@ -9453,24 +9465,31 @@ def validate_protocol(root: Path, part: str) -> None:
 
             # Existing questions read board-owned open block edges and reach in Stage and the dialog; their holds field is refused.
             configure(health={"counts": counts, "items": {"questions": [
-                {"id": "fx-question", "status": "open", "type": "decision", "title": "Existing question?", "priority": 1, "blockedBy": []}]}},
-                items={"fx-question": {"status": "open", "issue_type": "decision"},
+                {"id": "fx-question", "status": "open", "type": "decision", "title": "Released question?", "priority": 1, "blockedBy": []},
+                {"id": "fx-deferred", "status": "open", "type": "decision", "title": "Deferred question?", "priority": 1, "blockedBy": []}]}},
+                items={"fx-question": {"status": "released", "issue_type": "decision", "holds": 3, "holdsAll": 5},
+                       "fx-deferred": {"status": "deferred", "issue_type": "decision", "holds": 2, "holdsAll": 4},
                        "fx-work": {"status": "open", "issue_type": "task", "dependencies": [
-                           {"issue_id": "fx-work", "depends_on_id": "fx-question", "type": "blocks"}]}},
-                position={"questionsHoldingWork": [{"id": "fx-question", "holds": 3, "holdsAll": 5}]})
+                           {"issue_id": "fx-work", "depends_on_id": "fx-question", "type": "blocks"},
+                           {"issue_id": "fx-work", "depends_on_id": "fx-deferred", "type": "blocks"}]}})
             proto("start", "round", cwd=repo, **hold_case)
-            proto("step", stdin={"classes": {"fx-question": "user"}}, cwd=repo, **hold_case)
-            proto("step", stdin={"select": ["fx-question"]}, cwd=repo, **hold_case)
+            proto("step", stdin={"classes": {"fx-question": "user", "fx-deferred": "user"}}, cwd=repo, **hold_case)
+            proto("step", stdin={"select": ["fx-question", "fx-deferred"]}, cwd=repo, **hold_case)
+            calls()
             stage_text = proto("show", cwd=repo, **hold_case).stdout
-            if "fx-work (holds 3/5)" not in stage_text:
-                raise ValueError(f"Stage must show the existing question's current edge and reach: {stage_text}")
-            refused("step", stdin={**ROUND_INFO, "questions": [question("Existing question?", board="fx-question", holds=[])]},
+            if "fx-work (holds 3/5)" not in stage_text or "fx-work (holds 2/4)" not in stage_text:
+                raise ValueError(f"Stage must show released and deferred questions' current edges and reach: {stage_text}")
+            if any(c["args"][0] == "position" for c in calls()):
+                raise ValueError("question holds must come from item show JSON, not the position dashboard")
+            refused("step", stdin={**ROUND_INFO, "questions": [question("Released question?", board="fx-question", holds=[]),
+                                                                    question("Deferred question?", board="fx-deferred")]},
                     needle="board block` / `board unblock", cwd=repo, **hold_case)
-            proto("step", stdin={**ROUND_INFO, "questions": [question("Existing question?", board="fx-question")]}, cwd=repo, **hold_case)
+            proto("step", stdin={**ROUND_INFO, "questions": [question("Released question?", board="fx-question"),
+                                                                question("Deferred question?", board="fx-deferred")]}, cwd=repo, **hold_case)
             converge(cwd=repo, **hold_case)
             batch = shown(cwd=repo, **hold_case)["batch"]
-            if "fx-work (holds 3/5)" not in batch["notice"]:
-                raise ValueError(f"the dialog must read the board's current hold edge and reach: {batch}")
+            if "fx-work (holds 3/5)" not in batch["notice"] or "fx-work (holds 2/4)" not in batch["notice"]:
+                raise ValueError(f"the dialog must show released and deferred questions' current edges and reach: {batch}")
             proto("abandon", cwd=repo, **hold_case)
             configure(items={"fx-cr": {"status": "open", "issue_type": "change-request", "title": "Design CR"},
                             "fx-design": {"status": "open", "issue_type": "design", "title": "Design item"}})

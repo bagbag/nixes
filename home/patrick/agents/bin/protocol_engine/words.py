@@ -290,9 +290,8 @@ def stage_instructions(round_id: str, selected: list[str], has_board: bool, prop
         '- `settles` lists the items '
         f'one answer settles the same way (a rule question); an open decision outside the selection named there or in `board` joins the round. {MERGE_TEST}',
         '- `holds` lists the board ids of the work items this draft question holds up (board-core.md "Questions and rulings"; absent or empty: none); '
-        'Record passes it once when creating the board question. For an existing board question, Stage shows its current open blocks and reach; '
-        'only a deciding session changes those links with `board block <item> --on <question>` or `board unblock <item> --on <question>`; '
-        'do not report `holds` or expect Record to reconcile the links.',
+        'Record passes it once when creating the board question. For an existing board question, change its links with '
+        '`board block` / `board unblock <item> --on <question>`.',
         f'- `waitsOn` names the questions a decision rests on; it holds a dependent back until its premise is answered; {WAITS_FOR}',
         '- Cut under question-format.md: the first part keeps the item in `board`, the others are drafts (`for`: the item or point id); '
         'a detail `waitsOn` the direction it rests on.',
