@@ -175,10 +175,10 @@ user.
 3. **Own rulings.** Report them in the fields the engine asks for.
 4. **Approval.** The engine asks it. Mark each owner write in the approval:
    `write` (no CR, no look) or `show` (its diff joins the approval; the user
-   can switch a mark). Draft every `show` write uncommitted in the project's
-   main tree before the approval.
-   After the yes, commit the set's owner writes on the target branch without
-   asking (AGENTS.md Authorized workflows).
+   can switch a mark). Draft each `show` write as a patch in your scratch
+   folder. After the yes, apply the patches and commit the set's owner writes
+   on the target branch without asking (AGENTS.md Authorized workflows); ask
+   first when a path holds the user's uncommitted edits.
 5. **Owner writes.** Move superseded text to `history/` under project-memory.
    Write a rule a project's convention owners (coding style, module authoring)
    state now; only READMEs, other skills and source wait for their work. For a
