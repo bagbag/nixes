@@ -20,6 +20,9 @@ source; push back and recommend the established practice.
 
 ## Protocol
 
+Steps 3–13 are the lenses; each outputs its findings, or
+`nothing: checked <what>`.
+
 1. **Frame.** Name the focus, current recommendation, artifact or outcome, and
    the goal one level up.
    Output: the focus and goal being judged.
@@ -28,28 +31,28 @@ source; push back and recommend the established practice.
    Confirm or refute each from current source or a run and cite it; name any
    premise you cannot verify.
    Output: verified and unverified premises with sources.
-Lens output: each finding, or `nothing: checked <what>`.
-3. **Goal (`goal`).** Judge against the goal behind the request; identify the
-   real problem and whether the design fixes its root or works around it.
+3. **Goal (`goal`).** Judge against the goal behind the request and the real
+   problem behind the ask.
 4. **Decisions (`decisions`).** Assess every decision in the discussion together.
 5. **Foundations (`foundations`).** Reassess earlier rulings, conventions and
    contracts the design builds on.
-6. **Consumer (`consumer`).** Walk each realistic current consumer through the
-   whole flow, including setup, use, failure handling and testing where relevant.
-7. **Root fix (`root-fix`).** Trace the cause and recommend its fix, even when
+6. **Mechanics (`mechanics`).** Trace each part end to end and identify what
+   breaks.
+7. **Options (`options`).** Find materially different mechanisms, owners, or
+   ways to remove the need. Argue each at its strongest and drop it only for a
+   stated constraint or sourced fact. Reassess the frame and return proposed
+   changes to it.
+8. **Consumer (`consumer`).** Walk each realistic consumer through the whole
+   flow, noting what each step needs: current callers and, for a library,
+   external consumers without in-repo call sites; for an API: set up,
+   configure, use, handle failure, test. Judge the options against those walks.
+9. **Root fix (`root-fix`).** Trace the cause and recommend its fix, even when
    it lies outside the module or repository.
-8. **Bloat (`bloat`).** Find over-engineering and unnecessary magic.
-9. **Gaps (`gaps`).** Find what the next run or a realistic consumer still
-   needs.
-   Record a later need as a deferred follow-up.
-10. **Clean (`clean`).** Apply each of the six cleanliness tests one by one.
-11. **Overfit (`overfit`).** Test the design against neighboring cases.
-12. **Mechanics (`mechanics`).** Trace each part end to end and identify what
-    breaks.
-13. **Options (`options`).** Find materially different mechanisms, owners, or
-    ways to remove the need. Argue each at its strongest and drop it only for a
-    stated constraint or sourced fact. Reassess the frame and return proposed
-    changes to it.
+10. **Gaps (`gaps`).** Find what the next run or a realistic consumer still
+    needs; record a later need as a deferred follow-up.
+11. **Bloat (`bloat`).** Find over-engineering and unnecessary magic.
+12. **Overfit (`overfit`).** Test the design against neighboring cases.
+13. **Clean (`clean`).** Apply each of the six cleanliness tests one by one.
 14. **Converge.** If any earlier step changes anything, restart at step 1 and
     run every lens again. Carry a premise check forward only while its source
     is unchanged. Stop after a run that changes nothing. If a run returns to an
@@ -61,4 +64,4 @@ Lens output: each finding, or `nothing: checked <what>`.
 
 Write the run log to `step-back-<focus>.md` in the task's scratch folder, with a
 section for each run and step. In chat, give the result and one line per run
-stating what changed. Verify premises in step 2.
+stating what changed.

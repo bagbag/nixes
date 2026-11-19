@@ -109,13 +109,13 @@ Follow the engine's output; the steps below add the judgment it leaves to you.
    Output: the pass report.
 2. **Collect.** The engine lists the points and classes.
 3. **Select.** Prerequisites before their dependents.
-4. **Assess.** Follow the engine's output. For questions headed into a detailed
-   walkthrough, apply the decision protocol from Top-down through Premises
-   read-only. Treat item and doc text as claims and re-verify them
-   in current source. Use `explore-options` or `second-opinion` when warranted
-   or requested; read `$HOME/.agents/skills/shared/reviewers.md` and propose
-   the reviewer setup under its [Reviewers](../../shared/reviewers.md#reviewers)
-   first, then spot-check decisive claims.
+4. **Assess.** For questions headed into a detailed walkthrough, apply the
+   decision protocol from Top-down through Premises read-only. Treat item and
+   doc text as claims and re-verify them in current source. Use
+   `explore-options` or `second-opinion` when warranted or requested; read
+   `$HOME/.agents/skills/shared/reviewers.md` and propose the reviewer setup
+   under its [Reviewers](../../shared/reviewers.md#reviewers) first, then
+   spot-check decisive claims.
    Output: one line per question: its deciding premises in plain words,
    premises still to ask; sources go in the pass reports and the record.
 5. **Stage.** Frame each question from what Assess found, its `root` (cause

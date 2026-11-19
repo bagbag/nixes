@@ -118,12 +118,6 @@ TOUCHES = ('own', 'decision')  # a contained change: only the model's own parts 
 CAP_CHOICES = ('Continue', 'Ask now', 'Pause')
 STRENGTHS = ('lean', 'strong')
 LEAN_CAUSES = ('preference', 'evidence')  # the user's values decide, or a fact remains unchecked
-# Lens names: skills/step-back/SKILL.md and skills/ground/SKILL.md own them (the console's hooks/words.ts repeats them);
-# the validator keeps all three in sync.
-ALL_LENSES = {
-    'step-back': ('goal', 'decisions', 'foundations', 'consumer', 'root-fix', 'bloat', 'gaps', 'clean', 'overfit', 'mechanics', 'options'),
-    'ground': ('assumptions', 'board', 'sources', 'probe'),
-}
 # skills/shared/decision-protocol.md#recommendation-strength owns these rules; the validator keeps the names in step.
 # A strong recommendation is a claim: each criterion "true: <evidence>", or "does-not-apply: <reason>" where allowed.
 STRONG_CRITERIA = {

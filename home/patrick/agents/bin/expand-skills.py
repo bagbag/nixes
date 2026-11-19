@@ -10,7 +10,7 @@ from pathlib import Path
 
 
 INCLUDE_MARKER = re.compile(
-    r'^[\t ]*<!-- @include (?P<path>[^<>]+) -->[\t ]*$'
+    r'^<!-- @include (?P<path>[^<>]+) -->[\t ]*$'
 )
 
 

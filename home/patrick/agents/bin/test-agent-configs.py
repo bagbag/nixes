@@ -334,6 +334,7 @@ def validate_skill_expander(root: Path, expander) -> None:
             "escape.md": "<!-- @include ../outside.md -->\n",
             "frontmatter.md": "---\n<!-- @include shared/rule.md -->\n---\n",
             "malformed.md": "<!-- @include shared/rule.md-->",
+            "indented.md": "1. Step.\n   <!-- @include shared/rule.md -->\n",
         }
         for name, content in cases.items():
             path = source / name
@@ -8981,27 +8982,21 @@ def validate_console_contract(root: Path) -> None:
                          "and update the console's parser and tests")
 
 
-def lens_problems(engine: dict, step_back_md: str, ground_md: str) -> list[str]:
-    """The engine's lens lists against their owning skills."""
-    def ground_bullets(markdown: str) -> list[str]:
-        return re.findall(r"^\s*- \*\*([\w-]+):\*\*", markdown, re.M)
-
-    def step_back_lenses(markdown: str) -> list[str]:
-        entries = re.findall(r"^(\d+)\. \*\*([\w -]+) \(`([\w-]+)`\)\.\*\*", markdown, re.M)
-        return [lens for _, _, lens in entries if lens in engine["step-back"]]
-
-    expected = {"step-back": list(engine["step-back"]), "ground": list(engine["ground"])}
-    found = {"step-back": step_back_lenses(step_back_md), "ground": ground_bullets(ground_md)}
-    problems = [f"skill {name}: {names} differs from the engine's {expected[name]}" for name, names in found.items()
-                if names != expected[name]]
-    numbered = [(int(number), lens)
-                for number, _, lens in re.findall(
-                    r"^(\d+)\. \*\*([\w -]+) \(`([\w-]+)`\)\.\*\*", step_back_md, re.M
-                )
-                if lens in engine["step-back"]]
-    required = list(zip(range(3, 14), expected["step-back"]))
-    if numbered != required:
-        problems.append(f"skill step-back: numbered lens steps {numbered} differs from {required}")
+def lens_problems(step_back_md: str, review_method_md: str, prepass_lenses: str) -> list[str]:
+    """step-back owns its lens ids: steps 3-13 (its text names the range); review-method's code-diff set and the
+    engine's pre-pass use them."""
+    lens_steps = re.findall(r"^(\d+)\. \*\*[\w -]+ \(`([\w-]+)`\)\.\*\*", step_back_md, re.M)
+    problems = []
+    if [int(number) for number, _ in lens_steps] != list(range(3, 14)):
+        problems.append(f"skill step-back: lens steps {[number for number, _ in lens_steps]} are not steps 3-13")
+    lenses = {lens for _, lens in lens_steps}
+    code_set = re.search(r"; `([\w\s-]+)` for code diffs", review_method_md)
+    if code_set is None:
+        problems.append("review-method: no code-diff lens set")
+    elif unknown := [lens for lens in code_set.group(1).split() if lens not in lenses]:
+        problems.append(f"review-method: code-diff lenses {unknown} are not step-back lenses")
+    if unknown := [lens for lens in prepass_lenses.split() if lens not in lenses]:
+        problems.append(f"engine pre-pass lenses {unknown} are not step-back lenses")
     return problems
 
 
@@ -9095,12 +9090,13 @@ def engine_text(root: Path) -> str:
 
 
 def validate_lens_names(root: Path) -> None:
-    """The engine's ALL_LENSES follows the managing skills; the console offers whole passes."""
-    engine = load_engine(root / "bin").base
+    """step-back's lens ids and their users agree; the console offers whole passes."""
+    package = load_engine(root / "bin")
+    engine = package.base
     step_back = (root / "skills" / "step-back" / "SKILL.md").read_text(encoding="utf-8")
-    ground = (root / "skills" / "ground" / "SKILL.md").read_text(encoding="utf-8")
+    method = (root / "skills" / "shared" / "review-method.md").read_text(encoding="utf-8")
     words = (root / "claude" / "mods" / "console" / "hooks" / "words.ts").read_text(encoding="utf-8")
-    problems = lens_problems(engine.ALL_LENSES, step_back, ground)
+    problems = lens_problems(step_back, method, package.prepass.PREPASS_LENSES)
     problems += check_sets_problems(engine, words)
     if problems:
         raise ValueError("lens names drifted: " + "; ".join(problems))
