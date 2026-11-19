@@ -4366,6 +4366,10 @@ def handover(board: Board, args) -> None:
     if not author and status not in ('in_review', ACCEPT):
         raise BoardError(f"{args.id}: {status} is neither work in hand, a review to pass nor a refresh to send back to review")
     refuse_long_comment(HANDOVER + args.evidence)
+    if author and m.get('checkpoint') in ('agent', 'user'):
+        busy_designs = checkpoint_design_items(board, args.id, 'in_progress')
+        if busy_designs:
+            raise BoardError(f"{args.id}: checkpoint design items still in progress: {', '.join(busy_designs)}; finish each design pass and release its hold before handover")
     refusal = open_item_refusal(board, cr)
     if refusal:
         raise BoardError(refusal)

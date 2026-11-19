@@ -41,6 +41,8 @@ def validate_record_commands(ctx: Context, questions: list[dict], revisions_only
             revised = q.get('revises') or next(iter(q.get('replaces') or []), None)
             if revisions_only and not revised:
                 continue
+            if q.get('board') and not revised:
+                continue
             ctx.board.checked(*record_board_command(ctx, q, Path(directory) / str(index), dry_run=True))
 
 

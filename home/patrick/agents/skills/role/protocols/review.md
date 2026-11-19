@@ -61,6 +61,8 @@ steps 3-7.
    `board return <cr> "<findings>"`.
    Raise a choice that needs a decision as a question holding the affected
    work items under [Questions and rulings](../../shared/board-core.md#questions-and-rulings).
+   For a code-review question, include the follow-up item the Return adds to
+   the CR among the question's holds.
    At a design checkpoint the open design items remain in review until the
    checkpoint passes. A
    standalone review closes with `board close <id> --reason "<verdict>"`,

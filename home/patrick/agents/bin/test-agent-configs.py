@@ -4977,6 +4977,16 @@ def validate_board(root: Path) -> None:
                 invoke(["handover", "fx-ovo.c2", "ok"], fake, "aaaa1111")
                 if design["status"] != "in_review" or ["update", design["id"], "--status", "in_review", "--json"] not in fake.writes():
                     raise ValueError(f"board handover at checkpoint {checkpoint} must move its open design to in_review: {fake.writes()}")
+            busy_design = {"id": "fx-ovo.c2.busy", "title": "held design checkpoint", "issue_type": "design", "status": "in_progress",
+                           "assignee": "cccc3333", "priority": 2, "description": "d", "created_at": "2026-10-22T15:29:00Z",
+                           "updated_at": "2026-10-22T15:29:00Z",
+                           "dependencies": [{"issue_id": "fx-ovo.c2.busy", "depends_on_id": "fx-ovo.c2", "type": "parent-child"}]}
+            for checkpoint in ("agent", "user"):
+                fake = CheckpointHandover([*variant(**{"CR held": {"metadata": {**ready_cr["CR held"]["metadata"], "checkpoint": checkpoint}}, **done_item}), busy_design])
+                code, _, errors = invoke(["handover", "fx-ovo.c2", "ok"], fake, "aaaa1111")
+                if code != 1 or "checkpoint design items still in progress" not in errors or busy_design["status"] != "in_progress" \
+                        or any(args[0] in ("update", "comments", "close") for args in fake.writes()):
+                    raise ValueError(f"a checkpoint cannot hand over while a design worker still holds an in-progress design: {code} {errors} {fake.writes()}")
             agent_design = {"id": "fx-ovo.c2.d", "title": "design checkpoint", "issue_type": "design", "status": "in_review", "priority": 2,
                             "description": "d", "created_at": "2026-10-22T15:29:00Z", "updated_at": "2026-10-22T15:29:00Z",
                             "dependencies": [{"issue_id": "fx-ovo.c2.d", "depends_on_id": "fx-ovo.c2", "type": "parent-child"}]}
@@ -9795,7 +9805,7 @@ def validate_protocol(root: Path, part: str) -> None:
                                                {"id": "fx-rel", "title": "", "outcome": None}] \
                     or [c["args"][:4] for c in board_calls if c["args"][0] != "show" and "--dry-run" not in c["args"]] \
                     != [["related", "--like", "-", "--json"]] \
-                    or sum(c["args"][:2] == ["create", "--graph"] and "--dry-run" in c["args"] for c in board_calls) != 3:
+                    or sum(c["args"][:2] == ["create", "--graph"] and "--dry-run" in c["args"] for c in board_calls) != 1:
                 raise ValueError(f"protocol Related: {related_state}")
             refused("step", cwd=repo, stdin={"outcomes": {draft_q["id"]: {"fx-old": "supersedes"}}}, needle="outcomes missing")
             refused("step", cwd=repo, stdin={"outcomes": {draft_q["id"]: {"fx-old": "maybe"}}}, needle="outcome must be one of")
