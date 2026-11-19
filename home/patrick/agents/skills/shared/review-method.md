@@ -6,14 +6,11 @@
    sources. Run the smallest permitted read-only probe when needed.
    Output: verified facts and source locations; label assumptions.
 3. **Assess.** Check correctness, counterexamples, requirement coverage,
-   source contradictions, dependencies, integration gaps, silent failures,
-   reuse and composition. Merge near-copies; split a function when its jobs
-   change for different reasons. For code, apply Writing code in the global
-   instructions. For a design, contract or architecture, also apply the six
-   Cleanliness tests and codebase conventions; report an outdated convention
-   with the better pattern. Account for the brief's known findings without
-   re-raising them. Flag a new list that parallel changes would each add
-   entries to ([Change requests](change-requests.md) Shared append-lists).
+   source contradictions, known findings and shared append-lists
+   ([Change requests](change-requests.md) Shared append-lists). Merge
+   near-copies while keeping each copy's validation and error handling; split
+   by job, never by line count. Account for the brief's known findings without
+   re-raising them.
    Output: the cases and requirements assessed.
    <!-- @include shared/reuse-check.md -->
 4. **Step back.** Reassess the frame and end state against the whole artifact.
@@ -33,9 +30,9 @@
    preferences as trade-offs and summarize lenses without findings in one
    line. Report a verdict and one line for each applicable Cleanliness test.
    Return confirmed findings with risks and unresolved intent questions;
-   keep unrelated observations within scope. Include the artifact's checks and
-   probes, and list probes run from the brief's named scratch folder or the
-   session scratch folder. Unless the brief forbids fixes, fix findings within
+   keep unrelated observations within scope. Run the brief's checks and your
+   probes; list probes run from the brief's named scratch folder or the session
+   scratch folder. Unless the brief forbids fixes, fix findings within
    its rules; otherwise make only a small contained fix that is the only clean
    option, rerun checks after code fixes, and list each fix with its finding.
    <!-- @include shared/limits-assessor.md -->
