@@ -1003,6 +1003,11 @@ export async function pressOpenRatification($: $, one: ConsoleRatification): Pro
   })
 }
 
+/** Sends the walk-through request for the landed range represented by a ratification row. */
+export async function pressWalkRatification($: $, one: ConsoleRatification): Promise<void> {
+  await crPress($, { key: crPressKey('walk', one.id), id: one.id, verb: 'Walk through' }, () => sendRequest($, `Walk me through ${one.id}'s landed change (${one.title}).`))
+}
+
 export type RatifyVerdict = 'yes' | 'edits' | 'no'
 export const ratifyPressKey = (verdict: RatifyVerdict, id: string): string => `ratify-${id}-${verdict}`
 const RATIFY_VERBS: Record<RatifyVerdict, { verb: string; done: string }> = {

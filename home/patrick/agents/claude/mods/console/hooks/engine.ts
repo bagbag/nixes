@@ -474,7 +474,9 @@ function parseProblem(value: unknown): ConsoleProblem {
 
 function parseRatification(value: unknown): ConsoleRatification {
   const raw = record(value)
-  return { id: text(raw.id), cr: text(raw.cr), title: text(raw.title), tip: nullableText(raw.tip), baseTip: nullableText(raw.baseTip), review: parseReview(raw.review) }
+  return { id: text(raw.id), cr: text(raw.cr), title: text(raw.title), kind: oneOf(raw.kind, ['landing', 'design']), priority: typeof raw.priority === 'number' ? raw.priority : 9,
+    tip: nullableText(raw.tip), baseTip: nullableText(raw.baseTip), stale: list(raw.stale).map(value => ({ sha: text(record(value).sha), subject: text(record(value).subject) })).filter(one => one.sha !== ''),
+    conflict: raw.conflict === true, review: parseReview(raw.review) }
 }
 
 function parseReview(value: unknown): ConsoleReview | null {

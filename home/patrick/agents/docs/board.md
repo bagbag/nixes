@@ -176,7 +176,12 @@ stacked request open for review to the target when its base lands; deleting a br
 is already open changes nothing it holds (its `opened_tip` stays, so the user's commits and uncommitted edits stay theirs; a missing worktree
 is made again from the branch; the uncommitted-changes refusal applies to the first open only). Open does not refresh: Accept brings in a moved
 base. A ratification opens `.worktrees/<ratification id>` on a new branch `ratify/<id>` at its landed tip, with the same remote and upstream
-(`board/<target>`). From Open until the user's Accept or Return (a ratification: its verdict) the item is held: `claim` for work, review or
+(`board/ratify-base/<id>`), a board-owned ref fixed at the landed range's base tip. This makes its landed commits Outgoing and keeps the
+review's incoming list empty; later target commits do not become part of the review. Ratification rows report `stale` commits only when
+target commits since that base touched files changed by the landed range. They report `conflict` only when an edited review tree conflicts
+with the current target; an unedited review is never marked conflict. Pulling target commits into an open ratification review is still
+detected as imported work, never as the user's edits. The board deletes the base ref with `ratify/<id>` when the verdict removes the review,
+or when edits turn it into a follow-up CR. From Open until the user's Accept or Return (a ratification: its verdict) the item is held: `claim` for work, review or
 refresh (the deciding session's accept claim takes it), `handover` and `cr refresh` (its holder's too) refuse it (`refuse_open`), and the queue
 offers no review or refresh for it (`cr_claimable`; no refresh work). The user's edits are their commits after `opened_tip` plus the uncommitted
 changes (tracked and new, not ignored files, staged or not, through a throwaway index: `review_edits_tree`); `review_read` reads them live. The
@@ -224,7 +229,9 @@ The board is the one reader of what a review holds (r1-q3): `board show <item>` 
 `open for your review: opened at <tip>; not edited` or `…; edited (<files>): not yet recorded as yours`; `board console` carries the same per request
 and per ratification (several reviews open at once) as `review: {opened, edited, files} | null` on each `crs[]` and `ratifications[]` row (`opened`: the
 tip it was opened at; `edited`: true / false, null when it could not be read: an amended opened tip, a missing worktree; `files`: the paths that differ
-from `opened`), null while not open. There is no top-level `reviewTree`, and no `heldInReviewView` (an open item is the held one). A CR row at `needs_acceptance` carries `acceptance: {seenTip, seenBaseTip, delta, fullChange, noAgentReviewReason, incomingBaseTip, incomingCommits}`.
+from `opened`), null while not open. A ratification row also carries its `kind`, `priority`, `stale: [{sha, subject}]` and `conflict` mark.
+`stale` lists target commits after the landed tip that touched files changed by the landed range. `conflict` tests the current target against the edited review tree.
+There is no top-level `reviewTree`, and no `heldInReviewView` (an open item is the held one). A CR row at `needs_acceptance` carries `acceptance: {seenTip, seenBaseTip, delta, fullChange, noAgentReviewReason, incomingBaseTip, incomingCommits}`.
 `incomingCommits` lists commits since the covered base, with each commit's `tip`, `subject`, `files` and overlapping `crFiles`. `board show` uses the same list.
 `delta` is a range-diff from the last explicit user look. It is empty when the range-diff finds only equal commits. Before a look exists, it holds a summary of the full change. The row's Review action invokes
 `board cr request-review <cr>`, sending the change since the last review to an agent. The pane keeps no copy of any of it: Accept and Return

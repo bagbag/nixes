@@ -35,5 +35,5 @@ export const BOARD_CONSOLE_CONTRACT = {
   queued: 92,
   prefix: 'p',
   noBoard: false,
-  ratifications: [{ id: 'p-rat1', cr: 'p-cr0', title: 'Move the clock', tip: sha(6), baseTip: sha(5), review: { opened: sha(6), edited: false, files: [] } }],
+  ratifications: [{ id: 'p-rat1', cr: 'p-cr0', title: 'Move the clock', kind: 'landing', priority: 2, tip: sha(6), baseTip: sha(5), stale: [{ sha: sha(7), subject: 'Touch landed lines' }], conflict: false, review: { opened: sha(6), edited: false, files: [] } }],
 } as const

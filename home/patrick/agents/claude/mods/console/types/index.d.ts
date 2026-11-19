@@ -111,7 +111,7 @@ export type ConsoleCr = {
 export type ConsoleProblem = { kind: string; text: string; next: { action: string; command: string | null; paths: string[] } }
 
 /** A look-after landing's ratification item (`board console` `ratifications`): it waits for your look and blocks nothing. */
-export type ConsoleRatification = { id: string; cr: string; title: string; tip: string | null; baseTip: string | null; review: ConsoleReview | null }  // the range its request landed: Open shows it
+export type ConsoleRatification = { id: string; cr: string; title: string; kind: 'landing' | 'design' | null; priority: number; tip: string | null; baseTip: string | null; stale: { sha: string; subject: string }[]; conflict: boolean; review: ConsoleReview | null }  // the landed range and its drift from the target
 
 /** What a request or ratification open for your review holds (`board console` `crs[].review`, `ratifications[].review`): `opened` the tip it was opened at; `edited` you made commits after it or have uncommitted changes (null: the board cannot read it, e.g. an amended opened tip); `files` the paths that differ from `opened`. Null: it is not open for review. */
 export type ConsoleReview = { opened: string; edited: boolean | null; files: string[] }

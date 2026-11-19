@@ -120,8 +120,13 @@ queue order and refresh work: [Board coordination](board-coordination.md).
   `needs_ratification` under the CR and blocks nothing. Metadata
   `ratification=landing|design` identifies what the user reviews. The board
   creates one only when no child of that kind is currently `needs_ratification`;
-  a closed child does not block a later review. The user's verdict goes through
-  `board ratify` (accept.md Ratification).
+  a closed child does not block a later review. The console shows it with the
+  Accept row layout, its kind, priority, and stale/conflict marks. Stale lists
+  target commits since the landed base that touched landed files; conflict is
+  shown only when edits in its open review tree conflict with the current target.
+  Its review branch tracks a board-owned ref at the landed base, so the landed
+  commits are Outgoing and the review has no Incoming until its verdict. The
+  user's verdict goes through `board ratify` (accept.md Ratification).
 - **User review:** from `board review open` until the user's Accept or Return
   (ratification: verdict), refresh and agent steps leave the item alone; Open
   does not refresh it. Opening, reading and recording edits: accept.md User

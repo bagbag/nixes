@@ -54,6 +54,20 @@ describe('the board\'s review', () => {
 })
 
 describe('ratification verdicts', () => {
+  test('the shared row shows kind, priority and drift marks, and Walk through names the landed change', async ($, on) => {
+    const stale = { ...RATIFICATION, kind: 'design', priority: 1, stale: [{ sha: sha(7), subject: 'Touch landed lines' }], conflict: true }
+    const { ui, clock, w } = await mounted($, on, { ratifications: [stale] })
+    const drawn = await texts(ui)
+    expect(drawn).toContain('P1')
+    expect(drawn).toContain('stale')
+    expect(drawn).toContain('conflict')
+    expect((await ui.find({ key: 'cr-walk-p-rat1' }))?.text).toBe('Walk through')
+    await ui.press({ key: 'cr-walk-p-rat1' })
+    await clock.settle()
+    expect(w.prompts).toEqual(["Walk me through p-rat1's landed change (Move the clock)."])
+    await ui.unmount()
+  })
+
   test('Ratify calls board ratify yes; the row refreshes', async ($, on) => {
     const { ui, clock, w, boardRatify } = await mounted($, on, { ratifications: [rat(view())] })
     await ui.press({ key: 'ratify-p-rat1-yes' })

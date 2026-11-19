@@ -3022,8 +3022,10 @@ def validate_board(root: Path) -> None:
                        "metadata": {"ratification": "landing"},
                        "dependencies": []}]
             rows = json.loads(invoke(["console"], Fake([*fixture, *landed]), "aaaa1111")[1])["ratifications"]
-            if rows != [{"id": "rt-1", "cr": "rt-cr", "title": "Landed CR", "tip": "a" * 40, "baseTip": "b" * 40, "review": None},
-                        {"id": "rt-2", "cr": "", "title": "unknown range", "tip": None, "baseTip": None, "review": None}]:
+            if rows != [{"id": "rt-1", "cr": "rt-cr", "title": "Landed CR", "kind": "landing", "priority": landed[1]["priority"], "tip": "a" * 40, "baseTip": "b" * 40,
+                         "stale": [], "conflict": False, "review": None},
+                        {"id": "rt-2", "cr": "", "title": "unknown range", "kind": "landing", "priority": landed[2]["priority"], "tip": None, "baseTip": None,
+                         "stale": [], "conflict": False, "review": None}]:
                 raise ValueError(f"board console ratifications carry the landed range of their CR: {rows}")
             # A work item is claimed by id inside a change request its session holds (a worker of it); outside one it is refused.
             fake = Fake(fixture)
@@ -7279,7 +7281,7 @@ def validate_board(root: Path) -> None:
                 apply_writes(rows, fake)
                 if code or output.strip() != str(tree5) or git("rev-parse", "HEAD", cwd=tree5) != tip5 or attached(tree5) != "refs/heads/ratify/rat5" \
                         or git("rev-parse", "refs/heads/ratify/rat5") != tip5 or git("status", "--porcelain", cwd=tree5) or f"opened_tip={tip5}" not in flat(fake) \
-                        or config_of("branch.ratify/rat5.remote") != "board" or config_of("branch.ratify/rat5.merge") != "refs/heads/main" or git("branch", "--list", "rat5"):
+                        or config_of("branch.ratify/rat5.remote") != "board" or config_of("branch.ratify/rat5.merge") != "refs/heads/ratify-base/rat5" or git("branch", "--list", "rat5"):
                     raise ValueError(f"a ratification opens a worktree named for it on branch ratify/<id> at the landed tip, with the same upstream: {code} {output} {errors}")
                 Path(tree5, "r.txt").write_text("ratified edit\n", encoding="utf-8")
                 code, output, errors, fake = edits("rat5", tip5, issues=rows)
@@ -7316,6 +7318,7 @@ def validate_board(root: Path) -> None:
                         raise ValueError("the simulated kill must reach the top")
                 standing = subprocess.run(["git", "rev-parse", "-q", "--verify", "refs/heads/cr/fx-new"], cwd=repo_root, capture_output=True).returncode == 0
                 if not standing or tree5.exists() or not Path(repo_root, ".worktrees", "fx-new").is_dir() or git("branch", "--list", "ratify/rat5") \
+                        or git("branch", "--list", "ratify-base/rat5") \
                         or attached(Path(repo_root, ".worktrees", "fx-new")) != "refs/heads/cr/fx-new" or git("show", "refs/heads/cr/fx-new:r.txt") != "ratified edit" \
                         or config_of("branch.cr/fx-new.merge") != "refs/heads/main" or config_of("branch.ratify/rat5.merge"):
                     raise ValueError("a run killed after the worktree became the follow-up's leaves the follow-up standing on its own branch, the ratify branch and worktree gone")
@@ -7520,7 +7523,7 @@ def validate_board(root: Path) -> None:
                     raise ValueError(f"a gate flag goes with edits: {code} {errors}")
                 git("checkout", "--", "ra.txt", cwd=tree_ra)
                 code, output, errors, fake = ratify_run("yes", "-m", "fine")
-                if code or fake.writes() != [["close", "rat9", "--reason", "fine"]] or tree_ra.exists() or listed(tree_ra) or git("branch", "--list", "ratify/rat9") \
+                if code or fake.writes() != [["close", "rat9", "--reason", "fine"]] or tree_ra.exists() or listed(tree_ra) or git("branch", "--list", "ratify/rat9") or git("branch", "--list", "ratify-base/rat9") \
                         or config_of("branch.ratify/rat9.remote"):
                     raise ValueError(f"ratify yes with a clean review closes the item with the reason and removes its worktree, branch and upstream config: {code} {errors} {fake.writes()}")
                 open_ratification()

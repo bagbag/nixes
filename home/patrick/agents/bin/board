@@ -3841,6 +3841,11 @@ def review_branch(board: Board, item: dict) -> str:
     return cr_branch(item['id']) if board.is_cr(item['id']) else f"ratify/{item['id']}"
 
 
+def ratification_base_branch(item: dict) -> str:
+    """The board-owned snapshot that lets a ratification review compare its landed range with the target."""
+    return f"ratify-base/{item['id']}"
+
+
 def linked_worktree(wt: Path) -> bool:
     """`wt` is a worktree of its own: a `.git` file there and git's top level the folder itself. A plain folder under the main checkout
     is no worktree: git would resolve every command in it to the main checkout."""
@@ -3870,7 +3875,7 @@ def review_recovery(wt: Path, opened: str) -> str:
     return f'git -C {wt} reset --hard {opened} (it also drops your commits after it: re-apply them, e.g. git cherry-pick from git reflog)'
 
 
-def taken_in(main: Path, branch: str, opened: str, tip: str) -> bool:
+def taken_in(board: Board, main: Path, branch: str, opened: str, tip: str) -> bool:
     """The range opened..tip holds a merge commit or a commit of the branch's base (a Pull brought them in): never the user's edits."""
     if git_text(main, 'rev-list', '--merges', '-n1', f'{opened}..{tip}').strip():
         return True
@@ -3879,7 +3884,13 @@ def taken_in(main: Path, branch: str, opened: str, tip: str) -> bool:
     if not base_tip:
         return False
     ours = set(git_text(main, 'rev-list', f'{opened}..{tip}').split())
-    return bool(ours & set(git_text(main, 'rev-list', base_tip, f'^{opened}').split()))
+    if ours & set(git_text(main, 'rev-list', base_tip, f'^{opened}').split()):
+        return True
+    if branch.startswith('ratify/'):
+        target = target_branch(board, main)
+        target_tip = view_rev(board, main, f'refs/heads/{target}')
+        return bool(target_tip and ours & set(git_text(main, 'rev-list', f'{opened}..{target_tip}').split()))
+    return False
 
 
 def review_read(board: Board, item: dict) -> dict | None:
@@ -3891,7 +3902,7 @@ def review_read(board: Board, item: dict) -> dict | None:
     if not opened:
         return None
     wt = review_worktree(board, item)
-    found = {'opened': opened, 'edited': None, 'files': [], 'commits': [], 'dirty': False, 'tip': None, 'why': None}
+    found = {'opened': opened, 'edited': None, 'files': [], 'commits': [], 'dirty': False, 'tip': None, 'editsTree': None, 'why': None}
     if wt is None:
         found['why'] = f"its worktree {cr_worktree(main_of(board), item['id'])} is gone: board review open {item['id']} makes it again"
         return found
@@ -3905,11 +3916,12 @@ def review_read(board: Board, item: dict) -> dict | None:
     elif not is_ancestor(main, opened, tip):
         found['why'] = (f'the tip it was opened at ({opened[:12]}) is no longer in {branch} (an amend, reset or rebase rewrote reviewed work, which never passes '
                         f'as your edit): {review_recovery(wt, opened)}')
-    elif taken_in(main, branch, opened, tip):
+    elif taken_in(board, main, branch, opened, tip):
         found['why'] = (f'{branch} took in a merge or commits of its base after it was opened (a Pull; they are never your edits): {review_recovery(wt, opened)}')
     else:
         try:
             tree = review_edits_tree(main, wt, tip)
+            found['editsTree'] = tree
             found['files'] = git_text(main, 'diff', '--name-only', '--no-renames', f'{opened}^{{tree}}', tree).splitlines()
             found['commits'] = git_text(main, 'rev-list', '--reverse', f'{opened}..{tip}').split()
             found['dirty'] = tree != git_text(main, 'rev-parse', f'{tip}^{{tree}}').strip()
@@ -3924,10 +3936,15 @@ def review_of(board: Board, item: dict) -> dict | None:
     and the console read this."""
     if not is_review_item(board, item):
         return None
-    cache = board.__dict__.setdefault('_review', {})
+    found = review_snapshot(board, item)
+    return {key: found[key] for key in ('opened', 'edited', 'files')} if found else None
+
+
+def review_snapshot(board: Board, item: dict) -> dict | None:
+    """The live read behind a review view, including private data used to compute board-owned marks."""
+    cache = board.__dict__.setdefault('_review_read', {})
     if item['id'] not in cache:
-        found = review_read(board, item)
-        cache[item['id']] = {key: found[key] for key in ('opened', 'edited', 'files')} if found else None
+        cache[item['id']] = review_read(board, item)
     return cache[item['id']]
 
 
@@ -4289,13 +4306,36 @@ def ratifications_json(board: Board) -> list[dict]:
     base tip of its check), which the console's Open shows; null when the CR is gone or recorded none. One read for the CRs."""
     rows = [i for i in board.issues if i['status'] == 'needs_ratification' and i.get('issue_type') in WORK_TYPES]
     crs = {i['id']: i for i in bd_show(sorted({(board.parents.get(r['id']) or [''])[0] for r in rows} - {''}), comments=False)} if rows else {}
+    main = main_of(board)
+    try:
+        target = target_branch(board, main) if rows else None
+    except BoardError:
+        target = None  # a board without a configured local target still lists ratifications, but cannot compute drift
+    target_tip = view_rev(board, main, f'refs/heads/{target}') if target else None
     out = []
     for i in rows:
         cr_id = (board.parents.get(i['id']) or [''])[0]
         m = meta(crs.get(cr_id) or {})
         tip, base = m.get('landing') or m.get('check_tip'), m.get('check_base_tip')
-        out.append({'id': i['id'], 'cr': cr_id, 'title': i.get('title', ''), 'tip': tip if tip and base else None, 'baseTip': base if tip and base else None,
-                    'review': review_of(board, i)})  # open for the user's review: {opened, edited, files}, else null
+        review_data = review_snapshot(board, i)
+        review = review_of(board, i)
+        stale, conflict = [], False
+        if tip and base and target_tip and rev(main, tip) and rev(main, base):
+            files = git_text(main, 'diff', '--name-only', '--no-renames', f'{base}^{{tree}}', f'{tip}^{{tree}}').splitlines()
+            if files:
+                commits = git_text(main, 'log', '--reverse', '--format=%H%x00%s', f'{tip}..{target_tip}', '--', *files).splitlines()
+                stale = [{'sha': line.partition('\x00')[0], 'subject': line.partition('\x00')[2]} for line in commits if '\x00' in line]
+        if review and review.get('edited') is True and target_tip:
+            opened = review.get('opened')
+            if opened and review_data and review_data.get('editsTree'):
+                try:
+                    merged = git(main, 'merge-tree', '--write-tree', f'--merge-base={opened}', target_tip, review_data['editsTree'], check=False)
+                    conflict = merged.returncode != 0
+                except BoardError:
+                    conflict = False  # an unreadable review has no conflict mark
+        out.append({'id': i['id'], 'cr': cr_id, 'title': i.get('title', ''), 'kind': meta(i).get('ratification'), 'priority': i.get('priority', 2),
+                    'tip': tip if tip and base else None, 'baseTip': base if tip and base else None, 'stale': stale, 'conflict': conflict,
+                    'review': review})  # open for the user's review: {opened, edited, files}, else null
     return out
 
 
@@ -5219,7 +5259,13 @@ def review_open(board: Board, args) -> int:
         if not wt.exists() and not already:
             raise BoardError(f'{args.id}: no worktree {wt}: git worktree add {wt} {branch}')
     else:
-        upstream = target_branch(board, main)
+        base = meta(item).get('user_seen_base_tip') if already else None
+        base = base or found[1]
+        if not base or rev(main, base) is None:
+            raise BoardError(f'{args.id}: its landed base is gone')
+        base_branch = ratification_base_branch(item)
+        base_ref = f'refs/heads/{base_branch}'
+        upstream = base_branch
     if wt.exists() and not linked_worktree(wt):
         raise BoardError(f'{args.id}: {wt} exists but is no git worktree of its own (a plain folder would make git act on the main checkout): remove it or git worktree add it, then open again')
     if wt.exists():
@@ -5232,6 +5278,10 @@ def review_open(board: Board, args) -> int:
         if problem:
             raise BoardError(f'{args.id}: {problem}')
     board_remote(main, make=True)
+    if not board.is_cr(args.id):
+        current_base = rev(main, base_ref)
+        if current_base != base:
+            git(main, 'update-ref', base_ref, base, current_base or '')
     if not wt.exists():  # a ratification's first open, or a worktree that went missing from an open review
         exclude_worktrees(main)
         if rev(main, f'refs/heads/{branch}'):
@@ -5241,7 +5291,9 @@ def review_open(board: Board, args) -> int:
     set_upstream(main, branch, upstream)
     if not already:
         put_meta(item, **{OPENED: tip}, **({'user_seen_tip': tip, 'user_seen_base_tip': meta(item).get('base_sha') or found[1]}
-                                          if board.is_cr(args.id) else {}))
+                                          if board.is_cr(args.id) else {'user_seen_base_tip': base}))
+    elif not board.is_cr(args.id) and not meta(item).get('user_seen_base_tip'):
+        put_meta(item, user_seen_base_tip=base)
     stale = fetch_board(main)
     print(workspace_or_folder(wt))
     print(f'{args.id}: open for your review in {wt} on {branch} (upstream {BOARD_REMOTE}/{upstream}); your edits are commits after {tip[:12]} or uncommitted changes'
@@ -5530,6 +5582,10 @@ def follow_up(board: Board, ratification: dict, landed: dict, tip: str, commit: 
         if old:
             git(main, 'update-ref', '-d', f'refs/heads/{old_branch}', old)
             drop_upstream(main, old_branch)
+        base_branch = f'ratify-base/{ratification["id"]}'
+        base_tip = rev(main, f'refs/heads/{base_branch}')
+        if base_tip:
+            git(main, 'update-ref', '-d', f'refs/heads/{base_branch}', base_tip)
         if in_ratification:
             git(main, 'worktree', 'move', str(wt), str(new_wt))
     except BoardError as error:
@@ -5571,6 +5627,11 @@ def remove_review_worktree(main: Path, wt: Path, branch: str) -> str:
     if old:
         git(main, 'update-ref', '-d', f'refs/heads/{branch}', old, check=False)
         drop_upstream(main, branch)
+    if branch.startswith('ratify/'):
+        base_branch = f"ratify-base/{branch.removeprefix('ratify/')}"
+        base_tip = rev(main, f'refs/heads/{base_branch}')
+        if base_tip:
+            git(main, 'update-ref', '-d', f'refs/heads/{base_branch}', base_tip, check=False)
     return f'; removed {wt} and {branch}'
 
 

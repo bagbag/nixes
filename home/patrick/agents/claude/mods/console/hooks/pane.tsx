@@ -5,7 +5,7 @@ import type { EngineInterface, RenderPropsOf } from 'claude-code'
 
 import type { ConsoleBoard, ConsoleCr, ConsoleItem, ConsoleRatification, ConsoleQuestion, ConsoleRecord, ConsoleRole, ConsoleRound, ConsoleSection, ConsoleSession, ConsoleSuggestion } from '../types'
 
-import { crPressKey, ratifyPressKey, pressAcceptCr, pressContinue, pressOpenCr, pressOpenItem, pressOpenOverlaps, pressOpenRatification, pressOpenReason, pressOpenSettles, pressOpenSuggestion, pressRatify, pressRequestReviewCr, pressReturnCr, pressUpdateCr, pressRole, pressRun, pressStart, pressView, pressWalkCr, pressWorkers, queuedRuns, runKey } from './core'
+import { crPressKey, ratifyPressKey, pressAcceptCr, pressContinue, pressOpenCr, pressOpenItem, pressOpenOverlaps, pressOpenRatification, pressOpenReason, pressOpenSettles, pressOpenSuggestion, pressRatify, pressRequestReviewCr, pressReturnCr, pressUpdateCr, pressRole, pressRun, pressStart, pressView, pressWalkCr, pressWalkRatification, pressWorkers, queuedRuns, runKey } from './core'
 import { isRoundOpen, RELEASE_COMMAND, ROUND_ROLES, START_COMMAND } from './engine'
 import { getBoard, getExpanded, getFocus, getOpened, getPass, getPlaced, getPressing, getRole, getRound, getRoundError, getTurnRunning, setFocus, toggleExpanded } from './state'
 import { answerText, canUpdateCr, COUNT_GROUPS, countText, crDetailsText, crFailureParts, crFileHref, crMarks, crNewCountText, crKind, crPriorityHint, crPriorityText, crRowCheckText, crRows, crRowStageText, crSummaryText, crTreeText, crUnblocksHint, crUnblocksText, displayId, displayIds, fitText, canAcceptCr, isCrAccepting, GROUND_BASE, plural, pullsText, recommendationMark, recommendationText, roleText, roundWords, runNoun, staleHolds, staleSessions, startHint, STEP_BACK_BASE, suggestionText } from './words'
@@ -88,6 +88,28 @@ export async function drawPane($: $, e: { surface: string; props: RenderPropsOf[
   /** The id column: as wide as the widest id shown in it. */
   const idWidth = (ids: readonly string[]) => Math.max(0, ...ids.map(id => shown(id).length)) + ID_GAP
   const dimId = (id: string) => <Text color="inactive">{shown(id)}</Text>
+  const AcceptRatifyRow = (props: { id: string; rowKey: string; title: string; idLabel: any; showKey: string; kind: CrKind; branch?: string; rail?: string; idWidth: number; striped: boolean; actions: any[]; actionWidth?: number; barHover: string; onOpen: () => void; lineTwo: any; children?: any }) => {
+    const { id, rowKey, title, idLabel, showKey, kind, branch = '', rail = '', idWidth: width, striped, actions, actionWidth, barHover, onOpen, lineTwo, children } = props
+    return (
+      <Box key={rowKey} flexDirection="column">
+        <Box key={`${rowKey}-lines`} flexDirection="column" {...(striped ? { backgroundColor: STRIPE } : {})}>
+          <Box key={`${rowKey}-line1`} flexDirection="row">
+            {branch !== '' && <Box key={`${rowKey}-branch`} width={branch.length} flexShrink={0}><Text color="inactive">{branch}</Text></Box>}
+            <Box key={`${rowKey}-bar1`} width={1} flexShrink={0} hover={{ scope: barHover }}><Text color={KIND_COLOR[kind]}>{BAR}</Text></Box>
+            <Box key={`${rowKey}-title`} flexGrow={1} flexShrink={1} minWidth={0}><Text bold wrap="truncate-end">{title}</Text></Box>
+            {actions.length > 0 && <Box key={`${rowKey}-buttons`} width={actionWidth} marginLeft={1} flexShrink={0} flexDirection="row">{actions.flatMap((one, i) => i === 0 ? [one] : [<Text key={`${id}-sep-${i}`} color="inactive">{BUTTON_SEP}</Text>, one])}</Box>}
+          </Box>
+          <Box key={`${rowKey}-line2`} flexDirection="row">
+            {rail !== '' && <Box key={`${rowKey}-rail`} width={rail.length} flexShrink={0}><Text color="inactive">{rail}</Text></Box>}
+            <Box key={`${rowKey}-bar2`} width={1} flexShrink={0}><Text> </Text></Box>
+            <Box key={`${rowKey}-idbox`} width={width} flexShrink={0} hover={{ scope: `item-${id}` }}><Button key={showKey} plain onPress={onOpen}>{idLabel}</Button></Box>
+            {lineTwo}
+          </Box>
+        </Box>
+        {children}
+      </Box>
+    )
+  }
   // A pressed command until its run starts: the host holds a run while a turn works, so it reads queued then.
   const queuedWord = isTurnRunning ? 'queued' : 'starting…'
   const queuedMark = (isQueued: boolean) => isQueued ? <Text color="inactive"> · {queuedWord}</Text> : null
@@ -722,7 +744,6 @@ export async function drawPane($: $, e: { surface: string; props: RenderPropsOf[
             ]
             // line two: the milestone shrinks first, down to MILESTONE_MIN; what still does not fit wraps to a next line
             const room = e.props.bodyColumns - 1 - rail.length - crIdWidth - alignedWidth - (rest.length === 0 ? 0 : rightWidth + 1) - 1  // the bar, the id column, the columns, the right group with its gap and a spare cell
-            const barColor = KIND_COLOR[crKind(cr)]
             const milestone = cr.milestone === null ? null : fitText(cr.milestone, Math.max(MILESTONE_MIN, room))
             if (cr.milestone !== null && milestone !== cr.milestone) hint.add(`milestone-${cr.id}`, `${shown(cr.id)} belongs to: ${cr.milestone}`)
             const fact = (one: { key: string; text: string; color: string; hover?: string }) => {
@@ -740,29 +761,15 @@ export async function drawPane($: $, e: { surface: string; props: RenderPropsOf[
               : <Box key={`cr-${cr.id}-milestone-box`} flexShrink={0} hover={{ scope: `milestone-${cr.id}` }}><Text key={`cr-${cr.id}-milestone`} dimColor>{milestone}</Text></Box>
             const rightParts = rest.map(fact)
             return (
-              <Box key={`cr-${cr.id}`} flexDirection="column">
-                <Box key={`cr-${cr.id}-lines`} flexDirection="column" {...(index % 2 === 1 ? { backgroundColor: STRIPE } : {})}>
-                  <Box key={`cr-${cr.id}-line1`} flexDirection="row">
-                    {branch !== '' && <Box key={`cr-${cr.id}-branch`} width={branch.length} flexShrink={0}><Text color="inactive">{branch}</Text></Box>}
-                    <Box key={`cr-${cr.id}-bar1`} width={1} flexShrink={0} hover={{ scope: `bar-${cr.id}` }}><Text color={barColor}>{BAR}</Text></Box>
-                    <Box key={`cr-${cr.id}-title`} flexGrow={1} flexShrink={1} minWidth={0}><Text bold wrap="truncate-end">{cr.title}</Text></Box>
-                    {actions.length > 0 && <Box key={`cr-${cr.id}-buttons`} width={buttons.width} marginLeft={1} flexShrink={0} flexDirection="row">{actions.flatMap((one, i) => i === 0 ? [one] : [<Text key={`cr-${cr.id}-sep-${i}`} color="inactive">{BUTTON_SEP}</Text>, one])}</Box>}
-                  </Box>
-                  <Box key={`cr-${cr.id}-line2`} flexDirection="row">
-                    {rail !== '' && <Box key={`cr-${cr.id}-rail`} width={rail.length} flexShrink={0}><Text color="inactive">{rail}</Text></Box>}
-                    <Box key={`cr-${cr.id}-bar2`} width={1} flexShrink={0}><Text> </Text></Box>
-                    <Box key={`cr-${cr.id}-idbox`} width={crIdWidth} flexShrink={0} hover={{ scope: `item-${cr.id}` }}>
-                      <Button key={`cr-${cr.id}-show`} plain onPress={() => pressOpenItem($, cr.id)}>{dimId(cr.id)}</Button>
-                    </Box>
-                    <Box key={`cr-${cr.id}-facts`} flexDirection="row" flexWrap="wrap" columnGap={1} flexGrow={1} flexShrink={1} minWidth={0}>
-                      {cells}
-                      <Box key={`cr-${cr.id}-milestone-fill`} flexGrow={1} flexShrink={1} minWidth={0}>{milestoneCell}</Box>
-                      {rest.length > 0 && <Box key={`cr-${cr.id}-right`} flexDirection="row" flexShrink={0}>
-                        {rightParts.flatMap((part, i) => i === 0 ? [part] : [<Text key={`cr-${cr.id}-right-sep-${i}`}>{' '.repeat(PART_GAP)}</Text>, part])}
-                      </Box>}
-                    </Box>
-                  </Box>
-                </Box>
+              <AcceptRatifyRow key={`cr-${cr.id}`} id={cr.id} rowKey={`cr-${cr.id}`} title={cr.title} idLabel={dimId(cr.id)} showKey={`cr-${cr.id}-show`} kind={crKind(cr)} branch={branch} rail={rail}
+                idWidth={crIdWidth} striped={index % 2 === 1} actions={actions} actionWidth={buttons.width} barHover={`bar-${cr.id}`} onOpen={() => pressOpenItem($, cr.id)}
+                lineTwo={<Box key={`cr-${cr.id}-facts`} flexDirection="row" flexWrap="wrap" columnGap={1} flexGrow={1} flexShrink={1} minWidth={0}>
+                  {cells}
+                  <Box flexGrow={1} flexShrink={1} minWidth={0}>{milestoneCell}</Box>
+                  {rest.length > 0 && <Box key={`cr-${cr.id}-right`} flexDirection="row" flexShrink={0}>
+                    {rightParts.flatMap((part, i) => i === 0 ? [part] : [<Text key={`cr-${cr.id}-right-sep-${i}`}>{' '.repeat(PART_GAP)}</Text>, part])}
+                  </Box>}
+                </Box>}>
                 {incoming.length > 0 && <Box key={`cr-${cr.id}-incoming`} flexDirection="column" paddingLeft={2}>
                   <Text key={`cr-${cr.id}-incoming-base`} color="warning">incoming since {cr.acceptance?.incomingBaseTip?.slice(0, 12) ?? 'covered base'}</Text>
                   {incoming.map(commit => (
@@ -773,7 +780,7 @@ export async function drawPane($: $, e: { surface: string; props: RenderPropsOf[
                 </Box>}
                 {slot(cr.id)}
                 {crDetails(cr)}
-              </Box>
+              </AcceptRatifyRow>
             )
           })}
           {more('crs', queue.hidden, 'change requests')}
@@ -782,15 +789,18 @@ export async function drawPane($: $, e: { surface: string; props: RenderPropsOf[
     }
     if (view.ratifications.length > 0) {
       const ratify = capped('ratify', view.ratifications, CR_ROWS_SHOWN)
+      const ratifyIdWidth = idWidth(ratify.shown.map(one => one.id))
       rows.push(
         <Box key="cr-ratify" flexDirection="column" marginTop={1}>
           <Text color="warning">to ratify</Text>
           {ratify.shown.map(one => {
             hint.add(`item-${one.id}`, `${shown(one.id)}: open its summary here`)
+            hint.add(`bar-${one.id}`, `${shown(one.id)}: ${one.kind ?? 'ratification'}`)
             // What its review holds (the board's read): your edits make Ratify wait for Ratify with edits.
             const isEdited = one.review?.edited === true
             const buttons = [
-              ...(one.tip !== null && one.baseTip !== null ? [act(crPressKey('ratify', one.id), 'Open', () => pressOpenRatification($, one), 'Opens the landed change for your review in VS Code')] : []),
+              act(crPressKey('walk', one.id), CR_BUTTONS.walk, () => pressWalkRatification($, one), `Walk me through ${shown(one.id)}'s landed change (${one.title}).`, 'suggestion'),
+              ...(one.tip !== null && one.baseTip !== null ? [act(crPressKey('ratify', one.id), CR_BUTTONS.open, () => pressOpenRatification($, one), 'Opens the landed change for your review in VS Code', 'suggestion')] : []),
               isEdited
                 ? <Box key={`ratify-${one.id}-yes-wait`} hover={{ scope: `ratify-${one.id}-yes` }}><Text color="inactive">Ratify</Text></Box>
                 : act(ratifyPressKey('yes', one.id), 'Ratify', () => pressRatify($, one, 'yes'), 'Closes the ratification: you accept what landed', 'success'),
@@ -798,18 +808,23 @@ export async function drawPane($: $, e: { surface: string; props: RenderPropsOf[
               act(ratifyPressKey('no', one.id), 'Not OK', () => pressOpenReason($, one.id), 'Asks what you want instead; closes the ratification and files the follow-up', undefined, true),
             ]
             if (isEdited) hint.add(`ratify-${one.id}-yes`, 'Your edits in the review are not recorded: Ratify with edits records them first')
+            const marks = [
+              ...(one.stale.length === 0 ? [] : [{ key: 'stale', text: 'stale', color: 'warning', hint: `Behind main on landed lines: ${one.stale.map(commit => `${commit.sha.slice(0, 12)} ${commit.subject}`).join('; ')}` }]),
+              ...(one.conflict ? [{ key: 'conflict', text: 'conflict', color: 'error', hint: 'Your review edits conflict with the target branch' }] : []),
+            ]
+            for (const mark of marks) hint.add(`ratify-${one.id}-${mark.key}`, mark.hint)
+            const actionLabels = [CR_BUTTONS.walk, ...(one.tip !== null && one.baseTip !== null ? [CR_BUTTONS.open] : []), 'Ratify', ...(isEdited ? ['Ratify with edits'] : []), 'Not OK']
             return (
-              <Box key={`ratify-${one.id}`} flexDirection="column">
-                <Box flexDirection="row">
-                  <Box key={`ratify-${one.id}-idbox`} width={idWidth(ratify.shown.map(other => other.id))} flexShrink={0} hover={{ scope: `item-${one.id}` }}>
-                    <Button key={`ratify-${one.id}-show`} plain onPress={() => pressOpenItem($, one.id)}>{dimId(one.id)}</Button>
-                  </Box>
-                  <Box flexGrow={1} flexShrink={1} minWidth={0}><Text wrap="truncate-end">{one.title}</Text></Box>
-                  {buttons.length > 0 && <Box key={`ratify-${one.id}-buttons`} marginLeft={1} flexShrink={0} flexDirection="row">{buttons.flatMap((button, i) => i === 0 ? [button] : [<Text key={`ratify-${one.id}-sep-${i}`} color="inactive">{BUTTON_SEP}</Text>, button])}</Box>}
-                </Box>
+              <AcceptRatifyRow key={`ratify-${one.id}`} id={one.id} rowKey={`ratify-${one.id}`} title={one.title} idLabel={dimId(one.id)} showKey={`ratify-${one.id}-show`} kind={one.kind === 'design' ? 'design' : 'code'}
+                idWidth={ratifyIdWidth} striped={ratify.shown.indexOf(one) % 2 === 1} actions={buttons} actionWidth={buttonsWidth(actionLabels)} barHover={`bar-${one.id}`}
+                onOpen={() => pressOpenItem($, one.id)} lineTwo={<Box key={`ratify-${one.id}-facts`} flexDirection="row" flexGrow={1} flexShrink={1} minWidth={0}>
+                  <Text color="inactive">P{one.priority}</Text>
+                  <Box flexGrow={1} minWidth={0} />
+                  {marks.map(mark => <Box key={`ratify-${one.id}-${mark.key}`} marginLeft={PART_GAP} flexShrink={0} hover={{ scope: `ratify-${one.id}-${mark.key}` }}><Text color={mark.color}>{mark.text}</Text></Box>)}
+                </Box>}>
                 {reasonRow(one)}
                 {slot(one.id)}
-              </Box>
+              </AcceptRatifyRow>
             )
           })}
           {more('ratify', ratify.hidden, 'ratifications')}

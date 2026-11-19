@@ -1118,6 +1118,52 @@ def t_cr() -> None:
     check([r['id'] for r in json.loads(console)['ratifications']] == [ratify[0]['id']] and json.loads(console)['ratifications'][0]['cr'] == b,
           'cr: board console lists the ratification with its CR', console[-300:])
 
+    rat_id = ratify[0]['id']
+    rc, out, err, _ = run('a', 'review', 'open', rat_id, role='solo')
+    rat_wt, rat_branch, base_branch = wt(rat_id), f'ratify/{rat_id}', f'ratify-base/{rat_id}'
+    landed_tip = git('rev-parse', f'refs/heads/{rat_branch}', cwd=side).strip()
+    landed_base = meta_of(b).get('check_base_tip')
+    outgoing = git('rev-list', '@{u}..HEAD', cwd=rat_wt).splitlines() if rat_wt.exists() else []
+    expected_outgoing = git('rev-list', f'{landed_base}..{landed_tip}', cwd=side).splitlines()
+    incoming = git('rev-list', 'HEAD..@{u}', cwd=rat_wt).splitlines() if rat_wt.exists() else ['missing']
+    check(rc == 0 and git('config', f'branch.{rat_branch}.merge', cwd=side).strip() == f'refs/heads/{base_branch}'
+          and outgoing == expected_outgoing and incoming == [],
+          'ratification review tracks a board-owned landed base: outgoing is exactly landed commits, incoming is empty',
+          {'outgoing': outgoing, 'expected': expected_outgoing, 'incoming': incoming, 'config': git('config', f'branch.{rat_branch}.merge', cwd=side).strip(), 'error': err + out})
+    opened = git('rev-parse', 'HEAD', cwd=rat_wt).strip()
+    (side / 'b.txt').write_text('target changed landed lines\n')
+    git('add', 'b.txt', cwd=side)
+    git('commit', '-q', '-m', 'touch landed ratification lines', cwd=side)
+    (side / 'unrelated-target.txt').write_text('unrelated change\n')
+    git('add', 'unrelated-target.txt', cwd=side)
+    git('commit', '-q', '-m', 'unrelated target change', cwd=side)
+    target_tip = git('rev-parse', target, cwd=side).strip()
+    pull = subprocess.run(['git', 'merge', '--ff-only', target_tip], cwd=rat_wt, capture_output=True, text=True)
+    _, console, _, _ = run('a', 'console')
+    row = next((r for r in json.loads(console)['ratifications'] if r['id'] == rat_id), {})
+    check(pull.returncode == 0 and row.get('review', {}).get('edited') is None and row.get('conflict') is False,
+          'a fast-forward pull of target into the review is unreadable imported work, not the user\'s edit', row)
+    git('reset', '--hard', opened, cwd=rat_wt)
+    (rat_wt / 'review-only.txt').write_text('my non-conflicting edit\n')
+    git('add', 'review-only.txt', cwd=rat_wt)
+    git('commit', '-q', '-m', 'ratification review edit', cwd=rat_wt)
+    _, console, _, _ = run('a', 'console')
+    row = next((r for r in json.loads(console)['ratifications'] if r['id'] == rat_id), {})
+    check(row.get('review', {}).get('edited') is True and row.get('conflict') is False,
+          'ratification review edits without a clash are edited but not conflict', row)
+    (rat_wt / 'b.txt').write_text('review changed landed lines\n')
+    git('add', 'b.txt', cwd=rat_wt)
+    git('commit', '-q', '-m', 'edit landed ratification lines', cwd=rat_wt)
+    _, console, _, _ = run('a', 'console')
+    row = next((r for r in json.loads(console)['ratifications'] if r['id'] == rat_id), {})
+    check(len(row.get('stale', [])) == 1 and row['stale'][0].get('subject') == 'touch landed ratification lines' and row.get('conflict') is True,
+          'ratification reports only landed-line commits as stale and detects an edited merge clash', row)
+    git('reset', '--hard', opened, cwd=rat_wt)
+    rc, out, err, _ = run('a', 'ratify', rat_id, 'yes', role='solo')
+    check(rc == 0 and not git('show-ref', '--verify', f'refs/heads/{rat_branch}', cwd=side).strip()
+          and not git('show-ref', '--verify', f'refs/heads/{base_branch}', cwd=side).strip(),
+          'ratifying removes both the review branch and its board-owned landed-base ref', err + out)
+
     design = create('a', 'design checkpoint C', '--metadata', 'look=after', '--metadata', 'checkpoint=agent')
     design_item = task(design, 'C design')
     affected_design = create('a', 'affected checkpoint design', '--parent', design, kind='design')
