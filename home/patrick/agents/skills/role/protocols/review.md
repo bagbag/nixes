@@ -60,7 +60,10 @@ steps 3-7.
    Raise a choice that needs a decision as a question holding the affected
    work items under [Questions and rulings](../../shared/board-core.md#questions-and-rulings).
    For a code-review question, include the follow-up item the Return adds to
-   the CR among the question's holds. A
+   the CR among the question's holds. A frame change against a released
+   ruling the CR applies correctly: pass the CR, then open the decision with
+   `board ruling revise <ruling> --title <title> --body-file <packet> --holds
+   none` and `board link <question> <cr> --type discovered-from`. A
    standalone review closes with `board close <id> --reason "<verdict>"`,
    recording each finding as a new item discovered from it
    (`--deps discovered-from:<id>`).

@@ -26,7 +26,9 @@ Entry: [decide.md](decide.md#accept) Accept. Read `$HOME/.agents/skills/shared/c
    design). A ratification: the
    landed result, in its user review or at the result. If the refresh changed
    the CR meanwhile, show the range-diff before continuing. Open with the
-   defaults its hand-over lists; the user keeps or changes each.
+   defaults its hand-over lists; the user keeps or changes each. After each
+   answer, re-check the walkthrough's open verdicts under
+   [Changed premises](../../shared/decision-protocol.md#changed-premises).
    Output: the walkthrough; for a design, the round's answers.
 4. **Land or return.**
    - **Accept:** `board cr land <cr> --tip <tip>` (the tip the user reviewed;

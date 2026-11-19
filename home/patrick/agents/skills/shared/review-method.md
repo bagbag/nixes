@@ -21,7 +21,8 @@
 4. **Step back.** Invoke `step-back` on the whole artifact: all lenses for
    designs, plans, contracts and architecture; `mechanics consumer root-fix
    gaps bloat clean` for code diffs. Treat a proposal outside the brief or a
-   ruling as a frame change, not a defect.
+   ruling as a frame change, not a defect; never apply it, even with
+   ratification.
    Output: the end state and any proposed frame change.
 5. **Verify findings.** Ground each candidate in current source: name the
    violated requirement or invariant, trigger, impact and exact locations.
