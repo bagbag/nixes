@@ -97,7 +97,7 @@ Follow the engine's output; the steps below add the judgment it leaves to you.
    that are off or rest on an unclear premise (ask those first), and the cut
    under [Question format](../../shared/question-format.md). A question holding
    more open work than its answer changes is off: rewire its links under
-   [Board core, Questions and rulings](../../shared/board-core.md#questions-and-rulings).
+   board-core [Questions and rulings](../../shared/board-core.md#questions-and-rulings).
    Defer each
    question its topic's next run ([Frame](plan.md#frame)) does not need
    (revisit: after that run); for a topic without one, propose planning first.

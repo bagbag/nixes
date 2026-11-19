@@ -20,9 +20,7 @@ def question_parts(ctx: Context, q: dict, board_holds: dict[str, str] | None = N
     """The printed parts of a question by name, in print order (empty and absent parts left out)."""
     if ctx.round['protocol'] == 'release' and q['kind'] == 'confirm-own-rulings':
         return approval_parts(ctx)
-    holds = (board_holds or {}).get(q['board'], '') if q.get('board') else ', '.join(q.get('holds') or [])
-    if board_holds is None:
-        holds = ''
+    holds = '' if board_holds is None else board_holds.get(q['board'], '') if q.get('board') else ', '.join(q.get('holds') or [])
     parts = {
         'problem': q.get('problem') or '', 'cases': q.get('cases') or '',
         'settles': '\n'.join(settled_lines(ctx, q)), 'holds': holds, 'premises': (q.get('premises') or '').strip(),
