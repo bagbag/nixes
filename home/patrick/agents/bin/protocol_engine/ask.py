@@ -1,7 +1,7 @@
 """Ask: dialog batches and the Ask step."""
 from __future__ import annotations
 
-from .base import BATCH, ProtocolError, THINK_MORE, TITLE_MAX, cut, lines, recommended_suffix
+from .base import BATCH, ProtocolError, TEXT_LIMIT, THINK_MORE, TITLE_MAX, cut, lines, recommended_suffix
 from . import words
 from .engine import Context, PROTOCOLS, by_id, clear_reading, fail, premise_status, questions
 from .questions import check_question
@@ -124,17 +124,17 @@ def ask_enter(ctx: Context) -> str | None:
     if ctx.away:
         return None  # no batch: the step text asks the model to settle them (away_settle)
     # Only valid questions go out (an answer being recorded must not fail here). Only a question staged before a rule
-    # can be invalid here (staging, pass and edit updates check them): it names its error and the model fixes it in a
-    # pass of its own (no automatic pass).
-    valid, broken = [], {}
+    # can be invalid here (staging, pass and edit updates check them). An overlong body gets one scoped retry.
+    valid, broken, overlong = [], {}, []
     for q in ready:
         try:
             check_question(q, q['id'], marks=bool(q.get('strength')))  # a release approval has no mark and no parts
             valid.append(q)
         except ProtocolError as error:
             broken[q['id']] = str(error)
+            if isinstance(q.get('text'), str) and len(q['text']) > TEXT_LIMIT:
+                overlong.append(q['id'])
     if broken:
-        overlong = [qid for qid, error in broken.items() if 'text ' in error and 'over the limit' in error]
         retry = [qid for qid in overlong if not by_id(ctx, qid).get('autoRescoped')]
         if retry:
             for qid in retry:

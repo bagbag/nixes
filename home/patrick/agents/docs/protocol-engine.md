@@ -527,9 +527,9 @@ the person the round stopped and what to type.
 states is `claude/mods/console/tests/engine-contract.ts`, regenerated with
 `WRITE_CONSOLE_CONTRACT=1`): round title and summary, step progress, the
 questions with their recommendation and strength (and `changedBy`, the pass
-whose most recent report changed them), the batch, the round's whole log (pass lines name their kind: `step-back
-(path)`, `ground (lean q39 q40)`, scoped ids for a restart's or a release's
-rerun; a leading "no change" of a summary is left out; consecutive `recorded`
+whose most recent report changed them), the batch, the round's whole log (pass
+lines name their kind, such as `step-back (confirming)` or a focused
+`step-back` with question IDs; a leading "no change" of a summary is left out; consecutive `recorded`
 lines merge), a release's `records` with their state, and `stopped` (the last release's stop,
 shown while no run is open), and `next` (no run open: `{"release": {"count"}}` while the session holds decided
 board records a bare release would take, counted at a round's or release's close

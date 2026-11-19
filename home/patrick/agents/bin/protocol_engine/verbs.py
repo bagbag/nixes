@@ -65,7 +65,7 @@ def normalized(text: str) -> str:
 
 
 def skipped_checks(ctx: Context, q: dict) -> str:
-    """What a chat answer to a question that never went out skipped (r3-q17): its status and the Base passes that had not
+    """What a chat answer to a question that never went out skipped (r3-q17): its status and the passes that had not
     covered it, for the record. A question that was asked had every check."""
     if q['status'] == 'asked':
         return ''

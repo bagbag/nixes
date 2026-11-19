@@ -8981,8 +8981,8 @@ def validate_console_contract(root: Path) -> None:
                          "and update the console's parser and tests")
 
 
-def lens_problems(engine: dict, step_back_md: str, ground_md: str, words_ts: str) -> list[str]:
-    """The engine's lens lists against the numbered step-back protocol, ground bullets, and console lists."""
+def lens_problems(engine: dict, step_back_md: str, ground_md: str) -> list[str]:
+    """The engine's lens lists against their owning skills."""
     def ground_bullets(markdown: str) -> list[str]:
         return re.findall(r"^\s*- \*\*([\w-]+):\*\*", markdown, re.M)
 
@@ -8991,15 +8991,10 @@ def lens_problems(engine: dict, step_back_md: str, ground_md: str, words_ts: str
         return [name.casefold().replace(" ", "-") for _, name in entries
                 if name.casefold().replace(" ", "-") in engine["step-back"]]
 
-    def listed(name: str) -> list[str]:
-        block = words_ts.split(f"export const {name}: readonly Lens[] = [", 1)[1].split("\n]", 1)[0]
-        return re.findall(r"name: '([\w-]+)'", block)
-
     expected = {"step-back": list(engine["step-back"]), "ground": list(engine["ground"])}
-    found = {"skill step-back": step_back_lenses(step_back_md), "skill ground": ground_bullets(ground_md),
-             "words.ts step-back": listed("WHERE") + listed("WHAT"), "words.ts ground": listed("GROUND")}
-    problems = [f"{where}: {names} differs from the engine's {expected[where.split(' ', 1)[1]]}" for where, names in found.items()
-                if names != expected[where.split(" ", 1)[1]]]
+    found = {"step-back": step_back_lenses(step_back_md), "ground": ground_bullets(ground_md)}
+    problems = [f"skill {name}: {names} differs from the engine's {expected[name]}" for name, names in found.items()
+                if names != expected[name]]
     numbered = [(int(number), name.casefold().replace(" ", "-"))
                 for number, name in re.findall(r"^(\d+)\. \*\*([\w -]+)\.\*\*", step_back_md, re.M)
                 if name.casefold().replace(" ", "-") in engine["step-back"]]
@@ -9099,12 +9094,12 @@ def engine_text(root: Path) -> str:
 
 
 def validate_lens_names(root: Path) -> None:
-    """The engine's ALL_LENSES, skills/step-back and skills/ground (the owners) and the console's words.ts list the same lenses."""
+    """The engine's ALL_LENSES follows the managing skills; the console offers whole passes."""
     engine = load_engine(root / "bin").base
     step_back = (root / "skills" / "step-back" / "SKILL.md").read_text(encoding="utf-8")
     ground = (root / "skills" / "ground" / "SKILL.md").read_text(encoding="utf-8")
     words = (root / "claude" / "mods" / "console" / "hooks" / "words.ts").read_text(encoding="utf-8")
-    problems = lens_problems(engine.ALL_LENSES, step_back, ground, words)
+    problems = lens_problems(engine.ALL_LENSES, step_back, ground)
     problems += check_sets_problems(engine, words)
     if problems:
         raise ValueError("lens names drifted: " + "; ".join(problems))
@@ -9348,7 +9343,7 @@ def validate_protocol(root: Path, part: str) -> None:
                 "recommendation": "Keep", "strength": "lean", "leanBecause": {"cause": "preference", "detail": "taste", "flipsIf": "a different taste"}, **extra}
 
         def converge(**kwargs):
-            """Every pending pass without changes (the path pass, a Base cycle, the refine pair, the lean pass, challenge-rulings) before the batch."""
+            """Every pending check pass without changes before the batch."""
             out = ""
             for _ in range(12):
                 view = json.loads(proto("show", "--json", **kwargs).stdout)
@@ -9543,6 +9538,14 @@ def validate_protocol(root: Path, part: str) -> None:
             if challenge_pending != {"id": challenge_id, "command": "challenge-rulings", "args": f"{qid} and my rulings on them"} \
                     or challenge_after != challenge_before:
                 raise ValueError(f"a pending legacy challenge is left intact by step-back migration: {challenge_pending}")
+            proto("pass", "--origin", "plugin", stdin={"command": "challenge-rulings", "args": challenge_pending["args"], "pending": challenge_id},
+                  session=migration_session, cwd=migration_cwd)
+            proto("step", stdin={"pass": "challenge-rulings", "updates": [], "checked": {qid: "challenged the question"}},
+                  session=migration_session, cwd=migration_cwd)
+            after_challenge = shown(session=migration_session, cwd=migration_cwd)
+            if after_challenge["pending"] is not None or after_challenge["step"] != "ask" \
+                    or [item["question"] for item in (after_challenge["batch"] or {}).get("questions", [])] != ["Legacy pass?"]:
+                raise ValueError(f"reporting the legacy challenge advances the question to Ask: {after_challenge}")
             proto("abandon", session=migration_session, cwd=migration_cwd)
 
             # r22-q158: a view or count the board's health JSON lacks is named, not read as no items or a zero count.
@@ -12364,14 +12367,33 @@ def validate_protocol(root: Path, part: str) -> None:
                 raise ValueError(f"restart takes answered dependents along: {out}\n{after}")
             proto("abandon", **texts)
             # A legacy over-long question triggers one console-started focused step-back; a second failure is handed to the user.
-            def long_at_ask(qid_, session_state):
+            def invalid_at_ask(field, value):
+                for _ in range(2):
+                    proto("step", **texts, stdin={"pass": "step-back", "updates": [], "checked": ["q"]})
+                pending = shown(**texts)["pending"]
+                if not pending or pending["command"] != "challenge-rulings":
+                    raise ValueError(f"expected the last check before Ask: {pending}")
                 path = state / f"{texts['session']}.protocol" / "state.json"
                 data = json.loads(path.read_text(encoding="utf-8"))
-                data["round"]["questions"][0]["text"] = "z" * 250
+                data["round"]["questions"][0][field] = value
                 path.write_text(json.dumps(data), encoding="utf-8")
+                return proto("step", **texts, stdin={"pass": "challenge-rulings", "updates": [], "checked": ["q"]}).stdout
+
+            for field, value in (("title", "text " * 16), ("header", "text " * 4)):
+                texts_round("Fix?")
+                out = invalid_at_ask(field, value)
+                view = shown(**texts)
+                if "Ask the user to fix" not in out or view["pending"] is not None or view["batch"] is not None:
+                    raise ValueError(f"an overlong {field} does not queue a body shortening pass: {out}\n{view}")
+                proto("abandon", **texts)
 
             qid = texts_round("Fix?")
-            long_at_ask(qid, None)
+            out = invalid_at_ask("text", "z" * 250)
+            view = shown(**texts)
+            pending = view["pending"]
+            if "Ask the user to shorten" in out or view["batch"] is not None or not pending \
+                    or pending["command"] != "step-back" or pending["args"] != f"on {qid}":
+                raise ValueError(f"the first overlong body queues one focused step-back: {out}\n{view}")
             out = converge(**texts)
             if "Not asked yet" not in out or "over the limit of 240" not in out or "Ask the user to shorten" not in out \
                     or shown(**texts)["pending"] is not None or shown(**texts)["batch"] is not None:

@@ -36,10 +36,9 @@ findings or stops.
      one-way-door decisions as questions blocking their dependents, merged
      only under
      [Question format](../../shared/question-format.md#question-format); no
-     implementation. Before raising the questions and again before handing
-     over, run the full step-back protocol on the design, then confirm it with
-     console-started confirming step-back pass in a fresh turn. Repeat from
-     confirmation while a pass changes anything. A CR with `checkpoint` set holds only its design:
+     implementation. Invoke the self-converging step-back skill once on the
+     design before raising questions and once before handover. A CR with
+     `checkpoint` set holds only its design:
      implementation items arrive after the checkpoint passes.
    - Implementation items: tests alongside the change; changelog and doc
      duties are in the item's acceptance.

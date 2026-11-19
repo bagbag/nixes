@@ -45,7 +45,7 @@ source; push back and recommend the established practice.
 8. **Bloat.** Find over-engineering and unnecessary magic.
    Output: the bloat finding or `nothing: checked <what>`.
 9. **Gaps.** Find what the next run or a realistic consumer still needs.
-    Record a later need as a deferred follow-up.
+   Record a later need as a deferred follow-up.
    Output: the gaps finding or `nothing: checked <what>`.
 10. **Clean.** Apply each of the six cleanliness tests one by one.
     Output: one finding or `nothing: checked <what>` for each test.

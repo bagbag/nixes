@@ -15,18 +15,14 @@ approval. Give each step's output compactly.
    Output: the round's decisions; the instance list where one was flagged.
 2. **Check.** In a round run through `protocol` (decide protocol Round), the
    engine sequences passes: follow its output and report each pass's changes.
-   Otherwise invoke the full step-back protocol on the whole set, then have
-   the console start one confirming step-back pass in a fresh turn. If that
-   pass changes anything, repeat from confirmation until it changes nothing;
-   then invoke challenge-rulings. If challenge-rulings changes anything, the
-   engine queues a confirming step-back. Invoke skills through the runtime's mechanism
-   (Claude's Skill tool; in Codex, read its `SKILL.md`). A changed premise,
-   ruling, option or question set counts as a change. A pass that would revise a user's ruling
-   raises it as a question under decision-protocol Changed premises.
+   Outside a round, invoke the self-converging step-back skill once on the
+   whole set, then invoke challenge-rulings. If the challenge changes a premise,
+   ruling, option or question set, run this check again on the changed set.
+   Invoke skills through the runtime's mechanism (Claude's Skill tool; in Codex,
+   read its `SKILL.md`). Raise a proposed revision to a user's ruling as a
+   question under decision-protocol Changed premises.
    Derive process questions from the root fix; step up an abstraction level
    when all options feel wrong.
-   Let step-back report its finding or `nothing: checked <what>` for every
-   lens; its final line says what changed in that run.
    Output: each invocation and what it changed; what stays unsure, as
    questions.
 3. **Walk through.** Outside a round (retro, role, Accept): in chat, readable

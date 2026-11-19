@@ -54,7 +54,7 @@ with their state, and a stopped release its reason and next round), Controls
 full protocol, optionally with a focus, and Ground runs the full ground pass;
 Decide (Question Me, Intake running
 `/round-intake`, which asks for your list, Continue while a round is open, doing what `/console-continue` does (but an idle press hands a batch to the model to open)
-    and in the `suggestion` color while the session is idle and nothing has queued or started the pending pass, Challenge Rulings, Explain); Actions,
+and in the `suggestion` color while the session is idle and nothing has queued or started the pending pass, Challenge Rulings, Explain); Actions,
 whose Release Round and Compact take the `suggestion` color exactly when the
 proposals offer them, and which hold the role button: Autopilot while solo, Solo while
 autopilot, each running the `/role` command (the host refuses a prompt text starting with `/`);
