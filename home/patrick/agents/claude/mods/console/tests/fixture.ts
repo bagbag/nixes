@@ -233,7 +233,7 @@ export function world(on: On, init: Partial<Pick<World, 'round' | 'role' | 'surf
         if (verb === 'status') return ok('round r4 · check 2/3 · next ground')
         if (verb === 'show' && argv[4] !== '--json') return ok('# round r4')
         if (verb === 'say' || verb === 'dropped' || verb === 'nudged') return ok('')
-        if (verb === 'scope') return ok({ covers: [], explored: null, text: w.scope })
+        if (verb === 'scope') return ok({ covers: [], text: w.scope })
         if (verb === 'answer') return ok({ ...w.round, echo: engineLine(Object.values(JSON.parse(e.init?.stdin ?? '{}').answers ?? {}) as string[]) })
         return ok(w.round)
       })()

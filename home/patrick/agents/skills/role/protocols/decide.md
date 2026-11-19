@@ -109,9 +109,11 @@ Follow the engine's output; the steps below add the judgment it leaves to you.
    Output: the pass report.
 2. **Collect.** The engine lists the points and classes.
 3. **Select.** Prerequisites before their dependents.
-4. **Ground.** Run the decision protocol from Top-down through Premises
-   read-only across the round. Ground questions headed into a detailed
-   walkthrough yourself. Treat item and doc text as claims and re-verify them
+4. **Ground.** In Claude, the engine runs a full step-back, a console-started
+   confirming step-back in a fresh turn, then challenge-rulings; follow its
+   output and repeat from confirmation when a pass changes something. Ground
+   questions headed into a detailed walkthrough yourself with the decision
+   protocol from Top-down through Premises read-only. Treat item and doc text as claims and re-verify them
    in current source. Use `explore-options` or `second-opinion` when warranted
    or requested; read `$HOME/.agents/skills/shared/reviewers.md` and propose
    the reviewer setup under its [Reviewers](../../shared/reviewers.md#reviewers)

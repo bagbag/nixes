@@ -252,9 +252,10 @@ def cli(argv: list[str]) -> int:
     try:
         session, entry = resolve_session(args.session)
         store = Store(session)
-        write = args.command not in ('show', 'pending', 'status', 'scope')  # `next` saves the board's release count
+        write = args.command not in ('show', 'pending', 'status')  # `scope` persists its one-time told mark; `next` saves the board's release count
         with store.locked(write):
             state = store.load()
+            scope_snapshot = copy.deepcopy(state) if args.command == 'scope' else None
             open_round = state.get('round') if (state.get('round') or {}).get('step') not in (None, 'closed') else None
             if open_round:
                 repo = open_round.get('repo')  # the round keeps the board it started on, or none (--no-board)
@@ -270,8 +271,18 @@ def cli(argv: list[str]) -> int:
             require_origin(ctx, args.command, args.origin)
             output = run(ctx, args)
             if write:
-                store.save(state)
-                store.flush()
+                save = True
+                if scope_snapshot is not None:
+                    told = state.get('told')
+                    state = scope_snapshot
+                    save = told != state.get('told')
+                    if told is None:
+                        state.pop('told', None)
+                    else:
+                        state['told'] = told
+                if save:
+                    store.save(state)
+                    store.flush()
         _call.get().stdout.append(output + '\n')
         return 0
     except ProtocolError as error:
@@ -341,7 +352,12 @@ def run(ctx: Context, args) -> str:
         nudge_report(ctx, report)
         return ''
     if command == 'scope':  # no round open: nothing to name
-        return json.dumps(start_scope(ctx, report), ensure_ascii=False)
+        if ctx.round and ctx.round.get('protocol') == 'release':
+            from .release_checks import start_scope as release_start_scope
+            result = release_start_scope(ctx, report)
+        else:
+            result = start_scope(ctx, report)
+        return json.dumps(result, ensure_ascii=False)
     r = ctx.round
     if not r or r['step'] == 'closed':
         fail('no open round: protocol start round')

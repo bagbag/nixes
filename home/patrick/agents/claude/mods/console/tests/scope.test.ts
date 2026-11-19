@@ -25,8 +25,8 @@ describe('a pass that starts names its scope (r9-q36)', () => {
     expect(scopeCalls(w)).toEqual([{ flags: ['--origin', 'plugin'], input: { command: 'ground' } }])
   })
 
-  test('an options pass names the questions it covers', async ($, on) => {
-    const { w, clock } = world(on, { round: pending('p7', 'options', 'step-back') })
+  test('a focused step-back pass names the questions it covers', async ($, on) => {
+    const { w, clock } = world(on, { round: pending('p7', 'on q2 q3', 'step-back') })
     w.scope = LINE
     await start($)
     await $.turn.complete(complete())

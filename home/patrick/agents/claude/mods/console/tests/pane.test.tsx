@@ -1036,8 +1036,8 @@ describe('long lists', () => {
     expect(drawn.filter(line => line.includes('◂ next'))).toHaveLength(1)
   })
 
-  test('a refine pass with lens arguments is marked next like any pending pass', async ($, on) => {
-    const { clock } = world(on, { round: roundJson({ pending: { id: 'p8', command: 'step-back', args: 'decisions clean overfit mechanics' } }) })
+  test('a focused step-back pass is marked next like any pending pass', async ($, on) => {
+    const { clock } = world(on, { round: roundJson({ pending: { id: 'p8', command: 'step-back', args: 'on q3' } }) })
     await ready($, clock)
     const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
     expect((await texts(ui)).split('\n').filter(line => line.includes('◂ next'))).toHaveLength(1)

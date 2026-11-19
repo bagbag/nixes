@@ -156,9 +156,11 @@ def refused_formats(ctx: Context, step: Step, report: dict, before: dict) -> str
     ctx.state, ctx.formats = before, {}
     with contextlib.suppress(Exception):
         step.text(ctx)
-    if report.get('pass') in PASSES:
-        ctx.formats.setdefault('pass', words.pass_format(report['pass']))
-    if report.get('pass') == 'challenge-rulings':
+    reported = report.get('pass')
+    expected = reported if reported in PASSES else ((ctx.round.get('pending') or {}).get('command') if ctx.round else None)
+    if expected in PASSES:
+        ctx.formats.setdefault('pass', words.pass_format(expected))
+    if expected == 'challenge-rulings':
         ctx.formats.setdefault('challenge', words.challenge_format())
     new = [text for kind, text in ctx.formats.items() if f'format:{kind}' not in told]
     return '\n'.join([*new, *([words.FORMAT_AGAIN] if len(new) < len(ctx.formats) else [])])
@@ -236,11 +238,20 @@ def start_scope(ctx: Context, report: dict) -> dict:
     schema.require(schema.Scope, report)
     command, stamp = report['command'], report.get('pending')
     r = ctx.round
-    if not r or r['step'] not in SCOPE_STEPS or r['protocol'] != 'round':
+    if not r or r['protocol'] != 'round':
+        return {'covers': [], 'text': ''}
+    if r['step'] == 'prepass' and command == 'step-back' and r.get('pending'):
+        from .prepass import prepass_scope
+        text = prepass_scope(ctx)
+        return {'covers': [], 'text': text}
+    if r['step'] not in SCOPE_STEPS:
         return {'covers': [], 'text': ''}
     settled = stamp_settles(ctx, command, stamp) if 'pending' in report else None
     ids, strong = scope_ids(ctx, command, settled)
     text = words.start_scope(ids, strong, command, pass_kind(ctx, command, settled)[0] == 'after answers') if ids else ''
+    if text:
+        text = '\n'.join(part for part in (text, report_format(ctx, 'pass', words.pass_format(command)),
+                                            challenge_report_format(ctx) if command == 'challenge-rulings' else '') if part)
     return {'covers': ids, 'text': text}
 
 

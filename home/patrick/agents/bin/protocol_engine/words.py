@@ -82,7 +82,7 @@ def think_more_goal(head: str, ids: list[str], goals: list[str] | None = None) -
 
 
 CAP_HEADER = 'Check cap'
-CAP_DESCRIPTIONS = {'Continue': f'{CHECK_CAP} more step-back and ground cycles', 'Ask now': 'Ask the current questions as they stand',
+CAP_DESCRIPTIONS = {'Continue': f'{CHECK_CAP} more step-back and confirmation cycles', 'Ask now': 'Ask the current questions as they stand',
                     'Pause': 'Stop the loop; protocol resume continues it'}  # by CAP_CHOICES label
 
 
@@ -111,6 +111,7 @@ def pass_format(command: str) -> str:
         "user's ruling as a new question. "
         f'{WAITS_FOR} Name a hold you set for your own spike or review in `summary`. {MERGE_TEST} A merge is one rule question (`settles`: the keys it settles); split an item out when the rule\'s application to it is open. '
         f'A question that widens the round\'s scope: list the open items with `{LIST_COMMAND}`.',
+        *(['For each rejected alternative in a step-back, report its distinct idea and the sourced constraint or evidence in that question\'s `dropped`: [{"idea": "...", "why": "..."}].'] if command == 'step-back' else []),
         f'Key `checked` by question: for each id the step names as this pass\'s scope, what you examined in it this run, one line of about {CHECKED_MAX} characters (an update '
         'to it covers it too); `round` holds a round-wide note, the only entry an empty scope needs.',
         'Report with `protocol step` (stdin JSON), e.g. ' + json_block({
@@ -171,8 +172,8 @@ PREPASS_EXAMPLE = {'pass': 'step-back', 'summary': '<one line: what the pre-pass
 
 def prepass_instructions(round_id: str, subject: str | None, codex: bool, args: str, rows: list[str], items_listed: bool) -> str:
     return lines(
-        f"Round {round_id} · Pre-pass (decide.md Round 1): a step-back over the whole point set. "
-        + (f'Run the step-back skill now with the argument `{args}` (read its SKILL.md), then report the pass.' if codex else HAND_OVER),
+        f"Round {round_id} · Pre-pass: " + (f"a step-back over the whole point set. Run the step-back skill now with the argument `{args}` (read its SKILL.md), then report the pass."
+                                             if codex else 'the console starts the pending pass.'),
         '- Judge the direction, the points that are off or rest on an unclear premise (asked first), and the cut under question-format.md.',
         *([f"- Subject: {subject}. Assess it per decide.md Round 1: report its verdict and findings (findings are points)."] if subject else []),
         '- The point set:' if rows else '- The point set: the open items below; a finding or a missing point is a new one.'
@@ -180,6 +181,17 @@ def prepass_instructions(round_id: str, subject: str | None, codex: bool, args: 
         *rows,
         '- `points` entries: no `id` adds a point; a pasted point\'s `id` rewords it (`text`) or drops it (`drop`, `reason`); a split '
         'rewords one part and adds the others; `first` asks a point or open item first.')
+
+
+def prepass_started(round_id: str, subject: str | None, args: str, rows: list[str], items_listed: bool) -> str:
+    return lines(
+        f"Round {round_id} · Pre-pass (decide.md Round 1): run the full step-back protocol over the whole point set with `{args}`.",
+        '- Judge the direction, the points that are off or rest on an unclear premise (asked first), and the cut under question-format.md.',
+        *([f"- Subject: {subject}. Assess it per decide.md Round 1: report its verdict and findings (findings are points)."] if subject else []),
+        '- The point set:' if rows else '- The point set: the open items below; a finding or a missing point is a new one.'
+        if items_listed else '- The point set is empty: a finding or a missing point is a new one.',
+        *rows,
+        '- `points` entries: no `id` adds a point; a pasted point\'s `id` rewords it (`text`) or drops it (`drop`, `reason`); a split rewords one part and adds the others; `first` asks a point or open item first.')
 
 
 # Collect and Select (collect.py).
@@ -373,9 +385,12 @@ def replaced_text(closes: list[str], revised: str | None, named) -> str:
     return f"It replaces {', '.join(replaced)} at release." if replaced else ''
 
 
-def not_asked(broken: dict[str, str]) -> str:
-    return 'Not asked yet: ' + '; '.join(broken.values()) + f". Fix {', '.join(broken)} in a pass of its " \
-           'own: call the ground skill on it (that Skill call counts as the observed run), then report the pass.'
+def not_asked(broken: dict[str, str], overlong: list[str] | None = None) -> str:
+    still_long = [qid for qid in (overlong or []) if qid in broken]
+    if still_long:
+        return ('Not asked yet: ' + '; '.join(broken[qid] for qid in still_long) + f". The console-started step-back did not shorten "
+                f"{', '.join(still_long)} enough. Ask the user to shorten the question before continuing.")
+    return 'Not asked yet: ' + '; '.join(broken.values()) + f". Ask the user to fix {', '.join(broken)} before continuing."
 
 
 EDIT_STDIN = '{"updates": [...], "quote": "<the user\'s exact words>"}'
@@ -1189,9 +1204,7 @@ def own_rulings_example(first: str) -> dict:
 def scoped_text(round_id: str, command: str, args: str, codex: bool) -> str:
     lead = (f"Release {round_id} · Scoped {command} pass (decide.md Release 1) on the revised records {args}: the "
             'corrected record text, each against its sources and the rest of the set. ')
-    how = (f'Run the {command} skill now with the argument `{args}` (read its SKILL.md), then report the pass. '
-           if codex else
-           f'{HAND_OVER} ')
+    how = f'Run the {command} skill now with the argument `{args}` (read its SKILL.md), then report the pass. ' if codex else ''
     return lead + how + 'Report each revised record as "unchanged" or a change as in the re-check (a change of your own ' \
                         "parts rewrites it again; a change to the user's decision drops it; a spread stops the run):"
 

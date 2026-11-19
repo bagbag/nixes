@@ -391,7 +391,7 @@ def answer(ctx: Context, report: dict, origin: str) -> str:
     if reading:
         notes.append(words.answer_reading(typed))
     if rethink:
-        restart(ctx, rethink, THINK_MORE)
+        restart(ctx, rethink, THINK_MORE, internal_think_more=True)
         if reading:
             ctx.round['reading'] = True  # set after the restart, which counts as the model's reading
         return ' '.join([*notes, words.answer_rethink(rethink)])
@@ -404,14 +404,14 @@ def answer(ctx: Context, report: dict, origin: str) -> str:
 RESTART_STEPS = ('related', 'check', 'ask', 'record')  # the steps after Stage, while the round is open
 
 
-def restart(ctx: Context, ids: list[str], quote: str) -> None:
+def restart(ctx: Context, ids: list[str], quote: str, *, internal_think_more: bool = False) -> None:
     r = ctx.round
     if r and r['protocol'] == 'release' and r['step'] != 'closed':
         fail('restart is a round verb: in a release, a criterion holds the set (answer Hold, or `protocol abandon`) '
              'and the next round restarts it')
     if not r or r['step'] not in RESTART_STEPS:
         fail('restart needs an open round past Stage')
-    if quote != THINK_MORE:
+    if not internal_think_more:
         quote_check(ctx, 'restart', quote)
     targets = [by_id(ctx, qid) for qid in ids]
     # Answers resting on a restarted premise go with it, through chains (r23-q92): their options assumed the old answer.
@@ -420,7 +420,7 @@ def restart(ctx: Context, ids: list[str], quote: str) -> None:
         targets += [other for other in r['questions'] if other['status'] == 'deferred' and (other.get('deferral') or {}).get('with') == q['id']
                     and other not in targets]  # a deferral withdrawn takes the questions deferred with it
     for q in targets:
-        if quote != THINK_MORE:
+        if not internal_think_more:
             q['thinkMore'] = {'quote': quote}
         for other in r['questions']:
             if q['id'] in other.get('waitsOn', []) and other not in targets and other['answer'] is not None:

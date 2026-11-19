@@ -26,14 +26,29 @@ def prepass_enter(ctx: Context) -> str | None:
 
 def prepass_text(ctx: Context) -> str:
     r = ctx.round
+    rows = [words.collect_point(p) for p in r['points']]
+    if not ctx.codex:
+        return lines(f"Round {r['id']} · Pre-pass: the console starts the pending step-back.",
+                     '- The point set:' if rows else '- The point set: a finding or a missing point is new.',
+                     *rows)
     pending = r['pending'] or {}
     listing = items_text(ctx, r['items'], r.get('heldElsewhere') or {}, r.get('waiting') or [], r.get('named') or [],
                          bare=not r.get('named'), whole=bool(r.get('topic')))
     return lines(
-        words.prepass_instructions(r['id'], r.get('subject'), ctx.codex, pending.get('args') or '', [words.collect_point(p) for p in r['points']], bool(listing)),
+        words.prepass_instructions(r['id'], r.get('subject'), ctx.codex, pending.get('args') or '', rows, bool(listing)),
         listing,
         report_hint(ctx, 'prepass', words.PREPASS_EXAMPLE),
     )
+
+
+def prepass_scope(ctx: Context) -> str:
+    r = ctx.round
+    pending = r.get('pending') or {}
+    listing = items_text(ctx, r['items'], r.get('heldElsewhere') or {}, r.get('waiting') or [], r.get('named') or [],
+                         bare=not r.get('named'), whole=bool(r.get('topic')))
+    return lines(words.prepass_started(r['id'], r.get('subject'), pending.get('args') or '',
+                                       [words.collect_point(p) for p in r['points']], bool(listing)),
+                 listing, report_hint(ctx, 'prepass', words.PREPASS_EXAMPLE))
 
 
 def prepass_accept(ctx: Context, report: dict) -> str:

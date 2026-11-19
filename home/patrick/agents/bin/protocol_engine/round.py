@@ -66,9 +66,9 @@ def check_text(ctx: Context) -> str:
         *rows,
         *same_options_lines(ctx),
         pass_text(ctx, command),
-        scope_text(ctx, command),
-        pass_report_format(ctx, command),
-        challenge_report_format(ctx) if command == 'challenge-rulings' else '',
+        scope_text(ctx, command) if ctx.codex else '',
+        pass_report_format(ctx, command) if ctx.codex else '',
+        challenge_report_format(ctx) if ctx.codex and command == 'challenge-rulings' else '',
     )
 
 

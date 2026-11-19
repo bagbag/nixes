@@ -174,7 +174,8 @@ integration needs specialist judgment; leads can write pattern-determined plans
 and continuation deltas directly.
 
 The [review protocol](skills/role/protocols/review.md) owns review gates and
-acceptance evidence. The [decision protocol](skills/shared/decision-protocol.md)
+acceptance evidence; `review` and `deep-review` use the numbered shared method,
+which invokes `step-back` across the whole artifact. The [decision protocol](skills/shared/decision-protocol.md)
 owns default decision authority, end-state criteria and concern classes; agent
 definitions read it at runtime. Shared files:
 [reviewers](skills/shared/reviewers.md) (selection, briefing, independence,

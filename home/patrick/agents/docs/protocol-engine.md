@@ -170,7 +170,7 @@ A round:
   of this session's retired points with the own rulings as `sure` without a report. A removal without `ruling`
   that leaves a key uncovered stays refused. A merge or split is such an update set (set `settles`, add the rule
   question, `remove` the instance questions, or the reverse); only unanswered
-  questions change. A merge counts as a change for the Base loop. Settled board
+  questions change. A merge counts as a change for the check loop. Settled board
   items stay claimed by the round through Record into the release (a deferred
   or removed rule question releases them as any other claim). Record writes one
   record per rule (its own `board`, else a new decision item) and refuses one
@@ -208,8 +208,8 @@ A round:
 - Check runs one complete `step-back` over the ready questions, then a fresh
   confirming `step-back` on the same questions, then `challenge-rulings` before
   a batch. The step-back skill checks all 11 lenses deeply by default and owns
-  convergence; it records checked premises and dropped options in its run log,
-  not in protocol fields. If either step-back changes a question, Related
+  convergence; it reports checked premises in its scratch run log and carries
+  dropped options on the question as `dropped` updates. If either step-back changes a question, Related
   searches new drafts first, then a fresh confirming step-back follows. A
   confirming pass that changes a question restarts at the full pass; unchanged
   confirmation proceeds to challenge-rulings. A challenge that changes
@@ -246,9 +246,8 @@ A round:
   `round` note is the only entry an empty scope needs. The step names the scope;
   the engine refuses a gap, naming the missing ids. The scope can change between the
   step and the pass, so the console names it again as a pass starts (r9-q36): `scope`
-  (origin `plugin`, changes nothing; stdin `{"command", "pending"?}`, `pending` the stamp
-  of a run not recorded yet, else the recorded run's) prints `{"covers", "text"}` as the report check will work it out, and `text` the line, empty when there is nothing to name
-  or no pass report is taken (no round open, or a step other than check and ask). A pass covers
+  (origin `plugin`; stdin `{"command", "pending"?}`, `pending` the stamp
+  of a run not recorded yet, else the recorded run's) prints `{"covers", "text"}`. For Claude it persists which report formats the console showed; `text` carries the scope and the first-time pass/report instructions. It handles the pre-pass, check passes and release scoped passes; it is empty when no pass report is taken. A pass covers
   the open questions in its current full or focused scope; confirmation covers
   the same scope as the preceding step-back. The challenge after the answers covers the answered set and my rulings on it,
   the raised one its ids. An unchanged question resting on a changed one is
@@ -263,16 +262,16 @@ A round:
   the skill to run (its full text, every pass). A step's report format goes
   out once per step kind between compactions. A refused `step` reprints only the
   formats its step offers that the session was not told since its last compaction
-  (`state['told']`, `format:<kind>`), and adds one line, "The report format:
+  (`state['told']`, `format:<kind>`; a console `scope` persists these marks), and adds one line, "The report format:
   `protocol show` prints it again.", when it left one out; a refused `edit` or chat
   `answer` always repeats its own format. The dialog JSON always prints. In Claude sessions a
   pass report is accepted only after an observed console run of that pass since its
   last report; invoking a model Skill alone does not mark a run. A report
   applies whole: a refused one, at any step, changes nothing, lists every error
-  and leaves the run open for the resend. A question too long or
-  invalid to ask (only one from before the limits can be) gets a plain message
-  naming its error: the console starts a pending step-back and the model reports
-  the shorter question; no pass runs automatically. `protocol edit` (stdin `{"updates", "quote"}`) applies a change the
+  and leaves the run open for the resend. A legacy question over the text limit gets
+  one engine-queued focused step-back sequence, started by the console; if it
+  remains too long after that sequence, the model asks the user to shorten it.
+  Other invalid questions are reported for a user-directed fix. `protocol edit` (stdin `{"updates", "quote"}`) applies a change the
   user asked for: the quote must appear in a message the console relayed in this
   round, one sent before the questions went out too (Codex: verbatim), the updates validate as in
   a pass report, a batch that is out comes back and goes out again with no pass

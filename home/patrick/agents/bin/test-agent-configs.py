@@ -8512,6 +8512,10 @@ def validate_prepass(root: Path) -> None:
         def view(cwd=tmp):
             return json.loads(call("show", "--json", cwd=cwd))
 
+        def scope_text(cwd=tmp):
+            pending = view(cwd)["pending"]
+            return json.loads(call("scope", "--origin", "plugin", stdin={"command": pending["command"], "pending": pending["id"]}, cwd=cwd))["text"]
+
         def report(body, cwd=tmp, ok=True, observe=True):
             waiting = view(cwd)["pending"]
             if observe:  # the console's run carries the pending pass's id
@@ -8529,9 +8533,12 @@ def validate_prepass(root: Path) -> None:
         if (shown["step"], shown["subject"]) != ("prepass", "Cache design") or shown["pending"]["command"] != "step-back" \
                 or not shown["pending"]["args"].startswith("goal decisions; pre-pass on Cache design"):
             raise ValueError(f"the round must open at the pre-pass on its subject: {shown}")
-        for needle in ("Pre-pass", "Subject: Cache design", "Assess it per decide.md Round 1", "verdict", "pt1 [pasted]: Which cache?"):
-            if needle not in out:
-                raise ValueError(f"the pre-pass text lacks {needle!r}:\n{out}")
+        if "Pre-pass" not in out or "console starts the pending step-back" not in out:
+            raise ValueError(f"the Claude pre-pass hand-over stays short:\n{out}")
+        scope = json.loads(call("scope", "--origin", "plugin", stdin={"command": "step-back", "pending": shown["pending"]["id"]}))
+        for needle in ("Pre-pass", "Subject: Cache design", "Assess it per decide.md Round 1", "verdict", "pt1 [pasted]: Which cache?", "Report with `protocol step`"):
+            if needle not in scope["text"]:
+                raise ValueError(f"the started pre-pass lacks {needle!r}:\n{scope}")
         refused("round prepass takes no `classes`", "step", stdin={"classes": {"pt1": "user"}})
         refused("`pass` must be step-back: the pre-pass is waiting", "step", stdin={"pass": "options", "summary": "x"})
         refused("restart needs an open round past Stage", "restart", "pt1", "--quote", "rethink")  # not "unknown question"
@@ -8560,10 +8567,12 @@ def validate_prepass(root: Path) -> None:
         call("abandon")
 
         # No subject: no verdict; a pasted point only can be reworded, a split is a reword plus additions.
-        pasted = re.search(r"(pt\d+) \[pasted\]", call("start", "round", "--no-board", stdin={"points": ["A and B?"]}))[1]
+        call("start", "round", "--no-board", stdin={"points": ["A and B?"]})
         if view()["subject"] is not None or not view()["pending"]["args"].endswith("pre-pass over the round's points"):
             raise ValueError(f"a round without a subject: {view()}")
         waiting = view()["pending"]
+        scope = json.loads(call("scope", "--origin", "plugin", stdin={"command": "step-back", "pending": waiting["id"]}))
+        pasted = re.search(r"(pt\d+) \[pasted\]", scope["text"])[1]
         call("pass", "--origin", "plugin", stdin={"command": "step-back", "args": waiting["args"], "pending": waiting["id"]})
         refused("belongs to a round with a --subject", "step", stdin={"pass": "step-back", "summary": "x", "verdict": "ok"})
         out = call("step", stdin={"pass": "step-back", "summary": "Split.", "points": [{"id": pasted, "text": "A?"}, {"text": "B?"}]})
@@ -8596,27 +8605,31 @@ def validate_prepass(root: Path) -> None:
         config.write_text(json.dumps({"log": str(tmp / "calls.jsonl"), "health": {"counts": {}, "items": {"questions": [
             {"id": f"fx-{n}", "status": "open", "type": "decision", "title": f"Item {n}?", "priority": 1, "blockedBy": []} for n in (1, 2)]}}, "items": {}}))
         out = call("start", "round", cwd=repo)
-        if "- fx-1: Item 1?" not in out or "- fx-2: Item 2?" not in out or view(repo)["step"] != "prepass":
-            raise ValueError(f"the pre-pass lists the open board items:\n{out}")
+        scoped = scope_text(repo)
+        if "- fx-1: Item 1?" not in scoped or "- fx-2: Item 2?" not in scoped or view(repo)["step"] != "prepass":
+            raise ValueError(f"the started pre-pass lists the open board items:\n{out}\n{scoped}")
         waiting = view(repo)["pending"]
         call("pass", "--origin", "plugin", stdin={"command": "step-back", "args": waiting["args"], "pending": waiting["id"]}, cwd=repo)
         out = call("step", stdin={"pass": "step-back", "summary": "Looked."}, cwd=repo)
         if "Open items" in out and "(listed earlier)" not in out or "- fx-1: Item 1?" in out or "(listed earlier)" not in out:
-            raise ValueError(f"Collect classifies the items the pre-pass printed without listing them again:\n{out}")
+            raise ValueError(f"Collect classifies the items the started pre-pass printed without listing them again:\n{out}")
         call("abandon", cwd=repo)
         # Told once per compaction: a later pre-pass names the counts, and a named round shows only its ids.
         out = call("start", "round", "fx-2", cwd=repo)
-        if "- fx-1: Item 1?" in out or "- fx-2: Item 2?" not in out or "(listed earlier)" not in out:
-            raise ValueError(f"the pre-pass lists by the once-per-compaction rule and the named scope:\n{out}")
+        scoped = scope_text(repo)
+        if "- fx-1: Item 1?" in scoped or "- fx-2: Item 2?" not in scoped or "(listed earlier)" not in scoped:
+            raise ValueError(f"the started pre-pass lists by the once-per-compaction rule and the named scope:\n{out}\n{scoped}")
         call("abandon", cwd=repo)
         call("compacted", cwd=repo)
         out = call("start", "round", "fx-2", cwd=repo)
-        if "Open items (2):" not in out or "Named for this round: fx-2." not in out:
-            raise ValueError(f"after a compaction the pre-pass lists the open items whole again:\n{out}")
+        scoped = scope_text(repo)
+        if "Open items (2):" not in scoped or "Named for this round: fx-2." not in scoped:
+            raise ValueError(f"after a compaction the started pre-pass lists the open items whole again:\n{out}\n{scoped}")
         call("abandon", cwd=repo)
         out = call("start", "round", "--topic", "Items: decide them", cwd=repo)  # told already, yet a topic round lists whole
-        if "Open items (2):" not in out:
-            raise ValueError(f"a topic round's pre-pass lists the open items whole every time:\n{out}")
+        scoped = scope_text(repo)
+        if "Open items (2):" not in scoped:
+            raise ValueError(f"a topic round's started pre-pass lists the open items whole every time:\n{out}\n{scoped}")
         call("abandon", cwd=repo)
         call("start", "round", cwd=repo)
         waiting = view(repo)["pending"]
@@ -9481,6 +9494,9 @@ def validate_protocol(root: Path, part: str) -> None:
                 document["round"]["pending"] = {"id": legacy_id, "command": "ground", "args": "assumptions"}
             migration_state = migration_dir / "state.json"
             migration_document = json.loads(migration_state.read_text(encoding="utf-8"))
+            migration_document["round"]["questions"][0]["explored"] = [
+                {"idea": "unbounded cache", "verdict": "dropped", "why": "memory cap"},
+                {"idea": "keep the cache", "verdict": "kept", "why": "already an option"}]
             old_check(migration_document)
             migration_state.write_text(json.dumps(migration_document), encoding="utf-8")
             pending = json.loads(proto("pending", session=migration_session, cwd=migration_cwd).stdout)
@@ -9489,14 +9505,44 @@ def validate_protocol(root: Path, part: str) -> None:
             if pending != pending_again or pending["id"] == legacy_id or pending["command"] != "step-back" or pending["args"] != f"on {qid}" \
                     or scope["covers"] != [qid] or f"{qid}" not in scope["text"]:
                 raise ValueError(f"legacy pass reads must project one stable focused step-back: {pending} {scope}")
+            after_scope = json.loads(migration_state.read_text(encoding="utf-8"))
+            if after_scope["round"]["pending"]["id"] != legacy_id or "pathNow" not in after_scope["round"]["check"] \
+                    or "format:pass" not in after_scope.get("told", []):
+                raise ValueError(f"scope persists its told format without saving an unrelated legacy migration: {after_scope}")
             proto("pass", "--origin", "plugin", stdin={"command": "step-back", "args": f"on {qid}", "pending": pending["id"]}, session=migration_session, cwd=migration_cwd)
             proto("step", stdin={"pass": "step-back", "updates": [], "checked": {qid: "rechecked the question"}}, session=migration_session, cwd=migration_cwd)
             migrated = shown(session=migration_session, cwd=migration_cwd)
             saved = json.loads(migration_state.read_text(encoding="utf-8"))["round"]
             if migrated["pending"]["command"] != "challenge-rulings" \
                     or any(key in saved["check"] for key in ("pathNow", "optionsNow", "refineNow", "focusing")) \
-                    or "rescope" in saved:
+                    or "rescope" in saved \
+                    or saved["questions"][0].get("explored") is not None \
+                    or saved["questions"][0].get("dropped") != [{"idea": "unbounded cache", "why": "memory cap"}]:
                 raise ValueError(f"a reported legacy pass must settle into the clean step-back sequence: {migrated}; saved check={saved['check']}; rescope={'rescope' in saved}")
+            legacy_id = "legacy-without-rescope"
+            migration_document = json.loads(migration_state.read_text(encoding="utf-8"))
+            migration_document["round"]["check"].update(pathNow=True, optionsNow=False, refineNow=[],
+                                                         pathScoped=False, optionsScoped=False, refineScoped=False, focusing=False)
+            migration_document["round"].pop("rescope", None)
+            migration_document["round"]["pending"] = {"id": legacy_id, "command": "step-back", "args": "goal"}
+            migration_state.write_text(json.dumps(migration_document), encoding="utf-8")
+            pending = json.loads(proto("pending", session=migration_session, cwd=migration_cwd).stdout)
+            scope = json.loads(proto("scope", "--origin", "plugin", stdin={"command": "step-back", "pending": pending["id"]},
+                                     session=migration_session, cwd=migration_cwd).stdout)
+            if pending["id"] == legacy_id or pending != json.loads(proto("pending", session=migration_session, cwd=migration_cwd).stdout) \
+                    or scope["covers"] != [qid] or "Use this scope" not in scope["text"]:
+                raise ValueError(f"a legacy pass without a rescope migrates to one stable full step-back: {pending} {scope}")
+            challenge_document = json.loads(migration_state.read_text(encoding="utf-8"))
+            old_check(challenge_document)
+            challenge_id = "legacy-challenge-rulings"
+            challenge_document["round"]["pending"] = {"id": challenge_id, "command": "challenge-rulings", "args": f"{qid} and my rulings on them"}
+            migration_state.write_text(json.dumps(challenge_document), encoding="utf-8")
+            challenge_before = json.loads(migration_state.read_text(encoding="utf-8"))
+            challenge_pending = json.loads(proto("pending", session=migration_session, cwd=migration_cwd).stdout)
+            challenge_after = json.loads(migration_state.read_text(encoding="utf-8"))
+            if challenge_pending != {"id": challenge_id, "command": "challenge-rulings", "args": f"{qid} and my rulings on them"} \
+                    or challenge_after != challenge_before:
+                raise ValueError(f"a pending legacy challenge is left intact by step-back migration: {challenge_pending}")
             proto("abandon", session=migration_session, cwd=migration_cwd)
 
             # r22-q158: a view or count the board's health JSON lacks is named, not read as no items or a zero count.
@@ -9575,8 +9621,13 @@ def validate_protocol(root: Path, part: str) -> None:
                     or "step-back" in body.replace("report_hint", "").split("After the pass")[0] \
                     or "cycle" in out.split("After the pass")[0] or "next:" in out.splitlines()[0] or "Round r1 · Check." not in out:
                 raise ValueError(f"protocol Claude check output (hand-off names no pass and no cycle, r34-q165): {out}")
-            if "After the pass, report each change" not in out or '"pass": "step-back"' not in out:
-                raise ValueError(f"protocol: the first pass of a round carries the report format: {out}")
+            first_format = json.loads(proto("scope", "--origin", "plugin", stdin={"command": "step-back", "pending": first["pending"]["id"]}).stdout)["text"]
+            if "After the pass, report each change" not in first_format or '"pass": "step-back"' not in first_format \
+                    or "After the pass, report each change" in out:
+                raise ValueError(f"the pass format belongs to the console-started scope, once per kind: {out}\n{first_format}")
+            repeated_scope = json.loads(proto("scope", "--origin", "plugin", stdin={"command": "step-back", "pending": first["pending"]["id"]}).stdout)["text"]
+            if "After the pass, report each change" in repeated_scope or '"pass": "step-back"' in repeated_scope:
+                raise ValueError(f"a repeated scope omits its already-told report format: {repeated_scope}")
             # pass: origins enforced; the pending pass stays until its report, which then counts the observed origin.
             refused("pass", "--origin", "dialog", stdin={"command": "step-back"}, needle="origin 'dialog' is not accepted")
             refused("pass", "--origin", "model", stdin={"command": "step-back", "args": "", "pending": first["pending"]["id"]},
@@ -9642,6 +9693,7 @@ def validate_protocol(root: Path, part: str) -> None:
             refused("step", "--origin", "dialog", stdin={}, needle="not accepted")
             proto("show", "--json", "--origin", "model")  # the model's tool stamps model on every verb but answer (R-B11)
             refused("restart", "q1", "--quote", "rethink this", "--origin", "press", needle="not accepted")
+            refused("restart", "q1", "--quote", "Think more", needle="quote check failed", relay_quote=False)
             refused("answer", stdin=answers, needle="needs --origin")
             # No abbreviated flags, global or per verb: `--orig dialog` must not pass as a person origin.
             for spelled in (["answer", "--orig", "dialog"], ["answer", "--orig=dialog"], ["answer", "--sess", "0000-lead0001"],
@@ -9786,13 +9838,14 @@ def validate_protocol(root: Path, part: str) -> None:
                       position={"readyMilestones": [{"id": "fx-m", "status": "open", "type": "milestone", "title": "Beta",
                                                      "priority": 1, "blockedBy": []}], "finishedEpics": []})
             out = proto("start", "round", stdin={"points": ["Pasted point"]}, cwd=repo, prepass=False).stdout
+            scoped = json.loads(proto("scope", "--origin", "plugin", stdin={"command": "step-back", "pending": shown(cwd=repo)["pending"]["id"]}, cwd=repo).stdout)["text"]
             first_calls = calls()
             if [c["args"] for c in first_calls] != [["health", "--json", "--items", "decided,questions,accept,review,user"],
                                                     ["position", "--json"]] \
                     or first_calls[0]["actor"] != "lead0001" or Path(first_calls[0]["cwd"]).resolve() != repo.resolve() \
-                    or "decided, awaiting release · decided (1):\n- fx-d: D" not in out \
-                    or out.index("- fx-d: D") > out.index("- fx-a: A?") or "ready milestones · open (1):\n- fx-m [milestone]: Beta" not in out:
-                raise ValueError(f"protocol pre-pass from board health and position: {first_calls}\n{out}")
+                    or "decided, awaiting release · decided (1):\n- fx-d: D" not in scoped \
+                    or scoped.index("- fx-d: D") > scoped.index("- fx-a: A?") or "ready milestones · open (1):\n- fx-m [milestone]: Beta" not in scoped:
+                raise ValueError(f"protocol pre-pass from board health and position: {first_calls}\n{out}\n{scoped}")
             proto("step", stdin={"pass": "step-back", "summary": "No change."}, cwd=repo)
             # Scoped (user, 2026-10-31): every pasted point needs a class; board items outside the scope stay out.
             refused("step", stdin={"classes": {"fx-a": "user"}}, needle="every pasted point needs a class; unclassified: pt3", cwd=repo)
@@ -9998,9 +10051,10 @@ def validate_protocol(root: Path, part: str) -> None:
                 position={"held": [{"id": "fx-live", "holder": "other001", "mark": None}, {"id": "fx-gone", "holder": "gone0001", "mark": "gone"}]})
             proto("compacted", cwd=repo)  # the open-item list prints whole once between compactions
             out = proto("start", "round", cwd=repo, prepass=False).stdout
-            if "Held by live session other001, not offered: fx-live" not in out or "- fx-live" in out \
-                    or "- fx-gone, held by gone0001 (gone): Gone?" not in out:
-                raise ValueError(f"protocol pre-pass must leave out live foreign holds and mark gone ones:\n{out}")
+            scoped = json.loads(proto("scope", "--origin", "plugin", stdin={"command": "step-back", "pending": shown(cwd=repo)["pending"]["id"]}, cwd=repo).stdout)["text"]
+            if "Held by live session other001, not offered: fx-live" not in scoped or "- fx-live" in scoped \
+                    or "- fx-gone, held by gone0001 (gone): Gone?" not in scoped:
+                raise ValueError(f"the started pre-pass must leave out live foreign holds and mark gone ones:\n{out}\n{scoped}")
             proto("step", stdin={"pass": "step-back", "summary": "No change."}, cwd=repo)
             proto("step", stdin={"classes": {"fx-mine": "user", "fx-gone": "user"}}, cwd=repo)
             calls()
@@ -10605,9 +10659,10 @@ def validate_protocol(root: Path, part: str) -> None:
             if shown(cwd=repo)["next"] != stored:
                 raise ValueError("a refused start must leave the proposal stored")
             out = proto("start", "round", "--proposal", "2", cwd=repo, prepass=False).stdout
+            scope = json.loads(proto("scope", "--origin", "plugin", stdin={"command": "step-back", "pending": shown(cwd=repo)["pending"]["id"]}, cwd=repo).stdout)["text"]
             topic = "Plain question: A question no member covers, the highest priority outside a milestone."
-            if "Named for this round: fx-n1." not in out or "Open items (" not in out:
-                raise ValueError(f"--proposal starts the row's topic round on its leading ids:\n{out}")
+            if "Named for this round: fx-n1." not in scope or "Open items (" not in scope:
+                raise ValueError(f"--proposal starts the row's topic round on its leading ids:\n{out}\n{scope}")
             if f"Topic: {topic}" not in proto("step", stdin={"pass": "step-back", "summary": "No change."}, cwd=repo).stdout:
                 raise ValueError("--proposal's topic reaches the round's Collect")
             refused("start", "round", "--proposal", "1", needle="is open at collect", cwd=repo)  # the open run is named, not a missing proposal
@@ -10639,8 +10694,9 @@ def validate_protocol(root: Path, part: str) -> None:
             topic = "Member questions: members share one cache"
             for named in ([], ["fx-n1"]):
                 out = proto("start", "round", "--topic", topic, *named, cwd=repo, prepass=False).stdout
-                if "Open items (" not in out or "listed earlier" in out or (named and "Named for this round: fx-n1." not in out):
-                    raise ValueError(f"a topic round's pre-pass prints the whole list:\n{out}")
+                scoped = json.loads(proto("scope", "--origin", "plugin", stdin={"command": "step-back", "pending": shown(cwd=repo)["pending"]["id"]}, cwd=repo).stdout)["text"]
+                if "Open items (" not in scoped or "listed earlier" in scoped or (named and "Named for this round: fx-n1." not in scoped):
+                    raise ValueError(f"a topic round's started pre-pass prints the whole list:\n{out}\n{scoped}")
                 out = proto("step", stdin={"pass": "step-back", "summary": "No change."}, cwd=repo).stdout
                 if f"Topic: {topic}." not in out or "Group by default" not in out or "a round of a single question names why no other shares one" not in out \
                         or "Open items (" in out or "- fx-a" in out:
@@ -11010,6 +11066,11 @@ def validate_protocol(root: Path, part: str) -> None:
             proto("step", stdin={"records": {"fx-s1": "unchanged", "fx-s2": own}}, cwd=repo)
             proto("step", stdin={"checks": {"fx-s1": nones, "fx-s2": nones}}, cwd=repo)
             proto("step", stdin={"rulings": []}, cwd=repo)
+            pending = shown(cwd=repo)["pending"]
+            scoped = json.loads(proto("scope", "--origin", "plugin", stdin={"command": pending["command"], "pending": pending["id"]}, cwd=repo).stdout)["text"]
+            repeated = json.loads(proto("scope", "--origin", "plugin", stdin={"command": pending["command"], "pending": pending["id"]}, cwd=repo).stdout)["text"]
+            if "Scoped step-back pass" not in scoped or "Report with `protocol step`" not in scoped or "Report with `protocol step`" in repeated:
+                raise ValueError(f"a release scope carries the first-time pass brief and format only once:\n{scoped}\n{repeated}")
             proto("step", stdin={"pass": "step-back", "records": {"fx-s2": "unchanged"}}, cwd=repo)
             proto("step", stdin={"pass": "ground", "records": {"fx-s2": {"change": "the user chose the other store", "reach": "contained",
                                                                          "why": "only fx-s2", "touches": "decision"}}}, cwd=repo)
@@ -11769,9 +11830,13 @@ def validate_protocol(root: Path, part: str) -> None:
             env = {"PROTOCOL_BOARD": "", "PATH": f"{fake_bin}:{os.environ['PATH']}"}
             real_session = {"cwd": real, "session": "0000-real0001", "env": env, "process": True}
             out = proto("start", "round", prepass=False, **real_session).stdout
+            pending_prepass = shown(**real_session)["pending"]
+            scoped_prepass = json.loads(proto("scope", "--origin", "plugin", stdin={
+                "command": "step-back", "pending": pending_prepass["id"]}, **real_session).stdout)["text"]
             # fx-ovo.3 is held by the live lead0001: left out of this session's candidates, still a Related hit below.
-            if "Held by live session lead0001, not offered: fx-ovo.3" not in out or "- fx-ovo.3" in out or "- fx-ovo.1: Store choice" not in out:
-                raise ValueError(f"protocol pre-pass through bin/board:\n{out}")
+            if "console starts the pending step-back" not in out or "Held by live session lead0001, not offered: fx-ovo.3" not in scoped_prepass \
+                    or "- fx-ovo.3" in scoped_prepass or "- fx-ovo.1: Store choice" not in scoped_prepass:
+                raise ValueError(f"protocol pre-pass through bin/board:\n{out}\n{scoped_prepass}")
             proto("step", stdin={"pass": "step-back", "summary": "No change."}, **real_session)
             proto("step", stdin={"classes": {"fx-ovo.1": "user", "fx-ovo.9": "planning"}}, **real_session)
             proto("step", stdin={"select": ["fx-ovo.1"]}, **real_session)
@@ -12067,6 +12132,8 @@ def validate_protocol(root: Path, part: str) -> None:
             refused("step", **texts, stdin={**ROUND_INFO, "questions": [question("2. Numbered?", **{"for": "pt1"})]}, needle="carries no number")
             proto("step", **texts, stdin={**ROUND_INFO, "questions": [question("y" * 160, title="Long", options=[
                 {"label": "Keep", "description": "d" * 150, "for": "for it", "against": "against it", "example": "x = 1  # ```"}, {"label": "B", "description": "", "for": "for it", "against": "against it", "example": "y = 2"}], **{"for": "pt1"})]})
+            pending = shown(**texts)["pending"]
+            proto("scope", "--origin", "plugin", stdin={"command": pending["command"], "pending": pending["id"]}, **texts)
             # r10-q37: a preview is refused with a pointer to example, multi-select or not.
             refused("step", **texts, stdin={"pass": "step-back", "updates": [question("Multi?", multiSelect=True, options=[
                 {"label": "Keep", "description": "", "for": "for it", "against": "against it", "preview": "x"}, {"label": "B", "description": "", "for": "for it", "against": "against it"}])]}, needle="rename `preview` to `example`")
@@ -12296,8 +12363,7 @@ def validate_protocol(root: Path, part: str) -> None:
             if f"Restarted with it, their answers rested on it: {second}." not in out or after[first][1] is not None or after[second][1] is not None:
                 raise ValueError(f"restart takes answered dependents along: {out}\n{after}")
             proto("abandon", **texts)
-            # A question too long to ask (only a pre-limit one can be): a plain message naming the error, no automatic pass; the
-            # the console starts a pending step-back, and the report shortens it.
+            # A legacy over-long question triggers one console-started focused step-back; a second failure is handed to the user.
             def long_at_ask(qid_, session_state):
                 path = state / f"{texts['session']}.protocol" / "state.json"
                 data = json.loads(path.read_text(encoding="utf-8"))
@@ -12307,14 +12373,11 @@ def validate_protocol(root: Path, part: str) -> None:
             qid = texts_round("Fix?")
             long_at_ask(qid, None)
             out = converge(**texts)
-            if "Not asked yet" not in out or "over the limit of 240" not in out or "in a pass of its own" not in out \
+            if "Not asked yet" not in out or "over the limit of 240" not in out or "Ask the user to shorten" not in out \
                     or shown(**texts)["pending"] is not None or shown(**texts)["batch"] is not None:
-                raise ValueError(f"a question too long to ask gets a plain message and no pending pass:\n{out}\n{shown(**texts)['pending']}")
-            proto("pass", "--origin", "plugin", stdin={"command": "ground", "args": "", "pending": None}, **texts)
-            proto("step", **texts, stdin={"pass": "ground", "updates": [{"id": qid, "text": "Short?", "title": "Short"}]})
-            after = shown(**texts)
-            if after["batch"] is not None or after["step"] != "check":  # its change reruns the loop, then it goes out
-                raise ValueError(f"the pass that shortens the question reruns the loop: {after}")
+                raise ValueError(f"a second failed shortening asks the user, with no pass pending:\n{out}\n{shown(**texts)['pending']}")
+            proto("say", "--origin", "composer", stdin={"text": "Shorten this question"}, **texts)
+            proto("edit", **texts, stdin={"quote": "Shorten this question", "updates": [{"id": qid, "text": "Short?", "title": "Short"}]})
             converge(**texts)
             if shown(**texts)["batch"]["questions"][0]["question"] != "Short?":
                 raise ValueError(f"the shortened question goes out: {shown(**texts)}")
@@ -12837,10 +12900,10 @@ def validate_protocol(root: Path, part: str) -> None:
             # release asks the user even when every ruling is sure. The answer, the options and the rest stay locked.
             now = shown(**rules)
             scope_line = f"This pass covers {rule_q['id']} {store_c['id']} and my rulings on them"
+            scope_value = json.loads(proto("scope", "--origin", "plugin", stdin={"command": "challenge-rulings", "pending": now["pending"]["id"]}, **rules).stdout)["text"]
             if now["pending"] != {"id": now["pending"]["id"], "command": "challenge-rulings", "args": f"{rule_q['id']} {store_c['id']} and my rulings on them"} \
-                    or scope_line not in json.loads(proto("scope", "--origin", "plugin", stdin={"command": "challenge-rulings", "pending": now["pending"]["id"]}, **rules).stdout)["text"] \
-                    or scope_line not in proto("show", **rules).stdout:
-                raise ValueError(f"the pass after the last answer names the answered questions and my rulings on them: {now['pending']}")
+                    or scope_line not in scope_value:
+                raise ValueError(f"the pass after the last answer names the answered questions and my rulings on them: {now['pending']} / {scope_value!r}")
             changed_ruling = {"ruling": "Both stores keep their answer.", "why": "The answers entail it.", "alternative": "Ask again.",
                               "fails": "Remove manual burden.", "evidence": "The answers."}
             for stdin, needle in (
@@ -13320,10 +13383,11 @@ def validate_protocol(root: Path, part: str) -> None:
                 raise ValueError(f"protocol next lists nothing the second time between compactions: counts and the command:\n{again}")
             calls()
             bare = proto("start", "round", prepass=False, **listing_session).stdout
-            if "- fx-b" in bare or "Open items: 1 decided, 2 open questions, 1 waiting on the user" not in bare or "List them before you select." not in bare:
-                raise ValueError(f"a bare round after the list was printed counts and tells the model to list first:\n{bare}")
-            if "The point set is empty" in bare or "The point set: the open items below" not in bare:
-                raise ValueError(f"a pre-pass that lists open items must not call the point set empty:\n{bare}")
+            scoped = json.loads(proto("scope", "--origin", "plugin", stdin={"command": "step-back", "pending": shown(**listing_session)["pending"]["id"]}, **listing_session).stdout)["text"]
+            if "- fx-b" in scoped or "Open items: 1 decided, 2 open questions, 1 waiting on the user" not in scoped or "List them before you select." not in scoped:
+                raise ValueError(f"a bare round after the list was printed counts and tells the model to list first:\n{bare}\n{scoped}")
+            if "The point set is empty" in scoped or "The point set: the open items below" not in scoped:
+                raise ValueError(f"a started pre-pass that lists open items must not call the point set empty:\n{scoped}")
             collecting = proto("step", stdin={"pass": "step-back", "summary": "No change."}, **listing_session).stdout
             if "Open items:" not in collecting or "List them before you select" in collecting:
                 raise ValueError(f"Collect after the pre-pass lists nothing and does not tell the model to list first:\n{collecting}")
@@ -13333,21 +13397,24 @@ def validate_protocol(root: Path, part: str) -> None:
             proto("abandon", **listing_session)
             proto("compacted", **listing_session)
             bare = proto("start", "round", prepass=False, **listing_session).stdout
-            if "Open items (6):" not in bare or "List them before you select." in bare:
-                raise ValueError(f"after a compaction the pre-pass prints the whole list:\n{bare}")
+            scoped = json.loads(proto("scope", "--origin", "plugin", stdin={"command": "step-back", "pending": shown(**listing_session)["pending"]["id"]}, **listing_session).stdout)["text"]
+            if "Open items (6):" not in scoped or "List them before you select." in scoped:
+                raise ValueError(f"after a compaction the started pre-pass prints the whole list:\n{bare}\n{scoped}")
             proto("abandon", **listing_session)
             if "Open items (" in proto("next", **listing_session).stdout:
                 raise ValueError("a round's Collect counts as the list printed: protocol next after it does not print it again")
             # A named round: start round <ids>; the whole list the first time, the named ids with counts afterwards.
             proto("compacted", **listing_session)
             named = proto("start", "round", "fx-a", "fx-b", prepass=False, **listing_session).stdout
-            if "Open items (6):" not in named or "Named for this round: fx-a, fx-b." not in named:
-                raise ValueError(f"a named round prints the whole list the first time:\n{named}")
+            scoped = json.loads(proto("scope", "--origin", "plugin", stdin={"command": "step-back", "pending": shown(**listing_session)["pending"]["id"]}, **listing_session).stdout)["text"]
+            if "Open items (6):" not in scoped or "Named for this round: fx-a, fx-b." not in scoped:
+                raise ValueError(f"a named round's started pre-pass prints the whole list first:\n{named}\n{scoped}")
             proto("abandon", **listing_session)
             named = proto("start", "round", "fx-a", prepass=False, **listing_session).stdout
-            if "Named:\n- fx-a: A?\n" not in named or "Open items: 1 decided, 2 open questions, 1 waiting on the user" not in named or "- fx-b" in named \
-                    or "List them before you select." in named or "Open items (" in named:
-                raise ValueError(f"a named round afterwards prints its ids, the counts and the command:\n{named}")
+            scoped = json.loads(proto("scope", "--origin", "plugin", stdin={"command": "step-back", "pending": shown(**listing_session)["pending"]["id"]}, **listing_session).stdout)["text"]
+            if "Named:\n- fx-a: A?\n" not in scoped or "Open items: 1 decided, 2 open questions, 1 waiting on the user" not in scoped or "- fx-b" in scoped \
+                    or "List them before you select." in scoped or "Open items (" in scoped:
+                raise ValueError(f"a named round's started pre-pass lists its ids, counts and command:\n{named}\n{scoped}")
             if shown(**listing_session)["round"] is None:
                 raise ValueError("the named round started")
             proto("step", stdin={"pass": "step-back", "summary": "No change."}, **listing_session)
@@ -13389,6 +13456,8 @@ def validate_protocol(root: Path, part: str) -> None:
             proto("step", stdin={"select": ["pt2"]}, **fmt)
             refused_told(stdin={"questions": []})
             proto("step", stdin={**ROUND_INFO, "questions": [question("Again?", **{"for": "pt2"})]}, **fmt)
+            pending = shown(**fmt)["pending"]
+            proto("scope", "--origin", "plugin", stdin={"command": pending["command"], "pending": pending["id"]}, **fmt)
             refused_told(stdin={"pass": "step-back", "updates": []})
             ask = converge(**fmt)
             if "Record an answer the user types in chat" not in ask or "open the dialog" not in ask:
@@ -13479,7 +13548,8 @@ def validate_protocol(root: Path, part: str) -> None:
             if view["pending"] != {"id": view["pending"]["id"], "command": "step-back", "args": ""}:
                 raise ValueError(f"the first round check is the full step-back protocol: {view['pending']}")
             first_scope = json.loads(proto("scope", "--origin", "plugin", stdin={"command": "step-back", "pending": view["pending"]["id"]}, **cover).stdout)
-            if first_scope != {"covers": [qid], "text": "Use this scope, not one printed earlier. This pass covers q1: a `checked` entry (what you examined in it this run, one line of about 120 characters) or an update for each."}:
+            if first_scope["covers"] != [qid] or "Use this scope" not in first_scope["text"] \
+                    or "For each rejected alternative" not in first_scope["text"] or '"pass": "step-back"' not in first_scope["text"]:
                 raise ValueError(f"the first step-back scope: {first_scope}")
             proto("step", stdin={"pass": "step-back", "updates": [], "checked": {"round": "checked"}}, ok=False, **cover)
             proto("step", stdin={"pass": "step-back", "updates": [], "checked": {qid: "checked the whole question"}}, **cover)

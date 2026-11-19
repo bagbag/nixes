@@ -234,8 +234,6 @@ export type ConsoleAction = { kind: 'pass'; id: string; command: string; args: s
 /** Runs queued that have not started yet: a press's (repeat-press guard), a prompt's with its action, and each pass command the console queued (key `pass:<id>`, kept until its skill expands or for an hour); an action is re-checked where it is delivered. */
 export type ConsoleQueued = { key: string; at: number; action?: ConsoleAction }[]
 
-export type ConsoleLenses = { 'step-back': string[]; ground: string[]; focus: string }
-
 /** The change-request press at work (single flight: git works on one tree at a time): its button, the request, what the label reads while it works, the step it is at, and when it started (a press past the stale bound no longer holds the flight). */
 export type ConsolePressing = { key: string; id: string; verb: string; step: string; since: number }
 
@@ -281,7 +279,7 @@ declare module 'claude-code' {
       pass: Shaped<ConsolePassRun | null>
       queued: Shaped<ConsoleQueued>
       gate: Shaped<string[]>
-      lenses: Shaped<ConsoleLenses>
+      focus: string
       expanded: Shaped<ConsoleSection[]>
       opened: Shaped<ConsoleOpened | null>
       /** Built-in commands the person sent during the running turn, in order: its end runs them, ahead of anything the console starts. */

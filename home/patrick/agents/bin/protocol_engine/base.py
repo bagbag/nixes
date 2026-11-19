@@ -73,7 +73,7 @@ VERBS = (
     Verb(name='decline', audience='origin', origins=('dialog', 'model-reported'), summary='a declined batch returns to ready; prints show --json',
          example='protocol decline --origin model-reported < decline.json', stdin=('decline',)),
     Verb(name='pass', audience='origin', origins=PASS_ORIGINS, summary='a pass started, or the person typed or pressed /release-round; prints show --json',
-         example='protocol pass --origin model < pass.json', stdin=('pass-run',)),
+         example='protocol pass --origin plugin < pass.json', stdin=('pass-run',)),
     Verb(name='edit', audience='session', origins=(), summary="apply the user's requested change to the questions",
          example='protocol edit < edit.json', stdin=('edit',)),
     Verb(name='defer', audience='session', origins=(), summary="defer a question and the questions waiting on it at the user's request",

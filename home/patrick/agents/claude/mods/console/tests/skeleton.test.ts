@@ -782,10 +782,10 @@ describe('machine-run passes', () => {
     const { w, clock } = world(on, { round: roundJson({ pending: { id: 'p7', command: 'ground', args: '' } }) })
     await start($)
     await $.prompt.submit(during('keep in mind q3 is a library choice'))
-    await $.prompt.submit(during('/step-back options', 'composer'))
+    await $.prompt.submit(during('/step-back on q3', 'composer'))
     await $.turn.complete(complete())
     await clock.settle()
-    expect(w.prompts.slice(0, 2)).toEqual(['keep in mind q3 is a library choice', '/step-back options'])
+    expect(w.prompts.slice(0, 2)).toEqual(['keep in mind q3 is a library choice', '/step-back on q3'])
     expect(w.commands).toEqual([{ command: 'ground', args: '' }])
   })
 

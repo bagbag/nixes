@@ -134,7 +134,14 @@ def ask_enter(ctx: Context) -> str | None:
         except ProtocolError as error:
             broken[q['id']] = str(error)
     if broken:
-        ctx.messages.append(words.not_asked(broken))
+        overlong = [qid for qid, error in broken.items() if 'text ' in error and 'over the limit' in error]
+        retry = [qid for qid in overlong if not by_id(ctx, qid).get('autoRescoped')]
+        if retry:
+            for qid in retry:
+                by_id(ctx, qid)['autoRescoped'] = True
+            rescope_check(ctx, retry)
+            return 'check'
+        ctx.messages.append(words.not_asked(broken, overlong))
     if not valid:
         return None
     chosen = valid[:BATCH]

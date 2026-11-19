@@ -7,8 +7,8 @@ import type { ConsoleBoard, ConsoleCr, ConsoleItem, ConsoleRatification, Console
 
 import { crPressKey, ratifyPressKey, pressAcceptCr, pressContinue, pressOpenCr, pressOpenItem, pressOpenOverlaps, pressOpenRatification, pressOpenReason, pressOpenSettles, pressOpenSuggestion, pressRatify, pressReturnCr, pressUpdateCr, pressRole, pressRun, pressStart, pressView, pressWorkers, queuedRuns, runKey } from './core'
 import { isRoundOpen, RELEASE_COMMAND, ROUND_ROLES, START_COMMAND } from './engine'
-import { getBoard, getExpanded, getLenses, getOpened, getPass, getPlaced, getPressing, getRole, getRound, getRoundError, getTurnRunning, toggleExpanded, updateLenses } from './state'
-import { answerText, canUpdateCr, COUNT_GROUPS, countText, crDetailsText, crFailureParts, crFileHref, crMarks, crNewCountText, crKind, crPriorityHint, crPriorityText, crRowCheckText, crRows, crRowStageText, crSummaryText, crTreeText, crUnblocksHint, crUnblocksText, displayId, displayIds, fitText, canAcceptCr, isCrAccepting, isWalkCr, GROUND_BASE, lensArgs, plural, pullsText, recommendationMark, recommendationText, roleText, roundWords, runNoun, staleHolds, staleSessions, startHint, STEP_BACK_BASE, suggestionText } from './words'
+import { getBoard, getExpanded, getFocus, getOpened, getPass, getPlaced, getPressing, getRole, getRound, getRoundError, getTurnRunning, setFocus, toggleExpanded } from './state'
+import { answerText, canUpdateCr, COUNT_GROUPS, countText, crDetailsText, crFailureParts, crFileHref, crMarks, crNewCountText, crKind, crPriorityHint, crPriorityText, crRowCheckText, crRows, crRowStageText, crSummaryText, crTreeText, crUnblocksHint, crUnblocksText, displayId, displayIds, fitText, canAcceptCr, isCrAccepting, isWalkCr, GROUND_BASE, plural, pullsText, recommendationMark, recommendationText, roleText, roundWords, runNoun, staleHolds, staleSessions, startHint, STEP_BACK_BASE, suggestionText } from './words'
 import type { CrKind, LensCommand } from './words'
 
 type $ = EngineInterface
@@ -74,7 +74,7 @@ export async function drawPane($: $, e: { surface: string; props: RenderPropsOf[
   const role = await getRole($)
   const board = await getBoard($)
   const round = await getRound($)
-  const lenses = await getLenses($)
+  const focusText = await getFocus($)
   const expanded = await getExpanded($)
   const opened = await getOpened($)
   const roundError = await getRoundError($)
@@ -497,9 +497,9 @@ export async function drawPane($: $, e: { surface: string; props: RenderPropsOf[
 
   // Step Back always runs the full protocol; an optional focus scopes the run. Ground runs its full skill.
   const runBase = async (command: LensCommand) => {
-    const focus = command === 'step-back' ? (await getLenses($)).focus.trim() : ''
-    if (command === 'step-back') await updateLenses($, current => ({ ...current, focus: '' }))
-    await pressRun($, command, lensArgs([], focus))
+    const focus = command === 'step-back' ? (await getFocus($)).trim() : ''
+    if (command === 'step-back') await setFocus($, '')
+    await pressRun($, command, focus)
   }
   // The round's pending pass carries the accent color: "next" until its run starts, then "running" until its report
   // moves the engine on. The pass after it depends on that report, so the pane never shows two.
@@ -511,7 +511,7 @@ export async function drawPane($: $, e: { surface: string; props: RenderPropsOf[
     && !(passRun !== null && passRun.id === round?.pending?.id && (passRun.phase === 'queued' || passRun.phase === 'started'))
   const nextMark = (command: string) => pendingPass === command ? <Text color="claude"> ◂ {passWord}</Text> : null
   const lensHead = (command: LensCommand, title: string, base: string, hasFocus: boolean) => {
-    const focus = hasFocus ? lenses.focus.trim() : ''
+    const focus = hasFocus ? focusText.trim() : ''
     hint.add(`${command}-run`, `${base}${focus === '' ? '' : ` Focus: ${focus}`}`)
     return labelled(`${command}-head`, <Text bold color={pendingPass === command ? 'claude' : undefined}>{title}</Text>, (
       <Box flexDirection="row" columnGap={1}>
@@ -525,10 +525,10 @@ export async function drawPane($: $, e: { surface: string; props: RenderPropsOf[
   }
   const focusInput = Input === undefined ? null : (
     <Box key="focus-box" flexGrow={1} minWidth={16}>
-      <Input key="focus" placeholder="your focus…" value={lenses.focus} submitLabel="Run"
-        onInput={(typed: string) => updateLenses($, current => ({ ...current, focus: typed }))}
+      <Input key="focus" placeholder="your focus…" value={focusText} submitLabel="Run"
+        onInput={(typed: string) => setFocus($, typed)}
         onSubmit={async (typed: string) => {
-          await updateLenses($, current => ({ ...current, focus: typed }))
+          await setFocus($, typed)
           await runBase('step-back')
         }} />
     </Box>

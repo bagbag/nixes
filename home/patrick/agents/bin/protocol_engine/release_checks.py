@@ -226,8 +226,27 @@ def scoped_text(ctx: Context) -> str:
     r = ctx.round
     pending = r['pending'] or {}
     command, args = pending.get('command'), pending.get('args')
-    return lines(words.scoped_text(r['id'], command, args, ctx.codex),
+    if not ctx.codex:
+        return words.HAND_OVER
+    return lines(words.scoped_text(r['id'], command, args, True),
                  report_hint(ctx, 'scoped', words.scoped_example(command, scoped_records(ctx)[:1])))
+
+
+def start_scope(ctx: Context, report: dict) -> dict:
+    schema.require(schema.Scope, report)
+    r = ctx.round
+    if not r:
+        return {'covers': [], 'text': ''}
+    pending = r.get('pending') or {}
+    if r.get('protocol') != 'release' or r.get('step') != 'scoped' or pending.get('command') != report['command']:
+        return {'covers': [], 'text': ''}
+    if report.get('pending') != pending.get('id'):
+        return {'covers': [], 'text': ''}
+    records = scoped_records(ctx)
+    command, args = pending['command'], pending.get('args') or ''
+    text = words.scoped_text(r['id'], command, args, False)
+    text += '\n' + report_hint(ctx, 'scoped', words.scoped_example(command, records[:1]))
+    return {'covers': records, 'text': text}
 
 
 def scoped_accept(ctx: Context, report: dict) -> str:

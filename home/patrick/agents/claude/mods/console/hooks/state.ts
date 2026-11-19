@@ -5,7 +5,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface } from 'claude-code'
 
-import type { ConsoleBoard, ConsoleLenses, ConsoleOpened, ConsolePassRun, ConsolePersonOrigin, ConsolePlaced, ConsolePressing, ConsoleQueued, ConsoleRefresh, ConsoleRole, ConsoleRound, ConsoleSection, ConsoleDeferred } from '../types'
+import type { ConsoleBoard, ConsoleOpened, ConsolePassRun, ConsolePersonOrigin, ConsolePlaced, ConsolePressing, ConsoleQueued, ConsoleRefresh, ConsoleRole, ConsoleRound, ConsoleSection, ConsoleDeferred } from '../types'
 
 import { isRoundOpen } from './engine'
 
@@ -21,7 +21,7 @@ const boardState = atom({ plugin: 'console', key: 'board' } as const, null, { sh
 const passState = atom({ plugin: 'console', key: 'pass' } as const, null, { shape: 'pass-5' })
 const queuedState = atom({ plugin: 'console', key: 'queued' } as const, [], { shape: 'queued-2' })
 const gateState = atom({ plugin: 'console', key: 'gate' } as const, [], { shape: 'gate-1' })
-const lensState = atom({ plugin: 'console', key: 'lenses' } as const, { 'step-back': [], ground: [], focus: '' } as ConsoleLenses, { shape: 'lenses-1' })
+const focusState = atom({ plugin: 'console', key: 'focus' } as const, '')
 const refreshState = atom({ plugin: 'console', key: 'refresh' } as const, { since: null, again: false } as ConsoleRefresh, { shape: 'refresh-1' })
 const pressingState = atom({ plugin: 'console', key: 'pressing' } as const, null as ConsolePressing | null, { shape: 'pressing-1' })
 const dismissedState = atom({ plugin: 'console', key: 'isPaneDismissed' } as const, false)
@@ -82,8 +82,8 @@ export async function updateQueued($: $, change: (queued: ConsoleQueued) => Cons
 export async function getGate($: $): Promise<string[]> { return read($, gateState) }
 export async function addGate($: $, key: string): Promise<void> { await update($, gateState, keys => [...keys, key].slice(-GATE_KEYS_KEPT)) }
 
-export async function getLenses($: $): Promise<ConsoleLenses> { return read($, lensState) }
-export async function updateLenses($: $, change: (lenses: ConsoleLenses) => ConsoleLenses): Promise<void> { await update($, lensState, change) }
+export async function getFocus($: $): Promise<string> { return read($, focusState) }
+export async function setFocus($: $, value: string): Promise<void> { await update($, focusState, () => value) }
 
 export async function getExpanded($: $): Promise<ConsoleSection[]> { return read($, expandedState) }
 export async function toggleExpanded($: $, section: ConsoleSection): Promise<void> {

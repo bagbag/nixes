@@ -38,8 +38,8 @@ findings or stops.
      [Question format](../../shared/question-format.md#question-format); no
      implementation. Before raising the questions and again before handing
      over, run the full step-back protocol on the design, then confirm it with
-     one step-back pass in a fresh turn. Repeat from confirmation while a pass
-     changes anything. A CR with `checkpoint` set holds only its design:
+     console-started confirming step-back pass in a fresh turn. Repeat from
+     confirmation while a pass changes anything. A CR with `checkpoint` set holds only its design:
      implementation items arrive after the checkpoint passes.
    - Implementation items: tests alongside the change; changelog and doc
      duties are in the item's acceptance.

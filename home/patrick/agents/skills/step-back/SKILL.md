@@ -20,16 +20,6 @@ source; push back and recommend the established practice.
 
 ## Protocol
 
-Run all 11 lenses deeply by default. If the argument names lenses, give those
-deep treatment and one line to each other lens. For every lens, report its
-finding or `nothing: checked <what>`. For plans, designs and diffs, check
-requirement coverage, source contradictions, dependencies, integration gaps
-and silent failures. Ground findings in current source with the violated
-requirement or invariant, trigger, impact and exact locations. Seek
-counterexamples and competing explanations; separate verified evidence from
-behavioral assumptions and classify remaining uncertainty as a risk or open
-question. Apply `decision-protocol.md` End-state criteria and Concern classes.
-
 1. **Frame.** Name the focus, current recommendation, artifact or outcome, and
    the goal one level up.
    Output: the focus and goal being judged.
@@ -55,6 +45,7 @@ question. Apply `decision-protocol.md` End-state criteria and Concern classes.
 8. **Bloat.** Find over-engineering and unnecessary magic.
    Output: the bloat finding or `nothing: checked <what>`.
 9. **Gaps.** Find what the next run or a realistic consumer still needs.
+    Record a later need as a deferred follow-up.
    Output: the gaps finding or `nothing: checked <what>`.
 10. **Clean.** Apply each of the six cleanliness tests one by one.
     Output: one finding or `nothing: checked <what>` for each test.

@@ -27,7 +27,7 @@ The one check command: `claude/mods/console/tests/check.sh` (plugin tests, `tsc 
 Esc at a turn end stops the pass loop; a successful compaction right after reruns the stopped pass once (not a skipped or precompute
 one; a pass given up as stuck is never rerun). `/console-continue` (r7-q24) runs the turn-end decision on demand: it queues the pending pass (a stopped, asked-for or noted
 run of it included) unless a run of it is queued already (a run the host refused counts as none), reopens the issued batch past the
-repeat guard, else wakes the model at the open step with `protocol status --line`; during a turn it runs at the turn's end (Esc drops it); logged as `nudged`. Only a console-started pass counts as the round's pass; invoking a Skill alone does not. A pass skill that starts (console-run or typed command; not a stale queued run, nor a subagent's) gets the engine's `scope` line appended to its expanded text; an engine failure leaves the text as it is (r9-q36). The Console pane (`/console` shows it as text;
+repeat guard, else wakes the model at the open step with `protocol status --line`; during a turn it runs at the turn's end (Esc drops it); logged as `nudged`. Only a console-started pass counts as the round's pass; invoking a Skill alone does not. A pass skill that starts (console-run or typed command; not a stale queued run, nor a subagent's) gets the engine's scope and first-time report instructions appended to its expanded text; an engine failure leaves the text as it is (r9-q36). The Console pane (`/console` shows it as text;
 `/console-item <id>` prints an item's summary in the chat; `/console-questions` prints the issued batch's text) shows Board
 (counts, the ready items for you (id, type, title; 3 show, the rest fold behind `+N more`), sessions with runtime and pull initials, `auto` for autopilot,
 this session's items under `this session holds`, stale holds, live workers; the counts split by who acts, `you` (for you, to accept, to ratify,
@@ -51,10 +51,10 @@ the title truncates, the answer and marks keep their line) and `↻ <pass>` for
 the questions the most recent pass report changed; a release lists its records
 with their state, and a stopped release its reason and next round), Controls
 (the passes, with the pending one marked next or running; Step Back runs the
-full protocol, optionally with a focus, and Ground runs the full ground pass,
-without changing the selection; Decide (Question Me, Intake running
+full protocol, optionally with a focus, and Ground runs the full ground pass;
+Decide (Question Me, Intake running
 `/round-intake`, which asks for your list, Continue while a round is open, doing what `/console-continue` does (but an idle press hands a batch to the model to open)
-and in the `suggestion` color while the session is idle and nothing has queued or started the pending pass, Challenge Rulings, Explain); Actions,
+    and in the `suggestion` color while the session is idle and nothing has queued or started the pending pass, Challenge Rulings, Explain); Actions,
 whose Release Round and Compact take the `suggestion` color exactly when the
 proposals offer them, and which hold the role button: Autopilot while solo, Solo while
 autopilot, each running the `/role` command (the host refuses a prompt text starting with `/`);

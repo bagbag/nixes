@@ -6,18 +6,18 @@ import type { ConsoleBoard, ConsoleCount, ConsoleCr, ConsoleItemSlot, ConsoleQue
 
 import { isRoundOpen, START_COMMAND } from './engine'
 
-export type Lens = { name: string; label: string; hint: string }
 export type LensCommand = 'step-back' | 'ground'
 
-export const STEP_BACK_BASE = 'Stance on the current focus (greenfield, cleanest end state with DX, whole picture), judged by Consumer, Root Fix, Bloat and Gaps.'
+export const STEP_BACK_BASE = 'Rethink the direction; judge the cleanest end state against the whole design.'
 export const GROUND_BASE = 'Ground every open recommendation until it is strong; re-verify the premises of every reversed one.'
 
+// Kept in sync with the owning skills by test-agent-configs; the console exposes no lens presets.
+export type Lens = { name: string; label: string; hint: string }
 export const WHERE: readonly Lens[] = [
   { name: 'goal', label: 'Goal', hint: 'Where: one level up; judge the design against the goal behind it; dig into the real problem and the root fix (workaround, XY problem).' },
   { name: 'decisions', label: 'Decisions', hint: 'Where: every decision in the discussion together, not only the latest.' },
   { name: 'foundations', label: 'Foundations', hint: 'Where: what the design builds on: earlier rulings, conventions and contracts; re-judge them too.' },
 ]
-
 export const WHAT: readonly Lens[] = [
   { name: 'consumer', label: 'Consumer', hint: 'What (base): walk a realistic consumer through the whole flow end to end.' },
   { name: 'root-fix', label: 'Root Fix', hint: 'What (base): fixes the root cause, not a symptom; the root may lie outside this module or repo.' },
@@ -28,22 +28,16 @@ export const WHAT: readonly Lens[] = [
   { name: 'mechanics', label: 'Mechanics', hint: 'What: how each part actually works end to end, and what breaks.' },
   { name: 'options', label: 'Options', hint: 'What: radically different ways (other mechanisms, owners, removing the need), each at its strongest; dropped only for a stated constraint or sourced fact.' },
 ]
-
 export const GROUND: readonly Lens[] = [
   { name: 'assumptions', label: 'Assumptions', hint: 'Re-verify every premise in current source, decided items and prior rulings included.' },
   { name: 'board', label: 'Board', hint: 'Open items the result makes moot, duplicates, answers or contradicts; act on each.' },
   { name: 'sources', label: 'Sources', hint: 'Read the owning docs, READMEs, sibling modules and transcripts not yet read.' },
   { name: 'probe', label: 'Probe', hint: 'Settle facts by running something: a probe, a test, a count over real data.' },
 ]
-
-/** Every lens of a command in list order: what the All button runs. */
 export const ALL_LENSES: Record<LensCommand, readonly string[]> = {
   'step-back': [...WHERE, ...WHAT].map(lens => lens.name),
   ground: GROUND.map(lens => lens.name),
 }
-
-/** Step Back accepts only a free focus; absent one runs the full protocol. */
-export const lensArgs = (lenses: readonly string[], focus: string): string => focus.trim()
 
 const PULLS: readonly string[] = ['plan', 'design', 'implement', 'review']
 
