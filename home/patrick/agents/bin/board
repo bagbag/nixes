@@ -4320,11 +4320,9 @@ def ratifications_json(board: Board) -> list[dict]:
         review_data = review_snapshot(board, i)
         review = review_of(board, i)
         stale, conflict = [], False
-        if tip and base and target_tip and rev(main, tip) and rev(main, base):
-            files = git_text(main, 'diff', '--name-only', '--no-renames', f'{base}^{{tree}}', f'{tip}^{{tree}}').splitlines()
-            if files:
-                commits = git_text(main, 'log', '--reverse', '--format=%H%x00%s', f'{tip}..{target_tip}', '--', *files).splitlines()
-                stale = [{'sha': line.partition('\x00')[0], 'subject': line.partition('\x00')[2]} for line in commits if '\x00' in line]
+        if tip and base and target_tip and tip != target_tip:
+            commits = incoming_main_commits(main, tip, target_tip, base, tip)
+            stale = [{'sha': commit['tip'], 'subject': commit['subject']} for commit in commits or [] if commit['crFiles']]
         if review and review.get('edited') is True and target_tip:
             opened = review.get('opened')
             if opened and review_data and review_data.get('editsTree'):
@@ -5582,7 +5580,7 @@ def follow_up(board: Board, ratification: dict, landed: dict, tip: str, commit: 
         if old:
             git(main, 'update-ref', '-d', f'refs/heads/{old_branch}', old)
             drop_upstream(main, old_branch)
-        base_branch = f'ratify-base/{ratification["id"]}'
+        base_branch = ratification_base_branch(ratification)
         base_tip = rev(main, f'refs/heads/{base_branch}')
         if base_tip:
             git(main, 'update-ref', '-d', f'refs/heads/{base_branch}', base_tip)
@@ -5618,20 +5616,20 @@ def follow_up(board: Board, ratification: dict, landed: dict, tip: str, commit: 
     return (0 if passed else 1), made
 
 
-def remove_review_worktree(main: Path, wt: Path, branch: str) -> str:
+def remove_review_worktree(board: Board, main: Path, wt: Path, ratification: dict) -> str:
     """Removes a ratification's review worktree and its `ratify/<id>` branch once nothing in them is the user's edit (the caller checked);
     a note for the output."""
     if git(main, 'worktree', 'remove', '--force', str(wt), check=False).returncode != 0:
         return f'; its worktree {wt} stays (git could not remove it)'
+    branch = review_branch(board, ratification)
     old = rev(main, f'refs/heads/{branch}')
     if old:
         git(main, 'update-ref', '-d', f'refs/heads/{branch}', old, check=False)
         drop_upstream(main, branch)
-    if branch.startswith('ratify/'):
-        base_branch = f"ratify-base/{branch.removeprefix('ratify/')}"
-        base_tip = rev(main, f'refs/heads/{base_branch}')
-        if base_tip:
-            git(main, 'update-ref', '-d', f'refs/heads/{base_branch}', base_tip, check=False)
+    base_branch = ratification_base_branch(ratification)
+    base_tip = rev(main, f'refs/heads/{base_branch}')
+    if base_tip:
+        git(main, 'update-ref', '-d', f'refs/heads/{base_branch}', base_tip, check=False)
     return f'; removed {wt} and {branch}'
 
 
@@ -5646,7 +5644,7 @@ def ratify(board: Board, args) -> int:
     issue, landed, range_tip = edits_target(board, args)
     assert landed is not None and range_tip is not None
     main = main_root()
-    wt, branch = cr_worktree(main, args.id), review_branch(board, issue)
+    wt = cr_worktree(main, args.id)
     if args.verdict != 'edits' and (args.gate or args.no_gate or args.checks):
         raise BoardError('--gate, --no-gate and --checks go with edits')
     if args.verdict == 'edits':
@@ -5663,7 +5661,7 @@ def ratify(board: Board, args) -> int:
             refuse_unrecorded(args.id, review, f'board ratify {args.id} edits records them as a follow-up change request; discard them in the review folder to ratify as it is')
         reason = args.message or f"Ratified change request {landed['id']}: {landed.get('title', '')}".rstrip(': ')  # bd wants 20 characters at least
         bd_checked('close', args.id, '--reason', reason)
-        print(f'ratified {args.id}' + (remove_review_worktree(main, wt, branch) if review else ''))
+        print(f'ratified {args.id}' + (remove_review_worktree(board, main, wt, issue) if review else ''))
         return 0
     if not args.message:
         raise BoardError('no: say what the user wants in -m <reason> (a fix or a revert); it becomes the follow-up change request')
@@ -5674,7 +5672,7 @@ def ratify(board: Board, args) -> int:
     made = create_item(board, f"Follow-up to {landed.get('title', '')}: {first[:60]}", CR_TYPE, priority=issue.get('priority', 2),
                        description=args.message, deps=[('discovered-from', args.id)])
     bd_checked('close', args.id, '--reason', f'not OK; follow-up {made}: {first[:120]}')
-    kept = '' if not review else (remove_review_worktree(main, wt, branch) if review['edited'] is False else f"; its worktree {wt} stays (it holds your edits)")
+    kept = '' if not review else (remove_review_worktree(board, main, wt, issue) if review['edited'] is False else f"; its worktree {wt} stays (it holds your edits)")
     print(f'{args.id} closed: not OK; follow-up {made} created{kept}')
     return 0
 

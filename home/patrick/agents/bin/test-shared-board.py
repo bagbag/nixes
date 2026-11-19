@@ -934,10 +934,10 @@ def t_cr() -> None:
     def task(cr: str, title: str) -> str:
         return bd('a', 'create', title, '-t', 'task', '--description', 'x', '--silent', '--parent', cr)[1].strip().splitlines()[-1]
 
-    def worker_pass(cr: str, item: str, name: str) -> None:
+    def worker_pass(cr: str, item: str, name: str, contents: str | None = None) -> None:
         rc, _, err, _ = run('a', 'claim', item, role='agent')
         check(rc == 0, f'{cr}: the holding session claims its item {item}', err)
-        (wt(cr) / name).write_text(name + '\n')
+        (wt(cr) / name).write_text(name + '\n' if contents is None else contents)
         git('add', name, cwd=wt(cr))
         git('commit', '-q', '-m', f'{item}: {name}', cwd=wt(cr))
         sha = git('rev-parse', '--short', 'HEAD', cwd=wt(cr)).strip()
@@ -1131,6 +1131,13 @@ def t_cr() -> None:
           'ratification review tracks a board-owned landed base: outgoing is exactly landed commits, incoming is empty',
           {'outgoing': outgoing, 'expected': expected_outgoing, 'incoming': incoming, 'config': git('config', f'branch.{rat_branch}.merge', cwd=side).strip(), 'error': err + out})
     opened = git('rev-parse', 'HEAD', cwd=rat_wt).strip()
+    accept_comparison = create('a', 'Accept drift comparison')
+    accept_item = task(accept_comparison, 'Change a ratified file')
+    run('a', 'claim', accept_comparison, role='agent')
+    worker_pass(accept_comparison, accept_item, 'b.txt', 'Accept changes the ratified file\n')
+    to_review(accept_comparison)
+    rc, out, err = review_pass(accept_comparison)
+    check(rc == 0, 'the comparison CR reaches Accept before the target moves', err + out)
     (side / 'b.txt').write_text('target changed landed lines\n')
     git('add', 'b.txt', cwd=side)
     git('commit', '-q', '-m', 'touch landed ratification lines', cwd=side)
@@ -1140,7 +1147,16 @@ def t_cr() -> None:
     target_tip = git('rev-parse', target, cwd=side).strip()
     pull = subprocess.run(['git', 'merge', '--ff-only', target_tip], cwd=rat_wt, capture_output=True, text=True)
     _, console, _, _ = run('a', 'console')
-    row = next((r for r in json.loads(console)['ratifications'] if r['id'] == rat_id), {})
+    view = json.loads(console)
+    row = next(r for r in view['ratifications'] if r['id'] == rat_id)
+    accept = next(r for r in view['crs'] if r['id'] == accept_comparison)
+    incoming = accept['acceptance']['incomingCommits']
+    check([(c['subject'], c['crFiles']) for c in incoming] ==
+          [('touch landed ratification lines', ['b.txt']), ('unrelated target change', [])]
+          and row['stale'] == [{'sha': incoming[0]['tip'], 'subject': incoming[0]['subject']}],
+          'Accept lists all incoming commits while ratification lists only overlaps', (incoming, row['stale']))
+    rc, out, err, _ = run('a', 'cr', 'reject', accept_comparison, 'test fixture cleanup', role='solo')
+    check(rc == 0, 'the comparison CR leaves the Accept queue', err + out)
     check(pull.returncode == 0 and row.get('review', {}).get('edited') is None and row.get('conflict') is False,
           'a fast-forward pull of target into the review is unreadable imported work, not the user\'s edit', row)
     git('reset', '--hard', opened, cwd=rat_wt)
