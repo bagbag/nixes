@@ -15,7 +15,8 @@
    conventions and report an outdated one with the better pattern. Merge
    near-copies while keeping each copy's validation and error handling; split
    by job, never by line count. Account for the brief's known findings without
-   re-raising them.
+   re-raising them. For skill, agent-definition, instruction and engine-printed
+   instruction text, apply [skill-authoring](../skill-authoring/SKILL.md).
    Output: the cases and requirements assessed.
 4. **Step back.** Invoke `step-back` on the whole artifact: all lenses for
    designs, plans, contracts and architecture; `mechanics consumer root-fix

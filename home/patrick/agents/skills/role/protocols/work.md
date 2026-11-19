@@ -42,6 +42,8 @@ findings or stops.
      implementation items arrive after the checkpoint passes.
    - Implementation items: tests alongside the change; changelog and doc
      duties are in the item's acceptance.
+     When writing skill, agent-definition, instruction or engine-printed
+     instruction text, follow [skill-authoring](../../skill-authoring/SKILL.md).
    - Choices: decide what
      [Decision authority](../../shared/decision-protocol.md#decision-authority)
      lets you decide and list the two-way defaults in the hand-over
