@@ -23,7 +23,7 @@ describe('engine contract', () => {
   test('the states carry what the console acts on', () => {
     expect(parseRound(ENGINE_CONTRACT.none).round).toBeNull()
     expect(parseRound(ENGINE_CONTRACT.prepass)).toMatchObject({ step: 'prepass', subject: 'Cache design', pending: { command: 'step-back' } })
-    expect(parseRound(ENGINE_CONTRACT.check).pending).toEqual({ id: 'p2', command: 'step-back', args: 'goal foundations' })
+    expect(parseRound(ENGINE_CONTRACT.check).pending).toEqual({ id: 'p2', command: 'step-back', args: '' })
     expect(parseRound(ENGINE_CONTRACT.ask).batch?.marker).toBe('round:r1:1')
     expect(parseRound(ENGINE_CONTRACT.ask).batch?.notice).toMatch(/^\*\*Cache\*\*\n\nProblem: .*\n\nCases: /)  // the text the console prints between turns
     expect(parseRound(ENGINE_CONTRACT.answered).questions[0]?.answeredAt).toBe('2026-01-01T00:00:00Z')

@@ -102,6 +102,8 @@ def record_file(q: dict, fields: dict, topic: str | None = None) -> str:
     prior = q.get('priorRecord')  # revised in place: the record keeps the question it decided and its alternatives
     alternatives = fields.get('alternatives') or (section(prior, 'Alternatives Considered') if prior else '') or '\n'.join(
         f"- {o['label']}: {o['description']}".rstrip(': ') for o in q['options'] if o['label'] not in picked)
+    dropped = [f"- Dropped: {x['idea']} - {x['why']}" for x in q.get('dropped', [])]
+    alternatives = '\n'.join([alternatives, *(line for line in dropped if line not in alternatives.splitlines())]).strip()
     question = section(prior, 'Question') if prior else q['text']
     source = {'dialog': 'User (dialog)', 'chat': 'User (chat)', 'model-reported': 'User (model-reported)',
               AWAY: 'Away round (autopilot took the recommendation; no person answered)',

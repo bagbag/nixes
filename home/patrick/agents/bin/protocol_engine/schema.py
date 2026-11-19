@@ -8,7 +8,7 @@ from dataclasses import MISSING, dataclass, field, fields
 from types import NoneType, UnionType
 from typing import Literal, Union, get_args, get_origin
 
-from .base import DROP_KINDS, EXPLORED_VERDICTS, LEAN_CAUSES, PASSES, REACHES, SCOPED_PASSES, STAGED_KINDS, STRENGTHS, TOUCHES, VERBS, ProtocolError
+from .base import DROP_KINDS, LEAN_CAUSES, PASSES, REACHES, SCOPED_PASSES, STAGED_KINDS, STRENGTHS, TOUCHES, VERBS, ProtocolError
 
 
 class Text(str):
@@ -401,7 +401,14 @@ class LeanBecause:
     flipsIf: Text | None = opt('a preference lean: what you would have to value to pick another option')
 
 
-@form('question', nested=('option', 'disclosure', 'prior-ruling', 'lean-because'))
+@form('dropped-idea')
+class DroppedIdea:
+    """A distinct alternative considered and rejected during step-back."""
+    idea: Text = req()
+    why: Text = req('the constraint or evidence that rules it out')
+
+
+@form('question', nested=('option', 'disclosure', 'prior-ruling', 'lean-because', 'dropped-idea'))
 class Question:
     """A question as staged, or as a pass adds it."""
     text: Text = req('the dialog question; no number')
@@ -428,6 +435,7 @@ class Question:
     strongBecause: dict | None = opt('required with a strong: each criterion "true: <evidence>"', group='presentation')
     priorRulings: list[PriorRuling] | None = opt('related released rulings, each {"ruling", "verdict": "holds" or "fails", "why"}')
     key: str = opt('a handle later updates of the same report use')
+    dropped: list[DroppedIdea] = opt('distinct alternatives considered and rejected during step-back')
 
 
 CONTENT = tuple(spec.name for spec in specs(Question) if spec.name != 'key')  # a change to any counts (asking.md Check)
@@ -470,14 +478,6 @@ class OwnRuling(Disclosure):
     """An own ruling of the release set."""
     record: Text = req()
     sure: bool = req()
-
-
-@form('idea')
-class Idea:
-    """One way an options pass found."""
-    idea: Text = req('another mechanism or owner, not a variant')
-    verdict: Literal[EXPLORED_VERDICTS] = req()
-    why: Text = req('the stated constraint or sourced fact that rules it out')
 
 
 @form('record-entry')
@@ -570,15 +570,13 @@ class Related:
     outcomes: dict = req('question id to {hit id: outcome}')
 
 
-@form('pass-report', steps=('round check', 'round ask'), nested=('update', 'idea', 'challenge-ruling'))
+@form('pass-report', steps=('round check', 'round ask'), nested=('update', 'challenge-ruling'))
 class PassReport:
-    """A pass's report. challenge-rulings adds `verdicts` and `rulings`; an options
-    pass adds `explored`."""
+    """A pass's report. challenge-rulings adds `verdicts` and `rulings`."""
     pass_: Literal[PASSES] = opt('required in Check; in Ask a report with none re-issues the batch', key='pass')
     round: dict = opt()
     updates: list[Update] = opt('per-question updates')
     checked: dict = opt("required with a pass: per question id in this pass's scope what you examined in it this run, plus an optional `round` note")
-    explored: dict = opt('options pass: per question the ideas found')
     summary: str = opt()
     verdicts: dict = opt('challenge-rulings: each strong question in scope to {"strongBecause": {...}}')
     rulings: list = opt('challenge-rulings, required there: your own rulings, each as the challenge-ruling form below', of='challenge-ruling')

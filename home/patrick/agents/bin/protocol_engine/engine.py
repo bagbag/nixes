@@ -23,6 +23,17 @@ class Protocol:
 class Context:
     def __init__(self, store: Store, state: dict, entry: dict, board: Board | None):
         self.store, self.state, self.entry, self.board = store, state, entry, board
+        # Older rounds kept options-pass results in `explored`; the current question contract stores rejected ideas directly.
+        for question in (state.get('round') or {}).get('questions', []):
+            old = question.pop('explored', None)
+            if isinstance(old, list):
+                rejected = [{'idea': item['idea'], 'why': item['why']} for item in old
+                            if isinstance(item, dict) and item.get('verdict') == 'dropped'
+                            and isinstance(item.get('idea'), str) and isinstance(item.get('why'), str)]
+                if rejected:
+                    merged = list(question.get('dropped') or [])
+                    merged.extend(item for item in rejected if item not in merged)
+                    question['dropped'] = merged
         self.codex = entry.get('tool') == 'codex'
         self.away = entry.get('role') == 'autopilot'  # the registered role says whether the person can answer (r28-q126)
         self.complete = False  # a read the model asked for (`show`): says everything, records nothing as told

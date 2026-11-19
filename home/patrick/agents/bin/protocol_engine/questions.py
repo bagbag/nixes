@@ -110,10 +110,7 @@ def non_decision_errors(ctx: Context, items: list[str]) -> list[str]:
 
 
 def unknown_fields(where: str, unknown: set) -> str:
-    """`explored` belongs to the report, not to an update (agents r11-q48)."""
-    hint = ('; `explored` goes at the report\'s top level, keyed by question id (an options pass only), not inside an update'
-            if 'explored' in unknown else '')
-    return f"{where}: unknown fields {', '.join(sorted(unknown))}{hint}"
+    return f"{where}: unknown fields {', '.join(sorted(unknown))}"
 
 
 def check_question(q: dict, where: str, marks: bool = True, parts: tuple[str, ...] = ()) -> None:

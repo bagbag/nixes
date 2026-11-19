@@ -37,12 +37,12 @@ describe('pane', () => {
       await ready($, clock)
       const ui = await $.ui.mount({ ...PANE, surface })
       const drawn = await texts(ui)
-      for (const part of ['Board', 'lead 617adf08', 'for you', 'Round r4', 'checking 2/3', 'step-back changed 2, ground none', '1 held', 'Engine name', 'overlaps', 'Pane layout', 'waits on q3', 'where', 'what', 'Decide', 'Actions', 'in_progress']) {
+      for (const part of ['Board', 'lead 617adf08', 'for you', 'Round r4', 'checking 2/3', 'step-back changed 2, ground none', '1 held', 'Engine name', 'overlaps', 'Pane layout', 'waits on q3', 'Step Back', 'Ground', 'Decide', 'Actions', 'in_progress']) {
         expect(drawn, part).toContain(part)
       }
       expect(await ui.find({ key: 'item-tstdl-x1-show' })).toBeDefined()
       expect(await ui.find({ key: 'q-q2-ov' })).toBeDefined()
-      expect(await ui.find({ key: 'step-back-run' })).toBeUndefined()
+      expect(await ui.find({ key: 'step-back-run' })).toBeDefined()
       await ui.unmount()
     })
   }
@@ -142,138 +142,47 @@ describe('pane', () => {
     await ui.unmount()
   })
 
-  test('lens toggles show ✓, Run N runs them with the focus, and the selection clears', async ($, on) => {
+  test('Step Back runs the full protocol with its optional focus and has no lens presets', async ($, on) => {
     const { w, clock } = world(on)
     await ready($, clock)
     const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
-    await ui.press({ key: 'step-back-where-row-foundations' })
-    await clock.advance(1000)
-    await ui.press({ key: 'step-back-what-row-bloat' })
-    expect(await texts(ui)).toContain('✓ Foundations')
     await ui.input({ key: 'focus', text: 'the gate', kind: 'change' })
-    expect((await ui.find({ key: 'step-back-run' }))?.text).toContain('Run 2')
     await ui.press({ key: 'step-back-run' })
     await clock.settle()
-    expect(w.commands).toEqual([{ command: 'step-back', args: 'foundations bloat the gate' }])
-    expect(await ui.find({ key: 'step-back-run' })).toBeUndefined()
-    const pass = w.calls.find(one => one.argv[3] === 'pass')
-    expect(pass?.argv.slice(3)).toEqual(['pass', '--origin', 'press'])
+    expect(w.commands).toEqual([{ command: 'step-back', args: 'the gate' }])
+    expect(await ui.find({ key: 'step-back-path' })).toBeUndefined()
+    expect(await ui.find({ key: 'step-back-refine' })).toBeUndefined()
+    expect(await ui.find({ key: 'step-back-what' })).toBeUndefined()
     await ui.unmount()
   })
 
-  test('a double click runs one lens alone', async ($, on) => {
-    const { w, clock } = world(on)
-    await ready($, clock)
-    const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
-    await ui.press({ key: 'ground-row-probe' })
-    await clock.advance(200)
-    await ui.press({ key: 'ground-row-probe' })
-    await clock.settle()
-    expect(w.commands).toEqual([{ command: 'ground', args: 'probe' }])
-    expect(await texts(ui)).not.toContain('✓ Probe')
-    await ui.unmount()
-  })
-
-  test('Base includes the typed focus, and a repeat press while queued is dropped', async ($, on) => {
+  test('Ground runs its full skill and leaves the Step Back focus alone', async ($, on) => {
     const { w, clock } = world(on)
     await ready($, clock)
     const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
     await ui.input({ key: 'focus', text: 'the gate', kind: 'change' })
-    await ui.press({ key: 'step-back-base' })
-    await ui.press({ key: 'ground-base' })
-    await ui.press({ key: 'ground-base' })
+    await ui.press({ key: 'ground-run' })
     await clock.settle()
-    expect(w.commands).toEqual([{ command: 'step-back', args: 'the gate' }, { command: 'ground', args: '' }])
-    expect(w.toasts).toContain('/ground is already queued')
+    await ui.press({ key: 'step-back-run' })
+    await clock.settle()
+    expect(w.commands).toEqual([{ command: 'ground', args: '' }, { command: 'step-back', args: 'the gate' }])
+    expect(await ui.find({ key: 'ground-all' })).toBeUndefined()
     await ui.unmount()
   })
 
-  test('a press works again once its run started, namespaced skills included', async ($, on) => {
+  test('a repeated press while queued is dropped, then works once started', async ($, on) => {
     const { w, clock } = world(on)
     await ready($, clock)
     const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
-    await ui.press({ key: 'ground-base' })
-    await $.skill.prompt({ skill: 'ground', text: 'Ground…' } as never)
-    await ui.press({ key: 'ground-base' })
-    await ui.press({ key: 'actions-row-commit' })
-    await $.skill.prompt({ skill: 'commit-commands:commit', text: 'Commit…' } as never)
-    await ui.press({ key: 'actions-row-commit' })
-    await clock.settle()
-    expect(w.commands.map(one => one.command)).toEqual(['ground', 'ground', 'commit', 'commit'])
-    expect(w.toasts.filter(text => text.includes('already queued'))).toEqual([])
-    await ui.unmount()
-  })
-
-  test('a pressed command reads starting… on its button until its run starts, queued while a turn works', async ($, on) => {
-    const { clock } = world(on)
-    await ready($, clock)
-    const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
-    const commitBox = async () => (await ui.find({ key: 'actions-row-commit-box' }))?.text ?? ''
-    expect(await commitBox()).not.toContain('starting')
-    await ui.press({ key: 'actions-row-commit' })
-    await clock.settle()
-    expect(await commitBox()).toContain('Commit · starting…')
-    expect((await ui.find({ key: 'actions-row-retro-box' }))?.text).not.toContain('starting')  // only the pressed one
-    await $.turn.start({ text: 'busy', turnId: 't1' } as never)
-    await clock.settle()
-    expect(await commitBox()).toContain('Commit · queued')
-    await $.skill.prompt({ skill: 'commit-commands:commit', text: 'Commit…' } as never)
-    await clock.settle()
-    expect(await commitBox()).not.toContain('queued')
-    await ui.press({ key: 'ground-base' })
-    await clock.settle()
-    expect(await texts(ui)).toContain(' · queued')  // the lens head marks its command
-    await ui.unmount()
-  })
-
-  test('All runs every lens of the command in list order with the focus, and keeps the selection', async ($, on) => {
-    const { w, clock } = world(on)
-    await ready($, clock)
-    const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
-    await ui.press({ key: 'ground-row-probe' })
-    await ui.input({ key: 'focus', text: 'the gate', kind: 'change' })
-    await ui.press({ key: 'step-back-all' })
-    await ui.press({ key: 'ground-all' })
-    await clock.settle()
-    expect(w.commands).toEqual([
-      { command: 'step-back', args: 'goal decisions foundations consumer root-fix bloat gaps clean overfit mechanics options the gate' },
-      { command: 'ground', args: 'assumptions board sources probe' },
-    ])
-    expect(await texts(ui)).toContain('✓ Probe')
-    expect(await texts(ui)).toContain('All: every lens, in list order.')
-    await ui.unmount()
-  })
-
-  test('Path and Refine run their lens sets with the focus, and the Step Back row offers Base, Path, Refine, All', async ($, on) => {
-    const { w, clock } = world(on)
-    await ready($, clock)
-    const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
-    await ui.input({ key: 'focus', text: 'the gate', kind: 'change' })
-    await ui.press({ key: 'step-back-path' })
-    await ui.input({ key: 'focus', text: 'the gate', kind: 'change' })
-    await ui.press({ key: 'step-back-refine' })
-    await clock.settle()
-    expect(w.commands).toEqual([
-      { command: 'step-back', args: 'goal foundations the gate' },
-      { command: 'step-back', args: 'decisions clean overfit mechanics the gate' },
-    ])
-    expect(await ui.find({ key: 'ground-path' })).toBeUndefined()
-    expect(await ui.find({ key: 'ground-refine' })).toBeUndefined()
-    const drawn = await texts(ui)
-    expect(drawn).toContain('Path: goal and foundations: is the direction right?')
-    expect(drawn).toContain('Refine: decisions, clean, overfit, mechanics: sharpen the path.')
-    await ui.unmount()
-  })
-
-  test('Ground leaves the Step Back focus alone', async ($, on) => {
-    const { w, clock } = world(on)
-    await ready($, clock)
-    const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
-    await ui.input({ key: 'focus', text: 'the gate', kind: 'change' })
-    await ui.press({ key: 'ground-base' })
+    await ui.press({ key: 'ground-run' })
+    await ui.press({ key: 'ground-run' })
     await clock.settle()
     expect(w.commands).toEqual([{ command: 'ground', args: '' }])
-    expect((await ui.find({ key: 'step-back-run' }))?.text).toContain('Run 0')
+    expect(w.toasts).toContain('/ground is already queued')
+    await $.skill.prompt({ skill: 'ground', text: 'Ground…' } as never)
+    await ui.press({ key: 'ground-run' })
+    await clock.settle()
+    expect(w.commands).toHaveLength(2)
     await ui.unmount()
   })
 

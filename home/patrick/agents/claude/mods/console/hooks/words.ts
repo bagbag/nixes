@@ -42,24 +42,8 @@ export const ALL_LENSES: Record<LensCommand, readonly string[]> = {
   ground: GROUND.map(lens => lens.name),
 }
 
-/** The Path and Refine buttons' Step Back lenses; the engine's check sequence runs the same sets (the validator compares them). */
-export const PATH_LENSES: readonly string[] = ['goal', 'foundations']
-export const REFINE_LENSES: readonly string[] = ['decisions', 'clean', 'overfit', 'mechanics']
-
-/** The fixed lens sets each row offers after Base, in button order; Path and Refine are Step Back's only. */
-export const LENS_SETS: Record<LensCommand, readonly { key: string; label: string; hint: string; lenses: readonly string[] }[]> = {
-  'step-back': [
-    { key: 'path', label: 'Path', hint: 'goal and foundations: is the direction right?', lenses: PATH_LENSES },
-    { key: 'options', label: 'Options', hint: 'options: radically different ways to the outcome.', lenses: ['options'] },
-    { key: 'refine', label: 'Refine', hint: 'decisions, clean, overfit, mechanics: sharpen the path.', lenses: REFINE_LENSES },
-    { key: 'all', label: 'All', hint: 'every lens, in list order.', lenses: ALL_LENSES['step-back'] },
-  ],
-  ground: [{ key: 'all', label: 'All', hint: 'every lens, in list order.', lenses: ALL_LENSES.ground }],
-}
-
-/** Lens names first, then the free focus: the typed form both skills read. */
-export const lensArgs = (lenses: readonly string[], focus: string): string =>
-  [...lenses, focus.trim()].filter(part => part !== '').join(' ')
+/** Step Back accepts only a free focus; absent one runs the full protocol. */
+export const lensArgs = (lenses: readonly string[], focus: string): string => focus.trim()
 
 const PULLS: readonly string[] = ['plan', 'design', 'implement', 'review']
 

@@ -150,7 +150,9 @@ challenge pass may change only your own rulings on answered questions; the
 release asks the user about each such change.
 
 **Stop:** an answer states a criterion, or a later step changes the premise:
-restart the affected questions under the decision protocol's
+restart the affected questions with `protocol restart <ids> --quote <the user's
+exact words>`; this preserves their new goal through a focused step-back and
+confirmation. Then continue under the decision protocol's
 [Changed premises](../../shared/decision-protocol.md#changed-premises).
 
 **Exit:** each round question is decided or deferred by the user, or deferred

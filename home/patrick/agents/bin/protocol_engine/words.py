@@ -16,14 +16,12 @@ from .base import (
 
 MERGE_TEST = ('Merge questions only when no sensible answer would treat them differently: an option that splits them means separate '
               'questions, and a shared premise puts them in one round, not one question.')  # skills/shared/question-format.md owns the test
-LEAN_JOB = ' (the lean pass: aim each lean named in the argument at strong, decision-protocol.md Recommendation strength).'
 HAND_OVER = 'End your turn with one short line: what changed, or "No change." The console runs the next pass, not you.'  # r8-q30
 PICK_DETAIL = ('Count a pick as the answer when the rest of the reply or note questions only a detail the pick doesn\'t hinge on; '
                'leave the question open only when the doubt could change the pick. Record the pick (typed: the ["answer"] call with '
                'the option\'s label), then add the detail as a new question through `protocol edit` instead of folding it into the '
                'picked one; the pick\'s record names that question.')  # answer first: an edit sends a typed question out again
-THINK_MORE_LINE = ('No answer yet: its checks redo it aiming for a strong recommendation, with a consumer walk and a probe, '
-                   'then it comes back.')  # the consumer walk and the probe are the lean pass's (r38-q213)
+THINK_MORE_LINE = 'No answer yet: rerun the step-back on this question, then return to it.'
 
 
 def report_hint(example) -> str:
@@ -64,34 +62,23 @@ CHECK_AFTER_ANSWERS = (' (after the last answer: challenge your own rulings in t
                        'not the strong marks of answered questions; a finding that needs the user\'s decision is a new question, checked before it is asked).')
 CHECK_PLAIN = '.'
 CHECK_LAST = ' (last before the batch).'
-CHECK_PATH_NOW = " (the round's path pass: goal and foundations, before the drafts settle)."
-CHECK_OPTIONS_NOW = " (the round's options pass: radically different ways to the outcome, before the drafts settle)."
-CHECK_REFINE_NOW = " (the round's refine pass: the lenses named in the argument)."
 
 
 def check_raised(ids: list[str]) -> str:
     return f" (the strong recommendation raised on {' '.join(ids)})."
 
 
-def check_path_scoped(ids: list[str]) -> str:
-    return f" (the path pass on the restarted questions {' '.join(ids)}: goal and foundations)."
-
-
-def check_options_scoped(ids: list[str]) -> str:
-    return f" (the options pass on the restarted questions {' '.join(ids)}: other ways to the outcome)."
-
-
-def check_refine_scoped(ids: list[str]) -> str:
-    return f" (the refine pass on the restarted questions {' '.join(ids)}: the lenses named in the argument)."
-
-
 # Check: pass arguments, the cap dialog and the report formats (check.py).
 
-def think_more_goal(head: str, ids: list[str]) -> str:
-    """The Think more goal appended to a pass argument (r38-q213): one line without quotes, so a typed rerun matches it."""
+def think_more_goal(head: str, ids: list[str], goals: list[str] | None = None) -> str:
+    """The user's goal appended to a focused pass argument, so a typed rerun matches it."""
+    if goals and any(goals):
+        return (f"{head}; Rethink {' '.join(ids)}: {'; '.join(goal for goal in goals if goal)}; "
+                'reassess toward a strong recommendation under decision-protocol.md Recommendation strength')
     many = len(ids) > 1
     return (f"{head}; Think more on {' '.join(ids)}: the lean{'s' if many else ''} fell short, try to get "
-            + ('reasoned strong recommendations' if many else 'a reasoned strong recommendation'))
+            + ('reasoned strong recommendations' if many else 'a reasoned strong recommendation')
+            + ' under decision-protocol.md Recommendation strength')
 
 
 CAP_HEADER = 'Check cap'
@@ -132,20 +119,16 @@ def pass_format(command: str) -> str:
             'summary': '<one line: what the pass found>'}))
 
 
-ROOT_CHECK = (" Goal lens: check each question's `root`; rewrite a question whose cause lies outside its frame, and update its "
-              '`root`.')
-
-
 ANSWERED_RULINGS = (' An update to an answered question may change only its `rulings`: the answer and its options stay the user\'s; '
                     'each change is logged and the release asks the user about it.')
 
 
 def pass_scope(ids: list[str], strong: list[str] | None, command: str | None = None, answered: bool = False) -> str:
     """The pending pass's scope (r4-q15, q16); `strong`: the strong ids a challenge-rulings pass re-derives, None for other passes;
-    a step-back pass also checks each question's `root`; `answered`: the pass after the last answer, which covers the answered
+    `answered`: the pass after the last answer, which covers the answered
     questions and my rulings on them (r7-q27)."""
     head = (f"This pass covers {' '.join(ids)}{' and my rulings on them' if answered else ''}: a `checked` entry (what you examined in it this run, one line of about {CHECKED_MAX} characters) or an update for each."
-            + (ROOT_CHECK if command == 'step-back' else '') + (ANSWERED_RULINGS if answered else '')
+            + (ANSWERED_RULINGS if answered else '')
             if ids else 'Nothing changed since this pass last ran: `checked` needs only a `round` note.')
     if strong is None:
         return head
@@ -159,15 +142,13 @@ def answers_args(ids: list[str]) -> str:
     return f"{' '.join(ids)} and my rulings on them"
 
 
-def start_scope(ids: list[str], strong: list[str] | None, explored: list[str], command: str | None = None, answered: bool = False) -> str:
-    """The scope as the pass starts (r9-q36), appended to its expanded skill text: pass_scope's line, which it supersedes, and
-    for an options pass the ids `explored` covers."""
-    return (f"Use this scope, not one printed earlier. {pass_scope(ids, strong, command, answered)}"
-            + (f" Give `explored` an entry for each of {' '.join(explored)} and no other." if explored else ''))
+def start_scope(ids: list[str], strong: list[str] | None, command: str | None = None, answered: bool = False) -> str:
+    """The scope as the pass starts (r9-q36), appended to its expanded skill text: pass_scope's line, which it supersedes."""
+    return f"Use this scope, not one printed earlier. {pass_scope(ids, strong, command, answered)}"
 
 
 def challenge_format() -> str:
-    """challenge-rulings adds `verdicts` and `rulings` to its report: told apart from the pass format, like the options pass's."""
+    """challenge-rulings adds `verdicts` and `rulings` to its report, distinct from the step-back report."""
     return ('Add to a challenge-rulings report `verdicts`: for each strong question the step names (answered ones after the last answer are not), its `strongBecause` re-derived '
             'this run (an update lowering it to lean or re-sending it covers it too); and `rulings`: each own ruling in this round as '
             '{"question", "ruling", "why", "alternative", "fails", "evidence", "sure": true or false}, an empty list when there is '
@@ -178,18 +159,6 @@ def challenge_format() -> str:
                              'alternative': '<its strongest alternative>', 'fails': '<the test the alternative fails>',
                              'evidence': '<source, run or item>', 'sure': True}],
                 'summary': '<one line>'}))
-
-
-def options_format() -> str:
-    """The options pass adds `explored` to its report: told apart from the pass format, which a session is told once."""
-    return lines(
-        'The options pass also reports `explored` (its entries cover its questions): for each question the argument covers, the radically different ways you found '
-        '(other mechanisms, other owners, removing the need; not variants) as {"idea", "verdict": "kept" or "dropped", "why"}, or '
-        'one sentence saying why no other way exists. A dropped idea names the stated constraint or sourced fact that rules it out '
-        'and prints under the question\'s options; a kept one shows in the options or the recommendation. e.g. ' + json_block({
-            'pass': 'step-back', 'updates': [], 'explored': {'q1': [{'idea': '<another mechanism>', 'verdict': 'dropped',
-                                                                      'why': '<the constraint or fact>'}], 'q2': '<why no other way exists>'},
-            'checked': {}, 'summary': '<one line>'}))
 
 
 # Pre-pass (prepass.py).
@@ -714,10 +683,9 @@ def answer_noted(qid: str, pick: str, note: str) -> str:
 
 
 ANSWER_ROUTES = ('Act on each part of the user\'s words above: an option it picks → the ["answer"] call with the option\'s '
-                 'label and that text as quote; a criterion → `protocol restart <ids>`; a question → answer it '
+                 'label and that text as quote; a criterion → `protocol restart <ids> --quote "<the user\'s words>"`; a question → answer it '
                  'as this turn\'s last text, correcting a wrong premise; restart only for a criterion that still holds after the answer; a change to the questions → '
-                 '`protocol edit` (updates + the quote); a deferral of a question → `protocol defer` (question, the quote, until?); another request (explain, step back, ground, …) → run it (a pass: its skill with the Skill tool, then its report); a reply that '
-                 'changes a question (its recommendation included) → call a pass\'s skill on it, then report that pass. Restate '
+                 '`protocol edit` (updates + the quote); a deferral of a question → `protocol defer` (question, the quote, until?); an explicit request to rethink → `protocol restart <ids> --quote "<the user\'s words>"` and end your turn; other requests stay in the response. Restate '
                  'a part in one line when it could be read more than one way.')
 ANSWER_ROUTES_AGAIN = "Act on each part of the user's words above by the routes you were given."  # r13-q79; the full note again after a compaction
 NOTE_RECORD = 'A note no route takes stays in the record.'
@@ -912,14 +880,6 @@ def next_answers(console: bool, has_notice: bool, number: str) -> str:
 
 def next_challenge(kind: str, ids: list[str]) -> str:
     return 'challenge-rulings ' + ('after the last answer' if kind == 'answers' else 'on the raised strong ' + ' '.join(ids))
-
-
-def next_phase(kind: str, ids: list[str] | None) -> str:
-    """`, path pass`, `, refine pass q1 q2`: `ids` None for the round-wide pass."""
-    return f', {kind} pass' + (' ' + ' '.join(ids) if ids is not None else '')
-
-
-NEXT_LEAN = ', lean pass'
 
 
 def next_check(expect: str, phase: str, cycle: int, cap: int) -> str:
@@ -1360,9 +1320,9 @@ def code_block(text: str) -> str:
 
 
 def dropped_text(q: dict) -> str:
-    """The ideas the options pass dropped, one line each, under the options."""
-    found = q.get('explored')
-    return '\n'.join(f"- Dropped: {x['idea']} - {x['why']}" for x in found if x['verdict'] == 'dropped') if isinstance(found, list) else ''
+    """The distinct ideas step-back considered and rejected, one line each, under the options."""
+    found = q.get('dropped')
+    return '\n'.join(f"- Dropped: {x['idea']} - {x['why']}" for x in found if isinstance(x, dict) and x.get('idea') and x.get('why')) if isinstance(found, list) else ''
 
 
 def ruling_line(x: dict) -> str:
@@ -1432,9 +1392,5 @@ def batch_title(index: int, count: int, title: str, mark: str) -> str:
 
 
 def no_run(command: str, pending: dict | None) -> str:
-    """A report with no observed run of its pass (r5-q17): run the pending pass when it is that command, else end the turn."""
-    if pending and pending.get('command') == command:
-        run = ' '.join(part for part in (f'/{command}', pending.get('args') or '') if part)
-        return f'no /{command} ran since its last report: run `{run}` with the Skill tool, then report it'
-    return (f'no /{command} ran since its last report: end your turn (the console runs a pass it has not run yet, and tells '
-            'the person what to type for one it has)')
+    """A report without an observed run always ends the turn; the console starts the pending pass."""
+    return f'no /{command} ran since its last report: end your turn; the console starts or queues the pending pass'

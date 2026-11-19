@@ -66,7 +66,7 @@ describe('a pass run the console queued', () => {
   })
 })
 
-describe('a pass the console queued that the model ran itself (r8-q26)', () => {
+describe('a console queued pass expanded by the model (r8-q26)', () => {
   const expand = async ($: any) => ($.skill.prompt({ skill: 'ground', text: 'Ground, in full.' } as never) as Promise<{ text: string }>)
   /** The model's Skill call of /ground, whose skill expands inside it; returns the text the model read. */
   const modelRuns = (on: any, $: any) => {
@@ -140,15 +140,13 @@ describe('a pass the console queued that the model ran itself (r8-q26)', () => {
     expect(drops(w)).toEqual([{ origin: ['--origin', 'plugin'], report: { kind: 'pass', id: 'p7' } }])
   })
 
-  test('a queued record older than an hour is pruned', async ($, on) => {
+  test('an unexpanded queued record older than an hour is stale', async ($, on) => {
     const { w, clock } = world(on, { round: pending('p7') })
-    const run = modelRuns(on, $)
     await queued($, clock)
-    await run()
     w.round = roundJson({ step: 'stage', pending: null, batch: null })
     await clock.advance(61 * 60_000)
-    expect((await expand($)).text).toBe('Ground, in full.')
-    expect(drops(w)).toEqual([])
+    expect((await expand($)).text).toBe(STALE_PASS_TEXT)
+    expect(drops(w)).toEqual([{ origin: ['--origin', 'plugin'], report: { kind: 'pass', id: 'p7' } }])
   })
 })
 

@@ -80,7 +80,7 @@ A round:
   `notice` (`show --json`): per question, numbered like the dialog, its
   title and its parts in order, a blank line between parts: `Problem:`, `Cases:`,
   the items a rule question settles one line each (`Settles:`), the board ids it holds up (`Holds up:`, one line, when set), `Premises:`, the options,
-  the ideas the options pass dropped, the own rulings, `Note:`; the round's `overview` comes before the first
+  the alternatives the step-back dropped, the own rulings, `Note:`; the round's `overview` comes before the first
   block once. The options print as layered plain text: the recommended option first
   as `Recommended: <label>` with its reason on the next line (`Lean, your call: …`,
   `Lean, unverified: …`, or `Strong: ` and why the other options fail), then a `+` line with
@@ -99,7 +99,7 @@ A round:
   names what moved, `(changed: options, premises)`. After a dialog the engine writes the
   line the person reads: per question its number, title and outcome, a pick marked
   `(recommended)` or `(not recommended)`, and a skip, a typed reply or Think more saying
-  so. The console's own dialog sends that line to the model as its prompt, and the model's turn end runs a pending pass; the
+  so. The console's own dialog sends that line to the model as its prompt; at the model's turn end the console queues the pending pass. The
   dialog hook records the answers and wakes the model itself right away, so a console reload while the dialog is open loses
   no wake-up, and only a decline Esc kept from saving is recorded and sent once the dialog closed. A release
   approval prints its corrections (revised and dropped records), the board check
@@ -128,7 +128,7 @@ A round:
   `/console-questions` hook returns only once the swap took the dialog (2 s at most), and the hook that queues
   `/console-questions` makes one more call before it returns.
   Every outcome then wakes the model with the answers, one line each, as the person's own words (no plugin frame), and the engine's
-  text as a note; its turn end runs a pending pass or prints a next batch: the command hook has returned by then, so it
+  text as a note; at its turn end the console queues a pending pass or prints a next batch: the command hook has returned by then, so it
   can neither print the answers through a command nor the next batch. If the swap never ran, the host draws the stand-in
   question (`Open the questions for batch <marker>?`): Not now holds the batch until the person's next message, and a
   close, a timeout or Open the questions sends the lead a one-line message to open the dialog
@@ -194,7 +194,7 @@ A round:
   engine queues a `step-back` pass with the lenses `goal decisions` and the focus `pre-pass over the round's points`
   (`pre-pass on <subject>`), over the pasted points and the board items listed as read at `start`. It is the rough overview
   of the whole set (direction; points that are off or rest on an unclear premise, asked first; the cut under
-  question-format), where the path pass after staging judges each drafted question. Its report `{"pass": "step-back",
+  question-format), where the check step-back after staging judges each drafted question. Its report `{"pass": "step-back",
   "summary", "points"?, "verdict"?}` takes `points` entries: no `id` adds a point, a pasted point's `id` rewords it (`text`)
   or drops it (`drop`, with a `reason`), and `first` marks a pasted point or an open board item to ask before the rest
   (Select leads with it and says "ask first"; Stage names it so dependents wait on it). A board item is not reworded or
@@ -205,30 +205,24 @@ A round:
   own topic and items) and on `start release`. Stage's text points to the cut in question-format.md and adds its
   mechanics (the first part keeps the item, the others are drafts).
 - Related searches each new draft and needs an outcome per hit.
-- Check runs the full set on every question (r18-q120 reverted r13-q64's
-  light start), per round: the path pass once (`step-back goal foundations`,
-  which also digs into the real problem behind the ask and whether the design
-  fixes its root; its changes flow on, and new or reworded drafts are searched
-  through Related first), then the options pass once (`step-back options`, r30-q142:
-  radically different ways, other mechanisms or owners or removing the need, plus
-  the established practice, each argued at its strongest; the report carries
-  `explored`, per question a list of `{idea, verdict: kept|dropped, why}` or the
-  reason there is no other way, and is refused without it; a
-  `confirm-own-rulings` question is skipped; the dropped ideas print under the
-  options), then step-back and
-  ground until a cycle changes nothing (cap 10 cycles, then a dialog whose
-  Continue adds 10; an open round keeps its stored cap), then the refine pair
-  once (round-wide `step-back decisions clean overfit mechanics`, then
-  `ground assumptions board sources probe`; a change in either reruns the Base
-  loop under the cap, and the pair does not repeat), one targeted
-  `ground assumptions sources probe <ids>` pass on every lean (evidence or
-  preference, r38-q213: redo it from scratch, walk a realistic consumer through
-  it and test the deciding fact by a probe or count; a lean still resting on
-  values comes back with the value question as its text, options unchanged; no
-  loop), then challenge-rulings, last before a batch and again whenever a pass
-  changed questions since its last run (its own changes rerun the Base loop,
-  the cycle cap bounds the repeats, a run that changes nothing ends it). Once
-  the last answer is in, a round (never a release) runs one challenge-rulings
+- Check runs one complete `step-back` over the ready questions, then a fresh
+  confirming `step-back` on the same questions, then `challenge-rulings` before
+  a batch. The step-back skill checks all 11 lenses deeply by default and owns
+  convergence; it records checked premises and dropped options in its run log,
+  not in protocol fields. If either step-back changes a question, Related
+  searches new drafts first, then a fresh confirming step-back follows. A
+  confirming pass that changes a question restarts at the full pass; unchanged
+  confirmation proceeds to challenge-rulings. A challenge that changes
+  questions queues a confirming step-back. The check cycle cap bounds
+  restarts. `protocol restart <ids> --quote <user words>` and edits, released
+  held questions, and freed `waitsFor` questions queue a focused step-back on
+  the affected ids, then a confirming pass and challenge. A restart quote
+  remains the Think More goal for both focused passes. The Claude console
+  alone starts a pass; invoking the Skill is not an observed pass. Codex
+  reports its pending pass directly. Another report is extra: its changes
+  still apply and require confirmation. Ground remains a separately invocable
+  pass and is used by release checks; it is not part of a round's check loop.
+  Once the last answer is in, a round (never a release) runs one challenge-rulings
   pass over the answered set before Record (`challenge-rulings (after
   answers)`): a finding is a new question that gets the scoped check below
   before it is asked, and the pass runs again after its answer; a pass that
@@ -240,42 +234,23 @@ A round:
   (`rulings-changed`), the record carries it in its Own rulings (marked), and the release asks
   the user about a record with such a change, even when every own ruling is sure and the
   approval was typed or pressed (`ruling changed after the answer: <id>`).
-  Base's own lenses
-  (consumer, root-fix, bloat, gaps) are in none of the sets. The path, options and refine
-  passes run once per round, flagged on the round: a check rebuilt at
-  Ask does not repeat them. `protocol restart <ids>` (also several calls
-  before the loop settles, ids accumulating) queues scoped reruns on the
-  restarted questions, kept apart from the round's flags: a path pass
-  `step-back goal foundations <ids>` first, an options pass `step-back options <ids>`
-  (the same scoped re-check follows an edit, a released held question and a freed `waitsFor` one), the Base loop round-wide, then
-  `step-back decisions clean overfit mechanics <ids>` and
-  `ground assumptions board sources probe <ids>` (changes rerun Base once),
-  then the lean pass as usual. A pass settles the pending pass only when its run carried the
+  A pass settles the pending pass only when its run carried the
   pending id: the console stamps `protocol pass` with the id when a run's command and arguments
-  match the pending pass's (whitespace collapsed, wording and case exact), whoever started it
-  (the engine's own run, a typed or pressed command, a model Skill call); the report of that
+  match the pending pass's (whitespace collapsed, wording and case exact), whether it was
+  started by the engine, a typed command or a pressed control; the report of that
   run settles it (Codex: a report of the pending command). Any other
-  report is an extra pass: its changes apply and restart the Base loop, the log labels it
-  `extra`, and the pending pass still runs (a variant with other arguments, a lens press with
-  focus text and a plain `/step-back` while the path pass waits are extra). The engine's lens lists
-  (`ALL_LENSES`, `PATH_LENSES`, `OPTIONS_LENSES`, `REFINE_LENSES`) are checked against the
-  skills and the console's words.ts. Every pass report keys `checked` by question
+  report is an extra pass: its changes apply and queue confirmation, the log labels it
+  `extra`, and the pending pass still runs. Every pass report keys `checked` by question
   for its scope (r4-q15, q16): what it examined in each this run; an update to a
-  question covers it too, as do the options pass's `explored` entries, and a
+  question covers it too, and a
   `round` note is the only entry an empty scope needs. The step names the scope;
   the engine refuses a gap, naming the missing ids. The scope can change between the
   step and the pass, so the console names it again as a pass starts (r9-q36): `scope`
   (origin `plugin`, changes nothing; stdin `{"command", "pending"?}`, `pending` the stamp
-  of a run not recorded yet, else the recorded run's) prints `{"covers", "explored",
-  "text"}` as the report check will work it out, `explored` the ids an options pass's
-  `explored` covers (else null), and `text` the line, empty when there is nothing to name
-  or no pass report is taken (no round open, or a step other than check and ask). A pass kind's first run covers
-  every draft and ready question; a rerun of the Base step-back or ground, the lean
-  pass, the loop's challenge-rulings and an extra pass (per command) cover the
-  questions changed since that kind last ran (another pass's update, an edit, an
-  answer, a restart, a release from held, a new question; its own changes do not
-  count); a Base ground right after a Base step-back that updated no question, with nothing changed since that ground last ran, is skipped (r18-q121); the path, options and refine passes cover their scoped ids, else every
-  question they work on; the challenge after the answers covers the answered set and my rulings on it,
+  of a run not recorded yet, else the recorded run's) prints `{"covers", "text"}` as the report check will work it out, and `text` the line, empty when there is nothing to name
+  or no pass report is taken (no round open, or a step other than check and ask). A pass covers
+  the open questions in its current full or focused scope; confirmation covers
+  the same scope as the preceding step-back. The challenge after the answers covers the answered set and my rulings on it,
   the raised one its ids. An unchanged question resting on a changed one is
   outside a rerun's scope; every rerun still runs. challenge-rulings also re-sends,
   in `verdicts`, the `strongBecause` of each strong question in its scope (or an
@@ -291,13 +266,13 @@ A round:
   (`state['told']`, `format:<kind>`), and adds one line, "The report format:
   `protocol show` prints it again.", when it left one out; a refused `edit` or chat
   `answer` always repeats its own format. The dialog JSON always prints. In Claude sessions a
-  pass report is accepted only after an observed run of that pass since its
-  last report (the console's `pass` record, or a model Skill call). A report
+  pass report is accepted only after an observed console run of that pass since its
+  last report; invoking a model Skill alone does not mark a run. A report
   applies whole: a refused one, at any step, changes nothing, lists every error
   and leaves the run open for the resend. A question too long or
   invalid to ask (only one from before the limits can be) gets a plain message
-  naming its error: the model shortens it in a pass of its own (its Skill call
-  counts as the observed run); no pass runs automatically. `protocol edit` (stdin `{"updates", "quote"}`) applies a change the
+  naming its error: the console starts a pending step-back and the model reports
+  the shorter question; no pass runs automatically. `protocol edit` (stdin `{"updates", "quote"}`) applies a change the
   user asked for: the quote must appear in a message the console relayed in this
   round, one sent before the questions went out too (Codex: verbatim), the updates validate as in
   a pass report, a batch that is out comes back and goes out again with no pass
@@ -448,9 +423,8 @@ session's records`), one run per session, on a board only:
 When a batch's answers release held questions (every `waitsOn` answered), the
 round continues with them instead of recording (so do questions an edit added or
 re-recommended): Ask hands over to a scoped
-rerun like `restart`'s (a fresh check cycle on their ids, answered questions
-untouched; the path pass, the options pass, the Base loop, the refine pair on their ids, the lean
-pass and `challenge-rulings`), then the next batch asks them; chains release
+rerun like `restart`'s (a focused step-back and confirmation on their ids,
+answered questions untouched, then `challenge-rulings`), then the next batch asks them; chains release
 batch by batch, and Record runs once, when nothing is left to ask. A question
 can also wait on a named outside result (r8-q31): `waitsFor`, a non-empty string
 saying what (a spike, a review, the person's own try, another session's ruling)

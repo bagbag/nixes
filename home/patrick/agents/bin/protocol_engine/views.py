@@ -9,7 +9,7 @@ from .base import CHECK_CAP, VERSION
 from . import words
 from .engine import Context, PROTOCOLS, by_id, fail
 from .record import release_next
-from .check import options_ids, pending_view, rescope_ids
+from .check import pending_view, rescope_ids
 from .collect import candidates
 from .seeds import proposal_rows
 
@@ -141,10 +141,7 @@ def next_words(ctx: Context) -> str | None:
             return words.next_challenge(check['challenge']['kind'], check['challenge']['ids'])
         if check['expect'] == 'challenge-rulings':
             return words.NEXT_CHALLENGE_LAST
-        phase = (words.next_phase('path', rescope_ids(ctx) if check.get('pathScoped') else None) if check.get('pathNow') else
-                 words.next_phase('options', options_ids(ctx, rescope_ids(ctx)) if check.get('optionsScoped') else None) if check.get('optionsNow') else
-                 words.next_phase('refine', rescope_ids(ctx) if check.get('refineScoped') else None) if check.get('refineNow') else
-                 words.NEXT_LEAN if check.get('focusing') else '')
+        phase = f" on {' '.join(rescope_ids(ctx))}" if check.get('focusIds') else ''
         return words.next_check(check['expect'], phase, check['cycle'], check['cap'])
     if r['step'] == 'scoped' and r['pending']:
         return words.next_scoped(r['pending']['command'], r['pending']['args'])

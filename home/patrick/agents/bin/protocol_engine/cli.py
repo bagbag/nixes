@@ -34,7 +34,7 @@ from .boards import Board, board_root
 from .engine import Context, PROTOCOLS, fail
 from .record import abandon_note, refresh_board, release_claims
 from .away import SWITCH_TO_SOLO
-from .check import next_cycle, pending_view, refused_formats, start_scope
+from .check import migrate_legacy_check, next_cycle, pending_view, refused_formats, start_scope
 from .ask import batch_back, withdraw_away
 from . import schema, words
 from .release_set import start_release
@@ -224,7 +224,7 @@ def cli(argv: list[str]) -> int:
     verb('records')
     sub = verb('restart')
     sub.add_argument('ids', nargs='+')
-    sub.add_argument('--reason')
+    sub.add_argument('--quote', required=True)
     sub = verb('next')
     sub.add_argument('--set', action='store_true', help='store the proposal (stdin)')
     sub = verb('show')
@@ -264,6 +264,7 @@ def cli(argv: list[str]) -> int:
                 repo = str(board_root(_call.get().cwd)) if board_root(_call.get().cwd) else None
             board = Board(repo, entry.get('actor') or session[-8:]) if repo else None
             ctx = Context(store, state, entry, board)
+            migrate_legacy_check(ctx)
             if args.command == 'start':
                 args.no_board = default_records() if args.no_board else None
             require_origin(ctx, args.command, args.origin)
@@ -387,6 +388,8 @@ def run(ctx: Context, args) -> str:
                           indent=1, ensure_ascii=False)
     if command == 'pass':
         pass_command = report['command']
+        if r['protocol'] == 'round' and args.origin == 'model':
+            raise ProtocolError('only the Claude console starts a round pass; a Skill call alone is not a run')
         # Observation only: the pending pass stays until its report (`step`), so the console can tell a pass turn
         # that ended without one.
         stamp = report.get('pending')
@@ -395,7 +398,7 @@ def run(ctx: Context, args) -> str:
                 pending=report.get('pending'))
         return json.dumps({**show_json(ctx), 'note': None}, indent=1, ensure_ascii=False)
     if command == 'restart':
-        restart(ctx, args.ids, args.reason)
+        restart(ctx, args.ids, args.quote)
         return instructions(ctx)
     if command == 'resume':
         check = r['check']

@@ -100,7 +100,7 @@ export async function nudged($: $, session: string, report: ConsoleNudge): Promi
 
 /**
  * The line naming what a report of the pass starting now must cover (r9-q36), '' when there is nothing to name. The engine works it
- * out as its report check will: `pending` is the stamp of a run not recorded yet (a model Skill call); left out, the recorded run's.
+ * out as its report check will: `pending` is the stamp for a command whose name and arguments match the pending pass.
  */
 export async function startScope($: $, session: string, input: { command: string; pending?: string | null }): Promise<string> {
   return text(record(await protocolJson($, session, ['scope', '--origin', 'plugin'], input)).text)

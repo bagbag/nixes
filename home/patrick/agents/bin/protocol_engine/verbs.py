@@ -404,13 +404,15 @@ def answer(ctx: Context, report: dict, origin: str) -> str:
 RESTART_STEPS = ('related', 'check', 'ask', 'record')  # the steps after Stage, while the round is open
 
 
-def restart(ctx: Context, ids: list[str], reason: str | None) -> None:
+def restart(ctx: Context, ids: list[str], quote: str) -> None:
     r = ctx.round
     if r and r['protocol'] == 'release' and r['step'] != 'closed':
         fail('restart is a round verb: in a release, a criterion holds the set (answer Hold, or `protocol abandon`) '
              'and the next round restarts it')
     if not r or r['step'] not in RESTART_STEPS:
         fail('restart needs an open round past Stage')
+    if quote != THINK_MORE:
+        quote_check(ctx, 'restart', quote)
     targets = [by_id(ctx, qid) for qid in ids]
     # Answers resting on a restarted premise go with it, through chains (r23-q92): their options assumed the old answer.
     resting = []
@@ -418,6 +420,8 @@ def restart(ctx: Context, ids: list[str], reason: str | None) -> None:
         targets += [other for other in r['questions'] if other['status'] == 'deferred' and (other.get('deferral') or {}).get('with') == q['id']
                     and other not in targets]  # a deferral withdrawn takes the questions deferred with it
     for q in targets:
+        if quote != THINK_MORE:
+            q['thinkMore'] = {'quote': quote}
         for other in r['questions']:
             if q['id'] in other.get('waitsOn', []) and other not in targets and other['answer'] is not None:
                 targets.append(other)  # the loop reaches its own dependents too
@@ -440,7 +444,7 @@ def restart(ctx: Context, ids: list[str], reason: str | None) -> None:
         q.update(answer=None, status='draft')
     for q in questions(ctx, 'draft', 'held', 'ready'):
         q['status'] = premise_status(ctx, q)
-    ctx.log('restart', questions=ids, reason=reason)
+    ctx.log('restart', questions=ids, quote=quote)
     r['batch'] = None
     r.pop('reading', None)
     rescope_check(ctx, [*ids, *take_unchecked(ctx)])

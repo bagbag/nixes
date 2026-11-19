@@ -7,7 +7,7 @@ import type { EngineInterface, Register } from 'claude-code'
 import {
   afterTurn, compactThenStart, context, continueLater, continueTyped, CONTINUE_COMMAND, dropIfStale, failOpen, message, notice, PANE, placeholderMarker, pressRun, pressSubmit, recordPass, refreshAll, refreshBoard, refreshLater,
   refreshRole, refreshRound, releaseRun, rerunStoppedPass, resetSession, deliverDialogOutcome, dialogSwapped, stampReleaseRun, withContext,
-  midTurnBuiltin, modelStartedPass, notePersonRun, placeQuestions, questionList, showQuestions, staleDelivery, startedPass, withStartScope,
+  midTurnBuiltin, notePersonRun, placeQuestions, questionList, showQuestions, staleDelivery, startedPass, withStartScope,
 } from './core'
 import { answer, boardShow, decline, isRoundOpen, pass, pending as readPending, protocol, RELEASE_COMMAND, say, START_COMMAND, statusLine, toolArgv } from './engine'
 import { capture, judgeDialog } from './gate'
@@ -141,17 +141,13 @@ export const register: Register = on => {
     // Never draw the placeholder: a failure here falls back to the model opening the dialog.
   }).catch(($, e, next) => placeholderMarker((e as unknown as { questions?: { question?: unknown }[] }).questions?.[0]?.question) !== null ? { deny: 'the console could not open its dialog' } : next(e))
 
-  // Pass observation: the main agent's Skill call counts once it ran. A subagent's is its own work, not the round's pass.
+  // Skill calls can supply focus to the expansion; only the console's queued run records a pass.
   on('tool.call', { tool: 'Skill' }, async ($, e, next) => {
     const skill = e as unknown as { skill?: unknown; args?: unknown }
     const name = typeof skill.skill === 'string' ? bareSkill(skill.skill) : ''
     if (e.agentId !== undefined) return counted(subagentSkills, name, () => next(e))
     modelArgs.set(name, typeof skill.args === 'string' ? skill.args : '')
-    const ran = await counted(modelSkills, name, () => next(e)).finally(() => { if (!modelSkills.has(name)) modelArgs.delete(name) })
-    if (ran.deny === undefined && ran.isError !== true && typeof skill.skill === 'string') {
-      await recordPass($, await context($), 'model', skill.skill, typeof skill.args === 'string' ? skill.args : '')
-    }
-    return ran
+    return counted(modelSkills, name, () => next(e)).finally(() => { if (!modelSkills.has(name)) modelArgs.delete(name) })
   }).catch(($, e, next) => next(e))
 
   // Typed commands count as the person's passes. The console's own run only counts once its skill expands (`skill.prompt`):
@@ -167,14 +163,12 @@ export const register: Register = on => {
     return next(e)
   }).catch(($, e, next) => next(e))
 
-  // A run has started as its skill expands: a press's guard entry goes, and the machine's pass is started. The model's own Skill call
-  // runs as called; a queued run the round has left becomes a no-op (r3-q9), the console's own even after the model ran its pass (r8-q26).
+  // A run has started as its skill expands: a press's guard entry goes, and the console's queued pass starts.
   on('skill.prompt', async ($, e, next) => {
     const skill = bareSkill(e.skill)
     if (subagentSkills.has(skill)) return next(e)  // a subagent's call expands here: not the round's pass
     // A pass that starts names what its report must cover, as the engine works it out now (r9-q36); a stale run gets none.
     if (modelSkills.has(skill)) {
-      await modelStartedPass($, skill)
       return next({ ...e, text: await withStartScope($, e.text, skill, modelArgs.get(skill) ?? '') })
     }
     await releaseRun($, key => key === skill || key.startsWith(`${skill} `))

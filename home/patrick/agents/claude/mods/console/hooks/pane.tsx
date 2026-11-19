@@ -8,12 +8,11 @@ import type { ConsoleBoard, ConsoleCr, ConsoleItem, ConsoleRatification, Console
 import { crPressKey, ratifyPressKey, pressAcceptCr, pressContinue, pressOpenCr, pressOpenItem, pressOpenOverlaps, pressOpenRatification, pressOpenReason, pressOpenSettles, pressOpenSuggestion, pressRatify, pressReturnCr, pressUpdateCr, pressRole, pressRun, pressStart, pressView, pressWorkers, queuedRuns, runKey } from './core'
 import { isRoundOpen, RELEASE_COMMAND, ROUND_ROLES, START_COMMAND } from './engine'
 import { getBoard, getExpanded, getLenses, getOpened, getPass, getPlaced, getPressing, getRole, getRound, getRoundError, getTurnRunning, toggleExpanded, updateLenses } from './state'
-import { answerText, canUpdateCr, COUNT_GROUPS, countText, crDetailsText, crFailureParts, crFileHref, crMarks, crNewCountText, crKind, crPriorityHint, crPriorityText, crRowCheckText, crRows, crRowStageText, crSummaryText, crTreeText, crUnblocksHint, crUnblocksText, displayId, displayIds, fitText, canAcceptCr, isCrAccepting, isWalkCr, GROUND, GROUND_BASE, lensArgs, LENS_SETS, plural, pullsText, recommendationMark, recommendationText, roleText, roundWords, runNoun, staleHolds, staleSessions, startHint, STEP_BACK_BASE, suggestionText, WHAT, WHERE } from './words'
-import type { CrKind, Lens, LensCommand } from './words'
+import { answerText, canUpdateCr, COUNT_GROUPS, countText, crDetailsText, crFailureParts, crFileHref, crMarks, crNewCountText, crKind, crPriorityHint, crPriorityText, crRowCheckText, crRows, crRowStageText, crSummaryText, crTreeText, crUnblocksHint, crUnblocksText, displayId, displayIds, fitText, canAcceptCr, isCrAccepting, isWalkCr, GROUND_BASE, lensArgs, plural, pullsText, recommendationMark, recommendationText, roleText, roundWords, runNoun, staleHolds, staleSessions, startHint, STEP_BACK_BASE, suggestionText } from './words'
+import type { CrKind, LensCommand } from './words'
 
 type $ = EngineInterface
 
-export const DOUBLE_PRESS_MS = 450
 const QUESTIONS_SHOWN = 10  // this many questions show while enough exist: every asked one and the 2 latest answered, then upcoming, held and older answered ones
 const ANSWERED_SHOWN = 2
 const LOG_SHOWN = 10  // the newest log lines; the rest of the round's log folds behind +N more
@@ -62,8 +61,6 @@ const ITEM_COLOR: Record<string, string> = { open: 'claude', in_progress: 'sugge
 const SESSION_COLOR: Record<string, string> = { active: 'success', idle: 'warning', stopped: 'error', gone: 'inactive' }
 const RECORD_COLOR: Record<ConsoleRecord['state'], string> = { set: 'claude', revised: 'suggestion', dropped: 'warning', changed: 'error', released: 'success', replaced: 'inactive' }
 
-// A lens press within DOUBLE_PRESS_MS of the same lens runs it alone; a reload forgetting it is harmless.
-let lastLensPress: { key: string; at: number } | undefined
 
 type Hints = { add: (scope: string, text: string) => void; list: { scope: string; text: string }[] }
 
@@ -498,54 +495,11 @@ export async function drawPane($: $, e: { surface: string; props: RenderPropsOf[
     )
   }
 
-  // The free focus belongs to Step Back (its Input sits in the where row); Ground leaves it alone.
-  const runLenses = async (command: LensCommand) => {
-    const now = await getLenses($)
-    const hasFocus = command === 'step-back'
-    const args = lensArgs(now[command], hasFocus ? now.focus : '')
-    await updateLenses($, current => ({ ...current, [command]: [], ...(hasFocus ? { focus: '' } : {}) }))
-    await pressRun($, command, args)
-  }
+  // Step Back always runs the full protocol; an optional focus scopes the run. Ground runs its full skill.
   const runBase = async (command: LensCommand) => {
-    if (command !== 'step-back') return pressRun($, command, '')
-    const focus = (await getLenses($)).focus
-    await updateLenses($, current => ({ ...current, focus: '' }))
-    await pressRun($, command, focus.trim())
-  }
-  // A fixed lens set (Path, Refine, All), the focus included (Step Back); the toggled selection stays.
-  const runSet = async (command: LensCommand, set: readonly string[]) => {
-    const hasFocus = command === 'step-back'
-    const focus = hasFocus ? (await getLenses($)).focus : ''
-    if (hasFocus) await updateLenses($, current => ({ ...current, focus: '' }))
-    await pressRun($, command, lensArgs(set, focus))
-  }
-  const toggleLens = (command: LensCommand, lens: string) => async () => {
-    const now = await $.clock.now()
-    const key = `${command}:${lens}`
-    const isDouble = lastLensPress !== undefined && lastLensPress.key === key && now - lastLensPress.at < DOUBLE_PRESS_MS
-    lastLensPress = isDouble ? undefined : { key, at: now }
-    if (isDouble) {
-      // The first press of the pair toggled it; the double runs it alone and clears the selection.
-      await updateLenses($, current => ({ ...current, [command]: [] }))
-      await pressRun($, command, lens)
-      return
-    }
-    await updateLenses($, current => {
-      const picked = current[command]
-      return { ...current, [command]: picked.includes(lens) ? picked.filter(one => one !== lens) : [...picked, lens] }
-    })
-  }
-  const toggles = (key: string, command: LensCommand, list: readonly Lens[]) => {
-    const picked = lenses[command]
-    return divided(key, list.map(lens => {
-      hint.add(`${command}-${lens.name}`, `${lens.label}: ${lens.hint} Double click runs it alone.`)
-      return {
-        key: lens.name,
-        scope: `${command}-${lens.name}`,
-        onPress: toggleLens(command, lens.name),
-        label: picked.includes(lens.name) ? <Text bold color="suggestion">✓ {lens.label}</Text> : <Text>{lens.label}</Text>,
-      }
-    }))
+    const focus = command === 'step-back' ? (await getLenses($)).focus.trim() : ''
+    if (command === 'step-back') await updateLenses($, current => ({ ...current, focus: '' }))
+    await pressRun($, command, lensArgs([], focus))
   }
   // The round's pending pass carries the accent color: "next" until its run starts, then "running" until its report
   // moves the engine on. The pass after it depends on that report, so the pane never shows two.
@@ -557,28 +511,13 @@ export async function drawPane($: $, e: { surface: string; props: RenderPropsOf[
     && !(passRun !== null && passRun.id === round?.pending?.id && (passRun.phase === 'queued' || passRun.phase === 'started'))
   const nextMark = (command: string) => pendingPass === command ? <Text color="claude"> ◂ {passWord}</Text> : null
   const lensHead = (command: LensCommand, title: string, base: string, hasFocus: boolean) => {
-    const picked = lenses[command]
     const focus = hasFocus ? lenses.focus.trim() : ''
-    const isRunShown = picked.length > 0 || focus !== ''
-    hint.add(`${command}-base`, `Base: ${base}${focus === '' ? '' : ` Focus: ${focus}`}`)
-    const sets = LENS_SETS[command]
-    for (const set of sets) hint.add(`${command}-${set.key}`, `${set.label}: ${set.hint}${focus === '' ? '' : ` Focus: ${focus}`}`)
-    hint.add(`${command}-run`, `Runs /${command} ${lensArgs(picked, focus)}`)
+    hint.add(`${command}-run`, `${base}${focus === '' ? '' : ` Focus: ${focus}`}`)
     return labelled(`${command}-head`, <Text bold color={pendingPass === command ? 'claude' : undefined}>{title}</Text>, (
       <Box flexDirection="row" columnGap={1}>
-        <Box key={`${command}-base-box`} hover={{ scope: `${command}-base` }}>
-          <Button key={`${command}-base`} onPress={() => runBase(command)}>Base</Button>
+        <Box key={`${command}-run-box`} hover={{ scope: `${command}-run` }}>
+          <Button key={`${command}-run`} onPress={() => runBase(command)}>{command === 'step-back' ? 'Run full Step Back' : 'Run Ground'}</Button>
         </Box>
-        {sets.map(set => (
-          <Box key={`${command}-${set.key}-box`} hover={{ scope: `${command}-${set.key}` }}>
-            <Button key={`${command}-${set.key}`} onPress={() => runSet(command, set.lenses)}>{set.label}</Button>
-          </Box>
-        ))}
-        {isRunShown && (
-          <Box key={`${command}-run-box`} hover={{ scope: `${command}-run` }}>
-            <Button key={`${command}-run`} onPress={() => runLenses(command)}>Run {picked.length} ▸</Button>
-          </Box>
-        )}
         {nextMark(command)}
         {queuedMark(isCommandQueued(command))}
       </Box>
@@ -590,7 +529,7 @@ export async function drawPane($: $, e: { surface: string; props: RenderPropsOf[
         onInput={(typed: string) => updateLenses($, current => ({ ...current, focus: typed }))}
         onSubmit={async (typed: string) => {
           await updateLenses($, current => ({ ...current, focus: typed }))
-          await runLenses('step-back')
+          await runBase('step-back')
         }} />
     </Box>
   )
@@ -656,16 +595,8 @@ export async function drawPane($: $, e: { surface: string; props: RenderPropsOf[
     const rows: any[] = [banner('controls-banner', 'Controls', '', 1)]
     rows.push(
       lensHead('step-back', 'Step Back', STEP_BACK_BASE, true),
-      labelled('step-back-where', rightLabel('where'), (
-        <Box flexDirection="row">
-          {toggles('step-back-where-row', 'step-back', WHERE)}
-          {focusInput !== null && <Text color="inactive"> • </Text>}
-          {focusInput}
-        </Box>
-      )),
-      labelled('step-back-what', rightLabel('what'), toggles('step-back-what-row', 'step-back', WHAT)),
+      labelled('step-back-focus', rightLabel('focus'), focusInput),
       lensHead('ground', 'Ground', GROUND_BASE, false),
-      labelled('ground-lenses', <Text> </Text>, toggles('ground-row', 'ground', GROUND)),
       labelled('decide', <Text bold>Decide</Text>, divided('decide-row', [
         { key: 'question-me', scope: 'decide-question-me', label: 'Question Me', onPress: run('question-me'), run: { command: 'question-me' } },
         { key: 'intake', scope: 'decide-intake', label: 'Intake', onPress: run('round-intake'), run: { command: 'round-intake' } },

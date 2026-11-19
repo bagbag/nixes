@@ -25,7 +25,7 @@ const PRESS_STALE_MS = 3 * 60_000  // past a slow Open's worst case (board read,
 // Module state a reload may lose without harm: session.start resets it.
 let isToolRegistered = false
 let isPaneOpenedUnasked = false
-/** The person's typed or pressed pass commands not yet expanded, by command: their expansion is no console-queued pass (startedPass). */
+/** The person's typed or pressed pass commands not yet expanded, by command: their expansion is no console-queued pass. */
 const personRuns = new Map<string, number>()
 
 export function resetSession(): void {
@@ -767,16 +767,6 @@ export async function startedPass($: $, skill: string): Promise<boolean> {
   return stale
 }
 
-/**
- * The model's own Skill call expanding a pass skill: it never takes the console's queued record, is never rewritten and drops nothing.
- * It starts the stored queued run of that command while that run is the pending pass, so a turn end asks for its report.
- */
-export async function modelStartedPass($: $, skill: string): Promise<void> {
-  const run = await getPass($)
-  if (run === null || run.phase !== 'queued' || run.command !== skill) return
-  if (!isStale(await refreshRound($, await $.session.id()), { kind: 'pass', ...run })) await setPass($, { ...run, phase: 'started' })
-}
-
 /** The stamp a run of `command args` carries: the pending pass's id when it is that pass, else null. */
 const pendingStamp = (round: ConsoleRound, command: string, args: string): string | null =>
   round.pending !== null && round.pending.command === command && collapsed(round.pending.args) === collapsed(args) ? round.pending.id : null
@@ -784,7 +774,7 @@ const pendingStamp = (round: ConsoleRound, command: string, args: string): strin
 /**
  * A pass skill's expanded text with the line naming what its report must cover, worked out by the engine as the pass starts
  * (r9-q36): the step named the scope a turn earlier, and it may have changed since. `modelArgs`: a model Skill call's arguments,
- * whose run is recorded only once it ran; left out, the run is recorded already. The text stays as it is when there is nothing to
+ * which can focus the scope; the Skill call itself does not record a pass. The text stays as it is when there is nothing to
  * name or the engine fails (fail open).
  */
 export async function withStartScope($: $, text: string, skill: string, modelArgs?: string): Promise<string> {
@@ -812,8 +802,7 @@ export async function recordPass($: $, ctx: Context, origin: ConsolePassOrigin, 
   const pendingId = pendingStamp(round, command, args)
   if (pendingId !== null && (await getPass($))?.id !== pendingId) {
     // This run is the pending pass: turn.complete must not queue it again, and notes it if it ends unreported.
-    // A model Skill call has already run; a typed or pressed command starts when its skill expands.
-    await setPass($, { id: pendingId, command, args, phase: origin === 'model' ? 'started' : 'queued' })
+    await setPass($, { id: pendingId, command, args, phase: 'queued' })
   }
   try {
     const recorded = await pass($, ctx.session, origin, { command, args, pending: pendingId })

@@ -3,10 +3,7 @@ from __future__ import annotations
 
 import contextlib
 
-from .base import (
-    ALL_LENSES, CHECKED_LIMIT, CHECKED_MAX, CAP_CHOICES, CHECK_CAP, EXPLORED_VERDICTS, LEAN_LENSES, OPTIONS_LENSES, PASSES, PATH_LENSES,
-    REFINE_LENSES, ProtocolError, band_warning
-)
+from .base import CHECKED_LIMIT, CHECKED_MAX, CAP_CHOICES, CHECK_CAP, PASSES, ProtocolError, band_warning
 from . import schema, words
 from .engine import Context, Step, by_id, fail, questions, touch, unresolved
 from .questions import apply_updates, describe, disclosure_error, refuse_all, strong_errors
@@ -14,116 +11,79 @@ from .told import report_format
 from .away import away_cap
 
 
-# Check loop: step-back then ground per cycle until a cycle changes nothing; the cap hands over to the user.
+# Check loop: step-back and a confirming step-back converge before challenge-rulings; the cap hands over to the user.
 
 def fresh_check(ctx: Context) -> None:
+    focus_ids = list((ctx.round.get('check') or {}).get('focusIds') or [])
     ctx.round['check'] = {'cycle': 1, 'cap': CHECK_CAP, 'expect': 'step-back', 'changes': 0, 'last': {},
-                          'converged': False, 'challenged': False, 'focused': False, 'focusing': False, 'pathNow': False,
-                          'pathScoped': False, 'optionsNow': False, 'optionsScoped': False, 'refineNow': None, 'refineScoped': False, 'refineChanges': 0, 'askNow': False, 'paused': False}
+                          'converged': False, 'challenged': False, 'confirming': False, 'focusIds': focus_ids, 'askNow': False, 'paused': False}
     for q in questions(ctx, 'ready'):
         q['status'] = 'draft'
     start_base(ctx)
 
 
 def queue_rescope(ctx: Context, ids: list[str]) -> None:
-    """The ids get their own scoped path pass, options pass and refine pair, accumulating before the loop settles. A restart
-    (Think more included), an edit and a freed hold land here."""
+    """Questions changed by restart or edit receive a focused step-back before confirmation."""
     if ids:
-        scope = ctx.round.get('rescope') or {'ids': []}
-        ctx.round['rescope'] = {'ids': list(dict.fromkeys([*scope['ids'], *ids])), 'path': True, 'options': True, 'refine': list(REFINE_LENSES)}
+        scope = ctx.round['check'].setdefault('focusIds', [])
+        ctx.round['check']['focusIds'] = list(dict.fromkeys([*scope, *ids]))
 
 
 def rescope_ids(ctx: Context) -> list[str]:
-    """The restarted questions still in the round: `protocol restart` queues scoped reruns of the path, options and refine
-    passes on them (round['rescope']: ids, pending `path`, `options` and `refine` passes); the round's flags stay."""
-    scope = ctx.round.get('rescope') or {}
+    """The focused questions still in the round."""
     live = {q['id'] for q in ctx.round['questions']}
-    return [qid for qid in scope.get('ids', []) if qid in live]
+    return [qid for qid in ctx.round['check'].get('focusIds', []) if qid in live]
 
 
-def named_words(ctx: Context, args: str) -> list[str]:
-    """The lens names and question ids leading a pass's argument (`<lenses> on <ids>; <focus>`, `on` and `;` optional); the
-    rest is the skill's focus (a Think more goal), whose words never count as lenses or ids. Names the lean pass's questions."""
-    known = {lens for lenses in ALL_LENSES.values() for lens in lenses} | {q['id'] for q in ctx.round['questions']}
-    named = []
-    for word in str(args or '').split():
-        name = word.removesuffix(';')
-        if name == 'on' and name == word:
-            continue
-        if name not in known:
-            break
-        named.append(name)
-        if name != word:
-            break
-    return named
-
-
-def with_goal(ctx: Context, lenses: tuple[str, ...], ids: list[str]) -> str:
-    """A pass argument: `<lenses> on <ids>`, then the Think more goal of those ids (r38-q213): the lean the person saw fell
-    short (`protocol show <id>` keeps it as `thinkMore`), try to get a reasoned strong recommendation. One line without quotes,
-    so a typed rerun matches it."""
-    head = ' '.join([*lenses, *(['on', *ids] if ids else [])])
-    rethink = [q['id'] for q in ctx.round['questions'] if q['id'] in ids and isinstance(q.get('thinkMore'), dict)]
+def with_goal(ctx: Context, ids: list[str]) -> str:
+    """A focused pass includes the user's Think More goal, so the run keeps its reason and scope."""
+    head = ' '.join(['on', *ids]) if ids else ''
+    rethink = [q for q in ctx.round['questions'] if q['id'] in ids and isinstance(q.get('thinkMore'), dict)]
     if not rethink:
         return head
-    return words.think_more_goal(head, rethink)
+    return words.think_more_goal(head, [q['id'] for q in rethink], [str(q['thinkMore'].get('quote') or '') for q in rethink])
 
 
 def rescope_check(ctx: Context, ids: list[str]) -> None:
-    """The restarted (or released held, or edited) ids get their own path pass, options pass and refine pair, accumulating over
-    restarts before the loop settles, then a fresh check; the round's once-per-round flags stay."""
+    """Restarted, released or edited questions get a focused step-back and a fresh confirmation."""
     queue_rescope(ctx, ids)
     touch(ctx, ids)  # a restart, a release from held and an edit's re-check enter every pass kind's next scope
     fresh_check(ctx)
 
 
-def rescope_done(ctx: Context) -> None:
-    scope = ctx.round.get('rescope')
-    if scope and not scope['path'] and not scope.get('options') and not scope['refine']:
-        del ctx.round['rescope']
-
-
-def options_ids(ctx: Context, within: list[str] | None = None) -> list[str]:
-    """The staged decisions the options pass covers (`within`: only these ids): a confirm-own-rulings question asks the person
-    to confirm my rulings, so it has no other ways to explore (r30-q142)."""
-    return [q['id'] for q in questions(ctx, 'draft', 'held', 'ready') if q['kind'] == 'decision' and (within is None or q['id'] in within)]
-
-
 def start_base(ctx: Context) -> None:
-    """The next step-back of the Base loop; the round's first one is the path pass (round-wide, once per round: r5 q21,
-    flagged on the round so a rebuilt check does not repeat it), then the options pass (the same), and after a restart a
-    path and an options pass on the restarted ids."""
-    r, check = ctx.round, ctx.round['check']
-    scope = r.get('rescope')
-    check['pathNow'] = not r.get('pathRun')
-    check['pathScoped'] = bool(not check['pathNow'] and scope and scope['path'] and rescope_ids(ctx))
-    if scope and check['pathNow']:
-        scope['path'] = False  # the round-wide path pass covers the restarted ids
-    elif scope and scope['path'] and not check['pathScoped']:
-        scope['path'] = False
-    check['optionsNow'] = check['optionsScoped'] = False
-    if check['pathScoped']:
-        check['pathNow'] = True
-        ctx.set_pending('step-back', with_goal(ctx, PATH_LENSES, rescope_ids(ctx)))
-    elif check['pathNow']:
-        ctx.set_pending('step-back', ' '.join(PATH_LENSES))
-    else:
-        check['optionsNow'] = not r.get('optionsRun') and bool(options_ids(ctx))
-        scoped = options_ids(ctx, rescope_ids(ctx)) if scope and scope.get('options') else []
-        check['optionsScoped'] = bool(not check['optionsNow'] and scoped)
-        if scope and scope.get('options') and not check['optionsScoped']:
-            scope['options'] = False  # the round-wide pass covers the restarted ids, or none of them has options to explore
-        if check['optionsScoped']:
-            check['optionsNow'] = True
-            ctx.set_pending('step-back', with_goal(ctx, OPTIONS_LENSES, scoped))
-        else:
-            ctx.set_pending('step-back', ' '.join(OPTIONS_LENSES) if check['optionsNow'] else '')
-    rescope_done(ctx)
+    """Queue a full or focused step-back pass, then a fresh-turn confirmation."""
+    check = ctx.round['check']
+    ids = rescope_ids(ctx)
+    check['confirming'] = False
+    ctx.set_pending('step-back', with_goal(ctx, ids))
+
+
+def migrate_legacy_check(ctx: Context) -> bool:
+    """Map an old path/options/refine/ground run to a confirming step-back, preserving its pending id."""
+    r = ctx.round
+    if not r or r.get('protocol') != 'round' or r.get('step') != 'check':
+        return False
+    check = r.get('check') or {}
+    pending = r.get('pending') or {}
+    legacy = any(key in check for key in ('pathNow', 'pathScoped', 'optionsNow', 'optionsScoped', 'refineNow', 'refineScoped', 'focusing'))
+    if not legacy or pending.get('command') not in ('step-back', 'ground'):
+        return False
+    ids = list((r.get('rescope') or {}).get('ids', [])) or list(check.get('focusIds', []))
+    check.clear()
+    check.update(cycle=1, cap=CHECK_CAP, expect='step-back', changes=0, last={}, converged=False,
+                 challenged=False, confirming=True, focusIds=ids, askNow=False, paused=False)
+    r['check'] = check
+    r.pop('rescope', None)
+    live = [qid for qid in ids if any(q['id'] == qid for q in r['questions'])]
+    ctx.set_pending('step-back', with_goal(ctx, live))
+    return True
 
 
 def check_enter(ctx: Context) -> str | None:
     if not ctx.round['check'].get('expect'):
         fresh_check(ctx)
+    migrate_legacy_check(ctx)
     return None
 
 
@@ -141,44 +101,16 @@ def needs_challenge(ctx: Context) -> bool:
 
 
 def gate_ask(ctx: Context) -> str:
-    """Before asking: every related hit has an outcome; challenge-rulings ran on the converged questions."""
+    """Before asking: check new drafts for related hits, then challenge-rulings on converged questions."""
     check = ctx.round['check']
     check['converged'] = True
     if needs_related(ctx):
-        return 'related'  # a pass added or reworded drafts: search them first
-    if not check['askNow']:
-        # The refine pair, once per round after the Base loop converged (r5 q20, q26): step-back, then ground, round-wide
-        # (no question ids).
-        scope = ctx.round.get('rescope')
-        for command, lenses in REFINE_LENSES.items():
-            if command not in ctx.round.get('refineRun', []):
-                if scope and command in scope['refine']:
-                    scope['refine'].remove(command)  # the round-wide pass covers the restarted ids
-                check.update(expect=command, refineNow=command, refineScoped=False)
-                ctx.set_pending(command, ' '.join(lenses))
-                return 'check'
-            if scope and command in scope['refine']:
-                if not rescope_ids(ctx):
-                    scope['refine'].remove(command)
-                    continue
-                check.update(expect=command, refineNow=command, refineScoped=True)
-                ctx.set_pending(command, with_goal(ctx, lenses, rescope_ids(ctx)))
-                return 'check'
-        rescope_done(ctx)
-        if check.get('refineChanges'):  # the pair's changes rerun the Base loop (under the cap); the pair does not run again
-            check['refineChanges'] = 0
-            return next_cycle(ctx)
-    leans = [q['id'] for q in questions(ctx, 'draft', 'ready')
-             if q.get('strength') == 'lean']
-    if leans and not check.get('focused') and not check['askNow']:
-        # One targeted pass on every lean, evidence or preference, aiming it at strong (LEAN_JOB); a value lean asks its value question.
-        check.update(expect='ground', focusing=True)
-        ctx.set_pending('ground', with_goal(ctx, LEAN_LENSES, leans))
-        return 'check'
+        return 'related'
     if needs_challenge(ctx):
         check['expect'] = 'challenge-rulings'
         ctx.set_pending('challenge-rulings')
         return 'check'
+    check['focusIds'] = []
     ctx.round['pending'] = None
     return 'ask'
 
@@ -201,8 +133,8 @@ def next_cycle(ctx: Context) -> str:
             return away_cap(ctx)
         cap_batch(ctx)
         return 'check'
-    check.update(cycle=check['cycle'] + 1, changes=0, expect='step-back', converged=False, refineNow=None)
-    start_base(ctx)
+    check.update(cycle=check['cycle'] + 1, changes=0, expect='step-back', converged=False, confirming=True)
+    ctx.set_pending('step-back', with_goal(ctx, rescope_ids(ctx)))
     return 'check'
 
 
@@ -210,8 +142,6 @@ def pass_report_format(ctx: Context, command: str) -> str:
     return report_format(ctx, 'pass', words.pass_format(command))
 
 
-def options_report_format(ctx: Context) -> str:
-    return report_format(ctx, 'options', words.options_format())
 
 
 def challenge_report_format(ctx: Context) -> str:
@@ -242,41 +172,11 @@ def settles(ctx: Context, command: str) -> bool:
 
 
 def stamp_settles(ctx: Context, command: str, stamp: str | None) -> bool:
-    """`settles` for a run stamped `stamp`: one not observed yet, as a model Skill call is while it expands (start_scope)."""
+    """`settles` only when the console stamped this pending run; a Skill expansion alone is not a run."""
     pending = ctx.round['pending']
     if not pending or pending['command'] != command:
         return False
     return ctx.codex or stamp == pending['id']
-
-
-def options_due(ctx: Context, command: str, settled: bool | None = None) -> list[str] | None:
-    """The question ids a step-back report must account for in `explored` when it is the options pass (the pending one, settled
-    by its run; `settled` as in pass_kind), else None."""
-    check = ctx.round['check']
-    if (command != 'step-back' or check.get('expect') != command or not check.get('optionsNow')
-            or not (settles(ctx, command) if settled is None else settled)):
-        return None
-    return options_ids(ctx, rescope_ids(ctx)) if check.get('optionsScoped') else options_ids(ctx)
-
-
-def explored_of(raw, ids: list[str]) -> dict[str, list[dict] | str]:
-    """The options pass's `explored` (r30-q142): per question a list of {idea, verdict kept|dropped, why}, or the reason there
-    is no other way. Refused unless it accounts for exactly the questions the pass covers."""
-    if not isinstance(raw, dict):
-        fail('an options pass reports `explored`: per question a list of {"idea", "verdict": "kept" or "dropped", "why"}, or the reason there is no other way')
-    errors = [f'explored: no entry for {qid}' for qid in ids if qid not in raw] + [f'explored: {qid} is not covered by this pass' for qid in raw if qid not in ids]
-    found = {}
-    for qid, value in raw.items():
-        if qid not in ids:
-            continue
-        if isinstance(value, str) and value.strip():
-            found[qid] = value.strip()
-        elif isinstance(value, list) and value and all(isinstance(x, dict) and not schema.problems(schema.Idea, x) for x in value):
-            found[qid] = [{'idea': x['idea'].strip(), 'verdict': x['verdict'], 'why': x['why'].strip()} for x in value]
-        else:
-            errors.append(f'explored.{qid}: a non-empty list of {{"idea", "verdict": {" or ".join(EXPLORED_VERDICTS)}, "why"}}, or the reason there is no other way')
-    refuse_all(errors)
-    return found
 
 
 # Scoped coverage (r4-q15, q16): each pass report keys `checked` by question for its scope; a change stamps the question
@@ -287,14 +187,11 @@ SCOPE_STATUSES = ('draft', 'ready')
 
 
 def pass_scope(ctx: Context, command: str, kind: str | None, scoped: list[str]) -> tuple[str | None, list[str]]:
-    """The question ids a pass report must cover, and the coverage key whose marks it advances (None: a fixed scope). Path,
-    options and refine: their scoped ids, else every question they work on; the challenges after the answers and on a
-    raise: their ids; the Base step-back and ground, the lean pass, the loop's challenge-rulings and an extra pass (per
-    command): the questions changed since that kind last covered them, every question on its first run."""
-    if kind in ('path', 'refine'):
-        return None, scoped or [q['id'] for q in questions(ctx, *SCOPE_STATUSES)]
-    if kind == 'options':
-        return None, scoped or options_ids(ctx)
+    """The question ids a pass report must cover and the coverage key whose marks it advances."""
+    if kind == 'focused':
+        return 'focused', scoped
+    if kind == 'confirming':
+        return 'confirming', [q['id'] for q in questions(ctx, *SCOPE_STATUSES)]
     if kind in ('after answers', 'raised'):
         live = {q['id'] for q in ctx.round['questions']}
         return 'challenge-rulings', [qid for qid in ctx.round['check']['challenge']['ids'] if qid in live]
@@ -335,20 +232,16 @@ SCOPE_STEPS = ('check', 'ask')  # the steps that take a pass report (check_accep
 
 
 def start_scope(ctx: Context, report: dict) -> dict:
-    """`protocol scope` (r9-q36): what a report of the pass starting now must cover, worked out as record_pass will check it,
-    without a change. The step names the scope a turn earlier and it may change meanwhile, so the console names it again in the
-    pass's expanded text. stdin `pending`: the stamp of a run not observed yet (a model Skill call, recorded once it ran); left
-    out, the observed run's. `text` is empty when there is nothing to name."""
+    """`protocol scope`: what a report of the pass starting now must cover, without a change."""
     schema.require(schema.Scope, report)
     command, stamp = report['command'], report.get('pending')
     r = ctx.round
     if not r or r['step'] not in SCOPE_STEPS or r['protocol'] != 'round':
-        return {'covers': [], 'explored': None, 'text': ''}
+        return {'covers': [], 'text': ''}
     settled = stamp_settles(ctx, command, stamp) if 'pending' in report else None
     ids, strong = scope_ids(ctx, command, settled)
-    due = options_due(ctx, command, settled)
-    text = words.start_scope(ids, strong, due or [], command, pass_kind(ctx, command, settled)[0] == 'after answers') if ids or due else ''
-    return {'covers': ids, 'explored': due, 'text': text}
+    text = words.start_scope(ids, strong, command, pass_kind(ctx, command, settled)[0] == 'after answers') if ids else ''
+    return {'covers': ids, 'text': text}
 
 
 def checked_of(raw, known: set[str]) -> tuple[dict[str, str], list[str]]:
@@ -401,20 +294,17 @@ def record_pass(ctx: Context, report: dict) -> tuple[str, int, str]:
     describe(ctx, report.get('round'), 'pass report', required=False)
     shape = schema.problems(schema.PassReport, report, 'checked', due=('checked',))
     checked, errors = ({}, shape) if shape else checked_of(report['checked'], {q['id'] for q in ctx.round['questions']})
-    due = options_due(ctx, command)
-    raw = report.get('explored')
-    explored = explored_of(raw, due if due is not None else [qid for qid in raw if any(q['id'] == qid for q in ctx.round['questions'])] if isinstance(raw, dict) else []) if due is not None or raw is not None else {}
     updates = report.get('updates') or []
     try:
         changes = apply_updates(ctx, updates, answered_rulings=kind == 'after answers')
     except ProtocolError as error:
         refuse_all([*errors, str(error)])
-    covered = {*checked, *explored, *(u['id'] for u in updates if isinstance(u, dict) and isinstance(u.get('id'), str))}
+    covered = {*checked, *(u['id'] for u in updates if isinstance(u, dict) and isinstance(u.get('id'), str))}
     missing = [qid for qid in scope if qid not in covered]
     if missing:
         errors.append(f"a {command} pass covers {' '.join(scope)}: no `checked` entry or update for {' '.join(missing)}; add "
                       f'`"checked": {{"{missing[0]}": "<what you examined in it this run>"}}`')
-    elif not (changes or checked or explored or ctx.applied or ctx.added):
+    elif not (changes or checked or ctx.applied or ctx.added):
         errors.append(f'a {command} pass that changes nothing names what it checked: `"checked": {{"round": "<what you examined>"}}`')
     if command == 'challenge-rulings':
         errors += challenge_errors(ctx, report, scope, updates)
@@ -422,9 +312,6 @@ def record_pass(ctx: Context, report: dict) -> tuple[str, int, str]:
     ctx.messages += [w for name, value in checked.items() for w in band_warning(f'checked.{name}', len(value), CHECKED_MAX, CHECKED_LIMIT)]
     if key:
         mark_covered(ctx, key, [*scope, *ctx.applied, *ctx.added])
-    for qid, found in explored.items():
-        if any(q['id'] == qid for q in ctx.round['questions']):
-            by_id(ctx, qid)['explored'] = found
     observed.pop(command, None)
     ctx.round['check']['last'][command] = {'changes': changes, 'origin': origin}
     ctx.round['lastPass'] = {'pass': command, 'questions': list(dict.fromkeys([*ctx.applied, *ctx.added]))}  # in or out of sequence
@@ -436,10 +323,8 @@ def record_pass(ctx: Context, report: dict) -> tuple[str, int, str]:
 
 
 def start_challenge(ctx: Context, kind: str, ids: list[str]) -> None:
-    """One challenge-rulings pass outside the Base loop: `answers` over the answered set after the last answer, `raised` on
-    the questions an edit raised to strong. Its additions wait for their scoped check; nothing reruns the loop."""
-    ctx.round['check'].update(expect='challenge-rulings', converged=True, pathNow=False, pathScoped=False, optionsNow=False,
-                              optionsScoped=False, refineNow=None, refineScoped=False, focusing=False, challenge={'kind': kind, 'ids': ids})
+    """One challenge-rulings pass outside the loop, after answers or a raise to strong."""
+    ctx.round['check'].update(expect='challenge-rulings', converged=True, challenge={'kind': kind, 'ids': ids})
     ctx.set_pending('challenge-rulings', words.answers_args(ids) if kind == 'answers' else ' '.join(ids))
 
 
@@ -478,70 +363,37 @@ def check_accept(ctx: Context, report: dict) -> str:
     settled = settles(ctx, report.get('pass'))
     command, changes, _ = record_pass(ctx, report)
     if changes and command != 'challenge-rulings':
-        check['challenged'] = False  # a change after the last challenge-rulings run re-arms it
+        check['challenged'] = False
     if check.get('challenge') and command == expected == 'challenge-rulings' and settled:
         return finish_challenge(ctx, changes)
     if nothing_to_check(ctx):
         return leave_check(ctx)
-    scope = ctx.round.get('rescope') or {}
-    if command != expected or not settled:  # an extra pass between passes (pressed, typed, or asked for in chat)
+    if command != expected or not settled:
         if changes:
             check.pop('challenge', None)
-            check.update(changes=0, expect='step-back', converged=False, challenged=False, focused=False, focusing=False, refineNow=None)
-            if not (check.get('pathNow') or check.get('optionsNow')):  # the pending path or options pass stays
-                start_base(ctx)
+            check.update(changes=0, expect='step-back', converged=False, challenged=False, confirming=True)
+            ctx.set_pending('step-back', with_goal(ctx, rescope_ids(ctx)))
         return 'check'
-    if check.get('refineNow') == command:
-        check.update(refineNow=None, refineChanges=check.get('refineChanges', 0) + changes)
-        if check.get('refineScoped'):
-            scope['refine'].remove(command)
-        else:
-            ctx.round['refineRun'] = list(dict.fromkeys([*ctx.round.get('refineRun', []), command]))
-        check['refineScoped'] = False
-        return gate_ask(ctx)
-    if command == 'step-back' and check.get('pathNow'):
-        # The path pass: its changes flow into the Base loop that runs next; new or reworded drafts are searched first.
-        if check.get('pathScoped'):
-            scope['path'] = False
-        else:
-            ctx.round['pathRun'] = True
-        check.update(changes=0, expect='step-back')
-        start_base(ctx)
-        return 'related' if changes and needs_related(ctx) else 'check'
-    if command == 'step-back' and check.get('optionsNow'):
-        # The options pass: like the path pass, its changes flow into the Base loop that runs next.
-        if check.get('optionsScoped'):
-            scope['options'] = False
-        else:
-            ctx.round['optionsRun'] = True
-        check.update(changes=0, expect='step-back')
-        start_base(ctx)
-        return 'related' if changes and needs_related(ctx) else 'check'
     if command == 'step-back':
-        if ground_repeats(ctx):
-            return gate_ask(ctx)  # r18-q121: a quiet step-back skips the ground that would repeat the last one
-        check.update(changes=changes, expect='ground')
-        ctx.set_pending('ground')
-        return 'check'
-    if command == 'ground' and check.get('focusing'):
-        check.update(focusing=False, focused=True)  # one pass: its changes do not restart the loop
+        if needs_related(ctx):
+            check.update(changes=changes, confirming=True)
+            ctx.set_pending('step-back', with_goal(ctx, rescope_ids(ctx)))
+            return 'related'
+        if not check.get('confirming'):
+            check.update(changes=changes, confirming=True)
+            ctx.set_pending('step-back', with_goal(ctx, rescope_ids(ctx)))
+            return 'check'
+        if changes:
+            check['changes'] += changes
+            return next_cycle(ctx)
+        check.update(changes=0, confirming=False)
         return gate_ask(ctx)
-    if command == 'ground':
-        if check['changes'] + changes == 0:
-            return gate_ask(ctx)
-        return next_cycle(ctx)
-    check.update(challenged=not changes, challengeRan=True)  # challenge-rulings: a pass that changed nothing ends it
+    check.update(challenged=not changes, challengeRan=True)
     if changes and not check['askNow']:
-        return next_cycle(ctx)
+        check.update(expect='step-back', confirming=True, changes=0, focusIds=[])
+        ctx.set_pending('step-back', with_goal(ctx, rescope_ids(ctx)))
+        return 'check'
     return gate_ask(ctx)
-
-
-def ground_repeats(ctx: Context) -> bool:
-    """Whether the Base ground would repeat its last run (r18-q121): it has run before (same lenses: the Base ground names none) and
-    no question changed since it covered them. Any update of the step-back right before it, a presentation one included, stamps
-    its question (`touch`) and so puts it back in the scope."""
-    key, scope = pass_scope(ctx, 'ground', None, [])
-    return key in ((ctx.round.get('coverage') or {}).get('seen') or {}) and not scope
 
 
 def pending_view(ctx: Context) -> dict | None:
@@ -552,20 +404,14 @@ def pending_view(ctx: Context) -> dict | None:
 
 
 def pass_kind(ctx: Context, command: str, settled: bool | None = None) -> tuple[str | None, list[str]]:
-    """The kind of the pass about to be reported (path, options, refine, lean, challenge) and the ids it is scoped to; None for a
-    Base-loop pass, 'extra' for one that does not settle the pending pass (`settled`: assume it does or not, as the step
-    text does before the run)."""
+    """The pass kind and any intentionally focused question ids."""
     check = ctx.round['check']
     if check.get('expect') != command or not (settles(ctx, command) if settled is None else settled):
         return 'extra', []
-    if command == 'step-back' and check.get('pathNow'):
-        return 'path', rescope_ids(ctx) if check.get('pathScoped') else []
-    if command == 'step-back' and check.get('optionsNow'):
-        return 'options', options_ids(ctx, rescope_ids(ctx)) if check.get('optionsScoped') else []
-    if check.get('refineNow') == command:
-        return 'refine', rescope_ids(ctx) if check.get('refineScoped') else []
-    if command == 'ground' and check.get('focusing'):
-        return 'lean', [one for one in named_words(ctx, (ctx.round['pending'] or {}).get('args') or '') if one not in LEAN_LENSES]
+    if command == 'step-back' and check.get('focusIds'):
+        return 'focused', rescope_ids(ctx)
+    if command == 'step-back' and check.get('confirming'):
+        return 'confirming', []
     if command == 'challenge-rulings' and check.get('challenge'):
         spec = check['challenge']
         return ('after answers', []) if spec['kind'] == 'answers' else ('raised', spec['ids'])

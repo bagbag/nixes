@@ -14,21 +14,18 @@ approval. Give each step's output compactly.
    the planning session's call.
    Output: the round's decisions; the instance list where one was flagged.
 2. **Check.** In a round run through `protocol` (decide protocol Round), the
-   engine sequences the passes: follow its output and report
-   each pass's changes in its pass report. Otherwise invoke the
-   step-back and ground skills on the whole set, in that order; invoke
-   challenge-rulings last, before the questions or the approval request.
-   Invoke each through the runtime's skill mechanism (Claude's Skill tool; in
-   Codex, read its `SKILL.md`). Run step-back and ground with their full
-   lens sets on every question. Repeat step-back
-   and ground over the whole set until a pass changes nothing, also after
-   challenge-rulings changes something; a changed premise, ruling, option or
-   question set counts as a change. A pass that would revise a user's ruling
+   engine sequences passes: follow its output and report each pass's changes.
+   Otherwise invoke the full step-back protocol on the whole set, then invoke
+   it once more in a fresh turn to confirm the result. If confirmation changes
+   anything, repeat from that confirming pass until it changes nothing; then
+   invoke challenge-rulings. Invoke skills through the runtime's mechanism
+   (Claude's Skill tool; in Codex, read its `SKILL.md`). A changed premise,
+   ruling, option or question set counts as a change. A pass that would revise a user's ruling
    raises it as a question under decision-protocol Changed premises.
    Derive process questions from the root fix; step up an abstraction level
    when all options feel wrong.
-   End a pass's turn with one short line: what changed, or "No change."; list
-   nothing it checked.
+   End a pass's turn with one short line: what changed, or "No change."; report
+   a finding or `nothing: checked <what>` for every step-back lens.
    Output: each invocation and what it changed; what stays unsure, as
    questions.
 3. **Walk through.** Outside a round (retro, role, Accept): in chat, readable

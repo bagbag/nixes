@@ -42,7 +42,6 @@ PASS_ORIGINS = ('composer', 'bridge', 'press', 'plugin', 'model')
 AWAY = 'away'  # the origin of an answer an away round took from the recommendation: no verb accepts it, so no person origin passes as it (r28-q128)
 SETTLES = ('act', 'park')
 DROP_KINDS = ('pass', 'batch')  # what a dropped console action was: a pass run or prompt, a batch's dialog
-EXPLORED_VERDICTS = ('kept', 'dropped')
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -91,8 +90,8 @@ VERBS = (
     # what the pass the console sees start must cover, named in its expanded text (r9-q36)
     Verb(name='scope', audience='console', origins=('plugin',), summary='what a report of the pass starting now must cover, as JSON; changes nothing',
          example='protocol scope --origin plugin < scope.json', stdin=('scope',)),
-    Verb(name='restart', audience='session', origins=(), summary='questions back to draft after a criterion answer; the check loop reruns',
-         example='protocol restart q2 --reason "criterion changed"', stdin=()),
+    Verb(name='restart', audience='session', origins=(), summary='questions back to draft at the user\'s request; the check loop reruns',
+         example='protocol restart q2 --quote "rethink this decision"', stdin=()),
     Verb(name='next', audience='session', origins=(), summary='the seed questions, the open questions by topic and the stored proposal',
          example='protocol next', stdin=('proposal',)),
     Verb(name='compacted', audience='session', origins=(), summary="the session's context was compacted: what it was told prints in full again",
@@ -118,20 +117,13 @@ REACHES = ('contained', 'spreads')  # no "unsure": unsure is spreads (r4-q14, fa
 TOUCHES = ('own', 'decision')  # a contained change: only the model's own parts keeps the record; unsure is decision (r8-q36)
 CAP_CHOICES = ('Continue', 'Ask now', 'Pause')
 STRENGTHS = ('lean', 'strong')
-LEAN_CAUSES = ('preference', 'evidence')  # the user's values decide, or an unchecked fact (the lean pass)
+LEAN_CAUSES = ('preference', 'evidence')  # the user's values decide, or a fact remains unchecked
 # Lens names: skills/step-back/SKILL.md and skills/ground/SKILL.md own them (the console's hooks/words.ts repeats them);
-# the validator keeps the three in step. Base (no lens named) covers consumer, root-fix, bloat and gaps.
-ALL_LENSES = {  # the owners' lists (the validator compares them); the check sequence runs the path and refine subsets
+# the validator keeps all three in sync.
+ALL_LENSES = {  # the validator compares the skill-owned names with the console list
     'step-back': ('goal', 'decisions', 'foundations', 'consumer', 'root-fix', 'bloat', 'gaps', 'clean', 'overfit', 'mechanics', 'options'),
     'ground': ('assumptions', 'board', 'sources', 'probe'),
 }
-# The check sequence per round (user, r5 q26, r6 q28, r30 q142): the path pass (is the goal and what it builds on right?), then
-# the options pass (radically different ways, each kept or dropped with its reason), before the Base loop, the refine pair
-# after it; Base's own lenses (consumer, root-fix, bloat, gaps) are named in none of them.
-PATH_LENSES = ('goal', 'foundations')
-OPTIONS_LENSES = ('options',)
-REFINE_LENSES = {'step-back': ('decisions', 'clean', 'overfit', 'mechanics'), 'ground': ('assumptions', 'board', 'sources', 'probe')}
-LEAN_LENSES = ('assumptions', 'sources', 'probe')  # the targeted lean pass: every way a lean gets decided (r6 q29)
 # skills/shared/decision-protocol.md#recommendation-strength owns these rules; the validator keeps the names in step.
 # A strong recommendation is a claim: each criterion "true: <evidence>", or "does-not-apply: <reason>" where allowed.
 STRONG_CRITERIA = {

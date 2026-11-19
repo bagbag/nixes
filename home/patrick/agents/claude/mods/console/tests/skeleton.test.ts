@@ -990,15 +990,13 @@ describe('skill expansion', () => {
   })
 })
 
-describe('pass observation', () => {
-  test('a model Skill call counts after it ran, with origin model', async ($, on) => {
+describe('pass recording', () => {
+  test('a model Skill call does not record a pass', async ($, on) => {
     const { w } = world(on)
     on('tool.call', { tool: 'Skill' }, () => ({ result: { success: true } }) as never)
     await start($)
     await $.tool.call({ tool: 'Skill', skill: 'step-back', args: 'bloat' } as never)
-    const pass = w.calls.find(one => one.argv[3] === 'pass')
-    expect(pass?.argv.slice(3)).toEqual(['pass', '--origin', 'model'])
-    expect(JSON.parse(pass?.stdin ?? '{}')).toEqual({ command: 'step-back', args: 'bloat', pending: null })
+    expect(w.calls.filter(one => one.argv[3] === 'pass')).toEqual([])
   })
 
   describe("a subagent's Skill call is not the round's pass", () => {
@@ -1033,7 +1031,7 @@ describe('pass observation', () => {
       on('tool.call', { tool: 'Skill' }, () => ({ result: { success: true } }) as never)
       await start($)
       await $.tool.call({ tool: 'Skill', skill: 'step-back', args: 'goal foundations' } as never)
-      expect(passes(w)).toEqual([['model', { command: 'step-back', args: 'goal foundations', pending: 'p556' }]])
+      expect(passes(w)).toEqual([])
     })
 
     test("the lead's own run after a subagent's run is the one the pending pass settles on", async ($, on) => {
@@ -1042,7 +1040,7 @@ describe('pass observation', () => {
       await start($)
       await $.tool.call({ tool: 'Skill', skill: 'step-back', args: 'gaps consumer', agentId: 'a1' } as never)
       await $.tool.call({ tool: 'Skill', skill: 'step-back', args: 'goal foundations' } as never)
-      expect(passes(w)).toEqual([['model', { command: 'step-back', args: 'goal foundations', pending: 'p556' }]])
+      expect(passes(w)).toEqual([])
     })
   })
 
@@ -1051,8 +1049,7 @@ describe('pass observation', () => {
     on('tool.call', { tool: 'Skill' }, () => ({ result: { success: true } }) as never)
     await start($)
     await $.tool.call({ tool: 'Skill', skill: 'step-back', args: ' goal  foundations\non   q3 ' } as never)
-    const pass = w.calls.find(one => one.argv[3] === 'pass')
-    expect(JSON.parse(pass?.stdin ?? '{}')).toEqual({ command: 'step-back', args: ' goal  foundations\non   q3 ', pending: 'p7' })
+    expect(w.calls.filter(one => one.argv[3] === 'pass')).toEqual([])
   })
 
   test('a run with other words or case carries no pending id, and the turn end still runs the pending pass', async ($, on) => {
@@ -1061,7 +1058,7 @@ describe('pass observation', () => {
     await start($)
     await $.tool.call({ tool: 'Skill', skill: 'ground', args: 'probe' } as never)
     await $.tool.call({ tool: 'Skill', skill: 'ground', args: 'Assumptions' } as never)
-    expect(w.calls.filter(one => one.argv[3] === 'pass').map(one => JSON.parse(one.stdin ?? '{}').pending)).toEqual([null, null])
+    expect(w.calls.filter(one => one.argv[3] === 'pass')).toEqual([])
     await $.turn.complete({ answer: '', durationMs: 1, isAborted: false, turnId: 't', reason: 'answer' } as never)
     await clock.settle()
     expect(w.commands).toEqual([{ command: 'ground', args: 'assumptions' }])

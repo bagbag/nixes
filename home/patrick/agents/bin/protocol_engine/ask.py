@@ -61,8 +61,8 @@ def take_unchecked(ctx: Context) -> list[str]:
 def hand_over(ctx: Context) -> str:
     """Nothing is left to ask. A round continues with the questions that await a check, then ends (Record runs once, when
     nothing is left to ask):
-    - held questions the answers released (r11 q42) and questions an edit added or re-recommended (r13 q47) get the scoped
-      rerun (path pass and refine pair on their ids, a fresh Base loop, lean pass and challenge-rulings), then the next batch;
+    - held questions the answers released (r11 q42) and questions an edit added or re-recommended (r13 q47) get a focused
+      step-back, a confirming step-back and challenge-rulings, then the next batch;
     - questions an edit raised to strong alone get one challenge-rulings pass on them (r13 q48);
     - once the last answer is in, one challenge-rulings over the answered set (r13 q49): a finding is a new question that
       takes the first path, and the pass runs again after its answer; a pass that changed nothing goes to Record.

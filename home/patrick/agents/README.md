@@ -125,9 +125,10 @@ Workflow owners:
   moves a project from any starting state onto it, deriving the work from the gap to the target.
 - Challenge skills: [step-back](skills/step-back/SKILL.md),
   [challenge-rulings](skills/challenge-rulings/SKILL.md) and
-  [ground](skills/ground/SKILL.md) are model-invocable; the Check step of
-  [asking](skills/shared/asking.md) invokes them (in a `protocol` round, in
-  the engine's sequence);
+  [ground](skills/ground/SKILL.md) are model-invocable; round checks use the
+  full step-back protocol, a confirming pass in a fresh turn, then
+  challenge-rulings (the engine sequences a `protocol` round; Ground remains
+  separately invocable and is used by release checks);
   [ask-advisor](skills/ask-advisor/SKILL.md),
   [question-me](skills/question-me/SKILL.md),
   [release-round](skills/release-round/SKILL.md),

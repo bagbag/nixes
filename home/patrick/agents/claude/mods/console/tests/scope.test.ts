@@ -25,9 +25,9 @@ describe('a pass that starts names its scope (r9-q36)', () => {
     expect(scopeCalls(w)).toEqual([{ flags: ['--origin', 'plugin'], input: { command: 'ground' } }])
   })
 
-  test('an options pass also names the questions its explored list covers', async ($, on) => {
+  test('an options pass names the questions it covers', async ($, on) => {
     const { w, clock } = world(on, { round: pending('p7', 'options', 'step-back') })
-    w.scope = `${LINE} Give \`explored\` an entry for each of q2 q3 and no other.`
+    w.scope = LINE
     await start($)
     await $.turn.complete(complete())
     await clock.settle()
@@ -55,7 +55,7 @@ describe('a pass that starts names its scope (r9-q36)', () => {
     expect(scopeCalls(w)).toEqual([{ flags: ['--origin', 'plugin'], input: { command: 'ground' } }])
   })
 
-  test("a model-run pass gets the line, with the stamp its run is recorded with once it ran", async ($, on) => {
+  test("a model Skill call gets scope context without recording a pass", async ($, on) => {
     const { w } = world(on, { round: pending('p7', 'assumptions') })
     w.scope = LINE
     const read: string[] = []
@@ -65,8 +65,7 @@ describe('a pass that starts names its scope (r9-q36)', () => {
     await $.tool.call({ tool: 'Skill', skill: 'ground', args: 'probe' } as never)  // not the pending pass: an extra run
     expect(read).toEqual([`Pass, in full.\n\n${LINE}`, `Pass, in full.\n\n${LINE}`])
     expect(scopeCalls(w).map(one => one.input)).toEqual([{ command: 'ground', pending: 'p7' }, { command: 'ground', pending: null }])
-    const recorded = w.calls.filter(one => one.argv[3] === 'pass').map(one => JSON.parse(one.stdin ?? '{}').pending)
-    expect(recorded).toEqual(['p7', null])  // the stamps the scope was worked out for
+    expect(w.calls.filter(one => one.argv[3] === 'pass')).toEqual([])
   })
 
   test('a failing engine or an empty scope leaves the text as it is', async ($, on) => {

@@ -3,7 +3,7 @@
 
 export type ConsoleStep = 'prepass' | 'collect' | 'select' | 'stage' | 'related' | 'check' | 'ask' | 'record' | 'closed'
   | 'recheck' | 'board-check' | 'own-rulings' | 'scoped' | 'approval' | 'owners' | 'release'
-export type ConsolePassOrigin = 'plugin' | 'composer' | 'bridge' | 'press' | 'model'
+export type ConsolePassOrigin = 'plugin' | 'composer' | 'bridge' | 'press'
 
 /** The pending pass. */
 export type ConsolePending = { id: string; command: string; args: string }

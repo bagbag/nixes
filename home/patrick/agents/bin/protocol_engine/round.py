@@ -7,7 +7,7 @@ from .engine import Context, PROTOCOLS, Protocol, Step, questions
 from .told import changed_rows, first_time
 from .record import closed_enter, closed_text, record_accept, record_text
 from .check import (
-    challenge_report_format, check_accept, check_enter, options_ids, options_report_format, pass_report_format, rescope_ids, scope_text
+    challenge_report_format, check_accept, check_enter, pass_report_format, rescope_ids, scope_text
 )
 from .ask import ask_accept, ask_enter, ask_text
 from .collect import collect_accept, collect_text, select_accept, select_text
@@ -41,27 +41,13 @@ def check_why(ctx: Context) -> str:
     check = ctx.round['check']
     challenge = check.get('challenge') or {}
     return (words.CHECK_PLAIN
-            if not ctx.codex else  # Claude's model reads no pass sequence: the pass's own skill and argument say what it is (r34-q165)
+            if not ctx.codex else
             words.CHECK_AFTER_ANSWERS
             if challenge.get('kind') == 'answers' else
             words.check_raised(challenge['ids'])
             if challenge.get('kind') == 'raised' else
-            words.LEAN_JOB
-            if check.get('focusing') else
             words.CHECK_LAST
             if check['expect'] == 'challenge-rulings' else
-            words.check_path_scoped(rescope_ids(ctx))
-            if check.get('pathScoped') else
-            words.CHECK_PATH_NOW
-            if check.get('pathNow') else
-            words.check_options_scoped(options_ids(ctx, rescope_ids(ctx)))
-            if check.get('optionsScoped') else
-            words.CHECK_OPTIONS_NOW
-            if check.get('optionsNow') else
-            words.check_refine_scoped(rescope_ids(ctx))
-            if check.get('refineScoped') else
-            words.CHECK_REFINE_NOW
-            if check.get('refineNow') else
             words.CHECK_PLAIN)
 
 
@@ -82,7 +68,6 @@ def check_text(ctx: Context) -> str:
         pass_text(ctx, command),
         scope_text(ctx, command),
         pass_report_format(ctx, command),
-        options_report_format(ctx) if check.get('optionsNow') else '',
         challenge_report_format(ctx) if command == 'challenge-rulings' else '',
     )
 
