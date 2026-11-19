@@ -74,7 +74,7 @@ export const ENGINE_CONTRACT = {
     "pending": {
       "id": "p2",
       "command": "step-back",
-      "args": "goal foundations"
+      "args": ""
     },
     "questions": [
       {
@@ -155,15 +155,11 @@ export const ENGINE_CONTRACT = {
       "last": {
         "step-back": {
           "changes": 0,
-          "origin": "model"
-        },
-        "ground": {
-          "changes": 0,
-          "origin": "model"
+          "origin": "plugin"
         },
         "challenge-rulings": {
           "changes": 0,
-          "origin": "model"
+          "origin": "plugin"
         }
       }
     },
@@ -212,7 +208,7 @@ export const ENGINE_CONTRACT = {
             },
             {
               "label": "Think more",
-              "description": "No answer yet: its checks redo it aiming for a strong recommendation, with a consumer walk and a probe, then it comes back."
+              "description": "No answer yet: rerun the step-back on this question, then return to it."
             }
           ],
           "multiSelect": false
@@ -253,31 +249,11 @@ export const ENGINE_CONTRACT = {
       },
       {
         "at": "00:00",
-        "text": "step-back (path): no change"
-      },
-      {
-        "at": "00:00",
-        "text": "step-back (options): no change"
-      },
-      {
-        "at": "00:00",
         "text": "step-back: no change"
       },
       {
         "at": "00:00",
-        "text": "ground: no change"
-      },
-      {
-        "at": "00:00",
-        "text": "step-back (refine): no change"
-      },
-      {
-        "at": "00:00",
-        "text": "ground (refine): no change"
-      },
-      {
-        "at": "00:00",
-        "text": "ground (lean q1): no change"
+        "text": "step-back (confirming): no change"
       },
       {
         "at": "00:00",
@@ -307,20 +283,16 @@ export const ENGINE_CONTRACT = {
       "last": {
         "step-back": {
           "changes": 0,
-          "origin": "model"
-        },
-        "ground": {
-          "changes": 0,
-          "origin": "model"
+          "origin": "plugin"
         },
         "challenge-rulings": {
           "changes": 0,
-          "origin": "model"
+          "origin": "plugin"
         }
       }
     },
     "pending": {
-      "id": "p10",
+      "id": "p5",
       "command": "challenge-rulings",
       "args": "q1 and my rulings on them"
     },
@@ -385,31 +357,11 @@ export const ENGINE_CONTRACT = {
       },
       {
         "at": "00:00",
-        "text": "step-back (path): no change"
-      },
-      {
-        "at": "00:00",
-        "text": "step-back (options): no change"
-      },
-      {
-        "at": "00:00",
         "text": "step-back: no change"
       },
       {
         "at": "00:00",
-        "text": "ground: no change"
-      },
-      {
-        "at": "00:00",
-        "text": "step-back (refine): no change"
-      },
-      {
-        "at": "00:00",
-        "text": "ground (refine): no change"
-      },
-      {
-        "at": "00:00",
-        "text": "ground (lean q1): no change"
+        "text": "step-back (confirming): no change"
       },
       {
         "at": "00:00",
@@ -848,15 +800,11 @@ export const ENGINE_CONTRACT = {
       "last": {
         "step-back": {
           "changes": 0,
-          "origin": "model"
-        },
-        "ground": {
-          "changes": 0,
-          "origin": "model"
+          "origin": "plugin"
         },
         "challenge-rulings": {
           "changes": 0,
-          "origin": "model"
+          "origin": "plugin"
         }
       }
     },
@@ -957,31 +905,11 @@ export const ENGINE_CONTRACT = {
       },
       {
         "at": "00:00",
-        "text": "step-back (path): no change"
-      },
-      {
-        "at": "00:00",
-        "text": "step-back (options): no change"
-      },
-      {
-        "at": "00:00",
         "text": "step-back: no change"
       },
       {
         "at": "00:00",
-        "text": "ground: no change"
-      },
-      {
-        "at": "00:00",
-        "text": "step-back (refine): no change"
-      },
-      {
-        "at": "00:00",
-        "text": "ground (refine): no change"
-      },
-      {
-        "at": "00:00",
-        "text": "ground (lean q3): no change"
+        "text": "step-back (confirming): no change"
       },
       {
         "at": "00:00",
