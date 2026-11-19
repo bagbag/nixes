@@ -1,11 +1,9 @@
 """The round's Stage and Related steps."""
 from __future__ import annotations
 
-import re
-
-from .base import OUTCOMES, ProtocolError, TAKEOVER, REVISES, REVISES_RULE, lines
+from .base import OUTCOMES, ProtocolError, TAKEOVER, lines
 from . import schema, words
-from .boards import related_hits, split_holds
+from .boards import related_hits
 from .engine import Context, by_id, fail, premise_status, unresolved
 from .questions import (
     coverage_errors, describe, describe_errors, join_outside, new_question, non_decision_errors, refuse_all, shared_board_errors,
@@ -95,53 +93,16 @@ def related_text(ctx: Context) -> str:
 def resolve_replaced(ctx: Context, q: dict) -> None:
     """What the question's `supersedes` hits mean, read from the board: a decided (unreleased) record closes at Record
     (`q['replaces']`); a released one is revised, replaced at its release (`q['revises']`, at most one). Refuses what
-    `board ruling record --replaces` would refuse, before the user answers: a record that is no ruling, a foreign live hold, more
-    than one revision to carry onto the new record (the board judges them again at Record)."""
+    `board ruling check-replaces` refuses, before the user answers; Record repeats mutable checks against its new id."""
     hits = [h['id'] for h in q['overlaps'] if h['outcome'] == 'supersedes']
     q['replaces'], q['revises'] = [], None
     if not hits:
         return
-    rows = ctx.board.json('show', *hits, '--json', '--field', 'status', '--field', 'issue_type', '--field', 'assignee',
-                          '--field', 'dependencies', '--field', 'metadata', '--field', 'title', '--field', 'description')
+    result = ctx.board.json('ruling', 'check-replaces', *hits)
     for hit in q['overlaps']:  # the dialog names each record it replaces by its title
         if hit['id'] in hits:
-            hit['title'] = (rows.get(hit['id']) or {}).get('title') or hit['title']
-    problems = [f"{hit} is {(rows.get(hit) or {}).get('status')} {(rows.get(hit) or {}).get('issue_type')}, not a ruling"
-                for hit in hits if (rows.get(hit) or {}).get('issue_type') != 'decision'
-                or (rows.get(hit) or {}).get('status') in (None, 'open', 'in_progress')]
-    for hit in hits:
-        row = rows.get(hit) or {}
-        if row.get('status') != 'closed':
-            continue
-        superseded = any(dep.get('issue_id') == hit and dep.get('type') == 'supersedes'
-                         for dep in row.get('dependencies') or [])
-        headings = {match.group(1).strip().lower() for match in re.finditer(
-            r'^##\s+(.+?)\s*$', str(row.get('description') or ''), re.MULTILINE)}
-        missing = [section for section in ('Question', 'Alternatives Considered', 'Decision', 'Rationale', 'Rule owner', 'Reversal')
-                   if not any(heading.startswith(section.lower()) for heading in headings)]
-        if superseded:
-            problems.append(f'{hit} is closed and already superseded')
-        elif missing:
-            problems.append(f"{hit} is a closed question, not a planned ruling (missing {', '.join(missing)})")
-    if problems:
-        fail(f"{q['id']}: supersedes needs a recorded ruling: " + '; '.join(problems))
-    replaces = [hit for hit in hits if rows[hit]['status'] == 'decided']
-    released = [hit for hit in hits if hit not in replaces]
-    if len(released) > 1:
-        fail(f"{q['id']}: a question revises at most one released record ({', '.join(released)}); split the question")
-    held = split_holds(ctx, {hit: rows[hit].get('assignee') or '' for hit in replaces})[0]
-    if held:
-        fail(f"{q['id']}: {', '.join(f'{rid} (held by {holder})' for rid, holder in held.items())} would close at Record, "
-             'and another live session holds it; ask that session to hand it off (board unclaim), or choose another outcome')
-    # Record moves a closed record's pending revision to the new record, which keeps one revision (target and rule).
-    carried = {(dep['depends_on_id'], (rows[hit].get('metadata') or {}).get(REVISES_RULE))
-               for hit in replaces for dep in rows[hit].get('dependencies') or []
-               if dep['issue_id'] == hit and dep['type'] == REVISES}
-    if len({*carried, *((rid, None) for rid in released)}) > 1:
-        fail(f"{q['id']}: the new record would revise more than one record or rule "
-             f"({', '.join(sorted(f'{t}' + (f' ({r})' if r else '') for t, r in {*carried, *((rid, None) for rid in released)}))}); "
-             'a record keeps one revision: split the question')
-    q['replaces'], q['revises'] = replaces, released[0] if released else None
+            hit['title'] = result['titles'].get(hit['id']) or hit['title']
+    q['replaces'], q['revises'] = result['replaces'], result['revises']
 
 
 def related_accept(ctx: Context, report: dict) -> str:

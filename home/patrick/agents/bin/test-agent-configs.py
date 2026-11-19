@@ -2357,7 +2357,9 @@ def validate_board(root: Path) -> None:
             expected = fake.reads() if fake.reads() in (["show"], ["show", "show"]) else ["show"]
         elif argv[0] in ("comment", "close", "create", "defer", "undefer", "gate"):
             expected = fake.reads()  # reads only what it needs (none, the items it closes, a parent)
-        elif argv[0] in ("related", "check", "block", "update", "link", "unlink", "unblock", "reopen") or argv[:2] in (["ruling", "revise"], ["ruling", "release"], ["ruling", "supersede"]):
+        elif argv[0] == "health":
+            expected = fake.reads() if "export" in fake.reads() else ["list"]
+        elif argv[0] in ("related", "check", "block", "update", "link", "unlink", "unblock", "reopen") or argv[:2] in (["ruling", "check-replaces"], ["ruling", "revise"], ["ruling", "release"], ["ruling", "supersede"]):
             expected = ["export"]
             if argv[:2] == ["ruling", "revise"] and (("--holds" in argv and argv[argv.index("--holds") + 1] != "none") or any(a.startswith("blocks:") for a in argv)):
                 expected = ["export", "export"]  # and the board read again after the create, which holds the new question
@@ -2561,7 +2563,7 @@ def validate_board(root: Path) -> None:
             unnamed = report.split("flag, not a deviation")[1]
             if f"  {cid['Unnamed wait']}  unnamed-blocker" not in unnamed or f"  {cid['Old milestone']}  " in unnamed:
                 raise ValueError(f"board check missed or misplaced the unnamed-wait flag:\n{report}")
-            if "convention deviations: 6 — run /board-migrate; board fixes: 1 (board check)" not in health_check:
+            if "convention deviations: 6 — run /board-migrate" not in health_check:
                 raise ValueError("board health lacks the deviation hint")
             legacy = {"id": "fx-unrat", "title": "Legacy cache ruling", "description":
                       "## Question\nShould we cache?\n\n## Alternatives Considered\n- No cache\n\n## Decision\nCache it.\n\n"
@@ -2571,6 +2573,9 @@ def validate_board(root: Path) -> None:
             code, flagged, _ = invoke(["check"], legacy_board)
             if code != 1 or "unratified-ruling" not in flagged or "/board-migrate Upgrade/Reconcile" not in flagged:
                 raise ValueError(f"board check did not expose the legacy ruling repair: {code} {flagged}")
+            _, legacy_health, _ = invoke(["health"], legacy_board)
+            if "convention deviations: 1 — run /board-migrate" not in legacy_health or "board fixes:" in legacy_health:
+                raise ValueError(f"board health must route the legacy ruling repair to /board-migrate: {legacy_health}")
             with tempfile.TemporaryDirectory() as directory:
                 record_file = Path(directory, "legacy.md")
                 record_file.write_text(legacy["description"], encoding="utf-8")
@@ -3956,6 +3961,10 @@ def validate_board(root: Path) -> None:
                                                  "## Rationale\nUser (2026-10-31): A.\n## Rule owner\ndocs/cache.md\n", "dependencies": [
                                       {"issue_id": "fx-planned", "depends_on_id": ids["Goal"], "type": "parent-child"}]}
                 fake = Fake([*fixture, planned_record])
+                code, output, errors = invoke(["ruling", "check-replaces", "fx-planned"], fake, "lead0001")
+                preview = json.loads(output) if code == 0 else {}
+                if preview != {"replaces": [], "revises": "fx-planned", "titles": {"fx-planned": "Planned ruling"}} or fake.writes():
+                    raise ValueError(f"board ruling check-replaces must accept a complete planned ruling without Reversal: {code} {preview} {errors!r}")
                 code, _, errors = invoke(["ruling", "record", question, str(draft), "--replaces", "fx-planned"], fake, "lead0001")
                 if code or [stdin for args, stdin in fake.calls if args[0] == "batch"] != [
                         f"update {question} status=decided\ndep add {question} fx-planned tracks\n"]:
@@ -7866,6 +7875,28 @@ elif args[:1] == ["show"]:
     items = config.get("items", {})
     rows = {i: {"status": "open", **items.get(i, {})} for i in args[1:args.index("--json")]}
     print(json.dumps({i: {f: row.get(f) for f in fields} for i, row in rows.items()}))
+elif args[:1] == ["check-replaces"]:
+    items = config.get("items", {})
+    ids = list(dict.fromkeys(args[1:]))
+    invalid = [item for item in ids if items.get(item, {}).get("status", "open") not in ("decided", "released", "closed")]
+    if invalid:
+        print("supersedes needs a recorded ruling: " + ", ".join(invalid), file=sys.stderr)
+        sys.exit(1)
+    replaces = [item for item in ids if items.get(item, {}).get("status") == "decided"]
+    revises = [item for item in ids if item not in replaces]
+    held = [row for row in config.get("position", {}).get("held", []) if row.get("id") in replaces and row.get("mark") != "gone"]
+    if held:
+        print(f"{held[0]['id']}: another live session holds it", file=sys.stderr)
+        sys.exit(1)
+    if len(revises) > 1:
+        print("a question revises at most one released record", file=sys.stderr)
+        sys.exit(1)
+    tracked = [item for item in replaces if items.get(item, {}).get("dependencies")]
+    if tracked and revises:
+        print("more than one record or rule", file=sys.stderr)
+        sys.exit(1)
+    print(json.dumps({"replaces": replaces, "revises": revises[0] if revises else None,
+                      "titles": {item: items.get(item, {}).get("title", "") for item in ids}}))
 elif args[:1] in (["release"], ["supersede"]):
     # release and supersede change statuses in the config, as the board would; "fail" ids exit 1 after the writes
     items = config.setdefault("items", {})
@@ -9775,6 +9806,14 @@ def validate_protocol(root: Path, part: str) -> None:
 
             # G: a question that replaces records (r12-q44, r9-q33): Record links each, the release supersedes them.
             # Alpha: the dialog names the record, a record not naming it is refused, Record links it and reports it.
+            planned = {"status": "closed", "issue_type": "decision", "title": "Planned cache ruling",
+                       "description": "## Question\nWhich cache?\n## Alternatives Considered\nA or B.\n## Decision\nA.\n"
+                                      "## Rationale\nUser chose A.\n## Rule owner\ndocs/cache.md\n"}
+            replacing("Planned cache", ["fx-planned"], {"fx-planned": "supersedes"}, items={"fx-planned": planned})
+            checks = calls()
+            if ["ruling", "check-replaces", "fx-planned"] not in [row["args"][:3] for row in checks]:
+                raise ValueError(f"Stage must delegate supersedes validation to board ruling check-replaces: {checks}")
+            proto("abandon", cwd=repo)
             qid = replacing("Alpha point", ["fx-u1"], {"fx-u1": "supersedes"}, items={"fx-u1": {**decided, "title": "Alpha store"}}, newIds=["fx-n1"])
             if answered() != "Alpha point? It replaces fx-u1 (Alpha store) at release.":
                 raise ValueError("the dialog must name the record the question closes")

@@ -1797,7 +1797,7 @@ def doc_ref(anchor: str) -> str:
 
 
 # Deviations a board command fixes, which /board-migrate does not.
-COMMAND_FIXED = ('ruling-blocked', 'decision-blocks-cr', 'unratified-ruling')
+COMMAND_FIXED = ('ruling-blocked', 'decision-blocks-cr')
 
 
 def deviations(board: Board, root: str | None) -> list[tuple[str, str, str]]:
@@ -5724,6 +5724,52 @@ def replaced_checks(board: Board, new: str, replaces: list[str], actor: str, in_
     return closing, taking, operations
 
 
+def check_replaces(board: Board, args) -> None:
+    """Validate and classify the records a staged question proposes to replace. Record repeats the mutable checks with its new id."""
+    hits = list(dict.fromkeys(args.ids))
+    rows = {item_id: board.by_id.get(item_id) for item_id in hits}
+    problems = []
+    for item_id, issue in rows.items():
+        if issue is None or issue.get('issue_type') != 'decision' or issue.get('status') in (None, 'open', 'in_progress'):
+            status = issue.get('status') if issue else None
+            kind = issue.get('issue_type') if issue else None
+            problems.append(f'{item_id} is {status} {kind}, not a ruling')
+            continue
+        if issue['status'] == 'closed':
+            if superseding(board, item_id):
+                problems.append(f'{item_id} is closed and already superseded')
+            missing = missing_sections(str(issue.get('description') or ''))
+            if missing:
+                problems.append(f"{item_id} is a closed question, not a planned ruling (missing {', '.join(missing)})")
+        elif issue['status'] not in ('decided', 'released'):
+            problems.append(f'{item_id} is {issue["status"]} decision, not a decided or released ruling')
+    if problems:
+        raise BoardError('supersedes needs a recorded ruling: ' + '; '.join(problems))
+
+    replaces = [item_id for item_id, issue in rows.items() if issue['status'] == 'decided']
+    revises = [item_id for item_id in hits if item_id not in replaces]
+    if len(revises) > 1:
+        raise BoardError(f'a question revises at most one released record ({", ".join(revises)}); split the question')
+
+    actor = caller()
+    held = [(item_id, rows[item_id].get('assignee'), hold_refusal(board, rows[item_id], actor)) for item_id in replaces]
+    refused = [(item_id, holder, reason) for item_id, holder, reason in held if reason and reason != 'gone']
+    if refused:
+        item_id, holder, _ = refused[0]
+        raise BoardError(f'{item_id} (held by {holder}) would close at Record; ask that session to hand it off (board unclaim), or choose another outcome')
+
+    carried = {(dep['depends_on_id'], rule_of(rows[item_id]))
+               for item_id in replaces for dep in rows[item_id].get('dependencies') or []
+               if dep.get('issue_id') == item_id and dep.get('type') == REVISES}
+    carried.update((item_id, None) for item_id in revises)
+    if len(carried) > 1:
+        detail = ', '.join(sorted(target + (f' ({rule})' if rule else '') for target, rule in carried))
+        raise BoardError(f'the new record would revise more than one record or rule ({detail}); a record keeps one revision: split the question')
+
+    print(json.dumps({'replaces': replaces, 'revises': revises[0] if revises else None,
+                      'titles': {item_id: rows[item_id].get('title') or '' for item_id in hits}}))
+
+
 WHOLE_WAIT = '(the whole item waits)'
 
 
@@ -6834,6 +6880,7 @@ EXAMPLES = {
     'close': 'board close <id> <id> --reason "superseded by the cache ruling" [--force: blocked item, epic with open children]',
     'claim': 'board claim [<id>] [--force "waits on the cache ruling"]',
     'ruling record': 'board ruling record <id> record.md [--unratified] [--replaces <old>,<old>]',
+    'ruling check-replaces': 'board ruling check-replaces <old> [<old>]',
     'update': 'board update <id> <id> --title "New title" --priority 1 --label topic:x --unlabel topic:y --parent <id>',
     'link': 'board link <a> <b> --type related',
     'unlink': 'board unlink <a> <b>',
@@ -6888,7 +6935,7 @@ def bd_word(argv: list[str]) -> str:
 
 def writes(argv: list[str]) -> bool:
     """Whether a command may write: the window opens after it, and a moved board refuses it. `field export` and `discard` touch only scratch."""
-    if argv[:2] in (['field', 'export'], ['field', 'discard']):
+    if argv[:2] in (['field', 'export'], ['field', 'discard'], ['ruling', 'check-replaces']):
         return False
     if argv[:1] == ['bd']:
         if '--raw' not in argv[1:3]:
@@ -7097,6 +7144,8 @@ def run_command(argv: list[str]) -> int:
     sub.add_argument('--replaces', action=Values, default=[], metavar='ID[,ID...]',
                      help='the rulings this record replaces, rerunnable after a stop: each decided or released one gets a pending revision link and is superseded when '
                           'this record comes into force (its release; with --unratified at once); one already superseded by it is done; anything else refuses before any write (repeatable)')
+    sub = add('check-replaces', 'validate and classify rulings a staged question proposes to replace', check_replaces, group='ruling')
+    sub.add_argument('ids', nargs='+', type=board_id)
     sub = add('update', 'change items: title, priority, labels (not queue: or for:), parent', update_command)
     sub.add_argument('ids', nargs='+', type=board_id)
     sub.add_argument('--title', type=nonempty)
@@ -7301,7 +7350,7 @@ def run_command(argv: list[str]) -> int:
     try:
         # Status views read non-closed items. These read closed items too (check: closed decisions named in text;
         # block, revise, release, supersede: a closed blocker or old record) or comments (related, check).
-        scope = 'ids' if args.run in (show, route, send, field_export, field_apply) else 'all' if args.run in (related, check, block, revise, record, release, supersede, update_command, link_command, unlink_command, unblock, reopen_command) \
+        scope = 'ids' if args.run in (show, route, send, field_export, field_apply) else 'all' if args.run in (related, check, check_replaces, block, revise, record, release, supersede, update_command, link_command, unlink_command, unblock, reopen_command) \
             else 'status'
         if args.run in (route, send):
             mover(None, args, args.command)  # refuse before reading
