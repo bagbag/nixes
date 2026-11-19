@@ -120,7 +120,7 @@ STRENGTHS = ('lean', 'strong')
 LEAN_CAUSES = ('preference', 'evidence')  # the user's values decide, or a fact remains unchecked
 # Lens names: skills/step-back/SKILL.md and skills/ground/SKILL.md own them (the console's hooks/words.ts repeats them);
 # the validator keeps all three in sync.
-ALL_LENSES = {  # the validator compares the skill-owned names with the console list
+ALL_LENSES = {
     'step-back': ('goal', 'decisions', 'foundations', 'consumer', 'root-fix', 'bloat', 'gaps', 'clean', 'overfit', 'mechanics', 'options'),
     'ground': ('assumptions', 'board', 'sources', 'probe'),
 }

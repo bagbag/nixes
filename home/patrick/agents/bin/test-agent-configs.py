@@ -8987,17 +8987,18 @@ def lens_problems(engine: dict, step_back_md: str, ground_md: str) -> list[str]:
         return re.findall(r"^\s*- \*\*([\w-]+):\*\*", markdown, re.M)
 
     def step_back_lenses(markdown: str) -> list[str]:
-        entries = re.findall(r"^(\d+)\. \*\*([\w -]+)\.\*\*", markdown, re.M)
-        return [name.casefold().replace(" ", "-") for _, name in entries
-                if name.casefold().replace(" ", "-") in engine["step-back"]]
+        entries = re.findall(r"^(\d+)\. \*\*([\w -]+) \(`([\w-]+)`\)\.\*\*", markdown, re.M)
+        return [lens for _, _, lens in entries if lens in engine["step-back"]]
 
     expected = {"step-back": list(engine["step-back"]), "ground": list(engine["ground"])}
     found = {"step-back": step_back_lenses(step_back_md), "ground": ground_bullets(ground_md)}
     problems = [f"skill {name}: {names} differs from the engine's {expected[name]}" for name, names in found.items()
                 if names != expected[name]]
-    numbered = [(int(number), name.casefold().replace(" ", "-"))
-                for number, name in re.findall(r"^(\d+)\. \*\*([\w -]+)\.\*\*", step_back_md, re.M)
-                if name.casefold().replace(" ", "-") in engine["step-back"]]
+    numbered = [(int(number), lens)
+                for number, _, lens in re.findall(
+                    r"^(\d+)\. \*\*([\w -]+) \(`([\w-]+)`\)\.\*\*", step_back_md, re.M
+                )
+                if lens in engine["step-back"]]
     required = list(zip(range(3, 14), expected["step-back"]))
     if numbered != required:
         problems.append(f"skill step-back: numbered lens steps {numbered} differs from {required}")
