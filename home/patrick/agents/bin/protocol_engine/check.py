@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import contextlib
 
-from .base import CHECKED_LIMIT, CHECKED_MAX, CAP_CHOICES, CHECK_CAP, PASSES, ProtocolError, band_warning
+from .base import CAP_CHOICES, CHECK_CAP, CHECKED_LIMIT, PASSES, ProtocolError
 from . import schema, words
 from .engine import Context, Step, by_id, fail, questions, touch, unresolved
 from .questions import apply_updates, describe, disclosure_error, refuse_all, strong_errors
@@ -259,7 +259,7 @@ def checked_of(raw, known: set[str]) -> tuple[dict[str, str], list[str]]:
     errors = [f'checked.{key}: no question of this round (keys: question ids, and `round` for a round-wide note)'
               for key in raw if key != 'round' and key not in known]
     errors += [f'checked.{key}: what you examined, a non-empty string' for key, value in raw.items() if not (isinstance(value, str) and value.strip())]
-    errors += [f'checked.{key}: {len(value.strip())} characters; one line of about {CHECKED_MAX} (the finding itself goes in an update or `summary`)'
+    errors += [f'checked.{key}: {len(value.strip())} characters, over the limit of {CHECKED_LIMIT} (put findings in an update or `summary`)'
                for key, value in raw.items() if isinstance(value, str) and len(value.strip()) > CHECKED_LIMIT]
     return {key: value.strip() for key, value in raw.items() if isinstance(value, str) and value.strip()}, errors
 
@@ -320,7 +320,6 @@ def record_pass(ctx: Context, report: dict) -> tuple[str, int, str]:
     if command == 'challenge-rulings':
         errors += challenge_errors(ctx, report, scope, updates)
     refuse_all(errors)
-    ctx.messages += [w for name, value in checked.items() for w in band_warning(f'checked.{name}', len(value), CHECKED_MAX, CHECKED_LIMIT)]
     if key:
         mark_covered(ctx, key, [*scope, *ctx.applied, *ctx.added])
     observed.pop(command, None)

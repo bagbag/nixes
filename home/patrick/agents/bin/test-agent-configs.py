@@ -13330,20 +13330,24 @@ def validate_protocol(root: Path, part: str) -> None:
                     run_pass(**kwargs)
                 return found
 
-            # r13-q66: a `checked` line is one line of about 120 characters; above that and within 250 (the limit) the report is accepted with
-            # one warning line per entry, over 250 it is refused, and a refused report prints no warning.
+            # The pass instructions and the refusal agree, and every checked entry through the limit is accepted without a warning.
             to_check("Wordy?", **home)
             qid = staged["q"]
-            wordy = {"pass": "step-back", "updates": [], "checked": {qid: "x" * 251, "round": "short"}}
-            refused("step", stdin=wordy, needle="checked." + qid + ": 251 characters", **home)
-            if "keep it to about" in proto("step", stdin=wordy, ok=False, **home).stderr:
-                raise ValueError("a refused report prints no warnings")
-            out = proto("step", stdin={**wordy, "checked": {qid: "x" * 250, "round": "y" * 121}}, **home).stdout
-            for needle in (f"checked.{qid} is 250 characters; keep it to about 120 (refused over 250)", "checked.round is 121 characters; keep it to about 120 (refused over 250)"):
-                if needle not in out:
-                    raise ValueError(f"a checked line in the band is accepted with a warning ({needle!r} missing):\n{out}")
-            if "keep it to about" in proto("step", stdin={**wordy, "checked": {qid: "x" * 120, "round": "short"}}, **home).stdout:
-                raise ValueError("a checked line at the target gets no warning")
+            checked_limit = engine_module.base.CHECKED_LIMIT
+            pending = shown(**home)["pending"]
+            proto("compacted", **home)
+            scope = json.loads(proto("scope", "--origin", "plugin", stdin={"command": "step-back", "pending": pending["id"]}, **home).stdout)
+            if scope["text"].count(f"at most {checked_limit} characters") != 2:
+                raise ValueError(f"the scope and report format state the same checked limit: {scope}")
+            wordy = {"pass": "step-back", "updates": [], "checked": {qid: "x" * (checked_limit + 1), "round": "y" * (checked_limit + 1)}}
+            result = proto("step", stdin=wordy, ok=False, **home)
+            for key in (qid, "round"):
+                if f"checked.{key}: {checked_limit + 1} characters, over the limit of {checked_limit}" not in result.stderr:
+                    raise ValueError(f"each checked entry over the stated limit is refused: {result.stderr}")
+            for question_len, round_len in ((checked_limit, checked_limit - 1), (checked_limit - 1, checked_limit)):
+                out = proto("step", stdin={**wordy, "checked": {qid: "x" * question_len, "round": "y" * round_len}}, **home).stdout
+                if "keep it to about" in out or f"checked.{qid}" in out or "checked.round" in out:
+                    raise ValueError(f"a checked line at or just below the limit passes without a warning: {out}")
 
             # An update warns only for the fields it carries: an untouched long field is not warned again.
             def update_out(**fields):

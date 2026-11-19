@@ -7,7 +7,7 @@ from __future__ import annotations
 import re
 
 from .base import (
-    AWAY, BATCH, CHECK_CAP, CHECKED_MAX, DESCRIPTION_MAX, HEADER_MAX, LIST_COMMAND, PROPOSAL_ROUNDS, SEEDS, STRONG_CRITERIA, SUMMARY_MAX,
+    AWAY, BATCH, CHECK_CAP, CHECKED_LIMIT, DESCRIPTION_MAX, HEADER_MAX, LIST_COMMAND, PROPOSAL_ROUNDS, SEEDS, STRONG_CRITERIA, SUMMARY_MAX,
     TEXT_LIMIT, TEXT_MAX, THINK_MORE, TITLE_MAX, cut, json_block, lines, plural
 )
 
@@ -112,7 +112,7 @@ def pass_format(command: str) -> str:
         f'{WAITS_FOR} Name a hold you set for your own spike or review in `summary`. {MERGE_TEST} A merge is one rule question (`settles`: the keys it settles); split an item out when the rule\'s application to it is open. '
         f'A question that widens the round\'s scope: list the open items with `{LIST_COMMAND}`.',
         *(['For each rejected alternative in a step-back, report its distinct idea and the sourced constraint or evidence in that question\'s `dropped`: [{"idea": "...", "why": "..."}].'] if command == 'step-back' else []),
-        f'Key `checked` by question: for each id the step names as this pass\'s scope, what you examined in it this run, one line of about {CHECKED_MAX} characters (an update '
+        f'Key `checked` by question: for each id the step names as this pass\'s scope, what you examined in it this run, one line of at most {CHECKED_LIMIT} characters (an update '
         'to it covers it too); `round` holds a round-wide note, the only entry an empty scope needs.',
         'Report with `protocol step` (stdin JSON), e.g. ' + json_block({
             'pass': command, 'updates': [{'id': 'q1', 'premises': '<revised premise>'}],
@@ -128,9 +128,9 @@ def pass_scope(ids: list[str], strong: list[str] | None, command: str | None = N
     """The pending pass's scope (r4-q15, q16); `strong`: the strong ids a challenge-rulings pass re-derives, None for other passes;
     `answered`: the pass after the last answer, which covers the answered
     questions and my rulings on them (r7-q27)."""
-    head = (f"This pass covers {' '.join(ids)}{' and my rulings on them' if answered else ''}: a `checked` entry (what you examined in it this run, one line of about {CHECKED_MAX} characters) or an update for each."
+    head = (f"This pass covers {' '.join(ids)}{' and my rulings on them' if answered else ''}: a `checked` entry (what you examined in it this run, one line of at most {CHECKED_LIMIT} characters) or an update for each."
             + (ANSWERED_RULINGS if answered else '')
-            if ids else 'Nothing changed since this pass last ran: `checked` needs only a `round` note.')
+            if ids else f'Nothing changed since this pass last ran: `checked` needs only a `round` note of at most {CHECKED_LIMIT} characters.')
     if strong is None:
         return head
     verdicts = (f" In `verdicts`, re-send the `strongBecause` of each of {' '.join(strong)}, re-derived this run, or lower it to lean."

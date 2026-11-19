@@ -491,8 +491,9 @@ each part of the user's words", then a one-line pointer, r13-q79) and, beside th
 question rows last printed (`state['rows']`, r13-q66): a check pass prints only the rows that
 differ from the last output, then `N questions, K listed above as new or changed (protocol
 show lists them)`. A pass always gets the skill's full text; the engine cuts nothing. A
-compaction prints everything again. A `checked` line is one line of about 120 characters (the pass format and each pass's scope line say so);
-one over 120 and within 250 is accepted with a warning line, one over 250 is refused (strong reasons are still re-sent each challenge run).
+compaction prints everything again. Each `checked` entry is one line of at
+most 200 characters. The pass format, scope and refusal use this same limit.
+Strong reasons are still re-sent each challenge run.
 
 Every step's output opens with a headline: the call's events in the Log's
 words, then the next step (`r1 · related resolved · next: the next batch`); the

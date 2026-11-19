@@ -1189,9 +1189,9 @@ describe('long lists', () => {
   })
 
   test('a refused or malformed protocol call shows the engine\'s reason, not the exit code', () => {
-    const refusal = 'protocol exited 1.\n\nstderr:\nprotocol: checked.q62: 260 characters; one line of about 120 (the finding itself goes in an update or `summary`)\nAfter the pass, report each change as a per-question update'
+    const refusal = 'protocol exited 1.\n\nstderr:\nprotocol: checked.q62: 201 characters, over the limit of 200 (put findings in an update or `summary`)\nAfter the pass, report each change as a per-question update'
     expect(protocolResultText(refusal))
-      .toBe('refused: checked.q62: 260 characters; one line of about 120 (the finding itself goes in an update or `summary`)')
+      .toBe('refused: checked.q62: 201 characters, over the limit of 200 (put findings in an update or `summary`)')
     expect(protocolResultText({ result: refusal })).toBe(protocolResultText(refusal))
     const usage = 'protocol exited 2.\n\nstderr:\nusage: protocol [-h] [--session SESSION]\n                {start,step}\nprotocol: error: unrecognized arguments: --bogus'
     expect(protocolResultText(usage)).toBe('usage error: unrecognized arguments: --bogus')
