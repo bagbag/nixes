@@ -634,18 +634,26 @@ def find_shared(start: Path | None = None) -> Shared | None:
     return Shared(beads, mark['remote']) if mark else None
 
 
-def may_move(board: 'Board | None' = None) -> bool:
-    """A person's terminal has no actor and isn't limited; a session with no registered role and a worker count as agents."""
+def session_role(board: 'Board | None' = None) -> str | None:
+    """The calling session's registered role: None for a person, a worker, or a session with no readable registration."""
     actor = derived_actor()
-    if not actor:
-        return True
-    if actor != session_actor(actor):
-        return False
+    if not actor or actor != session_actor(actor):
+        return None
     try:
         entry = (board.registry() if board else registry_by_actor(registrations()[0])).get(actor)
     except BoardError:
-        return False
-    return bool(entry and entry.get('role') in MOVERS)
+        return None
+    return entry.get('role') if entry else None
+
+
+def may_move(board: 'Board | None' = None) -> bool:
+    """A person's terminal has no actor and isn't limited; a session with no registered role and a worker count as agents."""
+    return not derived_actor() or session_role(board) in MOVERS
+
+
+def may_judge(board: Board, cr: dict) -> bool:
+    """Who gives a change request's Accept verdict: a lead, solo or person any; autopilot a user design checkpoint, in the user's place."""
+    return may_move(board) or (session_role(board) == 'autopilot' and meta(cr).get('checkpoint') == 'user')
 
 
 def bd_show(ids: list[str], *flags: str, comments: bool = True) -> list[dict]:
@@ -4428,8 +4436,8 @@ def return_item(board: Board, args) -> None:
     if cr['status'] not in ('in_review', ACCEPT):
         raise BoardError(f"{args.id}: {cr['status']}; only a change request in review or waiting for its Accept is returned (unclaim frees work in hand)")
     if cr['status'] == ACCEPT:
-        if not may_move(board):
-            raise BoardError(f'{args.id}: waiting for your Accept; the lead returns it with the findings you gave')
+        if not may_judge(board, cr):
+            raise BoardError(f'{args.id}: waiting for your Accept; the lead returns it with the findings you gave (autopilot: a user design checkpoint)')
         if cr.get('assignee') and not holds_cr(cr, actor):
             raise BoardError(f"{args.id}: held by {cr['assignee']} (a refresh); return it once that is released")
     elif not holds_cr(cr, actor):
@@ -4455,13 +4463,10 @@ def design_pin(board: Board, cr: dict) -> tuple[str, list[str]]:
 
 
 def land(board: Board, args) -> int:
-    actor = derived_actor()
-    caller_actor = actor or 'user'
-    entry = board.registry().get(actor) if actor and actor == session_actor(actor) else None
-    autopilot = bool(entry and entry.get('role') == 'autopilot')
+    caller_actor = derived_actor() or 'user'
     cr = cr_arg(board, args.id, 'land')
-    if not may_move(board) and not (args.checkpoint and autopilot):
-        raise BoardError('only a lead or solo session, or a person, lands a change request (the Accept)')
+    if not may_judge(board, cr):
+        raise BoardError('only a lead or solo session, or a person, lands a change request (the Accept); autopilot accepts a user design checkpoint')
     m = meta(cr)
     if cr['status'] != ACCEPT:
         raise BoardError(f"{args.id}: {cr['status']}; only a change request waiting for its Accept lands")
@@ -4480,7 +4485,7 @@ def land(board: Board, args) -> int:
         put_meta(cr, checkpoint=None, since=None)
         bd_checked('update', args.id, '--status', 'open', '--assignee', '', '--json')
         comment(args.id, f'board cr land --checkpoint: {caller_actor} accepted the design; nothing landed, the planner adds the items.')
-        made = cr_ratification(board, cr, 'design') if autopilot else None
+        made = cr_ratification(board, cr, 'design') if session_role(board) == 'autopilot' else None
         print(f'accepted the design checkpoint of {args.id}: open for planning' + (f'; ratification {made}' if made else ''))
         return 0
     if m.get('checkpoint') == 'user':

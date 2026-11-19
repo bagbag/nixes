@@ -107,5 +107,5 @@ whether the user edited it.
 
 | Command | Effect |
 |---|---|
-| `board cr land <cr> --checkpoint --design <hash>` | The user's design checkpoint accept: `open`, checkpoint cleared, to planning; nothing lands. `<hash>` is the `design hash` `board claim <cr>` printed, still matching the design items' description, design, acceptance and notes. |
+| `board cr land <cr> --checkpoint --design <hash>` | The user's design checkpoint accept: `open`, checkpoint cleared, to planning; nothing lands. `<hash>` is the `design hash` `board claim <cr>` printed, still matching the design items' description, design, acceptance and notes. Accepted by autopilot, it also files a `design` ratification. |
 | `board cr edits <cr> --tip <sha> [--commit …]` | Prints, or with `--commit` commits and records as the user's, the user's edits in the CR's review; flags and gates: `board cr edits --help`. A failing gate keeps the commit and the CR waits for the user. |

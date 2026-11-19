@@ -31,12 +31,9 @@ setup, run `/role autopilot` again.
     question for the user with a recommendation (`board unclaim <id>` when you
     hold it outside a round). Parked questions form the user's next round;
     their dependents wait. Continue independent tracks.
-- Accept in the user's place a CR at a `user` checkpoint with
-  `board cr land <cr> --checkpoint --design <hash>`. When autopilot accepts a
-  design checkpoint, this files a `design` ratification for any project look.
-  Leave finished epics whose acceptance names the user open for the user's
-  Accept and report them at Return. A finished CR (`look` `before`) in
-  `needs_acceptance` stays parked for the user.
+- Judge a CR at a `user` checkpoint in the user's place under
+  [Accept](decide.md#accept). Finished CRs and epics whose acceptance names
+  the user wait for the user's Accept.
 - Treat public contracts, durable design and substantial downstream work as
   costly to reverse. Before non-trivial action, resolve facts and obtain
   independent assessment; review findings authorize no expansion. Assess scope

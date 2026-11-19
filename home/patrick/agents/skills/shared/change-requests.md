@@ -108,8 +108,9 @@ queue order and refresh work: [Board coordination](board-coordination.md).
   at no design checkpoint lands when its review passes, in either `look`,
   without the Accept and without a ratification. Plan work that changes no
   code as a no-code task ([Work items](../shared/board-core.md#work-items)).
-- **Ratification:** after a `look` `after` landing, or an agent design
-  checkpoint pass in such a project, a child task titled `<CR title>` sits in
+- **Ratification:** after a `look` `after` landing, an agent design
+  checkpoint pass in such a project, or autopilot's accept of a `user`
+  checkpoint, a child task titled `<CR title>` sits in
   `needs_ratification` under the CR and blocks nothing. Metadata
   `ratification=landing|design` identifies what the user reviews. The board
   creates one only when no child of that kind is currently `needs_ratification`;

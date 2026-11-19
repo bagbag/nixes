@@ -1041,6 +1041,20 @@ def t_cr() -> None:
               f'{user_checkpoint}: {role} accepts a user checkpoint in look-{look} with the correct ratification',
               err + output + f"\nparent={parent}\nratifications={[row for row in items('a').values() if (row.get('metadata') or {}).get('ratification') == 'design']}")
 
+    finished = create('a', 'autopilot finished CR', '--status', 'needs_acceptance')
+    rc, _, err, _ = run('a', 'cr', 'land', finished, role='autopilot')
+    check(rc != 0 and 'only a lead or solo' in err and items('a')[finished]['status'] == 'needs_acceptance',
+          f'{finished}: autopilot is refused a land outside a user checkpoint', err)
+    returned = create('a', 'autopilot returned checkpoint', '--status', 'needs_acceptance', '--metadata', 'checkpoint=user')
+    create('a', f'{returned} design', '--parent', returned, kind='design')
+    rc, _, err, _ = run('a', 'return', returned, 'rework the design', role='agent')
+    check(rc != 0 and items('a')[returned]['status'] == 'needs_acceptance',
+          f'{returned}: an agent session is refused the return of a user checkpoint', err)
+    rc, claimed, err, _ = run('a', 'claim', returned, role='autopilot')
+    rc2, output, err2, _ = run('a', 'return', returned, 'rework the design', role='autopilot')
+    check(rc == 0 and rc2 == 0 and items('a')[returned]['status'] == 'open',
+          f'{returned}: autopilot returns a user design checkpoint', err + claimed + err2 + output)
+
     base_cr, child_cr = create('a', 'stack base P'), create('a', 'stack child C')
     p1, c1 = task(base_cr, 'P item'), task(child_cr, 'C item')
     bd('a', 'dep', 'add', child_cr, base_cr)
