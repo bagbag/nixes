@@ -4613,6 +4613,10 @@ def validate_board(root: Path) -> None:
                                              deck=Graphing([*mine_rows, stacked]))
             if code != 2 or "keeps its parent" not in errors or any(a[0] == "create" for a, _ in fake.calls):
                 raise ValueError(f"a plan that moves an existing child under a new parent meets the parent-move rule: {code} {errors} {fake.calls}")
+            named_question = {"nodes": [{"key": "question-key", "title": "Which cache?", "type": "decision", "description": "d"}]}
+            code, _, errors, fake = bd_graph(named_question, "--holds", "fx-cr", deck=Graphing([*mine_rows, stacked]))
+            if code != 2 or "new decision 'Which cache?'" not in errors or "on question-key" in errors or any(a[0] == "create" for a, _ in fake.calls):
+                raise ValueError(f"a plan CR-hold refusal names the new decision title, not its key: {code} {errors} {fake.calls}")
             # q30: one link rule for every writer. Any blocking spelling from an existing item to a new decision is a hold (not only `blocks`).
             for kind in ("waits-for", "conditional-blocks", "blocked-by", "depends-on"):
                 code, output, errors, fake = bd_graph({"nodes": nodes, "edges": [{"from_key": "t", "to_key": "q", "type": "blocks"}, {"from_id": ready, "to_key": "q", "type": kind}]})
@@ -7753,7 +7757,8 @@ elif args[:2] == ["create", "--graph"] and "--dry-run" in args:
     for held in holds:
         row = by_id.get(held)
         if row and row.get("issue_type") == "change-request":
-            print(f"board: {{held}} is a change request: unblock it from its decisions (board check lists them) and block its work items on question instead (board block <item> --on question)", file=sys.stderr)
+            title = next((node["title"] for node in plan["nodes"] if node.get("type") == "decision"), "")
+            print(f"board: {{held}} is a change request: unblock it from its decisions (board check lists them) and block its work items on new decision {{title!r}} instead (board block <item> --on <new decision id>)", file=sys.stderr)
             sys.exit(2)
         if not row or row.get("status") == "closed":
             print(f"board: unknown or closed: {{held}}", file=sys.stderr)
@@ -8118,7 +8123,8 @@ elif args[:2] == ["create", "--graph"] and "--dry-run" in args:
     for held in holds:
         row = items.get(held)
         if row and row.get("issue_type") == "change-request":
-            print(f"board: {held} is a change request: unblock it from its decisions (board check lists them) and block its work items on question instead (board block <item> --on question)", file=sys.stderr)
+            title = next((node["title"] for node in plan["nodes"] if node.get("type") == "decision"), "")
+            print(f"board: {held} is a change request: unblock it from its decisions (board check lists them) and block its work items on new decision {title!r} instead (board block <item> --on <new decision id>)", file=sys.stderr)
             sys.exit(2)
         if not row or row.get("status") == "closed":
             print(f"board: unknown or closed: {held}", file=sys.stderr)
@@ -10251,7 +10257,9 @@ def validate_protocol(root: Path, part: str) -> None:
             own, shared = [q["id"] for q in shown(cwd=repo)["questions"]]
             calls()
             refused("step", stdin={"outcomes": {shared: {"fx-own": "extend"}}}, needle=f"fx-own is already {own}'s item", cwd=repo)
-            if calls() or shown(cwd=repo)["questions"][1]["board"] is not None or shown(cwd=repo)["step"] != "related":
+            board_calls = calls()
+            if any(c["args"][0] not in ("show", "health", "position") and "--dry-run" not in c["args"] for c in board_calls) \
+                    or shown(cwd=repo)["questions"][1]["board"] is not None or shown(cwd=repo)["step"] != "related":
                 raise ValueError("Related must refuse a takeover of another round question's item before any write")
             proto("step", stdin={"outcomes": {shared: {"fx-own": "relate"}}}, cwd=repo)
             if shown(cwd=repo)["step"] == "related" or shown(cwd=repo)["questions"][1]["board"] is not None:
@@ -10263,7 +10271,7 @@ def validate_protocol(root: Path, part: str) -> None:
             qid = replacing("Betafive point", ["fx-u13", "fx-u14"], None, items={"fx-u13": {"status": "open", "issue_type": "decision"}})
             calls()
             refused("step", stdin={"outcomes": {qid: {"fx-u13": "extend"}}}, needle="outcomes missing", cwd=repo)
-            if calls():
+            if any(c["args"][0] not in ("show", "health", "position") and "--dry-run" not in c["args"] for c in calls()):
                 raise ValueError("Related must claim a taken-over item only after the whole report passes")
             proto("step", stdin={"outcomes": {qid: {"fx-u13": "extend", "fx-u14": "unrelated"}}}, cwd=repo)
             converge(cwd=repo)
@@ -12862,6 +12870,8 @@ def validate_protocol(root: Path, part: str) -> None:
                     {"issue_id": "fx-b", "depends_on_id": "fx-y", "type": "blocks"},      # open: blocks the record
                     {"issue_id": "fx-b", "depends_on_id": "fx-a", "type": "blocks"}]},
                 "fx-c": {"status": "open", "issue_type": "decision", "title": "C", "assignee": "rules001"},
+                "fx-cr1": {"status": "open", "issue_type": "change-request", "title": "CR 1"},
+                "fx-cr2": {"status": "open", "issue_type": "change-request", "title": "CR 2"},
                 "fx-w": {"status": "open", "issue_type": "task", "title": "Waiting work"},
                 "fx-y": {"status": "open", "issue_type": "task", "title": "Blocked work"},
                 "fx-k": {"status": "closed"},
@@ -12908,6 +12918,16 @@ def validate_protocol(root: Path, part: str) -> None:
                     needle="settles fx-b, which q1 settles already", **rules)
             refused("step", stdin=stage(question("Rule: only a?", settles=["fx-a"]), store("c")), needle="no question covers fx-b", **rules)
             refused("step", stdin=stage(question("Rule: bad?", settles="fx-a"), store("c")), needle="`settles` must be a list", **rules)
+            calls()
+            bad_stage = proto("step", stdin=stage(
+                question("Rule one?", settles=["fx-a", "fx-b"], holds=["fx-cr1"]),
+                question("Rule two?", settles=["fx-c"], holds=["fx-cr2"])), ok=False, **rules)
+            bad_stage_calls = [call["args"] for call in calls()]
+            if "fx-cr1 is a change request" not in bad_stage.stderr or "fx-cr2 is a change request" not in bad_stage.stderr \
+                    or "new decision 'Rule one'" not in bad_stage.stderr or "new decision 'Rule two'" not in bad_stage.stderr \
+                    or sum(args[:2] == ["create", "--graph"] and "--dry-run" in args for args in bad_stage_calls) != 2 \
+                    or shown(**rules)["questions"]:
+                raise ValueError(f"a Stage report must collect two invalid board hold errors without saving either question: {bad_stage.stderr} {bad_stage_calls}")
             proto("step", stdin=stage(rule, store("c")), **rules)
             staged = shown(**rules)
             rule_q = next(q for q in staged["questions"] if q["settles"])
@@ -12916,6 +12936,30 @@ def validate_protocol(root: Path, part: str) -> None:
                     or [c["args"][0] for c in calls() if c["args"][0] not in ("show", "position") and "--dry-run" not in c["args"]] != ["related"]:
                 raise ValueError(f"a rule question settling two selected items stages: {staged}")
             proto("step", stdin={"outcomes": {rule_q["id"]: {"fx-rel": "relate", "fx-w": "relate"}}}, **rules)
+            # A pass checks every changed draft's record links as one set and saves none when either board dry-run fails.
+            before = shown(**rules)["questions"]
+            calls()
+            rejected = proto("step", stdin={"pass": shown(**rules)["pending"]["command"], "updates": [
+                {"id": rule_q["id"], "holds": ["fx-cr1"]}, question("Another?", holds=["fx-cr2"])]}, ok=False, **rules)
+            failures = [call["args"] for call in calls()]
+            if "fx-cr1 is a change request" not in rejected.stderr or "fx-cr2 is a change request" not in rejected.stderr \
+                    or "new decision 'Rule: close both stores'" not in rejected.stderr or "new decision 'Another'" not in rejected.stderr \
+                    or sum(args[:2] == ["create", "--graph"] and "--dry-run" in args for args in failures) != 2 \
+                    or shown(**rules)["questions"] != before:
+                raise ValueError(f"a pass must report both invalid hold targets and apply neither update: {rejected.stderr} {failures}")
+            # The same check runs for protocol edit, while an existing board question still cannot accept draft holds.
+            proto("say", "--origin", "composer", stdin={"text": "move the rule hold"}, **rules)
+            calls()
+            rejected = proto("edit", stdin={"updates": [{"id": rule_q["id"], "holds": ["fx-cr1"]}], "quote": "move the rule hold"}, ok=False, **rules)
+            edit_calls = [call["args"] for call in calls()]
+            if "fx-cr1 is a change request" not in rejected.stderr or sum(args[:2] == ["create", "--graph"] and "--dry-run" in args for args in edit_calls) != 1 \
+                    or shown(**rules)["questions"] != before:
+                raise ValueError(f"protocol edit must reject a draft's invalid board hold without saving it: {rejected.stderr} {edit_calls}")
+            proto("say", "--origin", "composer", stdin={"text": "try to alter an existing question hold"}, **rules)
+            rejected = proto("edit", stdin={"updates": [{"id": store_c["id"], "holds": ["fx-w"]}],
+                                         "quote": "alter an existing question hold"}, ok=False, **rules)
+            if "`holds` is draft-only" not in rejected.stderr or shown(**rules)["questions"] != before:
+                raise ValueError("protocol edit must preserve the existing-board holds rule")
             # Coverage after every update set: a remove that leaves a selected key uncovered is refused, all keys named, and
             # nothing of the report applies.
             before = shown(**rules)["questions"]

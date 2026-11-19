@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import re
+import tempfile
+from pathlib import Path
 
 from .base import (
     DESCRIPTION_LIMIT, DESCRIPTION_MAX, HEADER_MAX, KINDS, MAY_NOT_APPLY, ProtocolError, STAGED_KINDS, STRENGTHS,
@@ -199,17 +201,21 @@ def settles_status_errors(q_keys: list[tuple[str, str]], status: dict[str, str |
             "replace it (`supersedes`)" for qid, key in q_keys if status.get(key) not in (None, 'open')]
 
 
-def join_outside(ctx: Context) -> None:
+def join_outside(ctx: Context, validate=None) -> None:
     """An open decision named in an unanswered question's `board` or `settles` joins the round, claimed as at Select: a live
     session's hold is refused, a gone session's taken over; closed, unknown and non-decision items are refused. A boardless
     round has nothing to join: coverage_errors refuses its unknown keys."""
     r = ctx.round
     if not ctx.board or not r['selected']:
+        if validate:
+            validate()
         return
     known = {*r['selected'], *(p['id'] for p in r['points'])}
     named = [key for q in questions(ctx, 'draft', 'held', 'ready') for key in ([q['board']] if q['board'] else []) + (q.get('settles') or [])]
     outside = [key for key in dict.fromkeys(named) if key not in known]
     if not outside:
+        if validate:
+            validate()
         return
     rows = ctx.board.json('show', *outside, '--json', '--field', 'issue_type', '--field', 'status', '--field', 'title', '--field', 'assignee')
     errors = [f'{key} is unknown or closed, so it cannot join the round' for key in outside if (rows.get(key) or {}).get('status') in (None, 'closed')]
@@ -220,9 +226,11 @@ def join_outside(ctx: Context) -> None:
     live, gone = split_holds(ctx, {key: (rows.get(key) or {}).get('assignee') or '' for key in outside})
     errors += [f'{key} is held by {holder}, a live session, so it cannot join the round' for key, holder in live.items()]
     refuse_all(errors)
-    take_and_claim(ctx, list(gone), [key for key in outside if key not in gone])
     r['selected'] = [*r['selected'], *outside]
     r['items'] = [*r['items'], *({'id': key, 'title': rows[key].get('title') or '', 'status': rows[key].get('status')} for key in outside)]
+    if validate:
+        validate()
+    take_and_claim(ctx, list(gone), [key for key in outside if key not in gone])
     ctx.log('joined', items=outside)
 
 
@@ -277,6 +285,26 @@ def coverage_errors(ctx: Context) -> list[str]:
     return errors
 
 
+def validate_question_set(ctx: Context, changed=()) -> None:
+    """Validate round-wide ownership and each changed draft/revision record command together."""
+    questions_ = ctx.round['questions']
+    errors = coverage_errors(ctx) + shared_board_errors(ctx) + non_decision_errors(
+        ctx, [q['board'] for q in questions_ if q.get('board')])
+    if ctx.board and changed:
+        from .record import record_board_command
+
+        with tempfile.TemporaryDirectory(prefix='protocol-question-set-') as directory:
+            for index, q in enumerate(changed):
+                revised = q.get('revises') or next(iter(q.get('replaces') or []), None)
+                if q.get('board') and not revised:
+                    continue
+                try:
+                    ctx.board.checked(*record_board_command(ctx, q, Path(directory) / str(index), dry_run=True))
+                except ProtocolError as error:
+                    errors.append(f"{q['id']}: {error}")
+    refuse_all(errors)
+
+
 MARK_FIELDS = ('recommendation', 'strength', 'leanBecause', 'strongBecause', 'options')
 
 
@@ -305,8 +333,8 @@ def apply_updates(ctx: Context, updates, answered_rulings: bool = False) -> int:
         place_before(ctx, qid, keys.get(before, before), where)
     resolve_waits(ctx, keys)
     unique_texts(ctx)
-    join_outside(ctx)
-    refuse_all(coverage_errors(ctx) + shared_board_errors(ctx) + non_decision_errors(ctx, [u['board'] for u in updates if isinstance(u, dict) and u.get('board')]))  # a merge or split is several updates: the set is checked once, after all of them
+    changed = [q for q in ctx.round['questions'] if q['id'] in touched]
+    join_outside(ctx, validate=lambda: validate_question_set(ctx, changed))
     for q in questions(ctx, 'draft', 'held', 'ready'):
         q['status'] = premise_status(ctx, q)
     if touched:
@@ -391,6 +419,8 @@ def apply_update(ctx: Context, update, where: str, keys: dict, answered_rulings:
     unknown = set(update) - set(CONTENT) - {'id', 'reason'}
     if unknown:
         fail(unknown_fields(where, unknown))
+    if q.get('board') and 'holds' in update:
+        fail(f"{where}: `holds` is draft-only; change this question's links with `board block` / `board unblock <item> --on <question>`")
     merged = {**q, **{k: [] if v is None and k in ('waitsOn', 'settles', 'holds') else v for k, v in update.items() if k in CONTENT}}  # the lists new_question defaults to []
     check_question(merged, f"{where} ({q['id']})", marks=any(k in update for k in MARK_FIELDS),
                    parts=tuple(k for k in PARTS if k in update))

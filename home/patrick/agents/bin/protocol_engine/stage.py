@@ -1,20 +1,16 @@
 """The round's Stage and Related steps."""
 from __future__ import annotations
 
-import tempfile
-from pathlib import Path
-
 from .base import OUTCOMES, ProtocolError, TAKEOVER, lines
 from . import schema, words
 from .boards import question_holds, related_hits
 from .engine import Context, by_id, fail, premise_status, unresolved
 from .questions import (
-    coverage_errors, describe, describe_errors, join_outside, new_question, non_decision_errors, refuse_all, shared_board_errors,
-    resolve_waits, unique_texts
+    describe, describe_errors, join_outside, new_question, refuse_all, resolve_waits,
+    unique_texts, validate_question_set
 )
 from .told import report_hint
 from .check import gate_ask
-from .record import record_board_command
 
 
 def titled(ctx: Context) -> bool:
@@ -33,20 +29,6 @@ def stage_text(ctx: Context) -> str:
         *(words.stage_dropped(dropped) if dropped else []),
         report_hint(ctx, 'stage', words.stage_example(r['selected'][0] if r['selected'] else None)),
     )
-
-
-def validate_record_commands(ctx: Context, questions: list[dict], revisions_only: bool = False) -> None:
-    """Ask the board to validate each staged create or now-known revision without writing."""
-    if not ctx.board:
-        return
-    with tempfile.TemporaryDirectory(prefix='protocol-stage-') as directory:
-        for index, q in enumerate(questions):
-            revised = q.get('revises') or next(iter(q.get('replaces') or []), None)
-            if revisions_only and not revised:
-                continue
-            if q.get('board') and not revised:
-                continue
-            ctx.board.checked(*record_board_command(ctx, q, Path(directory) / str(index), dry_run=True))
 
 
 def stage_accept(ctx: Context, report: dict) -> str:
@@ -69,14 +51,12 @@ def stage_accept(ctx: Context, report: dict) -> str:
         ctx.round['questions'].append(q)
         keys[item.get('key') or q['id']] = q['id']
     refuse_all(errors)
-    validate_record_commands(ctx, ctx.round['questions'])
     describe(ctx, report.get('round'), 'stage', required=not titled(ctx))
     resolve_waits(ctx, keys)
     unique_texts(ctx)
-    join_outside(ctx)
-    refuse_all(coverage_errors(ctx) + shared_board_errors(ctx) + non_decision_errors(ctx, [q['board'] for q in ctx.round['questions'] if q.get('board')]))
     if not ctx.round['questions']:
         fail('stage at least one question')
+    join_outside(ctx, validate=lambda: validate_question_set(ctx, ctx.round['questions']))
     for q in ctx.round['questions']:
         q['status'] = premise_status(ctx, q)
     ctx.log('staged', questions=[q['id'] for q in ctx.round['questions']])
@@ -154,10 +134,9 @@ def related_accept(ctx: Context, report: dict) -> str:
             fail(f'{qid}: a draft with `holds` cannot take over an existing board question; use `board block` / `board unblock` for its links')
         resolve_replaced(ctx, q)
         q['board'] = takeover[0] if takeover else None  # the item it records onto from here on: one place holds it
-    validate_record_commands(ctx, ctx.round['questions'], revisions_only=True)
-    refuse_all(shared_board_errors(ctx))
+    changed = [q for q in ctx.round['questions'] if q.get('revises') or q.get('replaces')]
     missing = unresolved(ctx)
     if missing:
         fail('outcomes missing: ' + ', '.join(f"{q['id']}→{hit['id']}" for q, hit in missing))
-    join_outside(ctx)  # after every refusal: a taken-over item joins the round, claimed, as a selected one does
+    join_outside(ctx, validate=lambda: validate_question_set(ctx, changed))  # after every refusal: a taken-over item joins the round, claimed, as a selected one does
     return gate_ask(ctx) if ctx.round['check'].get('converged') else 'check'
