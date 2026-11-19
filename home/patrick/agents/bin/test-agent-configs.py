@@ -8045,10 +8045,14 @@ elif args[:1] == ["claim"]:
             print(f"{item}: already held by {os.environ.get('BEADS_ACTOR')}")
     sys.exit(1 if set(args[1:]) & set(config.get("refuse", [])) else 0)
 elif args[:1] == ["show"]:
-    # config "items": {id: {status, issue_type, title, assignee, description}}; a missing id is an open item
+    # config "items": {id: {status, issue_type, title, assignee, description, dependencies}}; a missing id is an open item
     fields = [args[i + 1] for i, a in enumerate(args) if a == "--field"] or ["status"]
     items = config.get("items", {})
     rows = {i: {"status": "open", **items.get(i, {})} for i in args[1:args.index("--json")]}
+    all_edges = [dep for row in items.values() for dep in row.get("dependencies") or []]
+    for item, row in rows.items():
+        if "dependencies" in fields:
+            row["dependencies"] = [dep for dep in all_edges if item in (dep.get("issue_id"), dep.get("depends_on_id"))]
     print(json.dumps({i: {f: row.get(f) for f in fields} for i, row in rows.items()}))
 elif args[:1] == ["check-replaces"]:
     items = config.get("items", {})
@@ -9447,6 +9451,30 @@ def validate_protocol(root: Path, part: str) -> None:
                 raise ValueError("an unknown hold id is refused by board dry-run before staging")
             proto("abandon", cwd=repo, **hold_case)
 
+            # Existing questions read board-owned open block edges and reach in Stage and the dialog; their holds field is refused.
+            configure(health={"counts": counts, "items": {"questions": [
+                {"id": "fx-question", "status": "open", "type": "decision", "title": "Existing question?", "priority": 1, "blockedBy": []}]}},
+                items={"fx-question": {"status": "open", "issue_type": "decision"},
+                       "fx-work": {"status": "open", "issue_type": "task", "dependencies": [
+                           {"issue_id": "fx-work", "depends_on_id": "fx-question", "type": "blocks"}]}},
+                position={"questionsHoldingWork": [{"id": "fx-question", "holds": 3, "holdsAll": 5}]})
+            proto("start", "round", cwd=repo, **hold_case)
+            proto("step", stdin={"classes": {"fx-question": "user"}}, cwd=repo, **hold_case)
+            proto("step", stdin={"select": ["fx-question"]}, cwd=repo, **hold_case)
+            stage_text = proto("show", cwd=repo, **hold_case).stdout
+            if "fx-work (holds 3/5)" not in stage_text:
+                raise ValueError(f"Stage must show the existing question's current edge and reach: {stage_text}")
+            refused("step", stdin={**ROUND_INFO, "questions": [question("Existing question?", board="fx-question", holds=[])]},
+                    needle="board block` / `board unblock", cwd=repo, **hold_case)
+            proto("step", stdin={**ROUND_INFO, "questions": [question("Existing question?", board="fx-question")]}, cwd=repo, **hold_case)
+            converge(cwd=repo, **hold_case)
+            batch = shown(cwd=repo, **hold_case)["batch"]
+            if "fx-work (holds 3/5)" not in batch["notice"]:
+                raise ValueError(f"the dialog must read the board's current hold edge and reach: {batch}")
+            proto("abandon", cwd=repo, **hold_case)
+            configure(items={"fx-cr": {"status": "open", "issue_type": "change-request", "title": "Design CR"},
+                            "fx-design": {"status": "open", "issue_type": "design", "title": "Design item"}})
+
             pasted = re.search(r"(pt\d+) \[pasted\]", proto("start", "round", stdin={"points": ["Update design?"]}, cwd=repo, **hold_case).stdout)[1]
             proto("step", stdin={"classes": {pasted: "user"}}, cwd=repo, **hold_case)
             proto("step", stdin={"select": [pasted]}, cwd=repo, **hold_case)
@@ -9861,7 +9889,8 @@ def validate_protocol(root: Path, part: str) -> None:
             configure(related={"Pasted": ["fx-old", "fx-rel"]}, items={"fx-old": {"status": "released", "issue_type": "decision"}})
             calls()
             proto("step", stdin={"select": ["fx-a", "fx-b", "pt3"]}, cwd=repo)
-            if [c["args"] for c in calls()] != [["claim", "fx-a", "fx-b"]]:
+            selected_calls = calls()
+            if [c["args"] for c in selected_calls if c["args"][:1] == ["claim"]] != [["claim", "fx-a", "fx-b"]]:
                 raise ValueError("protocol Select must claim the selected board items")
             staging = shown(cwd=repo)["progress"]
             if staging["selected"] != ["fx-a", "fx-b", "pt3"] or staging["items"] != 4 or staging["points"] != 1:
@@ -10059,7 +10088,7 @@ def validate_protocol(root: Path, part: str) -> None:
             proto("step", stdin={"classes": {"fx-mine": "user", "fx-gone": "user"}}, cwd=repo)
             calls()
             proto("step", stdin={"select": ["fx-mine", "fx-gone"]}, cwd=repo)
-            made = [c["args"] for c in calls()]
+            made = [c["args"] for c in calls() if c["args"][:1] in (["take"], ["claim"])]
             proto("abandon", cwd=repo)
             released = [c["args"] for c in calls() if c["args"][0] == "unclaim"]
             if made != [["take", "fx-gone"], ["claim", "fx-mine"]] or released != [["unclaim", "fx-gone", "fx-mine"]]:
@@ -12821,7 +12850,8 @@ def validate_protocol(root: Path, part: str) -> None:
             open_questions = [{"id": i, "status": "open", "type": "decision", "title": f"{i}?", "priority": 1, "blockedBy": []}
                               for i in ("fx-a", "fx-b", "fx-c")]
             rule_config = {"health": {"counts": counts, "items": {"questions": open_questions}}, "items": board_items,
-                           "related": {"Rule": ["fx-rel", "fx-w"]}}
+                           "related": {"Rule": ["fx-rel", "fx-w"]},
+                           "position": {"questionsHoldingWork": [{"id": "fx-a", "holds": 2, "holdsAll": 2}]}}
             configure(**rule_config)
             proto("start", "round", **rules)
             proto("step", stdin={"classes": {"fx-a": "user", "fx-b": "user", "fx-c": "user"}}, **rules)
@@ -12864,7 +12894,7 @@ def validate_protocol(root: Path, part: str) -> None:
             rule_q = next(q for q in staged["questions"] if q["settles"])
             store_c = next(q for q in staged["questions"] if q["board"] == "fx-c")
             if staged["step"] != "related" or rule_q["settles"] != ["fx-a", "fx-b"] or store_c["settles"] != [] \
-                    or [c["args"][0] for c in calls() if c["args"][0] != "show" and "--dry-run" not in c["args"]] != ["related"]:
+                    or [c["args"][0] for c in calls() if c["args"][0] not in ("show", "position") and "--dry-run" not in c["args"]] != ["related"]:
                 raise ValueError(f"a rule question settling two selected items stages: {staged}")
             proto("step", stdin={"outcomes": {rule_q["id"]: {"fx-rel": "relate", "fx-w": "relate"}}}, **rules)
             # Coverage after every update set: a remove that leaves a selected key uncovered is refused, all keys named, and
@@ -13102,7 +13132,7 @@ def validate_protocol(root: Path, part: str) -> None:
             points = re.findall(r"(pt\d+) \[pasted\]", out)
             proto("step", stdin={"classes": {**{p: "user" for p in points}, "fx-c": "user"}}, **rules)
             proto("step", stdin={"select": [*points, "fx-c"]}, **rules)
-            proto("step", stdin=stage(question("Defer one?", key="one", **{"for": points[0]}), question("Defer two?", waitsOn=["one"], **{"for": points[1]}),
+            proto("step", stdin=stage(question("Defer one?", key="one", holds=["fx-w"], **{"for": points[0]}), question("Defer two?", waitsOn=["one"], **{"for": points[1]}),
                                       question("Wait on a spike?", waitsFor=spike_wait, **{"for": points[2]}), question("Old store?", board="fx-c")), **rules)
             ids = [q["id"] for q in shown(**rules)["questions"]]
             refused("defer", stdin={"question": ids[0], "quote": "later please"}, needle="quote check failed", **rules)
@@ -13127,6 +13157,9 @@ def validate_protocol(root: Path, part: str) -> None:
             patch_config(fail=["defer"])
             out = proto("step", stdin={"records": {}}, **rules).stdout
             made = calls()
+            plans = [json.loads(Path(c["args"][2]).read_text(encoding="utf-8")) for c in made if c["args"][:2] == ["create", "--graph"]]
+            if not plans or "Holds up" in plans[0]["nodes"][0]["description"]:
+                raise ValueError(f"a deferred record's text omits its mutable board holds: {plans[:1]}")
             patch_config(fail=[])
             if "Not recorded" not in out or shown(**rules)["step"] != "record" or sum(c["args"][:2] == ["create", "--graph"] for c in made) != 3:
                 raise ValueError(f"protocol defer: a failing board defer leaves Record open after the creates:\n{out}\n{made}")

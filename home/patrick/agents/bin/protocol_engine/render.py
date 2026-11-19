@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from . import words
+from .boards import question_holds
 from .engine import Context, by_id
 
 
@@ -15,13 +16,16 @@ def settled_lines(ctx: Context, q: dict) -> list[str]:
     return [words.settled_line(key, titles.get(key, '')) for key in q.get('settles') or []]
 
 
-def question_parts(ctx: Context, q: dict) -> dict[str, str]:
+def question_parts(ctx: Context, q: dict, board_holds: dict[str, str] | None = None) -> dict[str, str]:
     """The printed parts of a question by name, in print order (empty and absent parts left out)."""
     if ctx.round['protocol'] == 'release' and q['kind'] == 'confirm-own-rulings':
         return approval_parts(ctx)
+    holds = (board_holds or {}).get(q['board'], '') if q.get('board') else ', '.join(q.get('holds') or [])
+    if board_holds is None:
+        holds = ''
     parts = {
         'problem': q.get('problem') or '', 'cases': q.get('cases') or '',
-        'settles': '\n'.join(settled_lines(ctx, q)), 'holds': ', '.join(q.get('holds') or []), 'premises': (q.get('premises') or '').strip(),
+        'settles': '\n'.join(settled_lines(ctx, q)), 'holds': holds, 'premises': (q.get('premises') or '').strip(),
         'options': words.options_text(q), 'dropped': words.dropped_text(q),
         'rulings': '\n\n'.join(words.ruling_block(x) for x in q.get('rulings') or []),
         'priorRulings': words.prior_rulings_text(q),
@@ -53,9 +57,10 @@ def render_batch(ctx: Context, chosen: list[dict]) -> str:
     the text sits above every dialog however much scrolled by (r36-q195). A question the person saw before names the parts
     that differ from what `batch_seen` recorded they saw (r36-q196); a batch withdrawn before its dialog opened was never seen."""
     r = ctx.round
+    board_holds = question_holds(ctx, [q['board'] for q in chosen if q.get('board')])
     blocks = []
     for index, q in enumerate(chosen):
-        parts, before = question_parts(ctx, q), q.get('printed') or {}
+        parts, before = question_parts(ctx, q, board_holds), q.get('printed') or {}
         if not parts:
             continue
         changed = [name for name in (*parts, *(name for name in before if name not in parts)) if before and parts.get(name) != before.get(name)]
@@ -73,9 +78,10 @@ def render_batch(ctx: Context, chosen: list[dict]) -> str:
 
 def batch_seen(ctx: Context, batch: dict) -> None:
     """A dialog for the batch came back: the person saw what the batch printed."""
+    board_holds = question_holds(ctx, [by_id(ctx, qid)['board'] for qid in batch['ids'] if by_id(ctx, qid).get('board')])
     for qid in batch['ids']:
         q = by_id(ctx, qid)
-        q['printed'] = question_parts(ctx, q)
+        q['printed'] = question_parts(ctx, q, board_holds)
     for x in words.retired_points(ctx.round):
         if words.retired_block(x) in (batch.get('notice') or ''):
             by_id(ctx, x['id'])['retiredPrinted'] = True

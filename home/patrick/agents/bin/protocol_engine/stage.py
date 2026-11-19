@@ -6,7 +6,7 @@ from pathlib import Path
 
 from .base import OUTCOMES, ProtocolError, TAKEOVER, lines
 from . import schema, words
-from .boards import related_hits
+from .boards import question_holds, related_hits
 from .engine import Context, by_id, fail, premise_status, unresolved
 from .questions import (
     coverage_errors, describe, describe_errors, join_outside, new_question, non_decision_errors, refuse_all, shared_board_errors,
@@ -25,8 +25,11 @@ def titled(ctx: Context) -> bool:
 def stage_text(ctx: Context) -> str:
     r = ctx.round
     dropped = {key: (ctx.state.get('dropReasons') or {})[key] for key in r['selected'] if key in (ctx.state.get('dropReasons') or {})}
+    existing = {item['id'] for item in r.get('items') or []}
+    holds = question_holds(ctx, [key for key in r['selected'] if key in existing])
     return lines(
         words.stage_instructions(r['id'], r['selected'], bool(ctx.board), titled(ctx), [k for k in r.get('first') or [] if k in r['selected']]),
+        *(f"Existing board question {qid}: open blocks {text}." for qid, text in holds.items()),
         *(words.stage_dropped(dropped) if dropped else []),
         report_hint(ctx, 'stage', words.stage_example(r['selected'][0] if r['selected'] else None)),
     )
@@ -56,6 +59,9 @@ def stage_accept(ctx: Context, report: dict) -> str:
         try:
             if not isinstance(item, dict):
                 fail(f'questions[{index}]: must be an object')
+            if item.get('board') and 'holds' in item:
+                errors.append(f"questions[{index}]: `holds` is draft-only; change this question's links with `board block` / `board unblock`")
+                continue
             q = new_question(ctx, item, f'questions[{index}]')
         except ProtocolError as error:
             errors.append(str(error))
@@ -144,6 +150,8 @@ def related_accept(ctx: Context, report: dict) -> str:
         takeover = [h['id'] for h in q['overlaps'] if h['outcome'] in TAKEOVER]
         if len(takeover) > 1 or (takeover and any(h['outcome'] == 'supersedes' for h in q['overlaps'])):
             fail(f'{qid}: one question takes over at most one item, and not while it supersedes another')
+        if takeover and q.get('holds'):
+            fail(f'{qid}: a draft with `holds` cannot take over an existing board question; use `board block` / `board unblock` for its links')
         resolve_replaced(ctx, q)
         q['board'] = takeover[0] if takeover else None  # the item it records onto from here on: one place holds it
     validate_record_commands(ctx, ctx.round['questions'], revisions_only=True)

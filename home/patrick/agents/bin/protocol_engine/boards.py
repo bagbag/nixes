@@ -122,3 +122,34 @@ def statuses(ctx: Context, ids) -> dict[str, str | None]:
     ids = list(dict.fromkeys(ids))
     found = ctx.board.json('show', *ids, '--json', '--field', 'status') if ids else {}
     return {rid: (found.get(rid) or {}).get('status') for rid in ids}
+
+
+def question_holds(ctx: Context, ids: list[str]) -> dict[str, str]:
+    """Current open block edges and board reach for existing questions."""
+    ids = list(dict.fromkeys(ids))
+    if not ctx.board or not ids:
+        return {}
+    rows = ctx.board.json('show', *ids, '--json', '--field', 'dependencies')
+    edges = {qid: list(dict.fromkeys(dep['issue_id'] for dep in (rows.get(qid) or {}).get('dependencies') or []
+                                    if dep.get('depends_on_id') == qid and dep.get('type') == 'blocks')) for qid in ids}
+    targets = list(dict.fromkeys(target for targets in edges.values() for target in targets))
+    if not targets:
+        return {}
+    states = statuses(ctx, targets)
+    missing = [target for target in targets if states.get(target) is None]
+    if missing:
+        raise ProtocolError(f"`board show --field status` has no status for held item `{missing[0]}`")
+    position_args = ['position', '--json', '--limit', '0']
+    if ctx.board.repo and (Path(ctx.board.repo) / '.beads' / 'board-shared.json').is_file():
+        position_args += ['--queue', 'all']
+    position = ctx.board.json(*position_args)
+    reach = {row['id']: (row.get('holds'), row.get('holdsAll')) for row in position.get('questionsHoldingWork') or []}
+    result = {}
+    for qid, targets in edges.items():
+        opened = [target for target in targets if states[target] != 'closed']
+        if opened:
+            counts = reach.get(qid)
+            if not counts or not all(isinstance(count, int) for count in counts):
+                raise ProtocolError(f"`board position --json` has no reach for question `{qid}`")
+            result[qid] = f"{', '.join(opened)} (holds {counts[0]}/{counts[1]})"
+    return result
