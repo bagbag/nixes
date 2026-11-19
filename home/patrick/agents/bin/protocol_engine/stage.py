@@ -6,8 +6,7 @@ from . import schema, words
 from .boards import question_holds, related_hits
 from .engine import Context, by_id, fail, premise_status, unresolved
 from .questions import (
-    describe, describe_errors, join_outside, new_question, refuse_all, resolve_waits,
-    unique_texts, validate_question_set
+    admit_question_set, describe, describe_errors, draft_only_holds, new_question, refuse_all, resolve_waits, unique_texts
 )
 from .told import report_hint
 from .check import gate_ask
@@ -42,7 +41,7 @@ def stage_accept(ctx: Context, report: dict) -> str:
             if not isinstance(item, dict):
                 fail(f'questions[{index}]: must be an object')
             if item.get('board') and 'holds' in item:
-                errors.append(f"questions[{index}]: `holds` is draft-only; change this question's links with `board block` / `board unblock`")
+                errors.append(draft_only_holds(f'questions[{index}]'))
                 continue
             q = new_question(ctx, item, f'questions[{index}]')
         except ProtocolError as error:
@@ -56,7 +55,7 @@ def stage_accept(ctx: Context, report: dict) -> str:
     unique_texts(ctx)
     if not ctx.round['questions']:
         fail('stage at least one question')
-    join_outside(ctx, validate=lambda: validate_question_set(ctx, ctx.round['questions']))
+    admit_question_set(ctx, ctx.round['questions'])
     for q in ctx.round['questions']:
         q['status'] = premise_status(ctx, q)
     ctx.log('staged', questions=[q['id'] for q in ctx.round['questions']])
@@ -131,12 +130,11 @@ def related_accept(ctx: Context, report: dict) -> str:
         if len(takeover) > 1 or (takeover and any(h['outcome'] == 'supersedes' for h in q['overlaps'])):
             fail(f'{qid}: one question takes over at most one item, and not while it supersedes another')
         if takeover and q.get('holds'):
-            fail(f'{qid}: a draft with `holds` cannot take over an existing board question; use `board block` / `board unblock` for its links')
+            fail(draft_only_holds(f'{qid} (takes over {takeover[0]})'))
         resolve_replaced(ctx, q)
         q['board'] = takeover[0] if takeover else None  # the item it records onto from here on: one place holds it
-    changed = [q for q in ctx.round['questions'] if q.get('revises') or q.get('replaces')]
     missing = unresolved(ctx)
     if missing:
         fail('outcomes missing: ' + ', '.join(f"{q['id']}→{hit['id']}" for q, hit in missing))
-    join_outside(ctx, validate=lambda: validate_question_set(ctx, changed))  # after every refusal: a taken-over item joins the round, claimed, as a selected one does
+    admit_question_set(ctx, [q for q in ctx.round['questions'] if q.get('revises') or q.get('replaces')])
     return gate_ask(ctx) if ctx.round['check'].get('converged') else 'check'

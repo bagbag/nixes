@@ -5453,7 +5453,7 @@ def plan_links(plan: dict) -> tuple[list[tuple[str, str, str]], dict[str, str]]:
 
 
 def link_rules(board: Board | None, links: list[tuple[str, str, str]], verb: str, new: dict[str, str] | None = None,
-               holds: list[str] = (), new_titles: dict[str, str] | None = None) -> tuple[list[str], Waits]:
+               holds: list[str] = ()) -> tuple[list[str], Waits]:
     """The rules every link meets. `links` are (waiting or starting end, other end, kind); `new` marks a plan's new items {key: type} (None: every
     end exists: a link written after the fact). `verb` is who writes it: 'create', 'link', 'ruling' or 'record'.
     - A ruling link (supersedes, tracks) is written by the ruling verbs only; `link` writes no blocking link (that is board block).
@@ -5473,8 +5473,7 @@ def link_rules(board: Board | None, links: list[tuple[str, str, str]], verb: str
             if kind == 'parent-child' and waiting not in new and board and other not in board.parents.get(waiting, []) and (refusal :=parent_move_refusal(board, [waiting], other if other in board.by_id else None)):
                 raise BoardError(refusal)
         elif refusal := cr_hold_refusal(waiting, new[waiting] if waiting in new else (board.by_id.get(waiting, {}).get('issue_type') if board else None),
-                                        other, new[other] if other in new else (board.by_id.get(other, {}).get('issue_type') if board else None),
-                                        (new_titles or {}).get(other)):
+                                        new[other] if other in new else (board.by_id.get(other, {}).get('issue_type') if board else None)):
             raise BoardError(refusal)
         elif other in new:
             if waiting in new:
@@ -5625,7 +5624,7 @@ def create_item(board: Board, title: str, kind: str, parent: str | None = None, 
         node['deps'] = [{'target': target, 'type': link} for link, target in deps]
     plan = {'nodes': [node]}
     links, types = plan_links(validate_plan(plan))
-    link_rules(board, links, verb, types, new_titles={'item': title})  # the held items' links were judged by the caller (link_rules with the same holds)
+    link_rules(board, links, verb, types)  # the held items' links were judged by the caller (link_rules with the same holds)
     if holds:
         plan['edges'] = [{'from_id': one, 'to_key': 'item', 'type': 'blocks'} for one in holds]
     plan_with_queue(plan)
@@ -5849,14 +5848,10 @@ def reason_optional(issue: dict, record: dict) -> bool:
     return record.get('issue_type') in ('decision', 'gate') or issue.get('issue_type') == 'milestone'
 
 
-def cr_hold_refusal(waiting: str, waiting_type: str | None, blocker: str, blocker_type: str | None,
-                    blocker_title: str | None = None) -> str | None:
+def cr_hold_refusal(waiting: str, waiting_type: str | None, blocker_type: str | None) -> str | None:
     """A decision holds work items, never a CR, which waits on its items' blockers (board-core.md Questions and rulings)."""
     if blocker_type == 'decision' and waiting_type == CR_TYPE:
-        name = f"new decision {blocker_title!r}" if blocker_title else blocker
-        target = '<new decision id>' if blocker_title else blocker
-        return (f"{waiting} is a change request: unblock it from its decisions (board check lists them) and block its work items "
-                f"on {name} instead (board block <item> --on {target})")
+        return f"{waiting} is a change request: a decision holds its work items, not the request; name those items instead"
     return None
 
 
@@ -5872,7 +5867,7 @@ def block_one(board: Board, item_id: str, blocker: str, reason: str | None, acto
     keeps its worktree."""
     issue = board.by_id[item_id]
     record = board.by_id.get(blocker, {})
-    if refusal := cr_hold_refusal(item_id, issue.get('issue_type'), blocker, record.get('issue_type')):
+    if refusal := cr_hold_refusal(item_id, issue.get('issue_type'), record.get('issue_type')):
         raise BoardError(refusal)
     if not reason and not reason_optional(issue, record):
         raise BoardError(f'{item_id}: a work item waits with a reason: board block {item_id} --on {blocker} --reason "<why it waits>" '
@@ -6065,7 +6060,7 @@ def revise(board: Board, args) -> int:
             'edges': [{'from_id': dep.partition(':')[2], 'to_key': 'item', 'type': 'blocks'} for dep in given]}
     value = ','.join(args.holds) if args.holds else None
     links, types = plan_links(stub)
-    _, waits = link_rules(board, links, 'ruling', types, parse_holds(value) if value is not None else (), {'item': args.title})
+    _, waits = link_rules(board, links, 'ruling', types, parse_holds(value) if value is not None else ())
     require_holds_declared(waits, types, value)
     holds = waits['item'][0]
     old = board.by_id.get(args.old)
@@ -6918,7 +6913,7 @@ def create_command(args) -> int:
     links, types = plan_links(plan)
     named = parse_holds(holds_value) if holds_value is not None else []
     deck = Board.load('all') if named or any(waiting not in types for waiting, _, _ in links) else None  # an existing item at a link's start: the rules read the board
-    _, waits = link_rules(deck, links, 'create', types, named, {node['key']: node['title'] for node in nodes})  # before anything is created
+    _, waits = link_rules(deck, links, 'create', types, named)  # before anything is created
     if decides:
         require_holds_declared(waits, types, holds_value)
     if shared is not None and derived_actor() and (refusal := plan_queue_refusal(plan)):

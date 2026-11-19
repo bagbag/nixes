@@ -4615,8 +4615,8 @@ def validate_board(root: Path) -> None:
                 raise ValueError(f"a plan that moves an existing child under a new parent meets the parent-move rule: {code} {errors} {fake.calls}")
             named_question = {"nodes": [{"key": "question-key", "title": "Which cache?", "type": "decision", "description": "d"}]}
             code, _, errors, fake = bd_graph(named_question, "--holds", "fx-cr", deck=Graphing([*mine_rows, stacked]))
-            if code != 2 or "new decision 'Which cache?'" not in errors or "on question-key" in errors or any(a[0] == "create" for a, _ in fake.calls):
-                raise ValueError(f"a plan CR-hold refusal names the new decision title, not its key: {code} {errors} {fake.calls}")
+            if code != 2 or "a decision holds its work items" not in errors or any(a[0] == "create" for a, _ in fake.calls):
+                raise ValueError(f"a plan holding a CR is refused before any write and names the fix: {code} {errors} {fake.calls}")
             # q30: one link rule for every writer. Any blocking spelling from an existing item to a new decision is a hold (not only `blocks`).
             for kind in ("waits-for", "conditional-blocks", "blocked-by", "depends-on"):
                 code, output, errors, fake = bd_graph({"nodes": nodes, "edges": [{"from_key": "t", "to_key": "q", "type": "blocks"}, {"from_id": ready, "to_key": "q", "type": kind}]})
@@ -7757,8 +7757,7 @@ elif args[:2] == ["create", "--graph"] and "--dry-run" in args:
     for held in holds:
         row = by_id.get(held)
         if row and row.get("issue_type") == "change-request":
-            title = next((node["title"] for node in plan["nodes"] if node.get("type") == "decision"), "")
-            print(f"board: {{held}} is a change request: unblock it from its decisions (board check lists them) and block its work items on new decision {{title!r}} instead (board block <item> --on <new decision id>)", file=sys.stderr)
+            print(f"board: {{held}} is a change request", file=sys.stderr)
             sys.exit(2)
         if not row or row.get("status") == "closed":
             print(f"board: unknown or closed: {{held}}", file=sys.stderr)
@@ -8123,8 +8122,7 @@ elif args[:2] == ["create", "--graph"] and "--dry-run" in args:
     for held in holds:
         row = items.get(held)
         if row and row.get("issue_type") == "change-request":
-            title = next((node["title"] for node in plan["nodes"] if node.get("type") == "decision"), "")
-            print(f"board: {held} is a change request: unblock it from its decisions (board check lists them) and block its work items on new decision {title!r} instead (board block <item> --on <new decision id>)", file=sys.stderr)
+            print(f"board: {held} is a change request", file=sys.stderr)
             sys.exit(2)
         if not row or row.get("status") == "closed":
             print(f"board: unknown or closed: {held}", file=sys.stderr)
@@ -12924,7 +12922,6 @@ def validate_protocol(root: Path, part: str) -> None:
                 question("Rule two?", settles=["fx-c"], holds=["fx-cr2"])), ok=False, **rules)
             bad_stage_calls = [call["args"] for call in calls()]
             if "fx-cr1 is a change request" not in bad_stage.stderr or "fx-cr2 is a change request" not in bad_stage.stderr \
-                    or "new decision 'Rule one'" not in bad_stage.stderr or "new decision 'Rule two'" not in bad_stage.stderr \
                     or sum(args[:2] == ["create", "--graph"] and "--dry-run" in args for args in bad_stage_calls) != 2 \
                     or shown(**rules)["questions"]:
                 raise ValueError(f"a Stage report must collect two invalid board hold errors without saving either question: {bad_stage.stderr} {bad_stage_calls}")
@@ -12943,7 +12940,6 @@ def validate_protocol(root: Path, part: str) -> None:
                 {"id": rule_q["id"], "holds": ["fx-cr1"]}, question("Another?", holds=["fx-cr2"])]}, ok=False, **rules)
             failures = [call["args"] for call in calls()]
             if "fx-cr1 is a change request" not in rejected.stderr or "fx-cr2 is a change request" not in rejected.stderr \
-                    or "new decision 'Rule: close both stores'" not in rejected.stderr or "new decision 'Another'" not in rejected.stderr \
                     or sum(args[:2] == ["create", "--graph"] and "--dry-run" in args for args in failures) != 2 \
                     or shown(**rules)["questions"] != before:
                 raise ValueError(f"a pass must report both invalid hold targets and apply neither update: {rejected.stderr} {failures}")
