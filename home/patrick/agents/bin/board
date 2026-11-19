@@ -656,6 +656,11 @@ def may_judge(board: Board, cr: dict) -> bool:
     return may_move(board) or (session_role(board) == 'autopilot' and meta(cr).get('checkpoint') == 'user')
 
 
+def autopilot_barred(board: Board, cr: dict) -> bool:
+    """An autopilot session facing a finished change request: its Accept is the user's, so autopilot neither claims nor judges it."""
+    return session_role(board) == 'autopilot' and not may_judge(board, cr)
+
+
 def bd_show(ids: list[str], *flags: str, comments: bool = True) -> list[dict]:
     """Full records of the ids that exist (bd reports unknown ids on stderr, or fails when none exists)."""
     result = bd('show', '--json', *(['--include-comments'] if comments else []), '--brief-deps', *flags, '--', *ids)
@@ -2808,6 +2813,11 @@ def claim(board: Board, args) -> int:
                         failed.append(item_id)
                         print(f'{item_id}: not claimed: {message}', file=sys.stderr)
                     continue
+                if kind is None and board.kind(issue) == 'accept' and autopilot_barred(board, issue):
+                    failed.append(item_id)
+                    print(f"{item_id}: not claimable: autopilot judges only user design checkpoints; a finished change request waits for the user's Accept",
+                          file=sys.stderr)
+                    continue
                 if kind is None and board.kind(issue) == 'accept' and accept_waits(board, issue) and not cr_worktree_state(board, issue):
                     kind = 'accept'  # named: the Accept protocol may still return or reject it; landing refuses while it waits
                 if kind is None:
@@ -3718,7 +3728,7 @@ def accept_waits(board: Board, cr: dict) -> list[str]:
 def cr_claimable(board: Board, cr: dict, kind: str) -> str | None:
     if board.cr_waits(cr)[0]:
         return None  # includes a review whose base was returned (q206); a named Accept claim takes one anyway (`claim`)
-    if kind == 'accept' and session_role(board) == 'autopilot' and not may_judge(board, cr):
+    if kind == 'accept' and autopilot_barred(board, cr):
         return None  # finished CRs wait for the user's Accept; autopilot takes only user design checkpoints
     if kind == 'accept' and accept_waits(board, cr):
         return None  # nothing of it can land yet: the next claim passes it

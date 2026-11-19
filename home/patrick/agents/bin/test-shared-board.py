@@ -1045,6 +1045,16 @@ def t_cr() -> None:
     rc, _, err, _ = run('a', 'cr', 'land', finished, role='autopilot')
     check(rc != 0 and 'only a lead or solo' in err and items('a')[finished]['status'] == 'needs_acceptance',
           f'{finished}: autopilot is refused a land outside a user checkpoint', err)
+    waiting_finished = create('a', 'autopilot finished CR that waits', '--status', 'needs_acceptance')
+    bd('a', 'dep', 'add', waiting_finished, create('a', 'autopilot finished CR blocker', kind='task'))
+    for named in (finished, waiting_finished):  # the waiting one took the named Accept override before
+        rc, _, err, _ = run('a', 'claim', named, role='autopilot')
+        check(rc != 0 and "user's Accept" in err and not items('a')[named].get('assignee'),
+              f'{named}: autopilot is refused a named claim of a finished CR', err)
+    waiting_checkpoint = create('a', 'autopilot user checkpoint that waits', '--status', 'needs_acceptance', '--metadata', 'checkpoint=user')
+    bd('a', 'dep', 'add', waiting_checkpoint, create('a', 'autopilot checkpoint blocker', kind='task'))
+    rc, _, err, _ = run('a', 'claim', waiting_checkpoint, role='autopilot')
+    check(rc == 0 and items('a')[waiting_checkpoint].get('assignee'), f'{waiting_checkpoint}: autopilot claims a waiting user checkpoint by name', err)
     accept_queue = create('a', 'autopilot bare Accept queue', kind='epic')
     finished_in_queue = create('a', 'finished CR in autopilot queue', '--status', 'needs_acceptance', '--parent', accept_queue)
     checkpoint_in_queue = create('a', 'checkpoint in autopilot queue', '--status', 'needs_acceptance',
