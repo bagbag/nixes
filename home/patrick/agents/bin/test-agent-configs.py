@@ -12854,7 +12854,7 @@ def validate_protocol(root: Path, part: str) -> None:
             # blocks, and the release closes them by it.
             rules = {"session": "0000-rules001", "cwd": repo}
             board_items = {
-                "fx-a": {"status": "open", "issue_type": "decision", "title": "A", "assignee": "rules001", "dependencies": [
+                "fx-a": {"status": "open", "issue_type": "decision", "title": "A", "assignee": "rules001", "holds": 2, "holdsAll": 2, "dependencies": [
                     {"issue_id": "fx-w", "depends_on_id": "fx-a", "type": "blocks"},      # open: waits on the record
                     {"issue_id": "fx-k", "depends_on_id": "fx-a", "type": "blocks"},      # closed: left
                     {"issue_id": "fx-b", "depends_on_id": "fx-a", "type": "blocks"}]},    # a settled item: left
