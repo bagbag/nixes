@@ -172,7 +172,7 @@ On a shared board (`.beads/board-shared.json` exists):
   rounds.
 - One decision per record. While open, the description holds the
   [Decision packet](#decision-packet).
-- Name the items a question or ruling holds up when you create it, creating
+- Name the items whose work a question or ruling changes when you create it, creating
   missing ones first, never a CR (it waits on its items' blockers):
   `--holds <ids>` (shorthand for blocking links; also
   `--deps blocks:<id>` on `board create --type decision` and `board ruling
@@ -180,9 +180,6 @@ On a shared board (`.beads/board-shared.json` exists):
   `holds`, which Record passes) or `--holds none`. Depend on each open question its options
   assume (`board block <id> --on <other>`; no reason line when the blocker is a
   question).
-- A question holds open work whose answer changes, never a change request or
-  a closed item. Design items at a checkpoint are `in_review` and remain open
-  until the checkpoint passes.
 - Implementation steps, file lists and test lists become work items, never
   ruling text.
 - Answer provenance questions from the record (`board show`,

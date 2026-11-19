@@ -38,11 +38,8 @@ findings or stops.
      [Question format](../../shared/question-format.md#question-format); no
      implementation. Before raising the questions and again before handing
      over, invoke `step-back`, then `ground`, on the design; repeat until a
-     pass changes nothing. At a CR checkpoint, the open design items move to
-     `in_review` and stay open until the checkpoint passes; questions hold
-     affected design items under
-     [Questions and rulings](../../shared/board-core.md#questions-and-rulings).
-     Implementation items arrive after the checkpoint passes.
+     pass changes nothing. A CR with `checkpoint` set holds only its design:
+     implementation items arrive after the checkpoint passes.
    - Implementation items: tests alongside the change; changelog and doc
      duties are in the item's acceptance.
    - Choices: decide what
@@ -104,7 +101,7 @@ report to the session. It does not hand over, rebase or land.
   consequence on the CR.
 - The retry limit: follow it, recording in the CR's `notes`.
 
-Questions hold the affected work items; they never block the CR. Other blockers may still block the CR. When a non-question blocker holds one item, block that item and continue the rest; when it holds the whole CR, block the CR and unclaim it.
+Questions hold the affected work items. When another blocker holds one item, block it and continue the rest; when it holds the whole CR, block the CR.
 A failed setup: fix it or raise the blocker as a question, then claim the CR
 again to rerun setup.
 
