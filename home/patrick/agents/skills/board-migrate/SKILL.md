@@ -193,12 +193,8 @@ step goes in a change set and runs on the user's confirmation.
    deviations; one `board claim` of a CR works end to end. Defer each open
    backlog work item; a plan pass groups the rest into CRs as they become due.
    For live legacy decisions at `needs_ratification`, run
-   `python3 "$HOME/.agents/skills/board-migrate/scripts/convert-unratified-rulings.py"`
-   in a lead or solo session. It preflights every record section before claiming
-   any item, then releases each ruling with `--unratified` and prints the
-   related Confirm-or-revise question ids. In one ordinary decision round, ask
-   a rule question that settles all those questions; split out any rulings the
-   user chooses to revise. Rerun the check.
+   `python3 "$HOME/.agents/skills/board-migrate/scripts/convert-unratified-rulings.py"`,
+   follow its output, then rerun the check.
    Tell the user pulls may start.
    Output: check result.
 

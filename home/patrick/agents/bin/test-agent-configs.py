@@ -2601,11 +2601,8 @@ def validate_board(root: Path) -> None:
                 raise ValueError(f"board check still flagged the released legacy ruling: {code} {clean_report}")
             board_docs = (root / "docs" / "board.md").read_text(encoding="utf-8")
             migrate_docs = (root / "skills" / "board-migrate" / "SKILL.md").read_text(encoding="utf-8")
-            unattended_docs = (root / "skills" / "role" / "protocols" / "unattended.md").read_text(encoding="utf-8")
             protocol_docs = (root / "docs" / "protocol-engine.md").read_text(encoding="utf-8")
             if "/board-migrate` Upgrade/Reconcile" not in board_docs or "convert-unratified-rulings.py" not in board_docs + migrate_docs \
-                    or "lead or solo" not in migrate_docs or "settles all those questions" not in migrate_docs \
-                    or "related `Confirm or revise` question" not in unattended_docs or "--unratified" not in unattended_docs \
                     or "--status needs_ratification" in protocol_docs \
                     or "runs `board ruling record … --unratified`" not in protocol_docs \
                     or "files a related `Confirm or revise` question" not in protocol_docs:

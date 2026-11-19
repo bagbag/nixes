@@ -71,11 +71,12 @@ milestones, recorded rulings and deferrals. The board model is
 ### Rulings
 
 - At decision time, write the record with `board ruling record <id> <file>`:
-  it replaces the packet and sets status `decided` (an autopilot ruling or a standing two-way default uses `--unratified`, which releases it at once and files a related Confirm-or-revise question). `--replaces <old>[,<old>]` links each ruling it
-  replaces, decided, released or a closed planned ruling; each is superseded
-  when the new ruling comes into force: at its release, or at once with
-  `--unratified`. A closed ruling must have the record sections and no existing
-  superseding record. Rerun it after a stop; `board ruling supersede <old>
+  it replaces the packet and sets status `decided`; an autopilot ruling or a
+  standing two-way default uses `--unratified`, which releases it and files a
+  related Confirm-or-revise question. `--replaces <old>[,<old>]` links each
+  ruling it replaces, decided, released or closed after planning; each is
+  superseded when the new ruling comes into force: at its release, or at once
+  with `--unratified`. Rerun it after a stop; `board ruling supersede <old>
   --with <new>` alone for one rule or by hand. The file holds these `##` sections, which `board ruling record`
   checks: `Question`, `Alternatives Considered`, `Decision`, `Rationale` (with
   provenance: user or the ruling session's role, and date) and `Rule owner`;
@@ -84,7 +85,7 @@ milestones, recorded rulings and deferrals. The board model is
   <cleanliness test, principle or correctness property>". For a consequential
   ruling without a question, create and answer one at once.
 - Open a revision with
-  `board ruling revise <old> --title "<question>" --body-file <packet> --holds <ids>|none`; the old ruling may be released or closed after planning, provided no record supersedes it. For one rule
+  `board ruling revise <old> --title "<question>" --body-file <packet> --holds <ids>|none`; the old ruling may be released or closed after planning. For one rule
   of a record add `--partial "<rule>"`, and the rest stays in force. Its
   record restates the rule in full. `board ruling release` supersedes a released
   old record. A revision
