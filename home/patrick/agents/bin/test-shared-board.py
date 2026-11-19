@@ -1045,6 +1045,15 @@ def t_cr() -> None:
     rc, _, err, _ = run('a', 'cr', 'land', finished, role='autopilot')
     check(rc != 0 and 'only a lead or solo' in err and items('a')[finished]['status'] == 'needs_acceptance',
           f'{finished}: autopilot is refused a land outside a user checkpoint', err)
+    accept_queue = create('a', 'autopilot bare Accept queue', kind='epic')
+    finished_in_queue = create('a', 'finished CR in autopilot queue', '--status', 'needs_acceptance', '--parent', accept_queue)
+    checkpoint_in_queue = create('a', 'checkpoint in autopilot queue', '--status', 'needs_acceptance',
+                                 '--metadata', 'checkpoint=user', '--parent', accept_queue)
+    rc, output, err, _ = run('a', 'claim', '--root', accept_queue, role='autopilot')
+    accepted_queue_items = items('a')
+    check(rc == 0 and checkpoint_in_queue in output and accepted_queue_items[checkpoint_in_queue].get('assignee')
+          and accepted_queue_items[finished_in_queue].get('assignee') is None,
+          'autopilot bare claim skips a finished CR and takes the user design checkpoint', err + output)
     returned = create('a', 'autopilot returned checkpoint', '--status', 'needs_acceptance', '--metadata', 'checkpoint=user')
     create('a', f'{returned} design', '--parent', returned, kind='design')
     rc, _, err, _ = run('a', 'return', returned, 'rework the design', role='agent')

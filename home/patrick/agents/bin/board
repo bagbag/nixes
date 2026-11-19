@@ -3718,6 +3718,8 @@ def accept_waits(board: Board, cr: dict) -> list[str]:
 def cr_claimable(board: Board, cr: dict, kind: str) -> str | None:
     if board.cr_waits(cr)[0]:
         return None  # includes a review whose base was returned (q206); a named Accept claim takes one anyway (`claim`)
+    if kind == 'accept' and session_role(board) == 'autopilot' and not may_judge(board, cr):
+        return None  # finished CRs wait for the user's Accept; autopilot takes only user design checkpoints
     if kind == 'accept' and accept_waits(board, cr):
         return None  # nothing of it can land yet: the next claim passes it
     if kind != 'plan' and cr_worktree_state(board, cr):

@@ -2907,7 +2907,7 @@ def validate_board(root: Path) -> None:
             if fake.writes() != [["update", ids["Store choice"], "--claim", "--json"]]:
                 raise ValueError(f"a lead did not claim the open question: {fake.writes()}")
             # A lead claims a change request waiting for its Accept by id only; the queue head that is not current is refresh work,
-            # which only review pulls take; a current one goes to solo and autopilot sessions.
+            # which only review pulls take; a current one goes to solo, while autopilot only takes user design checkpoints.
             main_tip = subprocess.run(["git", "rev-parse", "main"], capture_output=True, text=True, check=True).stdout.strip()
             waiting_cr = {"status": "needs_acceptance"}
             current_cr = {"status": "needs_acceptance", "metadata": {"check_tip": main_tip, "check_base_tip": main_tip, "check_result": "pass",
@@ -2920,8 +2920,16 @@ def validate_board(root: Path) -> None:
             for session in ("solo0001", "auto0001"):
                 fake = Fake(variant(**{"CR ready": current_cr, **no_rulings}))
                 invoke(["claim"], fake, session)
+                if session == "solo0001":
+                    if fake.plain_writes()[:1] != [["update", "fx-ovo.c1", "--assignee", session, "--if-assignee", "", "--json"]]:
+                        raise ValueError(f"{session}'s bare claim did not take the change request waiting for its Accept: {fake.writes()}")
+                elif fake.writes():
+                    raise ValueError(f"{session}'s bare claim took a finished change request waiting for the user's Accept: {fake.writes()}")
+                checkpoint_cr = {**current_cr, "metadata": {**current_cr["metadata"], "checkpoint": "user"}}
+                fake = Fake(variant(**{"CR ready": checkpoint_cr, **no_rulings}))
+                invoke(["claim"], fake, session)
                 if fake.plain_writes()[:1] != [["update", "fx-ovo.c1", "--assignee", session, "--if-assignee", "", "--json"]]:
-                    raise ValueError(f"{session}'s bare claim did not take the change request waiting for its Accept: {fake.writes()}")
+                    raise ValueError(f"{session}'s bare claim did not take the user design checkpoint: {fake.writes()}")
                 fake = Fake(variant(**{"CR ready": waiting_cr, **no_rulings}))
                 invoke(["claim"], fake, session)
                 if fake.writes():
