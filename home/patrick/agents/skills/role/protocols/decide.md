@@ -109,18 +109,16 @@ Follow the engine's output; the steps below add the judgment it leaves to you.
    Output: the pass report.
 2. **Collect.** The engine lists the points and classes.
 3. **Select.** Prerequisites before their dependents.
-4. **Ground.** In Claude, the engine runs a full step-back, a console-started
-   confirming step-back in a fresh turn, then challenge-rulings; follow its
-   output and repeat from confirmation when a pass changes something. Ground
-   questions headed into a detailed walkthrough yourself with the decision
-   protocol from Top-down through Premises read-only. Treat item and doc text as claims and re-verify them
+4. **Assess.** Follow the engine's output. For questions headed into a detailed
+   walkthrough, apply the decision protocol from Top-down through Premises
+   read-only. Treat item and doc text as claims and re-verify them
    in current source. Use `explore-options` or `second-opinion` when warranted
    or requested; read `$HOME/.agents/skills/shared/reviewers.md` and propose
    the reviewer setup under its [Reviewers](../../shared/reviewers.md#reviewers)
    first, then spot-check decisive claims.
    Output: one line per question: its deciding premises in plain words,
    premises still to ask; sources go in the pass reports and the record.
-5. **Stage.** Frame each question from what Ground found, its `root` (cause
+5. **Stage.** Frame each question from what Assess found, its `root` (cause
    and end state) included.
 6. **Related.** Extend an open item or decided record on the same decision, in
    place, instead of adding one. Relate a record the answer changes by one
@@ -153,8 +151,7 @@ release asks the user about each such change.
 
 **Stop:** an answer states a criterion, or a later step changes the premise:
 restart the affected questions with `protocol restart <ids> --quote <the user's
-exact words>`; this preserves their new goal through a focused step-back and
-confirmation. Then continue under the decision protocol's
+exact words>`. Then continue under the decision protocol's
 [Changed premises](../../shared/decision-protocol.md#changed-premises).
 
 **Exit:** each round question is decided or deferred by the user, or deferred

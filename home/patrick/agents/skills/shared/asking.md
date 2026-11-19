@@ -15,7 +15,7 @@ approval. Give each step's output compactly.
    Output: the round's decisions; the instance list where one was flagged.
 2. **Check.** In a round run through `protocol` (decide protocol Round), the
    engine sequences passes: follow its output and report each pass's changes.
-   Outside a round, invoke the self-converging step-back skill once on the
+   Outside a round, invoke the step-back skill once on the
    whole set, then invoke challenge-rulings. If the challenge changes a premise,
    ruling, option or question set, run this check again on the changed set.
    Invoke skills through the runtime's mechanism (Claude's Skill tool; in Codex,

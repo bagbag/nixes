@@ -36,7 +36,7 @@ findings or stops.
      one-way-door decisions as questions blocking their dependents, merged
      only under
      [Question format](../../shared/question-format.md#question-format); no
-     implementation. Invoke the self-converging step-back skill once on the
+     implementation. Invoke the step-back skill once on the
      design before raising questions and once before handover. A CR with
      `checkpoint` set holds only its design:
      implementation items arrive after the checkpoint passes.
