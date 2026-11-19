@@ -209,6 +209,3 @@ is in order, bases first
 ([Change-request queue](../../shared/board-coordination.md#change-request-queue)).
 
 Read `$HOME/.agents/skills/role/protocols/accept.md` at entry and follow it.
-In the console, a ratification shares the Accept row layout and shows its kind,
-priority, and stale/conflict marks: stale is limited to target commits touching
-the landed lines, and conflict appears only for edited review trees.
