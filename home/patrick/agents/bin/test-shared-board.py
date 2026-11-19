@@ -405,51 +405,70 @@ def t_child_ids() -> None:
     def status_of(item: str) -> str:
         return items('a')[item]['status']
 
-    def superseded_by(old: str, new: str) -> bool:
-        return any(dep['type'] == 'supersedes' and dep['depends_on_id'] == new for dep in items('a')[old].get('dependencies', []))
+    def linked(source: str, target: str, kind: str) -> bool:
+        return any(dep['type'] == kind and dep['depends_on_id'] == target for dep in items('a')[source].get('dependencies', []))
 
-    # record --replaces (real bd): a pair with another link kind refuses before any write for a released record; a decided one replaces it.
+    # Record replaces the pair's previous link. Release brings the new ruling into force and supersedes the old one.
     released = decision('released ruling')
     check(run('a', 'ruling', 'record', released, str(draft))[0] == 0 and run('a', 'ruling', 'release', released)[0] == 0 and status_of(released) == 'released',
           'links: the released ruling is set up')
     newer = decision('newer ruling')
     run('a', 'link', newer, released, '--type', 'relates-to')
     rc, out, err, _ = run('a', 'ruling', 'record', newer, str(draft), '--replaces', released)
-    row = items('a')[newer]
-    check(rc != 0 and 'linked already (relates-to)' in err and row['status'] != 'decided' and 'Rule owner' not in (row.get('description') or ''),
-          'links: record --replaces over a released record whose pair has another link refuses before any write', (rc, err, row['status']))
-    # A decided old closes with the record, whatever other link its pair held; a rerun finds it done and changes nothing.
+    check(rc == 0 and status_of(newer) == 'decided' and status_of(released) == 'released'
+          and linked(newer, released, 'tracks') and not linked(newer, released, 'relates-to'),
+          'record --replaces: recording replaces a related link with a pending revision and keeps the old ruling in force', (rc, err, out))
+    rc, out, err, _ = run('a', 'ruling', 'release', newer)
+    check(rc == 0 and status_of(newer) == 'released' and status_of(released) == 'closed' and linked(released, newer, 'supersedes'),
+          'record --replaces: release supersedes the old ruling', (rc, err, out))
+
+    # Decided records stay pending through Record retries. Release supersedes them without releasing them first.
+    newer = decision('replacement for two drafts')
     first, second = decision('first old ruling'), decision('second old ruling')
     for old in (first, second):
         check(run('a', 'ruling', 'record', old, str(draft))[0] == 0, 'links: an old ruling records')
     run('a', 'link', newer, first, '--type', 'relates-to')
     rc, out, err, _ = run('a', 'ruling', 'record', newer, str(draft), '--replaces', f'{first},{second}')
-    check(rc == 0 and status_of(newer) == 'decided' and all(status_of(old) == 'closed' and superseded_by(old, newer) for old in (first, second)),
-          'record --replaces: one call records the new ruling and closes both decided olds, whatever link their pair held', (rc, err, out))
+    check(rc == 0 and status_of(newer) == 'decided' and all(status_of(old) == 'decided' and linked(newer, old, 'tracks') for old in (first, second)),
+          'record --replaces: both decided drafts remain pending until release', (rc, err, out))
     rc, out, err, _ = run('a', 'ruling', 'record', newer, str(draft), '--replaces', f'{first},{second}')
-    check(rc == 0, 'record --replaces: a rerun after everything is done succeeds', (rc, err))
-    # Reruns from each stop. Stopped after the body and status write (revision links written, olds still decided):
+    check(rc == 0 and all(status_of(old) == 'decided' and linked(newer, old, 'tracks') for old in (first, second)),
+          'record --replaces: a Record retry keeps the same pending revisions', (rc, err, out))
+    rc, out, err, _ = run('a', 'ruling', 'release', first, second, newer)
+    check(rc == 0 and status_of(newer) == 'released' and all(status_of(old) == 'closed' and linked(old, newer, 'supersedes') for old in (first, second)),
+          'record --replaces: releasing the set supersedes both drafts', (rc, err, out))
+
+    # Resume a release stopped after its status write and one of its supersedes.
     first, second, third = decision('first old ruling b'), decision('second old ruling b'), decision('third old ruling b')
     for old in (first, second, third):
         run('a', 'ruling', 'record', old, str(draft))
     newer = decision('newer ruling b')
-    rc, out, err, _ = raw('a', 'update', newer, '--status', 'decided')
-    for old in (first, second, third):
-        raw('a', 'dep', 'add', newer, old, '--type', 'tracks')
-    rc, _, err, _ = run('a', 'ruling', 'release', first)
-    check(rc != 0 and f'revised by {newer}' in err and status_of(first) == 'decided', 'record --replaces: a stop after its links leaves an old that release refuses until the new record closes it', err)
-    # ... and after the first old's supersede (closed, supersedes edge, revision link replaced):
-    check(run('a', 'ruling', 'supersede', first, '--with', newer)[0] == 0 and status_of(first) == 'closed', 'record --replaces: the first old is superseded by hand (a stop mid-way)')
     rc, out, err, _ = run('a', 'ruling', 'record', newer, str(draft), '--replaces', f'{first},{second},{third}')
-    check(rc == 0 and all(status_of(old) == 'closed' and superseded_by(old, newer) for old in (first, second, third)),
-          'record --replaces: a rerun after a stop between supersedes finishes the rest and skips the closed one', (rc, err, out))
-    # A live session's hold on an old refuses the call before any write (the other side's session).
+    check(rc == 0, 'record --replaces: the release retry fixture records all revisions', (rc, err, out))
+    rc, _, err, _ = run('a', 'ruling', 'release', first)
+    check(rc != 0 and newer in err and status_of(first) == 'decided',
+          'record --replaces: a pending draft cannot be released separately from its replacement', err)
+    rc, out, err, _ = raw('a', 'update', newer, '--status', 'released', '--assignee', '')
+    check(rc == 0 and status_of(newer) == 'released', 'record --replaces: the interrupted release has written its status', (rc, err, out))
+    check(run('a', 'ruling', 'supersede', first, '--with', newer)[0] == 0 and status_of(first) == 'closed', 'record --replaces: the first old is superseded by hand (a stop mid-way)')
+    rc, out, err, _ = run('a', 'ruling', 'release', newer)
+    check(rc == 0 and all(status_of(old) == 'closed' and linked(old, newer, 'supersedes') for old in (first, second, third)),
+          'record --replaces: a Release retry finishes pending supersedes', (rc, err, out))
+    # A hold on the old ruling only blocks the operation that supersedes it.
     held, newest = decision('held old ruling'), decision('newest ruling')
     run('a', 'ruling', 'record', held, str(draft))
     run('a', 'unclaim', held)
-    run('a', 'claim', held, role='solo')  # another session of the same clone
+    rc, out, err, _ = run('a', 'claim', held, role='solo')
+    solo = session('a', 'solo')[-8:]
+    check(rc == 0 and items('a')[held].get('assignee') == solo,
+          'record --replaces: the old ruling is held by another session', (rc, err, out))
     rc, out, err, _ = run('a', 'ruling', 'record', newest, str(draft), '--replaces', held)
-    check(rc != 0 and status_of(newest) != 'decided' and status_of(held) == 'decided', 'record --replaces: a hold of another session refuses before any write', (rc, err))
+    check(rc == 0 and status_of(newest) == 'decided' and status_of(held) == 'decided' and linked(newest, held, 'tracks'),
+          'record --replaces: recording can stage a revision of a held draft', (rc, err, out))
+    rc, out, err, _ = run('a', 'ruling', 'release', newest)
+    check(rc != 0 and solo in err and status_of(newest) == 'decided' and status_of(held) == 'decided'
+          and items('a')[held].get('assignee') == solo and linked(newest, held, 'tracks'),
+          'record --replaces: release refuses before writing while another session holds the old ruling', (rc, err, out))
     bd('a', 'sync')
 
 
