@@ -24,7 +24,6 @@ TITLE_MAX, TITLE_LIMIT = 60, 75  # question and round titles: one pane row
 SUMMARY_MAX = 240  # the round summary: about two pane rows
 TEXT_MAX, TEXT_LIMIT = 160, 240  # a question's text: the dialog question
 DESCRIPTION_MAX, DESCRIPTION_LIMIT = 150, 200  # an option's model-written description (the engine's "Unverified: …" prefix is not counted)
-
 CHECKED_LIMIT = 200  # characters per checked entry in a pass report
 OVERLAP_LIMIT = 5  # related hits per new draft
 SEEDS = 5  # `protocol next` lists this many seed questions

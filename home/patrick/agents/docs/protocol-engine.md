@@ -492,8 +492,7 @@ question rows last printed (`state['rows']`, r13-q66): a check pass prints only 
 differ from the last output, then `N questions, K listed above as new or changed (protocol
 show lists them)`. A pass always gets the skill's full text; the engine cuts nothing. A
 compaction prints everything again. Each `checked` entry is one line of at
-most 200 characters. The pass format, scope and refusal use this same limit.
-Strong reasons are still re-sent each challenge run.
+most 200 characters. Strong reasons are still re-sent each challenge run.
 
 Every step's output opens with a headline: the call's events in the Log's
 words, then the next step (`r1 · related resolved · next: the next batch`); the
