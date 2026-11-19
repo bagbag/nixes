@@ -28,6 +28,9 @@ in
   };
 
   home = {
+    packages = lib.optional pkgs.stdenv.hostPlatform.isDarwin (
+      pkgs.callPackage ./packages/drain-battery/package.nix { }
+    );
     sessionPath = [ "${pnpmHome}/bin" ];
     file.${pnpmConfigPath}.text = ''
       minimumReleaseAge: 2880
