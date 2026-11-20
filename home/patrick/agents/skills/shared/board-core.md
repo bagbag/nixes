@@ -172,9 +172,8 @@ On a shared board (`.beads/board-shared.json` exists):
   rounds.
 - One decision per record. While open, the description holds the
   [Decision packet](#decision-packet).
-- Name the affected items when creating a question or ruling. Create missing
-  items first. The CR waits on the item holds. Until release, it counts under
-  `wait on your answers`. Pass the affected ids with
+- Name the affected items, never their CR, when creating a question or
+  ruling; create missing items first. Pass the affected ids with
   `--holds <ids>` (shorthand for blocking links; also
   `--deps blocks:<id>` on `board create --type decision` and `board ruling
   revise`; a plan's links from its decision node; in a round, the question's
@@ -230,7 +229,7 @@ items](#work-items)).
 
 | Relation | Use |
 |---|---|
-| B uses A's output (an artifact, contract, decision or environment) or changes code A changes, or released ruling A changes B | `blocks`: `board block B --on A --reason "<the input B uses>"` ([Milestones](../shared/board-coordination.md#milestones) members: `board block <milestone> --on <member>`, no reason line). |
+| B uses A's output (an artifact, contract, decision or environment) or changes code A changes, or released ruling A changes B | `blocks`: `board block B --on A --reason "<the input B uses>"` (an outside wait goes on B's change request: [Waiting and stacks](change-requests.md#change-requests); [Milestones](../shared/board-coordination.md#milestones) members: `board block <milestone> --on <member>`, no reason line). |
 | B is part of outcome A | `--parent A` |
 | B found while working on A | `discovered-from`: `board create … --deps discovered-from:A` |
 | Shared context, alternatives, a ruling's context-only item | `relates-to`: `board link A B --type relates-to` |

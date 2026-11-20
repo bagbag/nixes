@@ -138,10 +138,8 @@ Establish the outcome's contribution to its milestone:
   next run's path, else `agent`. When the
   checkpoint passes, the CR returns to you: add the implementation items to
   it. Dependent CRs wait under
-  [Waiting and stacks](../../shared/change-requests.md#change-requests).
-  Put outside work and gate waits on the CR. Split a blocked part into its
-  own CR when the rest can proceed. Design-only dependents read the
-  accepted design on its branch.
+  [Waiting and stacks](../../shared/change-requests.md#change-requests);
+  design-only dependents read the accepted design on its branch.
 - Group items that sit in no CR into CRs per topic when they become due
   (items waiting on a decision, design or spike stay ungrouped until it closes).
 - Set a CR's `look` or `view` only to override the defaults, naming the reason
