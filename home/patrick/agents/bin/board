@@ -5934,9 +5934,9 @@ def known_items(board: Board, ids: list[str]) -> None:
 
 
 def update_command(board: Board, args) -> int:
-    """`board update <id>... [--title] [--priority] [--label L]... [--unlabel L]... [--parent P|""]`: the short fields bd leaves to bd, with the
-    board's value rules: labels the board routes on (queue:, for:) change through send, route and create --for; a parent moves an item only
-    where the board's invariants allow (parent_move_refusal)."""
+    """`board update <id>... [--title] [--priority] [--label L]... [--unlabel L]... [--parent P|""] [--assignee user|""]`: the short fields bd
+    leaves to bd, with the board's value rules: labels the board routes on (queue:, for:) change through send, route and create --for; a parent
+    moves an item only where the board's invariants allow (parent_move_refusal); the assignee hands manual work to the user and back."""
     known_items(board, args.ids)
     changes = []
     if args.title is not None:
@@ -5954,8 +5954,16 @@ def update_command(board: Board, args) -> int:
         if refusal := parent_move_refusal(board, args.ids, target):
             raise BoardError(refusal)
         changes += ['--parent', args.parent]
+    if args.assignee is not None:
+        for item_id in args.ids:
+            held = board.by_id[item_id].get('assignee')
+            if held and held != 'user':
+                raise BoardError(f'{item_id}: held by {held}; board unclaim or board take it first')
+            if board.by_id[item_id].get('issue_type') not in WORK_TYPES or board.cr_of(item_id):
+                raise BoardError(f'{item_id}: user work is a task, bug or spike outside any change request')
+        changes += ['--assignee', args.assignee]
     if not changes:
-        raise BoardError('nothing to change: give --title, --priority, --label, --unlabel or --parent (long fields: board field; claim: board claim)')
+        raise BoardError('nothing to change: give --title, --priority, --label, --unlabel, --parent or --assignee (long fields: board field; claim: board claim)')
     bd_checked('update', *args.ids, *changes, '--json')
     for item_id in args.ids:
         print(f'{item_id}: updated')
@@ -7262,13 +7270,14 @@ def run_command(argv: list[str]) -> int:
                           'this record comes into force (its release; with --unratified at once); one already superseded by it is done; anything else refuses before any write (repeatable)')
     sub = add('check-replaces', 'validate and classify rulings a staged question proposes to replace', check_replaces, group='ruling')
     sub.add_argument('ids', nargs='+', type=board_id)
-    sub = add('update', 'change items: title, priority, labels (not queue: or for:), parent', update_command)
+    sub = add('update', 'change items: title, priority, labels (not queue: or for:), parent, user assignment', update_command)
     sub.add_argument('ids', nargs='+', type=board_id)
     sub.add_argument('--title', type=nonempty)
     sub.add_argument('-p', '--priority', type=priority, help='0-4 or P0-P4 (0 highest)')
     sub.add_argument('--label', action=Values, default=[], metavar='LABEL[,LABEL...]', help='add; repeatable, commas separate')
     sub.add_argument('--unlabel', action=Values, default=[], metavar='LABEL[,LABEL...]', help='remove; repeatable, commas separate')
     sub.add_argument('--parent', type=board_id, metavar='ID', help='the new parent ("" removes it)')
+    sub.add_argument('--assignee', choices=('user', ''), help='user hands the items to the user, "" back to agents')
     sub = add('link', 'link two items with a type that holds nothing up (a blocking link is board block)', link_command)
     sub.add_argument('a', type=board_id)
     sub.add_argument('b', type=board_id)

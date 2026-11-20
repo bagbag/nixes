@@ -103,8 +103,8 @@ park adds its packet with `board comment … --board-packet` (r16-q87).
 `board close <id>... --reason "<why>"` refuses a reason under bd's 20 characters before calling bd, and a change request
 (`board cr land` or `reject` closes it).
 `--force` closes past open blockers. The other writes `board bd` no longer carries have verbs: `board update <id>... [--title] [--priority] [--label L]...
-[--unlabel L]... [--parent P|""]` (a `queue:` or `for:` label goes through `send`, `route` or `create --for`; `--parent` keeps a change request and its held
-items where they are), `board link <a> <b> --type T` and `board unlink <a> <b>` (links that hold nothing up; a blocking one is `board block` /
+[--unlabel L]... [--parent P|""] [--assignee user|""]` (a `queue:` or `for:` label goes through `send`, `route` or `create --for`; `--parent` keeps a change request and its held
+items where they are; `--assignee` hands a task, bug or spike outside any change request to the user and back, never one a session holds), `board link <a> <b> --type T` and `board unlink <a> <b>` (links that hold nothing up; a blocking one is `board block` /
 `board unblock <ids> --on <blocker>`, whose `--reason` a work item needs and a decision or gate blocker or a milestone item does not),
 `board reopen <id>...` (not a change request), `board defer <id>... --reason [--until]` / `board undefer` (defer refuses work a live item waits on, unless deferred with it, and a decision that work in progress, in review or at Accept waits on; `board check` flags both as `deferred-blocker`), and `board gate create|resolve`. Refused
 calls of these verbs exit 2, as every verb that writes an item from its flags does (`REFUSAL_EXIT_2` in `bin/board` is the list). Plain

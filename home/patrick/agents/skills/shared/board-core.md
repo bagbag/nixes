@@ -214,7 +214,7 @@ Statuses carry the lifecycle; labels only classify (`topic:<topic-slug>`,
 | `deferred` | [Deferral](../shared/board-coordination.md#deferrals-and-environment-facts). |
 
 Question statuses: [Questions and rulings](#questions-and-rulings). Assign `user`
-only tasks that need the user's authority, credentials or judgment; agents do
+(`board update --assignee user`) only tasks that need the user's authority, credentials or judgment; agents do
 the rest, using the user's logins only with their consent per run. A deciding
 session prepares user tasks up to the user's step and brings the ready ones in
 one batch.

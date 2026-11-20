@@ -6110,6 +6110,15 @@ def validate_board(root: Path) -> None:
                     code, _, errors, writes = verb(argv, world)
                     if code != 2 or word not in errors or writes:
                         raise ValueError(f"board {argv} must be refused ({word}) before any write: {code} {errors!r} {writes}")
+                code, _, errors, writes = verb(["update", "t-a", "--assignee", "user"], world)
+                if code or writes != [["update", "t-a", "--assignee", "user", "--json"]]:
+                    raise ValueError(f"board update --assignee user must hand the item to the user: {code} {errors!r} {writes}")
+                for argv, word in ((["update", "t-cr.o", "--assignee", "user"], "change request"), (["update", "t-cr", "--assignee", "user"], "change request"),
+                                   (["update", "t-q", "--assignee", "user"], "change request"),
+                                   (["update", "t-h", "--assignee", ""], "held by w2")):
+                    code, _, errors, writes = verb(argv, [*world, plain("t-h", "in_progress", assignee="w2"), plain("t-q", issue_type="decision")])
+                    if code != 2 or word not in errors or writes:
+                        raise ValueError(f"board {argv} must be refused ({word}): {code} {errors!r} {writes}")
                 for argv in (["update", "t-cr.o", "--parent", "t-a"], ["update", "t-a", "--parent", ""]):
                     code, _, errors, writes = verb(argv, world)
                     if code or writes != [["update", argv[1], "--parent", argv[3], "--json"]]:
