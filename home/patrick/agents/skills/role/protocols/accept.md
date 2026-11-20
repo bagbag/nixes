@@ -8,9 +8,8 @@ Entry: [decide.md](decide.md#accept) Accept. Read `$HOME/.agents/skills/shared/c
 2. **Evidence.** Read `$HOME/.agents/skills/shared/acceptance.md`; check the
    named evidence under its
    [Evidence and gates](../../shared/acceptance.md#evidence-and-gates). For a
-   code CR, inspect the check shown for the current tip. Nothing refreshes a CR
-   while it is open in the user's review. A conflict on the user's edit commit
-   follows change-requests.md Rebase.
+   code CR, inspect the check shown for the current tip. A conflict on the
+   user's edit commit follows change-requests.md Rebase.
    Note the tip and base the walkthrough starts on. For a user design checkpoint, note the
    `design hash` the claim printed.
    Output: one line per gate: command, result; check state and tip, or the

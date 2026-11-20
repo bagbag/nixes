@@ -41,9 +41,8 @@ steps 3-7.
    required gate.
    Output: one line per gate: command, result, accepted or reproduced.
 5. **Assess.** Assess the artifact under the shared
-   [review method](../../shared/review-method.md). For a new pattern or style
-   rule, verify the author checked the open CRs already past review and
-   commented on those that should adapt. Triage the author's
+   [review method](../../shared/review-method.md). Verify the author applied
+   [Convention changes](../../shared/change-requests.md#change-requests). Triage the author's
    disclosed judgment calls; classify scope growth under
    [Expansion findings](#expansion-findings).
    Output: confirmed defects, risks and open questions with evidence.
