@@ -142,11 +142,6 @@ Workflow owners:
 - [Skill authoring](skills/skill-authoring/SKILL.md): invocation policy,
   trigger descriptions, frontmatter and style for skills, definitions and
   instructions; loaded while writing, user-invoked to review.
-Use `agents <command>` from your shell. The dispatcher exposes `board`,
-`scratch`, `session`, `protocol`, `worker-last-use` and `round-report`.
-Home Manager adds `~/.agents/commands` to the session PATH.
-The dispatcher is the only public command there. Hooks and running sessions
-keep using the private payload under `~/.agents/bin`.
 
 Component references (behavior, verbs and rulings of each tool):
 
@@ -197,6 +192,14 @@ Tool-specific names are optional and default to the canonical `name`. Shared
 `explore` overrides that default as Claude Code's `Explore` and Codex's
 `explorer`; shared `plan` becomes Claude Code's `Plan` and remains lowercase
 in Codex.
+
+## Command-line tools
+
+Use `agents <command>` from your shell. The dispatcher exposes `board`,
+`scratch`, `session`, `protocol`, `worker-last-use` and `round-report`.
+Home Manager adds `~/.agents/commands` to the session PATH.
+The dispatcher is the only public command there. Hooks and running sessions
+keep using the private payload under `~/.agents/bin`.
 
 ## Sharing the setup
 
