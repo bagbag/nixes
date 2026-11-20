@@ -62,6 +62,9 @@ dispatched or claimable; the checkpoint file is current; the report is given.
 
 ## Released rulings
 
+Plan a ruling right after its release; give one whose planning creates a new
+item set (`board create --graph`) to a `plan` worker ([Cut work](#cut-work)).
+
 1. Claim it: `board claim` when pulling `plan`,
    `board claim <id>` otherwise. Read the record and its
    rule owner section. A ruling settles only its stated choice; linked reports

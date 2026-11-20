@@ -18,7 +18,7 @@ include.
 
 | Role | Pulls | Protocols |
 |---|---|---|
-| lead | The decide set: decides with the user, releases rulings, writes rule owners, accepts change requests (CRs) and user-judged outcomes with the user. May add pulls; several leads may run, the user coordinates them. | decide |
+| lead | The decide set: decides with the user, releases rulings, writes rule owners, accepts change requests (CRs) and user-judged outcomes with the user, and plans (pull `plan`). May add pulls; several leads may run, the user coordinates them. | decide, plan |
 | agent | Any of plan, design, implement and review, as chosen. | per claimed CR or item (below) |
 | solo | Decide plus plan, implement and review: decides with the user and plans; workers design and implement each CR, and a different worker reviews it. | decide, plan |
 | autopilot | Solo while the user is away, with unattended authority. | decide, plan, unattended |

@@ -100,5 +100,5 @@ milestones, recorded rulings and deferrals. The board model is
 
 | Item | Lifecycle |
 |---|---|
-| Deferral | `board defer <id> --reason "<revisit condition>"`, plus `--until <date>` for a date condition; `board undefer` other conditions on named new evidence. Deferred items are the project backlog. |
+| Deferral | `board defer <id> --reason "<revisit condition>"`, plus `--until <date>` for a date condition; `board undefer` other conditions on named new evidence. Deferred items are the project backlog: deferred work holds up no live item, and a deferred question no work in progress, in review or at Accept (write a wait under [Dependencies](board-core.md#dependencies); `board defer` and `board check` enforce it). |
 | Environment fact | `board bd --raw --yes remember --key <key>` (no board command) for temporary repository-wide facts needed by every current session, a user's broad stop (area, paths, kind of action) included with its words and date; state a removal condition; remove with `board bd --raw --yes forget`. |

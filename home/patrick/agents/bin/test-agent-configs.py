@@ -2863,10 +2863,7 @@ def validate_board(root: Path) -> None:
             if fake.writes() != [["update", ids["Released ruling"], "--assignee", "plan0001", "--if-assignee", "", "--json"]]:
                 raise ValueError(f"board claim did not take the released ruling before the equal-priority spike: {fake.writes()}")
 
-            fake = Fake(fixture)
-            code, _, _ = invoke(["claim"], fake, "lead0001")
-            if code != 1 or fake.writes():
-                raise ValueError("a lead's bare claim took work other than open questions")
+            no_plan = {"Old store ruling": {"status": "closed"}, "Released ruling": {"status": "closed"}}  # nothing for a lead to plan
             # board wait: the same candidates a bare claim tries, read-only; exit 3 at --timeout, 1 for an unregistered session.
             fake = Fake(fixture)
             invoke(["claim"], fake, worker)
@@ -2875,7 +2872,7 @@ def validate_board(root: Path) -> None:
             code, found, _ = invoke(["wait", "--timeout", "0"], fake, worker)
             if code != 0 or not found.startswith(f"claimable: {first} ") or fake.writes():
                 raise ValueError(f"board wait did not name what a bare claim takes, or wrote ({code}): {found} {fake.writes()}")
-            fake = Fake(fixture)
+            fake = Fake(variant(**no_plan))
             code, found, _ = invoke(["wait", "--timeout", "0"], fake, "lead0001")
             if code != 3 or found.strip() != "nothing claimable yet" or fake.writes():
                 raise ValueError(f"board wait did not time out where a bare claim finds nothing ({code}): {found}")
@@ -2891,7 +2888,7 @@ def validate_board(root: Path) -> None:
             code, found, _ = invoke(["wait", "--timeout", "0"], Fake(variant(**only_handed)), worker)
             if code != 0 or f"claimable: {ids['Handed task']} " not in found:
                 raise ValueError(f"board wait did not offer another session's hand-over ({code}): {found}")
-            fake = Fake(variant())  # copies: the poll below edits its issues
+            fake = Fake(variant(**no_plan))  # copies: the poll below edits its issues
 
             def appears(_seconds):  # the next read finds the open question
                 for issue in fake.issues:
@@ -2903,10 +2900,10 @@ def validate_board(root: Path) -> None:
             if code != 0 or not found.startswith(f"claimable: {ids['Store choice']} "):
                 raise ValueError(f"board wait did not return once work appeared ({code}): {found}")
             # A bare claim with nothing claimable names the held items it passed over, with holder and state (r5-q24).
-            code, report, held_errors = invoke(["claim"], Fake(variant(**{"Store choice": {"status": "open", "assignee": "cccc3333"}})), "lead0001")
+            code, report, held_errors = invoke(["claim"], Fake(variant(**no_plan, **{"Store choice": {"status": "open", "assignee": "cccc3333"}})), "lead0001")
             if code != 1 or f"held: {ids['Store choice']} open, held by cccc3333 (live)" not in report:
                 raise ValueError(f"board claim did not name the held item it passed over ({code}):\n{report}\n{held_errors}")
-            fake = Fake(variant(**{"Store choice": {"status": "open"}}))
+            fake = Fake(variant(**no_plan, **{"Store choice": {"status": "open"}}))
             invoke(["claim"], fake, "lead0001")
             if fake.writes() != [["update", ids["Store choice"], "--claim", "--json"]]:
                 raise ValueError(f"a lead did not claim the open question: {fake.writes()}")
@@ -2916,13 +2913,12 @@ def validate_board(root: Path) -> None:
             waiting_cr = {"status": "needs_acceptance"}
             current_cr = {"status": "needs_acceptance", "metadata": {"check_tip": main_tip, "check_base_tip": main_tip, "check_result": "pass",
                                                                   "review_tip": main_tip, "review_base_tip": main_tip}}
-            no_rulings = {"Released ruling": {"status": "closed"}, "Old store ruling": {"status": "closed"}}
-            fake = Fake(variant(**{"CR ready": current_cr}))
+            fake = Fake(variant(**{"CR ready": current_cr, **no_plan}))
             invoke(["claim"], fake, "lead0001")
             if fake.writes():
                 raise ValueError(f"a lead's bare claim took a change request waiting for its Accept: {fake.writes()}")
             for session in ("solo0001", "auto0001"):
-                fake = Fake(variant(**{"CR ready": current_cr, **no_rulings}))
+                fake = Fake(variant(**{"CR ready": current_cr, **no_plan}))
                 invoke(["claim"], fake, session)
                 if session == "solo0001":
                     if fake.plain_writes()[:1] != [["update", "fx-ovo.c1", "--assignee", session, "--if-assignee", "", "--json"]]:
@@ -2930,15 +2926,15 @@ def validate_board(root: Path) -> None:
                 elif fake.writes():
                     raise ValueError(f"{session}'s bare claim took a finished change request waiting for the user's Accept: {fake.writes()}")
                 checkpoint_cr = {**current_cr, "metadata": {**current_cr["metadata"], "checkpoint": "user"}}
-                fake = Fake(variant(**{"CR ready": checkpoint_cr, **no_rulings}))
+                fake = Fake(variant(**{"CR ready": checkpoint_cr, **no_plan}))
                 invoke(["claim"], fake, session)
                 if fake.plain_writes()[:1] != [["update", "fx-ovo.c1", "--assignee", session, "--if-assignee", "", "--json"]]:
                     raise ValueError(f"{session}'s bare claim did not take the user design checkpoint: {fake.writes()}")
-                fake = Fake(variant(**{"CR ready": waiting_cr, **no_rulings}))
+                fake = Fake(variant(**{"CR ready": waiting_cr, **no_plan}))
                 invoke(["claim"], fake, session)
                 if fake.writes():
                     raise ValueError(f"{session}'s bare claim took the queue head that needs its refresh: {fake.writes()}")
-            fake = Fake(variant(**{"CR ready": waiting_cr, **no_rulings, "Handed task": {"status": "closed"}}))
+            fake = Fake(variant(**{"CR ready": waiting_cr, **no_plan, "Handed task": {"status": "closed"}}))
             _, claimed, _ = invoke(["claim"], fake, "aaaa1111/build-87654321")
             if "claimed fx-ovo.c1 (refresh)" not in claimed or "board cr refresh fx-ovo.c1, then board unclaim fx-ovo.c1" not in claimed \
                     or fake.plain_writes()[:1] != [["update", "fx-ovo.c1", "--assignee", "aaaa1111/build-87654321", "--if-assignee", "", "--json"]]:
@@ -3024,6 +3020,30 @@ def validate_board(root: Path) -> None:
                 code, _, errors = invoke(["create", "Later", "--description-file", str(body), "--status", "deferred"], fake, "lead0001")
             if code == 0 or fake.writes() or "board defer" not in errors:
                 raise ValueError(f"board create must refuse the deferred status and name board defer: {code} {errors} {fake.writes()}")
+            # A deferred item is backlog and holds no live item up (board-coordination.md Deferrals): defer refuses, check flags.
+            ready, loose = ids["Ready task"], ids["Loose item"]
+            waits = {"Loose item": {"dependencies": [{"issue_id": loose, "depends_on_id": ready, "type": "blocks"}]}}
+            fake = Fake(variant(**waits))
+            code, _, errors = invoke(["defer", ready, "--reason", "later"], fake, "lead0001")
+            if code == 0 or fake.writes() or loose not in errors:
+                raise ValueError(f"board defer must refuse an item a live item waits on: {code} {errors} {fake.writes()}")
+            fake = Fake(variant(**waits))
+            if invoke(["defer", ready, loose, "--reason", "later"], fake, "lead0001")[0]:
+                raise ValueError("board defer must take an item together with the items waiting on it")
+            report = invoke(["check"], Fake(variant(**waits, **{"Ready task": {"status": "deferred"}})))[1]
+            if f"  {ready}  deferred-blocker" not in report or loose not in report:
+                raise ValueError(f"board check must flag a deferred item a live item waits on:\n{report}")
+            parked = {"Loose item": {"dependencies": [{"issue_id": loose, "depends_on_id": ids["Open cache question"], "type": "blocks"}]}}
+            if invoke(["defer", ids["Open cache question"], "--reason", "after the next run"], Fake(variant(**parked)), "lead0001")[0]:
+                raise ValueError("board defer must park a question that holds items (decide.md Pre-pass)")
+            parked_in_work = {**parked, "Loose item": {**parked["Loose item"], "status": "in_progress", "assignee": "lead0001"}}
+            code, _, errors = invoke(["defer", ids["Open cache question"], "--reason", "later"], Fake(variant(**parked_in_work)), "lead0001")
+            if code == 0 or loose not in errors:
+                raise ValueError(f"board defer must refuse a question that work in progress waits on: {code} {errors}")
+            in_round = {**parked, "Store choice": {"status": "in_progress", "assignee": "lead0001",
+                                                   "dependencies": [{"issue_id": ids["Store choice"], "depends_on_id": ids["Open cache question"], "type": "blocks"}]}}
+            if invoke(["defer", ids["Open cache question"], "--reason", "later"], Fake(variant(**in_round)), "lead0001")[0]:
+                raise ValueError("board defer must park a question whose waiting question is still in its round")
             held_cr = variant(**{"CR ready": {"status": "in_progress", "assignee": "lead0001"}})
             fake = Fake(held_cr)
             code, _, _ = invoke(["claim", ids["Ready task"]], fake, "lead0001/build-00000001")
@@ -3034,8 +3054,7 @@ def validate_board(root: Path) -> None:
             if code:
                 raise ValueError("board claim refused a decision")
 
-            # Routing per role: solo plans and ratifies, autopilot plans, a lead's bare claim takes only
-            # open questions, nobody claims `user`'s items.
+            # Routing per role: solo plans and ratifies, autopilot and lead plan, nobody claims `user`'s items.
             ratify = variant(**{"Old store ruling": {"status": "needs_ratification"},
                                 "Released ruling": {"assignee": "user"}})
             for actor, expected in (("solo0001", ids["Old store ruling"]), ("auto0001", None),
@@ -3044,10 +3063,11 @@ def validate_board(root: Path) -> None:
                 invoke(["claim"], fake, actor)
                 if [args[1] for args in fake.writes()] != ([expected] if expected else []):
                     raise ValueError(f"{actor} routing claimed {fake.writes()}")
-            fake = Fake(fixture)
-            invoke(["claim"], fake, "auto0001")
-            if fake.writes() != [["update", ids["Old store ruling"], "--assignee", "auto0001", "--if-assignee", "", "--json"]]:
-                raise ValueError(f"autopilot did not claim a released ruling to plan: {fake.writes()}")
+            for actor in ("auto0001", "lead0001"):  # a lead plans its released rulings (plan.md Released rulings)
+                fake = Fake(fixture)
+                invoke(["claim"], fake, actor)
+                if fake.writes() != [["update", ids["Old store ruling"], "--assignee", actor, "--if-assignee", "", "--json"]]:
+                    raise ValueError(f"{actor} did not claim a released ruling to plan: {fake.writes()}")
             fake = Fake(ratify)
             if invoke(["claim", ids["Released ruling"]], fake, "lead0001")[0] == 0 or fake.writes():
                 raise ValueError("board claim took an item held by user")
@@ -3269,14 +3289,14 @@ def validate_board(root: Path) -> None:
             # Pulls (r13-q61): a lead's registered pulls come on top of its preset, for claiming and for handles.
             subprocess.run(["bash", str(registry), "activate", "lead", "--pulls", "implement"], check=True,
                            env={**os.environ, **session_env(state_dir), **as_session("0000-lead0002"), **project_env})
-            fake = Fake(fixture)
+            fake = Fake(variant(**no_plan))
             invoke(["claim"], fake, "lead0002")
             if len(fake.plain_writes()) != 1 or fake.plain_writes()[0][2:] != ["--claim", "--json"]:
                 raise ValueError(f"a lead with the implement pull did not claim implement work: {fake.writes()}")
-            fake = Fake(fixture)
+            fake = Fake(variant(**no_plan))
             invoke(["claim"], fake, "lead0001")
             if fake.writes():
-                raise ValueError(f"a lead without pulls claimed work: {fake.writes()}")
+                raise ValueError(f"a lead without pulls claimed work beyond its preset: {fake.writes()}")
             Path(state_dir, "0000-lead0002.json").unlink()
             Path(state_dir, "0000-agnt0001.json").unlink()  # the later position checks count the fixture's sessions
 
@@ -6139,8 +6159,8 @@ def validate_board(root: Path) -> None:
                 code, _, errors, writes = verb(["reopen", "t-cr", "t-g"], world)
                 if code != 2 or "change request" not in errors or writes:
                     raise ValueError(f"board reopen must refuse a change request: {code} {errors!r} {writes}")
-                for argv, want in ((["defer", "t-a", "t-b", "--reason", "revisit with the cache ruling", "--until", "2026-12-01"],
-                                    [["defer", "t-a", "t-b", "--reason", "revisit with the cache ruling", "--until", "2026-12-01"]]),
+                for argv, want in ((["defer", "t-a", "t-b", "t-l", "--reason", "revisit with the cache ruling", "--until", "2026-12-01"],
+                                    [["defer", "t-a", "t-b", "t-l", "--reason", "revisit with the cache ruling", "--until", "2026-12-01"]]),
                                    (["undefer", "t-a"], [["undefer", "t-a"]]),
                                    (["gate", "create", "--blocks", "t-a", "--reason", "user 2026-11-16: wait", "--title", "user gate"],
                                     [["gate", "create", "--type=human", "--blocks", "t-a", "--reason", "user 2026-11-16: wait", "--title", "user gate"]]),

@@ -106,7 +106,7 @@ park adds its packet with `board comment … --board-packet` (r16-q87).
 [--unlabel L]... [--parent P|""]` (a `queue:` or `for:` label goes through `send`, `route` or `create --for`; `--parent` keeps a change request and its held
 items where they are), `board link <a> <b> --type T` and `board unlink <a> <b>` (links that hold nothing up; a blocking one is `board block` /
 `board unblock <ids> --on <blocker>`, whose `--reason` a work item needs and a decision or gate blocker or a milestone item does not),
-`board reopen <id>...` (not a change request), `board defer <id>... --reason [--until]` / `board undefer`, and `board gate create|resolve`. Refused
+`board reopen <id>...` (not a change request), `board defer <id>... --reason [--until]` / `board undefer` (defer refuses work a live item waits on, unless deferred with it, and a decision that work in progress, in review or at Accept waits on; `board check` flags both as `deferred-blocker`), and `board gate create|resolve`. Refused
 calls of these verbs exit 2, as every verb that writes an item from its flags does (`REFUSAL_EXIT_2` in `bin/board` is the list). Plain
 `board show` prints the item's newest 5 comments, each cut at 2000 characters with a pointer to
 `board show <id> --comments`, which prints them whole (r16-q88, q89); it prints item metadata

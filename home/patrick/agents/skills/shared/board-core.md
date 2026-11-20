@@ -213,19 +213,23 @@ Statuses carry the lifecycle; labels only classify (`topic:<topic-slug>`,
 | `in_review` | A findings-only review ([Kinds](#kinds)); CR statuses: [Change requests](../shared/change-requests.md#change-requests). |
 | `deferred` | [Deferral](../shared/board-coordination.md#deferrals-and-environment-facts). |
 
-Question statuses: [Questions and rulings](#questions-and-rulings). Assign
-only a task waiting on a human action to `user`; express waiting on other work
-with `blocks`.
+Question statuses: [Questions and rulings](#questions-and-rulings). Assign `user`
+only tasks that need the user's authority, credentials or judgment; agents do
+the rest, using the user's logins only with their consent per run. A deciding
+session prepares user tasks up to the user's step and brings the ready ones in
+one batch.
 
 ### Dependencies
 
 Use the first matching row. `board block` and the `board ruling` verbs replace an existing link; by hand,
-first remove the pair's `relates-to` edge. When order
-and context coincide, keep `blocks`.
+first remove the pair's `relates-to` edge. When an input and context
+coincide, keep `blocks`. Put a wanted order in priority and wanted evidence in
+acceptance, never in `blocks`; when only part of B uses A, split B ([Work
+items](#work-items)).
 
 | Relation | Use |
 |---|---|
-| B can't start before A, including released ruling A changing B | `blocks`: `board block B --on A --reason "<why>"` ([Milestones](../shared/board-coordination.md#milestones) members: `board block <milestone> --on <member>`, no reason line). |
+| B uses A's output (an artifact, contract, decision or environment) or changes code A changes, or released ruling A changes B | `blocks`: `board block B --on A --reason "<the input B uses>"` ([Milestones](../shared/board-coordination.md#milestones) members: `board block <milestone> --on <member>`, no reason line). |
 | B is part of outcome A | `--parent A` |
 | B found while working on A | `discovered-from`: `board create … --deps discovered-from:A` |
 | Shared context, alternatives, a ruling's context-only item | `relates-to`: `board link A B --type relates-to` |

@@ -77,11 +77,11 @@ def planning_wait(record: dict) -> bool:
 CLAIM_RANK = {kind: at for at, kind in enumerate(('plan', 'review', 'refresh', 'ratify', 'accept', 'design', 'question', 'implement', 'milestone'))}
 FINISHING = ('review', 'refresh', 'ratify', 'accept')
 # Kinds a bare `board claim` takes per role preset; the session's registered pulls come on top (agent: only its pulls).
-ROLE_KINDS = {'lead': ('question',), 'agent': (), 'solo': ('question', 'plan', 'ratify', 'accept'),
+ROLE_KINDS = {'lead': ('question', 'plan'), 'agent': (), 'solo': ('question', 'plan', 'ratify', 'accept'),
               'autopilot': ('question', 'plan', 'accept')}
 # Kinds each role handles, by bare claim or by id; `board position` counts sessions from these.
 # A ready milestone is accepted with the user: claimed by id only, never by autopilot.
-ROLE_HANDLES = {'lead': ('question', 'accept', 'ratify', 'milestone'), 'agent': (),
+ROLE_HANDLES = {'lead': ('question', 'plan', 'accept', 'ratify', 'milestone'), 'agent': (),
                 'solo': ('question', 'plan', 'ratify', 'accept', 'milestone'), 'autopilot': ('question', 'plan', 'accept')}
 TEXT_FIELDS = ('title', 'description', 'design', 'acceptance_criteria', 'notes', 'close_reason')
 SHOW_FIELDS = TEXT_FIELDS[1:]
@@ -1792,13 +1792,14 @@ CHECK_CLASSES = {  # class -> board-core anchor
     'unratified-ruling': 'questions-and-rulings',
     'decision-blocks-cr': 'questions-and-rulings',
     'no-cr': 'change-requests',
+    'deferred-blocker': 'deferrals-and-environment-facts',
     'cr-settings': 'change-requests',
     'cr-worktree': 'change-requests',
     'cr-branch': 'change-requests',
     'cr-landing': 'change-requests',
     'cr-git-state': 'actors-and-holds',
 }
-CHECK_DOCS = {'change-requests': 'change-requests.md'}  # anchors that live outside board-core.md
+CHECK_DOCS = {'change-requests': 'change-requests.md', 'deferrals-and-environment-facts': 'board-coordination.md'}  # anchors that live outside board-core.md
 
 
 def doc_ref(anchor: str) -> str:
@@ -1841,6 +1842,11 @@ def deviations(board: Board, root: str | None) -> list[tuple[str, str, str]]:
             if held:
                 found.append((item_id, 'decision-blocks-cr', f"decision blocks a change request, which waits on its items' blockers: "
                                                              f"{'; '.join(dep_fix(item_id, b) for b in held)}, then hold its work items"))
+        if issue['status'] == 'deferred':
+            waiting = deferred_waiters(board, item_id)
+            if waiting:
+                found.append((item_id, 'deferred-blocker', f"deferred, yet {', '.join(waiting)} wait on it: "
+                                                           f"{deferred_fix(board, item_id, waiting)}"))
         if is_work_hold(issue) and board.cr_of(item_id) is None and issue['status'] not in ('in_review', 'deferred') and not is_no_code(issue) \
                 and not board.waits_on_decision_design_or_spike(item_id):
             found.append((item_id, 'no-cr', f'work item outside any change request: board update {item_id} --parent <change request>'))
@@ -6019,8 +6025,41 @@ def reopen_command(board: Board, args) -> int:
     return 0
 
 
+def deferred_waiters(board: Board, item_id: str, deferring: set[str] = frozenset()) -> list[str]:
+    """What deferring it would hang (board-coordination.md#deferrals-and-environment-facts). Deferred work holds up no live item:
+    the live items waiting on it (a milestone's member detaches instead). A deferred question is a parked decision its held items
+    still need (decide.md Pre-pass), unless work in progress, in review or at Accept waits on it through open items: that work."""
+    def live(w: str) -> bool:
+        return w not in deferring and board.is_open(w) and board.by_id[w]['status'] != 'deferred'
+    if board.by_id.get(item_id, {}).get('issue_type') != 'decision':
+        return [w for w in board.dependents.get(item_id, []) if live(w) and board.by_id[w].get('issue_type') != 'milestone']
+    in_work, seen, todo = [], set(), list(board.dependents.get(item_id, []))
+    while todo:
+        w = todo.pop()
+        if w in seen or not live(w):
+            continue
+        seen.add(w)
+        unit = board.cr_of(w) or w  # an item waits with its change request (cr_waits)
+        if board.by_id[unit].get('issue_type') != 'decision' and board.by_id[unit].get('status') in ('in_progress', 'in_review', ACCEPT) \
+                and unit not in in_work:  # a question in a round is no work: a round defers the questions waiting on it one by one
+            in_work.append(unit)
+        todo += board.dependents.get(w, []) + ([unit] if unit != w else [])
+    return in_work
+
+
+def deferred_fix(board: Board, item_id: str, waiting: list[str]) -> str:
+    if board.by_id.get(item_id, {}).get('issue_type') == 'decision':
+        return f"answer {item_id}, or return {', '.join(waiting)} (board return <id> \"<why>\") until it is answered"
+    return f"defer {' '.join(waiting)} too, or keep {item_id} undeferred and write the wait as a gate (board gate create) or a blocks edge"
+
+
 def defer_command(args) -> int:
     """`board defer <id>... --reason "<revisit condition>" [--until <date>]`: bd undefers it at the date."""
+    board = Board.load('status')
+    for item_id in args.ids:
+        waiting = deferred_waiters(board, item_id, set(args.ids))
+        if waiting:
+            raise BoardError(f"{item_id}: {', '.join(waiting)} would hang on it deferred: {deferred_fix(board, item_id, waiting)}")
     bd_checked('defer', *args.ids, '--reason', args.reason, *(['--until', args.until] if args.until else []))
     for item_id in args.ids:
         print(f'{item_id}: deferred')
