@@ -65,6 +65,11 @@ export type ConsoleBoardCounts = ConsoleCounts & { toDesign: ConsoleCount; toImp
 
 /** A change request's check against the current refs (`board console`): `stale` the base moved, `conflict` it would not rebase cleanly, `failed` the checks failed, `unchecked` none ran yet. */
 export type ConsoleCheckState = 'current' | 'stale' | 'conflict' | 'failed' | 'unchecked'
+export type ConsoleCrAcceptance = {
+  /** User's last explicitly opened or accepted range; null means the full current change is presented. */
+  seenTip: string | null; seenBaseTip: string | null; delta: string | null; fullChange: boolean; noAgentReviewReason: string | null
+  incomingBaseTip: string | null; incomingCommits: { tip: string; subject: string; files: string[]; crFiles: string[] }[] | null
+}
 
 /**
  * One live change request from `board console` `crs`, in accept-queue order (parents before children). Waiting for you is status `needs_acceptance`; agent review and an agent checkpoint are `in_review`.
@@ -92,13 +97,16 @@ export type ConsoleCr = {
   problems: ConsoleProblem[]
   /** Open for your review (from Open until your Accept or Return): no refresh or agent step touches it meanwhile; null when it is not open. */
   review: ConsoleReview | null
+  /** The series waiting for Accept, plus the delta since the user's last explicit Open or Accept look. */
+  acceptance: ConsoleCrAcceptance | null
+  /** The most recently covered series; retained across handovers and Return. */
   /** Look-after child that passed review and lands with this base; null otherwise. */
   after: string | null
 }
 
 /**
  * One problem of a request row (`board console` `crs[].problems`): `kind` setup-failed, git-state (a rebase, merge, … the board did not start), check (stale or conflict while waiting for you),
- * review-stale, waits (an unlanded parent or a blocker its Accept waits on), land-blocked; `text` the board's words; `next.action` refresh (only the queue head's refresh work, never on an open review), claim, merge (with you), owner, ask-user or wait.
+ * waits (an unlanded parent or a blocker its Accept waits on), land-blocked; `text` the board's words; `next.action` refresh (only the queue head's refresh work, never on an open review), claim, merge (with you), owner, ask-user or wait.
  */
 export type ConsoleProblem = { kind: string; text: string; next: { action: string; command: string | null; paths: string[] } }
 

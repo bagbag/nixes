@@ -2095,9 +2095,25 @@ def section_text(issue: dict, field: str, title: str) -> str:
     return '\n'.join(out)
 
 
+def incoming_main_section(main: Path, cr: dict, info: dict, base: str | None = None) -> tuple[str, str]:
+    base = base or incoming_base_of(cr)
+    commits = incoming_cr_commits(main, cr, base, info.get('baseTip'), info.get('tip'))
+    return 'incoming main commits', incoming_main_text(commits, base, info.get('baseTip'))
+
+
+def incoming_base_of(cr: dict) -> str | None:
+    m = meta(cr)
+    return m.get('review_base_tip') or m.get('user_seen_base_tip') or m.get('base_sha')
+
+
 def show_sections(board: Board, issue: dict, query: str) -> list[tuple[str, str]]:
     candidates = [(field, f'{field}:\n' + str(issue.get(field)).strip('\n')) for field in SHOW_FIELDS
                   if str(issue.get(field) or '').strip()]
+    if board.is_cr(issue['id']) and issue['status'] == ACCEPT:
+        info = cr_info(board, issue)
+        if info.get('main'):
+            name, text = incoming_main_section(info['main'], issue, info)
+            candidates.append((name, text))
     links = link_lines(board, issue)
     if links:
         candidates.append(('links', 'links:\n' + '\n'.join(links)))
@@ -2208,6 +2224,11 @@ def show(board: Board, args) -> int:
             links = link_lines(board, issue)
             if links:
                 budget.emit('links:\n' + '\n'.join(links), f'board show {item_id} --section links', 'links', item_id)
+            if board.is_cr(item_id) and issue['status'] == ACCEPT:
+                info = cr_info(board, issue)
+                if info.get('main'):
+                    name, text = incoming_main_section(info['main'], issue, info)
+                    budget.emit(text, f'board show {item_id} --section {q(name)}', name, item_id)
             for field in SHOW_FIELDS:
                 for name, text in field_units(issue, field):
                     budget.emit(text, f'board show {item_id} --section {q(name)}', name, item_id)
@@ -3555,8 +3576,7 @@ def queue_head(board: Board, queue: list[dict] | None = None) -> dict | None:
 
 
 def needs_refresh(board: Board, cr: dict) -> bool:
-    info = cr_info(board, cr)
-    return info['state'] != 'current' or not review_current(cr, info)
+    return cr_info(board, cr)['state'] != 'current'
 
 
 OPENED = 'opened_tip'  # metadata of an item open for the user's review: the tip it was opened at (accept.md User review)
@@ -3660,9 +3680,11 @@ def review_read(board: Board, item: dict) -> dict | None:
         found['why'] = f"its worktree {cr_worktree(main_of(board), item['id'])} is gone: board review open {item['id']} makes it again"
         return found
     main, branch = cr_worktree_main(wt), review_branch(board, item)
-    head, tip = rev(wt, 'HEAD'), rev(main, f'refs/heads/{branch}')
+    ref = f'refs/heads/{branch}'
+    attached = git(wt, 'symbolic-ref', '--quiet', 'HEAD', check=False).stdout.decode().strip()
+    head, tip = rev(wt, 'HEAD'), rev(main, ref)
     found['tip'] = tip
-    if tip is None or head != tip:
+    if tip is None or attached != ref or head != tip:
         found['why'] = f'{wt} is not on {branch}: check it out, then try again'
     elif not is_ancestor(main, opened, tip):
         found['why'] = (f'the tip it was opened at ({opened[:12]}) is no longer in {branch} (an amend, reset or rebase rewrote reviewed work, which never passes '
@@ -3827,6 +3849,87 @@ def review_current(cr: dict, info: dict) -> bool:
     return reviewed == info['tip'] or edits_only(info.get('main'), cr, reviewed, info['tip'])
 
 
+def accept_covered(cr: dict, info: dict) -> bool:
+    """A direct user review covers the displayed change. Agent review also covers clean replays."""
+    if meta(cr).get('no_agent_review_reason') or review_current(cr, info):
+        return True
+    m = meta(cr)
+    main, tip, base = info.get('main'), info.get('tip'), info.get('baseTip')
+    covered_tip, covered_base = m.get('review_tip'), m.get('review_base_tip')
+    return bool(main and tip and base and covered_tip and covered_base
+                and replays(main, cr, covered_base, covered_tip, base, tip))
+
+
+def incoming_cr_commits(main: Path, cr: dict, from_base: str | None, to_base: str | None,
+                        branch_tip: str | None) -> list[dict] | None:
+    """Report CR drift when the current base continues the covered base."""
+    if from_base and from_base == to_base:
+        return []
+    if not from_base or not to_base or not is_ancestor(main, from_base, to_base):
+        return None
+    fork = meta(cr).get('base_sha')
+    if not branch_tip or not fork or not is_ancestor(main, fork, branch_tip):
+        return None
+    return incoming_main_commits(main, from_base, to_base, fork, branch_tip)
+
+
+def incoming_main_commits(main: Path, start: str, end: str, change_base: str, change_tip: str) -> list[dict] | None:
+    """List incoming commits with their paths and overlaps with the given change, or None if either range is unavailable."""
+    commits = git(main, 'log', '--reverse', '--no-renames', '--name-only', '--diff-merges=separate',
+                  '-z', '--format=%x00%H%x00%s', f'{start}..{end}', check=False)
+    changed = git(main, 'diff', '--name-only', '--no-renames', '-z', change_base, change_tip, check=False)
+    if commits.returncode or changed.returncode:
+        return None
+    change_files = set(changed.stdout.decode('utf-8', 'replace').split('\x00'))
+    by_tip: dict[str, tuple[str, set[str]]] = {}
+    records = iter(commits.stdout.decode('utf-8', 'replace').split('\x00'))
+    first_path = False
+    for record in records:
+        if not record:
+            tip = next(records, '')
+            if not tip:
+                break
+            subject = next(records)
+            files = by_tip.setdefault(tip, (subject, set()))[1]
+            first_path = True
+        else:
+            files.add(record.removeprefix('\n') if first_path else record)
+            first_path = False
+    return [{'tip': tip, 'subject': subject, 'files': sorted(files), 'crFiles': sorted(change_files & files)}
+            for tip, (subject, files) in by_tip.items()]
+
+
+def incoming_main_text(commits: list[dict] | None, from_base: str | None, to_base: str | None) -> str:
+    title = f"incoming main commits and files ({(from_base or '?')[:12]}..{(to_base or '?')[:12]}):"
+    if commits is None:
+        return title + '\n  unavailable: the covered base or current base is not reachable'
+    if not commits:
+        return title + '\n  none'
+    rows = [title]
+    for one in commits:
+        overlap = f" [touches CR files: {', '.join(one['crFiles'])}]" if one['crFiles'] else ''
+        rows.append(f"  commit {one['tip']} {one['subject']}{overlap}")
+        rows.append('    files: ' + (', '.join(one['files']) or 'none'))
+    return '\n'.join(rows)
+
+
+def range_delta(main: Path, cr: dict, base_tip: str | None, tip: str | None, *, user_seen: bool = False) -> str | None:
+    """The range-diff since the last review or look, empty when every commit is equal."""
+    m = meta(cr)
+    base_tip = m.get('base_sha') or base_tip  # the branch's own series starts at its fork, even when the target has since moved
+    old_tip = m.get('user_seen_tip' if user_seen else 'review_tip')
+    old_base = m.get('user_seen_base_tip' if user_seen else 'review_base_tip')
+    if not old_tip or not old_base or not base_tip or not tip:
+        return None
+    if (old_tip, old_base) == (tip, base_tip):
+        return ''
+    diff = git(main, 'range-diff', '--no-color', f'{old_base}..{old_tip}', f'{base_tip}..{tip}', check=False)
+    if diff.returncode:
+        return None
+    shown = diff.stdout.decode('utf-8', 'replace').rstrip()
+    return '' if all(line.split()[2:3] == ['='] for line in shown.splitlines()) else shown
+
+
 def after_base(board: Board, cr: dict) -> str | None:
     """The base a look-after CR (or one with no commits of its own) waits for in stage accept (A1): it lands when that base has."""
     base = live_parent(board, cr)
@@ -3871,7 +3974,7 @@ def cr_milestone(board: Board, cr_id: str) -> str | None:
 
 def cr_problems(board: Board, cr: dict, info: dict, refresh_id: str | None) -> list[dict]:
     """What holds the request up, each with the step that clears it (`next`: action, and the command or paths where one applies), so
-    the console and the text views name the same step. A stale check or review is refresh work only at the queue head and never
+    the console and the text views name the same step. A stale check is refresh work only at the queue head and never
     while open for the user's review (`refresh_id`); a stop on the user's edit commit is merged with the user (change-requests.md Rebase)."""
     cid, m = cr['id'], meta(cr)
     stale_next = {'action': 'refresh', 'command': f'board cr refresh {cid}'} if cid == refresh_id \
@@ -3892,8 +3995,6 @@ def cr_problems(board: Board, cr: dict, info: dict, refresh_id: str | None) -> l
             out.append({'kind': 'waits', 'text': text, 'next': {'action': 'wait'}})
         if info['state'] != 'current':  # every state needs_refresh counts
             out.append({'kind': 'check', 'text': f"check {info['state']}", 'next': stale_next})
-        if m.get('review_tip') and not review_current(cr, info):
-            out.append({'kind': 'review-stale', 'text': 'review stale', 'next': stale_next})
     if info['blocked']:
         out.append({'kind': 'land-blocked', 'text': f"land blocked: {', '.join(info['blocked'])}", 'next': {'action': 'ask-user', 'paths': info['blocked']}})
     return out
@@ -3914,6 +4015,19 @@ def cr_json(board: Board, cr: dict, children: dict[str, list[str]], refresh_id: 
     parent = live_parent(board, cr)
     unblocks, direct = cr_unblocks(board, cr['id'])
     priority, raised_by, by_item = effective_priority(board, cr)
+    acceptance = None
+    if cr['status'] == ACCEPT:
+        delta = range_delta(info['main'], cr, info['baseTip'], info['tip'], user_seen=True) if info['main'] else None
+        full_change = not m.get('user_seen_tip')
+        fork = m.get('base_sha') or info['baseTip']
+        if full_change and info['main'] and fork and info['tip']:
+            delta = git(info['main'], 'diff', '--stat', f"{fork}..{info['tip']}", check=False).stdout.decode('utf-8', 'replace').rstrip()
+        incoming_base = incoming_base_of(cr) or fork
+        incoming = incoming_cr_commits(info['main'], cr, incoming_base, info['baseTip'], info['tip']) if info['main'] else None
+        acceptance = {'seenTip': m.get('user_seen_tip'), 'seenBaseTip': m.get('user_seen_base_tip'),
+                      'delta': delta, 'fullChange': full_change,
+                      'noAgentReviewReason': m.get('no_agent_review_reason'), 'incomingBaseTip': incoming_base,
+                      'incomingCommits': incoming}
     return {'id': cr['id'], 'title': cr.get('title', ''), 'status': cr['status'], 'stage': cr_stage(cr),
             'holder': cr.get('assignee') or None, 'look': m.get('look') or board.settings.get('look') or None,
             'view': m.get('view') or board.settings.get('view') or None, 'checkpoint': m.get('checkpoint') or None,
@@ -3928,6 +4042,7 @@ def cr_json(board: Board, cr: dict, children: dict[str, list[str]], refresh_id: 
             'children': children.get(cr['id'], []), 'baseSha': m.get('base_sha') or None,
             'problems': cr_problems(board, cr, info, refresh_id),  # the console's marks and its Update button (next.action refresh)
             'review': review_of(board, cr),  # open for the user's review: {opened, edited, files}, else null
+            'acceptance': acceptance,
             'after': after_base(board, cr),
             'unblocks': unblocks, 'unblocksDirect': direct, 'milestone': cr_milestone(board, cr['id']),
             'priority': priority, 'ownPriority': cr.get('priority', 9),  # the rank counts it at `priority`; raisedBy names what sets it
@@ -4189,7 +4304,13 @@ def claim_cr(board: Board, cr: dict, actor: str, kind: str) -> tuple[bool, str]:
     else:
         print(f'  worktree {cr_worktree(main, cid)}')
         if kind == 'review':
-            put_meta(cr, reviewing_tip=rev(main, f'refs/heads/{cr_branch(cid)}'))  # the tip this reviewer is shown
+            tip = rev(main, f'refs/heads/{cr_branch(cid)}')
+            put_meta(cr, reviewing_tip=tip)  # the tip this reviewer is shown
+            info = cr_info(board, cr)
+            if meta(cr).get('review_tip') and tip and not review_current(cr, info):
+                delta = range_delta(main, cr, info['baseTip'], tip)
+                print('  prior range unavailable; read the full change' if delta is None else
+                      '  range-diff since the last covered series:\n' + (delta or '(no changes since prior coverage)'))
     return True, ''
 
 
@@ -4300,7 +4421,7 @@ def settle_landed(board: Board) -> bool:
     return changed
 
 
-def land_core(board: Board, cr: dict, main: Path, tip: str | None = None) -> list[str]:
+def land_core(board: Board, cr: dict, main: Path, tip: str, base_tip: str) -> list[str]:
     """Fast-forwards the target to the CR's tip and finishes the landing. Refuses unless the base is the target, the items
     are closed and the check and review pairs are the current (branch tip, target tip) with a pass (q183, q209, q236, A1, A6)."""
     cid = cr['id']
@@ -4315,8 +4436,10 @@ def land_core(board: Board, cr: dict, main: Path, tip: str | None = None) -> lis
     branch_tip, old = rev(main, f'refs/heads/{cr_branch(cid)}'), rev(main, ref)
     if branch_tip is None:
         raise BoardError(f'{cid}: no branch {cr_branch(cid)}')
-    if tip and rev(main, tip) != branch_tip:
-        raise BoardError(f'{cid}: the branch moved since {tip}: now {branch_tip[:12]}; look at the change again (board cr refresh, then re-show the range)')
+    if rev(main, tip) != branch_tip:
+        raise BoardError(f'{cid}: the branch moved since {tip[:12]}: now {branch_tip[:12]}; look at the change again (board cr refresh, then re-show the range)')
+    if old != base_tip:
+        raise BoardError(f'{cid}: the base moved since {base_tip[:12]}: now {old[:12]}; look at the incoming commits again (board cr refresh, then re-show the range)')
     review = review_read(board, cr)
     if review:  # the user's Accept: an unedited review ends with it; one with edits is recorded first (it rebases and checks them)
         refuse_unrecorded(cid, review, f'{edits_line(cid, review["opened"])} records them, then land')
@@ -4325,16 +4448,19 @@ def land_core(board: Board, cr: dict, main: Path, tip: str | None = None) -> lis
     if pair is None or pair['result'] != 'pass' or pair['tip'] != branch_tip or pair['baseTip'] != old:
         state = check_state(main, cr, branch_tip, old)
         raise BoardError(f'{cid}: not landed, its check is {state} (it must pass for tip {branch_tip[:12]} on {name} {old[:12]}): {refresh_step}')
-    if not review_current(cr, {'tip': branch_tip, 'baseTip': old, 'main': main}):
-        raise BoardError(f'{cid}: not landed, its review is of another (tip, base tip) than {branch_tip[:12]} on {name} {old[:12]}: '
-                         f'{refresh_step}, then --review-holds if the review still holds, else board handover {cid} "<flag>" sends it back to review')
+    if not accept_covered(cr, {'tip': branch_tip, 'baseTip': old, 'main': main}):
+        if cr['status'] == ACCEPT:
+            send_to_review(board, cr)
+            raise BoardError(f'{cid}: the series changed since its last review; sent to agent review')
+        raise BoardError(f'{cid}: the series changed since its last review; review the current change')
     where, rebasing = checked_out_at(main, ref)
     if rebasing:
         raise BoardError(f'{cid}: not landed, {rebasing}')
     blocked = land_blocked(main, name, branch_tip)
     if blocked:
         raise BoardError(f"{cid}: land blocked: uncommitted edits in the worktree with {name} checked out overlap: {', '.join(blocked)}; they are the user's: ask the user to commit or move them, and do not restore or stash them yourself")
-    put_meta(cr, landing=branch_tip, **({OPENED: None} if review else {}))  # vouches for this tip: if the close fails after the fast-forward, the next read finishes it
+    landing_fields = {'landing': branch_tip, **({OPENED: None} if review else {})}
+    put_meta(cr, **landing_fields)  # vouches for this tip: if the close fails after the fast-forward, the next read finishes it
     done = git(where, 'merge', '--ff-only', branch_tip, check=False) if where else git(main, 'update-ref', ref, branch_tip, old, check=False)
     if done.returncode != 0:
         put_meta(cr, landing=None)
@@ -4348,7 +4474,8 @@ def land_core(board: Board, cr: dict, main: Path, tip: str | None = None) -> lis
     for other in after:
         try:
             if cr_info(board, other)['state'] == 'current' and review_current(other, cr_info(board, other)):
-                notes.append(f"{other['id']} (after {cid}): " + '; '.join(land_core(board, other, main)))
+                child_info = cr_info(board, other)
+                notes.append(f"{other['id']} (after {cid}): " + '; '.join(land_core(board, other, main, child_info['tip'], child_info['baseTip'])))
             else:
                 notes.append(f"{other['id']} (after {cid}): left as refresh work (its check or review no longer matches)")
         except LandedError as error:
@@ -4387,8 +4514,17 @@ def handover(board: Board, args) -> None:
         raise BoardError(f"{args.id}: {cr['status']}, held by {holder or 'nobody'}; claim it first")
     m, status = meta(cr), cr['status']
     author = status == 'in_progress'
-    if not author and status not in ('in_review', ACCEPT):
-        raise BoardError(f"{args.id}: {status} is neither work in hand, a review to pass nor a refresh to send back to review")
+    if not author and status != 'in_review':
+        raise BoardError(f'{args.id}: {status}; only work in hand is handed over or an agent review is passed (use board cr request-review at Accept)')
+    no_agent_reason = args.no_agent_review
+    if no_agent_reason is not None:
+        if not author:
+            raise BoardError('--no-agent-review is only available on an author handover, not a reviewer pass')
+        if cr_look(board, cr) != 'before':
+            raise BoardError('--no-agent-review is refused in a look-after project')
+        if m.get('checkpoint'):
+            raise BoardError('--no-agent-review is for a change request, not a design checkpoint')
+        refuse_long_comment(f'no agent review: {no_agent_reason}')
     refuse_long_comment(HANDOVER + args.evidence)
     if author and m.get('checkpoint') in ('agent', 'user'):
         busy_designs = checkpoint_design_items(board, args.id, 'in_progress')
@@ -4417,14 +4553,7 @@ def handover(board: Board, args) -> None:
             shown = git(wt, 'log', '--stat', '--format=%h %s', f"{result['baseTip']}..{result['tip']}", check=False).stdout.decode('utf-8', 'replace')
             said = f"no tip is recorded as seen by you (the CR was taken over); the tip is {result['tip'][:12]}"
         raise BoardError(f"{args.id}: {said}; nothing was recorded. Review the change, then pass again:\n{shown.rstrip() or '(nothing to show)'}")
-    if status == ACCEPT:  # the refresh triage flagged it: back to agent review, its verdict no longer stands (q236)
-        bd_checked('update', args.id, '--status', 'in_review', '--assignee', '', *expect, '--json')
-        put_meta(cr, since=None, review_tip=None, review_base_tip=None, reviewing_tip=None)
-        comment(args.id, HANDOVER + args.evidence)
-        print(f'handed over {args.id} back to agent review ({check_said(args)} on {result["tip"][:12]})')
-        return
     if author:
-        put_meta(cr, review_tip=None, review_base_tip=None, reviewing_tip=None)  # a new hand-over starts a new review (F9)
         if m.get('checkpoint') == 'user':  # a design for the user goes straight to the user's Accept
             designs = checkpoint_design_items(board, cr['id'], 'open')
             if designs:
@@ -4437,12 +4566,20 @@ def handover(board: Board, args) -> None:
             designs = checkpoint_design_items(board, cr['id'], 'open')
             if designs:
                 bd_checked('update', *designs, '--status', 'in_review', '--json')
+        if no_agent_reason is not None:
+            waiting_for_user(cr, holder)
+            put_meta(cr, no_agent_review_reason=no_agent_reason, reviewing_tip=None)
+            comment(args.id, HANDOVER + args.evidence)
+            comment(args.id, f'no agent review: {no_agent_reason}')
+            print(f'handed over {args.id} to your Accept without agent review: {no_agent_reason}')
+            return
+        put_meta(cr, no_agent_review_reason=None, reviewing_tip=None)
         bd_checked('update', args.id, '--status', 'in_review', '--assignee', '', *expect, '--json')
         comment(args.id, HANDOVER + args.evidence)
         print(f'handed over {args.id} for {"checkpoint " if m.get("checkpoint") == "agent" else ""}review ({check_said(args)} on {result["tip"][:12]})')
         return
     comment(args.id, f'board pass: {args.evidence}')
-    put_meta(cr, review_tip=result['tip'], review_base_tip=result['baseTip'])  # the verdict holds for this (tip, base tip) pair (q236)
+    put_meta(cr, review_tip=result['tip'], review_base_tip=result['baseTip'], no_agent_review_reason=None)
     if m.get('checkpoint') == 'agent':  # the agent's design checkpoint passed: the CR goes to planning
         designs = checkpoint_design_items(board, cr['id'], 'in_review')
         if designs:
@@ -4457,7 +4594,7 @@ def handover(board: Board, args) -> None:
     if (look == 'after' or empty) and not board.is_cr(base):
         bd_checked('update', args.id, '--assignee', '', *expect, '--json')
         try:
-            notes = land_core(board, cr, main)
+            notes = land_core(board, cr, main, result['tip'], result['baseTip'])
         except LandedError as error:
             print(f'passed and landed {args.id}, but: {error}')
             return
@@ -4474,6 +4611,53 @@ def handover(board: Board, args) -> None:
         return
     waiting_for_user(cr, holder)
     print(f'passed {args.id}: waiting for your Accept')
+
+
+def send_to_review(board: Board, cr: dict) -> None:
+    holder = cr.get('assignee') or ''
+    keys = ('since', 'reviewing_tip', 'no_agent_review_reason', OPENED)
+    clear = [flag for key in keys if key in meta(cr) for flag in ('--unset-metadata', key)]
+    bd_checked('update', cr['id'], '--status', 'in_review', '--assignee', '', '--if-assignee', holder, *clear, '--json')
+    cr.update(status='in_review', assignee='')
+    for key in keys:
+        meta(cr).pop(key, None)
+    board._cr.pop(cr['id'], None)
+
+
+def route_uncovered(board: Board, cr: dict, info: dict) -> bool:
+    if cr['status'] != ACCEPT or meta(cr).get('checkpoint') == 'user' or accept_covered(cr, info):
+        return False
+    send_to_review(board, cr)
+    return True
+
+
+def request_review(board: Board, args) -> int:
+    actor = derived_actor() or 'user'
+    cr = cr_arg(board, args.id, 'request-review')
+    if cr['status'] != ACCEPT:
+        raise BoardError(f"{args.id}: {cr['status']}; request-review works only at the user's Accept")
+    if meta(cr).get('checkpoint') == 'user':
+        raise BoardError(f'{args.id}: this is a design checkpoint with no change range to send for review')
+    if cr.get('assignee') and not holds_cr(cr, actor):
+        raise BoardError(f"{args.id}: held by {cr['assignee']}; request review once that session releases it")
+    review = review_read(board, cr)
+    if review:
+        refuse_unrecorded(args.id, review, f'{edits_line(args.id, review["opened"])} records them, then request review')
+    main = main_root()
+    info = cr_info(board, cr)
+    if not info['tip'] or not info['baseTip']:
+        raise BoardError(f'{args.id}: its branch or base is gone; cannot request review')
+    if not may_move(board) and not holds_cr(cr, actor):
+        raise BoardError('only a lead or solo session, a person, or the current CR holder requests agent review')
+    shown = range_delta(main, cr, info['baseTip'], info['tip'])
+    send_to_review(board, cr)
+    detail = ''
+    if meta(cr).get('review_tip'):
+        detail = ('\nprior range unavailable; read the full change' if shown is None else
+                  f'\nrange-diff since the last covered series:\n{shown or "(no changes since prior coverage)"}')
+    comment(args.id, f'board cr request-review: {args.reason}' if args.reason else 'board cr request-review')
+    print(f'requested agent review of {args.id}{detail}')
+    return 0
 
 
 def return_item(board: Board, args) -> None:
@@ -4497,7 +4681,8 @@ def return_item(board: Board, args) -> None:
         if designs:
             bd_checked('update', *designs, '--status', 'open', '--json')
     bd_checked('update', args.id, '--status', 'open', '--assignee', '', '--json')
-    put_meta(cr, since=None, review_tip=None, review_base_tip=None, reviewing_tip=None, **({OPENED: None} if review else {}))
+    route_fields = {'no_agent_review_reason': None} if meta(cr).get('no_agent_review_reason') else {}
+    put_meta(cr, since=None, reviewing_tip=None, **route_fields, **({OPENED: None} if review else {}))
     comment(args.id, f'board return: {args.findings}')
     print(f'returned {args.id} to the queue (worktree and branch kept)')
 
@@ -4544,10 +4729,73 @@ def land(board: Board, args) -> int:
         return 0
     if m.get('checkpoint') == 'user':
         raise BoardError(f'{args.id}: a design checkpoint is pending: board cr land {args.id} --checkpoint')
-    for note in land_core(board, cr, main, args.tip):
+    stacked, _ = cr_base(board, cr, main)
+    if board.is_cr(stacked):
+        raise BoardError(f'{args.id}: stacked on {stacked}, which has not landed: board cr land {stacked} first')
+    if not args.tip or not args.base:
+        raise BoardError(f'{args.id}: --tip <sha> and --base <sha> are required: pass the pair shown at Accept')
+    incoming_base = incoming_base_of(cr)
+    try:
+        branch_tip, branch_base = prepare_land(board, cr, main, args.tip, args.base)
+        notes = land_core(board, cr, main, branch_tip, branch_base)
+    except LandedError:
+        raise
+    except BoardError:
+        board._cr.pop(args.id, None)
+        print(incoming_main_section(main, cr, cr_info(board, cr), incoming_base)[1])
+        raise
+    if reason := m.get('no_agent_review_reason'):
+        comment(args.id, f'board user review: {caller_actor} accepted {branch_tip[:12]} ({reason})')
+    else:
+        comment(args.id, f'board user accept: {caller_actor} accepted tip {branch_tip[:12]}')
+    for note in notes:
         print(note)
     print(f"landed {args.id} on {board_setting(board, 'target')}")
     return 0
+
+
+def prepare_land(board: Board, cr: dict, main: Path, tip: str, base: str) -> tuple[str, str]:
+    cid = cr['id']
+    info = cr_info(board, cr)
+    branch_tip, branch_base = info['tip'], info['baseTip']
+    seen_tip, seen_base = rev(main, tip), rev(main, base)
+    if branch_tip is None or branch_base is None:
+        raise BoardError(f'{cid}: no branch or base is available')
+    if seen_tip is None or seen_base is None:
+        raise BoardError(f'{cid}: --tip and --base must name reachable commits')
+    if seen_tip != branch_tip:
+        raise BoardError(f'{cid}: the branch moved since the pair you saw ({seen_tip[:12]}); now {branch_tip[:12]}. Look at the current change and Accept it again.')
+    if seen_base != branch_base:
+        raise BoardError(f'{cid}: the base moved since the pair you saw ({seen_base[:12]}); now {branch_base[:12]}. Look at the incoming commits and Accept the current pair.')
+    put_meta(cr, user_seen_tip=seen_tip, user_seen_base_tip=seen_base)
+    review = review_read(board, cr)
+    if review:
+        refuse_unrecorded(cid, review, f'{edits_line(cid, review["opened"])} records them, then land')
+    if refusal := open_item_refusal(board, cr):
+        raise BoardError(refusal)
+    if review:
+        end_review(board, cr)
+    result = None
+    if info['state'] != 'current':
+        wt = cr_worktree(main, cid)
+        if not wt.is_dir():
+            raise BoardError(f'{cid}: no worktree {wt}: git worktree add {wt} {cr_branch(cid)}')
+        result = sync_branch(board, cr, main, wt)
+        info = cr_info(board, cr)
+        branch_tip, branch_base = info['tip'], info['baseTip']
+        if result['oldTip'] != seen_tip or result['tip'] != branch_tip:
+            raise BoardError(f'{cid}: the branch moved while the check ran; look at the current change and Accept it again')
+        if branch_base != seen_base or result['baseTip'] != seen_base:
+            raise BoardError(f'{cid}: the base moved while the check ran; look at the incoming commits and Accept the current pair')
+        # The no-agent route covers the series the user saw, not a conflict resolution made after it.
+        if meta(cr).get('no_agent_review_reason') and branch_tip != seen_tip and not replays(
+                main, cr, result['oldBase'], seen_tip, branch_base, branch_tip):
+            raise BoardError(f'{cid}: the change differs from the series you saw. Review its delta and Accept the current pair.')
+    if result and result['code']:
+        if route_uncovered(board, cr, info):
+            print(f'{cid}: the series changed since its last review; sent to agent review')
+        raise BoardError(f"{cid}: not landed, its check failed after rebase:\n{result['output']}")
+    return branch_tip, branch_base
 
 
 def reject(board: Board, args) -> int:
@@ -4578,16 +4826,32 @@ def reject(board: Board, args) -> int:
 
 
 def replays(wt: Path, cr: dict, old_base: str, old_tip: str, base: str, tip: str) -> bool:
-    """base..tip holds the commits of old_base..old_tip, each a clean replay of its counterpart in order (`is_replay`), plus only
-    recorded edit commits: what a rebase git did unaided leaves. A resolved conflict, an edit, a dropped or a new commit fails."""
-    old = git_text(wt, 'rev-list', '--reverse', f'{old_base}..{old_tip}').split()
+    """Each commit of old_base..old_tip has a clean replay in base..tip in order. Review coverage can also allow recorded user edits."""
+    old_result = git(wt, 'rev-list', '--reverse', f'{old_base}..{old_tip}', check=False)
+    current_result = git(wt, 'rev-list', '--reverse', f'{base}..{tip}', check=False)
+    if old_result.returncode != 0 or current_result.returncode != 0:
+        return False
+    old = old_result.stdout.decode('utf-8', 'replace').split()
+    current = current_result.stdout.decode('utf-8', 'replace').split()
+    edits = edit_commits(wt, cr, base, tip)
     at = 0
-    for commit, is_edit in zip(git_text(wt, 'rev-list', '--reverse', f'{base}..{tip}').split(), edit_commits(wt, cr, base, tip)):
+    for commit, is_edit in zip(current, edits):
         if at < len(old) and is_replay(wt, old[at], commit):
             at += 1
         elif not is_edit:
             return False
     return at == len(old)
+
+
+def show_rebase_evidence(wt: Path, cr: dict, from_base: str, to_base: str, to_tip: str) -> None:
+    """Show the CR range and incoming commits with files."""
+    if rev(wt, to_base) and rev(wt, to_tip):
+        request_files = git_text(wt, 'diff', '--name-status', '--no-renames', to_base, to_tip).splitlines()
+        print(f'CR files ({to_base[:12]}..{to_tip[:12]}):' + ('\n  ' + '\n  '.join(request_files) if request_files else ' none'))
+    else:
+        print('CR files: unavailable because the current pair cannot be resolved')
+    incoming = incoming_cr_commits(wt, cr, from_base, to_base, to_tip)
+    print(incoming_main_text(incoming, from_base, to_base))
 
 
 def refresh(board: Board, args) -> int:
@@ -4597,52 +4861,27 @@ def refresh(board: Board, args) -> int:
         raise BoardError(f"{args.id}: held by {cr['assignee']}; refresh waits until that session releases it")
     if cr['status'] not in ('in_review', 'in_progress', ACCEPT):
         raise BoardError(f"{args.id}: {cr['status']}, no worktree in use to refresh")
-    if args.review_holds and cr['status'] != ACCEPT:
-        raise BoardError(f'{args.id}: --review-holds re-stamps the review of a change request waiting for its Accept')
     main = main_root()
     wt = cr_worktree(main, args.id)
     if not wt.is_dir():
         raise BoardError(f'{args.id}: no worktree {wt}: git worktree add {wt} {cr_branch(args.id)}')
     refuse_open(args.id, cr, 'a refresh')
+    merging_user_edit = stopped_edit_commit(cr, wt) is not None
     result = checked_sync(board, cr, main, wt, args)
     print(f"refreshed {args.id}: tip {result['tip'][:12]} on base {result['baseTip'][:12]}; {check_said(args, not result['code'])}" + (f" (exit {result['code']})" if result['code'] else ''))
     if result['code']:
         print(result['output'])
     old_tip, old_base = result['oldTip'], result['oldBase']
-    reviewed, reviewed_base = meta(cr).get('review_tip'), meta(cr).get('review_base_tip')
-    # What a waiting-for-Accept CR's triage asks is what changed since the review, not since the last fork (q236).
-    since_review = cr['status'] == ACCEPT and bool(reviewed and reviewed_base and rev(wt, reviewed) and rev(wt, reviewed_base)) \
-        and not review_current(cr, {'tip': result['tip'], 'baseTip': result['baseTip'], 'main': main})
-    from_base, from_tip = (reviewed_base, reviewed) if since_review else (old_base, old_tip)
-    if since_review or result['moved'] or result['tip'] != old_tip:
-        ranges = git(wt, 'range-diff', f'{from_base}..{from_tip}', f"{result['baseTip']}..{result['tip']}", check=False).stdout.decode('utf-8', 'replace')
-        print(f"range-diff {'review' if since_review else 'old'}..new:\n" + ranges.rstrip())
-        if cr['status'] == ACCEPT:  # the verdict --review-holds enforces; elsewhere new commits are expected work
-            print('replay: clean, the reviewed commits are unchanged (what moved around them shows above)'
-                  if replays(wt, cr, from_base, from_tip, result['baseTip'], result['tip'])
-                  else 'replay: not clean (a conflict resolution, an edit, a dropped or a new commit)')
-    incoming = git_text(wt, 'diff', '--name-only', from_base, result['baseTip']).splitlines() if from_base != result['baseTip'] else []
-    print(f'incoming files ({from_base[:12]}..{result["baseTip"][:12]}{", since the review" if since_review else ""}): {len(incoming)}' + ''.join(f'\n  {path}' for path in incoming))
-    if cr['status'] == ACCEPT:
-        info = {'tip': result['tip'], 'baseTip': result['baseTip'], 'main': main}
-        triaged = (meta(cr).get('triaged_tip'), meta(cr).get('triaged_base_tip'))
-        put_meta(cr, triaged_tip=result['tip'], triaged_base_tip=result['baseTip'])  # what this output asked the triage about
-        if not review_current(cr, info) and not args.review_holds:
-            print(f'{args.id}: its review was of another (tip, base tip); if the incoming change touches it: board handover {args.id} "<flag>" '
-                  f'sends it back to agent review; if the review still holds: board cr refresh {args.id} --review-holds, then board unclaim {args.id}')
-        if args.review_holds:  # the triage verdict "the review still holds" is recorded explicitly (F1)
-            if result['code']:
-                raise BoardError(f'{args.id}: the check is not passing, so the review cannot be kept; board handover {args.id} "<why>" sends it back to review')
-            if not reviewed or not reviewed_base or rev(wt, reviewed) is None or rev(wt, reviewed_base) is None:
-                raise BoardError(f'{args.id}: no reviewed range is recorded; board handover {args.id} "<why>" sends it back to review')
-            if not replays(wt, cr, reviewed_base, reviewed, result['baseTip'], result['tip']):
-                raise BoardError(f'{args.id}: its commits are no longer the reviewed changes (a conflict resolution, an edit, a dropped or a new commit); '
-                                 f'board handover {args.id} "<why>" sends it back to review')
-            if triaged != (result['tip'], result['baseTip']):  # the base or the tip moved after the triage: that change is untriaged
-                raise BoardError(f'{args.id}: the base or the tip moved since the last refresh; the incoming list above is untriaged; '
-                                 f'triage it, then run board cr refresh {args.id} --review-holds again (or board handover {args.id} "<flag>")')
-            put_meta(cr, review_tip=result['tip'], review_base_tip=result['baseTip'])
-            print(f'{args.id}: the review holds for tip {result["tip"][:12]} on base {result["baseTip"][:12]}; board unclaim {args.id}')
+    m = meta(cr)
+    from_tip, from_base = m.get('review_tip') or old_tip, m.get('review_base_tip') or old_base
+    changed = result['tip'] != from_tip or result['baseTip'] != from_base
+    if changed:
+        ranges = git(wt, 'range-diff', f'{from_base}..{from_tip}', f"{result['baseTip']}..{result['tip']}", check=False)
+        if not ranges.returncode:
+            print(f"range-diff covered..current:\n{ranges.stdout.decode('utf-8', 'replace').rstrip() or '(no changes)'}")
+        show_rebase_evidence(wt, cr, from_base, result['baseTip'], result['tip'])
+    if not merging_user_edit and route_uncovered(board, cr, cr_info(board, cr)):
+        print(f'{args.id}: the series changed since its last review; sent to agent review')
     return 0
 
 
@@ -4771,7 +5010,8 @@ def review_open(board: Board, args) -> int:
             git(main, 'worktree', 'add', '-b', branch, str(wt), tip)
     set_upstream(main, branch, upstream)
     if not already:
-        put_meta(item, **{OPENED: tip})
+        put_meta(item, **{OPENED: tip}, **({'user_seen_tip': tip, 'user_seen_base_tip': meta(item).get('base_sha') or found[1]}
+                                          if board.is_cr(args.id) else {}))
     stale = fetch_board(main)
     print(workspace_or_folder(wt))
     print(f'{args.id}: open for your review in {wt} on {branch} (upstream {BOARD_REMOTE}/{upstream}); your edits are commits after {tip[:12]} or uncommitted changes'
@@ -4934,17 +5174,19 @@ def cr_edits(board: Board, args) -> int:
     comment(args.id, f'board cr edits: the review edits of {wt}@{opened[:12]} recorded as yours ({", ".join(c[:12] for c in recorded)}).')
     result = checked_sync(board, cr, main, wt, args)  # rebased onto the base, then the chosen gate (r11-q38)
     board._cr.pop(args.id, None)
+    routed = route_uncovered(board, cr, cr_info(board, cr))
+    if routed:
+        print(f'{args.id}: the series changed since its last review; sent to agent review')
     if result['code']:
-        rebased = f"; the branch was rebased to {result['tip'][:12]}: board review open {args.id} shows it again" if result['tip'] != new_tip else ''
-        print(f"{check_said(args, False)} (exit {result['code']}):\n{result['output']}\n"
-              f"nothing lands; the edit commits stay on {branch} and {args.id} waits for the user: fix it{rebased}, or board return {args.id} \"<findings>\" sends it to a worker")
+        print(f"{check_said(args, False)} (exit {result['code']}):\n{result['output']}")
+        if not routed:
+            rebased = f"; the branch was rebased to {result['tip'][:12]}: board review open {args.id} shows it again" if result['tip'] != new_tip else ''
+            print(f"nothing lands; the edit commits stay on {branch} and {args.id} waits for the user: fix it{rebased}, or board return {args.id} \"<findings>\" sends it to a worker")
         return 1
-    stored = 'full check passed' if not (args.gate or args.no_gate) else f'{check_said(args)} (this tip only, never a full check)'
-    if not review_current(cr, {'tip': result['tip'], 'baseTip': result['baseTip'], 'main': main}):  # the rebase moved its base
-        print(f"stored: {stored} for {result['tip'][:12]}; the review is of the old base: board cr refresh {args.id} shows what came in; "
-              f"if the review still holds, board cr refresh {args.id} --review-holds, then board cr land {args.id} --tip {result['tip'][:12]}")
+    if routed:
         return 0
-    print(f"stored: {stored} for {result['tip'][:12]}; land with board cr land {args.id} --tip {result['tip'][:12]}")
+    stored = 'full check passed' if not (args.gate or args.no_gate) else f'{check_said(args)} (this tip only, never a full check)'
+    print(f"stored: {stored} for {result['tip'][:12]}; land with board cr land {args.id} --tip {result['tip']} --base {result['baseTip']}")
     return 0
 
 
@@ -4981,7 +5223,7 @@ def record_merged(board: Board, args, main: Path) -> int:
     put_meta(cr, review_edits=json.dumps([{'commit': commit if n == at else one} for n, one in enumerate(entries)]))  # in place of the pre-rebase commit, which no branch holds now
     comment(args.id, f'board cr edits: the merge {commit[:12]} of a conflict on the user\'s edit {entries[at][:12]}, confirmed by the user, recorded as their edit in its place.')
     board._cr.pop(args.id, None)
-    print(f'recorded {commit[:12]} as the user\'s edit on {args.id}; land with board cr land {args.id} --tip {tip[:12]} once its check is current')
+    print(f'recorded {commit[:12]} as the user\'s edit on {args.id}; Accept the current row pair with board cr land {args.id} --tip <tip> --base <base> once its check is current')
     return 0
 
 
@@ -5086,7 +5328,7 @@ def follow_up(board: Board, ratification: dict, landed: dict, tip: str, commit: 
         return 1, made
     print(f'follow-up {made} created: the edits of {wt} are its commits on {branch} in {new_wt}, rebased to {result["tip"][:12]} on {target}; '
           + (check_said(args) if passed else f'{check_said(args, False)}:\n{tail(output)}\nfix it, or board return {made} "<findings>" sends it to a worker')
-          + f'; it waits for the user\'s Accept (board cr land {made} --tip {result["tip"][:12]})')
+          + f'; it waits for the user\'s Accept (board cr land {made} --tip {result["tip"][:12]} --base {result["baseTip"][:12]})')
     return (0 if passed else 1), made
 
 
@@ -7011,8 +7253,9 @@ EXAMPLES = {
     'gate resolve': 'board gate resolve <gate> --reason "capability shipped"',
     'gate': 'board gate create --blocks <id> --reason "waits for the upstream"',
     'block': 'board block <item> <item> --on <blocker> --reason "waits for the cache ruling"  (--reason optional: decision or gate blocker, milestone item)',
-    'cr land': 'board cr land <cr> --tip <sha>',
-    'cr refresh': 'board cr refresh <cr> [--review-holds]',
+    'cr land': 'board cr land <cr> --tip <sha> --base <sha>',
+    'cr refresh': 'board cr refresh <cr>',
+    'cr request-review': 'board cr request-review <cr> ["reason"]',
     'cr reject': 'board cr reject <cr> "approach X fails because Y"',
     'ratify': 'board ratify <ratification> yes | edits [-m "msg"] [--gate "<cmd>" | --no-gate "docs only" | --checks] | no -m "what the user wants"',
     'cr edits': 'board cr edits <cr> --tip <sha> [--commit -m "fix typo" (--no-gate "docs only" | --gate "<cmd>" | --checks)] | board cr edits <cr> --merged <commit>',
@@ -7021,10 +7264,10 @@ EXAMPLES = {
     'ruling revise': 'board ruling revise <old> --title "May X replace Y?" --body-file packet.md --partial "Rule 2" --holds <id>,<id> [--dry-run]  (or --deps blocks:<id>)',
     'ruling release': 'board ruling release <id> <id> --closes <question>=<id> --closes <question>=<id>,<id>',
     'ruling supersede': 'board ruling supersede <old> --with <new> --partial "Rule 2"',
-    'cr': 'board cr land <cr> --tip <sha>',
+    'cr': 'board cr land <cr> --tip <sha> --base <sha>',
     'ruling': 'board ruling record <id> record.md',
     'bd': 'board bd list --status open --json  (bd runs read-only: writes have board verbs; board bd --raw --yes <args> when none does)',
-    'handover': 'board handover <id> "pnpm test: exit 0, 412 passed; typecheck exit 0"',
+    'handover': 'board handover <id> "pnpm test: exit 0, 412 passed; typecheck exit 0" [--no-agent-review "changelog only"]',
     'return': 'board return <id> "test x fails: <finding>"',
     'take': 'board take <id>',
     'unclaim': 'board unclaim <id>',
@@ -7121,7 +7364,7 @@ def pointer_for(word: str, rest: list[str], groups: dict) -> str | None:
 
 
 GIT_READERS = {'console', 'queue', 'health', 'position', 'check', 'mine'}  # change no git state: they read it through one GitView
-CR_AWARE = {'claim', 'handover', 'return', 'unclaim', 'take', 'cr land', 'cr reject', 'cr refresh', 'cr edits', 'review open', 'ratify', 'queue', 'health', 'position', 'console', 'check', 'mine', 'block'}
+CR_AWARE = {'claim', 'handover', 'return', 'unclaim', 'take', 'cr land', 'cr reject', 'cr refresh', 'cr request-review', 'cr edits', 'review open', 'ratify', 'queue', 'health', 'position', 'console', 'check', 'mine', 'block'}
 
 
 def set_view(board: Board, chosen: str | None) -> None:
@@ -7176,7 +7419,7 @@ def run_command(argv: list[str]) -> int:
 
     # Kind groups (r15-q80): verbs that act on one kind of item; a bare group prints its verbs.
     groups = {}
-    for group, text in (('cr', 'change request verbs: land, refresh, edits, reject'), ('ruling', 'ruling verbs: record, revise, release, supersede'),
+    for group, text in (('cr', 'change request verbs: land, refresh, request-review, edits, reject'), ('ruling', 'ruling verbs: record, revise, release, supersede'),
                         ('review', "the user's review of a change request or ratification: open"),
                         ('field', "an item's long fields (description, design, acceptance, notes): export, apply, discard"),
                         ('gate', 'human gates: create, resolve')):
@@ -7307,15 +7550,18 @@ def run_command(argv: list[str]) -> int:
     sub.add_argument('ids', nargs='+', metavar='item', type=board_id)
     sub.add_argument('--on', dest='blocker', required=True, type=board_id)
     sub.add_argument('--reason', type=nonempty, help='why it waits; required for a work item, optional on a decision or gate blocker or a milestone')
-    sub = add('land', "fast-forward the target to a change request's tip (its Accept), or pass its design checkpoint with --checkpoint", land, group='cr')
+    sub = add('land', "Accept the tip/base pair shown at Accept; --checkpoint accepts a design", land, group='cr')
     sub.add_argument('id', type=board_id)
-    sub.add_argument('--tip', metavar='SHA', help='the tip you reviewed: refused when the branch moved since')
+    sub.add_argument('--tip', metavar='SHA', help='the tip shown at Accept; required for a change request')
+    sub.add_argument('--base', metavar='SHA', help='the base tip shown at Accept; required for a change request')
     sub.add_argument('--checkpoint', action='store_true', help="accept a user design checkpoint: the change request returns to planning, nothing lands")
     sub.add_argument('--design', metavar='HASH', help='required with --checkpoint: the design hash `board claim` printed; refused when the design text changed since')
-    sub = add('refresh', "rebase a change request onto its base in its worktree, set up, check, and print the range-diff and the incoming files", refresh, group='cr')
+    sub = add('refresh', "rebase, set up, check, and show the CR files and incoming commits with their files", refresh, group='cr')
     sub.add_argument('id', type=board_id)
-    sub.add_argument('--review-holds', action='store_true', help='the triage found the incoming change does not touch it: keep its review for the new (tip, base tip); refused unless the check passes and its commits are the reviewed changes')
     gate_options(sub, nonempty)
+    sub = add('request-review', "send the change since its last review to agent review", request_review, group='cr')
+    sub.add_argument('id', type=board_id)
+    sub.add_argument('reason', nargs='?', type=nonempty, help='why the delta needs agent review (shown to the reviewer)')
     sub = add('edits', "show the user's edits in the item's review (commits after the opened tip and uncommitted changes), or with --commit record them as the user's and end the review; --merged records a merge the user confirmed", cr_edits, group='cr')
     sub.add_argument('id', type=board_id)
     sub.add_argument('--tip', metavar='SHA', help='the tip the review was opened at (required without --merged): `board show` names it')
@@ -7370,6 +7616,7 @@ def run_command(argv: list[str]) -> int:
     sub = add('handover', 'comment the evidence and hand your item over for review', handover)
     sub.add_argument('id', type=board_id)
     sub.add_argument('evidence', type=nonempty)
+    sub.add_argument('--no-agent-review', metavar='REASON', type=nonempty, help="route an authored change to the user's Accept without agent review; see skills/shared/acceptance.md Review policy")
     gate_options(sub, nonempty)
     sub = add('return', 'return a claimed review to the work queue with its findings', return_item)
     sub.add_argument('id', type=board_id)

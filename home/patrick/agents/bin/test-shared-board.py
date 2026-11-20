@@ -954,6 +954,9 @@ def t_cr() -> None:
         rc, out, err, _ = run('a', 'handover', cr, 'reviewed: fine', role='solo')
         return rc, out, err
 
+    (side / 'overlap.txt').write_text('base line one\n' + ''.join(f'base line {n}\n' for n in range(2, 10)))
+    git('add', 'overlap.txt', cwd=side)
+    git('commit', '-q', '-m', 'seed overlap fixture', cwd=side)
     a = create('a', 'change request A')
     a1 = task(a, 'A item')
     main_tip = git('rev-parse', target, cwd=side).strip()
@@ -971,6 +974,10 @@ def t_cr() -> None:
     rc, _, err, _ = run('a', 'handover', a, 'too early', role='agent')
     check(rc == 1 and 'items still open' in err, 'cr: hand-over refuses open items', err)
     worker_pass(a, a1, 'a.txt')
+    overlap = wt(a) / 'overlap.txt'
+    overlap.write_text('CR line one\n' + ''.join(f'base line {n}\n' for n in range(2, 10)))
+    git('add', 'overlap.txt', cwd=wt(a))
+    git('commit', '-q', '-m', 'edit first overlap line', cwd=wt(a))
     (wt(a) / 'dirty.txt').write_text('x\n')
     rc, _, err, _ = run('a', 'handover', a, 'dirty', role='agent')
     check(rc == 1 and 'uncommitted changes' in err, 'cr: hand-over refuses a dirty worktree', err)
@@ -983,11 +990,102 @@ def t_cr() -> None:
     rc, _, err, _ = run('a', 'cr', 'land', a, role='agent')
     check(rc == 1 and 'only a lead or solo' in err, 'cr: an agent session cannot land', err)
     tip = git('rev-parse', 'HEAD', cwd=wt(a)).strip()
-    rc, _, err, _ = run('a', 'cr', 'land', a, '--tip', 'deadbee')
+    rc, _, err, _ = run('a', 'cr', 'land', a, '--tip', main_tip, '--base', main_tip)
     check(rc == 1 and 'branch moved' in err and git('rev-parse', target, cwd=side).strip() == main_tip, 'cr: land --tip refuses a moved branch', err)
-    rc, out, err, _ = run('a', 'cr', 'land', a, '--tip', tip[:9])
-    check(rc == 0 and git('rev-parse', target, cwd=side).strip() == tip and items('a')[a]['status'] == 'closed' and not wt(a).exists()
-          and not git('branch', '--list', f'cr/{a}', cwd=side).strip(), 'cr: land fast-forwards the target, closes the CR and removes worktree and branch', err + out)
+    rc, out, err, _ = run('a', 'review', 'open', a, role='solo')
+    check(rc == 0 and meta_of(a).get('opened_tip') == tip, 'cr: the user opens the reviewed branch at its seen tip', err + out)
+    (side / 'land-base.txt').write_text('base moved after Accept\n')
+    (side / 'overlap.txt').write_text('base line one\n' + ''.join(f'base line {n}\n' for n in range(2, 9)) + 'main line nine\n')
+    git('add', 'land-base.txt', cwd=side)
+    git('add', 'overlap.txt', cwd=side)
+    git('commit', '-q', '-m', 'advance target after Accept', cwd=side)
+    moved_base = git('rev-parse', target, cwd=side).strip()
+    rc, out, err, _ = run('a', 'cr', 'land', a, '--tip', tip, '--base', main_tip)
+    check(rc == 1 and items('a')[a]['status'] == 'needs_acceptance'
+          and git('rev-parse', target, cwd=side).strip() == moved_base
+          and 'advance target after Accept' in (err + out),
+          'cr: a moved base refuses the seen pair and shows incoming commits without changing coverage', err + out)
+    rc, console, err, _ = run('a', 'console')
+    row = next(one for one in json.loads(console)['crs'] if one['id'] == a)
+    incoming = row['acceptance']['incomingCommits']
+    moved = next(one for one in incoming if one['subject'] == 'advance target after Accept')
+    check(rc == 0 and row['acceptance']['incomingBaseTip'] == main_tip
+          and 'land-base.txt' in moved['files'] and moved['crFiles'] == ['overlap.txt'],
+          'cr: the Accept JSON lists incoming commits and marks paths overlapping CR files', err + str(row['acceptance']))
+    rc, out, err, _ = run('a', 'cr', 'land', a, '--tip', tip, '--base', moved_base)
+    landed = meta_of(a)
+    rebased_tip = git('rev-parse', target, cwd=side).strip()
+    check(rc == 0 and landed.get('check_result') == 'pass',
+          'cr: one Accept call rebases and checks the exact current row pair', err + out)
+    check(rc == 0 and items('a')[a]['status'] == 'closed' and landed.get('review_tip') == tip
+          and landed.get('review_base_tip') == main_tip and landed.get('check_result') == 'pass'
+          and landed.get('check_tip') == rebased_tip and landed.get('check_base_tip') == moved_base,
+          'cr: one exact current pair lands with its passing check and clean replay', err + out + str(landed))
+    check(not meta_of(a).get('opened_tip') and not wt(a).exists()
+          and not git('branch', '--list', f'cr/{a}', cwd=side).strip(), 'cr: land removes the CR worktree and branch')
+
+    a_stale = create('a', 'stale seen pair')
+    stale_item = task(a_stale, 'stale pair item')
+    run('a', 'claim', a_stale, role='agent')
+    worker_pass(a_stale, stale_item, 'stale.txt')
+    to_review(a_stale)
+    review_pass(a_stale)
+    stale_seen = git('rev-parse', f'refs/heads/cr/{a_stale}', cwd=side).strip()
+    stale_base = git('rev-parse', target, cwd=side).strip()
+    (side / 'stale-base-one.txt').write_text('first incoming base move\n')
+    git('add', 'stale-base-one.txt', cwd=side)
+    git('commit', '-q', '-m', 'move base for stale pair', cwd=side)
+    moved_again = git('rev-parse', target, cwd=side).strip()
+    rc, out, err, _ = run('a', 'cr', 'land', a_stale, '--tip', stale_seen, '--base', stale_base)
+    check(rc == 1 and 'base moved since the pair you saw' in err and 'move base for stale pair' in out
+          and git('rev-parse', target, cwd=side).strip() == moved_again
+          and meta_of(a_stale).get('review_tip') == stale_seen,
+          'cr: a stale base pin refuses without advancing review coverage', err + out)
+    (side / 'stale-base-two.txt').write_text('second incoming base move\n')
+    git('add', 'stale-base-two.txt', cwd=side)
+    git('commit', '-q', '-m', 'move base after refresh', cwd=side)
+    newest_base = git('rev-parse', target, cwd=side).strip()
+    rc, out, err, _ = run('a', 'cr', 'land', a_stale, '--tip', stale_seen, '--base', moved_again)
+    check(rc == 1 and 'base moved since the pair you saw' in err and 'move base after refresh' in out
+          and items('a')[a_stale]['status'] == 'needs_acceptance',
+          'cr: concurrent target movement invalidates the exact refreshed pins', err + out)
+    rc, out, err, _ = run('a', 'cr', 'land', a_stale, '--tip', stale_seen, '--base', newest_base)
+    next_tip = meta_of(a_stale).get('check_tip')
+    check(rc == 0 and items('a')[a_stale]['status'] == 'closed'
+          and git('rev-parse', target, cwd=side).strip() == next_tip,
+          'cr: the latest exact pair lands after a fresh passing check', err + out)
+
+    direct_land = create('a', 'direct route moved-base landing')
+    direct_land_item = task(direct_land, 'direct route landing item')
+    run('a', 'claim', direct_land, role='agent')
+    worker_pass(direct_land, direct_land_item, 'direct-land.txt')
+    rc, out, err, _ = run('a', 'handover', direct_land, 'documentation only', '--no-agent-review', 'documentation only', role='agent')
+    direct_seen = git('rev-parse', f'refs/heads/cr/{direct_land}', cwd=side).strip()
+    direct_seen_base = git('rev-parse', target, cwd=side).strip()
+    (side / 'direct-land-base.txt').write_text('unrelated incoming change for direct route\n')
+    git('add', 'direct-land-base.txt', cwd=side)
+    git('commit', '-q', '-m', 'move base for direct route land', cwd=side)
+    direct_moved_base = git('rev-parse', target, cwd=side).strip()
+    rc, out, err, _ = run('a', 'cr', 'land', direct_land, '--tip', direct_seen, '--base', direct_seen_base)
+    check(rc == 1 and 'move base for direct route land' in out and 'base moved since the pair you saw' in err
+          and meta_of(direct_land).get('no_agent_review_reason') == 'documentation only',
+          'cr: direct user coverage also refuses a moved seen pair', err + out)
+    (side / 'direct-land.txt').write_text('overlapping user edit\n')
+    rc, out, err, _ = run('a', 'cr', 'land', direct_land, '--tip', direct_seen, '--base', direct_moved_base)
+    direct_rebased_tip = git('rev-parse', f'refs/heads/cr/{direct_land}', cwd=side).strip()
+    direct_check_at = meta_of(direct_land).get('check_at')
+    blocked_pending = meta_of(direct_land)
+    check(rc == 1 and 'land blocked' in err and blocked_pending.get('landing') is None
+          and blocked_pending.get('review_tip') is None and blocked_pending.get('no_agent_review_reason') == 'documentation only'
+          and git('rev-parse', target, cwd=side).strip() == direct_moved_base,
+          'cr: a failed land preflight leaves direct-route coverage unchanged', err + out + str(blocked_pending))
+    (side / 'direct-land.txt').unlink()
+    rc, out, err, _ = run('a', 'cr', 'land', direct_land, '--tip', direct_rebased_tip, '--base', direct_moved_base)
+    direct_landed = meta_of(direct_land)
+    check(rc == 0 and items('a')[direct_land]['status'] == 'closed'
+          and direct_landed.get('review_tip') is None
+          and direct_landed.get('no_agent_review_reason') == 'documentation only' and direct_landed.get('check_at') == direct_check_at,
+          'cr: successful direct-route landing keeps only its reason and reuses its check', err + out + str(direct_landed))
 
     b = create('a', 'change request B', '--metadata', 'look=after')
     b1 = task(b, 'B item')
@@ -1070,6 +1168,10 @@ def t_cr() -> None:
         rc, _, err, _ = run('a', 'claim', named, role='autopilot')
         check(rc != 0 and "user's Accept" in err and not items('a')[named].get('assignee'),
               f'{named}: autopilot is refused a named claim of a finished CR', err)
+    for unused_accept in (finished, waiting_finished):
+        rc, out, err, _ = run('a', 'cr', 'reject', unused_accept, 'test fixture cleanup', role='solo')
+        check(rc == 0 and items('a')[unused_accept]['status'] == 'closed',
+              f'{unused_accept}: the negative Accept fixture leaves the queue', err + out)
     waiting_checkpoint = create('a', 'autopilot user checkpoint that waits', '--status', 'needs_acceptance', '--metadata', 'checkpoint=user')
     bd('a', 'dep', 'add', waiting_checkpoint, create('a', 'autopilot checkpoint blocker', kind='task'))
     rc, _, err, _ = run('a', 'claim', waiting_checkpoint, role='autopilot')
@@ -1083,6 +1185,9 @@ def t_cr() -> None:
     check(rc == 0 and checkpoint_in_queue in output and accepted_queue_items[checkpoint_in_queue].get('assignee')
           and accepted_queue_items[finished_in_queue].get('assignee') is None,
           'autopilot bare claim skips a finished CR and takes the user design checkpoint', err + output)
+    rc, out, err, _ = run('a', 'cr', 'reject', finished_in_queue, 'test fixture cleanup', role='solo')
+    check(rc == 0 and items('a')[finished_in_queue]['status'] == 'closed',
+          f'{finished_in_queue}: the queue fixture leaves the refresh queue', err + out)
     returned = create('a', 'autopilot returned checkpoint', '--status', 'needs_acceptance', '--metadata', 'checkpoint=user')
     create('a', f'{returned} design', '--parent', returned, kind='design')
     rc, _, err, _ = run('a', 'return', returned, 'rework the design', role='agent')
@@ -1112,11 +1217,14 @@ def t_cr() -> None:
     rc, _, err, _ = run('a', 'cr', 'land', child_cr)
     check(rc == 1 and 'has not landed' in err, 'cr: a CR with a CR base never lands before its base', err)
     base_tip = git('rev-parse', 'HEAD', cwd=wt(base_cr)).strip()
-    rc, out, err, _ = run('a', 'cr', 'land', base_cr, '--tip', base_tip[:9])
+    base_pair_tip = git('rev-parse', f'refs/heads/cr/{base_cr}', cwd=side).strip()
+    base_pair_base = git('rev-parse', target, cwd=side).strip()
+    rc, out, err, _ = run('a', 'cr', 'land', base_cr, '--tip', base_pair_tip, '--base', base_pair_base)
     check(rc == 0 and meta_of(child_cr).get('base') == target and items('a')[base_cr]['status'] == 'closed',
           'cr: landing the base resets the CRs stacked on it to the target', err + out)
     child_tip = git('rev-parse', 'HEAD', cwd=wt(child_cr)).strip()
-    rc, out, err, _ = run('a', 'cr', 'land', child_cr, '--tip', child_tip[:9])
+    child_base = git('rev-parse', target, cwd=side).strip()
+    rc, out, err, _ = run('a', 'cr', 'land', child_cr, '--tip', child_tip, '--base', child_base)
     check(rc == 0 and git('rev-parse', target, cwd=side).strip() == child_tip and subprocess.run(['git', 'merge-base', '--is-ancestor', base_tip, target], cwd=side).returncode == 0,
           'cr: the child lands once its base has', err + out)
 
@@ -1135,14 +1243,204 @@ def t_cr() -> None:
     run('a', 'claim', e, role='agent')
     worker_pass(e, e1, 'e.txt')
     to_review(e)
-    run('a', 'claim', e, role='solo')
+    review_pass(e)
+    covered = meta_of(e).get('review_tip')
     rc, _, err, _ = run('a', 'return', e, 'rename the file', role='solo')
     row = items('a')[e]
-    check(rc == 0 and row['status'] == 'open' and not row.get('assignee') and wt(e).is_dir() and git('branch', '--list', f'cr/{e}', cwd=side).strip(),
-          'cr: return leaves the CR open and unassigned, its worktree and branch kept', err)
+    check(rc == 0 and row['status'] == 'open' and not row.get('assignee') and wt(e).is_dir() and git('branch', '--list', f'cr/{e}', cwd=side).strip()
+          and meta_of(e).get('review_tip') == covered, 'cr: Return keeps the prior reviewed range and leaves the worktree and branch', err)
     rc, out, err, _ = run('a', 'cr', 'reject', e, 'the approach fails')
     check(rc == 0 and items('a')[e]['status'] == 'closed' and git('branch', '--list', f'cr/{e}', cwd=side).strip() and wt(e).is_dir(),
           'cr: reject closes it unlanded, the branch and worktree stay until confirmed', err + out)
+
+    f = create('a', 'direct user review')
+    f1 = task(f, 'F item')
+    run('a', 'claim', f, role='agent')
+    worker_pass(f, f1, 'f.txt')
+    rc, out, err, _ = run('a', 'handover', f, 'changelog only', '--no-agent-review', 'merged changelog bullet', role='agent')
+    direct_tip = git('rev-parse', 'HEAD', cwd=wt(f)).strip()
+    direct_base_tip = git('rev-parse', target, cwd=side).strip()
+    direct_meta = meta_of(f)
+    check(rc == 0 and items('a')[f]['status'] == 'needs_acceptance' and direct_meta.get('no_agent_review_reason') == 'merged changelog bullet',
+          'cr: eligible no-agent handover reaches Accept with its reason', err + out)
+    (side / 'f.txt').write_text('uncommitted edit that overlaps the landing\n')
+    rc, out, err, _ = run('a', 'cr', 'land', f, '--tip', direct_tip, '--base', direct_base_tip)
+    failed_meta = meta_of(f)
+    check(rc == 1 and 'land blocked' in err and failed_meta.get('review_tip') is None
+          and failed_meta.get('no_agent_review_reason') == 'merged changelog bullet',
+          'cr: a refused direct Accept does not record operative user review coverage', err + str(failed_meta))
+    (side / 'f.txt').unlink()
+    rc, out, err, _ = run('a', 'cr', 'land', f, '--tip', direct_tip, '--base', direct_base_tip)
+    final_meta = meta_of(f)
+    check(rc == 0 and items('a')[f]['status'] == 'closed' and final_meta.get('review_tip') is None and final_meta.get('no_agent_review_reason') == 'merged changelog bullet',
+          'cr: direct Accept lands with its route reason', err + out)
+
+    h = create('a', 'direct review with a moved base')
+    h1 = task(h, 'H item')
+    run('a', 'claim', h, role='agent')
+    worker_pass(h, h1, 'h.txt')
+    rc, out, err, _ = run('a', 'handover', h, 'changelog only', '--no-agent-review', 'merged changelog bullet', role='agent')
+    h_tip = git('rev-parse', 'HEAD', cwd=wt(h)).strip()
+    h_base = git('rev-parse', target, cwd=side).strip()
+    (side / 'direct-base.txt').write_text('incoming unrelated change\n')
+    git('add', 'direct-base.txt', cwd=side)
+    git('commit', '-q', '-m', 'move base for direct review', cwd=side)
+    direct_base = git('rev-parse', target, cwd=side).strip()
+    rc, out, err, _ = run('a', 'cr', 'land', h, '--tip', h_tip, '--base', h_base)
+    check(rc == 1 and 'move base for direct review' in out and 'base moved since the pair you saw' in err,
+          'cr: a direct user route refuses a moved seen pair and shows incoming commits', err + out)
+    rc, _, err, _ = run('a', 'cr', 'request-review', h, 'incoming change affects this CR', role='autopilot')
+    check(rc == 1 and 'only a lead or solo' in err,
+          'cr: an unheld non-deciding session cannot request review', err)
+    rc, out, err, _ = run('a', 'claim', h, role='agent')
+    check(rc == 0, 'cr: a current CR holder can take the request', err + out)
+    rc, out, err, _ = run('a', 'cr', 'request-review', h, 'incoming change affects this CR', role='agent')
+    check(rc == 0 and items('a')[h]['status'] == 'in_review' and 'requested agent review' in out,
+          'cr: the current holder can route relevant changes without a lead detour', err + out)
+    rc, out, err = review_pass(h)
+    check(rc == 1 and 'tip moved' in err + out,
+          'cr: the first review gate reports its moved tip before recording a verdict', err + out)
+    rc, out, err = review_pass(h)
+    after_review_tip = git('rev-parse', 'HEAD', cwd=wt(h)).strip()
+    after_review_base = git('rev-parse', target, cwd=side).strip()
+    check(rc == 0 and items('a')[h]['status'] == 'needs_acceptance',
+          'cr: review passes after a moved-base Accept requests review', err + out)
+    rc, out, err, _ = run('a', 'cr', 'land', h, '--tip', after_review_tip, '--base', after_review_base, role='solo')
+    check(rc == 0 and items('a')[h]['status'] == 'closed' and git('rev-parse', target, cwd=side).strip() == after_review_tip,
+          'cr: exact current pair lands after the requested review passes', err + out)
+
+    i = create('a', 'prior agent coverage with a direct route')
+    i1 = task(i, 'I item')
+    run('a', 'claim', i, role='agent')
+    worker_pass(i, i1, 'i.txt')
+    to_review(i)
+    rc, out, err = review_pass(i)
+    prior_agent_tip = meta_of(i).get('review_tip')
+    prior_agent_base = meta_of(i).get('review_base_tip')
+    check(rc == 0 and items('a')[i]['status'] == 'needs_acceptance' and prior_agent_tip,
+          'cr: the prior coverage route starts with a real agent review', err + out)
+    rc, out, err, _ = run('a', 'return', i, 'the remaining note is documentation only', role='solo')
+    check(rc == 0 and items('a')[i]['status'] == 'open', 'cr: the direct route can follow a user Return', err + out)
+    run('a', 'claim', i, role='agent')
+    (wt(i) / 'i-doc.txt').write_text('documentation-only follow-up\n')
+    git('add', 'i-doc.txt', cwd=wt(i))
+    git('commit', '-q', '-m', 'documentation-only follow-up', cwd=wt(i))
+    rc, out, err, _ = run('a', 'handover', i, 'documentation-only follow-up', '--no-agent-review', 'documentation only', role='agent')
+    check(rc == 0 and meta_of(i).get('review_tip') == prior_agent_tip
+          and meta_of(i).get('review_base_tip') == prior_agent_base and items('a')[i]['status'] == 'needs_acceptance',
+          'cr: direct routing preserves the historical agent review pair', err + out)
+    (side / 'i-base.txt').write_text('unrelated incoming base change\n')
+    git('add', 'i-base.txt', cwd=side)
+    git('commit', '-q', '-m', 'move base for prior direct route', cwd=side)
+    direct_i_base = git('rev-parse', target, cwd=side).strip()
+    rc, out, err, _ = run('a', 'cr', 'refresh', i, role='agent')
+    direct_i_tip = git('rev-parse', 'HEAD', cwd=wt(i)).strip()
+    check(rc == 0 and items('a')[i]['status'] == 'needs_acceptance' and out.count('move base for prior direct route') == 1,
+          'cr: refresh rebases and checks without advancing coverage', err + out)
+    refreshed_i = meta_of(i)
+    check(refreshed_i.get('no_agent_review_reason') == 'documentation only'
+          and refreshed_i.get('review_tip') == prior_agent_tip and refreshed_i.get('review_base_tip') == prior_agent_base,
+          'cr: refresh preserves existing agent coverage', err + out + str(refreshed_i))
+    rc, out, err, _ = run('a', 'review', 'open', i, role='solo')
+    check(rc == 0, 'cr: the user sees the no-agent series before a conflict', err + out)
+    run('a', 'cr', 'edits', i, '--tip', direct_i_tip, '--commit', role='solo')
+    (side / 'i-doc.txt').write_text('main added this file too\n')
+    git('add', 'i-doc.txt', cwd=side)
+    git('commit', '-q', '-m', 'conflict with no-agent series', cwd=side)
+    rc, out, err, _ = run('a', 'cr', 'refresh', i, role='agent')
+    check(rc == 1 and 'stopped on a conflict' in err, 'cr: refresh stops at the no-agent conflict', err + out)
+    (wt(i) / 'i-doc.txt').write_text('resolved documentation change\n')
+    git('add', 'i-doc.txt', cwd=wt(i))
+    rc, out, err, _ = run('a', 'cr', 'refresh', i, role='agent')
+    direct_i_tip = git('rev-parse', 'HEAD', cwd=wt(i)).strip()
+    _, console, _, _ = run('a', 'console')
+    row_i = next(one for one in json.loads(console)['crs'] if one['id'] == i)
+    delta_i = row_i['acceptance']['delta'] or ''
+    check(rc == 0 and row_i['status'] == 'needs_acceptance' and not row_i['acceptance']['fullChange']
+          and row_i['acceptance']['seenTip'] != direct_i_tip and 'documentation-only follow-up' in delta_i
+          and any(line.split()[2:3] in (['!'], ['>']) for line in delta_i.splitlines()),
+          'cr: a resolved no-agent series stays at Accept with its changed delta', err + out + str(row_i['acceptance']))
+    rc, out, err, _ = run('a', 'cr', 'request-review', i, 'the incoming change affects this documentation', role='solo')
+    check(rc == 0 and items('a')[i]['status'] == 'in_review' and meta_of(i).get('review_tip') == prior_agent_tip,
+          'cr: a lead can route relevant incoming changes while preserving old agent coverage', err + out)
+    rc, out, err, _ = run('a', 'claim', i, role='agent')
+    check(rc == 0 and 'range-diff since the last covered series' in out and 'documentation-only follow-up' in out,
+          'cr: the re-review sees the uncovered author follow-up', err + out)
+    rc, out, err, _ = run('a', 'handover', i, 'reviewed the uncovered documentation change', role='agent')
+    check(rc == 0 and items('a')[i]['status'] == 'needs_acceptance'
+          and meta_of(i).get('review_tip') == direct_i_tip,
+          'cr: the agent can pass the request for review after reading the uncovered range', err + out)
+
+    j = create('a', 'recorded user edit after a base move')
+    j1 = task(j, 'J item')
+    run('a', 'claim', j, role='agent')
+    worker_pass(j, j1, 'j.txt')
+    to_review(j)
+    rc, out, err = review_pass(j)
+    j_covered_tip, j_covered_base = meta_of(j).get('review_tip'), meta_of(j).get('review_base_tip')
+    check(rc == 0 and items('a')[j]['status'] == 'needs_acceptance' and j_covered_tip and j_covered_base,
+          'cr: recorded-user-edit case starts from current agent coverage', err + out)
+    git('config', 'user.name', 'Test User', cwd=side)
+    git('config', 'user.email', 'test@example.test', cwd=side)
+    rc, out, err, _ = run('a', 'review', 'open', j, role='solo')
+    j_seen_tip = meta_of(j).get('user_seen_tip')
+    check(rc == 0 and j_seen_tip == j_covered_tip, 'cr: the user opened the covered series before editing', err + out)
+    (wt(j) / 'j.txt').write_text('user edit after agent review\n')
+    (side / 'j-base.txt').write_text('incoming base change during user edits\n')
+    git('add', 'j-base.txt', cwd=side)
+    git('commit', '-q', '-m', 'move base during user edits', cwd=side)
+    j_moved_base = git('rev-parse', target, cwd=side).strip()
+    rc, out, err, _ = run('a', 'cr', 'edits', j, '--tip', j_seen_tip, '--commit', '-m', 'record user edit', role='solo')
+    j_after_edit = meta_of(j)
+    check(rc == 0 and items('a')[j]['status'] == 'needs_acceptance'
+          and j_after_edit.get('review_tip') == j_covered_tip and j_after_edit.get('review_base_tip') == j_covered_base
+          and j_after_edit.get('user_seen_base_tip') == j_covered_base
+          and j_after_edit.get('base_sha') == j_moved_base,
+          'cr: recorded user edits after a base move keep prior coverage and remain at Accept', err + out + str(j_after_edit))
+    j_current_tip = git('rev-parse', f'refs/heads/cr/{j}', cwd=side).strip()
+    rc, out, err, _ = run('a', 'cr', 'land', j, '--tip', j_current_tip, '--base', j_moved_base)
+    check(rc == 0 and items('a')[j]['status'] == 'closed' and meta_of(j).get('review_tip') == j_covered_tip
+          and meta_of(j).get('review_base_tip') == j_covered_base,
+          'cr: a user edit cleanly replayed on the moved base lands on the exact current pair', err + out)
+
+    k = create('a', 'first Accept look after a base move')
+    k1 = task(k, 'K item')
+    run('a', 'claim', k, role='agent')
+    worker_pass(k, k1, 'k.txt')
+    k_fork = meta_of(k).get('base_sha')
+    rc, out, err, _ = run('a', 'handover', k, 'documentation-only change', '--no-agent-review', 'documentation only', role='agent')
+    check(rc == 0 and items('a')[k]['status'] == 'needs_acceptance' and k_fork,
+          'cr: first-look moved-base case begins with a user-only coverage route', err + out)
+    (side / 'k-base.txt').write_text('unrelated incoming base change before first Accept look\n')
+    git('add', 'k-base.txt', cwd=side)
+    git('commit', '-q', '-m', 'move base before first Accept look', cwd=side)
+    k_tip = git('rev-parse', f'refs/heads/cr/{k}', cwd=side).strip()
+    k_seen_base = git('rev-parse', target, cwd=side).strip()
+    rc, out, err, _ = run('a', 'cr', 'land', k, '--tip', k_tip, '--base', k_seen_base)
+    k_after_look = meta_of(k)
+    k_landed_tip = git('rev-parse', target, cwd=side).strip()
+    check(rc == 0 and items('a')[k]['status'] == 'closed' and k_after_look.get('user_seen_tip') == k_tip
+          and k_after_look.get('user_seen_base_tip') == k_seen_base and k_after_look.get('base_sha') == k_seen_base
+          and k_landed_tip == k_after_look.get('check_tip'),
+          'cr: first Accept on the exact current pair rebases, checks and lands in one call', err + out + str(k_after_look))
+
+    g = create('a', 'request a delta review')
+    g1 = task(g, 'G item')
+    run('a', 'claim', g, role='agent')
+    worker_pass(g, g1, 'g.txt')
+    to_review(g)
+    review_pass(g)
+    prior = meta_of(g).get('review_tip')
+    rc, out, err, _ = run('a', 'cr', 'request-review', g, 'please recheck this delta', role='solo')
+    after_request = meta_of(g)
+    check(rc == 0 and items('a')[g]['status'] == 'in_review' and after_request.get('review_tip') == prior
+          and 'requested agent review' in out, 'cr: Review requests agent delta review without erasing prior coverage', err + out)
+    rc, out, err = review_pass(g)
+    g_tip = git('rev-parse', 'HEAD', cwd=wt(g)).strip()
+    g_base = git('rev-parse', target, cwd=side).strip()
+    rc_land, land_out, land_err, _ = run('a', 'cr', 'land', g, '--tip', g_tip, '--base', g_base)
+    check(rc == 0 and rc_land == 0 and items('a')[g]['status'] == 'closed' and meta_of(g).get('review_tip') == prior,
+          'cr: re-review passes and lands the unchanged already-covered series', err + out + land_err + land_out)
 
 
 def t_move() -> None:

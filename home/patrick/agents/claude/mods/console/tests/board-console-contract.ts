@@ -12,7 +12,8 @@ export function cr(over: CrInit): Record<string, unknown> {
     base: 'main', branch: `cr/${over.id}`, worktree: `/main/.worktrees/${over.id}`, tip: sha(2), baseTip: sha(1),
     check: { state: 'current', tip: sha(2), baseTip: sha(1), at: '2026-11-11T09:00:00Z', result: 'pass', kind: 'full', command: null, reason: null, newFailures: [], baseCount: 3012, tipCount: 2972 },
     parent: null, children: [], unblocks: 0, unblocksDirect: 0, milestone: null,
-    problems: [], review: null, after: null, priority: 2, ownPriority: 2, raisedBy: null,
+    problems: [], review: null, acceptance: { seenTip: null, seenBaseTip: null, delta: 'full change', fullChange: true, noAgentReviewReason: null },
+    after: null, priority: 2, ownPriority: 2, raisedBy: null,
     ...over,
   }
 }

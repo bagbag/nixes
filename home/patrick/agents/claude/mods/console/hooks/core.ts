@@ -11,7 +11,7 @@ import {
   setRound, setRoundError, stepPressing, takeContinueAsked, takeRefreshAgain, updateOpened, updateQueued,
 } from './state'
 import {
-  CONTINUE_NO_ROUND, keepStartText, startAbandonedText, continueInHandText, continueText, declineFailedNote, acceptText, canAcceptCr, isWalkCr, itemSlot, missingReportText, openDialogText, questionListLine, questionListText, PROTOCOL_ARGS_DESCRIPTION, PROTOCOL_STDIN_DESCRIPTION, PROTOCOL_TOOL_DESCRIPTION, refreshText, returnText, updateText, STALE_DROP, stuckPassText, walkText,
+  CONTINUE_NO_ROUND, keepStartText, startAbandonedText, continueInHandText, continueText, declineFailedNote, acceptText, canAcceptCr, itemSlot, missingReportText, openDialogText, questionListLine, questionListText, PROTOCOL_ARGS_DESCRIPTION, PROTOCOL_STDIN_DESCRIPTION, PROTOCOL_TOOL_DESCRIPTION, refreshText, requestReviewText, returnText, updateText, STALE_DROP, stuckPassText, walkText,
 } from './words'
 
 type $ = EngineInterface
@@ -933,7 +933,7 @@ export async function pressView($: $, agentId: string | undefined): Promise<void
 // Single flight (git works on one tree at a time), held in state so the pane marks the pressed button and its step from the press on.
 type Step = (step: string) => Promise<void>
 
-export const crPressKey = (kind: 'open' | 'accept' | 'return' | 'update' | 'ratify', id: string): string => kind === 'ratify' ? `ratify-${id}-open` : `cr-${kind}-${id}`
+export const crPressKey = (kind: 'walk' | 'open' | 'accept' | 'review' | 'return' | 'update' | 'ratify', id: string): string => kind === 'ratify' ? `ratify-${id}-open` : `cr-${kind}-${id}`
 
 async function crPress($: $, pressed: { key: string; id: string; verb: string }, press: (step: Step) => Promise<string | null>): Promise<void> {
   const since = await $.clock.now()
@@ -983,10 +983,13 @@ async function openReview($: $, id: string, what: string, step: Step): Promise<s
   return ran.exitCode === 0 ? `${id} is opening in VS Code (${opened.open})` : `${what}: ${id} is open for your review (${opened.open}); VS Code did not open it (${ran.stderr.trim()})`
 }
 
-/** Open (`label`: the button's, Open or Walk through): view=code opens the request for your review (its worktree, on its branch) in VS Code; a result view or a design (it has no branch) sets no view and puts the walk-through request in the prompt. */
-export async function pressOpenCr($: $, cr: ConsoleCr, label: string): Promise<void> {
-  await crPress($, { key: crPressKey('open', cr.id), id: cr.id, verb: label }, async step => {
-    if (isWalkCr(cr)) return sendRequest($, walkText(cr))
+export async function pressWalkCr($: $, cr: ConsoleCr): Promise<void> {
+  await crPress($, { key: crPressKey('walk', cr.id), id: cr.id, verb: 'Walk through' }, () => sendRequest($, walkText(cr)))
+}
+
+/** Open the code change in its review worktree. */
+export async function pressOpenCr($: $, cr: ConsoleCr): Promise<void> {
+  await crPress($, { key: crPressKey('open', cr.id), id: cr.id, verb: 'Open' }, async step => {
     if (cr.tip === null || cr.baseTip === null) return `Change request: ${cr.id} has no branch tip to open`
     return openReview($, cr.id, 'Change request', step)
   })
@@ -1046,8 +1049,14 @@ export async function pressAcceptCr($: $, cr: ConsoleCr): Promise<void> {
   await crPress($, { key: crPressKey('accept', cr.id), id: cr.id, verb: 'Accept' }, async step => {
     const state = reviewState(cr)
     if ('said' in state) return state.said
-    return state.tip === null && cr.checkpoint !== 'user' ? `Change request: ${cr.id} has no branch tip` : sendRequest($, acceptText(cr, state.tip, state.edits))
+    if (cr.checkpoint !== 'user' && (cr.tip === null || cr.baseTip === null)) return `Change request: ${cr.id} has no branch tip/base pair`
+    return sendRequest($, acceptText(cr, state.tip, cr.baseTip, state.edits))
   })
+}
+
+/** Review: asks the lead to run the board's request-review action, reviewing the change since its last review. */
+export async function pressRequestReviewCr($: $, cr: ConsoleCr): Promise<void> {
+  await crPress($, { key: crPressKey('review', cr.id), id: cr.id, verb: 'Review' }, async () => sendRequest($, requestReviewText(cr)))
 }
 
 /** Return: the request with room for your changes, and your edits when you made any; the lead takes it from there. */

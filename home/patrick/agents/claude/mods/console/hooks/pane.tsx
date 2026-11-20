@@ -5,10 +5,10 @@ import type { EngineInterface, RenderPropsOf } from 'claude-code'
 
 import type { ConsoleBoard, ConsoleCr, ConsoleItem, ConsoleRatification, ConsoleQuestion, ConsoleRecord, ConsoleRole, ConsoleRound, ConsoleSection, ConsoleSession, ConsoleSuggestion } from '../types'
 
-import { crPressKey, ratifyPressKey, pressAcceptCr, pressContinue, pressOpenCr, pressOpenItem, pressOpenOverlaps, pressOpenRatification, pressOpenReason, pressOpenSettles, pressOpenSuggestion, pressRatify, pressReturnCr, pressUpdateCr, pressRole, pressRun, pressStart, pressView, pressWorkers, queuedRuns, runKey } from './core'
+import { crPressKey, ratifyPressKey, pressAcceptCr, pressContinue, pressOpenCr, pressOpenItem, pressOpenOverlaps, pressOpenRatification, pressOpenReason, pressOpenSettles, pressOpenSuggestion, pressRatify, pressRequestReviewCr, pressReturnCr, pressUpdateCr, pressRole, pressRun, pressStart, pressView, pressWalkCr, pressWorkers, queuedRuns, runKey } from './core'
 import { isRoundOpen, RELEASE_COMMAND, ROUND_ROLES, START_COMMAND } from './engine'
 import { getBoard, getExpanded, getFocus, getOpened, getPass, getPlaced, getPressing, getRole, getRound, getRoundError, getTurnRunning, setFocus, toggleExpanded } from './state'
-import { answerText, canUpdateCr, COUNT_GROUPS, countText, crDetailsText, crFailureParts, crFileHref, crMarks, crNewCountText, crKind, crPriorityHint, crPriorityText, crRowCheckText, crRows, crRowStageText, crSummaryText, crTreeText, crUnblocksHint, crUnblocksText, displayId, displayIds, fitText, canAcceptCr, isCrAccepting, isWalkCr, GROUND_BASE, plural, pullsText, recommendationMark, recommendationText, roleText, roundWords, runNoun, staleHolds, staleSessions, startHint, STEP_BACK_BASE, suggestionText } from './words'
+import { answerText, canUpdateCr, COUNT_GROUPS, countText, crDetailsText, crFailureParts, crFileHref, crMarks, crNewCountText, crKind, crPriorityHint, crPriorityText, crRowCheckText, crRows, crRowStageText, crSummaryText, crTreeText, crUnblocksHint, crUnblocksText, displayId, displayIds, fitText, canAcceptCr, isCrAccepting, GROUND_BASE, plural, pullsText, recommendationMark, recommendationText, roleText, roundWords, runNoun, staleHolds, staleSessions, startHint, STEP_BACK_BASE, suggestionText } from './words'
 import type { CrKind, LensCommand } from './words'
 
 type $ = EngineInterface
@@ -25,7 +25,7 @@ const STRIPE = 'rgb(50,50,50)'  // a fixed color a little darker than the dark t
 const PART_GAP = 2  // cells between the parts of line two
 const KIND_COLOR: Record<CrKind, string> = { design: 'planMode', code: 'claude', result: 'ide', 'in work': 'success' }  // the bar's color per kind; the legend reads the same map
 const BAR = '▌'  // the first cell of a request's title line: marks where it starts and shows the kind
-const CR_BUTTONS = { walk: 'Walk through', open: 'Open', accept: 'Accept', return: 'Return', update: 'Update' } as const
+const CR_BUTTONS = { walk: 'Walk through', open: 'Open', accept: 'Accept', review: 'Review', return: 'Return', update: 'Update' } as const
 /** The cells a row of plain buttons takes (labels and the separators between): they sit at the right edge, so Return lines up on every row. */
 const buttonsWidth = (labels: readonly string[]): number => labels.reduce((sum, label) => sum + label.length, 0) + BUTTON_SEP.length * Math.max(0, labels.length - 1)
 const SESSION_ORDER: Record<string, number> = { active: 0, idle: 1, gone: 3 }
@@ -660,13 +660,15 @@ export async function drawPane($: $, e: { surface: string; props: RenderPropsOf[
     if (view.crs.length > 0) {
       const queue = capped('crs', crRows(view.crs), CR_ROWS_SHOWN)
       const buttonsOf = (cr: ConsoleCr) => {
-        const walkLabel = isWalkCr(cr) ? CR_BUTTONS.walk : CR_BUTTONS.open
+        const opening = cr.checkpoint !== 'user' && cr.view === 'code'
         const accepting = isCrAccepting(cr)
         const landing = canAcceptCr(cr)
         const updating = canUpdateCr(cr, isRoundRole, pulls)
+        const review = accepting && cr.checkpoint !== 'user' && !!cr.acceptance?.noAgentReviewReason
         return {
-          accepting, landing, updating, width: buttonsWidth([...(accepting ? [walkLabel, ...(landing ? [CR_BUTTONS.accept] : []), CR_BUTTONS.return] : []), ...(updating ? [CR_BUTTONS.update] : [])]),
-          walkLabel, walkHint: isWalkCr(cr) ? 'Sends the walk-through request' : `Opens ${shown(cr.id)} for your review in its worktree: its change as Outgoing Changes, your edits as Changes`,
+          accepting, opening, landing, review, updating,
+          width: buttonsWidth([...(accepting ? [CR_BUTTONS.walk, ...(opening ? [CR_BUTTONS.open] : []), ...(landing ? [CR_BUTTONS.accept] : []), ...(review ? [CR_BUTTONS.review] : []), CR_BUTTONS.return] : []), ...(updating ? [CR_BUTTONS.update] : [])]),
+          openHint: `Opens ${shown(cr.id)} for your review in its worktree: its change as Outgoing Changes, your edits as Changes`,
         }
       }
       const crIdWidth = idWidth(queue.shown.map(one => one.cr.id))
@@ -688,6 +690,7 @@ export async function drawPane($: $, e: { surface: string; props: RenderPropsOf[
             const marks = crMarks(cr, boardPrefix).filter(mark => mark.isProblem || mark.isWarning === true)  // the quiet ones are the summary's
             const held = crTreeText(cr)
             const buttons = buttonsOf(cr)
+            const incoming = cr.acceptance?.incomingCommits ?? []
             hint.add(`bar-${cr.id}`, crRowStageText(cr))
             const unblocks = crUnblocksText(cr)
             if (unblocks !== null) hint.add(`unblocks-${cr.id}`, crUnblocksHint(cr, boardPrefix))
@@ -699,6 +702,8 @@ export async function drawPane($: $, e: { surface: string; props: RenderPropsOf[
             ]
             // the right group, flush against the right edge, in this order: the marks, the held word, the new-failure count and the check state
             const rest: { key: string; text: string; color: string }[] = [
+              ...(cr.acceptance?.noAgentReviewReason ? [{ key: 'no-agent-review', text: `no agent review: ${cr.acceptance.noAgentReviewReason}`, color: 'warning' }] : []),
+              ...(cr.acceptance?.delta && !cr.acceptance.fullChange ? [{ key: 'delta', text: 'delta since your look', color: 'suggestion' }] : []),
               ...marks.map(mark => ({ key: `mark-${mark.text}`, text: mark.text, color: mark.isProblem ? 'error' : 'warning' })),
               ...(held === null ? [] : [{ key: 'held', text: held, color: 'warning' }]),
               ...(count === null ? [] : [{ key: 'new', text: count, color: 'error' }]),
@@ -707,8 +712,10 @@ export async function drawPane($: $, e: { surface: string; props: RenderPropsOf[
             const rightWidth = rest.reduce((sum, one) => sum + one.text.length, 0) + PART_GAP * Math.max(0, rest.length - 1)
             const actions = [
               ...(buttons.accepting ? [
-                act(crPressKey('open', cr.id), buttons.walkLabel, () => pressOpenCr($, cr, buttons.walkLabel), buttons.walkHint, 'suggestion'),
+                act(crPressKey('walk', cr.id), CR_BUTTONS.walk, () => pressWalkCr($, cr), 'Sends the walk-through request', 'suggestion'),
+                ...(buttons.opening ? [act(crPressKey('open', cr.id), CR_BUTTONS.open, () => pressOpenCr($, cr), buttons.openHint, 'suggestion')] : []),
                 ...(buttons.landing ? [act(crPressKey('accept', cr.id), CR_BUTTONS.accept, () => pressAcceptCr($, cr), 'Sends the accept request; your session lands it', 'success', true)] : []),
+                ...(buttons.review ? [act(crPressKey('review', cr.id), CR_BUTTONS.review, () => pressRequestReviewCr($, cr), 'Requests agent review of the uncovered delta', 'suggestion')] : []),
                 act(crPressKey('return', cr.id), CR_BUTTONS.return, () => pressReturnCr($, cr), 'Puts the return request in your prompt, ready for your changes', undefined, true),
               ] : []),
               ...(buttons.updating ? [act(crPressKey('update', cr.id), CR_BUTTONS.update, () => pressUpdateCr($, cr, isRoundRole), isRoundRole ? 'Sends the update request: your session dispatches the refresh' : 'Sends the refresh request: rebase, checks and the range-diff', 'suggestion')] : []),
@@ -756,6 +763,14 @@ export async function drawPane($: $, e: { surface: string; props: RenderPropsOf[
                     </Box>
                   </Box>
                 </Box>
+                {incoming.length > 0 && <Box key={`cr-${cr.id}-incoming`} flexDirection="column" paddingLeft={2}>
+                  <Text key={`cr-${cr.id}-incoming-base`} color="warning">incoming since {cr.acceptance?.incomingBaseTip?.slice(0, 12) ?? 'covered base'}</Text>
+                  {incoming.map(commit => (
+                    <Text key={`cr-${cr.id}-incoming-${commit.tip}`} color="inactive" wrap="truncate-end">
+                      main {commit.tip.slice(0, 12)} {commit.subject}{commit.crFiles.length > 0 ? ` · touches CR files: ${commit.crFiles.join(', ')}` : ''} · files: {commit.files.join(', ') || 'none'}
+                    </Text>
+                  ))}
+                </Box>}
                 {slot(cr.id)}
                 {crDetails(cr)}
               </Box>

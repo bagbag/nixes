@@ -8,7 +8,7 @@ import { COUNTS, NO_ROUND, PANE_PROPS, SESSION, world } from './fixture'
 import { CR_TREE, git, repo, sha } from './review-world'
 import type { Repo } from './review-world'
 import { parseBoardConsole, parseRound } from '../hooks/engine'
-import { canUpdateCr, consoleText, countText, crCheckText, crDetailsText, crFailuresText, crMarks, crPriorityHint, crRows, crUnblocksHint, crUnblocksText, fitText } from '../hooks/words'
+import { canUpdateCr, consoleText, countText, crCheckText, crDetailsText, crFailuresText, crMarks, crPriorityHint, crRows, crUnblocksHint, crUnblocksText, fitText, requestReviewText } from '../hooks/words'
 import type { ConsoleBoard, ConsoleCr } from '../types'
 
 const PANE = { plugin: 'console', component: 'Pane', requestId: 'console', props: PANE_PROPS } as const
@@ -22,6 +22,7 @@ const texts = async (ui: { findAll: (query: { type: string }) => Promise<{ text:
   (await ui.findAll({ type: 'Text' })).map(one => one.text).join('\n')
 
 type Crs = Record<string, unknown>[]
+const directRoute = { seenTip: null, seenBaseTip: null, delta: null, fullChange: true, noAgentReviewReason: 'changelog only' }
 
 /** A world over a stand-in repo and a board queue; mounts the pane. */
 async function queued($: any, on: any, crs: Crs, r: Repo = repo(), init: Parameters<typeof world>[1] = {}) {
@@ -83,10 +84,40 @@ describe('change request queue', () => {
     await ui.unmount()
   })
 
-  test('Open, Accept and Return only where the request waits for you', async ($, on) => {
-    const { ui } = await queued($, on, [cr({ id: 'p-cr1' }), cr({ id: 'p-cr2', status: 'in_review' })])
-    for (const key of ['cr-open-p-cr1', 'cr-accept-p-cr1', 'cr-return-p-cr1']) expect(await ui.find({ key }), key).toBeDefined()
-    for (const key of ['cr-open-p-cr2', 'cr-accept-p-cr2', 'cr-return-p-cr2']) expect(await ui.find({ key }), key).toBeUndefined()
+  test('Open, Accept, Review and Return only where the request waits for you', async ($, on) => {
+    const { ui } = await queued($, on, [cr({ id: 'p-cr1', acceptance: directRoute }), cr({ id: 'p-cr2', status: 'in_review' })])
+    for (const key of ['cr-walk-p-cr1', 'cr-open-p-cr1', 'cr-accept-p-cr1', 'cr-review-p-cr1', 'cr-return-p-cr1']) expect(await ui.find({ key }), key).toBeDefined()
+    for (const key of ['cr-walk-p-cr2', 'cr-open-p-cr2', 'cr-accept-p-cr2', 'cr-review-p-cr2', 'cr-return-p-cr2']) expect(await ui.find({ key }), key).toBeUndefined()
+    await ui.unmount()
+  })
+
+  test('Review requests agent review of the change since its last review with the public board command', async ($, on) => {
+    const { ui, w, clock } = await queued($, on, [cr({ id: 'p-cr1', acceptance: { seenTip: sha(1), seenBaseTip: sha(0), delta: '1: old ! 1: new', fullChange: false, noAgentReviewReason: 'merged changelog only' } })])
+    expect((await ui.find({ key: 'cr-p-cr1-lines' }))?.text).toContain('delta since your look')
+    await ui.press({ key: 'cr-review-p-cr1' })
+    await clock.settle()
+    expect(w.prompts).toEqual([requestReviewText(cr({ id: 'p-cr1' }) as unknown as ConsoleCr)])
+    expect(w.prompts[0]).toContain('board cr request-review p-cr1')
+    await ui.unmount()
+  })
+
+  test('a no-agent-review reason is shown on the Accept row', async ($, on) => {
+    const { ui } = await queued($, on, [cr({ id: 'p-cr1', acceptance: { seenTip: null, seenBaseTip: null, delta: 'file | 2 +-', fullChange: true, noAgentReviewReason: 'merged changelog only' } })])
+    expect((await ui.find({ key: 'cr-p-cr1-lines' }))?.text).toContain('no agent review: merged changelog only')
+    await ui.unmount()
+  })
+
+  test('the Accept row lists every incoming commit and marks CR-file overlap', async ($, on) => {
+    const { ui } = await queued($, on, [cr({ id: 'p-cr1', acceptance: {
+      seenTip: sha(2), seenBaseTip: sha(1), delta: null, fullChange: false, noAgentReviewReason: null,
+      incomingBaseTip: sha(1), incomingCommits: [
+        { tip: sha(7), subject: 'unrelated change', files: ['docs/guide.md'], crFiles: [] },
+        { tip: sha(8), subject: 'touch config', files: ['README.md', 'src/config.ts'], crFiles: ['src/config.ts'] },
+      ],
+    } })])
+    const drawn = await texts(ui)
+    expect(drawn).toContain(`main ${sha(7).slice(0, 12)} unrelated change · files: docs/guide.md`)
+    expect(drawn).toContain(`main ${sha(8).slice(0, 12)} touch config · touches CR files: src/config.ts · files: README.md, src/config.ts`)
     await ui.unmount()
   })
 
@@ -272,7 +303,7 @@ describe('Open', () => {
   test('after any press the board refreshes once the action is done (r3-q14)', async ($, on) => {
     const ratifications = [{ id: 'p-rat1', cr: 'p-cr0', title: 'Move the clock', tip: sha(6), baseTip: sha(5), review: null }]
     const { w, ui, clock } = await queued($, on, [cr({ id: 'p-cr1' }), cr({ id: 'p-cr2', view: 'result' })], repo(), { ratifications })
-    for (const key of ['cr-open-p-cr1', 'cr-accept-p-cr1', 'cr-return-p-cr1', 'cr-open-p-cr2', 'ratify-p-rat1-open', 'ratify-p-rat1-yes']) {
+    for (const key of ['cr-open-p-cr1', 'cr-accept-p-cr1', 'cr-return-p-cr1', 'cr-walk-p-cr2', 'ratify-p-rat1-open', 'ratify-p-rat1-yes']) {
       const before = boardReads(w)
       await ui.press({ key })
       await clock.settle()
@@ -334,34 +365,27 @@ describe('Open', () => {
     await ui.unmount()
   })
 
-  test('view=result sets no view: the walk-through request is sent', async ($, on) => {
+  test('Walk through sends only a prompt for design, result and code rows; code also keeps Open', async ($, on) => {
     const r = repo()
-    const { ui, clock, w } = await queued($, on, [cr({ id: 'p-cr1', view: 'result', title: 'Remove X' })], r)
-    await ui.press({ key: 'cr-open-p-cr1' })
-    await clock.settle()
-    expect(w.prompts).toEqual(["Walk me through p-cr1's result (Remove X)."])
+    const design = cr({ id: 'p-design', title: 'Design Y', checkpoint: 'user', tip: null, baseTip: null, worktree: null })
+    const result = cr({ id: 'p-res', title: 'Remove X', view: 'result' })
+    const code = cr({ id: 'p-code', title: 'Fix Z' })
+    const { ui, clock, w } = await queued($, on, [design, result, code], r)
+    for (const id of ['p-design', 'p-res', 'p-code']) {
+      expect((await ui.find({ key: `cr-walk-${id}` }))?.text).toBe('Walk through')
+      await ui.press({ key: `cr-walk-${id}` })
+      await clock.settle()
+    }
+    expect(await ui.find({ key: 'cr-open-p-design' })).toBeUndefined()
+    expect(await ui.find({ key: 'cr-open-p-res' })).toBeUndefined()
+    expect((await ui.find({ key: 'cr-open-p-code' }))?.text).toBe('Open')
+    expect(w.prompts).toEqual([
+      "Walk me through p-design's design (Design Y).",
+      "Walk me through p-res's result (Remove X).",
+      "Walk me through p-code's change (Fix Z).",
+    ])
     expect(boardCalls(w, 'review')).toEqual([])
     expect(r.opened).toEqual([])
-    await ui.unmount()
-  })
-
-  test('a design has no branch: its button is Walk through, and it sends the walk-through request', async ($, on) => {
-    const r = repo()
-    const design = cr({ id: 'p-cr1', title: 'Design Y', checkpoint: 'user', tip: null, baseTip: null, worktree: null })
-    const { ui, clock, w } = await queued($, on, [design], r)
-    expect((await ui.find({ key: 'cr-open-p-cr1' }))?.text).toBe('Walk through')
-    await ui.press({ key: 'cr-open-p-cr1' })
-    await clock.settle()
-    expect(w.prompts).toEqual(["Walk me through p-cr1's design (Design Y)."])
-    expect(w.toasts).toEqual([])
-    expect(boardCalls(w, 'review')).toEqual([])
-    await ui.unmount()
-  })
-
-  test('the button reads Walk through for a result view and Open for code', async ($, on) => {
-    const { ui } = await queued($, on, [cr({ id: 'p-code' }), cr({ id: 'p-res', view: 'result' })])
-    expect((await ui.find({ key: 'cr-open-p-code' }))?.text).toBe('Open')
-    expect((await ui.find({ key: 'cr-open-p-res' }))?.text).toBe('Walk through')
     await ui.unmount()
   })
 
@@ -438,13 +462,13 @@ describe('scratch line', () => {
 describe('Accept, Return', () => {
   /** The board's `review` for a request open for your review since the tip `opened`. */
   const viewAt = (opened: string, over: Record<string, unknown> = {}) => ({ opened, edited: false, files: [], ...over })
-  const landLine = (n: number) => `board cr land p-cr1 --tip ${short(n)}`
+  const landLine = (n: number, base = 1) => `board cr land p-cr1 --tip ${short(n)} --base ${short(base)}`
 
   test('Accept of a request not open for review names its own tip and the board command that lands it', async ($, on) => {
     const { ui, clock, w, r } = await queued($, on, [cr({ id: 'p-cr1', title: 'Remove X', tip: sha(4) })])
     await ui.press({ key: 'cr-accept-p-cr1' })
     await clock.settle()
-    expect(w.prompts).toEqual([`Accept p-cr1 (Remove X): land it with \`${landLine(4)}\`.`])
+    expect(w.prompts).toEqual([`Accept p-cr1 (Remove X): land the exact tip/base pair shown on this row with \`${landLine(4)}\`.`])
     expect(r.all).toEqual([])  // the pane reads the board's JSON only, never git
     await ui.unmount()
   })
@@ -453,7 +477,7 @@ describe('Accept, Return', () => {
     const { ui, clock, w } = await queued($, on, [cr({ id: 'p-cr1', tip: sha(4) }), cr({ id: 'p-cr2', review: viewAt(sha(2), { edited: true, files: ['a.ts'] }) })])
     await ui.press({ key: 'cr-accept-p-cr1' })
     await clock.settle()
-    expect(w.prompts).toEqual([`Accept p-cr1 (Title of p-cr1): land it with \`${landLine(4)}\`.`])
+    expect(w.prompts).toEqual([`Accept p-cr1 (Title of p-cr1): land the exact tip/base pair shown on this row with \`${landLine(4)}\`.`])
     await ui.unmount()
   })
 
@@ -528,7 +552,8 @@ describe('Accept, Return', () => {
     expect(prompt).toContain(`board cr edits p-cr1 --tip ${sha(2)}`)
     expect(prompt).toContain(`I edited it in the review folder ${CR_TREE}`)
     expect(prompt).toContain('--commit -m')
-    expect(prompt).toContain('board cr land p-cr1 --tip')
+    expect(prompt).toContain("then use the current row's tip/base pair to land it")
+    expect(prompt).not.toContain('confirm-pair')
     expect(prompt).not.toContain('--from')
     expect(r.all).toEqual([])
     expect(await ui.find({ key: 'cr-done-p-cr1' })).toBeUndefined()
@@ -550,7 +575,7 @@ describe('Accept, Return', () => {
     const { ui, clock, w } = await queued($, on, [cr({ id: 'p-cr1', tip: sha(9), review: viewAt(sha(9)) })])
     await ui.press({ key: 'cr-accept-p-cr1' })
     await clock.settle()
-    expect(w.prompts).toEqual([`Accept p-cr1 (Title of p-cr1): land it with \`${landLine(9)}\`.`])
+    expect(w.prompts).toEqual([`Accept p-cr1 (Title of p-cr1): land the exact tip/base pair shown on this row with \`${landLine(9)}\`.`])
     await ui.unmount()
   })
 
@@ -574,6 +599,20 @@ describe('Accept, Return', () => {
     expect(crDetailsText(checked({ kind: 'none', reason: 'docs only' }))).toContain('no check: docs only')
   })
 
+  test('the Accept summary shows the delta since the explicit look and the direct-route reason', () => {
+    const one = cr({ id: 'p-cr1', acceptance: { seenTip: sha(2), seenBaseTip: sha(1), delta: '1: old = 1: new', fullChange: false, noAgentReviewReason: 'merged changelog only' } }) as unknown as ConsoleCr
+    expect(crDetailsText(one)).toContain('delta since your last look:\n1: old = 1: new')
+    expect(crDetailsText(one)).toContain('no agent review: merged changelog only')
+  })
+
+  test('board JSON reads the user-look range', () => {
+    const one = parseBoardConsole({ ...BOARD_CONSOLE_CONTRACT, crs: [cr({ id: 'p-cr1',
+      acceptance: { seenTip: sha(8), seenBaseTip: sha(2), delta: '2: prior = 2: current', fullChange: false, noAgentReviewReason: 'changelog only' },
+    })] }).crs[0]!
+    expect(one.acceptance).toEqual({ seenTip: sha(8), seenBaseTip: sha(2), delta: '2: prior = 2: current', fullChange: false,
+      noAgentReviewReason: 'changelog only', incomingBaseTip: null, incomingCommits: null })
+  })
+
   test('without a prompt box the press says so', async ($, on) => {
     const { ui, clock, w } = await queued($, on, WAITING())
     w.hasBox = false
@@ -585,8 +624,8 @@ describe('Accept, Return', () => {
 
   test('the console never lands or writes git: no press runs a git change, and the board runs only review open', async ($, on) => {
     const r = repo()
-    const { ui, clock, w } = await queued($, on, [cr({ id: 'p-cr1', review: { opened: sha(2), edited: true, files: ['a.ts'] } }), cr({ id: 'p-cr2', view: 'result' })], r)
-    for (const key of ['cr-open-p-cr1', 'cr-accept-p-cr1', 'cr-return-p-cr1', 'cr-open-p-cr2', 'cr-accept-p-cr2', 'cr-return-p-cr2']) {
+    const { ui, clock, w } = await queued($, on, [cr({ id: 'p-cr1', acceptance: directRoute, review: { opened: sha(2), edited: true, files: ['a.ts'] } }), cr({ id: 'p-cr2', view: 'result', acceptance: directRoute })], r)
+    for (const key of ['cr-open-p-cr1', 'cr-accept-p-cr1', 'cr-review-p-cr1', 'cr-return-p-cr1', 'cr-walk-p-cr2', 'cr-accept-p-cr2', 'cr-review-p-cr2', 'cr-return-p-cr2']) {
       await ui.press({ key })
       await clock.settle()
     }
@@ -604,7 +643,7 @@ describe('change requests in the /console text', () => {
     await clock.settle()
     return ran.text as string
   }
-  const PRESSES = /Open|Accept|Return|Refresh/
+  const PRESSES = /Open|Accept|Review|Return|Refresh/
 
   test('the stack, each request\'s state, and the ratifications: no press labels', async ($, on) => {
     const { ui, clock } = await queued($, on, [...BOARD_CONSOLE_CONTRACT.crs] as unknown as Crs, repo(), { ratifications: [...BOARD_CONSOLE_CONTRACT.ratifications] })
@@ -680,9 +719,9 @@ describe('what holds a request up', () => {
   })
 
   test('problems stay on the request row; lands-with waits in the opened summary', async ($, on) => {
-    const { ui, clock } = await queued($, on, [cr({ id: 'p-cr1', problems: [BLOCKED(['src/x.ts']), { kind: 'setup-failed', text: 'setup failed', next: { action: 'claim' } }, { kind: 'review-stale', text: 'review stale', next: { action: 'wait' } }] }), cr({ id: 'p-cr2', status: 'in_review', base: 'p-cr1', parent: 'p-cr1', after: 'p-cr1' })])
+    const { ui, clock } = await queued($, on, [cr({ id: 'p-cr1', problems: [BLOCKED(['src/x.ts']), { kind: 'setup-failed', text: 'setup failed', next: { action: 'claim' } }] }), cr({ id: 'p-cr2', status: 'in_review', base: 'p-cr1', parent: 'p-cr1', after: 'p-cr1' })])
     const all = await texts(ui)
-    for (const part of ['land blocked: src/x.ts', 'setup failed', 'review stale']) expect(all, part).toContain(part)
+    for (const part of ['land blocked: src/x.ts', 'setup failed']) expect(all, part).toContain(part)
     expect(all).not.toContain('lands with p-cr1')
     await ui.press({ key: 'cr-p-cr2-show' })
     await clock.settle()
@@ -692,14 +731,14 @@ describe('what holds a request up', () => {
   })
 })
 
-describe('a stale review', () => {
+describe('a stale check', () => {
   test('a request waiting for its Accept says so; the board decides whether it is refresh work', () => {
-    const stale = cr({ id: 'p-cr1', problems: [{ kind: 'review-stale', text: 'review stale', next: { action: 'refresh', command: 'board cr refresh p-cr1' } }] }) as unknown as ConsoleCr
-    expect(crMarks(stale)).toEqual([{ text: 'review stale', isProblem: true }])
+    const stale = cr({ id: 'p-cr1', problems: [{ kind: 'check', text: 'check stale', next: { action: 'refresh', command: 'board cr refresh p-cr1' } }] }) as unknown as ConsoleCr
+    expect(crMarks(stale)).toEqual([])
     expect(canUpdateCr(stale, false, ['review'])).toBe(true)
     expect(canUpdateCr(stale, true, [])).toBe(true)
     expect(canUpdateCr(stale, false, ['implement'])).toBe(false)
-    expect(canUpdateCr(cr({ id: 'p-cr2', problems: [{ kind: 'review-stale', text: 'review stale', next: { action: 'wait' } }] }) as unknown as ConsoleCr, true, ['review'])).toBe(false)  // stale, not the queue head
+    expect(canUpdateCr(cr({ id: 'p-cr2', problems: [{ kind: 'check', text: 'check stale', next: { action: 'wait' } }] }) as unknown as ConsoleCr, true, ['review'])).toBe(false)  // stale, not the queue head
   })
 
   test('a hold marks only a request waiting for the Accept', () => {
@@ -733,14 +772,14 @@ describe('request rows', () => {
       const places = [id, ...(id === 'p-cr1' ? ['unblocks 14', '1.0-beta scope'] : [])].map(at)
       expect(places.every(place => place >= 0), id).toBe(true)
       expect(places, id).toEqual([...places].sort((a, b) => a - b))
-      expect((await ui.find({ key: `cr-${id}-buttons` }))?.props, id).toMatchObject({ width: id === 'p-cr1' ? 22 : 30, flexShrink: 0 })  // Open • Accept • Return; Walk through • Accept • Return
+      expect((await ui.find({ key: `cr-${id}-buttons` }))?.props, id).toMatchObject({ width: id === 'p-cr1' ? 37 : 30, flexShrink: 0 })  // Code also has Open.
     }
     await ui.unmount()
   })
 
   test('the buttons are as wide as their labels and sit at the right edge', async ($, on) => {
     const code = await mounted($, on, [cr({ id: 'p-cr1' })], WIDE)
-    expect((await code.ui.find({ key: 'cr-p-cr1-buttons' }))?.props.width).toBe(22)
+    expect((await code.ui.find({ key: 'cr-p-cr1-buttons' }))?.props.width).toBe(37)
     await code.ui.unmount()
   })
 

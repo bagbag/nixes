@@ -451,6 +451,18 @@ function parseCr(value: unknown): ConsoleCr {
     priority: typeof raw.priority === 'number' ? raw.priority : 9, ownPriority: typeof raw.ownPriority === 'number' ? raw.ownPriority : 9,
     raisedBy: raw.raisedBy === null || raw.raisedBy === undefined || text(record(raw.raisedBy).id) === '' ? null : { id: text(record(raw.raisedBy).id), isItem: record(raw.raisedBy).isItem === true },
     problems: list(raw.problems).map(parseProblem).filter(one => one.kind !== ''), review: parseReview(raw.review),
+    acceptance: raw.acceptance === null || raw.acceptance === undefined ? null : {
+      seenTip: nullableText(record(raw.acceptance).seenTip), seenBaseTip: nullableText(record(raw.acceptance).seenBaseTip),
+      delta: nullableText(record(raw.acceptance).delta), fullChange: record(raw.acceptance).fullChange === true,
+      noAgentReviewReason: nullableText(record(raw.acceptance).noAgentReviewReason),
+      incomingBaseTip: nullableText(record(raw.acceptance).incomingBaseTip),
+      incomingCommits: Array.isArray(record(raw.acceptance).incomingCommits) ? list(record(raw.acceptance).incomingCommits).map(value => {
+        const commit = record(value)
+        const tip = text(commit.tip)
+        return tip === '' ? null : { tip, subject: text(commit.subject), files: list(commit.files).map(text).filter(path => path !== ''),
+          crFiles: list(commit.crFiles).map(text).filter(path => path !== '') }
+      }).filter((commit): commit is NonNullable<typeof commit> => commit !== null) : null,
+    },
   }
 }
 

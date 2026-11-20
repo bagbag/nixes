@@ -183,7 +183,6 @@ def validate_generated_agents(root: Path, generator) -> None:
         "explorer.toml",
         "option-explorer.toml",
         "plan.toml",
-        "cr-refresh.toml",
         "review.toml",
         "scout.toml",
         "second-opinion.toml",
@@ -198,7 +197,6 @@ def validate_generated_agents(root: Path, generator) -> None:
         "Explore.md",
         "option-explorer.md",
         "Plan.md",
-        "cr-refresh.md",
         "review.md",
         "scout.md",
         "second-opinion.md",
@@ -284,7 +282,7 @@ def validate_generated_agents(root: Path, generator) -> None:
         if guarded != ("readonly-guard.sh" in document):
             raise ValueError(f"Claude {claude_name} readonly Bash hook must be {'on' if guarded else 'off'}")
 
-    for codex_name, claude_name in {"scout": "scout", "explorer": "Explore", "cr-refresh": "cr-refresh"}.items():
+    for codex_name, claude_name in {"scout": "scout", "explorer": "Explore"}.items():
         if parsed[f"{codex_name}.toml"]["sandbox_mode"] != "read-only":
             raise ValueError(f"{codex_name} must remain response-only and read-only")
         document = claude[f"{claude_name}.md"]
@@ -3582,14 +3580,14 @@ def validate_board(root: Path) -> None:
                 raise ValueError(f"board console counts: health's, with the agents' steps as position counts what a claim gives each pull: {console_counts}")
             if [c["id"] for c in crs_view] != ["fx-ovo.c2"] or ratifications_view != [] \
                     or set(crs_view[0]) != {"id", "title", "status", "stage", "holder", "look", "view", "checkpoint", "base", "branch", "worktree", "tip",
-                                            "baseTip", "check", "parent", "children", "baseSha", "problems", "review", "after",
+                                            "baseTip", "check", "parent", "children", "baseSha", "problems", "review", "acceptance", "after",
                                             "unblocks", "unblocksDirect", "milestone", "priority", "ownPriority", "raisedBy"}:
                 raise ValueError(f"board console crs: {crs_view}")
             # The console's stub contract (tests/board-console-contract.ts) declares the CR row it reads: every key it declares must exist.
             contract_file = root / "claude" / "mods" / "console" / "tests" / "board-console-contract.ts"
             if contract_file.is_file():
                 body = contract_file.read_text(encoding="utf-8").split("export function cr(")[1].split("return {")[1].split("...over")[0]
-                declared = set(re.findall(r"\b([A-Za-z]\w*):", body))
+                declared = set(re.findall(r"^ {4}([A-Za-z]\w*):", body, re.M))
                 real_keys = set(crs_view[0]) | set(crs_view[0]["check"])
                 if declared - real_keys:
                     raise ValueError(f"board console crs lacks keys the console's contract declares: {sorted(declared - real_keys)}")
@@ -5233,7 +5231,7 @@ def validate_board(root: Path) -> None:
                 issues, tip, wt = make_cr("land1")
                 old = at_main()
                 fake = Fake(issues)
-                code, output, errors = invoke(["cr", "land", "land1", "--tip", tip[:8]], fake, "lead0001")
+                code, output, errors = invoke(["cr", "land", "land1", "--tip", tip[:8], "--base", at_main()], fake, "lead0001")
                 if code or at_main() != tip or Path(repo_root, "c.txt").read_text() != "c\n" or wt.exists() or git("branch", "--list", "cr/land1") \
                         or not any(w[:2] == ["close", "land1"] for w in fake.writes()) or "landed land1 on main" not in output:
                     raise ValueError(f"board cr land must fast-forward main, close the CR and remove its worktree and branch: {code} {errors} {fake.writes()}")
@@ -5241,6 +5239,7 @@ def validate_board(root: Path) -> None:
                 # edits is refused, naming the cr edits line, and nothing lands.
                 issues, tip, wt = make_cr("landv", "v.txt", "v\n")
                 issues_e, tip_e, wt_e = make_cr("landve", "ve.txt", "ve\n")
+                base_e = issues_e[0]["metadata"]["base_sha"]
                 for open_id, rows_ in (("landv", issues), ("landve", issues_e)):
                     fake = Fake(rows_)
                     code, output, errors = invoke(["review", "open", open_id], fake, "lead0001")
@@ -5250,11 +5249,14 @@ def validate_board(root: Path) -> None:
                 Path(wt_e, "ve.txt").write_text("edited\n", encoding="utf-8")
                 before_v = at_main()
                 fake = Fake(issues_e)
-                code, output, errors = invoke(["cr", "land", "landve", "--tip", tip_e[:8]], fake, "lead0001")
-                if code != 1 or "your review holds edits" not in errors or "board cr edits landve --tip" not in errors or at_main() != before_v or not wt_e.is_dir() or fake.writes():
-                    raise ValueError(f"cr land must refuse a review holding edits and name the cr edits line: {code} {output} {errors}")
+                code, output, errors = invoke(["cr", "land", "landve", "--tip", tip_e[:8], "--base", at_main()], fake, "lead0001")
+                if code != 1 or "your review holds edits" not in errors or "board cr edits landve --tip" not in errors \
+                        or at_main() != before_v or not wt_e.is_dir() \
+                        or not any(w[:2] == ["update", "landve"] and f"user_seen_tip={tip_e}" in w and f"user_seen_base_tip={base_e}" in w for w in fake.writes()) \
+                        or any(w[:2] == ["close", "landve"] or (w[:2] == ["update", "landve"] and "--status" in w) for w in fake.writes()):
+                    raise ValueError(f"cr land must refuse a review holding edits, record only the validated look, and name the cr edits line: {code} {output} {errors} {fake.writes()}")
                 fake = Fake(issues)
-                code, output, errors = invoke(["cr", "land", "landv", "--tip", tip[:8]], fake, "lead0001")
+                code, output, errors = invoke(["cr", "land", "landv", "--tip", tip[:8], "--base", at_main()], fake, "lead0001")
                 left_config = subprocess.run(["git", "config", "--get-regexp", r"^branch\.cr/landv\."], capture_output=True).returncode == 0
                 mirrored = subprocess.run(["git", "rev-parse", "-q", "--verify", "refs/remotes/board/cr/landv"], capture_output=True).returncode == 0
                 if code or at_main() != tip or wt.exists() or not any(w[:2] == ["close", "landv"] for w in fake.writes()) \
@@ -5266,26 +5268,26 @@ def validate_board(root: Path) -> None:
                 git("checkout", "-q", "-b", "elsewhere")
                 issues, tip, wt = make_cr("land2", "d.txt", "d\n")
                 before = git("rev-parse", "HEAD")
-                code, output, errors = invoke(["cr", "land", "land2"], Fake(issues), "lead0001")
+                code, output, errors = invoke(["cr", "land", "land2", "--tip", tip[:8], "--base", at_main()], Fake(issues), "lead0001")
                 if code or at_main() != tip or git("rev-parse", "HEAD") != before or git("symbolic-ref", "HEAD") != "refs/heads/elsewhere" \
                         or Path(repo_root, "d.txt").exists():
                     raise ValueError(f"board cr land must advance the target ref by update-ref where another branch is checked out: {code} {errors}")
                 git("checkout", "-q", "main")
-                # Refusals change nothing: a CR on a CR, an open item, a moved branch, a stale or failed check, an Accept not yet reached,
+                # Refusals change nothing: a CR on a CR, an open item, a moved branch, a missing explicit user look, a failed check, an Accept not yet reached,
                 # a caller who may not land, edits in the target's worktree that the landing would overwrite.
                 issues, tip, wt = make_cr("refused", "e.txt", "e\n")
                 main_now = at_main()
                 stack = [cr_issue("lower", "needs_acceptance"), cr_issue("upper", "needs_acceptance", **{**issues[0]["metadata"], "base": "lower"})]
                 other_main = commit(repo_root, "other.txt", "o\n", "main moves")
                 cases = (("a CR stacked on a CR", [stack[0], stack[1], issues[1]], "upper", "lead0001", ["--tip", tip], "has not landed"),
-                         ("an open item", [issues[0], cr_item("refused.i", "refused", "open")], "refused", "lead0001", [], "items still open"),
+                         ("an open item", [issues[0], cr_item("refused.i", "refused", "open")], "refused", "lead0001", ["--tip", tip[:8]], "items still open"),
                          ("a moved branch", issues, "refused", "lead0001", ["--tip", main_now[:8]], "branch moved"),
-                         ("a stale check (main moved)", issues, "refused", "lead0001", [], "check is stale"),
-                         ("a caller who may not land", issues, "refused", "aaaa1111", [], "only a lead or solo"),
-                         ("an unreached Accept", [{**issues[0], "status": "in_review"}, issues[1]], "refused", "lead0001", [], "waiting for its Accept"))
+                         ("a missing explicit user look", issues, "refused", "lead0001", [], "--tip <sha> and --base <sha> are required"),
+                         ("a caller who may not land", issues, "refused", "aaaa1111", ["--tip", tip[:8]], "only a lead or solo"),
+                         ("an unreached Accept", [{**issues[0], "status": "in_review"}, issues[1]], "refused", "lead0001", ["--tip", tip[:8]], "waiting for its Accept"))
                 for what, rows, target, actor, extra, needle in cases:
                     fake = Fake(rows)
-                    code, _, errors = invoke(["cr", "land", target, *extra], fake, actor)
+                    code, _, errors = invoke(["cr", "land", target, *extra, "--base", other_main], fake, actor)
                     if code != 1 or needle not in errors or at_main() != other_main or any(w[0] == "close" for w in fake.writes()):
                         raise ValueError(f"board cr land accepted {what}: {code} {errors}")
                 # A landing with a current check but edits in the target's worktree on a file the CR changes is blocked, not forced.
@@ -5294,7 +5296,7 @@ def validate_board(root: Path) -> None:
                 issues, tip, wt = make_cr("blocked", "a.txt", "1\n2\nchanged\n")
                 Path(repo_root, "a.txt").write_text("1\nlocal edit\n3\n", encoding="utf-8")
                 fake = Fake(issues)
-                code, _, errors = invoke(["cr", "land", "blocked"], fake, "lead0001")
+                code, _, errors = invoke(["cr", "land", "blocked", "--tip", tip[:8], "--base", at_main()], fake, "lead0001")
                 _, queued, _ = invoke(["queue"], Fake(issues), "lead0001")
                 if code != 1 or "land blocked" not in errors or "a.txt" not in errors or at_main() != other_main \
                         or "land blocked: a.txt" not in queued:
@@ -5368,7 +5370,7 @@ def validate_board(root: Path) -> None:
                 git("checkout", "-q", "main")
                 git("branch", "-D", "elsewhere2")
 
-                # Refresh: rebase `--onto <base tip> <fork point>` after the base was rewritten; its range-diff and incoming files print.
+                # Refresh rebases using the recorded fork and checks against the rewritten base.
                 base_issues, base_tip_old, base_wt = make_cr("pbase", "p.txt", "p\n")
                 child_issues, child_tip_old, child_wt = make_cr("pchild", "q.txt", "q\n", base="pbase")
                 Path(base_wt, "p.txt").write_text("p reworked\n", encoding="utf-8")  # the rewrite changes the patch, so a plain rebase would replay the old one
@@ -5382,7 +5384,7 @@ def validate_board(root: Path) -> None:
                 if code or rebased != ["pchild: pass", "pbase: reworked", "main moves"] and rebased[:2] != ["pchild: pass", "pbase: reworked"] \
                         or git("merge-base", "--is-ancestor", new_base, "HEAD", cwd=child_wt) is None \
                         or f"base_sha={new_base}" not in " ".join(" ".join(w) for w in fake.writes()) \
-                        or "range-diff old..new" not in output or "incoming files" not in output:
+                        or f"check_base_tip={new_base}" not in " ".join(" ".join(w) for w in fake.writes()):
                     raise ValueError(f"board cr refresh must follow a rewritten base with --onto the recorded fork point: {code} {errors} {rebased}\n{output}")
                 # A conflict stops the rebase in the worktree and says how to go on; a refresh refuses while another session holds the CR.
                 commit(base_wt, "q.txt", "clash\n", "pbase: clash with the child")
@@ -5416,7 +5418,7 @@ def validate_board(root: Path) -> None:
                 y_issues[0].update(status="in_review")  # passed review, waiting for its parent (q219)
                 y_issues[0]["metadata"].update(look="after", review_tip=y_tip, review_base_tip=x_tip)
                 fake = Fake([*x_issues, *y_issues])
-                code, output, errors = invoke(["cr", "land", "lx", "--tip", x_tip[:8]], fake, "lead0001")
+                code, output, errors = invoke(["cr", "land", "lx", "--tip", x_tip[:8], "--base", at_main()], fake, "lead0001")
                 ratifications = [node for graph in fake.graphs for node in graph["nodes"]
                                  if node.get("title") == "CR ly" and node.get("metadata", {}).get("ratification") == "landing"]
                 if code or at_main() != y_tip or not any(w[:2] == ["close", "ly"] for w in fake.writes()) or y_wt.exists() \
@@ -5430,12 +5432,12 @@ def validate_board(root: Path) -> None:
                 y_issues[0].update(status="in_review")
                 y_issues[0]["metadata"].update(look="after", check_base_tip="f" * 40, review_tip=y_tip, review_base_tip=x_tip)
                 fake = Fake([*x_issues, *y_issues])
-                code, output, errors = invoke(["cr", "land", "lx2", "--tip", x_tip[:8]], fake, "lead0001")
+                code, output, errors = invoke(["cr", "land", "lx2", "--tip", x_tip[:8], "--base", at_main()], fake, "lead0001")
                 if code or at_main() != x_tip or any(w[:2] == ["close", "ly2"] for w in fake.writes()) or "left as refresh work" not in output:
                     raise ValueError(f"a look-after CR with a stale check must be left as refresh work: {code} {errors}\n{output}")
 
                 # A look-after CR that passed review while its parent waits for the user stays in review, marked after, and is no pull
-                # again; a stale review pair (a re-handed-over CR) makes it a pull again (F9).
+                # again; uncovered coverage makes it a review pull again (F9).
                 p_issues, p_tip, _ = make_cr("ab", "ab.txt", "x\n")
                 c_issues, c_tip, _ = make_cr("ac", "ac.txt", "y\n", base="ab")
                 c_issues[0].update(status="in_review")
@@ -5446,14 +5448,14 @@ def validate_board(root: Path) -> None:
                 c_issues[0]["metadata"].update(review_tip="1" * 40)
                 deck = bare_deck([*p_issues, *c_issues], complete=False)
                 if deck.kind(c_issues[0]) != "review" or board.after_base(deck, c_issues[0]) is not None:
-                    raise ValueError("a look-after CR whose review pair is stale (handed over again) must be reviewable")
+                    raise ValueError("a look-after CR whose review coverage is stale must be reviewable")
                 # ...or when its review was of another base tip (q236).
                 x_issues, x_tip, x_wt = make_cr("lx3", "lx3.txt", "x\n")
                 y_issues, y_tip, y_wt = make_cr("ly3", "ly3.txt", "y\n", base="lx3")
                 y_issues[0].update(status="in_review")
                 y_issues[0]["metadata"].update(look="after", review_tip=y_tip, review_base_tip="e" * 40)
                 fake = Fake([*x_issues, *y_issues])
-                code, output, errors = invoke(["cr", "land", "lx3", "--tip", x_tip[:8]], fake, "lead0001")
+                code, output, errors = invoke(["cr", "land", "lx3", "--tip", x_tip[:8], "--base", at_main()], fake, "lead0001")
                 if code or at_main() != x_tip or any(w[:2] == ["close", "ly3"] for w in fake.writes()) or "(after lx3)" in output:
                     raise ValueError(f"a look-after CR whose review no longer matches must stay behind (a review pull again): {code} {errors}\n{output}")
 
@@ -5544,7 +5546,7 @@ def validate_board(root: Path) -> None:
                 issues, tip, wt = make_empty_cr("emplate", "after", status="needs_acceptance", check_tip=git("rev-parse", "main"), check_base_tip=git("rev-parse", "main"),
                                                 check_result="pass", check_at="2026-10-22T15:00:00Z", review_tip=git("rev-parse", "main"), review_base_tip=git("rev-parse", "main"))
                 fake = Fake(issues)
-                code, output, errors = invoke(["cr", "land", "emplate"], fake, "lead0001")
+                code, output, errors = invoke(["cr", "land", "emplate", "--tip", tip[:8], "--base", at_main()], fake, "lead0001")
                 if code or not any(w[:2] == ["close", "emplate"] for w in fake.writes()) or any(w[0] == "create" for w in fake.writes()):
                     raise ValueError(f"landing an empty CR from the Accept queue opens no ratification: {code} {errors}\n{fake.writes()}")
                 # A stacked CR with nothing to merge, passed in a look-before project, lands with its base (review F5).
@@ -5554,7 +5556,7 @@ def validate_board(root: Path) -> None:
                 c_issues = [cr_issue("ec", "in_review", look="before", base="ep", base_sha=p_tip, setup_sha=p_tip, review_tip=p_tip, review_base_tip=p_tip,
                                        check_tip=p_tip, check_base_tip=p_tip, check_result="pass", check_at="2026-10-22T15:00:00Z"), cr_item("ec.i", "ec", "closed")]
                 fake = Fake([*p_issues, *c_issues])
-                code, output, errors = invoke(["cr", "land", "ep", "--tip", p_tip[:8]], fake, "lead0001")
+                code, output, errors = invoke(["cr", "land", "ep", "--tip", p_tip[:8], "--base", at_main()], fake, "lead0001")
                 if code or not any(w[:2] == ["close", "ec"] for w in fake.writes()):
                     raise ValueError(f"an empty stacked look-before CR must land with its base: {code} {errors}\n{output}\n{fake.writes()}")
                 def design_hash(rows):
@@ -5765,21 +5767,19 @@ def validate_board(root: Path) -> None:
                 if code or "custom.board.look: before -> after\n  2 open change request(s) keep their own look" not in said or "own-a  after (equals the new default): The look is after" not in said \
                         or "keep their own view" in said:
                     raise ValueError(f"board setup prints the CRs keeping their own look right under the switch of look (not of nothing else): {code}\n{said}")
-                # The review verdict is tied to (tip, base tip): a pass records it; a refresh that finds it stale says so; the refreshing
-                # session sends it back with a handover, which clears the verdict (q236).
+                # The review verdict is tied to (tip, base tip): refresh reports when prior coverage no longer matches; request-review
+                # sends the uncovered delta to an agent while preserving the old covered range.
                 issues, tip, wt = make_cr("rv", "rv.txt", "x\n")
                 issues[0]["metadata"].update(review_tip=tip, review_base_tip="e" * 40, since="2026-10-22T15:00:00Z")
                 issues[0]["assignee"] = "bbbb2222"
                 fake = Fake(issues)
                 code, output, errors = invoke(["cr", "refresh", "rv"], fake, "bbbb2222")
-                if code or "its review was of another (tip, base tip)" not in output:
+                if code or "sent to agent review" not in output:
                     raise ValueError(f"a refresh must say when the review no longer matches: {code} {errors}\n{output}")
                 fake = Fake(issues)
-                code, output, errors = invoke(["handover", "rv", "the new helper replaces its copy"], fake, "bbbb2222")
-                flat = " ".join(" ".join(w) for w in fake.writes())
-                if code or ["update", "rv", "--status", "in_review", "--assignee", "", "--if-assignee", "bbbb2222", "--json"] not in fake.writes() \
-                        or "--unset-metadata review_tip" not in flat or "back to agent review" not in output:
-                    raise ValueError(f"a handover of a CR waiting for its Accept must send it back to agent review: {code} {errors}\n{fake.writes()}")
+                code, _, errors = invoke(["handover", "rv", "the new helper replaces its copy"], fake, "bbbb2222")
+                if code != 1 or "use board cr request-review" not in errors or fake.writes():
+                    raise ValueError(f"handover from Accept must refuse and direct the user to request-review: {code} {errors} {fake.writes()}")
                 # r11-q38: the refresh's gate option stores what ran: --no-gate no check (never a pass), --gate a targeted check of that tip.
                 for flags, stored, said in ((["--no-gate", "docs only"], ["check_kind=none", "check_reason=docs only"], "no check: docs only"),
                                             (["--gate", "true"], ["check_kind=targeted", "check_command=true"], "targeted check passed: true")):
@@ -5831,46 +5831,25 @@ def validate_board(root: Path) -> None:
                     raise ValueError(f"claiming a held CR again must rerun its setup: {output}")
 
                 # ---- deep review findings F1-F10 and risks ----
-                # F1: land needs the review pair as it needs the check pair; the triage verdict "the review holds" is recorded by
-                # `refresh --review-holds`, only for the reviewed changes with a passing check.
+                # F1: refuse landing when the current series has no valid prior coverage.
                 issues, tip, wt = make_cr("f1stale", "f1.txt", "x\n")
                 issues[0]["metadata"]["review_base_tip"] = "e" * 40
                 fake = Fake(issues)
-                code, _, errors = invoke(["cr", "land", "f1stale"], fake, "lead0001")
-                if code != 1 or "its review is of another" not in errors or "--review-holds" not in errors or any(w[0] == "close" for w in fake.writes()):
+                code, _, errors = invoke(["cr", "land", "f1stale", "--tip", tip, "--base", at_main()], fake, "lead0001")
+                if code != 1 or "sent to agent review" not in errors or any(w[0] == "close" for w in fake.writes()):
                     raise ValueError(f"F1: land must refuse a CR whose review is of another (tip, base tip): {code} {errors}")
-                commit(repo_root, "f1-main.txt", "m\n", "f1: main moves")
-                issues, tip, wt = make_cr("f1hold", "f1h.txt", "x\n")
-                commit(repo_root, "f1-main2.txt", "m2\n", "f1: main moves again")
-                invoke(["cr", "refresh", "f1hold"], Fake(issues), "lead0001")  # the triage input: what the refresh showed
-                new_tip = git("rev-parse", "HEAD", cwd=wt)
-                # Verdict after a base that moved again since that refresh: refused, untriaged.
-                issues[0]["metadata"].update(triaged_tip=new_tip, triaged_base_tip=at_main(), base_sha=at_main())
-                commit(repo_root, "f1-main3.txt", "m3\n", "f1: main moves after the triage")
-                code, output, errors = invoke(["cr", "refresh", "f1hold", "--review-holds"], Fake(issues), "lead0001")
-                if code != 1 or "untriaged" not in errors or "f1-main3.txt" not in output:
-                    raise ValueError(f"the base moved after the triage: --review-holds must refuse and show the new incoming list: {code} {errors}\n{output}")
-                new_tip = git("rev-parse", "HEAD", cwd=wt)
-                issues[0]["metadata"].update(triaged_tip=new_tip, triaged_base_tip=at_main(), base_sha=at_main())
-                fake = Fake(issues)
-                code, output, errors = invoke(["cr", "refresh", "f1hold", "--review-holds"], fake, "lead0001")
-                flat = " ".join(" ".join(w) for w in fake.writes())
-                if code or f"review_tip={new_tip}" not in flat or f"review_base_tip={at_main()}" not in flat or "the review holds" not in output:
-                    raise ValueError(f"F1: refresh --review-holds must re-stamp the review of the same changes: {code} {errors}\n{output}\n{fake.writes()}")
-                # A clean rebase that only moved the context around the CR's change keeps the review (the patch-id changed, the change did not).
+                # A refresh may replay onto a moved base without rewriting the covered range.
                 ten = "".join(f"{n}\n" for n in range(1, 11))
                 commit(repo_root, "ctx.txt", ten, "ctx: shared file")
                 issues, tip, wt = make_cr("ctx", "ctx.txt", ten.replace("5\n", "5\nNEW\n"))
                 commit(repo_root, "ctx.txt", ten.replace("3\n", "X\n"), "ctx: main edits a context line")
-                _, output, _ = invoke(["cr", "refresh", "ctx"], Fake(issues), "lead0001")
-                new_tip = git("rev-parse", "HEAD", cwd=wt)
-                if "replay: clean" not in output:
-                    raise ValueError(f"a context-only shift must print a clean replay:\n{output}")
-                issues[0]["metadata"].update(triaged_tip=new_tip, triaged_base_tip=at_main(), base_sha=at_main())
                 fake = Fake(issues)
-                code, output, errors = invoke(["cr", "refresh", "ctx", "--review-holds"], fake, "lead0001")
-                if code or f"review_tip={new_tip}" not in " ".join(" ".join(w) for w in fake.writes()):
-                    raise ValueError(f"a context-only shift must keep the review: {code} {errors}\n{output}")
+                code, output, errors = invoke(["cr", "refresh", "ctx"], fake, "lead0001")
+                new_tip = git("rev-parse", "HEAD", cwd=wt)
+                apply_writes(issues, fake)
+                refreshed = issues[0]["metadata"]
+                if code or new_tip == tip or refreshed.get("check_tip") != new_tip or refreshed.get("review_tip") != tip:
+                    raise ValueError(f"refresh must rebase and check without overwriting prior coverage: {code} {output} {errors} {refreshed}")
                 # A conflict resolved by hand keeping the CR's own line is no clean replay; neither is a commit the rebase dropped as upstream.
                 commit(repo_root, "cfl.txt", ten, "cfl: shared file")
                 issues, tip, wt = make_cr("cfl", "cfl.txt", ten.replace("5\n", "5\nNEW\n"))
@@ -5880,44 +5859,68 @@ def validate_board(root: Path) -> None:
                 git("add", "cfl.txt", cwd=wt)
                 subprocess.run(["git", "-c", "core.editor=true", "rebase", "--continue"], cwd=wt, capture_output=True, check=True)
                 issues[0]["metadata"].update(base_sha=at_main())
-                _, output, _ = invoke(["cr", "refresh", "cfl"], Fake(issues), "lead0001")
-                issues[0]["metadata"].update(triaged_tip=git("rev-parse", "HEAD", cwd=wt), triaged_base_tip=at_main())
-                code, _, errors = invoke(["cr", "refresh", "cfl", "--review-holds"], Fake(issues), "lead0001")
-                if "replay: not clean" not in output or code != 1 or "no longer the reviewed changes" not in errors:
-                    raise ValueError(f"a resolved conflict must not keep the review: {code} {errors}\n{output}")
+                fake = Fake(issues)
+                _, output, _ = invoke(["cr", "refresh", "cfl"], fake, "lead0001")
+                if any(arg.startswith("review_tip=") or arg.startswith("review_base_tip=") for write in fake.writes() for arg in write):
+                    raise ValueError(f"a conflict resolution must not carry prior review coverage:\n{fake.writes()}")
                 issues, tip, wt = make_cr("upd", "upd.txt", "u\n")
                 commit(repo_root, "upd.txt", "u\n", "upd: main lands the same change")
-                invoke(["cr", "refresh", "upd"], Fake(issues), "lead0001")
-                issues[0]["metadata"].update(triaged_tip=git("rev-parse", "HEAD", cwd=wt), triaged_base_tip=at_main(), base_sha=at_main())
-                code, _, errors = invoke(["cr", "refresh", "upd", "--review-holds"], Fake(issues), "lead0001")
-                if code != 1 or "no longer the reviewed changes" not in errors:
-                    raise ValueError(f"a reviewed commit the rebase dropped must not keep the review: {code} {errors}")
-                # Two refreshes without a verdict: the second still shows what changed since the review, B1..B2 included.
+                code, output, _ = invoke(["cr", "refresh", "upd"], Fake(issues), "lead0001")
+                if "sent to agent review" not in output:
+                    raise ValueError(f"a rebase that drops reviewed work must leave coverage stale: {code} {output}")
+                # After two refreshes, Accept still shows incoming commits since coverage.
                 issues, tip, wt = make_cr("tri", "tri.txt", "x\n")
                 commit(repo_root, "tri-b2.txt", "b2\n", "tri: base change one")
                 first_fake = Fake(issues)
                 invoke(["cr", "refresh", "tri"], first_fake, "lead0001")
-                flat_first = " ".join(" ".join(w) for w in first_fake.writes())
-                if "triaged_tip=" not in flat_first or f"triaged_base_tip={at_main()}" not in flat_first:
-                    raise ValueError(f"a refresh must record what it asked the triage about: {first_fake.writes()}")
                 issues[0]["metadata"].update(base_sha=at_main())  # the first refresh moved the fork point to B2
                 commit(repo_root, "tri-b3.txt", "b3\n", "tri: base change two")
-                _, output, _ = invoke(["cr", "refresh", "tri"], Fake(issues), "lead0001")
-                if "tri-b2.txt" not in output or "tri-b3.txt" not in output or "since the review" not in output or "range-diff review..new" not in output:
-                    raise ValueError(f"a stale review's refresh must show what changed since the review:\n{output}")
+                second_fake = Fake(issues)
+                invoke(["cr", "refresh", "tri"], second_fake, "lead0001")
+                apply_writes(issues, second_fake)
+                _, output, _ = invoke(["show", "tri"], Fake(issues), "lead0001")
+                if "tri: base change one" not in output or "tri: base change two" not in output:
+                    raise ValueError(f"Accept must show all incoming commits since coverage: {output}")
                 issues, tip, wt = make_cr("f1new", "f1n.txt", "x\n")
                 commit(wt, "f1n2.txt", "unreviewed\n", "f1: unreviewed commit")
-                code, _, errors = invoke(["cr", "refresh", "f1new", "--review-holds"], Fake(issues), "lead0001")
-                if code != 1 or "no longer the reviewed changes" not in errors:
-                    raise ValueError(f"F1: --review-holds must refuse commits that were not reviewed: {code} {errors}")
+                _, output, _ = invoke(["cr", "refresh", "f1new"], Fake(issues), "lead0001")
+                if "sent to agent review" not in output:
+                    raise ValueError(f"new author commits do not inherit prior coverage: {output}")
                 issues, tip, wt = make_cr("f1red", "f1r.txt", "x\n")
                 fake = Fake(issues)
                 fake.settings["custom.board.checks"] = "false"
-                code, _, errors = invoke(["cr", "refresh", "f1red", "--review-holds"], fake, "lead0001")
-                if code != 1 or "check is not passing" not in errors:
-                    raise ValueError(f"F1: --review-holds must refuse while the check fails: {code} {errors}")
-                if invoke(["cr", "refresh", "f1red", "--review-holds"], Fake([cr_issue("f1red", "in_review")]), "lead0001")[0] != 1:
-                    raise ValueError("F1: --review-holds is for a CR waiting for its Accept")
+                _, output, _ = invoke(["cr", "refresh", "f1red"], fake, "lead0001")
+                if any(arg.startswith("review_tip=") for write in fake.writes() for arg in write):
+                    raise ValueError("a failed check must not carry review coverage")
+
+                # The direct user route is accepted only for an author's look-before handover, with a reason.
+                direct, direct_tip, direct_wt = make_cr("direct", "direct.txt", "docs\n")
+                direct[0].update(status="in_progress", assignee="lead0001")
+                direct[0]["metadata"]["look"] = "before"
+                fake = Fake(direct)
+                code, output, errors = invoke(["handover", "direct", "docs changed", "--no-agent-review", "wording only"], fake, "lead0001")
+                flat_writes = " ".join(" ".join(w) for w in fake.writes())
+                if code or "without agent review" not in output or "no_agent_review_reason=wording only" not in flat_writes:
+                    raise ValueError(f"a look-before author may route with the flag's reason: {code} {output} {errors} {fake.writes()}")
+                for status, look, args in (("in_review", "before", ["--no-agent-review", "reason"]), ("in_progress", "after", ["--no-agent-review", "reason"])):
+                    bad_id = "badroute-review" if status == "in_review" else "badroute-after"
+                    bad, _, _ = make_cr(bad_id, f"{bad_id}.txt", "x\n")
+                    bad[0]["status"] = status
+                    bad[0]["assignee"] = "lead0001"
+                    bad[0]["metadata"]["look"] = look
+                    code, _, errors = invoke(["handover", bad_id, "evidence", *args], Fake(bad), "lead0001")
+                    if code != 1 or (status == "in_review" and "only available on an author" not in errors) or (look == "after" and "look-after" not in errors):
+                        raise ValueError(f"the no-agent route must refuse {status}/{look}: {code} {errors}")
+
+                # Requesting agent review at Accept preserves the last covered pair and rejects other stages.
+                request, request_tip, request_wt = make_cr("request", "request.txt", "x\n")
+                fake = Fake(request)
+                code, output, errors = invoke(["cr", "request-review", "request", "delta changed"], fake, "lead0001")
+                flat_writes = " ".join(" ".join(w) for w in fake.writes())
+                if code or "requested agent review" not in output or "--status" not in flat_writes or "review_tip=" in flat_writes or "review_base_tip=" in flat_writes:
+                    raise ValueError(f"request-review must keep the covered range while moving to agent review: {code} {output} {errors} {fake.writes()}")
+                if invoke(["cr", "request-review", "request"], Fake([cr_issue("request", "in_review")]), "lead0001")[0] != 1:
+                    raise ValueError("request-review must refuse outside needs_acceptance")
 
                 # F2: the reviewer's pass records only a tip the reviewer saw.
                 issues, tip, wt = make_cr("f2", "f2.txt", "x\n")
@@ -6013,12 +6016,12 @@ def validate_board(root: Path) -> None:
                 gitdir = Path(git("rev-parse", "--absolute-git-dir"))
                 (gitdir / "rebase-merge").mkdir()
                 (gitdir / "rebase-merge" / "head-name").write_text("refs/heads/main\n", encoding="utf-8")
-                code, _, errors = invoke(["cr", "land", "f7"], Fake(issues), "lead0001")
+                code, _, errors = invoke(["cr", "land", "f7", "--tip", tip[:8], "--base", at_main()], Fake(issues), "lead0001")
                 refused_f7 = code == 1 and "is rebasing main" in errors and at_main() == before
                 (gitdir / "rebase-merge" / "head-name").unlink()
                 (gitdir / "rebase-merge").rmdir()
                 (gitdir / "BISECT_START").write_text("main\n", encoding="utf-8")
-                code, _, errors = invoke(["cr", "land", "f7"], Fake(issues), "lead0001")
+                code, _, errors = invoke(["cr", "land", "f7", "--tip", tip[:8], "--base", at_main()], Fake(issues), "lead0001")
                 refused_f7 = refused_f7 and code == 1 and "is bisecting main" in errors and at_main() == before
                 (gitdir / "BISECT_START").unlink()
                 git("checkout", "-q", "main")
@@ -6034,11 +6037,12 @@ def validate_board(root: Path) -> None:
                     if code != 1 or "changed the worktree" not in errors or any("check_result" in " ".join(w) for w in fake.writes()):
                         raise ValueError(f"F8: {what} must record nothing: {code} {errors} {fake.writes()}")
 
-                # F9: the review pair goes with a return and with a new hand-over.
-                fake = Fake(variant(**{"CR ready": {"status": "in_review", "assignee": "lead0001", "metadata": {"review_tip": "1" * 40}}}))
+                # F9: a return preserves the prior covered range for the next author pass and agent review.
+                covered = {"review_tip": "1" * 40, "review_base_tip": "2" * 40}
+                fake = Fake(variant(**{"CR ready": {"status": "in_review", "assignee": "lead0001", "metadata": covered}}))
                 invoke(["return", "fx-ovo.c1", "again"], fake, "lead0001")
-                if not any("--unset-metadata" in w and "review_tip" in w for w in fake.writes()):
-                    raise ValueError(f"F9: a return must clear the review pair: {fake.writes()}")
+                if any("--unset-metadata" in w and ("review_tip" in w or "review_base_tip" in w) for w in fake.writes()):
+                    raise ValueError(f"F9: a return must preserve the covered review pair: {fake.writes()}")
                 # F10: reject reopens work, never a ratification.
                 rej = [cr_issue("rej10", "needs_acceptance"), cr_item("rej10.i", "rej10", "closed"),
                        {**cr_item("rej10.r", "rej10", "closed"), "title": "CR rej10", "metadata": {"ratification": "design"}}]
@@ -6059,7 +6063,7 @@ def validate_board(root: Path) -> None:
                     raise ValueError(f"risk: the branch is deleted only if it still is at the landed tip: {notes}")
                 issues, tip, wt = make_cr("r2", "r2.txt", "x\n")
                 with patch.object(board, "finish_landing", lambda *a, **k: (_ for _ in ()).throw(board.BoardError("close failed"))):
-                    code, _, errors = invoke(["cr", "land", "r2"], Fake(issues), "lead0001")
+                    code, _, errors = invoke(["cr", "land", "r2", "--tip", tip[:8], "--base", at_main()], Fake(issues), "lead0001")
                 if code != 1 or "now holds" not in errors or "not landed" in errors or at_main() != tip:
                     raise ValueError(f"risk: after a fast-forward whose close failed the message must say the target holds the tip: {code} {errors}")
                 git("worktree", "remove", "--force", str(wt))
@@ -6073,7 +6077,7 @@ def validate_board(root: Path) -> None:
                 tip = git("rev-parse", "HEAD", cwd=wt)
                 issues[0]["metadata"].update(check_tip=tip, review_tip=tip)
                 Path(repo_root, "ren_src.txt").write_text("1\n2\nlocal\n", encoding="utf-8")
-                code, _, errors = invoke(["cr", "land", "r3"], Fake(issues), "lead0001")
+                code, _, errors = invoke(["cr", "land", "r3", "--tip", tip[:8], "--base", at_main()], Fake(issues), "lead0001")
                 git("checkout", "-q", "--", "ren_src.txt")
                 if code != 1 or "land blocked" not in errors or "ren_src.txt" not in errors:
                     raise ValueError(f"risk: land_blocked must list the old path of a renamed file: {code} {errors}")
@@ -6249,7 +6253,7 @@ def validate_board(root: Path) -> None:
                 gone_issues, _, gone_wt = make_cr("n2gone", "n2g.txt", "y\n")
                 shutil.rmtree(gone_wt)  # git lists this worktree as prunable
                 git("checkout", "-q", "-b", "n2-elsewhere")
-                code, _, errors = invoke(["cr", "land", "n2"], Fake(issues), "lead0001")
+                code, _, errors = invoke(["cr", "land", "n2", "--tip", tip[:8], "--base", at_main()], Fake(issues), "lead0001")
                 git("checkout", "-q", "main")
                 git("worktree", "prune")
                 if code or at_main() != tip:
@@ -6323,8 +6327,8 @@ def validate_board(root: Path) -> None:
                     accept_kind = board.Board([*issues], complete=False).claimable(issues[0])
                     issues[0]["metadata"]["review_base_tip"] = "e" * 40  # the check is current, the review is not
                     stale_kind = board.Board([*issues], complete=False).claimable(issues[0])
-                if (accept_kind, stale_kind) != ("accept", "refresh"):
-                    raise ValueError(f"a queued CR with a current check and review waits for its Accept; with a stale review it is refresh work: {accept_kind} {stale_kind}")
+                if (accept_kind, stale_kind) != ("accept", "accept"):
+                    raise ValueError(f"a queued CR with a current check waits for its Accept instead of repeating refresh: {accept_kind} {stale_kind}")
 
                 # A CR open for the user's review (r6-q24, r6-q25) is held from every agent step until their Accept or Return: no refresh work,
                 # claimable only for the Accept, refused by a refresh even for its holder; the verdict ends the hold and a refresh then runs.
@@ -6584,7 +6588,7 @@ def validate_board(root: Path) -> None:
                 code, output, errors = invoke(["handover", "ed1", "evidence"], Fake(held_v), "lead0001")
                 if code != 1 or "open for your review" not in errors or git("rev-parse", "cr/ed1") != tip:
                     raise ValueError(f"handover must refuse a CR open for review: {code} {output} {errors}")
-                code, output, errors = invoke(["cr", "land", "ed1", "--tip", tip[:8]], Fake(issues), "lead0001")
+                code, output, errors = invoke(["cr", "land", "ed1", "--tip", tip[:8], "--base", at_main()], Fake(issues), "lead0001")
                 if code != 1 or "your review holds edits" not in errors or f"board cr edits ed1 --tip {tip[:12]}" not in errors or at_main() == tip:
                     raise ValueError(f"land must refuse an open review with edits and name the cr edits line: {code} {output} {errors}")
                 code, output, errors = invoke(["return", "ed1", "findings"], Fake(issues), "lead0001")
@@ -6594,12 +6598,18 @@ def validate_board(root: Path) -> None:
                 amend_world, amend_tip, amend_wt = make_cr("ed1a", "a.txt", "a\n")
                 view_of("ed1a", amend_world, edit=False)
                 git("commit", "-q", "--amend", "-m", "amended agent commit", cwd=amend_wt)
-                for verb in (["cr", "land", "ed1a", "--tip", git("rev-parse", "cr/ed1a")[:8]], ["return", "ed1a", "findings"], ["cr", "edits", "ed1a", "--tip", amend_tip, "--commit"]):
+                amended_tip = git("rev-parse", "cr/ed1a")
+                main_before_amend = at_main()
+                for verb in (["cr", "land", "ed1a", "--tip", git("rev-parse", "cr/ed1a")[:8], "--base", at_main()], ["return", "ed1a", "findings"], ["cr", "edits", "ed1a", "--tip", amend_tip, "--commit"]):
                     fake = Fake(amend_world)
                     code, output, errors = invoke(verb, fake, "lead0001")
+                    writes = fake.writes()
+                    look_recorded = any(w[:2] == ["update", "ed1a"] and f"user_seen_tip={amended_tip}" in w for w in writes)
+                    only_look_write = all(w[:2] == ["update", "ed1a"] and any(arg.startswith("user_seen_tip=") for arg in w) and any(arg.startswith("user_seen_base_tip=") for arg in w) for w in writes)
                     if code != 1 or amend_tip not in errors or "no longer in cr/ed1a" not in errors or f"git -C {amend_wt} reset --hard {amend_tip}" not in errors \
-                            or "drops your commits" not in errors or fake.writes() or at_main() == git("rev-parse", "cr/ed1a"):
-                        raise ValueError(f"{verb[:2]} must refuse a review whose opened tip was amended away, naming it: {code} {output} {errors} {fake.writes()}")
+                            or "drops your commits" not in errors or git("rev-parse", "cr/ed1a") != amended_tip or at_main() != main_before_amend \
+                            or (verb[1] == "land" and (not look_recorded or not only_look_write)) or (verb[1] != "land" and writes):
+                        raise ValueError(f"{verb[:2]} must refuse an amended review without moving branch or coverage, recording only a validated land look: {code} {output} {errors} {writes}")
                 _, shown_amend, _ = invoke(["show", "ed1a"], Fake(amend_world), "lead0001")
                 if "no longer in cr/ed1a" not in shown_amend or "reset --hard" not in shown_amend:
                     raise ValueError(f"board show must say why an open review cannot be read, as the pane promises: {shown_amend}")
@@ -6611,10 +6621,16 @@ def validate_board(root: Path) -> None:
                 main_before_merge = at_main()
                 commit(repo_root, "g-base.txt", "b\n", "main moves under ed1mrg")
                 git("-c", "user.name=T", "-c", "user.email=t@t.invalid", "merge", "-q", "--no-ff", "--no-edit", "main", cwd=merge_wt)
-                for verb in (["cr", "land", "ed1mrg", "--tip", git("rev-parse", "cr/ed1mrg")[:8]], ["return", "ed1mrg", "findings"], ["cr", "edits", "ed1mrg", "--tip", merge_tip, "--commit"]):
+                merged_tip = git("rev-parse", "cr/ed1mrg")
+                for verb in (["cr", "land", "ed1mrg", "--tip", git("rev-parse", "cr/ed1mrg")[:8], "--base", at_main()], ["return", "ed1mrg", "findings"], ["cr", "edits", "ed1mrg", "--tip", merge_tip, "--commit"]):
                     fake = Fake(merge_world)
                     code, output, errors = invoke(verb, fake, "lead0001")
-                    if code != 1 or "merge" not in errors or f"git -C {merge_wt} reset --hard {merge_tip}" not in errors or fake.writes():
+                    writes = fake.writes()
+                    only_look_write = all(w[:2] == ["update", "ed1mrg"] and any(arg.startswith("user_seen_tip=") for arg in w) and any(arg.startswith("user_seen_base_tip=") for arg in w) for w in writes)
+                    if code != 1 or "merge" not in errors or f"git -C {merge_wt} reset --hard {merge_tip}" not in errors \
+                            or git("rev-parse", "cr/ed1mrg") != merged_tip \
+                            or (verb[1] == "land" and (not any(w[:2] == ["update", "ed1mrg"] and f"user_seen_tip={merged_tip}" in w for w in writes) or not only_look_write)) \
+                            or (verb[1] != "land" and writes):
                         raise ValueError(f"{verb[:2]} must refuse a review branch that took the base in, naming the reset to the opened tip: {code} {output} {errors} {fake.writes()}")
                 git("worktree", "remove", "--force", str(merge_wt))
                 git("branch", "-D", "cr/ed1mrg")
@@ -6637,10 +6653,14 @@ def validate_board(root: Path) -> None:
                 off_world, off_tip, off_wt = make_cr("ed1o", "a.txt", "a\n")
                 view_of("ed1o", off_world, edit=False)
                 git("checkout", "-q", "--detach", "HEAD~1", cwd=off_wt)
-                for verb in (["cr", "land", "ed1o", "--tip", off_tip[:8]], ["return", "ed1o", "findings"]):
+                for verb in (["cr", "land", "ed1o", "--tip", off_tip[:8], "--base", at_main()], ["return", "ed1o", "findings"]):
                     fake = Fake(off_world)
                     code, output, errors = invoke(verb, fake, "lead0001")
-                    if code != 1 or "is not on cr/ed1o" not in errors or fake.writes() or at_main() == off_tip:
+                    writes = fake.writes()
+                    look_recorded = any(w[:2] == ["update", "ed1o"] and f"user_seen_tip={off_tip}" in w for w in writes)
+                    only_look_write = all(w[:2] == ["update", "ed1o"] and any(arg.startswith("user_seen_tip=") for arg in w) and any(arg.startswith("user_seen_base_tip=") for arg in w) for w in writes)
+                    if code != 1 or "is not on cr/ed1o" not in errors or git("rev-parse", "cr/ed1o") != off_tip \
+                            or (verb[1] == "land" and (not look_recorded or not only_look_write)) or (verb[1] != "land" and writes):
                         raise ValueError(f"{verb[:2]} must refuse a review folder off its branch: {code} {output} {errors} {fake.writes()}")
                 git("worktree", "remove", "--force", str(off_wt))
                 git("branch", "-D", "cr/ed1o")
@@ -6717,26 +6737,35 @@ def validate_board(root: Path) -> None:
                 crow = next(c for c in json.loads(invoke(["console"], Fake(landing), "lead0001")[1])["crs"] if c["id"] == "ed1")
                 _, queued, _ = invoke(["queue"], Fake(landing), "lead0001")
                 if crow["check"]["kind"] != "none" or crow["check"]["reason"] != "docs only" or crow["check"]["state"] != "current" \
-                        or cr_problem(crow, "review-stale") is not None or "no check: docs only" not in queued or crow["review"] is not None:
+                        or "no check: docs only" not in queued or crow["review"] is not None:
                     raise ValueError(f"a no-gate result must show as no check, with the review current: {crow['check']} {crow['problems']}\n{queued}")
-                code, out, errors = invoke(["cr", "land", "ed1", "--tip", tip[:8]], Fake(landing), "lead0001")
+                code, out, errors = invoke(["cr", "land", "ed1", "--tip", tip[:8], "--base", at_main()], Fake(landing), "lead0001")
                 if code != 1 or "branch moved" not in errors:
                     raise ValueError(f"landing must still refuse a tip other than the branch's: {code} {errors}")
-                code, out, errors = invoke(["cr", "land", "ed1", "--tip", new[:8]], Fake(landing), "lead0001")
+                code, out, errors = invoke(["cr", "land", "ed1", "--tip", new[:8], "--base", at_main()], Fake(landing), "lead0001")
                 if code or at_main() != new:
                     raise ValueError(f"board cr land must accept a no-gate result for exactly that tip, the review kept by the recorded commit: {code} {errors}")
-                # A new commit that is not recorded after the reviewed tip is still refused, whatever its message says; so is a result for another tip.
+                # Accept reruns a failed check for the same base and lands when it now passes.
+                retry_rows, retry_tip, _ = make_cr("retry-check", "retry-check.txt", "covered\n")
+                retry_rows[0]["metadata"]["check_result"] = "fail"
+                retry_base = at_main()
+                fake_retry = Fake(retry_rows)
+                code, output, errors = invoke(["cr", "land", "retry-check", "--tip", retry_tip, "--base", retry_base], fake_retry, "lead0001")
+                if code or at_main() != retry_tip or "check_result=pass" not in flat(fake_retry):
+                    raise ValueError(f"land must rerun a failed check for the exact seen pair: {code} {output} {errors}")
+                new = retry_tip
+                # A new commit that is not recorded after the reviewed tip is still refused, whatever its message or current check says.
                 issues2, tip2, wt2 = make_cr("ed2", "e2.txt", "e\n")
                 other = commit(wt2, "late.txt", "x\n", "late worker commit\n\nReview-edits: copied@trailer")
                 stored2 = {**issues2[0]["metadata"], "check_tip": other, "check_result": "pass", "check_kind": "none", "check_reason": "r",
                            "review_edits": json.dumps(recorded[0])}
-                code, _, errors = invoke(["cr", "land", "ed2"], Fake([{**issues2[0], "metadata": stored2}, issues2[1]]), "lead0001")
-                if code != 1 or "its review is of another" not in errors or at_main() != new:
+                code, _, errors = invoke(["cr", "land", "ed2", "--tip", other[:8], "--base", at_main()], Fake([{**issues2[0], "metadata": stored2}, issues2[1]]), "lead0001")
+                if code != 1 or "sent to agent review" not in errors or at_main() != new:
                     raise ValueError(f"a commit that is not recorded (a copied trailer included) must void the review: {code} {errors}")
                 forged = {**issues2[0]["metadata"], "check_tip": tip2, "check_result": "pass", "check_kind": "none", "check_reason": "r"}
-                code, _, errors = invoke(["cr", "land", "ed2"], Fake([{**issues2[0], "metadata": forged}, issues2[1]]), "lead0001")
-                if code != 1 or "check is" not in errors:
-                    raise ValueError(f"a no-gate result for another tip must not land this tip: {code} {errors}")
+                code, _, errors = invoke(["cr", "land", "ed2", "--tip", other[:8], "--base", at_main()], Fake([{**issues2[0], "metadata": forged}, issues2[1]]), "lead0001")
+                if code != 1 or "sent to agent review" not in errors or at_main() != new:
+                    raise ValueError(f"a no-gate result for the prior tip must not authorize landing: {code} {errors}")
                 # --gate: a targeted pass stores its command and output; a failing gate keeps the commit, stores the failure, moves nothing.
                 issues3, tip3, wt3 = make_cr("ed3", "e.txt", "e\n")
                 view_of("ed3", issues3)
@@ -6815,40 +6844,55 @@ def validate_board(root: Path) -> None:
                 if code != 1 or "board review open ed17" not in output or attached(wt17) != "refs/heads/cr/ed17" or git("rev-parse", f"{head17}^^") != at_main() \
                         or not any("--unset-metadata" in w and "opened_tip" in w for w in fake.writes()):
                     raise ValueError(f"a failed --checks that rebased must end the review with the branch rebased and say to open it again: {code} {output} {errors}")
-                # --checks that rebased onto a moved base and passed: the review is of the old base, so it names the triage, not a landing.
+                # Recording edits on a moved base checks the rebased tip and keeps prior coverage until Accept.
                 issues18, tip18, wt18 = make_cr("ed18", "e18.txt", "e\n")
-                commit(repo_root, "ed18-base.txt", "b\n", "main moves under ed18")
+                reviewed18 = issues18[0]["metadata"]["review_tip"]
+                base18 = commit(repo_root, "ed18-base.txt", "b\n", "main moves under ed18")
                 view_of("ed18", issues18, edit=False)
                 Path(wt18, "e18.txt").write_text("changed\n", encoding="utf-8")
                 fake = Fake(issues18)
                 fake.settings["custom.board.checks"] = "true"
                 code, output, errors = invoke(["cr", "edits", "ed18", "--tip", tip18, "--commit", "-m", "Fix", "--checks"], fake, "lead0001")
-                if code or "board cr refresh ed18 --review-holds" not in output or "; land with" in output:
-                    raise ValueError(f"a passing --checks that moved the base must name the review triage, not the landing: {code} {output} {errors}")
-                # refresh --review-holds compares by clean replay: the reviewed commits plus the recorded edit commits keep the review; a changed
-                # edit commit (an amend, a conflict fix) or any other commit stales it.
+                apply_writes(issues18, fake)
+                new_tip18 = git("rev-parse", "HEAD", cwd=wt18)
+                stored18 = issues18[0]["metadata"]
+                if code or stored18.get("check_tip") != new_tip18 or stored18.get("check_base_tip") != base18 \
+                        or stored18.get("review_tip") != reviewed18 or at_main() != base18:
+                    raise ValueError(f"recording edits must check the rebased pair and preserve the review range: {code} {output} {errors} {stored18}")
+                # A user edit does not cover an earlier author commit that arrived after review.
+                edits_world, _, edits_wt = make_cr("edroute", "edroute.txt", "agent\n")
+                reviewed_tip = edits_world[0]["metadata"]["review_tip"]
+                changed_tip = commit(edits_wt, "late-author.txt", "new\n", "author change since review")
+                view_of("edroute", edits_world, edit=False)
+                Path(edits_wt, "edroute.txt").write_text("user edit\n", encoding="utf-8")
+                fake = Fake(edits_world)
+                code, output, errors = invoke(["cr", "edits", "edroute", "--tip", changed_tip, "--commit", "-m", "User edit"], fake, "lead0001")
+                routed = apply_writes(edits_world, fake)[0]
+                if code or routed["status"] != "in_review" or routed["metadata"].get("review_tip") != reviewed_tip:
+                    raise ValueError(f"recording edits must route earlier uncovered work to agent review: {code} {output} {errors} {routed}")
+                # A recorded user-edit commit preserves review coverage; an amended edit or other commit does not.
                 issues8, tip8, wt8 = make_cr("ed8", "e8.txt", "e\n")
                 edit8 = commit(wt8, "e8.txt", "edited\n", "edit")
                 entry8 = json.dumps([{"commit": edit8}])
-                triaged = {**issues8[0]["metadata"], "triaged_tip": edit8, "triaged_base_tip": issues8[0]["metadata"]["base_sha"], "review_edits": entry8}
-                fake = Fake([{**issues8[0], "metadata": triaged}, issues8[1]])
-                code, output, errors = invoke(["cr", "refresh", "ed8", "--review-holds"], fake, "lead0001")
-                if code or f"review_tip={edit8}" not in flat(fake) or "the review holds" not in output:
-                    raise ValueError(f"--review-holds must keep a review past a recorded edit commit: {code} {output} {errors} {fake.writes()}")
+                coverage8 = {**issues8[0]["metadata"], "review_edits": entry8}
+                fake = Fake([{**issues8[0], "metadata": coverage8}, issues8[1]])
+                code, output, errors = invoke(["cr", "refresh", "ed8"], fake, "lead0001")
+                if code or any(arg.startswith("review_tip=") for write in fake.writes() for arg in write):
+                    raise ValueError(f"a recorded edit commit must keep existing review coverage without re-stamping it: {code} {output} {errors} {fake.writes()}")
                 git("commit", "-q", "--amend", "-m", "edit changed", cwd=wt8)
                 Path(wt8, "e8.txt").write_text("edited differently\n", encoding="utf-8")
                 git("commit", "-q", "-a", "--amend", "--no-edit", cwd=wt8)
                 amended8 = git("rev-parse", "HEAD", cwd=wt8)
-                fake = Fake([{**issues8[0], "metadata": {**triaged, "triaged_tip": amended8}}, issues8[1]])
-                code, _, errors = invoke(["cr", "refresh", "ed8", "--review-holds"], fake, "lead0001")
-                if code != 1 or "no longer the reviewed changes" not in errors:
-                    raise ValueError(f"--review-holds must stale the review when a recorded edit commit was changed: {code} {errors}")
+                fake = Fake([{**issues8[0], "metadata": coverage8}, issues8[1]])
+                _, output, _ = invoke(["cr", "refresh", "ed8"], fake, "lead0001")
+                if "sent to agent review" not in output or any(arg.startswith("review_tip=") for write in fake.writes() for arg in write):
+                    raise ValueError(f"an amended user edit must leave prior coverage stale: {output} {fake.writes()}")
                 git("reset", "-q", "--hard", edit8, cwd=wt8)
                 other8 = commit(wt8, "e8b.txt", "x\n", "late worker commit")
-                fake = Fake([{**issues8[0], "metadata": {**triaged, "triaged_tip": other8}}, issues8[1]])
-                code, _, errors = invoke(["cr", "refresh", "ed8", "--review-holds"], fake, "lead0001")
-                if code != 1 or "no longer the reviewed changes" not in errors:
-                    raise ValueError(f"--review-holds must refuse a commit that is not a recorded edit: {code} {errors}")
+                fake = Fake([{**issues8[0], "metadata": coverage8}, issues8[1]])
+                _, output, _ = invoke(["cr", "refresh", "ed8"], fake, "lead0001")
+                if "sent to agent review" not in output or any(arg.startswith("review_tip=") for write in fake.writes() for arg in write):
+                    raise ValueError(f"an unrecorded worker commit must leave prior coverage stale: {output} {fake.writes()}")
                 # A rebased copy of the recorded edit commit keeps the review; a changed commit is not the recorded one.
                 issues10, tip10, wt10 = make_cr("ed10", "e10.txt", "e\n")
                 view_of("ed10", issues10, edit=False)
@@ -6925,10 +6969,10 @@ def validate_board(root: Path) -> None:
                 edit13 = commit(wt13, "e13.txt", "edited\n", "edit")
                 entry13 = json.dumps([{"commit": edit13}])
                 base13 = issues13[0]["metadata"]["base_sha"]
-                m13 = {**issues13[0]["metadata"], "review_tip": edit13, "review_base_tip": base13, "triaged_tip": edit13, "triaged_base_tip": base13, "review_edits": entry13}
+                m13 = {**issues13[0]["metadata"], "review_tip": edit13, "review_base_tip": base13, "review_edits": entry13}
                 fake = Fake([{**issues13[0], "metadata": m13}, issues13[1]])
-                code, output, errors = invoke(["cr", "refresh", "ed13", "--review-holds"], fake, "lead0001")
-                if code or "the review holds" not in output:
+                code, output, errors = invoke(["cr", "refresh", "ed13"], fake, "lead0001")
+                if code or any(arg.startswith("review_tip=") for write in fake.writes() for arg in write):
                     raise ValueError(f"a reviewed range holding a recorded edit commit must keep its review: {code} {output} {errors}")
                 # A moved base: the edit commit rebases onto it, and the gate is stored for the rebased tip and the new base (r11-q38).
                 issues7, tip7, wt7 = make_cr("ed7", "e7.txt", "e\n")
@@ -6940,9 +6984,7 @@ def validate_board(root: Path) -> None:
                 if code or git("merge-base", rebased7, main7) != main7 \
                         or f"check_tip={rebased7}" not in flat(fake) or f"check_base_tip={main7}" not in flat(fake) or "check_kind=none" not in flat(fake):
                     raise ValueError(f"an edit commit on a moved base must rebase and store its gate for the rebased tip: {code} {errors} {fake.writes()}")
-                # The trial run's deadlock (r6-q24): edits and a moved base reach the Accept. Open does not refresh, so the base moves under the
-                # open review; the Accept is the commands decide.md prints, each allowed at its point: record the edits (this ends the hold),
-                # refresh (rebase, setup, checks, triage), keep the review, land. Every step must succeed.
+                # An open review can record user edits onto a moved base and land them from the resulting Accept pair.
                 def accept_walk(name, rows, steps):
                     """Runs each argv as the deciding session, applying its writes to `rows` before the next; returns the outputs."""
                     outputs = []
@@ -6956,55 +6998,111 @@ def validate_board(root: Path) -> None:
                     return outputs
 
                 issues_dl, tip_dl, wt_dl = make_cr("dl1", "dl.txt", "d\n")
+                reviewed_tip_dl = issues_dl[0]["metadata"].get("review_tip")
+                reviewed_base_dl = issues_dl[0]["metadata"].get("review_base_tip")
                 view_of("dl1", issues_dl, edit=False)
                 user_commit(wt_dl, "dl-user.txt", "u\n")
                 Path(wt_dl, "dl.txt").write_text("changed\n", encoding="utf-8")
-                commit(repo_root, "dl1-base.txt", "b\n", "main moves under dl1")
+                main_dl = commit(repo_root, "dl1-base.txt", "b\n", "main moves under dl1")
                 # Edits and a moved base: land names the edits line alone, whose commit rebases and checks (r11-q38).
-                code, output, errors = invoke(["cr", "land", "dl1"], Fake(issues_dl), "lead0001")
-                if code != 1 or "your review holds edits" not in errors or "board cr edits dl1" not in errors or "board cr refresh" in errors:
+                fake_dl = Fake(issues_dl)
+                edited_tip_dl = git("rev-parse", "cr/dl1")
+                code, output, errors = invoke(["cr", "land", "dl1", "--tip", edited_tip_dl, "--base", main_dl], fake_dl, "lead0001")
+                if code != 1 or "your review holds edits" not in errors or "board cr edits dl1" not in errors or "board cr refresh" in errors \
+                        or git("rev-parse", "cr/dl1") != edited_tip_dl or at_main() != main_dl or "opened_tip" in flat(fake_dl):
                     raise ValueError(f"land on a review with edits and a moved base must name the edits line, which rebases: {code} {output} {errors}")
-                recorded_out, refreshed_out, held_out = accept_walk("dl1", issues_dl, (
-                    ["cr", "edits", "dl1", "--tip", tip_dl, "--commit", "-m", "Fix dl"], ["cr", "refresh", "dl1"], ["cr", "refresh", "dl1", "--review-holds"]))
+                accept_walk("dl1", issues_dl, (["cr", "edits", "dl1", "--tip", tip_dl, "--commit", "-m", "Fix dl"],))
                 tip_dl_now = git("rev-parse", "cr/dl1")
                 if git("rev-parse", "refs/remotes/board/cr/dl1") != tip_dl_now:
-                    raise ValueError("a refresh moves the branch: it fetches the board remote, so the review folder's Outgoing follows")
-                if "your review ended" not in recorded_out or "--review-holds" not in refreshed_out or "the review holds" not in held_out:
-                    raise ValueError(f"the Accept walk of edits on a moved base must print its steps: {recorded_out} {refreshed_out} {held_out}")
-                accept_walk("dl1", issues_dl, (["cr", "land", "dl1", "--tip", tip_dl_now[:12]],))
+                    raise ValueError("recording edits rebases the branch and fetches the board remote, so the review folder's Outgoing follows")
+                base_dl_now = at_main()
+                if issues_dl[0]["metadata"].get("review_tip") != reviewed_tip_dl or issues_dl[0]["metadata"].get("review_base_tip") != reviewed_base_dl:
+                    raise ValueError(f"recording edits across a moved base must retain the prior coverage pair: {issues_dl[0]['metadata']}")
+                accept_walk("dl1", issues_dl, (["cr", "land", "dl1", "--tip", tip_dl_now[:12], "--base", base_dl_now],))
+                if issues_dl[0]["metadata"].get("landing") != tip_dl_now or at_main() != tip_dl_now:
+                    raise ValueError(f"the Accept land must move the target to the recorded tip: {issues_dl[0]}")
                 if at_main() != tip_dl_now or git("show", f"{tip_dl_now}:dl.txt") != "changed" or git("show", f"{tip_dl_now}:dl-user.txt") != "u":
                     raise ValueError("the Accept walk must land the user's commit and their uncommitted change on the moved base")
-                # The trial run's deadlock: Accept with edits and a gate on a moved base. The gated edit commit rebases onto the base and
-                # stores its gate for the rebased tip (r11-q38); keeping the review reaches the landing.
+                # The selected check on user edits applies to the rebased pair shown at Accept.
                 issues_d3, tip_d3, wt_d3 = make_cr("dl3", "dl3.txt", "d\n")
+                reviewed_tip_d3 = issues_d3[0]["metadata"].get("review_tip")
+                reviewed_base_d3 = issues_d3[0]["metadata"].get("review_base_tip")
                 view_of("dl3", issues_d3, edit=False)
                 user_commit(wt_d3, "dl3-user.txt", "u\n")
                 commit(repo_root, "dl3-base.txt", "b\n", "main moves under dl3")
-                gated_out, _, _ = accept_walk("dl3", issues_d3, (["cr", "edits", "dl3", "--tip", tip_d3, "--commit", "--no-gate", "docs only"],
-                                                                ["cr", "refresh", "dl3"], ["cr", "refresh", "dl3", "--review-holds"]))
+                (gated_out,) = accept_walk("dl3", issues_d3, (["cr", "edits", "dl3", "--tip", tip_d3, "--commit", "--no-gate", "docs only"],))
                 tip_d3_now = git("rev-parse", "cr/dl3")
-                if git("merge-base", tip_d3_now, at_main()) != at_main() or "no check: docs only" not in gated_out:
-                    raise ValueError(f"a gated edit commit on a moved base must rebase and say it stored no check: {gated_out}")
-                accept_walk("dl3", issues_d3, (["cr", "land", "dl3", "--tip", tip_d3_now[:12]],))
+                base_d3_now = at_main()
+                if issues_d3[0]["metadata"].get("review_tip") != reviewed_tip_d3 or issues_d3[0]["metadata"].get("review_base_tip") != reviewed_base_d3:
+                    raise ValueError(f"a gated edit commit across a moved base must retain the prior coverage pair: {issues_d3[0]['metadata']}")
+                accept_walk("dl3", issues_d3, (["cr", "land", "dl3", "--tip", tip_d3_now[:12], "--base", base_d3_now],))
+                if at_main() != tip_d3_now or "no check: docs only" not in gated_out:
+                    raise ValueError(f"a gated edit commit on a moved base must rebase and carry clean review coverage: {issues_d3[0]}")
                 if at_main() != tip_d3_now or git("show", f"{tip_d3_now}:dl3-user.txt") != "u":
                     raise ValueError("the Accept walk of a gated edit commit must land the user's commit on the moved base")
-                # The same without edits: land says what ends the hold (it names no step an open review refuses), then the walk runs.
+                # Refresh leaves an open review alone; one Accept ends the unedited review and lands the clean replay.
                 issues_d2, tip_d2, wt_d2 = make_cr("dl2", "dl2.txt", "d\n")
                 view_of("dl2", issues_d2, edit=False)
-                commit(repo_root, "dl2-base.txt", "b\n", "main moves under dl2")
-                code, _, errors = invoke(["cr", "land", "dl2", "--tip", tip_d2[:12]], Fake(issues_d2), "lead0001")
-                code_refresh, _, errors_refresh = invoke(["cr", "refresh", "dl2"], Fake(issues_d2), "lead0001")
-                if code != 1 or f"board cr edits dl2 --tip {tip_d2[:12]}" not in errors or "ends your review, then board cr refresh dl2" not in errors or code_refresh != 1 \
-                        or f"board cr edits dl2 --tip {tip_d2[:12]}" not in errors_refresh:
-                    raise ValueError(f"land and refresh on an open review must name the step that ends it: {errors} {errors_refresh}")
-                accept_walk("dl2", issues_d2, (["cr", "edits", "dl2", "--tip", tip_d2, "--commit"], ["cr", "refresh", "dl2"], ["cr", "refresh", "dl2", "--review-holds"]))
-                tip_d2_now = git("rev-parse", "cr/dl2")
-                accept_walk("dl2", issues_d2, (["cr", "land", "dl2", "--tip", tip_d2_now[:12]],))
-                if at_main() != tip_d2_now:
-                    raise ValueError("the Accept walk without edits must land on the moved base")
+                if states(issues_d2)[0]["acceptance"]["delta"] != "":
+                    raise ValueError("the user's identical seen series must have an empty delta")
+                main_d2 = commit(repo_root, "dl2-base.txt", "b\n", "main moves under dl2")
+                if states(issues_d2)[0]["acceptance"]["delta"] != "":
+                    raise ValueError("the target moving without the CR branch must leave the seen series unchanged")
+                fake_refresh_d2 = Fake(issues_d2)
+                code_refresh, _, errors_refresh = invoke(["cr", "refresh", "dl2"], fake_refresh_d2, "lead0001")
+                if code_refresh != 1 or "open for your review" not in errors_refresh or fake_refresh_d2.writes() \
+                        or git("rev-parse", "cr/dl2") != tip_d2 or at_main() != main_d2:
+                    raise ValueError(f"refresh must preserve Git and the open review: {errors_refresh} {fake_refresh_d2.writes()}")
+                git("checkout", "-q", "--detach", tip_d2, cwd=wt_d2)
+                fake_detached = Fake(issues_d2)
+                code, _, errors = invoke(["cr", "land", "dl2", "--tip", tip_d2[:12], "--base", at_main()], fake_detached, "lead0001")
+                if code != 1 or "your review cannot be read" not in errors or "opened_tip" in flat(fake_detached) \
+                        or git("rev-parse", "cr/dl2") != tip_d2 or at_main() != main_d2:
+                    raise ValueError(f"a detached review at the same tip must refuse before closing or moving the branch: {errors}")
+                git("checkout", "-q", "cr/dl2", cwd=wt_d2)
+                old_base_d2 = issues_d2[0]["metadata"]["review_base_tip"]
+                fake_land_d2 = Fake(issues_d2)
+                code, output, errors = invoke(["cr", "land", "dl2", "--tip", tip_d2[:12], "--base", old_base_d2], fake_land_d2, "lead0001")
+                if code != 1 or "base moved" not in errors or "main moves under dl2" not in output \
+                        or at_main() != main_d2 or git("rev-parse", "cr/dl2") != tip_d2 or fake_land_d2.writes():
+                    raise ValueError(f"a stale Accept pair must show incoming commits and leave the review and refs alone: {code} {output} {errors}")
+                accept_walk("dl2", issues_d2, (["cr", "land", "dl2", "--tip", tip_d2[:12], "--base", main_d2],))
+                landed_d2 = at_main()
+                meta_d2 = issues_d2[0]["metadata"]
+                if git("rev-parse", f"{landed_d2}^") != main_d2 or wt_d2.exists() \
+                        or "opened_tip" in meta_d2 or meta_d2.get("landing") != landed_d2 \
+                        or meta_d2.get("review_tip") != tip_d2 or meta_d2.get("check_tip") != landed_d2 \
+                        or meta_d2.get("user_seen_tip") != tip_d2 or meta_d2.get("user_seen_base_tip") != main_d2:
+                    raise ValueError(f"one Accept must end the open review and land the checked clean replay: {meta_d2}")
+
+                # A failed check and a conflicting rebase both leave Accept pending and the validated review ended.
+                for failure in ("check", "conflict"):
+                    name = f"dl2-{failure}"
+                    issues_failed, tip_failed, wt_failed = make_cr(name, f"{name}.txt", "request\n")
+                    view_of(name, issues_failed, edit=False)
+                    incoming = f"{name}.txt" if failure == "conflict" else f"{name}-base.txt"
+                    base_failed = commit(repo_root, incoming, "base\n", f"main moves under {name}")
+                    fake_failed = Fake(issues_failed)
+                    if failure == "check":
+                        fake_failed.settings["custom.board.checks"] = f"test ! -f {name}.txt || {{ echo '{name}.txt broken'; exit 1; }}"
+                    code, _, errors = invoke(["cr", "land", name, "--tip", tip_failed[:12], "--base", at_main()], fake_failed, "lead0001")
+                    failed_row = apply_writes(issues_failed, fake_failed)[0]
+                    failed_meta = failed_row["metadata"]
+                    expected_error = "check failed after rebase" if failure == "check" else "stopped on a conflict"
+                    if code != 1 or expected_error not in errors or at_main() != base_failed or failed_row["status"] != "needs_acceptance" \
+                            or "opened_tip" in failed_meta or failed_meta.get("review_tip") != tip_failed or "landing" in failed_meta \
+                            or any(w[:2] == ["close", name] for w in fake_failed.writes()):
+                        raise ValueError(f"a failed {failure} must end the review and leave Accept pending: {code} {errors} {failed_meta}")
+                    if failure == "check":
+                        if failed_meta.get("check_result") != "fail" or states(issues_failed)[0]["acceptance"]["delta"] != "":
+                            raise ValueError(f"the rebased tip must show the failed check and an empty clean-replay delta: {failed_meta}")
+                        commit(wt_failed, "delta.txt", "new\n", "a change since the user's look")
+                        delta = states(issues_failed)[0]["acceptance"]["delta"]
+                        if not delta or "a change since the user's look" not in delta:
+                            raise ValueError(f"the user's delta must show new commits after the look: {delta}")
                 # Ratification: the CR landed; its worktree, named for the ratification, shows the landed tip; the edit makes it the follow-up CR's.
                 issues5, tip5, wt5 = make_cr("ed5", "r.txt", "r\n")
-                code, _, errors = invoke(["cr", "land", "ed5"], Fake(issues5), "lead0001")
+                code, _, errors = invoke(["cr", "land", "ed5", "--tip", tip5[:8], "--base", at_main()], Fake(issues5), "lead0001")
                 moved = commit(repo_root, "after.txt", "later\n", "main moves on")
                 landed = {**issues5[0], "status": "closed", "metadata": {**issues5[0]["metadata"], "landing": tip5}}
                 rat = {**cr_item("rat5", "ed5", "needs_ratification"), "metadata": {"ratification": "1"}}
@@ -7082,12 +7180,12 @@ def validate_board(root: Path) -> None:
                 # r1-q5: that follow-up has no stored review, only the user's recorded edit: it lands on the Accept.
                 follow_meta = {"look": "before", "base": "main", "base_sha": moved, "setup_sha": moved, "check_tip": follow, "check_base_tip": moved,
                                "check_result": "pass", "check_at": "2026-10-22T15:00:00Z", "review_edits": json.dumps(recorded)}
-                code, output, errors = invoke(["cr", "land", "fx-new", "--tip", follow[:8]], Fake([cr_issue("fx-new", "needs_acceptance", **follow_meta)]), "lead0001")
+                code, output, errors = invoke(["cr", "land", "fx-new", "--tip", follow[:8], "--base", at_main()], Fake([cr_issue("fx-new", "needs_acceptance", **follow_meta)]), "lead0001")
                 if code or at_main() != follow:
                     raise ValueError(f"a follow-up made only of the user's recorded edits must land on the Accept without an agent review: {code} {errors} {output}")
                 issues_nr, tip_nr, wt_nr = make_cr("nr1", "nr.txt", "n\n")
                 issues_nr[0]["metadata"] = {k: v for k, v in issues_nr[0]["metadata"].items() if not k.startswith("review")}
-                code, _, errors = invoke(["cr", "land", "nr1"], Fake(issues_nr), "lead0001")
+                code, _, errors = invoke(["cr", "land", "nr1", "--tip", tip_nr[:8], "--base", at_main()], Fake(issues_nr), "lead0001")
                 if code != 1 or "review" not in errors:
                     raise ValueError(f"a CR with no review and commits of its own must not land: {code} {errors}")
 
@@ -7197,7 +7295,7 @@ def validate_board(root: Path) -> None:
                 Path(wt_rv, "new-file.txt").unlink()
                 # r1-q6, r3-q19: board ratify yes | edits | no, with the ratification's own worktree.
                 issues_ra, tip_ra, wt_ra = make_cr("ra1", "ra.txt", "r\n")
-                invoke(["cr", "land", "ra1"], Fake(issues_ra), "lead0001")
+                invoke(["cr", "land", "ra1", "--tip", tip_ra[:8], "--base", at_main()], Fake(issues_ra), "lead0001")
                 landed_ra = {**issues_ra[0], "status": "closed", "metadata": {**issues_ra[0]["metadata"], "landing": tip_ra}}
                 rat_ra = {**cr_item("rat9", "ra1", "needs_ratification"), "priority": 1, "metadata": {"ratification": "1"}}
                 rows_ra = [landed_ra, rat_ra, cr_issue("fx-new", "open")]
@@ -7290,7 +7388,7 @@ def validate_board(root: Path) -> None:
                 # in review, not refresh work; the deciding session merges the conflict with the user, who confirms it with `cr edits --merged`.
                 def ratify_world(name, filename, theirs=None):
                     issues_w, tip_w, _ = make_cr(name, filename, "r\n")
-                    invoke(["cr", "land", name], Fake(issues_w), "lead0001")
+                    invoke(["cr", "land", name, "--tip", tip_w[:8], "--base", at_main()], Fake(issues_w), "lead0001")
                     if theirs:
                         commit(repo_root, filename, theirs, f"main edits {filename}")
                     landed_w = {**issues_w[0], "status": "closed", "metadata": {**issues_w[0]["metadata"], "landing": tip_w}}
