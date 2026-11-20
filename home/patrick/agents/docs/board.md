@@ -100,6 +100,13 @@ or only replaces paths in it (same tokens and whitespace, each changed token hol
 the same 2000 (`board comment <id>... (-m <text> | -f <file>)`, `-f -` for stdin; `board handover` evidence, `board return`
 findings, `board block` reasons); the board's own packets are exempt: the protocol engine's autopilot
 park adds its packet with `board comment … --board-packet` (r16-q87).
+`board return <cr> "<what changes>" --ruling <id>` lets a registered session
+pulling plan return an unassigned CR in review while it holds a released
+ruling blocking an open item of that request. Return reserves the review
+with Beads' assignee and status preconditions before it reopens work.
+Review claims use the same preconditions so a stale claim cannot take a CR
+that Return already reopened.
+Linking or releasing a ruling leaves the review stage in place until a return.
 `board close <id>... --reason "<why>"` refuses a reason under bd's 20 characters before calling bd, and a change request
 (`board cr land` or `reject` closes it).
 `--force` closes past open blockers. The other writes `board bd` no longer carries have verbs: `board update <id>... [--title] [--priority] [--label L]...

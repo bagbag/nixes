@@ -2697,7 +2697,9 @@ def claim_one(issue: dict, actor: str) -> tuple[bool, str]:
     if issue['status'] == 'open':
         result = bd('update', issue['id'], '--claim', '--json')
     else:
-        result = bd('update', issue['id'], '--assignee', actor, '--if-assignee', '', '--json')
+        # A planner can finish Return after a reviewer reads the unassigned CR.
+        guard = ['--if-status', 'in_review'] if issue.get('issue_type') == CR_TYPE and issue['status'] == 'in_review' else []
+        result = bd('update', issue['id'], '--assignee', actor, '--if-assignee', '', *guard, '--json')
     return result.returncode == 0, (result.stderr or result.stdout).strip()
 
 
@@ -4660,30 +4662,63 @@ def request_review(board: Board, args) -> int:
     return 0
 
 
+def reserve_planner_return(board: Board, cr: dict, ruling_id: str, actor: str) -> None:
+    """Reserve an unclaimed review before changing its checkpoint items."""
+    if cr['status'] != 'in_review' or cr.get('assignee'):
+        raise BoardError(f"{cr['id']}: --ruling requires an unclaimed change request in review")
+    entry = own_entry(board, actor)
+    if not entry or 'plan' not in session_kinds(entry):
+        raise BoardError('--ruling requires a registered session pulling plan')
+    ruling = board.by_id.get(ruling_id) or {}
+    if ruling.get('issue_type') != 'decision' or ruling.get('status') != 'released' or ruling.get('assignee') != actor:
+        raise BoardError(f'{ruling_id}: --ruling requires a released ruling you hold')
+    if refusal := foreign_claim(board, cr['id']):
+        raise BoardError(refusal)
+    if not any(ruling_id in board.blockers.get(item['id'], ()) for item in board.cr_items(cr['id'])):
+        raise BoardError(f'{ruling_id}: it does not hold any open item of {cr["id"]}; block the affected items first')
+    bd_checked('update', cr['id'], '--assignee', actor, '--if-assignee', '', '--if-status', 'in_review', '--json')
+
+
 def return_item(board: Board, args) -> None:
     actor = derived_actor() or 'user'
     cr = cr_arg(board, args.id, 'return')
-    refuse_long_comment(f'board return: {args.findings}')
-    if cr['status'] not in ('in_review', ACCEPT):
+    findings = f'board return: {args.findings}' if not args.ruling else f'board return: {args.ruling}: {args.findings}'
+    refuse_long_comment(findings)
+    if args.ruling:
+        reserve_planner_return(board, cr, args.ruling, caller())
+    elif cr['status'] not in ('in_review', ACCEPT):
         raise BoardError(f"{args.id}: {cr['status']}; only a change request in review or waiting for its Accept is returned (unclaim frees work in hand)")
-    if cr['status'] == ACCEPT:
+    elif cr['status'] == ACCEPT:
         if not may_judge(board, cr):
             raise BoardError(f'{args.id}: waiting for your Accept; the lead returns it with the findings you gave (autopilot: a user design checkpoint)')
         if cr.get('assignee') and not holds_cr(cr, actor):
             raise BoardError(f"{args.id}: held by {cr['assignee']} (a refresh); return it once that is released")
     elif not holds_cr(cr, actor):
         raise BoardError(f"{args.id}: {cr['status']}, held by {cr.get('assignee') or 'nobody'}; claim it first")
-    review = review_read(board, cr)
-    if review:  # the user's Return: an unedited review ends with it, one with edits is recorded first
-        refuse_unrecorded(args.id, review, f'{edits_line(args.id, review["opened"])} --no-gate "returned" records them, then return')
-    if cr_at_design_checkpoint(cr):
-        designs = checkpoint_design_items(board, cr['id'], 'in_review')
-        if designs:
-            bd_checked('update', *designs, '--status', 'open', '--json')
-    bd_checked('update', args.id, '--status', 'open', '--assignee', '', '--json')
-    route_fields = {'no_agent_review_reason': None} if meta(cr).get('no_agent_review_reason') else {}
-    put_meta(cr, since=None, reviewing_tip=None, **route_fields, **({OPENED: None} if review else {}))
-    comment(args.id, f'board return: {args.findings}')
+    guard = ['--if-assignee', actor, '--if-status', 'in_review'] if args.ruling else []
+    try:
+        review = review_read(board, cr)
+        if review:  # a review with edits must record them before Return
+            refuse_unrecorded(args.id, review, f'{edits_line(args.id, review["opened"])} --no-gate "returned" records them, then return')
+        if cr_at_design_checkpoint(cr):
+            designs = checkpoint_design_items(board, cr['id'], 'in_review')
+            if designs:
+                bd_checked('update', *designs, '--status', 'open', '--json')
+        clear = [key for key in ('since', 'reviewing_tip', 'no_agent_review_reason', *([OPENED] if review else []))
+                 if key in meta(cr)]  # the covered review pair stays (change-requests.md Review coverage)
+        if guard:
+            bd_checked('update', args.id, '--status', 'open', '--assignee', '', *guard,
+                       *(arg for key in clear for arg in ('--unset-metadata', key)), '--json')
+        else:
+            bd_checked('update', args.id, '--status', 'open', '--assignee', '', '--json')
+            put_meta(cr, **dict.fromkeys(clear))
+    except BoardError as error:
+        if guard:
+            released = bd('update', args.id, '--assignee', '', *guard, '--json')
+            if released.returncode not in (0, 13):
+                raise BoardError(f'{error}; releasing the temporary return hold failed: {bd_message(released)}') from error
+        raise
+    comment(args.id, findings)
     print(f'returned {args.id} to the queue (worktree and branch kept)')
 
 
@@ -7618,9 +7653,10 @@ def run_command(argv: list[str]) -> int:
     sub.add_argument('evidence', type=nonempty)
     sub.add_argument('--no-agent-review', metavar='REASON', type=nonempty, help="route an authored change to the user's Accept without agent review; see skills/shared/acceptance.md Review policy")
     gate_options(sub, nonempty)
-    sub = add('return', 'return a claimed review to the work queue with its findings', return_item)
+    sub = add('return', 'return a change request to the work queue with its findings', return_item)
     sub.add_argument('id', type=board_id)
     sub.add_argument('findings', type=nonempty)
+    sub.add_argument('--ruling', type=board_id, help='return an unclaimed review whose items wait on this released ruling you hold')
     for name, run, text in (('take', take, 'reassign held items to yourself (with a comment)'),
                             ('unclaim', unclaim, "free a hold, yours or another's (with a comment)")):
         sub = add(name, text, run)

@@ -5110,6 +5110,63 @@ def validate_board(root: Path) -> None:
             if invoke(["return", "fx-ovo.c1", "changes"], Fake(accepted), "lead0001")[0] != 0 or invoke(["return", "fx-ovo.c1", "changes"], Fake(accepted), "aaaa1111")[0] != 1:
                 raise ValueError("a lead returns a change request waiting for its Accept; an agent session does not")
 
+            # A planner must hold a released ruling linked to affected work. Neither an unrelated ruling nor a concurrent reviewer can be overwritten.
+            ruling_id = ids["Released ruling"]
+            command = ["return", "fx-ovo.c1", "revise the design", "--ruling", ruling_id]
+            reserve = ["update", "fx-ovo.c1", "--assignee", "plan0001", "--if-assignee", "", "--if-status", "in_review", "--json"]
+
+            def planner_return_fixture(status="in_review", holder="", ruling_holder="plan0001", released=True, affected=True):
+                child = {**agent_design, "id": "fx-ovo.c1.d", "status": "in_review",
+                         "dependencies": [{"issue_id": "fx-ovo.c1.d", "depends_on_id": "fx-ovo.c1", "type": "parent-child"}]}
+                if affected:
+                    child["dependencies"].append({"issue_id": child["id"], "depends_on_id": ruling_id, "type": "blocks"})
+                rows = variant(**{"CR ready": {"status": status, "assignee": holder, "metadata": {"checkpoint": "agent"}},
+                                  "Released ruling": {"status": "released" if released else "decided", "assignee": ruling_holder}})
+                return [*rows, child]
+
+            fake = CheckpointHandover(planner_return_fixture())
+            code, _, errors = invoke(command, fake, "plan0001")
+            writes = fake.writes()
+            if code or writes[0] != reserve or fake.issues[-1]["status"] != "open" \
+                    or writes[2][:10] != ["update", "fx-ovo.c1", "--status", "open", "--assignee", "",
+                                         "--if-assignee", "plan0001", "--if-status", "in_review"] \
+                    or writes[-1] != ["comments", "add", "fx-ovo.c1", f"board return: {ruling_id}: revise the design"]:
+                raise ValueError(f"planner return must reserve, reopen the checkpoint, and record its ruling: {errors} {writes}")
+            for actor, changes in (("plan0001", {"status": "needs_acceptance"}), ("plan0001", {"holder": "bbbb2222"}),
+                                   ("plan0001", {"ruling_holder": ""}), ("plan0001", {"released": False}),
+                                   ("plan0001", {"affected": False}), ("aaaa1111", {"ruling_holder": "aaaa1111"})):
+                fake = Fake(planner_return_fixture(**changes))
+                code, _, errors = invoke(command, fake, actor)
+                if code != 1 or fake.writes():
+                    raise ValueError(f"an unauthorized planner return must not write: {actor} {changes} {errors} {fake.writes()}")
+            fake = Fake(planner_return_fixture(), refuse={"fx-ovo.c1"})
+            code, _, errors = invoke(command, fake, "plan0001")
+            if code != 1 or fake.writes() != [reserve]:
+                raise ValueError(f"planner return must stop if a reviewer wins the reservation race: {errors} {fake.writes()}")
+
+            class ReviewClaim(Fake):
+                def __init__(self, returned):
+                    super().__init__(planner_return_fixture(affected=False))  # the reviewer reads before the ruling is linked
+                    self.returned = returned
+
+                def __call__(self, command, **kwargs):
+                    result = super().__call__(command, **kwargs)
+                    if command[:3] == ["bd", "update", "fx-ovo.c1"] and "--assignee" in command:
+                        cr = next(issue for issue in self.issues if issue["id"] == "fx-ovo.c1")
+                        if self.returned:
+                            cr["status"] = "open"
+                        if "--if-status" in command and cr["status"] != command[command.index("--if-status") + 1]:
+                            return subprocess.CompletedProcess(command, 13, "", "status mismatch")
+                        cr["assignee"] = command[command.index("--assignee") + 1]
+                    return result
+
+            for returned in (False, True):
+                fake = ReviewClaim(returned)
+                code, _, errors = invoke(["claim", "fx-ovo.c1"], fake, "solo0001")
+                claimant = next(issue.get("assignee") for issue in fake.issues if issue["id"] == "fx-ovo.c1")
+                if code != int(returned) or claimant != ("" if returned else "solo0001"):
+                    raise ValueError(f"a review claim succeeds only while the CR is still in review: {errors} {fake.writes()}")
+
             # Change requests (r24, r25): readiness, check state, landing, refresh, rejection, console rows; real git in a second
             # scratch repository, bd writes recorded.
             def cr_issue(item_id, status="open", assignee=None, priority=2, blocks=(), **metadata):
@@ -6256,7 +6313,7 @@ def validate_board(root: Path) -> None:
                 fake = Fake([*low_i, *up_i])
                 code, output, _ = invoke(["claim", "ru"], fake, "lead0001")
                 refused, _, _ = invoke(["claim", "ru"], Fake([*low_i, *up_i]), "aaaa1111")
-                if code or ["update", "ru", "--assignee", "lead0001", "--if-assignee", "", "--json"] not in fake.writes() or refused == 0:
+                if code or ["update", "ru", "--assignee", "lead0001", "--if-assignee", "", "--if-status", "in_review", "--json"] not in fake.writes() or refused == 0:
                     raise ValueError(f"risk: a deciding session takes a passed look-after child by id, an agent session does not: {code} {fake.writes()}")
                 # Check exit status contract: 0 ran, 1 ran with failure lines on stdout, anything else is a broken check. stderr is no
                 # failure: a two-word stderr line only at the tip (ex.txt exists there) passes; failure lines on stderr alone with exit 1

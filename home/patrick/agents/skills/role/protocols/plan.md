@@ -74,12 +74,16 @@ item set (`board create --graph`) to a `plan` worker ([Cut work](#cut-work)).
 2. Block each open item the ruling changes on it, except designs, spikes and
    CRs ([Questions and rulings](../../shared/board-core.md#questions-and-rulings))
    (`board block <item>… --on <ruling> --reason "<what changes>"`); relate
-   items it only informs (`board link <ruling> <item> --type relates-to`). Add the
-   ruling id and owner anchor to each item's design, then unblock the designs
-   and spikes (`board unblock <item> --on <ruling>`).
+   items it only informs (`board link <ruling> <item> --type relates-to`).
+   When a ruling changes a CR in review, create any missing affected items and
+   block its affected open items (designs included) on the ruling. While you
+   hold the released ruling, return an unclaimed review with
+   `board return <cr> "<what changes>" --ruling <ruling>`. For a held review,
+   record the change for its reviewer. Add the ruling id and owner anchor to each item's design,
+   then unblock the designs and spikes (`board unblock <item> --on <ruling>`).
    Create missing work items; when cutting them needs a design or spike first,
    create it, block the ruling on it and stop: the ruling returns to planning
-   when it closes, and the design never waits on the ruling.
+   when that prerequisite closes.
    Add changelog and upgrade duties to affected
    items' acceptance.
 3. For a revision, update every consumer of the changed decision: related

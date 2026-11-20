@@ -250,8 +250,9 @@ items](#work-items)).
 4. The acceptor passes with `board handover <cr> "<verdict>"` or returns it
    with `board return <cr> "<findings>"`. The user's accept is a deciding
    session's [Accept](../role/protocols/decide.md#accept).
-5. `board block` on a CR in review returns it to the queue; amend it to the
-   blocker before handing it over again.
+5. A hold leaves the review stage in place. Apply
+   [Released rulings](../role/protocols/plan.md#released-rulings) when a ruling
+   changes a CR in review.
 
 ### Priority
 
