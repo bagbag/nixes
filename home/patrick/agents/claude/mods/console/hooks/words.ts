@@ -13,7 +13,7 @@ const PULLS: readonly string[] = ['plan', 'design', 'implement', 'review']
 /** A session's role for the pane's fixed column, which `autopilot` would overflow. */
 export const roleText = (role: string): string => role === 'autopilot' ? 'auto' : role
 
-/** An agent's pulls as fixed-position initials, a missing pull as `·`: `p d i r`, `· d i ·`; empty without pulls. */
+/** A session's pulls as fixed-position initials, a missing pull as `·`: `p d i r`, `· d i ·`; empty without pulls. */
 export const pullsText = (pulls: readonly string[]): string =>
   pulls.length === 0 ? '' : PULLS.map(pull => pulls.includes(pull) ? pull[0] : '·').join(' ')
 

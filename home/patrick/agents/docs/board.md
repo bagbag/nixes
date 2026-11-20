@@ -92,9 +92,10 @@ items) unless `--force "<reason>"`; a takeover of a work item held in progress (
 (item metadata `forced_hold_by`/`forced_hold`, shown while that actor holds it). A held work item
 with no update (fields, notes, comments) for an hour is `STALE` in position, mine, check and the
 holder's claim output (r13-q76); nothing is refused. An unregistered session has no cap; one whose own registration file
-exists but is unreadable is refused by `board claim` and `board take` until it registers again (r3-q16). Registration takes `--pulls` for every role;
-lead, solo and agent are presets, and a session's pulls add to its preset for bare claims, handles
-and capacity (r13-q61). `board create` and `board field apply` refuse a task, bug, design or
+exists but is unreadable is refused by `board claim` and `board take` until it registers again (r3-q16). A role sets the
+authority (its decide kinds, `ROLE_KINDS`); the stored pulls set the work: `session activate` stores the role's preset (lead: plan;
+solo, autopilot: all four; agent: none), `--pulls` sets them, `--without` drops some from the preset, and a later activate without
+either keeps the stored ones. Bare claims, handles and worker dispatch read the stored pulls (r13-q61). `board create` and `board field apply` refuse a task, bug, design or
 spike whose description, design, acceptance or notes is over 2000 characters (naming field and size; the refusal says how to cut, r3-q14); an update that shrinks an over-limit field
 or only replaces paths in it (same tokens and whitespace, each changed token holding a `/`; the rewrite after a scratch move) passes, and decision records are not limited (r13-q74, r16-q96). Comments a session writes are held to
 the same 2000 (`board comment <id>... (-m <text> | -f <file>)`, `-f -` for stdin; `board handover` evidence, `board return`

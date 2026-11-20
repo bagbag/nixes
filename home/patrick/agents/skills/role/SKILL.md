@@ -10,18 +10,17 @@ disable-model-invocation: true
 
 ## Roles
 
-A session registers a role (`lead`, `agent`, `solo`, `autopilot`) and pulls.
-The **decide set** (questions, ratification, acceptance with the user,
-milestones) comes with `lead` and `solo`; pulls come with the role's preset
-(agent has none) or `--pulls`. A session executes only what its role and pulls
-include.
+A session registers a role, which sets its authority (the **decide set**:
+questions, ratification, acceptance with the user, milestones), and its pulls,
+which set its work, preset by the role. A session executes only what its role
+and pulls include.
 
-| Role | Pulls | Protocols |
-|---|---|---|
-| lead | The decide set: decides with the user, releases rulings, writes rule owners, accepts change requests (CRs) and user-judged outcomes with the user, and plans (pull `plan`). May add pulls; several leads may run, the user coordinates them. | decide, plan |
-| agent | Any of plan, design, implement and review, as chosen. | per claimed CR or item (below) |
-| solo | Decide plus plan, implement and review: decides with the user and plans; workers design and implement each CR, and a different worker reviews it. | decide, plan |
-| autopilot | Solo while the user is away, with unattended authority. | decide, plan, unattended |
+| Role | Authority | Preset pulls | Protocols |
+|---|---|---|---|
+| lead | The decide set: decides with the user, releases rulings, writes rule owners, accepts change requests (CRs) and user-judged outcomes with the user. Several leads may run; the user coordinates them. | plan | decide |
+| solo | As lead. | all four | decide |
+| autopilot | Solo while the user is away, with unattended authority. | all four | decide, unattended |
+| agent | None. | none: any of the four, as chosen | per claimed CR or item (below) |
 
 A **deciding session** is one registered as `lead`, `solo` or `autopilot`;
 `unattended.md` limits autopilot's authority.
@@ -63,16 +62,16 @@ Give each step's output as one line.
 2. **Ask.** Ask for what neither the argument nor step 1 gives (pulls
    named without a role give no role), under
    [Question format](../shared/question-format.md)
-   (`$HOME/.agents/skills/shared/question-format.md`): the role among the four; for agent,
-   the pulls as a multiple choice; for lead, whether to add pulls.
+   (`$HOME/.agents/skills/shared/question-format.md`): the role among the four, then
+   its pulls as one multiple choice with the role's preset ticked.
    Output: the question.
 3. **Register.**
 
    ```sh
-   $HOME/.agents/bin/session activate <role> [--pulls <pull>,<pull>] [--workers <n>]
+   $HOME/.agents/bin/session activate <role> --pulls <pull>,<pull> [--workers <n>]
    ```
 
-   Pass `--pulls` for agent and for any pulls added to lead, and `--workers`
+   Pass the chosen pulls, and `--workers`
    only when the invocation names a worker count (`/role solo 5`). For autopilot register `solo`: the
    setup registers autopilot on the user's go. Leaving autopilot, give the
    unattended protocol's Return report first.
@@ -88,7 +87,7 @@ Give each step's output as one line.
 6. **Continue** the current task under the loaded protocols; with none,
    report and wait. Run the claim loop only when the user asks for it (in
    words, or a loop command such as `/goal`). With
-   pulls beyond the decide set, loop: dispatch the CRs `board queue` lists for your
+   pulls, loop: dispatch the CRs `board queue` lists for your
    pulls, in its order, to workers in parallel under the plan protocol's
    [Dispatch](protocols/plan.md#dispatch), each running
    its protocol from the table above through its Exit, and refill as it says.

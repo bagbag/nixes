@@ -49,7 +49,6 @@ IDLE_HOURS = 1  # holds without activity (holder's tool call, else item update) 
 WORKER_CAP = 3  # workers a session targets unless registered with its own (activate --workers); Codex thread limits lower it
 WORKER_ACTIVE_MINUTES = 15  # a running worker with a tool call this recently counts as active
 CODEX_SYSTEM_CONFIG = Path('/etc/codex/config.toml')  # Codex's system layer, under $CODEX_HOME/config.toml
-CAPACITY_ROLES = ('agent', 'solo', 'autopilot')  # roles that dispatch workers (any role with pulls does)
 WORK_HOLD_TYPES = ('task', 'bug', 'spike', 'design')  # items a worker cap counts and a stale hold flags
 STALE_HOURS = 1  # a held work item without an update (fields, notes, comments) for longer is flagged stale
 DEEP_REVIEW = 'deep_review'  # item metadata a review sets to the failure path it escalates to deep-review; board show prints it
@@ -79,13 +78,14 @@ def planning_wait(record: dict) -> bool:
 # Rank of a kind within one claim-order tier at equal priority (r22-q177).
 CLAIM_RANK = {kind: at for at, kind in enumerate(('plan', 'review', 'refresh', 'ratify', 'accept', 'design', 'question', 'implement', 'milestone'))}
 FINISHING = ('review', 'refresh', 'ratify', 'accept')
-# Kinds a bare `board claim` takes per role preset; the session's registered pulls come on top (agent: only its pulls).
-ROLE_KINDS = {'lead': ('question', 'plan'), 'agent': (), 'solo': ('question', 'plan', 'ratify', 'accept'),
-              'autopilot': ('question', 'plan', 'accept')}
+# Kinds a bare `board claim` takes for a role's authority (with the user: lead, solo; unattended: autopilot); the session's
+# registered pulls (plan, design, implement, review) come on top, for every role.
+ROLE_KINDS = {'lead': ('question', 'ratify', 'accept'), 'agent': (), 'solo': ('question', 'ratify', 'accept'),
+              'autopilot': ('question', 'accept')}
 # Kinds each role handles, by bare claim or by id; `board position` counts sessions from these.
 # A ready milestone is accepted with the user: claimed by id only, never by autopilot.
-ROLE_HANDLES = {'lead': ('question', 'plan', 'accept', 'ratify', 'milestone'), 'agent': (),
-                'solo': ('question', 'plan', 'ratify', 'accept', 'milestone'), 'autopilot': ('question', 'plan', 'accept')}
+ROLE_HANDLES = {'lead': ('question', 'accept', 'ratify', 'milestone'), 'agent': (),
+                'solo': ('question', 'ratify', 'accept', 'milestone'), 'autopilot': ('question', 'accept')}
 TEXT_FIELDS = ('title', 'description', 'design', 'acceptance_criteria', 'notes', 'close_reason')
 SHOW_FIELDS = TEXT_FIELDS[1:]
 # Fields `board show --field` accepts besides those on the shown items (a read of few items would otherwise hide
@@ -2972,7 +2972,7 @@ def mine(board: Board, args) -> None:
 
 def capacity(board: Board, args) -> None:
     """The session's refill hint: printed for the session itself (no worker caller) in a dispatching role while
-    fewer than its cap of workers were active and worker work (WORKER_KINDS, within the pulls of a role without a preset) is
+    fewer than its cap of workers were active and worker work (WORKER_KINDS within the session's pulls) is
     claimable. A session's own hand-overs count: another of its workers may review them. The snapshot predates a write, so the
     items the command named or claimed are left out (one read per command). Never fails the command it follows."""
     actor = derived_actor()
@@ -2981,12 +2981,12 @@ def capacity(board: Board, args) -> None:
     try:
         entry = board.registry().get(actor)
         pulls = entry.get('pulls') or () if entry else ()
-        if entry is None or not (entry.get('role') in CAPACITY_ROLES or pulls):
+        if entry is None or not pulls:
             return
         active, cap = len(active_workers(entry)), worker_cap(entry)
         if active >= cap:
             return
-        kinds = tuple(kind for kind in WORKER_KINDS if entry.get('role') in ('solo', 'autopilot') or kind in pulls)
+        kinds = tuple(kind for kind in WORKER_KINDS if kind in pulls)
         changed = {*(getattr(args, 'ids', None) or ()), getattr(args, 'id', None), *getattr(args, 'claimed', ())}
         counts = {kind: sum(1 for issue in board.listed(args.root)
                             if board.claimable(issue) == kind and issue['id'] not in changed) for kind in kinds}

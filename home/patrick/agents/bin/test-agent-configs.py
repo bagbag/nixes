@@ -689,7 +689,7 @@ def validate_session_registry(root: Path) -> None:
         if run("get", SESSION, env=env).stdout.strip() != "lead":
             raise ValueError("session lost a registered lead")
         shown = json.loads(run("show", SESSION, env=env).stdout)
-        if (shown["role"], shown["pulls"], shown["actor"], shown["tool"]) != ("lead", [], SESSION_ACTOR, "claude"):
+        if (shown["role"], shown["pulls"], shown["actor"], shown["tool"]) != ("lead", ["plan"], SESSION_ACTOR, "claude"):  # the lead preset
             raise ValueError(f"session show: {shown}")
 
         # The bundle runs on macOS's bash 3.2, where an empty array under `set -u` is an unbound variable: the verbs
@@ -710,11 +710,21 @@ def validate_session_registry(root: Path) -> None:
                 != (["plan", "review"], "codex"):
             raise ValueError("session did not store the Codex agent's pulls in canonical order")
 
-        # Every role takes pulls (presets add to them); a preset role registers none unless given.
+        # --pulls sets any role's pulls.
         for role, given, stored in (("lead", "implement,plan", ["plan", "implement"]), ("solo", "review", ["review"]), ("autopilot", "design", ["design"])):
             run("activate", role, "--pulls", given, env={**env, **as_session(other)}).check_returncode()
             if json.loads(run("show", other, env=env).stdout)["pulls"] != stored:
                 raise ValueError(f"session did not store {role}'s pulls {given}")
+        # A first registration stores the role's preset; --without drops pulls from it; without either flag the stored pulls
+        # stay, so going away (autopilot) and back keeps a solo without review.
+        fresh = "abcdefgh-presets"
+        for args, stored in ((("activate", "solo"), ["plan", "design", "implement", "review"]),
+                             (("activate", "solo", "--without", "review"), ["plan", "design", "implement"]),
+                             (("activate", "autopilot"), ["plan", "design", "implement"]), (("activate", "solo"), ["plan", "design", "implement"])):
+            run(*args, env={**env, **as_session(fresh)}).check_returncode()
+            if json.loads(run("show", fresh, env=env).stdout)["pulls"] != stored:
+                raise ValueError(f"session {args} must store {stored}")
+        Path(state_dir, f"{fresh}.json").unlink()  # the registry check below counts only SESSION and other
         run("activate", "solo", env={**env, **as_session(SESSION)}).check_returncode()
         changed = json.loads(run("show", SESSION, env=env).stdout)
         if changed["role"] != "solo" or changed["actor"] != SESSION_ACTOR:
@@ -722,6 +732,10 @@ def validate_session_registry(root: Path) -> None:
 
         rejected = (
             (("activate", "agent"), as_session("abcdefgh-1")),
+            (("activate", "agent", "--without", "review"), as_session("abcdefgh-1")),
+            (("activate", "lead", "--without", "review"), as_session("abcdefgh-1")),
+            (("activate", "solo", "--pulls", "plan", "--without", "review"), as_session("abcdefgh-1")),
+            (("get", SESSION, "--without", "review"), {}),
             (("activate", "lead", "--pulls", "plan,deploy"), as_session("abcdefgh-1")),
             (("activate", "agent", "--pulls", "plan,deploy"), as_session("abcdefgh-1")),
             (("activate", "goal-lead"), as_session("abcdefgh-1")),
@@ -2509,10 +2523,10 @@ def validate_board(root: Path) -> None:
 
             _, recent, _ = invoke(["position"], Fake(fixture))
             _, later, _ = invoke(["position"], Fake(fixture), now="2026-10-22T17:30:00+00:00")
-            # Sessions count by the kinds a role handles, not only its bare-claim kinds.
-            for expected in ("implement: 1 ready (1 held, 1 wait), 1 sessions", "question: 0 ready (1 held), 3 sessions",
+            # Sessions count by the kinds a role handles and its stored pulls (solo and autopilot store every pull by preset).
+            for expected in ("implement: 1 ready (1 held, 1 wait), 3 sessions", "question: 0 ready (1 held), 3 sessions",
                              "accept: 0 ready, 3 sessions", "ratify: 0 ready, 2 sessions",
-                             "aaaa1111/build-12345678 (agent implement+review, codex)", "lead0001 (lead, claude)",
+                             "aaaa1111/build-12345678 (agent implement+review, codex)", "lead0001 (lead plan, claude)",  # the lead preset's pull
                              "open questions holding work: 2", f"finished epics not closed: 1\n  {ids['Finished outcome']}"):
                 if expected not in recent:
                     raise ValueError(f"board position lacks {expected!r}:\n{recent}")
@@ -2967,33 +2981,30 @@ def validate_board(root: Path) -> None:
             invoke(["claim"], fake, "lead0001")
             if fake.writes() != [["update", ids["Store choice"], "--claim", "--json"]]:
                 raise ValueError(f"a lead did not claim the open question: {fake.writes()}")
-            # A lead claims a change request waiting for its Accept by id only; the queue head that is not current is refresh work,
-            # which only review pulls take; a current one goes to solo, while autopilot only takes user design checkpoints.
+            # Lead and solo decide with the user alike: a current change request waiting for Accept goes to either bare claim; the queue
+            # head that is not current is refresh work, which only review pulls take; autopilot only takes user design checkpoints.
             main_tip = subprocess.run(["git", "rev-parse", "main"], capture_output=True, text=True, check=True).stdout.strip()
             waiting_cr = {"status": "needs_acceptance"}
             current_cr = {"status": "needs_acceptance", "metadata": {"check_tip": main_tip, "check_base_tip": main_tip, "check_result": "pass",
                                                                   "review_tip": main_tip, "review_base_tip": main_tip}}
-            fake = Fake(variant(**{"CR ready": current_cr, **no_plan}))
-            invoke(["claim"], fake, "lead0001")
-            if fake.writes():
-                raise ValueError(f"a lead's bare claim took a change request waiting for its Accept: {fake.writes()}")
-            for session in ("solo0001", "auto0001"):
-                fake = Fake(variant(**{"CR ready": current_cr, **no_plan}))
+            only_accept = {**no_plan, "Handed task": {"status": "closed"}}  # solo's review pull would take the handed task first
+            for session in ("lead0001", "solo0001", "auto0001"):
+                fake = Fake(variant(**{"CR ready": current_cr, **only_accept}))
                 invoke(["claim"], fake, session)
-                if session == "solo0001":
+                if session != "auto0001":
                     if fake.plain_writes()[:1] != [["update", "fx-ovo.c1", "--assignee", session, "--if-assignee", "", "--json"]]:
                         raise ValueError(f"{session}'s bare claim did not take the change request waiting for its Accept: {fake.writes()}")
-                elif fake.writes():
+                elif any(write[1:2] == ["fx-ovo.c1"] for write in fake.writes()):  # its work pulls may take other work
                     raise ValueError(f"{session}'s bare claim took a finished change request waiting for the user's Accept: {fake.writes()}")
                 checkpoint_cr = {**current_cr, "metadata": {**current_cr["metadata"], "checkpoint": "user"}}
-                fake = Fake(variant(**{"CR ready": checkpoint_cr, **no_plan}))
+                fake = Fake(variant(**{"CR ready": checkpoint_cr, **only_accept}))
                 invoke(["claim"], fake, session)
                 if fake.plain_writes()[:1] != [["update", "fx-ovo.c1", "--assignee", session, "--if-assignee", "", "--json"]]:
                     raise ValueError(f"{session}'s bare claim did not take the user design checkpoint: {fake.writes()}")
-                fake = Fake(variant(**{"CR ready": waiting_cr, **no_plan}))
+                fake = Fake(variant(**{"CR ready": waiting_cr, **only_accept}))
                 invoke(["claim"], fake, session)
-                if fake.writes():
-                    raise ValueError(f"{session}'s bare claim took the queue head that needs its refresh: {fake.writes()}")
+                if bool(fake.writes()) != (session != "lead0001"):  # refresh work goes with the review pull: solo and autopilot hold it
+                    raise ValueError(f"{session}'s bare claim of the queue head that needs its refresh: {fake.writes()}")
             fake = Fake(variant(**{"CR ready": waiting_cr, **no_plan, "Handed task": {"status": "closed"}}))
             _, claimed, _ = invoke(["claim"], fake, "aaaa1111/build-87654321")
             if "claimed fx-ovo.c1 (refresh)" not in claimed or "board cr refresh fx-ovo.c1, then board unclaim fx-ovo.c1" not in claimed \
@@ -3176,14 +3187,14 @@ def validate_board(root: Path) -> None:
             if code:
                 raise ValueError("board claim refused a decision")
 
-            # Routing per role: solo plans and ratifies, autopilot and lead plan, nobody claims `user`'s items.
-            ratify = variant(**{"Old store ruling": {"status": "needs_ratification"},
-                                "Released ruling": {"assignee": "user"}})
-            for actor, expected in (("solo0001", ids["Old store ruling"]), ("auto0001", None),
-                                    ("lead0001", None)):
+            # Routing per role: lead and solo ratify (they decide with the user), autopilot does not; nobody claims `user`'s items.
+            ratify = variant(**{"Old store ruling": {"status": "needs_ratification"}, "Released ruling": {"assignee": "user"},
+                                "Handed task": {"status": "closed"}})  # solo's and autopilot's review pull would take it first
+            for actor, ratifies in (("solo0001", True), ("lead0001", True), ("auto0001", False)):
                 fake = Fake(ratify)
                 invoke(["claim"], fake, actor)
-                if [args[1] for args in fake.writes()] != ([expected] if expected else []):
+                claimed = [args[1] for args in fake.writes()]
+                if (ids["Old store ruling"] in claimed) != ratifies or ids["Released ruling"] in claimed:
                     raise ValueError(f"{actor} routing claimed {fake.writes()}")
             for actor in ("auto0001", "lead0001"):  # a lead plans its released rulings (plan.md Released rulings)
                 fake = Fake(fixture)
@@ -3614,7 +3625,7 @@ def validate_board(root: Path) -> None:
                              "process", "state"} \
                     or lead["role"] != "lead" or lead["holds"] != 1 or lead["workers"] is not None or lead["state"] is not None \
                     or sessions["aaaa1111"]["pulls"] != ["implement", "review"] \
-                    or position_json["ready"]["implement"] != {"ready": 1, "held": 1, "waiting": 1, "sessions": 2} \
+                    or position_json["ready"]["implement"] != {"ready": 1, "held": 1, "waiting": 1, "sessions": 4} \
                     or {h["id"] for h in position_json["held"]} != {ids["Held task"], ids["Open cache question"], "fx-ovo.c2"} \
                     or len(position_json["questionsHoldingWork"]) != 2 or len(position_json["finishedEpics"]) != 1:
                 raise ValueError(f"board position --json: {text[:2000]}")

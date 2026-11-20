@@ -5,8 +5,8 @@ safeguards to the decide and plan protocols.
 
 ## Entry
 
-`/role autopilot` registered solo for setup (step 1); the decide, plan and
-unattended protocols are loaded. Read
+`/role autopilot` registered solo for setup (step 1); the decide and
+unattended protocols and those of its pulls are loaded. Read
 `$HOME/.agents/skills/role/protocols/review.md` too. After a compaction during
 setup, run `/role autopilot` again.
 

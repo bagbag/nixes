@@ -10,8 +10,7 @@ Read
 
 ## Entry
 
-Your session pulls `plan`, or its role is solo or autopilot. Only these
-sessions plan; others record gaps and remainders as new items or questions.
+Your session pulls `plan`. Only these sessions plan; others record gaps and remainders as new items or questions.
 
 ## Steps
 
@@ -29,8 +28,8 @@ findings or stops.
 4. **Cut.** Cut and order items under [Cut work](#cut-work) and
    [Queue](#queue); run `board bd dep cycles`.
    Output: created ids, edge changes, `no cycles`.
-5. **Dispatch.** When your session runs CRs through workers (solo and
-   autopilot always do), dispatch under [Dispatch](#dispatch).
+5. **Dispatch.** When your session runs CRs through workers, dispatch under
+   [Dispatch](#dispatch).
    Output: one line per worker: CR id, agent type, protocol.
 6. **Integrate.** After each wave, run [Integrate](#integrate).
    Output: one line per integration gate: command, result.
