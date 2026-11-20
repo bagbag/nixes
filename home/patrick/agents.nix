@@ -32,13 +32,18 @@ in
         storeLinks ".claude/hooks" "hooks/claude" (agentPackage.claudeHooks ++ agentPackage.claudeOwnHooks)
         // storeLinks ".codex/hooks" "hooks/codex" agentPackage.codexHooks
         // lib.listToAttrs (
-          map (name: lib.nameValuePair ".agents/bin/${name}" { source = "${agentPackage.pinnedBin}/${name}"; }) agentPackage.tools
+          map (
+            name: lib.nameValuePair ".agents/bin/${name}" { source = "${agentPackage.pinnedBin}/bin/${name}"; }
+          ) agentPackage.tools
         );
     }
   ];
 
   # The same python3 with pyyaml the build runs the suite on, so `python3 bin/test-...` works in any session.
   home.packages = [ (lib.hiPrio agentPackage.python) ];
+
+  home.sessionPath = [ "${config.home.homeDirectory}/.agents/commands" ];
+  home.file.".agents/commands/agents".source = "${agentPackage.pinnedBin}/commands/agents";
 
   home.file.".claude/CLAUDE.md".source = "${agentArtifacts}/AGENTS.md";
 

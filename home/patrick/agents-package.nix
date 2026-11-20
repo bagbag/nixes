@@ -25,6 +25,15 @@ let
       ]
     );
   };
+  checkSrc = lib.fileset.toSource {
+    root = ./.;
+    fileset = lib.fileset.unions [
+      ./agents
+      ./claude/hooks
+      ./claude/settings.json
+      ./codex/hooks.json
+    ];
+  };
   testInputs = [
     # The build sandbox refuses the setuid /bin/ps; the registry liveness tests need a ps.
     ps
@@ -72,8 +81,8 @@ let
   # The full validator (behavior of board, protocol engine and hooks): `nix flake check`, or the dev-time gate
   # before staging; the switch builds artifacts only.
   checks = runCommand "agent-checks" { nativeBuildInputs = testInputs; } ''
-    python3 ${src}/bin/test-agent-configs.py ${src}
-    python3 ${src}/bin/test-scratch.py </dev/null
+    python3 ${checkSrc}/agents/bin/test-agent-configs.py ${checkSrc}/agents
+    python3 ${checkSrc}/agents/bin/test-scratch.py </dev/null
     touch "$out"
   '';
 
@@ -99,7 +108,8 @@ let
           --output "$out/skills"
 
         # What agents.nix links into the home, built from the tree the suite just passed.
-        mkdir -p "$out/bin" "$out/hooks/claude" "$out/hooks/codex" "$out/mods"
+        mkdir -p "$out/bin" "$out/commands" "$out/hooks/claude" "$out/hooks/codex" "$out/mods"
+        cp ${buildSrc}/commands/agents "$out/commands/"
         for f in ${toString tools}; do cp -r ${buildSrc}/bin/"$f" "$out/bin/"; done
         for f in ${toString claudeHooks}; do cp ${buildSrc}/hooks/"$f" "$out/hooks/claude/"; done
         for f in ${toString claudeOwnHooks}; do cp ${claudeSrc}/hooks/"$f" "$out/hooks/claude/"; done
@@ -116,9 +126,10 @@ let
   # The tools as this machine links them: run on the python this generation keeps alive (home.packages), not on whatever
   # python3 a Dock-started session finds first. The bundle keeps the env shebang; install.py pins the user's python3.
   pinnedBin = runCommand "agent-bin" { } ''
-    cp -r ${artifacts}/bin "$out"
+    mkdir -p "$out"
+    cp -r ${artifacts}/{bin,commands} "$out/"
     chmod -R u+w "$out"
-    for f in "$out"/*; do
+    for f in "$out"/{bin,commands}/*; do
       if [ -f "$f" ] && [ "$(head -n1 "$f")" = "#!/usr/bin/env python3" ]; then
         sed -i '1s|.*|#!${python}/bin/python3|' "$f"
       fi
@@ -129,7 +140,7 @@ let
   setup = runCommand "agent-setup-${version}" { nativeBuildInputs = [ jq ]; } ''
     name=claude-codex-setup-${version}
     files=$name/files
-    mkdir -p "$files/.claude/hooks" "$files/.claude/mods" "$files/.codex/hooks" "$files/.agents/bin" "$name/settings"
+    mkdir -p "$files/.claude/hooks" "$files/.claude/mods" "$files/.codex/hooks" "$files/.agents/bin" "$files/.agents/commands" "$name/settings"
 
     cp ${src}/setup/install.py ${src}/setup/README.md "$name/"
     echo ${version} > "$name/VERSION"
@@ -145,8 +156,9 @@ let
     cp ${artifacts}/hooks/claude/* "$files/.claude/hooks/"
     cp ${artifacts}/hooks/codex/* "$files/.codex/hooks/"
     cp -r ${artifacts}/bin/* "$files/.agents/bin/"
+    cp ${artifacts}/commands/agents "$files/.agents/commands/"
     # install.py pins each user's own python3, so the bundle's tools keep the env shebang.
-    if head -qn1 "$files"/.agents/bin/* 2>/dev/null | grep -q '^#!/nix/store'; then
+    if head -qn1 "$files"/.agents/{bin,commands}/* 2>/dev/null | grep -q '^#!/nix/store'; then
       echo "the bundle's tools point into the nix store" >&2
       exit 1
     fi

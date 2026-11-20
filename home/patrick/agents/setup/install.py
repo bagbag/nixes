@@ -259,7 +259,8 @@ def plan_codex_config(path: Path, roots: list, home: str):
 
 
 def pinnable(rel: str, data: bytes) -> bool:
-    return re.fullmatch(r"\.agents/bin/[^/]+", rel) is not None and data.split(b"\n", 1)[0] == b"#!/usr/bin/env python3"
+    top_level_tool = re.fullmatch(r"\.agents/bin/[^/]+", rel) is not None
+    return (top_level_tool or rel == ".agents/commands/agents") and data.split(b"\n", 1)[0] == b"#!/usr/bin/env python3"
 
 
 def pinned_interpreter() -> tuple:

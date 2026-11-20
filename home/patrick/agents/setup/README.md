@@ -16,9 +16,20 @@ Requires `python3` 3.11 or newer and `bd` (beads, tested with 1.3.1). Under an o
 before changing anything when `bd` is missing, when a target is a symlink, or when a settings file
 isn't valid JSON or `config.toml` isn't valid TOML. Then restart Claude Code and Codex. Codex asks you to trust the changed hooks.
 
+Add `~/.agents/commands` to your shell PATH. In a POSIX shell, put the following
+in the startup file your client reads:
+
+    export PATH="$HOME/.agents/commands:$PATH"
+    agents board help
+
+Only the `agents` dispatcher needs to be on PATH. It runs the tools from the
+private `~/.agents/bin` directory. Verify the command in a fresh shell and in
+Claude Code and Codex sessions started from the Dock before relying on it in
+agent instructions.
+
 The installer:
 1. Backs up everything it replaces or removes to `~/.agent-config-backup/<timestamp>/`.
-2. Copies the skills, agents, hooks, `~/.agents/bin/*` and the console mod. Your own files next to
+2. Copies the skills, agents, hooks, dispatcher, private tools and console mod. Your own files next to
    them stay untouched.
 3. **Replaces your global instructions** (`~/.claude/CLAUDE.md`, `~/.codex/AGENTS.md`). Your old
    ones are in the backup; merge what you want to keep back by hand. An upgrade replaces them again.
@@ -28,7 +39,7 @@ The installer:
    your other hooks and settings. It creates either file when missing.
 6. Sets `env.CLAUDE_CODE_PLUGIN_DIRS` to the console mod. If it already holds a value, the installer
    prints a note and you add the mod path yourself.
-7. Pins the Python tools in `~/.agents/bin` (`board`, `protocol`, `scratch`, ...) to the `python3` on
+7. Pins the dispatcher and private Python tools (`board`, `protocol`, `scratch`, ...) to the `python3` on
    `PATH` that runs the installer (an unversioned `python3` is preferred to a `python3.N`, which gets a
    note), so a session started with a different `PATH` (Dock, IDE) does not pick macOS's 3.9. Rerun
    the installer after switching or removing that Python; it prints the pinned path.

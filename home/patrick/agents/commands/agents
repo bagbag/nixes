@@ -1,0 +1,35 @@
+#!/usr/bin/env python3
+"""Run a tool from the private payload beside the installed dispatcher."""
+
+import os
+from pathlib import Path
+import sys
+
+
+TOOLS = ("board", "scratch", "session", "protocol", "worker-last-use", "round-report")
+
+
+def main() -> int:
+    args = sys.argv[1:]
+    if not args or args[0] in ("-h", "--help"):
+        print("Usage: agents <command> [args...]")
+        print("Commands: " + ", ".join(TOOLS))
+        return 0
+    tool = args[0]
+    if tool not in TOOLS:
+        print(f"agents: unknown command {tool!r}; see agents --help", file=sys.stderr)
+        return 2
+
+    executable = Path(__file__).resolve().parent.parent / "bin" / tool
+    try:
+        os.execv(executable, [str(executable), *args[1:]])
+    except FileNotFoundError as error:
+        print(f"agents: cannot run {tool}: {error.strerror}: {executable}", file=sys.stderr)
+        return 127
+    except OSError as error:
+        print(f"agents: cannot run {tool}: {error.strerror}: {executable}", file=sys.stderr)
+        return 126
+
+
+if __name__ == "__main__":
+    sys.exit(main())

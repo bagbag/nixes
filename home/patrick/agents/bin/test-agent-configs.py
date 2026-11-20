@@ -1102,14 +1102,17 @@ def validate_session_register(root: Path) -> None:
     hook = root / "hooks" / "session-register.sh"
     worker = {"agent_id": "a43f14ee58a40ea36", "agent_type": "build"}
     for command in ("session activate lead", "~/.agents/bin/session activate agent --pulls plan",
-                    'bash "$HOME/.agents/bin/session" activate solo', "cd x && session activate lead"):
+                    'bash "$HOME/.agents/bin/session" activate solo', "cd x && session activate lead",
+                    "agents session activate lead", 'cd x && "$HOME/.agents/commands/agents" session activate agent',
+                    '"/home with space/.agents/commands/agents" "session" activate lead'):
         for extra in (worker, {**worker, "turn_id": "t"}):
             result = run_hook(hook, pre_tool_use(command, session_id=SESSION, **extra))
             if not result or result["hookSpecificOutput"].get("permissionDecision") != "deny":
                 raise ValueError(f"session-register let a worker register: {command!r}")
         if run_hook(hook, pre_tool_use(command, session_id=SESSION)) is not None:
             raise ValueError(f"session-register touched a session's {command!r}")
-    for command in ("session show", "rg 'session activate' skills", "echo session activate", "mysession activate lead"):
+    for command in ("session show", "rg 'session activate' skills", "echo session activate", "mysession activate lead",
+                    "agents board activate", "echo agents session activate"):
         if run_hook(hook, pre_tool_use(command, session_id=SESSION, **worker)) is not None:
             raise ValueError(f"session-register denied {command!r}")
 
@@ -1213,7 +1216,8 @@ def validate_bd_guard(root: Path) -> None:
     bare = ["bd show x", "cd repo && bd ready", "xargs -I{} sh -c 'bd show {}' < ids", "if bd close x; then :; fi",
             "/nix/store/x/bin/bd list", "BEADS_ACTOR=a bd close x", '"$B"; bd show x', 'bash -c "cd x && bd ready"', "X=$(cat ids) bd show x"]
     passing = ["board bd show x", "$HOME/.agents/bin/board bd close x", "cd x && board bd ready",
-               "xargs -I{} board bd show {} < ids", 'echo "bd close x"', 'git commit -m "bd close"', "rg pattern skills",
+               "xargs -I{} board bd show {} < ids", "agents board bd ready",
+               'echo "bd close x"', 'git commit -m "bd close"', "rg pattern skills",
                'board handover x "tests pass; bd lint clean"', 'git commit -m "x (bd 1.3.1)"', 'echo "x && bd ready"',
                "rg 'a|bd ' skills", "sh -c 'board bd show x'", "g=$($HOME/.agents/bin/board bd show x)",
                "B=$HOME/.agents/bin/board\n$B bd show x", "B=board;$B bd show x",
@@ -1254,6 +1258,9 @@ def validate_bd_guard(root: Path) -> None:
         ("board bd list > log 2>&1 &", True),
         ("cat <<-EOF > notes\n\tboard bd show x &\n\tEOF\nboard bd list &", True),
         ("$HOME/.agents/bin/board position &", True),
+        ("agents board position &", True),
+        ('"$HOME/.agents/commands/agents" "board" position &', True),
+        ("parallel agents board bd show {} ::: a b", True),
         ("xargs board bd show --json < ids", False),
         ("while read id; do board bd history $id; done < ids", False),
         ('git commit -m "blocks parallel bd calls"', False),
@@ -1276,7 +1283,8 @@ def validate_bd_guard(root: Path) -> None:
                 'bash "$HOME/.agents/bin/board" claim x', "~/.agents/bin/board ruling release a b",
                 "xargs -I{} sh -c 'board bd show {}' < ids", f"board bd update x --actor {worker_actor}",
                 'board bd comments add x "drop the --actor goal-agent habit and BEADS_ACTOR=goal-lead"',
-                'cd x && "${B}" bd ready', "sh -c '$B bd show x'"]
+                'cd x && "${B}" bd ready', "sh -c '$B bd show x'",
+                "agents board claim", 'cd repo && "/home with space/.agents/commands/agents" "board" claim']
     for command in injected:
         if rewritten(guard(command, session_id=SESSION, **worker), False) != worker_prefix + command:
             raise ValueError(f"bd-guard did not inject the worker actor into {command!r}")
@@ -1299,6 +1307,7 @@ def validate_bd_guard(root: Path) -> None:
         "BEADS_ACTOR=goal-lead board bd close x",
         "export BEADS_ACTOR=goal-lead; board bd close x",
         "BD_ACTOR=other $HOME/.agents/bin/board claim",
+        "agents board claim --actor goal-lead",
         'board bd create --title "Don\'t" --actor goal-lead --description "it\'s"',
         'board bd close x --actor "goal-lead"',
         'cd x && "${B}" bd ready --actor goal-lead',
@@ -1379,10 +1388,11 @@ def validate_setup_installer(root: Path) -> None:
         (folder / "settings" / "claude-hooks.json").write_text(json.dumps(hook(claude)), encoding="utf-8")
         (folder / "settings" / "codex-hooks.json").write_text(json.dumps(hook(codex)), encoding="utf-8")
         (folder / "VERSION").write_text(f"{version}\n", encoding="utf-8")
-        shutil.copy2(installer, folder / "install.py")
+        installer_text = source
         if grant_entries is not None:
-            edited = re.sub(r"GRANT_ROOTS = \(.*?\n\)\n", lambda _: f"GRANT_ROOTS = ({grant_entries})\n", source, count=1, flags=re.S)
-            (folder / "install.py").write_text(edited, encoding="utf-8")
+            installer_text = re.sub(r"GRANT_ROOTS = \(.*?\n\)\n", lambda _: f"GRANT_ROOTS = ({grant_entries})\n",
+                                    source, count=1, flags=re.S)
+        (folder / "install.py").write_text(installer_text, encoding="utf-8")
         return folder
 
     def tree(base: Path) -> dict[str, str]:
@@ -1604,6 +1614,8 @@ def validate_setup_installer(root: Path) -> None:
         # Upgrade: what the last install shipped and this one doesn't goes; the user's additions stay.
         (home / ".claude" / "skills" / "kept" / "note.md").write_text("my note\n", encoding="utf-8")
         v2_files = {
+            ".agents/commands/agents": (root / "commands" / "agents").read_text(encoding="utf-8"),
+            ".agents/bin/scratch": "#!/usr/bin/env python3\nprint('private tool')\n",
             ".agents/bin/pytool": "#!/usr/bin/env python3\nprint(1)\n",
             ".agents/bin/lib/module.py": "#!/usr/bin/env python3\n",
             ".claude/CLAUDE.md": "new rules\n",
@@ -1614,6 +1626,8 @@ def validate_setup_installer(root: Path) -> None:
         }
         v2 = bundle(base, "v2", "two", v2_files, 'bash "$HOME/.claude/hooks/two.sh"', 'bash "$HOME/.codex/hooks/two.sh"',
                     grant_entries="".join(entries[k] for k in ("scratch", "records", "extra")))
+        for rel in (".agents/commands/agents", ".agents/bin/scratch"):
+            (v2 / "files" / rel).chmod(0o755)
         # A leftover or planted `<file>.new` never redirects the settings or state write (install review, 2026-11-05).
         outside = base / "outside"
         outside.write_text("keep\n", encoding="utf-8")
@@ -1621,6 +1635,13 @@ def validate_setup_installer(root: Path) -> None:
         for link in planted:
             link.symlink_to(outside)
         ok(v2)
+        public = home / ".agents" / "commands"
+        dispatcher = public / "agents"
+        dispatched = subprocess.run(["agents", "scratch"], capture_output=True, text=True, check=True,
+                                    cwd=base, env={"HOME": str(home), "PATH": str(public)})
+        if dispatched.stdout != "private tool\n" or sorted(item.name for item in public.iterdir()) != ["agents"] or \
+                dispatcher.read_text(encoding="utf-8").splitlines()[0] != f"#!{tools}/python3":
+            raise ValueError("an upgrade must install a pinned dispatcher with one public command")
         if outside.read_text(encoding="utf-8") != "keep\n" or settings.is_symlink() or (home / ".agents" / "setup-state.json").is_symlink():
             raise ValueError("install.py must write settings and state through files of its own, not a planted .new")
         for link in planted:
@@ -1798,6 +1819,31 @@ def validate_hook_registrations(root: Path) -> None:
                       and any(hook.get("command") == command and "if" not in hook for hook in group.get("hooks", []))]
             if len(groups) != 1:
                 raise ValueError(f"{path}: {event} needs one all-tools group running {command}")
+        session_hook = f'bash "$HOME/.{tool}/hooks/session-register.sh"'
+        registrations = [(group, hook) for group in events.get("PreToolUse", [])
+                         for hook in group.get("hooks", []) if hook.get("command") == session_hook]
+        if len(registrations) != 1:
+            raise ValueError(f"{path}: expected one session-register PreToolUse hook")
+        group, registration = registrations[0]
+        if group.get("matcher") != "Bash" or "if" in registration:
+            raise ValueError(f"{path}: session-register must run on Bash commands without an inner filter")
+
+        with tempfile.TemporaryDirectory() as directory:
+            target = Path(directory) / f".{tool}" / "hooks" / "session-register.sh"
+            target.parent.mkdir(parents=True)
+            target.symlink_to(root / "hooks" / "session-register.sh")
+            for invocation, should_deny in (("agents session activate lead", True),
+                                            ("$HOME/.agents/bin/session activate lead", True),
+                                            ("printf ok", False)):
+                payload = pre_tool_use(invocation, session_id=SESSION, agent_id="test-worker")
+                result = subprocess.run(["bash", "-c", registration["command"]], input=json.dumps(payload),
+                                        text=True, capture_output=True, check=True,
+                                        env={**os.environ, "HOME": directory})
+                reply = json.loads(result.stdout) if result.stdout.strip() else {}
+                denied = reply.get("hookSpecificOutput", {}).get("permissionDecision") == "deny"
+                if denied != should_deny:
+                    raise ValueError(f"{path}: configured hook misclassified {invocation!r}: {reply}")
+
         for group in (group for groups in events.values() for group in groups):
             for hook in group.get("hooks", []):
                 for name in re.findall(rf'\$HOME/\.{tool}/hooks/([\w.-]+)', hook.get("command", "")):
@@ -14194,6 +14240,44 @@ def validate_read_sizes(root: Path, expander, generator) -> None:
         f"{name.removesuffix('.md')} {len(text.split('---', 2)[2].split())}" for name, text in sorted(agents.items()) if name.endswith(".md")))
 
 
+def validate_dispatcher(root: Path) -> None:
+    with tempfile.TemporaryDirectory() as directory:
+        working_dir = Path(directory).resolve()
+        layout = working_dir / "payload with spaces"
+        commands, private = layout / "commands", layout / "bin"
+        commands.mkdir(parents=True)
+        private.mkdir()
+        launcher = commands / "agents"
+        launcher.write_text(
+            f"#!{sys.executable}\n" + (root / "commands" / "agents").read_text(encoding="utf-8").split("\n", 1)[1],
+            encoding="utf-8",
+        )
+        launcher.chmod(0o755)
+        tool = private / "scratch"
+        tool.write_text(
+            f"#!{sys.executable}\n"
+            "import json, os, sys\n"
+            "print(json.dumps([sys.argv[1:], os.getcwd(), os.environ['DISPATCH_TEST'], sys.stdin.read()]))\n"
+            "print('stderr', file=sys.stderr)\n"
+            "sys.exit(7)\n",
+            encoding="utf-8",
+        )
+        tool.chmod(0o755)
+        link = working_dir / "agents"
+        link.symlink_to(launcher)
+        for entry in (launcher, link):
+            result = subprocess.run([str(entry), "scratch", "a b", "--", ""],
+                                    cwd=working_dir, env={"DISPATCH_TEST": "kept"}, input="stdin\n",
+                                    text=True, capture_output=True)
+            if result.returncode != 7 or result.stderr != "stderr\n" or \
+                    json.loads(result.stdout) != [["a b", "--", ""], str(working_dir), "kept", "stdin\n"]:
+                raise ValueError(f"dispatcher did not preserve the private tool's process interface: {result}")
+        for option, expected in (("--help", 0), ("unknown", 2), ("board", 127)):
+            result = subprocess.run([str(link), option], text=True, capture_output=True)
+            if result.returncode != expected:
+                raise ValueError(f"dispatcher returned {result.returncode} for {option}, expected {expected}")
+
+
 def run_group(name: str, root: Path) -> None:
     generator = load_generator(root)
     expander = load_skill_expander(root)
@@ -14217,6 +14301,7 @@ def run_group(name: str, root: Path) -> None:
         validate_engine_counts(root)
         validate_lens_names(root)
         validate_shebang_modes(root)
+        validate_dispatcher(root)
     elif name == "hooks":
         validate_hooks(root)
     elif name == "board":

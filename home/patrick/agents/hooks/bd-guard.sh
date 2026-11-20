@@ -41,9 +41,11 @@ deny() {
 
 # Quoted text is data, except that xargs often wraps bd in a quoted sh -c.
 beads='([^[:space:];&|()'\''"]*/)?(bd|board)'
+dispatcher="(([^[:space:];&|()'\"]*/)?agents|\"([^\"]*/)?agents\"|'([^']*/)?agents')"
+board_call="($beads(\.py)?|$dispatcher[[:space:]]+[\"']?board[\"']?)"
 # Newlines separate commands; joining lines first keeps multi-line quotes paired.
 # A quoted command word naming the board CLI or a variable stays a word: "$B" bd, "$HOME/.agents/bin/board" bd.
-stripped=$(tr '\n' ';' <<<"$cmd" | sed -E 's/"([^" ]*\/board|\$\{?[A-Za-z_][A-Za-z0-9_]*\}?)"/\1/g' |
+stripped=$(tr '\n' ';' <<<"$cmd" | sed -E 's/"([^" ]*\/board|([^"]*\/)?agents|board|\$\{?[A-Za-z_][A-Za-z0-9_]*\}?)"/\1/g' |
   sed -E "s/'[^']*'|\"[^\"]*\"//g")
 
 server_board() {
@@ -64,8 +66,8 @@ server_board() {
 
 parallel_beads() {
   { grep -Eq '(^|[;&|(])[[:space:]]*(xargs([[:space:]][^;&|]*)?[[:space:]](-P|--max-procs)|parallel[[:space:]])' <<<"$stripped" &&
-    grep -Eq "(^|[[:space:];&|('\"])$beads[[:space:]]" <<<"$cmd"; } ||
-    sed -E 's/[0-9]*>&[0-9-]*|&>//g' <<<"$stripped" | grep -Eq "(^|[[:space:];|(])$beads[[:space:]][^;]*[^&]&([^&]|\$)"
+    grep -Eq "(^|[[:space:];&|('\"])$board_call[[:space:]]" <<<"$cmd"; } ||
+    sed -E 's/[0-9]*>&[0-9-]*|&>//g' <<<"$stripped" | grep -Eq "(^|[[:space:];|(])$board_call[[:space:]][^;]*[^&]&([^&]|\$)"
 }
 
 if parallel_beads && ! server_board; then
@@ -94,7 +96,7 @@ fi
 # Board call: the CLI by name, or any command word running bd ("$B" bd).
 # Over-matching only adds the actor checks below.
 runs_bd="$position[[:space:]]*[^[:space:];&|()]+[[:space:]]+bd$word"
-grep -Eq "$position[[:space:]]*[\"']?$beads(\.py)?$word" <<<"$cmd" || grep -Eq "$runs_bd" <<<"$stripped" ||
+grep -Eq "$position[[:space:]]*[\"']?$board_call$word" <<<"$cmd" || grep -Eq "$runs_bd" <<<"$stripped" ||
   { [[ -n "$bodies" ]] && grep -Eq "$runs_bd" <<<"$bodies"; } || exit 0
 
 session_id=$(jq -r '.session_id // ""' <<<"$input")

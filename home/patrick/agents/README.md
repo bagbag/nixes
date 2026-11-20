@@ -142,6 +142,12 @@ Workflow owners:
 - [Skill authoring](skills/skill-authoring/SKILL.md): invocation policy,
   trigger descriptions, frontmatter and style for skills, definitions and
   instructions; loaded while writing, user-invoked to review.
+Use `agents <command>` from your shell. The dispatcher exposes `board`,
+`scratch`, `session`, `protocol`, `worker-last-use` and `round-report`.
+Home Manager adds `~/.agents/commands` to the session PATH.
+The dispatcher is the only public command there. Hooks and running sessions
+keep using the private payload under `~/.agents/bin`.
+
 Component references (behavior, verbs and rulings of each tool):
 
 - [Board and sessions](docs/board.md): `bin/board` (`board setup` owns a board's
@@ -208,7 +214,7 @@ the validator's hooks group runs it in a fake home. It refuses symlinked targets
 over this machine's home-manager links. The `~/.agents/setup-state.json` it writes lists what it
 installed, which is how an upgrade or `--uninstall` finds what to remove.
 
-The installer pins each top-level Python tool in `~/.agents/bin` to the `python3` it ran under; the
+The installer pins the dispatcher and each top-level Python tool in `~/.agents/bin` to the `python3` it ran under. The
 nix build pins this machine's copies (`pinnedBin`, linked by `../agents.nix`) to `agentPackage.python` and the bundle ships
 `#!/usr/bin/env python3`. It also grants the write roots listed in `GRANT_ROOTS` in `install.py`
 (the folders `bin/scratch` and `protocol_engine/cli.py` write; the validator checks them against
