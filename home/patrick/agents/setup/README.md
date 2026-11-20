@@ -43,6 +43,10 @@ The installer:
 10. At a terminal, asks for your name for shared boards when `git config --global agents.person`
    is unset. Leave it blank to skip; set it per repository with `git config agents.person <name>`.
 
+Board commands need elevated permissions in Codex's sandbox. To have Codex's reviewer approve them
+instead of prompting you, add `approvals_reviewer = "auto_review"` to `~/.codex/config.toml` yourself;
+the installer leaves your approval setting alone.
+
 Nothing else in `settings.json` or `config.toml` is touched. Models, plugins, your other
 permissions and `env` stay yours. The `settings/` folder holds the unmerged hook templates for reference.
 

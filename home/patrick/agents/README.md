@@ -103,6 +103,8 @@ artifacts and temporary probes. Implementation changes belong to implementation
 roles, except reported fixes an assessor is certain are the only realistic,
 clean option. Claude's investigation shell guard is a deny-list; Codex uses its
 native sandbox setting. Role instructions define assigned write zones.
+Sandboxes and reviewers guard against accidents, not attacks: board hand-overs
+and refreshes run a change request's own setup and check scripts as you.
 
 Workflow owners:
 
