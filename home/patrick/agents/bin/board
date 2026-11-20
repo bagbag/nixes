@@ -4328,7 +4328,7 @@ def ratifications_json(board: Board) -> list[dict]:
             if opened and review_data and review_data.get('editsTree'):
                 try:
                     merged = git(main, 'merge-tree', '--write-tree', f'--merge-base={opened}', target_tip, review_data['editsTree'], check=False)
-                    conflict = merged.returncode != 0
+                    conflict = merged.returncode == 1  # 1: conflicts; another status is a git failure, not a conflict
                 except BoardError:
                     conflict = False  # an unreadable review has no conflict mark
         out.append({'id': i['id'], 'cr': cr_id, 'title': i.get('title', ''), 'kind': meta(i).get('ratification'), 'priority': i.get('priority', 2),
