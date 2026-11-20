@@ -76,8 +76,7 @@ queue order and refresh work: [Board coordination](board-coordination.md).
 - **Convention changes:** when replacing a shared helper, move every use
   and delete the old helper so checks catch remaining uses in open CRs.
   For a new pattern or style rule, check the open CRs already past review
-  at handover and comment on each CR that should adapt. CRs still awaiting
-  review take the new convention through their own review after rebasing.
+  at handover and comment on each CR that should adapt.
 - **Waiting and stacks:** declare outside work and gate waits on the CR they
   hold. Use links within a CR to order that session's items. See
   [Questions and rulings](board-core.md#questions-and-rulings) for decision
@@ -133,7 +132,7 @@ queue order and refresh work: [Board coordination](board-coordination.md).
 | `board return <cr> "<findings>" [--ruling <id>]` | `open`, unassigned; a design checkpoint also moves its in-review design items back to `open`; also the user's "changes". `--ruling`: the planner holding that released ruling returns an unclaimed review ([Released rulings](../role/protocols/plan.md#released-rulings)). |
 | `board cr request-review <cr> ["<reason>"]` | From Accept, send the change since its last review to agent review. |
 | `board cr refresh <cr> [<gate>]` | Rebases and reruns setup and the gate. An uncovered agent-reviewed result goes to agent review. |
-| `board cr land <cr> --tip <sha> --base <sha>` | Pass the tip and base shown at Accept. If the check is not a pass for that pair, run rebase and check before landing. Land only a covered series with a passing check. If the base has moved since the look, land refuses and shows the incoming commits. A `look` `after` CR on a `needs_acceptance` parent waits marked `after <base>`; landing the parent lands each such child whose check and coverage still match, else leaves it as refresh work. Advances `custom.board.target`. Removes worktree and branch; stacked children get `base` = target; `look` `after` creates the ratification, unless nothing was merged. |
+| `board cr land <cr> --tip <sha> --base <sha>` | Pass the tip and base shown at Accept. Land rebases and checks first when the check is not a pass for that pair. Land only a covered series with a passing check. If the base has moved since the look, land refuses and shows the incoming commits. A `look` `after` CR on a `needs_acceptance` parent waits marked `after <base>`; landing the parent lands each such child whose check and coverage still match, else leaves it as refresh work. Advances `custom.board.target`. Removes worktree and branch; stacked children get `base` = target; `look` `after` creates the ratification, unless nothing was merged. |
 | `board cr reject <cr> "<reason>"` | Closes unlanded; items reopen, children return to planning. Branch `cr/<id>` and worktree stay until the user confirms deletion (the only copy). |
 | `board unclaim <cr>`, `board take <cr>` | Release, take over. Your own work in progress needs `--resume "<next action>"`, which the next `board claim` prints. `take` clears the taker's seen tip. |
 

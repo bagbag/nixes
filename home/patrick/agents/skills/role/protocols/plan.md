@@ -78,7 +78,7 @@ item set (`board create --graph`) to a `plan` worker ([Cut work](#cut-work)).
    items it only informs (`board link <ruling> <item> --type relates-to`).
    Return an unclaimed review the ruling changes with
    `board return <cr> "<what changes>" --ruling <ruling>`; for a held one,
-   record the change for its reviewer. Add the ruling id and owner anchor to each item's design,
+   comment the change on the CR for its reviewer. Add the ruling id and owner anchor to each item's design,
    then unblock the designs and spikes (`board unblock <item> --on <ruling>`).
    Create missing work items; when cutting them needs a design or spike first,
    create it, block the ruling on it and stop: the ruling returns to planning

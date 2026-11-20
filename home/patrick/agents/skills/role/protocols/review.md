@@ -120,7 +120,7 @@ its command: the `board cr refresh` row of
    rerun.
    Output: refreshed tip and check state.
 3. **Release.** If you still hold the CR, `board unclaim <cr>`.
-   Output: `refreshed <cr>: <state>` or `requested review <cr>: <reason>`.
+   Output: `refreshed <cr>: <state>` or `sent to agent review <cr>`.
 
 ## Assessor conduct
 

@@ -195,8 +195,7 @@ in Codex.
 
 ## Command-line tools
 
-Use `agents <command>` from your shell. The dispatcher exposes `board`,
-`scratch`, `session`, `protocol`, `worker-last-use` and `round-report`.
+Use `agents <command>` from your shell (`agents --help` lists the commands).
 Home Manager adds `~/.agents/commands` to the session PATH.
 The dispatcher is the only public command there. Hooks and running sessions
 keep using the private payload under `~/.agents/bin`.

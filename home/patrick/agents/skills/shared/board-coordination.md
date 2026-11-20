@@ -61,7 +61,7 @@ milestones, recorded rulings and deferrals. The board model is
   ([Milestones](#milestones)), then age (stacks:
   [Change requests](../shared/change-requests.md#change-requests)).
 - **Unlock rank:** Within a tier and effective priority, take the larger
-  unlock score, then the larger immediate solo count, then the existing ties.
+  unlock score, then the larger immediate solo count, then the claim order's remaining ties.
   Count one credit per work unit that can become dependency-ready. Divide
   it among its ready blockers when several contribute. Count solo and
   shared unlocks separately. A design checkpoint delivers its design items.
