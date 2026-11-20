@@ -78,8 +78,12 @@ queue order and refresh work: [Board coordination](board-coordination.md).
   For a new pattern or style rule, check the open CRs already past review
   at handover and comment on each CR that should adapt. CRs still awaiting
   review take the new convention through their own review after rebasing.
-- **Waiting and stacks:** item edges lift to their CRs; items in a CR order
-  only that session's work. A CR waits while a CR it depends on is not landed,
+- **Waiting and stacks:** declare outside work and gate waits on the CR they
+  hold. Use links within a CR to order that session's items. See
+  [Questions and rulings](board-core.md#questions-and-rulings) for decision
+  holds. A closed design delivers at its checkpoint. A wait on an
+  implementation item still waits on its CR's landing. A CR waits while a
+  CR it depends on is unlanded,
   except one in `needs_acceptance` that is no user design checkpoint: the CR
   stacks on it (`base` = that CR). At most one unlanded parent, else wait for
   the rest. Parents in agent review, at any checkpoint, `open` or in work are

@@ -4215,8 +4215,9 @@ def validate_board(root: Path) -> None:
                 if (code == 0) != allowed or (not allowed and (fake.writes() or "planning only" not in errors)):
                     raise ValueError(f"board block of a released ruling on a {blocker}: {code} {errors} {fake.writes()}")
             fake = Fake(fixture)
-            if invoke(["block", ids["Wire caller"], "--on", ids["Ready task"], "--reason", "r"], fake, "lead0001")[0] != 0:
-                raise ValueError("board block refused a task waiting on a task")
+            code, _, errors = invoke(["block", ids["Wire caller"], "--on", ids["Ready task"], "--reason", "r"], fake, "lead0001")
+            if not code or fake.writes() or "change request" not in errors:
+                raise ValueError(f"board block accepted a new outside wait on a task: {code} {errors} {fake.writes()}")
             # Only a live decision, a `user <date>` gate, a design or a spike is a planning wait (q139).
             def stub(item_id, kind, status, title):
                 return {"id": item_id, "title": title, "issue_type": kind, "status": status, "priority": 2,
@@ -4614,11 +4615,15 @@ def validate_board(root: Path) -> None:
                         contextlib.redirect_stdout(out_bd), contextlib.redirect_stderr(err_bd):
                     code_bd = board.main(["create", "T", "--description-file", str(description_file), *argv])
                 return code_bd, out_bd.getvalue(), err_bd.getvalue(), fake_bd
+            def without_request():
+                return Creating([{**row, "dependencies": [d for d in row.get("dependencies") or [] if d["type"] != "parent-child"]}
+                                 if row["id"] == ready else row for row in mine_rows])
+
             for kind in ("task", "bug", "spike"):
-                code, _, errors, fake = bd_make("-t", kind, "--deps", f"blocks:{ready}")
+                code, _, errors, fake = bd_make("-t", kind, "--deps", f"blocks:{ready}", deck=without_request())
                 if code != 2 or f"board block {ready} --on <new id> --reason" not in errors or any(a[0] == "create" for a, _ in fake.calls):
                     raise ValueError(f"a new {kind} must not hold an existing item up without a reason: {code} {errors} {fake.calls}")
-            code, _, errors, fake = bd_make("-t", "gate", "--deps", f"blocks:{ready}")
+            code, _, errors, fake = bd_make("-t", "gate", "--deps", f"blocks:{ready}", deck=without_request())
             if code or not any(a[:2] == ["create", "--graph"] for a, _ in fake.calls) or not any(w[:2] == ["unclaim", ready] for w in fake.writes()) \
                     or any(w[0] == "comments" for w in fake.writes()):
                 raise ValueError(f"a new gate holding an item up hands the creator's hold back, with no comment: {code} {errors} {fake.writes()}")
@@ -5247,6 +5252,49 @@ def validate_board(root: Path) -> None:
             with patch.object(board, "bd_show", show_outside), patch.object(board, "bd_closed", lambda: [closed_child]):
                 if readiness(*lifting)["lw"] != ("implement", ([], ["lb"])):
                     raise ValueError("a closed blocker that is an item of a live request must stack its CR on that request")
+            # A design delivered at its checkpoint releases the direct CR wait while its parent remains unlanded.
+            design = {**closed_child, "issue_type": "design"}
+            with patch.object(board, "bd_closed", lambda: [design]):
+                for complete in (False, True):
+                    snapshot = [*lifting, design] if complete else lifting
+                    if readiness(*snapshot, complete=complete)["lw"] != ("implement", ([], [])):
+                        raise ValueError("a closed design releases its dependent change request on every board view")
+
+            # Refuse new open outside waits on CR items before any write, regardless of where the edge is declared.
+            others = [cr_issue("fx-source"), cr_item("fx-source-task", "fx-source"), cr_issue("fx-dest"),
+                      cr_item("fx-dest-task", "fx-dest"), cr_item("fx-move", "fx-source", blocks=("fx-source-task",)),
+                      entry("fx-gate", "gate", "open", 2)]
+            graph = Path("outside-wait.json").resolve()
+            graph.write_text(json.dumps({"nodes": [{"key": "cr", "title": "Change", "description": "Work", "type": "change-request"},
+                                                   {"key": "child", "title": "Task", "description": "Work", "parent_key": "cr",
+                                                    "deps": [{"target": "fx-source-task"}]}]}))
+            for argv in (["block", "fx-dest-task", "--on", "fx-source-task", "--reason", "dependency"],
+                         ["create", "A task", "--parent", "fx-dest", "--description-file", "-", "--deps", "fx-source-task"],
+                         ["create", "--graph", str(graph), "--dry-run"],
+                         ["update", "fx-move", "--parent", "fx-dest"],
+                         ["link", "fx-move", "fx-dest", "--type", "parent-child"],
+                         ["update", "fx-source-task", "--parent", "fx-dest"],
+                         ["gate", "create", "--blocks", "fx-dest-task", "--reason", "external approval"]):
+                fake = Fake(others)
+                with patch.object(board.sys, "stdin", io.StringIO("This work needs an outside blocker.")):
+                    code, _, errors = invoke(argv, fake, "lead0001")
+                if not code or fake.writes() or "change request" not in errors:
+                    raise ValueError(f"outside task wait was not refused before mutation: {argv} {code} {errors} {fake.writes()}")
+            for waiting, blocker in (("fx-dest", "fx-source-task"), ("fx-move", "fx-source-task")):
+                fake = Fake(others)
+                code, _, errors = invoke(["block", waiting, "--on", blocker, "--reason", "dependency"], fake, "lead0001")
+                if code or not fake.writes():
+                    raise ValueError(f"valid dependency was refused: {waiting} {blocker} {errors}")
+
+            legacy_item = cr_item("fx-dest-task", "fx-dest", blocks=("fx-source-task",))
+            legacy = [row if row["id"] != legacy_item["id"] else legacy_item for row in others]
+            _, output, _ = invoke(["check", "--json"], Fake(legacy), "lead0001")
+            findings = [entry for entry in json.loads(output)["deviations"] if entry["class"] == "outside-wait"]
+            if len(findings) != 1 or findings[0]["id"] != "fx-dest-task" or "board unblock fx-dest-task --on fx-source-task" not in findings[0]["detail"]:
+                raise ValueError(f"board check must locate the old link and its migration commands: {findings}")
+            if readiness(*legacy, complete=True)["fx-dest"] != (None, (["fx-source"], [])):
+                raise ValueError("the old outside wait must still hold the change request before migration")
+
             # A failed read of the outside blockers is not remembered: the next ask reads them again, not treats them as closed.
             def failing_once():
                 lists.append(1)

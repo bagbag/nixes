@@ -253,7 +253,7 @@ lists it as `cr-git-state`, and `board console` gives the row a `git-state` prob
 Each `crs[]` row's `problems` lists what holds the request up with the step that clears it, `{kind, text, next: {action, command?, paths?}}`
 (`cr_problems`): `setup-failed` (claim again), `git-state` (its owner ends it), `check` (any state but current) while it waits for the
 Accept, never for a design checkpoint, which lands nothing (`refresh` when the check is stale, `merge` when stopped on the user's
-edit commit, else `wait`), `waits` (`wait`) for each unlanded parent and lifted wait of a request waiting for its Accept (`accept_waits`: the
+edit commit, else `wait`), `waits` (`wait`) for each unlanded parent and effective wait of a request waiting for its Accept (`accept_waits`: the
 console hides its Accept, the next claim passes it, a named claim still takes it to return or reject), `land-blocked` (`ask-user`, the paths). A hold is no problem: the row's `holder` says it, and the console marks it while
 the request waits for the Accept. The console maps the problems to marks and the Update button; `board queue` and `board show` print the same
 problems with their step. A rebase the board started and stopped on a conflict stays claimable: `sync_branch` (handover, `cr refresh`, `cr edits
@@ -324,3 +324,14 @@ owner); board core's
 [Questions and rulings](../skills/shared/board-core.md#questions-and-rulings)
 owns the record lifecycle. Closed records keep their shape (board-migrate
 Invariants).
+
+## Migrating outside waits
+
+On each board, ask its owner to resolve the outside-wait entries from
+`board check --limit 0`. For an ordinary wait the whole request already
+inherits, first add and verify its replacement with
+`board block <cr> --on <blocker> --reason "<why it waits>"`. Then run
+`board unblock <task> --on <blocker>`. If only part of the request needs
+the blocker, arrange the split first. A new board version keeps lifting
+existing links until their replacements are present. Rerun `board check`
+and the ready queue after migration to verify the expected waits.
