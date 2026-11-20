@@ -2118,7 +2118,8 @@ def validate_shared_board(root: Path) -> None:
     # Moves: who may, and what counts.
     snapshot = board.Board(issues, complete=False)
     with patch.object(board, "shared", SimpleNamespace()), patch.object(board, "person", lambda: "anna"), \
-            patch.object(board.Board, "load", classmethod(lambda cls, scope="status", ids=None: snapshot)), patch.object(board, "may_move", lambda: False):
+            patch.object(board.Board, "load", classmethod(lambda cls, scope="status", ids=None: snapshot)), patch.object(board, "may_move", lambda: False), \
+            patch.object(board, "derived_actor", lambda: "agnt0001"):  # an agent session's move, whoever runs the test
         expect("only lead and solo" in (board.parent_move_refusal(snapshot, ["kid"], "other") or ""), "a parent move is refused", "kid")
         expect(board.parent_move_refusal(snapshot, ["own"], "top") is None, "an item with a queue of its own may re-parent", "own")
         expect(board.parent_move_refusal(snapshot, ["kid"], None) is not None, "removing the parent moves it too", "kid")
@@ -2290,6 +2291,8 @@ def validate_board(root: Path) -> None:
                 return subprocess.CompletedProcess(command, 0, "fx-new\n" if "--silent" in command else json.dumps({"id": "fx-new"}), "")
             if command[1] == "export":
                 return subprocess.CompletedProcess(command, 0, "\n".join(json.dumps(shift_dates(issue)) for issue in self.issues) + "\n", "")
+            if command[1:3] == ["config", "list"]:
+                return subprocess.CompletedProcess(command, 0, json.dumps(self.settings), "")
             if command[1] == "config" and command[2] == "get":
                 return subprocess.CompletedProcess(command, 0, json.dumps({"key": command[-1], "value": self.settings.get(command[-1], "")}), "")
             if command[1] == "list" and "--parent" in command:
@@ -2408,7 +2411,7 @@ def validate_board(root: Path) -> None:
         elif argv[0] == "health":
             expected = fake.reads() if "export" in fake.reads() else ["list"]
         elif argv[0] in ("related", "check", "block", "update", "link", "unlink", "unblock", "reopen") or argv[:2] in (["ruling", "check-replaces"], ["ruling", "revise"], ["ruling", "release"], ["ruling", "supersede"]):
-            expected = ["export"]
+            expected = ["export", "export"] if argv[:2] == ["check", "--fix"] and fake.writes() else ["export"]  # --fix reads again after its writes
             if argv[:2] == ["ruling", "revise"] and (("--holds" in argv and argv[argv.index("--holds") + 1] != "none") or any(a.startswith("blocks:") for a in argv)):
                 expected = ["export", "show"] if "fx-nowhere" in argv else ["export", "export"]  # unknown targets are checked before creation; otherwise read after to block the new question
         elif argv[:2] == ["ruling", "record"]:
@@ -3036,14 +3039,74 @@ def validate_board(root: Path) -> None:
             code, _, errors = invoke(["claim", ids["Loose item"]], fake, "lead0001")
             if code != 1 or fake.writes() or "outside any change request" not in errors or "--parent" not in errors:
                 raise ValueError(f"board claim took a work item outside any change request: {code} {fake.writes()} {errors}")
-            # r10-q50: work marked no-code at creation (metadata no_code=1) is claimed outside any CR and is no `no-cr` deviation.
-            no_code = variant(**{"Loose item": {"metadata": {"no_code": "1"}}})
-            fake = Fake(no_code)
-            code, _, errors = invoke(["claim", ids["Loose item"]], fake, "lead0001")
-            if code or not any(w[:2] == ["update", ids["Loose item"]] and "--claim" in w or "lead0001" in w for w in fake.writes()):
-                raise ValueError(f"board claim refused a no-code work item outside any change request: {code} {errors} {fake.writes()}")
-            if f"{ids['Loose item']}  no-cr" in invoke(["check"], Fake(no_code))[1] or f"{ids['Loose item']}  no-cr" not in invoke(["check"], Fake(fixture))[1]:
-                raise ValueError("board check must flag a work item outside any CR, but not a no-code one")
+            # Work that commits nothing here (no_commit) is claimed outside any CR and is no `no-cr` deviation; neither is a person's item.
+            loose = ids["Loose item"]
+            no_commit = variant(**{"Loose item": {"metadata": {"no_commit": True}}})
+            fake = Fake(no_commit)
+            code, _, errors = invoke(["claim", loose], fake, "lead0001")
+            if code or not any(w[:2] == ["update", loose] and "--claim" in w or "lead0001" in w for w in fake.writes()):
+                raise ValueError(f"board claim refused a no-commit work item outside any change request: {code} {errors} {fake.writes()}")
+            if f"{loose}  no-cr" in invoke(["check"], Fake(no_commit))[1] or f"{loose}  no-cr" not in invoke(["check"], Fake(fixture))[1] \
+                    or f"{loose}  no-cr" in invoke(["check"], Fake(variant(**{"Loose item": {"assignee": "user"}})))[1]:
+                raise ValueError("board check must flag a work item outside any CR, but not a no-commit one or a person's")
+            # The earlier no_code mark counts no more: the check names its fix (agent work keeps the route, a person's item drops the mark).
+            for changes, fix in (({}, "makes it no_commit"), ({"assignee": "user"}, "drops it")):
+                shown = invoke(["check"], Fake(variant(**{"Loose item": {"metadata": {"no_code": 1}, **changes}})))[1]
+                if f"{loose}  unknown-metadata" not in shown or f"metadata no_code: retired: board check --fix {fix}" not in shown:
+                    raise ValueError(f"board check must flag a live no_code mark with its fix {fix}: {shown}")
+            # Anything else outside the board's vocabularies is flagged with its fix: a stray metadata key, the earlier `related` link, a bare label.
+            target = ids["Ready task"]
+            shown = invoke(["check"], Fake(variant(**{"Loose item": {"metadata": {"triaged_tip": "abc", "vendor_key": "v"}, "labels": ["orm-schema", "topic:x"],
+                                                                     "dependencies": [{"issue_id": loose, "depends_on_id": target, "type": "related"}]}})))[1]
+            for needle in (f"{loose}  unknown-metadata", "metadata triaged_tip: retired: board check --fix drops it",
+                           f"metadata vendor_key: not the board's: drop it if nothing else uses it (board bd --raw --yes update {loose} --unset-metadata vendor_key)", f"{loose}  unknown-link",
+                           "link related to " + target + ": board check --fix makes it relates-to", f"{loose}  label-form", "--unlabel orm-schema --label topic:orm-schema"):
+                if needle not in shown:
+                    raise ValueError(f"board check must name {needle!r}: {shown}")
+            # check --fix applies only the fixes that need no judgment (retired metadata, the earlier link spelling), planning's call; a label and a
+            # key the board never wrote (another tool's) stay.
+            stray = variant(**{"Loose item": {"metadata": {"no_code": "1", "triaged_tip": "abc", "vendor_key": "v"}, "labels": ["orm-schema"],
+                                              "dependencies": [{"issue_id": loose, "depends_on_id": target, "type": "related"}]}})
+            fake = Fake(stray)
+            code, output, errors = invoke(["check", "--fix"], fake)
+            batches = [(args, text) for args, text in fake.calls if args[:1] == ["batch"]]
+            if ["update", loose, "--set-metadata", "no_commit=true", "--unset-metadata", "no_code", "--unset-metadata", "triaged_tip", "--json"] not in fake.writes() \
+                    or len(batches) != 1 or batches[0][1] != f"dep remove {loose} {target}\ndep add {loose} {target} relates-to\n" \
+                    or any(w[:1] == ["update"] and "--unlabel" in w for w in fake.writes()) or f"fixed {loose}" not in output:
+                raise ValueError(f"board check --fix must apply the mechanical fixes only: {code} {output} {errors} {fake.calls}")
+            with patch.object(board, "may_move", lambda board=None: False):
+                fake = Fake(stray)
+                code, _, errors = invoke(["check", "--fix"], fake, "agnt0001")
+            if code == 0 or fake.writes() or "--fix" not in errors:
+                raise ValueError(f"an agent must not apply board check --fix: {code} {errors} {fake.writes()}")
+            if "label-form" in invoke(["check"], Fake(fixture))[1] or "unknown-metadata" in invoke(["check"], Fake(fixture))[1]:
+                raise ValueError("board check must not flag the board's own labels and metadata")
+            # update sets the route and item settings: planning's write, every item checked before any write.
+            cr = {**fixture[0], "id": "fx-cr", "title": "A CR", "issue_type": "change-request", "status": "open", "assignee": None, "dependencies": [], "metadata": {}}
+            for argv, issues, want in (
+                    (["update", loose, "--no-commit"], variant(**{"Loose item": {"metadata": {"no_code": "1"}}}),
+                     ["update", loose, "--set-metadata", "no_commit=true", "--unset-metadata", "no_code", "--json"]),
+                    (["update", loose, "--commits"], no_commit, ["update", loose, "--unset-metadata", "no_commit", "--unset-metadata", "no_code", "--json"]),
+                    (["update", "fx-cr", "--look", "after", "--checkpoint", ""], [*fixture, cr],
+                     ["update", "fx-cr", "--set-metadata", "look=after", "--unset-metadata", "checkpoint", "--json"])):
+                fake = Fake(issues)
+                code, _, errors = invoke(argv, fake)
+                if code or fake.writes() != [want]:
+                    raise ValueError(f"board {argv} must write {want}: {code} {errors} {fake.writes()}")
+            for argv, issues, needle in ((["update", loose, ids["Ready task"], "--no-commit"], fixture, "outside any change request"),
+                                         (["update", loose, "--no-commit"], variant(**{"Loose item": {"assignee": "user"}}), "needs no CR"),
+                                         (["update", "fx-cr", "--checkpoint", "user"], [*fixture, {**cr, "status": "in_progress", "assignee": "lead0001"}], "held by"),
+                                         (["update", "fx-cr", "--checkpoint", "user"], [*fixture, {**cr, "status": "in_review"}], "while it is open"),
+                                         (["update", loose, "--look", "after"], fixture, "change request settings")):
+                fake = Fake(issues)
+                code, _, errors = invoke(argv, fake)
+                if code == 0 or fake.writes() or needle not in errors:
+                    raise ValueError(f"board {argv} must be refused ({needle}) before any write: {code} {errors} {fake.writes()}")
+            with patch.object(board, "may_move", lambda board=None: False):
+                fake = Fake(fixture)
+                code, _, errors = invoke(["update", loose, "--no-commit"], fake, "agnt0001")
+            if code == 0 or fake.writes() or "planning" not in errors:
+                raise ValueError(f"an agent must not change an item's route: {code} {errors} {fake.writes()}")
             # Deferred work is backlog (board-coordination.md Deferrals): no CR until planning takes it up; undeferred, it is flagged.
             if f"{ids['Loose item']}  no-cr" in invoke(["check"], Fake(variant(**{"Loose item": {"status": "deferred"}})))[1]:
                 raise ValueError("board check must not flag a deferred work item outside any CR")
@@ -5818,7 +5881,7 @@ def validate_board(root: Path) -> None:
                 board_obj = bare_deck([], complete=False)
                 board_obj.settings.update({"setup": fake_cache.settings["custom.board.setup"], "checks": checks_cmd})
                 dummy = {"id": "cache-user", "metadata": {}}
-                with patch.object(board, "current_setting", lambda key: board_obj.settings[key.rsplit(".", 1)[1]]):
+                with patch.object(board, "project_settings", lambda: {name: (lambda key: board_obj.settings.get(key.rsplit(".", 1)[1], ""))(key) for name, key in board.SETTINGS.items()}):
                     errors_seen = []
 
                     def ask():
@@ -6271,7 +6334,7 @@ def validate_board(root: Path) -> None:
                 cr_one, kid_open, kid_held = cr_issue("t-cr"), cr_item("t-cr.o", "t-cr"), {**cr_item("t-cr.h", "t-cr", status="in_progress"), "assignee": "w1"}
                 world = [plain("t-a"), plain("t-b"), plain("t-g", "closed"), cr_one, kid_open, kid_held,
                          plain("t-l", dependencies=[{"issue_id": "t-l", "depends_on_id": "t-a", "type": "blocks"}]),
-                         plain("t-r", dependencies=[{"issue_id": "t-r", "depends_on_id": "t-b", "type": "related"}])]
+                         plain("t-r", dependencies=[{"issue_id": "t-r", "depends_on_id": "t-b", "type": "relates-to"}])]
                 code, output, errors, writes = verb(["update", "t-a", "t-b", "--title", "New", "-p", "P1", "--label", "topic:x", "--unlabel", "topic:y"], world)
                 if code or writes != [["update", "t-a", "t-b", "--title", "New", "--priority", "1", "--add-label", "topic:x", "--remove-label", "topic:y", "--json"]] \
                         or "t-a: updated" not in output:
@@ -6295,7 +6358,7 @@ def validate_board(root: Path) -> None:
                     code, _, errors, writes = verb(argv, world)
                     if code or writes != [["update", argv[1], "--parent", argv[3], "--json"]]:
                         raise ValueError(f"board {argv}: an open unheld item moves, and a parent is removed with an empty one: {code} {errors!r} {writes}")
-                code, _, errors, writes = verb(["link", "t-a", "t-b", "--type", "related"], world)
+                code, _, errors, writes = verb(["link", "t-a", "t-b", "--type", "relates-to"], world)
                 if code or writes != [["batch", "-m", "board link t-a t-b", "--json"]]:
                     raise ValueError(f"board link: {code} {errors!r} {writes}")
                 for argv, word in ((["link", "t-a", "t-b", "--type", "blocks"], "board block t-a --on t-b"), (["link", "t-a", "t-b", "--type", "nonsense"], "is not one of"),
@@ -6303,7 +6366,7 @@ def validate_board(root: Path) -> None:
                     code, _, errors, writes = verb(argv, world)
                     if code != 2 or word not in errors or writes:
                         raise ValueError(f"board {argv} must be refused ({word}): {code} {errors!r} {writes}")
-                code, output, _, writes = verb(["link", "t-r", "t-b", "--type", "related"], world)
+                code, output, _, writes = verb(["link", "t-r", "t-b", "--type", "relates-to"], world)
                 if code or writes or "already" not in output:
                     raise ValueError(f"board link of a link already there is a no-op: {code} {output!r} {writes}")
                 placed = [plain("t-a"), {**cr_issue("t-cq"), "dependencies": [{"issue_id": "t-cq", "depends_on_id": "t-a", "type": "parent-child"}]}]
@@ -6455,7 +6518,7 @@ def validate_board(root: Path) -> None:
                 probe = bare_deck([], complete=False)
                 probe.settings.update({"setup": "true", "checks": "echo 'z.ts Z1'; exit 1"})
                 dummy = {"id": "heal", "metadata": {}}
-                with patch.object(board, "current_setting", lambda key: probe.settings[key.rsplit(".", 1)[1]]):
+                with patch.object(board, "project_settings", lambda: {name: (lambda key: probe.settings.get(key.rsplit(".", 1)[1], ""))(key) for name, key in board.SETTINGS.items()}):
                     first = board.base_failures(probe, dummy, Path(repo_root), tip_now)
                     victim = next(f for f in cache_dir.iterdir() if not f.name.endswith((".lock", ".tmp")) and f.read_text().startswith("z.ts"))
                     victim.write_text("not a result row\n", encoding="utf-8")
@@ -6475,7 +6538,7 @@ def validate_board(root: Path) -> None:
                 gone = Path(repo_root, ".worktrees") / "c3-gone"
                 git("worktree", "add", "--detach", str(gone), tip_now)
                 shutil.rmtree(gone)
-                with patch.object(board, "current_setting", lambda key: probe.settings[key.rsplit(".", 1)[1]]):
+                with patch.object(board, "project_settings", lambda: {name: (lambda key: probe.settings.get(key.rsplit(".", 1)[1], ""))(key) for name, key in board.SETTINGS.items()}):
                     victim.unlink()
                     leftover.symlink_to(other)
                     linked = board.base_failures(probe, dummy, Path(repo_root), tip_now)
@@ -6491,7 +6554,7 @@ def validate_board(root: Path) -> None:
 
                 issues, tip, wt = make_cr("sr", "sr.txt", "x\n")
                 issues.append(cr_item("sr.x", "sr", "closed"))
-                with patch.object(board, "current_setting", lambda key: "main" if key.endswith("target") else "x"):
+                with patch.object(board, "project_settings", lambda: {name: (lambda key: "main" if key.endswith("target") else "x")(key) for name, key in board.SETTINGS.items()}):
                     accept_kind = board.Board([*issues], complete=False).claimable(issues[0])
                     issues[0]["metadata"]["review_base_tip"] = "e" * 40  # the check is current, the review is not
                     stale_kind = board.Board([*issues], complete=False).claimable(issues[0])
@@ -6503,13 +6566,13 @@ def validate_board(root: Path) -> None:
                 issues_rt, tip_rt, wt_rt = make_cr("rt", "rt.txt", "x\n")
                 issues_rt2, tip_rt2, wt_rt2 = make_cr("rt2", "rt2.txt", "x\n")
                 commit(repo_root, "rt-base.txt", "b\n", "main moves under rt")
-                with patch.object(board, "current_setting", lambda key: "main" if key.endswith("target") else "x"):
+                with patch.object(board, "project_settings", lambda: {name: (lambda key: "main" if key.endswith("target") else "x")(key) for name, key in board.SETTINGS.items()}):
                     loose_kind = board.Board([*issues_rt], complete=False).claimable(issues_rt[0])
                 fake = Fake(issues_rt)
                 code, output, errors = invoke(["review", "open", "rt"], fake, "lead0001")
                 if code or apply_writes(issues_rt, fake)[0]["metadata"].get("opened_tip") != tip_rt:
                     raise ValueError(f"board review open must record the opened tip in the CR's metadata: {code} {errors} {fake.writes()}")
-                with patch.object(board, "current_setting", lambda key: "main" if key.endswith("target") else "x"):
+                with patch.object(board, "project_settings", lambda: {name: (lambda key: "main" if key.endswith("target") else "x")(key) for name, key in board.SETTINGS.items()}):
                     held_kind = board.Board([*issues_rt], complete=False).claimable(issues_rt[0])
                     in_review_rt = [{**issues_rt[0], "status": "in_review"}]
                     review_kind = board.Board(in_review_rt, complete=False).claimable(in_review_rt[0])
@@ -7411,6 +7474,19 @@ def validate_board(root: Path) -> None:
                     where.rmdir() if marker_name == "rebase-apply" else where.unlink()
                 if claimable_of("st1", rows_o) != "implement":
                     raise ValueError("the CR is claimable again once the state ends")
+                # A stack base that became eligible after the branch forked: the existing worktree adopts it and keeps its true fork, so the
+                # next refresh replays only its own commits (h6bec); two candidate bases are a wait and change nothing.
+                fork_o = rows_o[0]["metadata"].get("base_sha")
+                for bases, want in ((["sb1"], "sb1"), (["sb1", "sb2"], rows_o[0]["metadata"].get("base"))):
+                    rows_s = [{**rows_o[0], "metadata": dict(rows_o[0]["metadata"]),
+                               "dependencies": [*(rows_o[0].get("dependencies") or []), *({"issue_id": "st1", "depends_on_id": b, "type": "blocks"} for b in bases)]},
+                              *rows_o[1:], *({**rows_o[0], "id": b, "title": f"base {b}", "status": "needs_acceptance", "assignee": None, "dependencies": [],
+                                              "metadata": {"base": "main"}} for b in bases)]
+                    deck_s = bare_deck(rows_s)
+                    with patch.object(board.subprocess, "run", Fake(rows_s)):
+                        board.open_worktree(deck_s, deck_s.by_id["st1"], Path(repo_root))
+                    if deck_s.by_id["st1"]["metadata"].get("base") != want or deck_s.by_id["st1"]["metadata"].get("base_sha") != fork_o:
+                        raise ValueError(f"an existing worktree with bases {bases} must end on base {want}, fork kept: {deck_s.by_id['st1']['metadata']}")
 
                 # A rebase the board started and stopped on a conflict: refresh refuses while a file is unmerged, continues once it is added.
                 issues_rb, tip_rb, wt_rb = make_cr("rb1", "a.txt", "mine\n")
@@ -7602,7 +7678,7 @@ def validate_board(root: Path) -> None:
                 stopped = git("rev-parse", "refs/heads/cr/fx-new")
                 if board.review_current({"metadata": {"review_edits": kept["metadata"]["review_edits"]}}, {"tip": stopped, "baseTip": main_c, "main": Path(repo_root)}):
                     raise ValueError("a follow-up stopped on a conflict is not edit-only: its base is not under it")
-                with patch.object(board, "current_setting", lambda key: "main" if key.endswith("target") else "x"):
+                with patch.object(board, "project_settings", lambda: {name: (lambda key: "main" if key.endswith("target") else "x")(key) for name, key in board.SETTINGS.items()}):
                     deck_c = board.Board([kept], complete=False)
                     kind_c = deck_c.claimable(deck_c.by_id["fx-new"])
                 _, text, _ = invoke(["console"], Fake([kept]), "lead0001")
@@ -7611,7 +7687,7 @@ def validate_board(root: Path) -> None:
                     raise ValueError(f"a stopped follow-up is claimed for the Accept by a deciding session, never refresh work: {kind_c} {row_c}")
                 # Only a stop on the user's recorded edit commit goes to the deciding session: any other stopped commit stays refresh work.
                 other_c = {**kept, "metadata": {**kept["metadata"], "review_edits": "[]"}}
-                with patch.object(board, "current_setting", lambda key: "main" if key.endswith("target") else "x"):
+                with patch.object(board, "project_settings", lambda: {name: (lambda key: "main" if key.endswith("target") else "x")(key) for name, key in board.SETTINGS.items()}):
                     deck_o = board.Board([other_c], complete=False)
                     kind_o = deck_o.claimable(deck_o.by_id["fx-new"])
                 if kind_o != "refresh":
@@ -7681,7 +7757,7 @@ def validate_board(root: Path) -> None:
                 created_h = [w for w in fake.writes() if w[0] == "create"]
                 handed = [w for w in fake.writes() if w[:2] == ["update", "fx-new"] and "needs_acceptance" in w]
                 held_row = rows_h[2]
-                with patch.object(board, "current_setting", lambda key: "main" if key.endswith("target") else "x"):
+                with patch.object(board, "project_settings", lambda: {name: (lambda key: "main" if key.endswith("target") else "x")(key) for name, key in board.SETTINGS.items()}):
                     deck_h = board.Board([held_row], complete=False)
                     claim_h = deck_h.claimable(deck_h.by_id["fx-new"])
                 if code or len(created_h) != 1 or "lead0001" not in created_h[0][4:] \
@@ -8090,17 +8166,23 @@ else:
         # the flags describe one node of a graph plan; --deps blocks: makes the other item wait on the new one (bd create's direction)
         result, calls = run_fake("create", "Login fails", "-t", "decision", "-p", "1", "--label", "a,b", "-l", "c", "--description-file", str(files["desc.md"]),
                                  "--design-file", str(files["design.md"]), "--acceptance-file", str(files["accept.md"]), "--deps", "discovered-from:fx-x",
-                                 "--deps", "blocks:fx-y,blocks:fx-a", "--metadata", "k=v", "--metadata", "no_code=1", "--status", "in_progress", "--parent", "fx-p")
+                                 "--deps", "blocks:fx-y,blocks:fx-a", "--status", "in_progress", "--parent", "fx-p")
         made = writes_of(calls, "create")
         plan = made[0]["plan"] if made else {}
         node = (plan.get("nodes") or [{}])[0]
         want = {"key": "item", "title": "Login fails", "type": "decision", "priority": 1, "status": "in_progress", "description": "What and where.\n",
                 "design": "The design.\n", "acceptance_criteria": "Done when it works.\n", "labels": ["a", "b", "c", "topic:t"], "parent_id": "fx-p",
-                "metadata": {"k": "v", "no_code": "1"}, "deps": [{"target": "fx-x", "type": "discovered-from"}]}
+                "deps": [{"target": "fx-x", "type": "discovered-from"}]}
         if result.returncode != 0 or len(made) != 1 or made[0]["args"][:2] != ["create", "--graph"] or "--json" not in made[0]["args"] or node != want \
                 or plan.get("edges") != [{"from_id": "fx-y", "to_key": "item", "type": "blocks"}, {"from_id": "fx-a", "to_key": "item", "type": "blocks"}] \
                 or result.stdout != "fx-item-new\n":
             raise ValueError(f"board create must build one graph node from the flags and print its id: {result.returncode} {result.stdout!r} {result.stderr!r} {plan}")
+        # item settings are typed: stored as the board's metadata, refused on an item they do not fit
+        for args, metadata in ((("T", "--no-commit"), {"no_commit": True}), (("T", "-t", "change-request", "--look", "after", "--checkpoint", "user"),
+                                                                            {"look": "after", "checkpoint": "user"})):
+            result, calls = run_fake("create", *args)
+            if result.returncode != 0 or writes_of(calls, "create")[0]["plan"]["nodes"][0].get("metadata") != metadata:
+                raise ValueError(f"board create {args} must store {metadata}: {result.returncode} {result.stderr!r} {calls}")
         # a node without a description (none, empty, blank) is refused before bd is called, flags and plans alike
         for args in (("T",), ("T", "-t", "decision", "--holds", "none")):
             result, calls = run_fake("create", *args, described=False)
@@ -8128,7 +8210,9 @@ else:
         for args, needle in ((("--graph", str(files["plan.json"]), "--title", "x"), "whole plan"), (("--graph", str(files["plan.json"]), "-t", "bug"), "whole plan"),
                              (("--graph", "/nonexistent/plan.json"), "cannot read the plan"), ((), "name the item once"),
                              (("T", "--title", "U"), "name the item once"), (("T", "-t", "question"), "--type decision"),
-                             (("T", "-t", "feature"), "is not a board type"), (("T", "--metadata", "novalue"), "key=value"),
+                             (("T", "-t", "feature"), "is not a board type"), (("T", "--metadata", "k=v"), "unrecognized arguments"),
+                             (("T", "-t", "decision", "--no-commit"), "marks a task"), (("T", "--look", "after"), "change request setting"),
+                             (("T", "--no-commit", "--assignee", "user"), "needs no CR"),
                              (("T", "--description-file", "/nonexistent/d.md"), "cannot read"), (("T", "--parent", "fx-nope"), "unknown parent"),
                              (("T", "--for", "ben"), "not shared"),
                              (("T", "--for", "ben", "--parent", "fx-p"), "drop --parent"), (("T", "--holds", "fx-a"), "goes with --type decision"),
@@ -8138,9 +8222,12 @@ else:
             if result.returncode == 0 or needle not in result.stderr or writes_of(calls, "create"):
                 raise ValueError(f"board create {args} must be refused ({needle}) before bd creates anything: {result.returncode} {result.stderr!r} {calls}")
         files["bad.json"].write_text(json.dumps({"nodes": [{"key": "a", "title": "A", "description": "d", "type": "task"}, {"key": "b", "title": "B", "description": "d", "type": "feature"}]}), encoding="utf-8")
-        files["look.json"].write_text(json.dumps({"nodes": [{"key": "a", "title": "A", "description": "d", "type": "change-request", "metadata": {"look": "before"}}]}), encoding="utf-8")
+        files["look.json"].write_text(json.dumps({"nodes": [{"key": "a", "title": "A", "description": "d", "type": "change-request", "look": "before"}]}), encoding="utf-8")
         files["dec.json"].write_text(json.dumps({"nodes": [{"key": "d", "title": "D", "description": "d", "type": "decision"}]}), encoding="utf-8")
-        for path, needle in ((files["bad.json"], "is not a board type"), (files["look.json"], "project default"), (files["dec.json"], "names what it holds up")):
+        files["meta.json"] = Path(repo, "meta.json")
+        files["meta.json"].write_text(json.dumps({"nodes": [{"key": "m", "title": "M", "description": "d", "metadata": {"no_commit": "1"}}]}), encoding="utf-8")
+        for path, needle in ((files["bad.json"], "is not a board type"), (files["look.json"], "project default"), (files["dec.json"], "names what it holds up"),
+                             (files["meta.json"], "unknown field metadata")):
             result, calls = run_fake("create", "--graph", str(path))
             if result.returncode == 0 or needle not in result.stderr or writes_of(calls, "create"):
                 raise ValueError(f"board create --graph {path.name} must be refused ({needle}): {result.returncode} {result.stderr!r}")
@@ -8247,6 +8334,14 @@ else:
         table_types = [name for row in kinds_table.splitlines()[2:] for name in re.findall(r"`([a-z-]+)`", row.split("|")[1])]
         if sorted(table_types) != sorted(board.ITEM_TYPES):
             raise ValueError(f"bin/board ITEM_TYPES and board-core.md's Kinds table must list the same types: {sorted(board.ITEM_TYPES)} vs {sorted(table_types)}")
+        # BOARD_METADATA is the one list of the metadata keys the board writes: every put_meta key and --set-metadata key is in it.
+        tree = ast.parse(Path(root, "bin", "board").read_text(encoding="utf-8"))
+        names = {node.targets[0].id: node.value.value for node in tree.body if isinstance(node, ast.Assign) and len(node.targets) == 1
+                 and isinstance(node.targets[0], ast.Name) and isinstance(node.value, ast.Constant) and isinstance(node.value.value, str)}
+        written = {kw.arg for node in ast.walk(tree) if isinstance(node, ast.Call) and getattr(node.func, "id", None) == "put_meta" for kw in node.keywords if kw.arg}
+        written |= {names[name] for name in re.findall(r"'--set-metadata', f[\"']\{([A-Za-z_]+)\}=", Path(root, "bin", "board").read_text(encoding="utf-8")) if name in names}  # a loop's own key is checked where it is set
+        if written - board.BOARD_METADATA:
+            raise ValueError(f"bin/board writes metadata keys missing from BOARD_METADATA: {sorted(written - board.BOARD_METADATA)}")
         # bd edit blocks on an editor: refused in one line naming the way on; a user's own --readonly is just bd's flag.
         result, seen = run_board("bd", "edit", "x")
         if result.returncode != 2 or seen or "board field export <id>" not in result.stderr or len(result.stderr.strip().splitlines()) != 1:

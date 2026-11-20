@@ -130,7 +130,7 @@ Parts: **Tracker** (Target through Exit), [Upgrade](#upgrade) and
    its owner.
    Output: one line per applied part; each moot close with its reason.
 5. **Reconcile.** Compare counts per source with the target and history; read
-   back mapped dependencies (`board bd dep list <id>`); run `board check --limit 0`
+   back mapped dependencies (`board bd dep list <id>`); run `board check --fix --limit 0`
    until it reports no deviation (flags are reported, not required clean);
    resolve every gap.
    Output: reconciliation table.
@@ -189,7 +189,7 @@ step goes in a change set and runs on the user's confirmation.
    Output: the settings as stored; the hook answer.
 5. **Reconcile.** Wrap each design still waiting for the user's accept in a
    CR under its topic: the design its child, `checkpoint` `user`, status
-   `needs_acceptance`. `board check --limit 0` clean but for user-accepted
+   `needs_acceptance`. `board check --fix --limit 0` clean but for user-accepted
    deviations; one `board claim` of a CR works end to end. Defer each open
    backlog work item; a plan pass groups the rest into CRs as they become due.
    For live legacy decisions at `needs_ratification`, run

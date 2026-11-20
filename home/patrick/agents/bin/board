@@ -2000,6 +2000,9 @@ CHECK_CLASSES = {  # class -> board-core anchor
     'unratified-ruling': 'questions-and-rulings',
     'decision-blocks-cr': 'questions-and-rulings',
     'no-cr': 'change-requests',
+    'unknown-metadata': 'kinds',
+    'unknown-link': 'dependencies',
+    'label-form': 'statuses-and-labels',
     'deferred-blocker': 'deferrals-and-environment-facts',
     'outside-wait': 'change-requests',
     'cr-settings': 'change-requests',
@@ -2060,9 +2063,20 @@ def deviations(board: Board, root: str | None) -> list[tuple[str, str, str]]:
             if refusal := outside_wait_refusal(item_id, kind, board.cr_of(item_id), blocker, board.cr_of(blocker),
                                                board.by_id.get(blocker, {}).get('issue_type')):
                 found.append((item_id, 'outside-wait', f'{refusal}; then board unblock {item_id} --on {blocker}'))
-        if is_work_hold(issue) and board.cr_of(item_id) is None and issue['status'] not in ('in_review', 'deferred') and not is_no_code(issue) \
+        if is_work_hold(issue) and board.cr_of(item_id) is None and issue['status'] not in ('in_review', 'deferred') and not needs_no_cr(issue) \
                 and not board.waits_on_decision_design_or_spike(item_id):
-            found.append((item_id, 'no-cr', f'work item outside any change request: board update {item_id} --parent <change request>'))
+            found.append((item_id, 'no-cr', f'work item outside any change request: board update {item_id} --parent <change request>, '
+                                            f'or --no-commit for work that commits nothing to this repository'))
+        for key in sorted(set(meta(issue)) - BOARD_METADATA):
+            found.append((item_id, 'unknown-metadata', f'metadata {key}: {metadata_fix(issue, key)}'))
+        for dep in issue.get('dependencies') or []:
+            link, target = dep.get('type') or 'blocks', dep.get('depends_on_id')
+            if dep.get('issue_id') == item_id and link not in PASS_LINKS and not blocking(link):
+                fix = f'board check --fix makes it {LEGACY_LINKS[link]}' if link in LEGACY_LINKS else f'board unlink {item_id} {target}'
+                found.append((item_id, 'unknown-link', f'link {link} to {target}: {fix}'))
+        for label in issue.get('labels') or []:
+            if label not in LIFECYCLE_LABELS and not label.startswith(LABEL_PREFIXES):
+                found.append((item_id, 'label-form', f'label {label}: board update {item_id} --unlabel {label} --label topic:{label} (or drop it)'))
     return found + cr_deviations(board, root)
 
 
@@ -2092,8 +2106,42 @@ def hold_flags(board: Board, root: str | None) -> tuple[list[tuple[str, str]], l
     return stale, forced
 
 
+def mechanical_fixes(board: Board, root: str | None) -> list[tuple[str, str, list[str], str | None]]:
+    """The deviations whose fix needs no judgment, as (id, what, bd args, batch input): a metadata key the board retired is dropped or
+    moved to its new name, a link in an earlier spelling moves to the current one. Keys the board never wrote stay for the reader."""
+    fixes = []
+    for issue in board.scoped(root):
+        if issue['status'] == 'closed':
+            continue
+        item_id = issue['id']
+        if retired := sorted(set(meta(issue)) & set(RETIRED_METADATA)):
+            moved = sorted({new for key in retired if (new := retired_move(issue, key))})
+            flags = [*(flag for new in moved for flag in ('--set-metadata', f'{new}=true')), *(flag for key in retired for flag in ('--unset-metadata', key))]
+            fixes.append((item_id, f"retired metadata {', '.join(retired)} dropped{''.join(f'; {new} set' for new in moved)}", ['update', item_id, *flags, '--json'], None))
+        for dep in issue.get('dependencies') or []:
+            link, target = dep.get('type'), dep.get('depends_on_id')
+            if dep.get('issue_id') == item_id and link in LEGACY_LINKS:
+                fixes.append((item_id, f'link {link} to {target} is now {LEGACY_LINKS[link]}', ['batch', '-m', f'board check --fix {item_id}', '--json'],
+                               f'dep remove {item_id} {target}\ndep add {item_id} {target} {LEGACY_LINKS[link]}\n'))
+    return fixes
+
+
+def apply_fixes(board: Board, args) -> Board:
+    """`check --fix`: applies the mechanical fixes (planning's call, as a parent move), prints each, and reads the board again."""
+    if not args.fix:
+        return board
+    if not may_move(board):
+        raise BoardError('only a lead or solo session or a person applies board check --fix')
+    fixes = mechanical_fixes(board, args.root)
+    for item_id, what, bd_args, batch in fixes:
+        bd_checked(*bd_args, **({'stdin': batch} if batch else {}))
+        print(f'fixed {item_id}: {what}', file=sys.stderr if args.json else sys.stdout)
+    return Board.load('all') if fixes else board
+
+
 def check_json(board: Board, args) -> dict:
     """Every finding of `board check`, unbudgeted: deviations by class, then the flags."""
+    board = apply_fixes(board, args)
     stale, forced = hold_flags(board, args.root)
     return {'deviations': [{'id': item_id, 'class': kind, 'detail': detail} for item_id, kind, detail in deviations(board, args.root)],
             'unnamedBlockers': [{'id': item_id, 'detail': detail} for item_id, detail in unnamed_waits(board, args.root)],
@@ -2102,6 +2150,7 @@ def check_json(board: Board, args) -> dict:
 
 
 def check(board: Board, args) -> int:
+    board = apply_fixes(board, args)
     limit = args.limit
     found = deviations(board, args.root)
     print(f'convention deviations: {len(found)}')
@@ -2717,11 +2766,53 @@ def author_label(board: Board, issue: dict) -> str:
     return f'author {actor}' if actor else f'author unknown ({legacy})' if legacy else 'standalone'
 
 
-NO_CODE = 'no_code'  # metadata of a work item that by design changes no code (a check, a baseline run): set when it is created, claimed outside any CR
+NO_COMMIT = 'no_commit'  # a work item that by design commits nothing to this repository (a run, an external step): it needs no CR. Stored as
+# JSON true: bd parses `--set-metadata k=1` to a number and a graph node keeps a string, so a boolean is the one form both writes give
+RETIRED_METADATA = {'no_code': NO_COMMIT, 'triaged_tip': None, 'triaged_base_tip': None}  # keys the board once wrote: their new name, or none
+CR_SETTINGS = {'look': ('before', 'after'), 'view': ('code', 'result'), 'checkpoint': ('agent', 'user')}  # a CR's own settings (change-requests.md)
 
 
-def is_no_code(issue: dict) -> bool:
-    return meta(issue).get(NO_CODE) == '1'
+def retired_move(issue: dict, key: str) -> str | None:
+    """The key a retired one moves to on this item: no_code becomes no_commit on agent work only (a person's item needs no mark)."""
+    new = RETIRED_METADATA[key]
+    return new if new != NO_COMMIT or (issue.get('issue_type') in WORK_TYPES and issue.get('assignee') != USER_HOLD) else None
+
+
+def metadata_fix(issue: dict, key: str) -> str:
+    """The fix board check names for a metadata key the board does not own: a retired one is check --fix's; any other may be another
+    tool's, so the reader decides."""
+    if key in RETIRED_METADATA:
+        new = retired_move(issue, key)
+        return f"retired: board check --fix {'makes it ' + new if new else 'drops it'}"
+    return f"not the board's: drop it if nothing else uses it (board bd --raw --yes update {issue['id']} --unset-metadata {key})"
+
+
+def is_no_commit(issue: dict) -> bool:
+    return issue.get('issue_type') in WORK_TYPES and meta(issue).get(NO_COMMIT) is True
+
+
+def needs_no_cr(issue: dict) -> bool:
+    """Work outside the agents' delivery: a person's item, or one that commits nothing here."""
+    return issue.get('assignee') == USER_HOLD or is_no_commit(issue)
+
+
+def setting_refusal(item_id: str, kind: str | None, assignee: str | None, settings: dict[str, object]) -> str | None:
+    """Why these item settings (create, a graph node, update) do not fit the item: no_commit on unassigned or agent work items only, a CR's
+    own settings on change requests from their value sets, look and view only to override the project default (r10-q52)."""
+    for name, value in settings.items():
+        if name == NO_COMMIT:
+            if value is not True:
+                return f'{item_id}: no_commit is true or absent'
+            if kind not in WORK_TYPES:
+                return f'{item_id}: no_commit marks a task, bug or spike'
+            if assignee == USER_HOLD:
+                return f"{item_id}: a person's item needs no CR; no_commit marks agent work"
+            continue
+        if kind != CR_TYPE:
+            return f'{item_id}: {name} is a change request setting'
+        if value not in CR_SETTINGS[name]:
+            return f"{item_id}: {name} is one of {', '.join(CR_SETTINGS[name])}"
+    return default_look_refusal([(name, str(value)) for name, value in settings.items() if name in ('look', 'view')])
 
 
 def is_work_hold(issue: dict) -> bool:
@@ -3158,8 +3249,8 @@ def work_item_refusal(board: Board, issue: dict, actor: str) -> str | None:
         return None
     item_id = issue['id']
     cr_id = board.cr_of(item_id)
-    if cr_id is None and (issue['status'] == 'in_review' or is_no_code(issue)):
-        return None  # a standalone review, or work that changes no code (r10-q50)
+    if cr_id is None and (issue['status'] == 'in_review' or is_no_commit(issue)):
+        return None  # a standalone review, or work that commits nothing here
     if cr_id is None:
         return f'{item_id}: outside any change request; put it in one: board update {item_id} --parent <change request>'
     cr = board.by_id[cr_id]
@@ -3351,7 +3442,8 @@ def board_setting(board: Board, name: str) -> str:
     """A project setting (bd config board.<name>), failing closed when it is missing or invalid."""
     key = SETTINGS[name]
     if name not in board.settings:
-        board.settings[name] = current_setting(key)
+        for missing, value in project_settings().items():  # one bd read for all of them: each read costs about 0.1 s
+            board.settings.setdefault(missing, value)
     value = board.settings[name].strip()
     allowed = {'look': LOOKS, 'view': VIEWS}.get(name)
     if not value:
@@ -3796,6 +3888,12 @@ def needs_refresh(board: Board, cr: dict) -> bool:
 
 
 OPENED = 'opened_tip'  # metadata of an item open for the user's review: the tip it was opened at (accept.md User review)
+BOARD_METADATA = {  # every metadata key the board writes, the one list (a test compares it with the writes); board check flags any other
+    NO_COMMIT, *CR_SETTINGS, 'ratification', DEEP_REVIEW, FORCED_BY, FORCED_REASON, SENT_AT, REVISES_RULE, OPENED,
+    'base', 'base_sha', 'setup_sha', 'since', 'landing', 'replan', 'rebase_from', 'rebase_onto', 'review_tip', 'review_base_tip',
+    'reviewing_tip', 'review_edits', 'user_seen_tip', 'user_seen_base_tip', 'no_agent_review_reason',
+    'check_at', 'check_base_count', 'check_base_tip', 'check_command', 'check_kind', 'check_new', 'check_output', 'check_reason',
+    'check_result', 'check_tip', 'check_tip_count'}
 BOARD_REMOTE = 'board'  # the remote the board makes so VS Code shows the request as Outgoing Changes; its push address is disabled
 NO_PUSH = 'no-push://the-board-lands-requests'  # no git-remote-no-push helper exists, so any push through the remote fails
 
@@ -4377,9 +4475,11 @@ def open_worktree(board: Board, cr: dict, main: Path, start: str | None = None) 
             raise BoardError(f'{cid}: {path} is mid {stuck} the board did not start: its owner finishes or aborts it, then claim again')
         if head != branch and not own_rebase(path, cr):  # detached mid the board's own rebase is the CR's (`sync_branch` resumes it)
             raise BoardError(f'{cid}: {path} exists but is on {head or "no branch"}, not {branch}: remove or fix it, then claim again')
+        adopt_stack_base(board, cr)
         return False, None
     if rev(main, f'refs/heads/{branch}'):
         git(main, 'worktree', 'add', str(path), branch)
+        adopt_stack_base(board, cr)
         return True, None
     base = None if start else next(iter(board.cr_waits(cr)[1]), None)
     if base:
@@ -4393,6 +4493,17 @@ def open_worktree(board: Board, cr: dict, main: Path, start: str | None = None) 
     git(main, 'worktree', 'add', '-b', branch, str(path), tip)
     put_meta(cr, base=base_value, base_sha=tip)
     return True, tip
+
+
+def adopt_stack_base(board: Board, cr: dict) -> None:
+    """An existing branch takes the one stackable base that became eligible since it forked: only `base` changes, `base_sha` stays its true
+    fork, so the next refresh replays the CR's own commits onto the base. Several candidate bases (a wait) or the board's own rebase in
+    progress leave it as it is, and so does a CR past planning (in review or at Accept: its reviewed range stays)."""
+    if cr['status'] != 'open':
+        return
+    base = next(iter(board.cr_waits(cr)[1]), None)
+    if base and meta(cr).get('base') != base and not meta(cr).get('rebase_onto'):
+        put_meta(cr, base=base)
 
 
 def drop_worktree(main: Path, cr_id: str, branch_tip: str | None) -> None:
@@ -5782,8 +5893,10 @@ def close_command(args) -> int:
 
 
 GLOBAL_VALUES = ('-C', '--directory', '--db', '--database', '--actor', '--dolt-auto-commit', '--mem-profile')
-PASS_LINKS = ('tracks', 'related', 'relates-to', 'discovered-from', 'parent-child', 'until', 'caused-by', 'validates', 'supersedes')  # the link types that hold nothing up
+PASS_LINKS = ('tracks', 'relates-to', 'discovered-from', 'parent-child', 'until', 'caused-by', 'validates', 'supersedes')  # the link types that hold nothing up
 BOARD_LABEL_PREFIXES = (QUEUE_PREFIX, FOR_PREFIX)  # labels the board routes on: they change through send, route and create --for
+LABEL_PREFIXES = ('topic:', 'export:', 'provides:', *BOARD_LABEL_PREFIXES)  # every label's form (board-core.md Statuses and labels)
+LEGACY_LINKS = {'related': 'relates-to'}  # an earlier spelling the board still reads on closed history; board check moves a live one
 RAW_RULE = 'raw bd writes only when no board command does it, or the user authorized it: board bd --raw --yes <args>'
 READ_GUARD = 'items are read through board show <ids> [--section …] [--field …] [--comments] [--full] [--json]: one read path, whole items'
 # The one map from a bd write word to the board command that does it; None: no board command does it (raw only). The refusal warning,
@@ -6112,9 +6225,11 @@ def apply_waits(made: dict[str | None, str], waits: Waits, types: dict[str, str]
 PLAN_NODE_KEYS = {'key', 'title', 'type', 'description', 'design', 'acceptance_criteria', 'notes', 'priority', 'labels', 'assignee', 'metadata',
                   'parent', 'parent_id', 'parent_key', 'deps', 'status', 'spec_id', 'external_ref', 'estimate'}  # the node fields bd's graph reads; it drops others silently
 PLAN_EDGE_KEYS = {'from_key', 'from_id', 'to_key', 'to_id', 'type'}
+ITEM_SETTING_KEYS = (NO_COMMIT, *CR_SETTINGS)  # typed node fields a plan gives; the board stores them as metadata
+GIVEN_NODE_KEYS = PLAN_NODE_KEYS - {'metadata'} | set(ITEM_SETTING_KEYS)  # a plan's own nodes: metadata stays the board's
 
 
-def validate_plan(plan: object, name: str = 'the plan') -> dict:
+def validate_plan(plan: object, name: str = 'the plan', fields: set[str] = PLAN_NODE_KEYS) -> dict:
     """The board's checkpoint of a `create --graph` plan: an object with a non-empty list of nodes (title, key, only the fields bd reads, labels a list of strings,
     deps and edges objects). bd ignores what it does not know, so a typo would lose a field silently."""
     nodes = plan.get('nodes') if isinstance(plan, dict) else None
@@ -6126,8 +6241,8 @@ def validate_plan(plan: object, name: str = 'the plan') -> dict:
     for node in nodes:
         if not isinstance(node, dict) or not isinstance(node.get('key'), str) or not node['key'] or not isinstance(node.get('title'), str) or not node['title'].strip():
             raise BoardError(f'{name}: every node is an object with a key and a title')
-        if unknown := sorted(set(node) - PLAN_NODE_KEYS):
-            raise BoardError(f"{name}: node {node['key']} has unknown field {', '.join(unknown)} (bd would drop it); fields: {', '.join(sorted(PLAN_NODE_KEYS))}")
+        if unknown := sorted(set(node) - fields):
+            raise BoardError(f"{name}: node {node['key']} has unknown field {', '.join(unknown)}; fields: {', '.join(sorted(fields))}")
         if not isinstance(node.get('description'), str) or not node['description'].strip():  # bd's create.require-description does not apply to --graph
             raise BoardError(f"{name}: node {node['key']} needs a description (what and why; --description-file, or the node's \"description\")")
         labels = node.get('labels', [])
@@ -6521,7 +6636,8 @@ def known_items(board: Board, ids: list[str]) -> None:
 
 
 def update_command(board: Board, args) -> int:
-    """`board update <id>... [--title] [--priority] [--label L]... [--unlabel L]... [--parent P|""] [--assignee user|""]`: the short fields bd
+    """`board update <id>... [--title] [--priority] [--label L]... [--unlabel L]... [--parent P|""] [--assignee user|""] [--no-commit|--commits]
+    [--look|--view|--checkpoint V|""]`: the short fields bd
     leaves to bd, with the board's value rules: labels the board routes on (queue:, for:) change through send, route and create --for; a parent
     moves an item only where the board's invariants allow (parent_move_refusal); the assignee hands manual work to the user and back."""
     known_items(board, args.ids)
@@ -6549,12 +6665,48 @@ def update_command(board: Board, args) -> int:
             if board.by_id[item_id].get('issue_type') not in WORK_TYPES or board.cr_of(item_id):
                 raise BoardError(f'{item_id}: user work is a task, bug or spike outside any change request')
         changes += ['--assignee', args.assignee]
+    changes += setting_changes(board, args)
     if not changes:
-        raise BoardError('nothing to change: give --title, --priority, --label, --unlabel, --parent or --assignee (long fields: board field; claim: board claim)')
+        raise BoardError('nothing to change: give --title, --priority, --label, --unlabel, --parent, --assignee, --no-commit, --commits, --look, --view '
+                         'or --checkpoint (long fields: board field; claim: board claim)')
     bd_checked('update', *args.ids, *changes, '--json')
     for item_id in args.ids:
         print(f'{item_id}: updated')
     return 0
+
+
+def setting_changes(board: Board, args) -> list[str]:
+    """The metadata writes of update's item settings, every item checked first: planning's call (a lead, solo or person, as a parent move),
+    on an item no session holds and before its work starts: a work item open or deferred in no change request, a change request open."""
+    cr_given = {name: getattr(args, name) for name in CR_SETTINGS if getattr(args, name) is not None}
+    if args.no_commit is None and not cr_given:
+        return []
+    if not may_move(board):
+        raise BoardError('only a lead or solo session or a person changes item settings (planning)')
+    for item_id in args.ids:
+        issue = board.by_id[item_id]
+        kind, holder = issue.get('issue_type'), issue.get('assignee')
+        if holder and holder != USER_HOLD:
+            raise BoardError(f'{item_id}: held by {holder}; board unclaim or board take it first')
+        if args.no_commit is not None and (issue['status'] not in ('open', 'deferred') or board.cr_of(item_id)):
+            raise BoardError(f"{item_id}: {issue['status']}{' in ' + board.cr_of(item_id) if board.cr_of(item_id) else ''}; "
+                             'its route changes while it is open or deferred outside any change request')
+        if cr_given and issue['status'] != 'open':
+            raise BoardError(f"{item_id}: {issue['status']}; a change request's settings change while it is open")
+        if args.no_commit is False and kind not in WORK_TYPES:
+            raise BoardError(f'{item_id}: --commits takes a task, bug or spike')
+        if cr_given and kind != CR_TYPE:
+            raise BoardError(f'{item_id}: look, view and checkpoint are change request settings')
+        given = {**({NO_COMMIT: True} if args.no_commit else {}), **{name: value for name, value in cr_given.items() if value}}
+        if refusal := setting_refusal(item_id, kind, holder, given):
+            raise BoardError(refusal)
+    changes = []
+    if args.no_commit is not None:
+        changes += ['--set-metadata', f'{NO_COMMIT}=true'] if args.no_commit else ['--unset-metadata', NO_COMMIT]
+        changes += ['--unset-metadata', 'no_code']  # its retired name (RETIRED_METADATA)
+    for name, value in cr_given.items():
+        changes += ['--set-metadata', f'{name}={value}'] if value else ['--unset-metadata', name]
+    return changes
 
 
 def link_command(board: Board, args) -> int:
@@ -7001,6 +7153,12 @@ def default_prefix(root: Path) -> str:
     origin = subprocess.run(['git', 'remote', 'get-url', 'origin'], capture_output=True, text=True).stdout.strip()
     name = re.sub(r'\.git$', '', origin.rstrip('/').rsplit('/', 1)[-1].rsplit(':', 1)[-1]) if origin else root.name
     return re.sub(r'[^a-z0-9]+', '-', name.lower()).strip('-') or 'board'
+
+
+def project_settings() -> dict[str, str]:
+    """The board's project settings (SETTINGS) by name, '' when unset, in one bd read."""
+    found = json.loads(bd_checked('config', 'list', '--json') or '{}')
+    return {name: str(found.get(key) or '') if isinstance(found, dict) else '' for name, key in SETTINGS.items()}
 
 
 def current_setting(key: str) -> str:
@@ -7460,11 +7618,9 @@ def flag_node(args) -> tuple[dict, list[dict]]:
         labels += [label for label in parents[0].get('labels') or [] if not label.startswith(QUEUE_PREFIX) and label not in labels]
     if labels:
         node['labels'] = labels
-    if args.metadata:
-        pairs = [pair.partition('=') for pair in args.metadata]
-        if any(not key or not sep for key, sep, _ in pairs):
-            raise BoardError('--metadata takes key=value')
-        node['metadata'] = {key: value for key, _, value in pairs}
+    if args.no_commit:
+        node[NO_COMMIT] = True
+    node.update({name: getattr(args, name) for name in CR_SETTINGS if getattr(args, name)})
     edges, deps = [], []
     for dep in args.deps:
         kind, sep, target = dep.partition(':')
@@ -7487,7 +7643,7 @@ def load_plan(path: str) -> dict:
         plan = json.loads(Path(path).read_text(encoding='utf-8'))
     except (OSError, UnicodeDecodeError, ValueError) as error:
         raise BoardError(f'cannot read the plan {path}: {error}') from None
-    return validate_plan(plan, path)
+    return validate_plan(plan, path, GIVEN_NODE_KEYS)
 
 
 def for_person(plan: dict, target: str) -> None:
@@ -7516,7 +7672,8 @@ def create_command(args) -> int:
     the size limit of a work item's long fields) and goes to `bd create --graph`. Prints the ids created."""
     flags_used = any(value not in (None, [], False) for value in (args.type, args.title, args.positional_title, args.parent, args.label,
                                                                     args.priority, args.description_file, args.design_file,
-                                                                    args.acceptance_file, args.deps, args.metadata, args.status, args.assignee))
+                                                                    args.acceptance_file, args.deps, args.no_commit, args.look, args.view, args.checkpoint,
+                                                                    args.status, args.assignee))
     if args.for_ and args.parent:
         raise BoardError('board create --for files a top-level item: drop --parent (a child takes its parent\'s queue)')
     if args.graph and flags_used:
@@ -7525,7 +7682,7 @@ def create_command(args) -> int:
         plan = load_plan(args.graph)
     else:
         node, edges = flag_node(args)
-        plan = validate_plan({'nodes': [node], **({'edges': edges} if edges else {})}, 'board create')
+        plan = validate_plan({'nodes': [node], **({'edges': edges} if edges else {})}, 'board create', GIVEN_NODE_KEYS)
     nodes = plan['nodes']
     if refusal := type_refusal([str(node['type']) for node in nodes if node.get('type')]):
         raise BoardError(refusal)
@@ -7538,9 +7695,12 @@ def create_command(args) -> int:
                                {field: str(node[field]) for field in ('description', 'design', 'acceptance_criteria', 'notes') if node.get(field)}, update=False)
         if refusal:
             raise BoardError(refusal)
-    metadata = [(key, str(value)) for node in nodes for key, value in (node.get('metadata') or {}).items()]
-    if refusal := default_look_refusal(metadata):
-        raise BoardError(refusal)
+    for node in nodes:
+        settings = {name: node.pop(name) for name in ITEM_SETTING_KEYS if name in node}
+        if refusal := setting_refusal(node['key'], node.get('type') or 'task', node.get('assignee'), settings):
+            raise BoardError(refusal)
+        if settings:
+            node['metadata'] = settings
     given = args.holds
     holds_value = ','.join(given) if args.holds else None
     decides = any(node.get('type') == 'decision' for node in nodes)
@@ -7596,7 +7756,7 @@ EXAMPLES = {
     'ruling record': 'board ruling record <id> record.md [--unratified] [--replaces <old>,<old>]',
     'ruling check-replaces': 'board ruling check-replaces <old> [<old>]',
     'update': 'board update <id> <id> --title "New title" --priority 1 --label topic:x --unlabel topic:y --parent <id>',
-    'link': 'board link <a> <b> --type related',
+    'link': 'board link <a> <b> --type relates-to',
     'unlink': 'board unlink <a> <b>',
     'unblock': 'board unblock <item> <item> --on <blocker>',
     'reopen': 'board reopen <id> <id>',
@@ -7654,6 +7814,8 @@ def writes(argv: list[str]) -> bool:
         return False
     if argv[:2] in (['field', 'export'], ['field', 'discard'], ['ruling', 'check-replaces']):
         return False
+    if argv[:1] == ['check'] and '--fix' in argv:
+        return True
     if argv[:1] == ['bd']:
         if '--raw' not in argv[1:3]:
             return False  # board bd runs bd read-only
@@ -7801,6 +7963,7 @@ def run_command(argv: list[str]) -> int:
     add('holders', 'items by open downstream work', holders, [scope, listing, queues])
     sub = add('check', 'deviations from the board conventions', check, [scope, listing])
     sub.add_argument('--json', action='store_true', help='deviations and flags as rows')
+    sub.add_argument('--fix', action='store_true', help='apply the fixes that need no judgment (retired metadata, earlier link spellings), then check')
     sub = add('related', 'items and doc lines mentioning terms', related, [scope, listing])
     sub.add_argument('terms', nargs='*')
 
@@ -7866,7 +8029,7 @@ def run_command(argv: list[str]) -> int:
                           'this record comes into force (its release; with --unratified at once); one already superseded by it is done; anything else refuses before any write (repeatable)')
     sub = add('check-replaces', 'validate and classify rulings a staged question proposes to replace', check_replaces, group='ruling')
     sub.add_argument('ids', nargs='+', type=board_id)
-    sub = add('update', 'change items: title, priority, labels (not queue: or for:), parent, user assignment', update_command)
+    sub = add('update', 'change items: title, priority, labels (not queue: or for:), parent, user assignment, item settings', update_command)
     sub.add_argument('ids', nargs='+', type=board_id)
     sub.add_argument('--title', type=nonempty)
     sub.add_argument('-p', '--priority', type=priority, help='0-4 or P0-P4 (0 highest)')
@@ -7874,6 +8037,12 @@ def run_command(argv: list[str]) -> int:
     sub.add_argument('--unlabel', action=Values, default=[], metavar='LABEL[,LABEL...]', help='remove; repeatable, commas separate')
     sub.add_argument('--parent', type=board_id, metavar='ID', help='the new parent ("" removes it)')
     sub.add_argument('--assignee', choices=('user', ''), help='user hands the items to the user, "" back to agents')
+    route = sub.add_mutually_exclusive_group()
+    route.add_argument('--no-commit', dest='no_commit', action='store_const', const=True,
+                       help='the work commits nothing to this repository: it needs no change request')
+    route.add_argument('--commits', dest='no_commit', action='store_const', const=False, help='the work commits here: it goes in a change request')
+    for name, values in CR_SETTINGS.items():
+        sub.add_argument(f'--{name}', choices=(*values, ''), help=f'a change request\'s {name} ("" drops it{", back to the project default" if name != "checkpoint" else ""})')
     sub = add('link', 'link two items with a type that holds nothing up (a blocking link is board block)', link_command)
     sub.add_argument('a', type=board_id)
     sub.add_argument('b', type=board_id)
@@ -7995,7 +8164,7 @@ def run_command(argv: list[str]) -> int:
     sub = add('create', 'create items: the flags describe one item, or --graph <plan.json> a whole plan (nodes, edges); prints the ids', create_command)
     sub.add_argument('positional_title', nargs='?', metavar='TITLE', help='the title (or --title)')
     sub.add_argument('--graph', metavar='PLAN', help="a bd graph plan: {nodes: [{key, title, type, description, design, acceptance_criteria, priority, labels, "
-                      "metadata, parent_key|parent_id, deps: [{target, type}], status, …}], edges: [{from_key|from_id, to_key, type}]}; prints 'key id' lines")
+                      "no_commit, look, view, checkpoint, parent_key|parent_id, deps: [{target, type}], status, …}], edges: [{from_key|from_id, to_key, type}]}; prints 'key id' lines")
     sub.add_argument('--title')
     sub.add_argument('-t', '--type', help=f"one of {', '.join(ITEM_TYPES)} (default task)")
     sub.add_argument('--parent', type=board_id, help='an existing parent; its labels (not its queue) are copied')
@@ -8006,10 +8175,13 @@ def run_command(argv: list[str]) -> int:
     sub.add_argument('--acceptance-file', metavar='FILE')
     sub.add_argument('--deps', action=Values, default=[], metavar='TYPE:ID[,TYPE:ID...]',
                      help='links; blocks:ID makes ID wait on the new item, blocked-by:ID (or a bare ID) makes it wait on ID, other types '
-                          '(discovered-from, related …) as bd; repeatable')
+                          '(discovered-from, relates-to …) as bd; repeatable')
     sub.add_argument('--holds', action=Values, default=[], metavar='ID[,ID...]|none',
                      help='a question or ruling names the items it holds up (they wait on it), or none; repeatable')
-    sub.add_argument('--metadata', action='append', default=[], metavar='KEY=VALUE', help='repeatable')
+    sub.add_argument('--no-commit', action='store_true', help='a task, bug or spike that by design commits nothing to this repository: it needs no change request')
+    sub.add_argument('--look', choices=CR_SETTINGS['look'], help="a change request's look, overriding the project default")
+    sub.add_argument('--view', choices=CR_SETTINGS['view'], help="a change request's view, overriding the project default")
+    sub.add_argument('--checkpoint', choices=CR_SETTINGS['checkpoint'], help='a design change request: who passes its checkpoint')
     sub.add_argument('--status', help='the initial status')
     sub.add_argument('-a', '--assignee', help='the assignee (not with --for, which holds the item for you)')
     sub.add_argument('--for', dest='for_', metavar='PERSON',

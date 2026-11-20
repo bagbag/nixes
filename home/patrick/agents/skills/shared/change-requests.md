@@ -111,8 +111,8 @@ queue order and refresh work: [Board coordination](board-coordination.md).
   generated files (lockfiles) are not such lists. A review flags a new one.
 - **Nothing to merge:** a CR whose branch holds no commit of its own and is
   at no design checkpoint lands when its review passes, in either `look`,
-  without the Accept and without a ratification. Plan work that changes no
-  code as a no-code task ([Work items](../shared/board-core.md#work-items)).
+  without the Accept and without a ratification. Plan work that commits
+  nothing here as a no-commit task ([Work items](../shared/board-core.md#work-items)).
 - **Ratification:** after a `look` `after` landing, an agent design
   checkpoint pass in such a project, or autopilot's accept of a `user`
   checkpoint, a child task titled `<CR title>` sits in

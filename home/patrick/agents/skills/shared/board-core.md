@@ -70,7 +70,7 @@ shared board, the user an unshared one (`bd dolt push`/`pull`).
 
 | Type | Kind |
 |---|---|
-| `task`, `bug`, `spike` | Work item; lives in a CR, unless deferred ([backlog](../shared/board-coordination.md#deferrals-and-environment-facts)), waiting on a decision, design or spike until it closes, or marked no-code ([Work items](#work-items)). |
+| `task`, `bug`, `spike` | Work item; lives in a CR, unless deferred ([backlog](../shared/board-coordination.md#deferrals-and-environment-facts)), waiting on a decision, design or spike until it closes, assigned to a person, or marked no-commit ([Work items](#work-items)). |
 | `design` | Design item: the architecture and package graph a slice still needs, and the decisions they raise. |
 | `decision` | Question, later the ruling's record ([Questions and rulings](#questions-and-rulings)). |
 | `change-request` | The claimed, reviewed and landed unit ([Change requests](../shared/change-requests.md#change-requests)). |
@@ -96,7 +96,7 @@ no role; follow these rules yourself:
   ([queue](../shared/board-coordination.md#change-request-queue)).
 - A work item is claimed by id only inside a CR your session holds. Decision,
   plan and milestone kinds, findings-only reviews and challenges, and work
-  items marked no-code need no CR.
+  items marked no-commit need no CR.
 - Pull `plan` also claims the board restructuring tasks it creates itself,
   and an `open` CR with no open items or marked for replanning (returned from
   an agent checkpoint, or a child of a rejected CR).
@@ -130,8 +130,8 @@ On a shared board (`.beads/board-shared.json` exists):
   Move a part with a different blocker or dependent to its own item in another
   CR (planning decides); items do not split inside a CR.
   Cut a check others wait on (whole typecheck, fresh build), or other work
-  that by design changes no code, as a task marked no-code when created
-  (metadata `no_code=1` on `create` or a `create --graph` node). It sits outside any
+  that by design commits nothing to this repository, as a task marked
+  no-commit (`create --no-commit` or a graph node's `"no_commit": true`). It sits outside any
   CR, runs against the target, and its acceptance is the recorded passing
   run; a defect it finds becomes a code item in a CR.
 - Fields: description (outcome and reason), design (contract, files,

@@ -126,7 +126,7 @@ changed on the board since its export or an edited file is empty; an unedited fi
 Export never overwrites an export edited since and not applied (it names apply and discard); an untouched one is refreshed.
 `board field discard <id>...` removes the exports. The flow replaces rewriting a field from memory. Reading stays `board show --field`; `board show <ids> --json` without `--field` prints whole items `{id: item}` with comments.
 `board create [<title>] [--type T] [--parent ID] [--label L]... [--priority N] [--description-file F|-] [--design-file F] [--acceptance-file F]
-[--deps type:ID]... [--holds ID|none]... [--metadata k=v]... [--status S] [--assignee A] [--for PERSON] [--dry-run]` builds one node of a bd graph plan; `--graph <plan.json>`
+[--deps type:ID]... [--holds ID|none]... [--no-commit] [--look L] [--view V] [--checkpoint C] [--status S] [--assignee A] [--for PERSON] [--dry-run]` builds one node of a bd graph plan; `--graph <plan.json>`
 takes a whole plan (no node flags beside it). Both pass the plan checks (types, a change request's look or view equal to the project default,
 decisions naming what they hold up, queue labels, `--for`: top-level nodes, your queue, held for you, a shared board only, the size
 limit of a work item's long fields) and go to `bd create --graph --json`; the ids print (`key id` per node for `--graph`). Node field names are
@@ -145,16 +145,22 @@ conventions mechanically; change both in the same change, so drifted boards
 surface in `board health` and move through `/board-migrate`.
 It flags a live `decision` in the legacy `needs_ratification` status as
 `unratified-ruling`; follow `/board-migrate` Upgrade/Reconcile to repair it.
-`board create` / `create --graph` node metadata are refused when the value equals the
+Item settings are typed: `create --no-commit|--look|--view|--checkpoint`, the same plan node fields (`"no_commit": true`), and
+`update --no-commit|--commits|--look|--view|--checkpoint` (`""` drops a setting); the board stores them as metadata, which plans and
+create flags do not take. `update` changes them only from a lead, solo or person, on an item no session holds, a work item open or deferred
+in no CR, a CR open. A look or view is refused when it equals the
 project default (an unreadable default lets bd answer); `board setup` that changes `look` or `view` prints, under the
 `old -> new` line, the open CRs keeping their own value, each with the first line of its description, design or notes naming the
 setting (`no reason in its text` otherwise) and a note when it now equals the default (r10-q52).
 `ITEM_TYPES` in `bin/board` is the one list of item types (board-core.md Kinds, a test compares them):
 `board create` (flags or `--graph`) and `update --type` refuse any other type, `question` is refused naming
 `--type decision` (never rewritten), and `board check` flags a live item of another type (class `unknown-type`).
-Metadata `no_code=1`, set at creation (`create --metadata` or a graph node), marks work that changes no code
-(r10-q50): it may be claimed outside a CR and `board check` drops its `no-cr` flag; `update --set-metadata no_code`
-is refused. A CR whose branch has no commits of its own lands on its passed review in either look, with no
+`no_commit` marks agent work that commits nothing to this repository: it is claimed outside a CR. Neither it nor an item assigned
+to a person gets a `no-cr` flag. `board check` flags what lies outside the board's vocabularies on a live item, each with its fix:
+a metadata key not in `BOARD_METADATA` (`unknown-metadata`), a link type it does not write (`unknown-link`), and a label outside
+`LABEL_PREFIXES` (`label-form`). `board check --fix` (lead, solo or person) applies the fixes that need no judgment first: a key the
+board retired (`RETIRED_METADATA`) is dropped or moved (`no_code` becomes `no_commit` on agent work), the earlier `related` link becomes
+`relates-to`. A key the board never wrote may be another tool's, so it, a label and every other class stay for the reader. A CR whose branch has no commits of its own lands on its passed review in either look, with no
 ratification and no Accept (a stacked one with its base); a design checkpoint is the exception.
 Landing and design ratifications are child tasks titled after their change request. Their metadata
 (`ratification=landing|design`) identifies the kind; see [Change requests](../skills/shared/change-requests.md#change-requests)
