@@ -1793,7 +1793,9 @@ def health(board: Board, args) -> None:
     found = deviations(board, args.root)
     if found:
         fixed = sum(1 for _, kind, _ in found if kind in COMMAND_FIXED)  # fixed by a board command, not a migration
-        hints = (['run /board-migrate'] if fixed < len(found) else []) + ([f'board fixes: {fixed} (board check)'] if fixed else [])
+        mechanical = len(mechanical_fixes(board, args.root))
+        hints = ([f'board check --fix: {mechanical} fixes'] if mechanical else []) + (['run /board-migrate'] if fixed < len(found) else []) \
+            + ([f'board fixes: {fixed} (board check)'] if fixed else [])
         print(f"convention deviations: {len(found)} — {'; '.join(hints)}")
     queue_rows(board, args.root, 'health')
 
@@ -2921,7 +2923,8 @@ def console_json(board: Board, args) -> dict:
     ratifications = ratifications_json(board)
     return {**({'sync': (shared.problem() or shared.store_warning()), 'queueLine': queue_line(board, args.root)} if shared else {}),
             'noBoard': False, 'prefix': board_prefix(),
-            'counts': console_counts(board, views, position),
+            'counts': {**console_counts(board, views, position),
+                       'deferred': sum(1 for issue in board.scoped(args.root) if issue['status'] == 'deferred')},  # the backlog, any type
             'forYou': [item_json(board, issue) for issue in sorted(views['user'][1], key=by_priority)
                        if not step_blocked(board, 'user', issue) and not held_by_a_session(issue)],  # the ready part of forUser
             'items': [item for item in mine_json(board, args)['items'] if item['type'] != CR_TYPE],  # held CRs show in crs

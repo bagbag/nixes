@@ -107,20 +107,6 @@ describe('change request queue', () => {
     await ui.unmount()
   })
 
-  test('the Accept row lists every incoming commit and marks CR-file overlap', async ($, on) => {
-    const { ui } = await queued($, on, [cr({ id: 'p-cr1', acceptance: {
-      seenTip: sha(2), seenBaseTip: sha(1), delta: null, fullChange: false, noAgentReviewReason: null,
-      incomingBaseTip: sha(1), incomingCommits: [
-        { tip: sha(7), subject: 'unrelated change', files: ['docs/guide.md'], crFiles: [] },
-        { tip: sha(8), subject: 'touch config', files: ['README.md', 'src/config.ts'], crFiles: ['src/config.ts'] },
-      ],
-    } })])
-    const drawn = await texts(ui)
-    expect(drawn).toContain(`main ${sha(7).slice(0, 12)} unrelated change · files: docs/guide.md`)
-    expect(drawn).toContain(`main ${sha(8).slice(0, 12)} touch config · touches CR files: src/config.ts · files: README.md, src/config.ts`)
-    await ui.unmount()
-  })
-
   test('a request whose landing waits on a parent shows the wait and no Accept; Open and Return stay', async ($, on) => {
     const WAITS = { kind: 'waits', text: 'waits on p-cr0 (returned)', next: { action: 'wait' } }
     const { ui } = await queued($, on, [cr({ id: 'p-cr1', problems: [WAITS] }), cr({ id: 'p-cr2' })])
@@ -195,11 +181,14 @@ describe('no new failures', () => {
     await ui.unmount()
   })
 
-  test('unchecked is hidden on a design checkpoint (landing it ignores checks) and shown on a code request', async ($, on) => {
-    const unchecked = { state: 'unchecked', tip: null, baseTip: null, at: null, result: null, newFailures: null, baseCount: null, tipCount: null }
-    const { ui } = await queued($, on, [cr({ id: 'p-d', checkpoint: 'user', check: unchecked }), cr({ id: 'p-c', check: unchecked })])
-    expect(await texts(ui)).toContain('unchecked')
-    expect((await texts(ui)).match(/unchecked/g)).toHaveLength(1)
+  test('stale and unchecked stay off the row (land rebases and checks first); a no-check pair shows', async ($, on) => {
+    const check = (state: string, kind = 'full') => ({ state, kind, tip: null, baseTip: null, at: null, result: null, newFailures: null, baseCount: null, tipCount: null, command: null, reason: null })
+    const { ui } = await queued($, on, [cr({ id: 'p-a', check: check('unchecked') }), cr({ id: 'p-b', check: check('stale') }),
+      cr({ id: 'p-c', check: check('current', 'none') })] as never)
+    const drawn = await texts(ui)
+    expect(drawn).not.toContain('unchecked')
+    expect(drawn).not.toMatch(/(^|\n)stale(\n|$)/)
+    expect(drawn).toContain('no check run')  // conflict shows: the right-edge test
     await ui.unmount()
   })
 
@@ -610,7 +599,7 @@ describe('Accept, Return', () => {
       acceptance: { seenTip: sha(8), seenBaseTip: sha(2), delta: '2: prior = 2: current', fullChange: false, noAgentReviewReason: 'changelog only' },
     })] }).crs[0]!
     expect(one.acceptance).toEqual({ seenTip: sha(8), seenBaseTip: sha(2), delta: '2: prior = 2: current', fullChange: false,
-      noAgentReviewReason: 'changelog only', incomingBaseTip: null, incomingCommits: null })
+      noAgentReviewReason: 'changelog only' })
   })
 
   test('without a prompt box the press says so', async ($, on) => {
@@ -684,7 +673,7 @@ describe('counts', () => {
   })
 
   test('the /console text prints the same labels', () => {
-    const text = consoleText({ session: 's', role: 'lead', actor: 'a', tool: 'claude' }, { isMissing: false, counts: { ...COUNTS, toDesign: { ready: 6, held: 1, waiting: 0 }, toImplement: { ready: 90, held: 1, waiting: 1 } }, forYou: [], items: [], sessions: [], held: [], crs: [], queued: 0, waitingOnYou: 0, prefix: null, ratifications: [], agents: [], scratch: null, sync: null, queues: null, error: null }, null, false, [])
+    const text = consoleText({ session: 's', role: 'lead', actor: 'a', tool: 'claude' }, { isMissing: false, counts: { ...COUNTS, toDesign: { ready: 6, held: 1, waiting: 0 }, toImplement: { ready: 90, held: 1, waiting: 1 }, deferred: { ready: 4, held: 0, waiting: 0 } }, forYou: [], items: [], sessions: [], held: [], crs: [], queued: 0, waitingOnYou: 0, prefix: null, ratifications: [], agents: [], scratch: null, sync: null, queues: null, error: null }, null, false, [])
     expect(text).toContain('you: for you 3 · to accept 13 (1 wait) · to ratify 1 · decided 0 · questions 186 (2 held)')
     expect(text).toContain('agents: to plan 0 (57 wait) · to design 6 (1 held) · to implement 90 (1 held, 1 wait) · to review 0')
   })
@@ -912,7 +901,7 @@ describe('request rows', () => {
 
   test('the right edge of line two holds the problem marks, then the new-failure count, then the check state, flush right; a current check is not shown', async ($, on) => {
     const check = (state: string, over: Record<string, unknown> = {}) => ({ state, kind: 'full', tip: sha(2), baseTip: sha(1), at: null, result: 'fail', newFailures: null, baseCount: null, tipCount: null, ...over })
-    const { ui } = await mounted($, on, [cr({ id: 'p-cr1', problems: [BLOCKED(['src/a.ts'])], check: check('conflict', { newFailures: ['x TS1'] }) } as never), cr({ id: 'p-cr2', check: check('stale') } as never), cr({ id: 'p-cr3' })], WIDE)
+    const { ui } = await mounted($, on, [cr({ id: 'p-cr1', problems: [BLOCKED(['src/a.ts'])], check: check('conflict', { newFailures: ['x TS1'] }) } as never), cr({ id: 'p-cr2', check: check('failed') } as never), cr({ id: 'p-cr3' })], WIDE)
     const line = async (id: string) => (await ui.find({ key: `cr-${id}-line2` }))?.text ?? ''
     const [one, two, three] = [await line('p-cr1'), await line('p-cr2'), await line('p-cr3')]
     expect(one.indexOf('land blocked: src/a.ts')).toBeLessThan(one.indexOf('1 new'))

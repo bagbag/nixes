@@ -316,7 +316,7 @@ function parseCounts(value: unknown): ConsoleCounts | null {
 function parseBoardCounts(value: unknown): ConsoleBoardCounts | null {
   const counts = parseCounts(value)
   const raw = record(value)
-  return counts === null ? null : { ...counts, toDesign: parseCount(raw.toDesign), toImplement: parseCount(raw.toImplement) }
+  return counts === null ? null : { ...counts, toDesign: parseCount(raw.toDesign), toImplement: parseCount(raw.toImplement), deferred: parseCount(raw.deferred) }
 }
 
 const STATUSES: readonly string[] = ['draft', 'ready', 'asked', 'answered', 'held', 'parked']
@@ -455,13 +455,6 @@ function parseCr(value: unknown): ConsoleCr {
       seenTip: nullableText(record(raw.acceptance).seenTip), seenBaseTip: nullableText(record(raw.acceptance).seenBaseTip),
       delta: nullableText(record(raw.acceptance).delta), fullChange: record(raw.acceptance).fullChange === true,
       noAgentReviewReason: nullableText(record(raw.acceptance).noAgentReviewReason),
-      incomingBaseTip: nullableText(record(raw.acceptance).incomingBaseTip),
-      incomingCommits: Array.isArray(record(raw.acceptance).incomingCommits) ? list(record(raw.acceptance).incomingCommits).map(value => {
-        const commit = record(value)
-        const tip = text(commit.tip)
-        return tip === '' ? null : { tip, subject: text(commit.subject), files: list(commit.files).map(text).filter(path => path !== ''),
-          crFiles: list(commit.crFiles).map(text).filter(path => path !== '') }
-      }).filter((commit): commit is NonNullable<typeof commit> => commit !== null) : null,
     },
   }
 }

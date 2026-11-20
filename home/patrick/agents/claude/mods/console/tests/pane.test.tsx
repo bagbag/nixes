@@ -812,10 +812,10 @@ describe('header counts', () => {
     const you = await group('board-counts-you')
     const agents = await group('board-counts-agents')
     expect((await ui.find({ key: 'board-counts-you-label' }))?.text).toBe('you')
-    expect(labels(you)).toEqual(['for you', 'to accept', 'to ratify', 'decided', 'questions'])
+    expect(labels(you)).toEqual(['for you', 'to accept', 'to ratify', 'decided', 'questions', 'deferred'])
     expect((await ui.find({ key: 'board-counts-agents-label' }))?.text).toBe('agents')
     expect(labels(agents)).toEqual(['to plan', 'to design', 'to implement', 'to review'])
-    expect(you.map(one => one.props?.dimColor === true)).toEqual([false, false, false, true, false])  // only decided is zero
+    expect(you.map(one => one.props?.dimColor === true)).toEqual([false, false, false, true, false, false])  // only decided is zero
     expect(agents.map(one => one.props?.dimColor === true)).toEqual([true, true, true, true])  // the agents' group is dim whatever it holds
     await ui.unmount()
   })

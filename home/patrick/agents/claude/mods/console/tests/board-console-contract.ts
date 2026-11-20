@@ -21,7 +21,7 @@ export function cr(over: CrInit): Record<string, unknown> {
 export const BOARD_CONSOLE_CONTRACT = {
   counts: {
     questions: { ready: 0, held: 0, waiting: 0 }, decided: { ready: 0, held: 0, waiting: 0 }, toPlan: { ready: 0, held: 0, waiting: 0 },
-    toDesign: { ready: 6, held: 1, waiting: 0 }, toImplement: { ready: 90, held: 1, waiting: 1 }, toReview: { ready: 2, held: 0, waiting: 0 }, toAccept: { ready: 1, held: 0, waiting: 1 }, toRatify: { ready: 1, held: 0, waiting: 0 }, forUser: { ready: 0, held: 0, waiting: 0 },
+    toDesign: { ready: 6, held: 1, waiting: 0 }, toImplement: { ready: 90, held: 1, waiting: 1 }, toReview: { ready: 2, held: 0, waiting: 0 }, toAccept: { ready: 1, held: 0, waiting: 1 }, toRatify: { ready: 1, held: 0, waiting: 0 }, forUser: { ready: 0, held: 0, waiting: 0 }, deferred: 4,
   },
   crs: [
     cr({ id: 'p-cr1', title: 'Remove the legacy cache', children: ['p-cr2'], unblocks: 14, unblocksDirect: 7, shares: 2, milestone: '1.0-beta scope', review: { opened: sha(2), edited: true, files: ['src/a.ts'] } }),

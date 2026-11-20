@@ -290,9 +290,9 @@ export const runNoun = (round: ConsoleRound): string => round.protocol === 'rele
 
 type CountKey = keyof NonNullable<ConsoleBoard['counts']>
 
-/** The header counts split by who acts: what waits on the person (a release needs them too, so `decided` counts), then the agents' queues. */
+/** The header counts split by who acts: what waits on the person (a release needs them too, so `decided` counts; the person undefers, so `deferred` counts), then the agents' queues. */
 export const COUNT_GROUPS: readonly { key: 'you' | 'agents'; counts: readonly (readonly [CountKey, string])[] }[] = [
-  { key: 'you', counts: [['forUser', 'for you'], ['toAccept', 'to accept'], ['toRatify', 'to ratify'], ['decided', 'decided'], ['questions', 'questions']] },
+  { key: 'you', counts: [['forUser', 'for you'], ['toAccept', 'to accept'], ['toRatify', 'to ratify'], ['decided', 'decided'], ['questions', 'questions'], ['deferred', 'deferred']] },
   { key: 'agents', counts: [['toPlan', 'to plan'], ['toDesign', 'to design'], ['toImplement', 'to implement'], ['toReview', 'to review']] },
 ]
 
@@ -352,10 +352,11 @@ export function crCheckText(cr: ConsoleCr): string | null {
 export const crCheckKindText = (cr: ConsoleCr): string | null =>
   cr.check.kind === 'targeted' ? `ran: ${cr.check.command ?? '?'}` : cr.check.kind === 'none' ? `no check: ${cr.check.reason ?? '?'}` : null
 
-/** The row's check word: the plain `checks current` is the normal state and stays out; every other state shows. */
+/** The row's check word: what changes whether to press Accept (conflict, failed, a targeted or no check); current, stale and unchecked stay out. */
 export const crRowCheckText = (cr: ConsoleCr): string | null => {
+  // stale and unchecked need nothing from the viewer: the refresh or land rebases and checks first (the opened summary keeps them)
   const text = crCheckText(cr)
-  return text === CHECK_WORDS.current ? null : text
+  return text === CHECK_WORDS.current || text === CHECK_WORDS.stale || text === CHECK_WORDS.unchecked ? null : text
 }
 
 /** The row's failure word: how many failures are new; null while no comparison ran and when none are new (the details say `0 new`). */

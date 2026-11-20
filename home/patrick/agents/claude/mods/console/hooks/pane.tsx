@@ -324,7 +324,7 @@ export async function drawPane($: $, e: { surface: string; props: RenderPropsOf[
     if (view.sync !== null) rows.push(<Box key="board-sync" marginTop={1}><Text color="warning">{view.sync}</Text></Box>)
     if (view.queues !== null) rows.push(<Box key="board-queues" marginTop={1}><Text color="inactive">{view.queues}</Text></Box>)
     if (view.scratch !== null) rows.push(<Box key="board-scratch" marginTop={1}><Text color="inactive">{view.scratch}</Text></Box>)
-    if (view.forYou.length > 0) rows.push(itemList('board-foryou', 'foryou', 'forYou', view.forYou, CR_ROWS_SHOWN, item => ({ text: item.type, color: 'inactive' }), 'items for you'))
+    if (view.forYou.length > 0) rows.push(itemList('board-foryou', 'foryou', 'forYou', view.forYou, CR_ROWS_SHOWN, item => ({ text: item.type, color: 'inactive' }), 'items for you', 'for you'))
     if (view.sessions.length > 0) {
       const rank = (one: ConsoleSession) => SESSION_ORDER[one.state] ?? 2
       hint.add('stale-holds', 'Holds of sessions that are gone or unknown with only idle holds: board take <id> or board unclaim <id>')
@@ -712,7 +712,6 @@ export async function drawPane($: $, e: { surface: string; props: RenderPropsOf[
             const marks = crMarks(cr, boardPrefix).filter(mark => mark.isProblem || mark.isWarning === true)  // the quiet ones are the summary's
             const held = crTreeText(cr)
             const buttons = buttonsOf(cr)
-            const incoming = cr.acceptance?.incomingCommits ?? []
             hint.add(`bar-${cr.id}`, crRowStageText(cr))
             const unblocks = crUnblocksText(cr)
             if (unblocks !== null) hint.add(`unblocks-${cr.id}`, crUnblocksHint(cr, boardPrefix))
@@ -770,14 +769,6 @@ export async function drawPane($: $, e: { surface: string; props: RenderPropsOf[
                     {rightParts.flatMap((part, i) => i === 0 ? [part] : [<Text key={`cr-${cr.id}-right-sep-${i}`}>{' '.repeat(PART_GAP)}</Text>, part])}
                   </Box>}
                 </Box>}>
-                {incoming.length > 0 && <Box key={`cr-${cr.id}-incoming`} flexDirection="column" paddingLeft={2}>
-                  <Text key={`cr-${cr.id}-incoming-base`} color="warning">incoming since {cr.acceptance?.incomingBaseTip?.slice(0, 12) ?? 'covered base'}</Text>
-                  {incoming.map(commit => (
-                    <Text key={`cr-${cr.id}-incoming-${commit.tip}`} color="inactive" wrap="truncate-end">
-                      main {commit.tip.slice(0, 12)} {commit.subject}{commit.crFiles.length > 0 ? ` · touches CR files: ${commit.crFiles.join(', ')}` : ''} · files: {commit.files.join(', ') || 'none'}
-                    </Text>
-                  ))}
-                </Box>}
                 {slot(cr.id)}
                 {crDetails(cr)}
               </AcceptRatifyRow>

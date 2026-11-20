@@ -2639,6 +2639,10 @@ def validate_board(root: Path) -> None:
             _, legacy_health, _ = invoke(["health"], legacy_board)
             if "convention deviations: 1 — run /board-migrate" not in legacy_health or "board fixes:" in legacy_health:
                 raise ValueError(f"board health must route the legacy ruling repair to /board-migrate: {legacy_health}")
+            # A fix check --fix applies on its own is named with its count before the migration hint.
+            _, retired_health, _ = invoke(["health"], Fake([{**legacy, "metadata": {"triaged_tip": "abc"}}]))
+            if "convention deviations: 2 — board check --fix: 1 fixes; run /board-migrate" not in retired_health:
+                raise ValueError(f"board health must name board check --fix with its count: {retired_health}")
             with tempfile.TemporaryDirectory() as directory:
                 record_file = Path(directory, "legacy.md")
                 record_file.write_text(legacy["description"], encoding="utf-8")
@@ -3700,7 +3704,9 @@ def validate_board(root: Path) -> None:
             console_counts = console_json.pop("counts")
             position_ready = position_view["ready"]
             steps = {"toPlan": ("plan",), "toDesign": ("design",), "toImplement": ("implement",), "toReview": ("review", "refresh")}
-            if {k: v for k, v in console_counts.items() if k not in steps} != {k: v for k, v in json.loads(health_text)["counts"].items() if k not in steps} \
+            deferred = console_counts.pop("deferred")  # the backlog the person undefers; health counts no such view
+            if deferred != sum(1 for issue in fixture if issue["status"] == "deferred") \
+                    or {k: v for k, v in console_counts.items() if k not in steps} != {k: v for k, v in json.loads(health_text)["counts"].items() if k not in steps} \
                     or any(console_counts[name] != {k: sum(position_ready[kind][k] for kind in kinds) for k in ("ready", "held", "waiting")}
                            for name, kinds in steps.items()):
                 raise ValueError(f"board console counts: health's, with the agents' steps as position counts what a claim gives each pull: {console_counts}")
@@ -4345,7 +4351,7 @@ def validate_board(root: Path) -> None:
             # Counts: ready = can be taken now, waiting = the rest of the step.
             _, text, _ = invoke(["health", "--json"], Fake(designed))
             counts = json.loads(text)["counts"]
-            if counts["toPlan"] != {"ready": 1, "held": 0, "waiting": 1} or {k: v for k, v in json.loads(invoke(["console"], Fake(designed), "aaaa1111")[1])["counts"].items() if k not in ("toDesign", "toImplement")} != counts:
+            if counts["toPlan"] != {"ready": 1, "held": 0, "waiting": 1} or {k: v for k, v in json.loads(invoke(["console"], Fake(designed), "aaaa1111")[1])["counts"].items() if k not in ("toDesign", "toImplement", "deferred")} != counts:
                 raise ValueError(f"toPlan must split claimable and waiting rulings, console equal to health: {counts}")
             if "released rulings to plan: 1 (1 wait)\n" not in invoke(["health"], Fake(designed))[1] \
                     or "plan: 1 ready (1 wait), " not in invoke(["position"], Fake(designed))[1] \
