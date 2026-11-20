@@ -1223,8 +1223,10 @@ COMPACTED = 'Compaction recorded: the next steps print their full text again.'
 # Next: the seeds, the open questions by topic and the stored proposal (seeds.py).
 
 def seed_line(seed: dict, priority: int) -> str:
-    return (f"- {seed['id']} · p{priority} · holds {seed['holds']}/{seed['holdsAll']} · "
-            + (f"milestone {seed['milestone']}" if seed['milestone'] else 'no milestone') + f" · {seed['title']}")
+    ids = ', '.join(q['id'] for q in seed['questions'])
+    titles = ' / '.join(q['title'] for q in seed['questions'])
+    return (f"- {ids} · p{priority} · unblocks {seed['unblocks']} · "
+            + (f"milestone {seed['milestone']}" if seed['milestone'] else 'no milestone') + f" · {titles}")
 
 
 def approx(n: int, word: str) -> str:
@@ -1268,8 +1270,7 @@ def inbox_text(held: list[dict], inbox: list[dict]) -> str:
     )
 
 
-SEEDS_HEAD = (f'Seeds for the next round (top {SEEDS} open questions, unblocked, not held by another live session; open-milestone '
-              'members first, then priority, then the work they hold; holds: stopping at a milestone/everything downstream):')
+SEEDS_HEAD = (f'Seeds for the next round (top {SEEDS} question sets; milestone, priority, then work freed per question):')
 SEEDS_NONE = '- none'
 
 

@@ -38,7 +38,10 @@ import time
 import tomllib
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from collections.abc import Iterator
+from collections import deque
+from collections.abc import Iterable, Iterator
+from fractions import Fraction
+from functools import cached_property
 from typing import NamedTuple
 
 HOLDS_LEGEND = 'holds a/b: a stops at a milestone, b counts everything downstream'
@@ -864,7 +867,7 @@ class Board:
         self.view: str | None = None  # the queue the default lists show; None: every item (an unshared board, --queue all)
         self._loaded = ids_of(issues)
         self._outside: dict[str, tuple[list[str], list[str]]] = {}  # item not in the snapshot -> (labels, parents)
-        self._closed_designs: set[str] = set()
+        self._closed_blockers: dict[str, str | None] = {}
         self.settings: dict[str, str] = {}  # project settings read so far (board_setting)
         self._registry: dict[str, dict] | None = None
         self._unreadable: set[str] = set()
@@ -1009,8 +1012,8 @@ class Board:
         for record in bd_show(sorted(missing), comments=False):
             self._outside[record['id']] = (record.get('labels') or [],
                                            [d['id'] for d in record.get('dependencies') or [] if d.get('dependency_type') == 'parent-child'])
-            if record.get('status') == 'closed' and record.get('issue_type') == 'design':
-                self._closed_designs.add(record['id'])
+            if record.get('status') == 'closed':
+                self._closed_blockers[record['id']] = record.get('issue_type')
         for other in missing:
             self._outside.setdefault(other, ([], []))
 
@@ -1172,55 +1175,63 @@ class Board:
         costs ~0.1 s). Those are closed items, and all a change request needs of one is its parents (to lift it to its
         request): one list of the closed items, free text omitted, costs ~0.3 s however many blockers there are, where
         `bd show` of them cost ~16 ms each."""
-        if not self._cr_blockers_read:
+        if not self.complete and not self._cr_blockers_read:
             wanted = [b for issue in self.issues if self.is_cr(issue['id']) for b in self.cr_blockers(issue)
                       if b not in self.by_id and not b.startswith('external:')]
             if any(b not in self._loaded and b not in self._outside for b in wanted):
                 for row in bd_closed():
                     self._outside.setdefault(row['id'], (row.get('labels') or [], [d['depends_on_id'] for d in row.get('dependencies') or []
                                                                                   if d.get('type') == 'parent-child']))
-                    if row.get('issue_type') == 'design':
-                        self._closed_designs.add(row['id'])
+                    self._closed_blockers[row['id']] = row.get('issue_type')
             self.fetch_outside(wanted)  # what the list lacks (an item that is not closed or not there)
             self._cr_blockers_read = True  # only a read that worked: a failed one is asked again
 
-    def cr_waits(self, issue: dict) -> tuple[list[str], list[str]]:
-        """(waits, stackable bases) of a change request (A2): the blockers of the CR and of its open items, lifted to their CRs.
-        An unlanded CR is a wait unless it is stackable; one stackable base is the base, a second one is a wait. Items of
-        the CR order its own work only."""
+    def cr_wait_parts(self, issue: dict, *, projected: bool = False) -> tuple[list[str], list[str]]:
+        """Hard waits and all candidate stack bases, before applying the one-base threshold."""
         waits: list[str] = []
         bases: list[str] = []
         blockers = self.cr_blockers(issue)
         self.fetch_cr_blockers()
         for blocker in dict.fromkeys(blockers):
             record = self.by_id.get(blocker)
-            if blocker in self._closed_designs or (record is not None and record['status'] == 'closed' and record.get('issue_type') == 'design'):
+            if self._closed_blockers.get(blocker) == 'design' or (record is not None and record['status'] == 'closed' and record.get('issue_type') == 'design'):
                 continue  # delivered at its checkpoint
             if record is not None and not self.is_open(blocker) and self.cr_of(blocker) is None:
                 continue  # closed
-            if record is None and (blocker.startswith('external:') or (not self.complete and self.cr_of(blocker) is None)):
+            if record is None and (blocker.startswith('external:') or
+                                   (not self.complete and not projected and self.cr_of(blocker) is None)):
                 continue  # closed outside a status snapshot, or never blocking
-            if record is None and self.complete:
+            if record is None and blocker not in self._closed_blockers and (self.complete or projected):
                 waits.append(blocker)  # unknown: fail closed
                 continue
             cr_id = self.cr_of(blocker)
             if cr_id is None:
-                waits.append(blocker)
+                if blocker not in self._closed_blockers:
+                    waits.append(blocker)
                 continue
             target = self.by_id.get(cr_id)
             if target is None or target['status'] == 'closed':
                 continue  # landed
             if cr_id == issue['id']:
                 continue
+            if projected and record and record.get('issue_type') == 'design':
+                waits.append(blocker)
+                continue
             if self.stackable(target):
                 if cr_id not in bases:
                     bases.append(cr_id)
             elif cr_id not in waits:
                 waits.append(cr_id)
-        if len(bases) > 1:
-            waits += bases
-            bases = []
         return waits, bases
+
+    def cr_waits(self, issue: dict) -> tuple[list[str], list[str]]:
+        """A request can start with at most one unlanded stackable base."""
+        waits, bases = self.cr_wait_parts(issue)
+        return (waits + bases, []) if len(bases) > 1 else (waits, bases)
+
+    @cached_property
+    def unlocks(self) -> WorkUnlocks:
+        return WorkUnlocks(self)
 
     def foreign_waits(self, issue: dict) -> list[str]:
         """The open blockers a released ruling may not wait on (r21-q139): work and containers, not planning. Claiming
@@ -1370,13 +1381,205 @@ def work_rank(board: Board, issue: dict) -> tuple[bool, int]:
     return bool(milestones_of(board, issue)), effective_priority(board, issue)[0]
 
 
+class WorkWait(NamedTuple):
+    hard: frozenset[str]
+    bases: frozenset[str]
+
+    def ready(self, delivered: set[str]) -> bool:
+        return self.hard <= delivered and len(self.bases - delivered) <= 1
+
+    def relevant(self) -> frozenset[str]:
+        return self.hard | self.bases if len(self.bases) > 1 else self.hard
+
+
+class UnlockImpact(NamedTuple):
+    score: Fraction = Fraction()
+    solo: int = 0
+    breadth: int = 0
+    shared: int = 0
+
+
+class WorkUnlocks:
+    """Delivery and wait projection shared by the rank, console and question seeds."""
+
+    def __init__(self, board: Board):
+        self.board = board
+        board.fetch_cr_blockers()
+        if not board.complete:
+            board.fetch_outside({blocker for blockers in board.blockers.values() for blocker in blockers
+                                 if blocker not in board.by_id and not blocker.startswith('external:')})
+        self.waits: dict[str, WorkWait] = {}
+        self.delivers: dict[str, set[str]] = {}
+        self.reverse: dict[str, list[str]] = {}
+        self.ready: set[str] = set()
+        for issue in board.issues:
+            item_id, kind = issue['id'], issue.get('issue_type')
+            if kind not in UNBLOCKED_TYPES or issue['status'] in ('closed', 'deferred'):
+                continue
+            if kind != CR_TYPE and (parent := board.cr_of(item_id)) and board.is_open(parent) \
+                    and issue['status'] != 'needs_ratification':
+                continue  # the parent is the work unit
+            self.delivers[item_id] = {item_id}
+            if kind == CR_TYPE:
+                designs = {child['id'] for child in board.cr_items(item_id) if child.get('issue_type') == 'design'}
+                self.delivers[item_id] = designs if meta(issue).get('checkpoint') else {item_id, *designs}
+            wait = self.waits[item_id] = self.wait_for(issue)
+            if wait.ready(set()):
+                self.ready.add(item_id)
+            else:
+                for token in wait.relevant():
+                    self.reverse.setdefault(token, []).append(item_id)
+
+    def wait_for(self, issue: dict) -> WorkWait:
+        board, item_id = self.board, issue['id']
+        if issue.get('issue_type') == CR_TYPE:
+            hard, bases = board.cr_wait_parts(issue, projected=True)
+            if issue['status'] == ACCEPT and (parent := live_parent(board, issue)):
+                hard.append(parent)
+            return WorkWait(frozenset(hard), frozenset(bases))
+        hard = set()
+        ignored = set(board.foreign_waits(issue))
+        blockers = board.blockers.get(item_id, [])
+        if issue['status'] == 'decided' and issue.get('issue_type') == 'decision':
+            ignored.update(b for b in blockers if board.by_id.get(b, {}).get('status') == 'released')
+            blockers = [*blockers, *(r for r in board.revised_by(item_id) if board.is_open(r))]
+        for blocker in blockers:
+            if blocker in ignored or blocker.startswith('external:'):
+                continue
+            record = board.by_id.get(blocker)
+            closed = record['status'] == 'closed' if record else blocker in board._closed_blockers
+            kind = record.get('issue_type') if record else board._closed_blockers.get(blocker)
+            parent = board.cr_of(blocker) if record or blocker in board._outside else None
+            if parent and parent != blocker and kind != 'design':
+                if board.is_open(parent):
+                    hard.add(parent)  # an implementation item's delivery is its parent's landing
+            elif not closed:
+                hard.add(blocker)    # missing blockers stay unresolved in the projection
+        return WorkWait(frozenset(hard), frozenset())
+
+    def release(self, roots: Iterable[str], within: set[str] | None = None) -> tuple[list[str], int]:
+        """Release initially blocked units through token delivery; breadth measures the first wave."""
+        delivered = {token for root in roots for token in self.delivers[root]}
+        pending = deque(sorted(delivered))
+        released: list[str] = []
+        completed: set[str] = set()
+        breadth = 0
+        while pending:
+            wave: list[str] = []
+            for _ in range(len(pending)):
+                for unit in self.reverse.get(pending.popleft(), []):
+                    if unit not in completed and (within is None or unit in within) and self.waits[unit].ready(delivered):
+                        completed.add(unit)
+                        wave.append(unit)
+            if not released:
+                breadth = len(wave)
+            released.extend(sorted(wave))
+            for unit in wave:
+                for token in sorted(self.delivers[unit] - delivered):
+                    pending.append(token)
+                    delivered.add(token)
+        return released, breadth
+
+    def _impossible_base_edges(self, released: list[str]) -> set[tuple[str, str]]:
+        """A stack base that must follow a unit cannot help release it through a two-base threshold."""
+        positions = {unit: i for i, unit in enumerate(released)}
+        producers = {token: unit for unit, tokens in self.delivers.items() for token in tokens}
+        impossible = set()
+        for unit, position in positions.items():
+            hard, bases = self.waits[unit]
+            if len(bases) < 2:
+                continue
+            later = {base for base in bases - hard if positions.get(base, -1) >= position}
+            needed: set[str] = set()
+            pending = list(later)
+            while pending:
+                upstream = pending.pop()
+                if upstream in needed or upstream not in positions:
+                    continue
+                needed.add(upstream)
+                if upstream != unit:
+                    pending.extend(producers[token] for token in self.waits[upstream].relevant() if token in producers)
+            if unit in needed:
+                # Only projected feedback needs replay, and only its candidate bases' ancestors.
+                feasible, _ = self.release(self.ready, within=needed - {unit})
+                impossible.update((base, unit) for base in later - set(feasible))
+        return impossible
+
+    @cached_property
+    def impact(self) -> dict[str, UnlockImpact]:
+        released, _ = self.release(self.ready)
+        reachable = set(released)
+        impossible = self._impossible_base_edges(released)
+        participants = {unit: {unit} for unit in self.ready}
+        pending = deque((unit, {unit}) for unit in self.ready)
+        while pending:
+            unit, added = pending.popleft()
+            for token in self.delivers[unit]:
+                for waiting in self.reverse.get(token, []):
+                    if waiting in reachable and (token, waiting) not in impossible:
+                        found = participants.setdefault(waiting, set())
+                        new = added - found
+                        if new:
+                            found.update(new)
+                            pending.append((waiting, new))
+        score: dict[str, Fraction] = {}
+        joined: dict[str, set[str]] = {}
+        for unit in released:
+            contributors = participants[unit]
+            credit = Fraction(1, len(contributors))
+            for root in contributors:
+                score[root] = score.get(root, Fraction()) + credit
+                joined.setdefault(root, set()).add(unit)
+        impact = {}
+        for root, credit in score.items():
+            solo, breadth = self.release([root])
+            impact[root] = UnlockImpact(credit, len(solo), breadth, len(joined[root] - set(solo)))
+        return impact
+
+    def key(self, item_id: str) -> tuple[Fraction, int]:
+        impact = self.impact.get(item_id, UnlockImpact())
+        return -impact.score, -impact.breadth
+
+    def question_seeds(self, visible: list[dict]) -> list[dict]:
+        questions = {row['id']: row for row in visible if row['id'] in self.waits}
+        roots = self.ready & questions.keys()
+        released, _ = self.release(roots, within=set(questions))
+        order = sorted(roots) + released
+        available: dict[str, frozenset[str]] = {}
+        for qid in order:
+            required = self.waits[qid].hard
+            if required <= available.keys():
+                available[qid] = frozenset({qid}).union(*(available[q] for q in required))
+
+        observed: dict[frozenset[str], list[str]] = {}
+        for item_id, (hard, bases) in self.waits.items():
+            if hard and len(bases) <= 1 and hard <= available.keys():
+                required = frozenset().union(*(available[q] for q in hard))
+                observed.setdefault(required, []).append(item_id)
+        seeds = []
+        def unit_rank(unit: str) -> tuple[bool, int, str | None]:
+            issue = self.board.by_id[unit]
+            milestones = milestones_of(self.board, issue)
+            return not milestones, effective_priority(self.board, issue)[0], min(milestones, default=None)
+
+        ranks = {unit: unit_rank(unit) for units in observed.values() for unit in units}
+        for required in observed:
+            freed = [item_id for subset, units in observed.items() if subset <= required for item_id in units]
+            milestone, priority, milestone_id = min(ranks[unit] for unit in freed)
+            ids = [qid for qid in order if qid in required]
+            key = (milestone, priority, -Fraction(len(freed), len(ids)), tuple(sorted(ids)))
+            seeds.append((key, {'questions': [{'id': qid, 'title': questions[qid].get('title', '')} for qid in ids],
+                                'milestone': milestone_id, 'priority': priority, 'unblocks': len(freed)}))
+        return [row for _, row in sorted(seeds, key=lambda one: one[0])]
+
+
 def claim_order(board: Board, issue: dict):
     # Tiers (r22-q176, r23-q180): P0, then the planning of any released ruling, milestone work (board-coordination.md#milestones),
-    # review, ratification and acceptance, the rest. Within a tier: effective priority, kind (CLAIM_RANK), then created.
+    # review, ratification and acceptance, the rest. Within a tier: effective priority, unlocks, kind, then created.
     milestone, priority = work_rank(board, issue)
     kind = board.claimable(issue) or board.kind(issue)  # refresh work ranks as a refresh, not as its Accept
     tier = 0 if priority == 0 else 1 if kind == 'plan' else 2 if milestone else 3 if kind in FINISHING else 4
-    return (tier, priority, CLAIM_RANK.get(kind, len(CLAIM_RANK)), issue.get('created_at') or '', issue['id'])
+    return (tier, priority, *board.unlocks.key(issue['id']), CLAIM_RANK.get(kind, len(CLAIM_RANK)), issue.get('created_at') or '', issue['id'])
 
 
 # Views
@@ -1559,6 +1762,7 @@ def health_json(board: Board, args) -> dict:
             'claimable': {kind: sum(1 for i in ready if board.claimable(i) == kind) for kind in KINDS},
             'items': {JSON_COUNTS.get(view, view): [item_json(board, issue) for issue in sorted(views[view][1], key=by_priority)]
                       for view in HEALTH_VIEWS if view in args.items},
+            **({'questionSeeds': board.unlocks.question_seeds(views['questions'][1])} if 'questions' in args.items else {}),
             'milestones': milestone_states(board, args.root),
             'deviations': {'count': len(found)}}
 
@@ -3538,9 +3742,9 @@ def live_crs(board: Board) -> list[dict]:
     return [i for i in board.issues if i.get('issue_type') == CR_TYPE and i['status'] != 'closed']
 
 
-def stacked_order(board: Board, issues: list[dict], since) -> list[dict]:
+def stacked_order(board: Board, issues: list[dict], since, *, rank_unlocks: bool = False) -> list[dict]:
     """Change requests in list order (r5-q21): a stack's base before the requests on it, then the claim order's tiers without
-    kind (P0, milestone work, effective priority; `work_rank`), then `since(issue)`, then id."""
+    kind (P0, milestone work, effective priority; `work_rank`), optionally unlocks, then `since(issue)` and id."""
     ids = {i['id'] for i in issues}
     ordered: list[dict] = []
     seen: set[str] = set()
@@ -3556,7 +3760,8 @@ def stacked_order(board: Board, issues: list[dict], since) -> list[dict]:
 
     def key(issue: dict):
         milestone, priority = work_rank(board, issue)
-        return (priority != 0, not milestone, priority, since(issue), issue['id'])
+        impact = board.unlocks.key(issue['id']) if rank_unlocks else ()
+        return (priority != 0, not milestone, priority, *impact, since(issue), issue['id'])
 
     for issue in sorted(issues, key=key):
         emit(issue)
@@ -3570,7 +3775,7 @@ def accept_queue(board: Board) -> list[dict]:
     key = tuple((i['id'], i['status'], meta(i).get('since'), i.get('updated_at'), meta(i).get('base')) for i in live)
     if board._accept_queue is None or board._accept_queue[0] != key:
         board._accept_queue = (key, stacked_order(board, [i for i in live if i['status'] == ACCEPT],
-                                                  lambda i: meta(i).get('since') or i.get('updated_at') or ''))
+                                                  lambda i: meta(i).get('since') or i.get('updated_at') or '', rank_unlocks=True))
     return list(board._accept_queue[1])
 
 
@@ -3956,27 +4161,6 @@ def after_base(board: Board, cr: dict) -> str | None:
 UNBLOCKED_TYPES = (*WORK_TYPES, 'design', 'decision', CR_TYPE)  # what a request's count holds: work, not containers (milestone, epic, gate)
 
 
-def cr_unblocks(board: Board, cr_id: str) -> tuple[int, int]:
-    """(all, direct): open work waiting on the request or its work unit, directly or through other work's `blocks` edges.
-    Milestones, epics and gates are neither counted nor passed through (so `Board.downstream` does not serve: it counts and
-    crosses them); the request's own unit is its part."""
-    own = set(work_unit(board, board.by_id[cr_id]))
-    direct: set[str] = set()
-    seen: set[str] = set()
-    pending = list(own)
-    while pending:
-        item_id = pending.pop()
-        for waiting in board.dependents.get(item_id, []):
-            if waiting in own or waiting in seen or not board.is_open(waiting) \
-                    or board.by_id[waiting].get('issue_type') not in UNBLOCKED_TYPES:
-                continue
-            seen.add(waiting)
-            pending.append(waiting)
-            if item_id in own:
-                direct.add(waiting)
-    return len(seen), len(direct)
-
-
 def cr_milestone(board: Board, cr_id: str) -> str | None:
     """Title of the open milestone the request is work of (`milestones_of`); several: the lowest milestone id."""
     found = milestones_of(board, board.by_id[cr_id])
@@ -4024,7 +4208,7 @@ def cr_json(board: Board, cr: dict, children: dict[str, list[str]], refresh_id: 
     pair = check_pair(cr) or {}
     base = m.get('base')
     parent = live_parent(board, cr)
-    unblocks, direct = cr_unblocks(board, cr['id'])
+    impact = board.unlocks.impact.get(cr['id'], UnlockImpact())
     priority, raised_by, by_item = effective_priority(board, cr)
     acceptance = None
     if cr['status'] == ACCEPT:
@@ -4055,7 +4239,8 @@ def cr_json(board: Board, cr: dict, children: dict[str, list[str]], refresh_id: 
             'review': review_of(board, cr),  # open for the user's review: {opened, edited, files}, else null
             'acceptance': acceptance,
             'after': after_base(board, cr),
-            'unblocks': unblocks, 'unblocksDirect': direct, 'milestone': cr_milestone(board, cr['id']),
+            'unblocks': impact.solo, 'unblocksDirect': impact.breadth, 'shares': impact.shared,
+            'milestone': cr_milestone(board, cr['id']),
             'priority': priority, 'ownPriority': cr.get('priority', 9),  # the rank counts it at `priority`; raisedBy names what sets it
             'raisedBy': {'id': raised_by, 'isItem': by_item} if raised_by else None}
 
@@ -4381,6 +4566,7 @@ def finish_landing(board: Board, cr: dict, tip: str, name: str, main: Path) -> l
     if cr['status'] != 'closed':
         bd_checked('close', cid, '--reason', f'landed {tip[:12]} on {name} from {cr_branch(cid)}', '--force')
         cr['status'] = 'closed'
+    board.__dict__.pop('unlocks', None)
     for other in live_crs(board):
         if meta(other).get('base') == cid:
             put_meta(other, base=name)

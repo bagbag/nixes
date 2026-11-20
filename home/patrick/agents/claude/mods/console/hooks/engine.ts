@@ -446,7 +446,7 @@ function parseCr(value: unknown): ConsoleCr {
       baseCount: typeof check.baseCount === 'number' ? check.baseCount : null, tipCount: typeof check.tipCount === 'number' ? check.tipCount : null,
     },
     parent: nullableText(raw.parent), children: list(raw.children).map(text).filter(id => id !== ''),
-    unblocks: count(raw.unblocks), unblocksDirect: count(raw.unblocksDirect), milestone: nullableText(raw.milestone),
+    unblocks: count(raw.unblocks), unblocksDirect: count(raw.unblocksDirect), shares: count(raw.shares), milestone: nullableText(raw.milestone),
     after: nullableText(raw.after),
     priority: typeof raw.priority === 'number' ? raw.priority : 9, ownPriority: typeof raw.ownPriority === 'number' ? raw.ownPriority : 9,
     raisedBy: raw.raisedBy === null || raw.raisedBy === undefined || text(record(raw.raisedBy).id) === '' ? null : { id: text(record(raw.raisedBy).id), isItem: record(raw.raisedBy).isItem === true },

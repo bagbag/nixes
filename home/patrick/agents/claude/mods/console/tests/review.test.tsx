@@ -649,7 +649,7 @@ describe('change requests in the /console text', () => {
     const { ui, clock } = await queued($, on, [...BOARD_CONSOLE_CONTRACT.crs] as unknown as Crs, repo(), { ratifications: [...BOARD_CONSOLE_CONTRACT.ratifications] })
     const out = await text($, ui, clock)
     expect(out).toContain('Change requests')
-    expect(out).toContain('  p-cr1  Remove the legacy cache · to accept · P2 · unblocks 14 · 1.0-beta scope · checks current · 0 new (base 3012, tip 2972) · look before · code')
+    expect(out).toContain('  p-cr1  Remove the legacy cache · to accept · P2 · unblocks 14 · shares 2 · 1.0-beta scope · checks current · 0 new (base 3012, tip 2972) · look before · code')
     expect(out).toContain('    p-cr2  Drop the cache config · checkpoint review · P2 · stale · 2 new: src/a.ts TS2322, src/b.ts TS2345 (base 3012, tip 3014) · look after · result · held by a1b2')
     expect(out).toContain('To ratify\n  p-rat1  Move the clock · landed in p-cr0')
     expect(out.split('\n').filter(line => line.includes('p-cr')).join('\n')).not.toMatch(PRESSES)
@@ -834,7 +834,7 @@ describe('request rows', () => {
     const { ui } = await mounted($, on, [cr({ id: 'p-cr1', unblocks: 14, unblocksDirect: 7 }), cr({ id: 'p-cr2' })], WIDE)
     const drawn = await texts(ui)
     expect(drawn.split('\n').filter(one => one.startsWith('unblocks '))).toEqual(['unblocks 14'])
-    expect(drawn).toContain('p-cr1 unblocks 14 open items in all, 7 waiting on it directly')
+    expect(drawn).toContain('p-cr1 unblocks 14 work units alone, 7 immediately')
     expect(drawn).not.toContain('p-cr2 unblocks')
     await ui.unmount()
   })
@@ -924,10 +924,10 @@ describe('request rows', () => {
   })
 
   test('words: unblocks text, hover and cut', () => {
-    const one = cr({ id: 'p-cr1', unblocks: 14, unblocksDirect: 7 }) as unknown as ConsoleCr
-    expect(crUnblocksText(one)).toBe('unblocks 14')
+    const one = cr({ id: 'p-cr1', unblocks: 14, unblocksDirect: 7, shares: 2 }) as unknown as ConsoleCr
     expect(crUnblocksText(cr({ id: 'p-cr1' }) as unknown as ConsoleCr)).toBeNull()
-    expect(crUnblocksHint(one)).toBe('p-cr1 unblocks 14 open items in all, 7 waiting on it directly')
+    expect(crUnblocksText(one)).toBe('unblocks 14 · shares 2')
+    expect(crUnblocksHint(one)).toBe('p-cr1 unblocks 14 work units alone, 7 immediately · shares credit for 2 with other blockers')
     expect(fitText('abcdef', 4)).toBe('abc…')
     expect(fitText('abc', 4)).toBe('abc')
     expect(fitText('abcdef', 0)).toBe('a…')

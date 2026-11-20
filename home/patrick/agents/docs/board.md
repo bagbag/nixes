@@ -265,6 +265,12 @@ keeps `--limit` per list) for the engine and the console; text output stays
 unchanged. `board console` prints the console pane's JSON (health counts,
 `mine` items, `position` sessions and holds with their marks) from one
 snapshot.
+The [unlock rank](../skills/shared/board-coordination.md#change-request-queue)
+uses the complete dependency graph even in a scoped queue. The console reads
+`unblocks` (solo), `unblocksDirect` (immediate solo) and `shares` (joint only).
+`board health --json --items questions` adds ordered `questionSeeds` rows
+with prerequisite-ordered `questions` (ids and titles), `milestone`, `priority`
+and `unblocks`. The protocol engine filters these rows for live holds.
 `board ruling record <id> <file> --unratified` writes an away or standing two-way ruling directly as `released`, requires `## Reversal`, and creates a
 non-blocking `Confirm or revise: <title>?` decision under the same parent, linked to the ruling by `relates-to`. Its description names the ruling id and carries its Reversal. A rerun reuses the question found through that link. A confirmation records an ordinary answer and leaves the ruling in force. To revise, the deciding round marks the ruling as replaced, and `--replaces` supersedes it when the new ruling is released. `--replaces` also accepts a closed planned ruling that is not already superseded.
 `board ruling release <ids> --closes <question>=<record>[,<record>]` releases the

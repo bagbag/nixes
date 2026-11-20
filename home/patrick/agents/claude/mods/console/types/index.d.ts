@@ -86,8 +86,8 @@ export type ConsoleCr = {
     /** No-new-failures: the `file code` lines whose count rose from base to tip; null while no comparison ran. `baseCount`, `tipCount`: failures at the base and at the tip. */
     newFailures: string[] | null; baseCount: number | null; tipCount: number | null }
   parent: string | null; children: string[]
-  /** Open work, designs, questions and requests waiting on it (or its children) directly or through others; milestones, epics and gates not counted. `unblocksDirect`: those waiting on it directly. */
-  unblocks: number; unblocksDirect: number
+  /** Work units freed alone, those freed immediately, and those it helps free only with others. */
+  unblocks: number; unblocksDirect: number; shares: number
   /** Title of the open milestone it belongs to (a member edge on it, on one of its open items, or on an ancestor request); the lowest milestone id when several; null when none. */
   milestone: string | null
   /** The priority the board ranks it at (`priority`): the highest of its work unit (the request and its open items) and what waits on them; `ownPriority` is the request's own. `raisedBy` names what sets the higher one (a waiting item, or one of its own items); null when its own is the highest. */

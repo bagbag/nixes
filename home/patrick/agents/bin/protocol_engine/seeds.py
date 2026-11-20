@@ -8,28 +8,18 @@ from . import schema, words
 from .boards import foreign_holds, view_rows
 from .engine import Context, fail
 from .questions import refuse_all
-from .collect import dependency_order, items_text, open_items, priority_of, read_open
+from .collect import items_text, open_items, priority_of, read_open
 
 
 # Next: the ranked seeds of the next round and the model's stored proposal (decide.md Release 7, Next).
 
 def seeds(ctx: Context, found: dict, position: dict) -> list[dict]:
-    """The top open decision questions to start a round from: unblocked, not held by another live session; members of
-    an open milestone first, then priority, then the work they hold (`board position`), prerequisites first as in Select."""
+    """Use the board's ordered question sets that this session can answer in full."""
     items = view_rows(found, 'questions')
     live, _ = foreign_holds(ctx, items, position)
-    member = {}
-    for milestone in found.get('milestones') or []:
-        scoped = ctx.board.json('health', '--json', '--root', milestone['id'], '--items', 'questions')
-        for item in view_rows(scoped, 'questions'):
-            member.setdefault(item['id'], milestone['id'])
-    holds = {item['id']: item for item in position.get('questionsHoldingWork') or []}
-    pool = [{'key': item['id'], 'id': item['id'], 'title': item.get('title', ''), 'priority': item.get('priority'),
-             'blockedBy': [], 'holds': (holds.get(item['id']) or {}).get('holds') or 0,
-             'holdsAll': (holds.get(item['id']) or {}).get('holdsAll') or 0, 'milestone': member.get(item['id'])}
-            for item in items if not item.get('blockedBy') and item['id'] not in live]
-    ordered = dependency_order(pool, lambda c: (c['milestone'] is None, priority_of(c), -c['holds'], -c['holdsAll'], c['key']))
-    return ordered[:SEEDS]
+    usable = {item['id'] for item in items} - live.keys()
+    return [seed for seed in found.get('questionSeeds') or []
+            if seed['questions'] and all(q['id'] in usable for q in seed['questions'])][:SEEDS]
 
 
 def topic_counts(items: list[dict]) -> list[str]:

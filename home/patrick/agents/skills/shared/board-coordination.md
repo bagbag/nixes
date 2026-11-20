@@ -60,6 +60,12 @@ milestones, recorded rulings and deferrals. The board model is
   on them, then the `board claim` order without kind
   ([Milestones](#milestones)), then age (stacks:
   [Change requests](../shared/change-requests.md#change-requests)).
+- **Unlock rank:** Within a tier and effective priority, take the larger
+  unlock score, then the larger immediate solo count, then the existing ties.
+  Count one credit per work unit that can become dependency-ready. Divide
+  it among its ready blockers when several contribute. Count solo and
+  shared unlocks separately. A design checkpoint delivers its design items.
+  A landing delivers its CR and implementation items.
 - **Check state** (`board queue`, `board health`, console): every live CR's
   check against the current refs.
 - **Refresh work:** the first CR of the accept queue that lands (not a design

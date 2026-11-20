@@ -482,11 +482,14 @@ export const refreshText = (cr: ConsoleCr): string => `Refresh ${cr.id} under th
 /** The deciding session's Update: it dispatches the refresh the board names, which then holds the row. */
 export const updateText = (cr: ConsoleCr): string => `Update ${cr.id} (${cr.title}): its ${cr.problems.filter(one => one.next.action === 'refresh').map(one => one.text).join(' and ')}; dispatch its refresh (\`${cr.problems.find(one => one.next.action === 'refresh')?.next.command ?? `board cr refresh ${cr.id}`}\`) under the review protocol's Refresh.`
 
-/** `unblocks 14` while open work waits on the request (directly or through others); null at none. */
-export const crUnblocksText = (cr: ConsoleCr): string | null => cr.unblocks > 0 ? `unblocks ${cr.unblocks}` : null
+export const crUnblocksText = (cr: ConsoleCr): string | null => [
+  ...(cr.unblocks > 0 ? [`unblocks ${cr.unblocks}`] : []),
+  ...(cr.shares > 0 ? [`shares ${cr.shares}`] : []),
+].join(' · ') || null
 
-/** The unblocks hover: the direct share of the count. */
-export const crUnblocksHint = (cr: ConsoleCr, prefix: string | null = null): string => `${displayId(cr.id, prefix)} unblocks ${cr.unblocks} open items in all, ${cr.unblocksDirect} waiting on it directly`
+export const crUnblocksHint = (cr: ConsoleCr, prefix: string | null = null): string =>
+  `${displayId(cr.id, prefix)} unblocks ${cr.unblocks} work units alone, ${cr.unblocksDirect} immediately`
+  + (cr.shares > 0 ? ` · shares credit for ${cr.shares} with other blockers` : '')
 
 /** `P1`: the priority the board ranks the request at (dim on line two). */
 export const crPriorityText = (cr: ConsoleCr): string => `P${cr.priority}`

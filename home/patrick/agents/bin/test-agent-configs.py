@@ -2441,6 +2441,15 @@ def validate_board(root: Path) -> None:
             fake_reads = collapse(fake.reads())
         else:
             fake_reads = fake.reads()
+        closed_ids = {issue["id"] for issue in fake.issues if issue["status"] == "closed"}
+        if argv[0] in ("queue", "console", "health", "return") and len(fake_reads) == len(expected) + 1:
+            snapshot_reads = [args for args, _ in fake.calls if args[0] in ("export", "list", "show") and "--parent" not in args]
+            for at, args in enumerate(snapshot_reads):
+                if args[:4] == ["show", "--json", "--brief-deps", "--"] and args[4:] and set(args[4:]) <= closed_ids \
+                        and fake_reads[:at] + fake_reads[at + 1:] == expected:
+                    # Ranking may resolve closed blockers omitted from the status snapshot in one batch.
+                    expected = fake_reads
+                    break
         # A command refused before its last read (unknown id, wrong holder) stops early.
         if fake_reads != expected and not (code != 0 and fake_reads == expected[:len(fake_reads)]):
             raise ValueError(f"board {argv[0]} must read {expected}, read {fake_reads}: {fake.calls}")
@@ -3519,6 +3528,12 @@ def validate_board(root: Path) -> None:
             blocked = json.loads(invoke(["health", "--json", "--items", "blocked"], Fake(fixture))[1])["items"]["blocked"]
             if not all(row["blockedBy"] for row in blocked) or len(blocked) != 3:
                 raise ValueError(f"board health --json rows must name their open blockers: {blocked}")
+            paired = [synthetic("seed-a", "Answer A", "decision"), synthetic("seed-b", "Answer B", "decision"),
+                      synthetic("seed-task", "Joint work", blocks=("seed-a", "seed-b"))]
+            _, text, _ = invoke(["health", "--json", "--items", "questions"], Fake(paired))
+            if json.loads(text)["questionSeeds"] != [{"questions": [{"id": "seed-a", "title": "Answer A"},
+                    {"id": "seed-b", "title": "Answer B"}], "priority": 2, "milestone": None, "unblocks": 1}]:
+                raise ValueError(f"board health --json must expose question sets in board order: {text}")
             _, text, _ = invoke(["console"], Fake(fixture), "aaaa1111")
             if [(i["id"], i["type"], i["holder"], i["workerStopped"]) for i in json.loads(text)["items"]] != [(ids["Held task"], "task", "aaaa1111/build-12345678", False)]:
                 raise ValueError(f"board console items (mine, change requests aside): {text[:1500]}")
@@ -3627,7 +3642,7 @@ def validate_board(root: Path) -> None:
             if [c["id"] for c in crs_view] != ["fx-ovo.c2"] or ratifications_view != [] \
                     or set(crs_view[0]) != {"id", "title", "status", "stage", "holder", "look", "view", "checkpoint", "base", "branch", "worktree", "tip",
                                             "baseTip", "check", "parent", "children", "baseSha", "problems", "review", "acceptance", "after",
-                                            "unblocks", "unblocksDirect", "milestone", "priority", "ownPriority", "raisedBy"}:
+                                            "unblocks", "unblocksDirect", "shares", "milestone", "priority", "ownPriority", "raisedBy"}:
                 raise ValueError(f"board console crs: {crs_view}")
             # The console's stub contract (tests/board-console-contract.ts) declares the CR row it reads: every key it declares must exist.
             contract_file = root / "claude" / "mods" / "console" / "tests" / "board-console-contract.ts"
@@ -3655,7 +3670,7 @@ def validate_board(root: Path) -> None:
             crowded = variant(**{"CR design": {"status": "needs_acceptance"}}) + [
                 {**design, "id": f"fx-ovo.a{n}", "title": f"CR accept {n}", "status": "needs_acceptance"} for n in range(3)]
             stackings, real_stacked = [], board.stacked_order
-            with patch.object(board, "stacked_order", side_effect=lambda deck, issues, since: (stackings.append(issues), real_stacked(deck, issues, since))[1]):
+            with patch.object(board, "stacked_order", side_effect=lambda deck, issues, since, **options: (stackings.append(issues), real_stacked(deck, issues, since, **options))[1]):
                 if invoke(["console"], Fake(crowded), "aaaa1111")[0] != 0:
                     raise ValueError("board console failed on a board with accept-stage requests")
             queues = sum(1 for issues in stackings if issues and all(issue["status"] == "needs_acceptance" for issue in issues))
@@ -8973,10 +8988,10 @@ def validate_console_unblocks(root: Path) -> None:
         item("cr4", "change-request"), item("cr4.d", "design", "closed", parent="cr4"),  # a closed design child brings no membership
         item("m-f", "milestone", title="Sixth", waits=["cr4.d"]),
     ])
-    for cr_id, wanted in (("cr", (5, 3)), ("lone", (0, 0)), ("cr2", (0, 0))):
-        got = board.cr_unblocks(deck, cr_id)
+    for cr_id, wanted in (("cr", (5, 2, 0)), ("lone", (0, 0, 0)), ("cr2", (0, 0, 0))):
+        got = deck.unlocks.impact.get(cr_id, board.UnlockImpact())[1:]
         if got != wanted:
-            raise ValueError(f"cr_unblocks({cr_id}) = {got}, wanted (all, direct) {wanted}")
+            raise ValueError(f"unlock counts({cr_id}) = {got}, wanted (alone, immediately, shared) {wanted}")
     # t1, t2, q, t5 and next-cr are work waiting through blocks edges; the milestone, epic, gate and what waits only on them are not.
     for cr_id, wanted in (("cr", "First"), ("sub", "First"), ("cr2", "Third"), ("cr3", "Second"), ("stack", "Second"), ("lone", None), ("sub2", None),
                            ("wt", "Fifth"), ("cr4", None)):
@@ -8984,6 +8999,79 @@ def validate_console_unblocks(root: Path) -> None:
         if got != wanted:
             raise ValueError(f"cr_milestone({cr_id}) = {got!r}, wanted {wanted!r} (Board.in_milestone for the request, plus the design child of it or of an ancestor request; "
                              "a closed milestone does not count, several pick the lowest id)")
+
+    from fractions import Fraction
+
+    graph = board.Board([
+        item("a", "decision"), item("b", "decision"),
+        item("first", "task", waits=["a"]), item("second", "task", waits=["a", "b"]),
+        item("third", "task", waits=["first", "second"]),
+        item("missing", "task", waits=["a", "unknown"]), item("cycle-a", "task", waits=["a", "cycle-b"]),
+        item("cycle-b", "task", waits=["cycle-a"]), item("gate", "gate", waits=["a"]),
+        item("behind-gate", "task", waits=["gate", "b"]),
+    ])
+    want = {"a": (Fraction(2), 1, 1, 2), "b": (Fraction(1), 0, 0, 2)}
+    if graph.unlocks.impact != want:
+        raise ValueError(f"joint credit must count each released unit once: {graph.unlocks.impact!r}")
+    questions = [graph.by_id[key] for key in ("a", "b")]
+    seeds = graph.unlocks.question_seeds(questions)
+    if [(tuple(q["id"] for q in seed["questions"]), seed["unblocks"]) for seed in seeds] != [(("a",), 1), (("a", "b"), 2)] \
+            or len(graph.unlocks.question_seeds(questions[:1])) != 1:
+        raise ValueError(f"question seeds count only direct question prerequisites, with scoped membership: {seeds}")
+    prerequisite_graph = board.Board([
+        item("a", "decision", waits=["z"]), item("z", "decision"), item("b", "decision", waits=["unavailable"]),
+        item("after", "task", waits=["a"]), item("behind-unknown", "task", waits=["b"]),
+    ])
+    seeds = prerequisite_graph.unlocks.question_seeds([i for i in prerequisite_graph.issues if i["issue_type"] == "decision"])
+    if [(tuple(q["id"] for q in row["questions"]), row["unblocks"]) for row in seeds] != [(("z", "a"), 2), (("z",), 1)]:
+        raise ValueError(f"question sets must preserve prerequisite order and keep unavailable waits out: {seeds}")
+    seeds_by_rank = board.Board([
+        *(item(q, "decision") for q in ("a", "b", "c", "d", "e")),
+        {**item("ordinary", "task", waits=["a", "b"]), "priority": 2},
+        {**item("broad", "task", waits=["c"]), "priority": 2},
+        {**item("urgent", "task", waits=["d"]), "priority": 1},
+        {**item("member", "task", waits=["e"]), "priority": 3}, item("milestone", "milestone", waits=["member"]),
+    ])
+    seeds = seeds_by_rank.unlocks.question_seeds([i for i in seeds_by_rank.issues if i["issue_type"] == "decision"])
+    if [tuple(q["id"] for q in row["questions"]) for row in seeds] != [("e",), ("d",), ("c",), ("a", "b")]:
+        raise ValueError(f"question sets rank by milestone, priority and then work freed per question: {seeds}")
+
+    phase = board.Board([
+        item("a", "change-request", "needs_acceptance"), item("b", "change-request", "needs_acceptance"),
+        item("both", "change-request", waits=["a", "b"]), item("one", "change-request", waits=["a"]),
+        {**item("design-cr", "change-request", "in_review"), "metadata": {"checkpoint": "agent"}},
+        item("design", "design", "in_review", parent="design-cr"), item("implementation", "task", "closed", parent="design-cr"),
+        item("design-waiter", "change-request", waits=["design"]), item("code-waiter", "change-request", waits=["implementation"]),
+    ])
+    want = {"a": (Fraction(1, 2), 1, 1, 0), "b": (Fraction(1, 2), 1, 1, 0),
+            "design-cr": (Fraction(1), 1, 1, 0)}
+    if phase.unlocks.impact != want:
+        raise ValueError(f"checkpoint and stack threshold impacts have different completion effects: {phase.unlocks.impact!r}")
+
+    feedback = board.Board([
+        item("other", "task"), item("independent", "change-request", "needs_acceptance"),
+        {**item("stacked", "change-request", "needs_acceptance", waits=["other"]), "metadata": {"base": "returned"}},
+        item("returned", "change-request", waits=["independent", "stacked"]),
+    ])
+    if feedback.unlocks.impact != {"independent": (Fraction(3, 2), 1, 1, 1), "other": (Fraction(1, 2), 0, 0, 1)}:
+        raise ValueError(f"a stack base cannot contribute to the release it waits on: {feedback.unlocks.impact!r}")
+
+    def ordered(status, kind, include_priority=False):
+        candidates = ["a-four", "b-five-chain", "c-five-parallel"]
+        roots = [{**item(key, kind, status), "priority": 1 if include_priority and key == "a-four" else 2}
+                 for key in candidates]
+        units = [item(f"small-{n}", "task", waits=[candidates[0]]) for n in range(4)]
+        units += [item(f"chain-{n}", "task", waits=[candidates[1] if n == 0 else f"chain-{n-1}"]) for n in range(5)]
+        units += [item(f"broad-{n}", "task", waits=[candidates[2]]) for n in range(5)]
+        snapshot = board.Board([*roots, *units])
+        if status == "needs_acceptance":
+            return [i["id"] for i in board.accept_queue(snapshot)]
+        return [i["id"] for i in sorted(roots, key=lambda i: board.claim_order(snapshot, i))]
+
+    expected = ["c-five-parallel", "b-five-chain", "a-four"]
+    if ordered("open", "decision") != expected or ordered("needs_acceptance", "change-request") != expected \
+            or ordered("open", "decision", include_priority=True) != [expected[-1], *expected[:2]]:
+        raise ValueError("claim and Accept use breadth within matched split credit, and keep priority ahead of unlocks")
 
 
 def validate_console_no_board(root: Path) -> None:
@@ -10872,10 +10960,17 @@ def validate_protocol(root: Path, part: str) -> None:
             proto("abandon", cwd=repo)
 
         if part == "release":
-            # N: `protocol next` ranks seeds (open milestone members, priority, work held; unblocked; no live foreign hold), `next
+            # N: `protocol next` uses board-ranked seeds and filters whole sets with live foreign holds. `next
             # --set` stores a validated proposal, a round start clears it, `show --json` carries it while no round is open.
             row = {"status": "open", "type": "decision", "blockedBy": []}
-            configure(health={"counts": counts, "milestones": [{"id": "fx-m1"}, {"id": "fx-m2"}], "items": {"questions": [
+            def seed(ids, priority, milestone, unblocks):
+                return {"questions": [{"id": f"fx-n{n}", "title": f"Question {n}?"} for n in ids],
+                        "priority": priority, "milestone": milestone, "unblocks": unblocks}
+
+            configure(health={"counts": counts, "questionSeeds": [
+                seed([2, 5], 1, "fx-m1", 8), seed([3, 4], 1, "fx-m2", 6), seed([1, 6], 0, None, 5),
+                seed([7], 0, None, 2), seed([2], 2, None, 1), seed([8], 2, None, 1), seed([1], 2, None, 1)],
+                "items": {"questions": [
                 {**row, "id": "fx-n1", "title": "Plain p0?", "priority": 0},
                 {**row, "id": "fx-n2", "title": "Member p2?", "priority": 2, "labels": ["topic:store", "topic:cache"]},
                 {**row, "id": "fx-n3", "title": "Member p1 holds 1?", "priority": 1, "labels": ["area", "topic:store"]},
@@ -10884,23 +10979,18 @@ def validate_protocol(root: Path, part: str) -> None:
                 {**row, "id": "fx-n6", "title": "Blocked?", "priority": 0, "blockedBy": ["fx-n1"]},
                 {**row, "id": "fx-n7", "title": "Gone held p0?", "priority": 0, "holder": "gone0001"},
                 {**row, "id": "fx-n8", "title": "Plain p1 holds 9?", "priority": 1}]}},
-                      position={"held": [{"id": "fx-n5", "holder": "other001", "mark": None}, {"id": "fx-n7", "holder": "gone0001", "mark": "gone"}],
-                                "questionsHoldingWork": [{"id": "fx-n3", "holds": 1, "holdsAll": 51}, {"id": "fx-n4", "holds": 5, "holdsAll": 55}, {"id": "fx-n8", "holds": 9, "holdsAll": 9}]},
-                      roots={"fx-m1": {"items": {"questions": [{"id": "fx-n2"}, {"id": "fx-n3"}]}},
-                             "fx-m2": {"items": {"questions": [{"id": "fx-n4"}, {"id": "fx-n3"}]}}},
+                      position={"held": [{"id": "fx-n5", "holder": "other001", "mark": None}, {"id": "fx-n7", "holder": "gone0001", "mark": "gone"}]},
                       items={"fx-n1": {"status": "open", "issue_type": "decision", "title": "Plain p0?"},
                              "fx-n2": {"status": "open", "issue_type": "decision", "title": "Member p2?"}},
                       fail=["show fx-gone", "show step-back", "show follow-up"])
             calls()
             out = proto("next", cwd=repo).stdout
-            seeds_only = out.split("Open items (")[0]
-            seeded = re.findall(r"^- (fx-n\d) · p(\d) · holds (\d+/\d+) · (milestone fx-m\d|no milestone) · ", out, re.M)
+            seeded = re.findall(r"^- (fx-n\d(?:, fx-n\d)*) · p(\d) · unblocks (\d+) · ", out, re.M)
             made = [c["args"] for c in calls()]
-            if seeded != [("fx-n4", "1", "5/55", "milestone fx-m2"), ("fx-n3", "1", "1/51", "milestone fx-m1"), ("fx-n2", "2", "0/0", "milestone fx-m1"),
-                          ("fx-n1", "0", "0/0", "no milestone"), ("fx-n7", "0", "0/0", "no milestone")] \
-                    or "fx-n5" in seeds_only or "fx-n6" in seeds_only or "fx-n8" in seeds_only or "No proposal stored." not in out \
-                    or ["health", "--json", "--root", "fx-m1", "--items", "questions"] not in made or made[0][:3] != ["health", "--json", "--items"]:
-                raise ValueError(f"protocol next must rank the seeds (milestone, priority, holds; no blocked or live-held):\n{out}\n{made}")
+            if seeded != [("fx-n3, fx-n4", "1", "6"), ("fx-n1, fx-n6", "0", "5"), ("fx-n7", "0", "2"),
+                          ("fx-n2", "2", "1"), ("fx-n8", "2", "1")] \
+                    or "No proposal stored." not in out or any("--root" in call for call in made) or made[0][:3] != ["health", "--json", "--items"]:
+                raise ValueError(f"protocol next must keep the board's ordering and skip seeds with a live foreign hold:\n{out}\n{made}")
             if "Seeds for the next round" in proto("next", cwd=plain).stdout or calls():
                 raise ValueError("protocol next without a board lists no seeds and reads no board")
             # r24-q104/q105: the open questions by topic label and priority print every time, and the lead ranks topics itself.

@@ -445,9 +445,13 @@ message of the round when it never went out. The record then adds `Checks skippe
 `waitsFor`). The answered question leaves its batch, the check loop's scopes (answered questions drop out of
 them) and its dependents are released as by any answer.
 
-`protocol next` prints the top 5 seed questions of the next round (open
-decisions, unblocked, not held by another live session; members of an open
-milestone first, then priority, then the work they hold, in Select's ordering),
+`protocol next` prints the top 5 available question sets for the next round
+from `board health`'s ordered `questionSeeds`. The board follows each waiting
+work unit's open question prerequisites and counts the units those answers
+release. Work with outstanding non-question waits stays out. Milestone work
+ranks first, then effective priority and work freed per question. The engine
+skips a set if another live session holds any member. The model groups
+questions into proposed rounds by topic. `next` also prints
 the open-item list (waiting questions, `in_review` designs, ready milestones,
 finished epics, what waits on the user: whole the first time between
 compactions, counts and the listing command after), the open questions by topic
