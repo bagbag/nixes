@@ -1485,6 +1485,39 @@ def t_cr() -> None:
     check(rc == 0 and meta_of(dependent).get('base') == target and items('a')[design_cr]['status'] == 'open',
           'cr: the closed design releases the dependent before its request lands', err)
 
+    first = create('a', 'first standalone item', kind='task')
+    second = create('a', 'second standalone item', kind='task')
+    rc, _, err, _ = run('a', 'block', second, '--on', first, '--reason', 'do the first item before the second')
+    check(rc == 0, 'cr: standalone items can already have a blocking edge', err)
+    plan = ROOT / 'group-linked-items.json'
+    plan.write_text(json.dumps({
+        'nodes': [{'key': 'request', 'title': 'group linked items', 'type': 'change-request', 'description': 'x'}],
+        'edges': [{'from_id': item, 'to_key': 'request', 'type': 'parent-child'} for item in (first, second)],
+    }))
+    rc, out, err, _ = run('a', 'create', '--graph', str(plan))
+    request = next((line.split()[1] for line in out.splitlines() if line.startswith('request ')), None)
+    graph_rows = items('a')
+    check(rc == 0 and request in graph_rows and all(
+        any(dep['type'] == 'parent-child' and dep['depends_on_id'] == request for dep in graph_rows[item]['dependencies'])
+        for item in (first, second)) and any(
+        dep['type'] == 'blocks' and dep['depends_on_id'] == first for dep in graph_rows[second]['dependencies']),
+        'cr: one graph can group linked items while keeping their newly internal wait', err + out)
+
+    awaiting = create('a', 'request waiting on a question')
+    affected = task(awaiting, 'item affected by the answer')
+    rc, out, err, _ = run('a', 'console')
+    before = json.loads(out)['waitingOnYou'] if rc == 0 else None
+    rc, out, err, _ = run('a', 'create', 'question about one item', '-t', 'decision', '--description', 'x', '--holds', affected)
+    question = out.strip().splitlines()[-1] if rc == 0 else None
+    held = items('a')[affected]
+    check(rc == 0 and any(dep['type'] == 'blocks' and dep['depends_on_id'] == question for dep in held.get('dependencies', [])),
+          'cr: a question can hold an affected item', err + out)
+    rc, out, err, _ = run('a', 'console')
+    check(rc == 0 and before is not None and json.loads(out)['waitingOnYou'] == before + 1,
+          'cr: an item-scoped question adds its request to waits on your answers', err + out)
+    rc, _, err, _ = run('a', 'claim', awaiting, role='agent')
+    check(rc == 1 and not wt(awaiting).exists(), 'cr: a pending item question blocks claiming the request', err)
+
 
 def t_move() -> None:
     """board move (beads-setup.md#history) to a local fresh repository, a stale clone told, its rejoin, a new joiner."""

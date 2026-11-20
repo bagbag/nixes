@@ -172,8 +172,9 @@ On a shared board (`.beads/board-shared.json` exists):
   rounds.
 - One decision per record. While open, the description holds the
   [Decision packet](#decision-packet).
-- Name the items whose work a question or ruling changes when you create it, creating
-  missing ones first, never a CR (it waits on its items' blockers):
+- Name the affected items when creating a question or ruling. Create missing
+  items first. The CR waits on the item holds. Until release, it counts under
+  `wait on your answers`. Pass the affected ids with
   `--holds <ids>` (shorthand for blocking links; also
   `--deps blocks:<id>` on `board create --type decision` and `board ruling
   revise`; a plan's links from its decision node; in a round, the question's

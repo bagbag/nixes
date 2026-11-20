@@ -5636,7 +5636,8 @@ def label_refusal(labels: list[str]) -> str | None:
             'board route <person> <id> (lead), a find for another person is filed with board create --for <person>') if bad else None
 
 
-def parent_move_refusal(board: Board, ids: list[str], target: str | None, *, new_cr: str | None = None) -> str | None:
+def parent_move_refusal(board: Board, ids: list[str], target: str | None, *,
+                        planned_crs: dict[str, str] | None = None, new: dict[str, str] | None = None) -> str | None:
     """Why this reparenting is refused. A change request keeps its place; a work item of one (it is that request's membership, and its
     hold, worktree and pass commit belong to the request) leaves it only while open and unheld; on a shared board the parent decides the
     queue of an item with none of its own, so only lead and solo sessions move it."""
@@ -5650,18 +5651,18 @@ def parent_move_refusal(board: Board, ids: list[str], target: str | None, *, new
             if parent != target and board.by_id.get(parent, {}).get('issue_type') == CR_TYPE and (issue['status'] != 'open' or issue.get('assignee')):
                 return (f"{item_id} is {issue['status']}{' and held' if issue.get('assignee') else ''} in change request {parent}: its hold, worktree and "
                         'pass commit belong to it; finish or hand it back before moving it out')
-    moved = set(ids)
-    target_cr = new_cr or (target if target and board.is_cr(target) else None)
+    target_cr = target if target and board.is_cr(target) else None
+    projected = planned_crs if planned_crs is not None else dict.fromkeys(ids, target_cr)
     pairs = {(one, blocker) for one in ids if board.is_open(one) for blocker in board.open_blockers(one)}
     pairs.update((waiter, one) for one in ids if board.is_open(one) for waiter in board.dependents.get(one, [])
                  if board.is_open(waiter))
     for waiting, blocker in sorted(pairs):
         old_cr, old_blocker_cr = board.cr_of(waiting), board.cr_of(blocker)
-        cr = target_cr if waiting in moved else old_cr
-        blocker_cr = target_cr if blocker in moved else old_blocker_cr
+        cr = projected.get(waiting, old_cr)
+        blocker_cr = projected.get(blocker, old_blocker_cr)
         if (cr, blocker_cr) != (old_cr, old_blocker_cr):
             if refusal := outside_wait_refusal(waiting, board.by_id.get(waiting, {}).get('issue_type'), cr,
-                                               blocker, blocker_cr, board.by_id.get(blocker, {}).get('issue_type')):
+                                               blocker, blocker_cr, board.by_id.get(blocker, {}).get('issue_type'), new):
                 return refusal
     if shared is not None and derived_actor() and not may_move():
         for item_id in ids:
@@ -5779,11 +5780,14 @@ def link_rules(board: Board | None, links: list[tuple[str, str, str]], verb: str
     def kind_of(item: str):
         return new.get(item) or (board.by_id.get(item, {}).get('issue_type') if board else None)
 
+    # bd writes the graph together, so both ends of a wait may acquire a CR in the same plan.
+    planned_crs = {item: cr for item, candidates in parents.items()
+                   if (cr := next((parent for parent in candidates if kind_of(parent) == CR_TYPE), None))}
+
     def cr_of(item: str):
         if kind_of(item) == CR_TYPE:
             return item
-        planned = next((parent for parent in parents.get(item, []) if kind_of(parent) == CR_TYPE), None)
-        return planned or (board.cr_of(item) if board and item not in new else None)
+        return planned_crs.get(item) or (board.cr_of(item) if board and item not in new else None)
 
     waits: Waits = {key: ([], []) for key in new}
     ops = []
@@ -5795,7 +5799,7 @@ def link_rules(board: Board | None, links: list[tuple[str, str, str]], verb: str
         if not blocking(kind):
             if kind == 'parent-child' and waiting not in new and board and other not in board.parents.get(waiting, []):
                 target = other if other in board.by_id else None
-                if refusal := parent_move_refusal(board, [waiting], target, new_cr=other if new.get(other) == CR_TYPE else None):
+                if refusal := parent_move_refusal(board, [waiting], target, planned_crs=planned_crs if new else None, new=new):
                     raise BoardError(refusal)
         elif refusal := cr_hold_refusal(waiting, kind_of(waiting), kind_of(other)):
             raise BoardError(refusal)
