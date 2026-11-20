@@ -69,13 +69,15 @@ queue order and refresh work: [Board coordination](board-coordination.md).
   `ratify … edits`) takes one gate option: `--checks` (the default),
   `--gate <cmd>` (a targeted check) or `--no-gate <reason>` (none); a
   reviewer runs its own gates.
-- **Review:** one agent review per CR, plus the checkpoints planning states on
-  it. The agent review's pass holds for the (tip, base tip) it was given on,
-  like a check; after a base change the refresh triage keeps it or sends the
-  CR back to `in_review`.
-  The user's edit commits (accept.md User review) keep it, rebased too, or merged with
-  the user's confirmation (Rebase); any other new commit voids it. A CR whose own commits are all such user edits needs no
-  agent review: it lands on the user's Accept once its gate passes.
+- **Review coverage:** a pass covers the series it reviewed (tip, base tip).
+  A clean replay keeps it and the user's recorded edits stay covered (Rebase).
+  A conflict resolution or new author commit sends an agent-reviewed CR back
+  to agent review.
+- **Convention changes:** when replacing a shared helper, move every use
+  and delete the old helper so checks catch remaining uses in open CRs.
+  For a new pattern or style rule, check the open CRs already past review
+  at handover and comment on each CR that should adapt. CRs still awaiting
+  review take the new convention through their own review after rebasing.
 - **Waiting and stacks:** item edges lift to their CRs; items in a CR order
   only that session's work. A CR waits while a CR it depends on is not landed,
   except one in `needs_acceptance` that is no user design checkpoint: the CR
@@ -123,10 +125,11 @@ queue order and refresh work: [Board coordination](board-coordination.md).
 
 | Command | Effect |
 |---|---|
-| `board handover <cr> "<evidence>" [<gate>]` | Rebases onto the base tip, runs setup and the gate, stores the check. `in_review`, or `needs_acceptance` when `checkpoint` is `user`; the worktree stays. The reviewer's pass is `handover` again: it stores the review, then `needs_acceptance` (`look` `before`), landed (`look` `after`, or a CR with nothing to merge), or `open` for planning (agent checkpoint; in a `look` `after` project also a design ratification). |
+| `board handover <cr> "<evidence>" [<gate>] [--no-agent-review "<reason>"]` | Rebases onto the base tip, runs setup and the gate, stores the check. Author work enters `in_review` by default. A user checkpoint or the [eligible author flag](acceptance.md#review-policy) sends it to `needs_acceptance`; the flag shows its reason. A reviewer pass records coverage and goes to `needs_acceptance` (`look` `before`), lands (`look` `after`, or a CR with nothing to merge), or opens planning (agent checkpoint; in a `look` `after` project also a design ratification). |
 | `board return <cr> "<findings>"` | `open`, unassigned; a design checkpoint also moves its in-review design items back to `open`; also the user's "changes". |
-| `board cr refresh <cr> [--review-holds] [<gate>]` | Rebases, reruns setup and the gate, stores the check, prints `git range-diff` and the incoming file list (for `cr-refresh`); for a CR whose review is stale both are measured since the review, not since the last refresh. `--review-holds` (the triage found no link) re-stamps the review for the new (tip, base tip) when the gate passes and each reviewed commit replayed cleanly (edit commits aside). |
-| `board cr land <cr> [--tip <sha>]` | Lands the CR's tip (`--tip`: the tip the user reviewed; a short sha is accepted) when base is the target and check (full, or the `board cr edits` gate result, for exactly this tip) and review are `current` and passing. A `look` `after` CR on a `needs_acceptance` parent waits marked `after <base>`; landing the parent lands each such child whose check and review still match, else leaves it as refresh work. Advances `custom.board.target`. Removes worktree and branch; stacked children get `base` = target; `look` `after` creates the ratification, unless nothing was merged. |
+| `board cr request-review <cr> ["<reason>"]` | From Accept, send the change since its last review to agent review. |
+| `board cr refresh <cr> [<gate>]` | Rebases and reruns setup and the gate. An uncovered agent-reviewed result goes to agent review. |
+| `board cr land <cr> --tip <sha> --base <sha>` | Pass the tip and base shown at Accept. If the check is not a pass for that pair, run rebase and check before landing. Land only a covered series with a passing check. If the base has moved since the look, land refuses and shows the incoming commits. A `look` `after` CR on a `needs_acceptance` parent waits marked `after <base>`; landing the parent lands each such child whose check and coverage still match, else leaves it as refresh work. Advances `custom.board.target`. Removes worktree and branch; stacked children get `base` = target; `look` `after` creates the ratification, unless nothing was merged. |
 | `board cr reject <cr> "<reason>"` | Closes unlanded; items reopen, children return to planning. Branch `cr/<id>` and worktree stay until the user confirms deletion (the only copy). |
 | `board unclaim <cr>`, `board take <cr>` | Release, take over. Your own work in progress needs `--resume "<next action>"`, which the next `board claim` prints. `take` clears the taker's seen tip. |
 

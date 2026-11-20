@@ -157,7 +157,10 @@ for the active-item deduplication rule.
 else the folder). It refuses (lead, solo or person only) a request not waiting for its Accept (`needs_acceptance`: in work, in agent review or
 returned) or held by an agent session, a worktree mid a rebase, merge, cherry-pick, revert or bisect, with uncommitted changes, or off its
 branch, and a remote named `board` that is not the board's (the board's own has the disabled push address; a stale url of it, after the checkout moved, is repaired). It moves nothing in git: no detach, no reset, no marker. It records the tip it
-opens at in the item's metadata `opened_tip`, makes the remote `board` when missing (url the main checkout, `remote.board.pushurl`
+opens at in the item's metadata `opened_tip`; when it opens a new review, it records the user's look as `user_seen_tip` and
+`user_seen_base_tip`, which persists across Return and later agent review. A validated `board cr land <cr> --tip <tip> --base <base>` also records
+that seen tip and clears `opened_tip` for a readable, unedited review before rebase and checks. A conflict or failed check leaves the CR
+waiting for Accept with the review ended. Open makes the remote `board` when missing (url the main checkout, `remote.board.pushurl`
 `no-push://the-board-lands-requests`, which no `git-remote-no-push` helper serves, so any push fails; fetch `+refs/heads/*:refs/remotes/board/*`),
 sets the branch's upstream to `board/<base branch>` (a stacked request's base is its parent's branch; with `branch.<name>.rebase=false` and `mergeOptions=--ff-only`, so a plain Pull, whatever the user's global `pull.rebase`, fast-forwards or fails and never rewrites reviewed commits) and fetches `board` (pruned; VS Code's
 auto-fetch is off by default), so VS Code shows the request's commits as Outgoing Changes, the user's edits as Changes and a moved base as
@@ -179,16 +182,19 @@ uncommitted changes, against `<sha>`) and refuses another tip or an item not ope
 `review_edits` metadata (each its own `{commit}`), commits the uncommitted changes as one more (exactly the files on disk, `commit-tree`; the hand-staged
 ones too; `-m` needed only then): author the repository's `user.name`/`user.email`, committer the session, no trailer. The record comes first, the branch
 then moves by compare-and-swap (`update-ref`, a branch that moved meanwhile commits nothing and unrecords), the worktree's index follows (`reset`), and
-`opened_tip` is cleared before any check or rebase that can stop, so the refresh that follows is allowed. Every gate first rebases onto the base
+`opened_tip` is cleared before any check or rebase that can stop, so the next land or refresh is allowed. Every gate first rebases onto the base
 (`checked_sync`). With no edits `--commit` only
-ends the review (clears `opened_tip`; no message, no check): the Accept and Return of an unedited review. `--gate` runs the command in the CR worktree and stores it as a targeted check for
+ends the review (clears `opened_tip`; no message, no check). `--gate` runs the command in the CR worktree and stores it as a targeted check for
 that tip (`check_kind=targeted`, `check_command`, output); `--no-gate` stores `check_kind=none` with the reason; `--checks`, the default, reuses `sync_branch` (rebase, setup, project checks, no new failures) and stores a normal full check.
 `handover`, `cr refresh` and `ratify … edits` take the same option (`gate_options`, `checked_sync`; r11-q38). Both show as such (`board queue`: `check current (targeted: …)`, the console's `check.kind`) and
-land only for that tip. A full check (`handover`, `refresh`) clears the kind. The review stays current past its tip while
-every later commit is a recorded edit commit or its replay (`edits_only`, `is_replay`: replaying the recorded change onto the commit's
+land only for that tip. A full check (`handover`, `refresh`) clears the kind. Review coverage records the last agent-reviewed tip and base tip. Landing follows
+[Change requests](../skills/shared/change-requests.md#change-requests). Conflicts, new author commits and other changed replays leave an uncovered
+delta. `replays` requires each reviewed commit to replay cleanly and permits only recorded user
+edit commits besides them.
+A recorded edit commit remains covered (`edits_only`, `is_replay`: replaying the recorded change onto the commit's
 parent by 3-way merge gives exactly its tree, so a rebase keeps it, and a copied message, a reindent or the same change at another place
-does not; `refresh --review-holds` skips such commits and requires every reviewed commit to be such a replay too, `replays`). A
-failing gate leaves the commit, stores the failure and the CR waiting for the user. A CR with no stored review whose own commits (base
+does not). A
+failing gate leaves the commit and stores the failure. A CR with no stored review whose own commits (base
 tip..tip) are all recorded edit commits is reviewed (`review_current`), so it lands on that Accept without an agent review.
 A conflict on a recorded edit commit (a rebase of any such request, a follow-up's included) is no special path: the request stays an
 ordinary CR mid its own board rebase, status as for any request waiting for the user (the follow-up is `needs_acceptance`, never
@@ -211,8 +217,11 @@ The board is the one reader of what a review holds (r1-q3): `board show <item>` 
 `open for your review: opened at <tip>; not edited` or `…; edited (<files>): not yet recorded as yours`; `board console` carries the same per request
 and per ratification (several reviews open at once) as `review: {opened, edited, files} | null` on each `crs[]` and `ratifications[]` row (`opened`: the
 tip it was opened at; `edited`: true / false, null when it could not be read: an amended opened tip, a missing worktree; `files`: the paths that differ
-from `opened`), null while not open. There is no top-level `reviewTree`, and no `heldInReviewView` (an open item is the held one). The pane keeps no copy
-of any of it: Accept and Return read `review` from the board JSON only and name the board commands (`board cr land <cr> --tip <the tip>`; `board cr edits <cr>
+from `opened`), null while not open. There is no top-level `reviewTree`, and no `heldInReviewView` (an open item is the held one). A CR row at `needs_acceptance` carries `acceptance: {seenTip, seenBaseTip, delta, fullChange, noAgentReviewReason, incomingBaseTip, incomingCommits}`.
+`incomingCommits` lists commits since the covered base, with each commit's `tip`, `subject`, `files` and overlapping `crFiles`. `board show` uses the same list.
+`delta` is a range-diff from the last explicit user look. It is empty when the range-diff finds only equal commits. Before a look exists, it holds a summary of the full change. The row's Review action invokes
+`board cr request-review <cr>`, sending the change since the last review to an agent. The pane keeps no copy of any of it: Accept and Return
+read `review` from the board JSON only and name the board commands (`board cr land <cr> --tip <tip> --base <base>`; `board cr edits <cr>
 --tip <review.opened>` while `review.edited`); edits made after the board's last read are caught by the board's own refusal of `land` and `return`, which
 names the line; `edited` null (unreadable) makes the pane refuse.
 `board ratify <ratification> yes|edits|no [-m <msg>] [--gate '<cmd>' | --no-gate '<reason>' | --checks]` is the user's verdict on a
@@ -235,8 +244,8 @@ A CR whose worktree is mid a rebase, merge, cherry-pick, revert or bisect the bo
 board's when its `onto` equals the CR's `rebase_onto`) leaves the claim queue (`cr_claimable`), `board claim` refuses it, `board check`
 lists it as `cr-git-state`, and `board console` gives the row a `git-state` problem.
 Each `crs[]` row's `problems` lists what holds the request up with the step that clears it, `{kind, text, next: {action, command?, paths?}}`
-(`cr_problems`): `setup-failed` (claim again), `git-state` (its owner ends it), `check` (any state but current) and `review-stale` while it waits for the
-Accept, never for a design checkpoint, which lands nothing (`refresh` with the command on the refresh work only, `merge` when stopped on the user's
+(`cr_problems`): `setup-failed` (claim again), `git-state` (its owner ends it), `check` (any state but current) while it waits for the
+Accept, never for a design checkpoint, which lands nothing (`refresh` when the check is stale, `merge` when stopped on the user's
 edit commit, else `wait`), `waits` (`wait`) for each unlanded parent and lifted wait of a request waiting for its Accept (`accept_waits`: the
 console hides its Accept, the next claim passes it, a named claim still takes it to return or reject), `land-blocked` (`ask-user`, the paths). A hold is no problem: the row's `holder` says it, and the console marks it while
 the request waits for the Accept. The console maps the problems to marks and the Update button; `board queue` and `board show` print the same

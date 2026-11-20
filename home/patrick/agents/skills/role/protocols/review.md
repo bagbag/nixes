@@ -28,8 +28,9 @@ steps 3-7.
    Output: `claimed <id>; author <actor>; independent`, or
    `claimed <id>; standalone review`.
 2. **Read.** The CR's acceptance and items, its brief, the released rulings
-   it links and their owners, the author's evidence comments, and the diff
-   `<base>..cr/<id>`. Current rulings and supersessions win over older briefs
+   it links and their owners, and the author's evidence comments. Read the
+   range-diff `board claim` prints (the full diff on a first review) and any
+   Return findings. Widen where the delta meets the rest. Current rulings and supersessions win over older briefs
    and verdicts.
    Output: ids and owners read.
 3. **Gate.** Select the gate under [Review policy](../../shared/acceptance.md#review-policy)
@@ -40,7 +41,9 @@ steps 3-7.
    required gate.
    Output: one line per gate: command, result, accepted or reproduced.
 5. **Assess.** Assess the artifact under the shared
-   [review method](../../shared/review-method.md). Triage the author's
+   [review method](../../shared/review-method.md). For a new pattern or style
+   rule, verify the author checked the open CRs already past review and
+   commented on those that should adapt. Triage the author's
    disclosed judgment calls; classify scope growth under
    [Expansion findings](#expansion-findings).
    Output: confirmed defects, risks and open questions with evidence.
@@ -116,17 +119,9 @@ its command: the `board cr refresh` row of
    Output: `claimed <cr> (refresh)`.
 2. **Refresh.** `board cr refresh <cr>`; resolve a conflict in the worktree and
    rerun.
-   Output: check state, range-diff size, incoming file count.
-3. **Triage.** Dispatch the `cr-refresh` agent with the CR id, its worktree
-   and the printed range-diff and file list; verify each flag it returns in
-   the diffs.
-   - A confirmed flag: `board handover <cr> "<confirmed flags>"` sends the CR
-     back to `in_review`. Hand over the same way after a resolved conflict
-     (the commits changed).
-   - None: `board cr refresh <cr> --review-holds`.
-   Output: flags with verdicts.
-4. **Release.** `board unclaim <cr>`.
-   Output: `refreshed <cr>: <state>` or `sent back to review`.
+   Output: refreshed tip and check state.
+3. **Release.** If you still hold the CR, `board unclaim <cr>`.
+   Output: `refreshed <cr>: <state>` or `requested review <cr>: <reason>`.
 
 ## Assessor conduct
 

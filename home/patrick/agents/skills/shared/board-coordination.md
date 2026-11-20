@@ -63,9 +63,9 @@ milestones, recorded rulings and deferrals. The board model is
 - **Check state** (`board queue`, `board health`, console): every live CR's
   check against the current refs.
 - **Refresh work:** the first CR of the accept queue that lands (not a design
-  checkpoint), waits on no other CR and whose check or review is not
+  checkpoint), waits on no other CR and whose check is not
   `current` is claimable by `review` pulls as
-  kind `refresh` (the CR keeps its status); that CR only. Protocol: review.md
+  kind `refresh`; that CR only. Protocol: review.md
   [Refresh](../role/protocols/review.md#refresh).
 
 ### Rulings
