@@ -71,14 +71,13 @@ item set (`board create --graph`) to a `plan` worker ([Cut work](#cut-work)).
    are evidence and hints are planning input; a supersession is an authorized
    revision. Act on each `fix:` line the claim prints, or state why it does
    not apply.
-2. Block each open item the ruling changes on it, except designs, spikes and
-   CRs ([Questions and rulings](../../shared/board-core.md#questions-and-rulings))
+2. Block each open item the ruling changes on it, except CRs and the designs
+   and spikes outside a CR in review
+   ([Questions and rulings](../../shared/board-core.md#questions-and-rulings))
    (`board block <item>… --on <ruling> --reason "<what changes>"`); relate
    items it only informs (`board link <ruling> <item> --type relates-to`).
-   When a ruling changes a CR in review, create any missing affected items and
-   block its affected open items (designs included) on the ruling. While you
-   hold the released ruling, return an unclaimed review with
-   `board return <cr> "<what changes>" --ruling <ruling>`. For a held review,
+   Return an unclaimed review the ruling changes with
+   `board return <cr> "<what changes>" --ruling <ruling>`; for a held one,
    record the change for its reviewer. Add the ruling id and owner anchor to each item's design,
    then unblock the designs and spikes (`board unblock <item> --on <ruling>`).
    Create missing work items; when cutting them needs a design or spike first,
