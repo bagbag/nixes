@@ -111,7 +111,7 @@ VERBS = (
 )
 VERB_ORIGINS = {verb.name: verb.origins for verb in VERBS if verb.origins}
 COLLECT_VIEWS = 'decided,questions,accept,review,user'
-LIST_COMMAND = f'board health --items {COLLECT_VIEWS}'  # lists the open items Collect offers, but for the ready milestones and finished epics `board position` lists
+LIST_COMMAND = f'agents board health --items {COLLECT_VIEWS}'  # lists the open items Collect offers, but for the ready milestones and finished epics `board position` lists
 SCOPED_PASSES = ('step-back', 'ground')  # once per release on the revised records, before the approval (r8-q36)
 REACHES = ('contained', 'spreads')  # no "unsure": unsure is spreads (r4-q14, fails closed)
 TOUCHES = ('own', 'decision')  # a contained change: only the model's own parts keeps the record; unsure is decision (r8-q36)

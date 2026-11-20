@@ -61,10 +61,10 @@
 
 ## Arc state
 
-- `$HOME/.agents/bin/board position` computes the position; epics hold no status
+- `agents board position` computes the position; epics hold no status
   (board-coordination [Epics](../shared/board-coordination.md#epics)).
 - Each session keeps one plain-prose checkpoint, `checkpoint.md` in its own
-  scratch folder (`$HOME/.agents/bin/scratch dir`), replaced in place. It holds only what
+  scratch folder (`agents scratch dir`), replaced in place. It holds only what
   recovers this session's next action: verified position, next authorized
   work and return boundary, blockers by board id, pending choices, parallel
   tracks, and pointers to records. State a later session needs lives on the
@@ -73,7 +73,7 @@
   evidence from author reports and intent. It holds no operating rules.
 - Arcs may run in parallel. Each arc has its own outcome epic; its plans,
   drafts, reviews and evidence go in a scratch folder
-  (`scratch dir --for <epic id>`).
+  (`agents scratch dir --for <epic id>`).
 - Use lowercase kebab-case slugs.
 
 ## Synchronization
@@ -95,8 +95,8 @@ context; keep contracts complete without them.
 - After compaction, resume or a crash, preserve the current task and newer
   user instructions. Recover holds, the approved checkpoint, next authorized
   work, deferrals, return boundary and authority from
-  `$HOME/.agents/bin/board mine`, `$HOME/.agents/bin/board position` and the
-  session's checkpoint (`scratch dir`), then from the canonical project goal and the applicable
+  `agents board mine`, `agents board position` and the
+  session's checkpoint (`agents scratch dir`), then from the canonical project goal and the applicable
   topic goal and milestone; reconcile the next action with those commitments
   and existing authority.
 - Re-read from tracking each item a summary names as pending or next before

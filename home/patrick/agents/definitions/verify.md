@@ -50,7 +50,7 @@ current evidence. Seek counterexamples and report what the checks establish.
 
 <!-- @include shared/limits-assessor.md -->
 Put probes in the scratch folder the brief names, else one named after your task
-in your session's (`$HOME/.agents/bin/scratch dir`), and list them. Unless the brief forbids fixes, apply a fix when certain it is the only
+in your session's (`agents scratch dir`), and list them. Unless the brief forbids fixes, apply a fix when certain it is the only
 realistic, clean option within the reviewed files; report each with its finding
 for the invoker's acceptance.
 

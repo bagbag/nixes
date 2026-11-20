@@ -1043,7 +1043,7 @@ export async function pressRatify($: $, one: ConsoleRatification, verdict: Ratif
 function reviewState(cr: ConsoleCr): { said: string } | { tip: string | null; edits: { tree: string; tip: string } | null } {
   const review = cr.review
   if (review === null) return { tip: cr.tip, edits: null }
-  if (review.edited === null) return { said: `Change request: ${cr.id}: the board could not read your review (\`board show ${cr.id}\` says why); open it again` }
+  if (review.edited === null) return { said: `Change request: ${cr.id}: the board could not read your review (\`agents board show ${cr.id}\` says why); open it again` }
   if (!review.edited) return { tip: cr.tip, edits: null }
   if (cr.worktree === null) return { said: `Change request: ${cr.id} has no worktree to name your review from` }
   return { tip: review.opened, edits: { tree: cr.worktree, tip: review.opened } }

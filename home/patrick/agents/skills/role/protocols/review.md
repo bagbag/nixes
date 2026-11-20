@@ -20,7 +20,7 @@ Give each step's output as one line when it passes; add detail only for
 findings or stops. A challenge follows [Challenge](#challenge) in place of
 steps 3-7.
 
-1. **Claim.** `board claim` for your pull or `board claim <id>` for a named
+1. **Claim.** `agents board claim` for your pull or `agents board claim <id>` for a named
    CR or item. It prints the author doer, `author unknown (<holder>)` or
    `standalone`: you are independent unless you are that doer; a fresh-context worker of
    the same session suffices. Review a CR in its worktree as the author left
@@ -29,7 +29,7 @@ steps 3-7.
    `claimed <id>; standalone review`.
 2. **Read.** The CR's acceptance and items, its brief, the released rulings
    it links and their owners, and the author's evidence comments. Read the
-   range-diff `board claim` prints (the full diff on a first review) and any
+   range-diff `agents board claim` prints (the full diff on a first review) and any
    Return findings. Widen where the delta meets the rest. Current rulings and supersessions win over older briefs
    and verdicts.
    Output: ids and owners read.
@@ -55,25 +55,25 @@ steps 3-7.
    Output: each fix with its commit, or `no fixes`; gate reruns.
 7. **Pass or return.** Pass only when certain everything is clean and every
    required gate passed (your fixes included, listed in the verdict):
-   `board handover <cr> "<verdict>"`; otherwise
+   `agents board handover <cr> "<verdict>"`; otherwise
    return it with verdict,
    confirmed defects, open questions, executed checks and next action:
-   `board return <cr> "<findings>"`.
+   `agents board return <cr> "<findings>"`.
    Raise a choice that needs a decision as a question holding the affected
    work items under [Questions and rulings](../../shared/board-core.md#questions-and-rulings).
    For a code-review question, include the follow-up item the Return adds to
    the CR among the question's holds. A frame change against a released
    ruling the CR applies correctly: pass the CR, then open the decision with
-   `board ruling revise <ruling> --title <title> --body-file <packet> --holds
-   none` and `board link <question> <cr> --type discovered-from`. A
-   standalone review closes with `board close <id> --reason "<verdict>"`,
+   `agents board ruling revise <ruling> --title <title> --body-file <packet> --holds
+   none` and `agents board link <question> <cr> --type discovered-from`. A
+   standalone review closes with `agents board close <id> --reason "<verdict>"`,
    recording each finding as a new item discovered from it
    (`--deps discovered-from:<id>`).
    Escalate instead of passing when a
    [hidden-and-costly](../../shared/acceptance.md#review-policy) path stays
    unsettled: comment your findings and evidence, then
-   `board bd --raw --yes update <id> --set-metadata deep_review="<the path>"` and
-   `board unclaim <id>`. A `deep-review` ending an escalated item removes the
+   `agents board bd --raw --yes update <id> --set-metadata deep_review="<the path>"` and
+   `agents board unclaim <id>`. A `deep-review` ending an escalated item removes the
    mark (`--unset-metadata deep_review`).
    Output: `passed <cr> to <status>`, `returned <cr>`, `question <id>`,
    `escalated <id>` or `closed <id>`, plus the new item ids for a standalone
@@ -81,7 +81,7 @@ steps 3-7.
 
 ## Stop
 
-- You are the author doer: `board unclaim <id>`, report it, stop.
+- You are the author doer: `agents board unclaim <id>`, report it, stop.
 - A required gate cannot run: return the item naming the unestablished claim
   and its acceptance consequence.
 - Repairs on the same problem reach the retry limit: follow it, recording in
@@ -103,23 +103,23 @@ A standalone review of decided records or a contract draft, before release.
    Output: verdict; each finding with its evidence.
 2. **Close.** Create each finding as a question discovered from the
    challenge (`--deps discovered-from:<id>`) and block the record it concerns
-   on it (`board block <record> --on <question> --reason "<finding>"`), then
+   on it (`agents board block <record> --on <question> --reason "<finding>"`), then
    close the challenge with the verdict.
    Output: `closed <id>`, plus the question ids.
 
 ## Refresh
 
 Refresh work: [Change-request queue](../../shared/board-coordination.md#change-request-queue);
-its command: the `board cr refresh` row of
+its command: the `agents board cr refresh` row of
 [Change requests](../../shared/change-requests.md#change-requests).
 
-1. **Claim.** `board claim` (kind `refresh`), or `board claim <cr>` for the
+1. **Claim.** `agents board claim` (kind `refresh`), or `agents board claim <cr>` for the
    request a prompt names.
    Output: `claimed <cr> (refresh)`.
-2. **Refresh.** `board cr refresh <cr>`; resolve a conflict in the worktree and
+2. **Refresh.** `agents board cr refresh <cr>`; resolve a conflict in the worktree and
    rerun.
    Output: refreshed tip and check state.
-3. **Release.** If you still hold the CR, `board unclaim <cr>`.
+3. **Release.** If you still hold the CR, `agents board unclaim <cr>`.
    Output: `refreshed <cr>: <state>` or `sent to agent review <cr>`.
 
 ## Assessor conduct

@@ -2,7 +2,7 @@
 
 Reference for `bin/protocol` and `bin/protocol_engine/`; the README links here. Rounds and releases: [decide](../skills/role/protocols/decide.md).
 
-`bin/protocol` (installed as `$HOME/.agents/bin/protocol`) is the protocol
+`bin/protocol` (installed privately in `~/.agents/bin`, run as `agents protocol`) is the protocol
 engine of deciding sessions: it owns each session's protocol state in
 `<state dir>/<session>.protocol/` (with an append-only `history.jsonl`) and
 prints the next step, one call per step; `run_cli()` (in `cli.py`) is the same
@@ -16,13 +16,13 @@ and functions taking the values they interpolate, imported by the modules that
 decide what to say; error and refusal messages and the CLI help stay where
 they are raised or defined. Its protocols are `round` (the decide protocol's
 Round from the pre-pass to Record) and `release` (its Release).
-A reversal is a revision record: a superseded ruling is put back only by recording a new revision (`board ruling revise <id>`); `board reopen` refuses a superseded ruling and says so. A question whose Related outcome supersedes a record links it at Record
-(`board ruling record --replaces`); the old record is superseded when the new ruling comes into force (r9-q33): at release for a
+A reversal is a revision record: a superseded ruling is put back only by recording a new revision (`agents board ruling revise <id>`); `agents board reopen` refuses a superseded ruling and says so. A question whose Related outcome supersedes a record links it at Record
+(`agents board ruling record --replaces`); the old record is superseded when the new ruling comes into force (r9-q33): at release for a
 decided ruling, or at Record for an away ruling written with `--unratified`. Waiting items and a pending revision move to the new
-record, the engine moves the settled items; the dialog names it by id and title. Stage asks `board ruling check-replaces` to validate and classify these hits; the board owns its record sections and status checks. `## Reversal` is required only for an unratified record. Related may mark any decided record this way,
+record, the engine moves the settled items; the dialog names it by id and title. Stage asks `agents board ruling check-replaces` to validate and classify these hits; the board owns its record sections and status checks. `## Reversal` is required only for an unratified record. Related may mark any decided record this way,
 a hit or not, by naming its id under `outcomes` (only a recorded ruling; a
-record another live session holds is refused). `board ruling record <id> <file> [--replaces <old>[,<old>]...]` writes the record and no comment copies of
-the replaced text. `--replaces` is one rerunnable command for what the record replaces: it judges every old before the first write (a decided or released one is linked, one closed and superseded by it is done, anything else is refused; for an away record a live other session's hold is refused, a gone session's taken), writes the revision links with the status, then, for an away record only, supersedes each old (`board ruling supersede`'s effects); a rerun after a stop derives what is done from the board alone. `board ruling release` supersedes every old the released record revises; a replaced decided draft named in the same release is superseded, not released, and releasing it alone while a live record revises it is refused. `board ruling supersede` stays for a rule (`--partial`) and by hand. The engine's Record makes this one call with every record the question closes; the board's history (`board bd history`) keeps earlier versions (r16-q95).
+record another live session holds is refused). `agents board ruling record <id> <file> [--replaces <old>[,<old>]...]` writes the record and no comment copies of
+the replaced text. `--replaces` is one rerunnable command for what the record replaces: it judges every old before the first write (a decided or released one is linked, one closed and superseded by it is done, anything else is refused; for an away record a live other session's hold is refused, a gone session's taken), writes the revision links with the status, then, for an away record only, supersedes each old (`agents board ruling supersede`'s effects); a rerun after a stop derives what is done from the board alone. `agents board ruling release` supersedes every old the released record revises; a replaced decided draft named in the same release is superseded, not released, and releasing it alone while a live record revises it is refused. `agents board ruling supersede` stays for a rule (`--partial`) and by hand. The engine's Record makes this one call with every record the question closes; the board's history (`agents board bd history`) keeps earlier versions (r16-q95).
 A round:
 
 - Collect classifies every pasted point and the board items in the round's
@@ -45,8 +45,8 @@ A round:
   and status, the first time between compactions that `protocol next` or a
   round's pre-pass needs it, and at every topic round's pre-pass. After that
   a step prints the named ids, the counts
-  per kind and the command that lists everything (`board health --items
-  <COLLECT_VIEWS>`, plus `board position` for ready milestones and finished
+  per kind and the command that lists everything (`agents board health --items
+  <COLLECT_VIEWS>`, plus `agents board position` for ready milestones and finished
   epics), and a bare round's pre-pass is told to list before it selects. A restart, a
   Related step and the pass report format name that command where a round's scope
   widens.
@@ -182,12 +182,12 @@ A round:
   relate), because a released ruling blocks what it changes until planned. The
   release pre-fills, for each settled board item of a rule record in its set
   (this session's state), the answers row `answered: close` and the close by
-  that record, so `board ruling release --closes` closes it; one still open afterwards
+  that record, so `agents board ruling release --closes` closes it; one still open afterwards
   follows the partial-failure path. A `--no-board` round only names the settled
   points in the record file. `show --json` questions carry `settles`.
 - A question's optional `holds` (list of board ids; absent or empty: none) names the items it holds up
   (board-core.md "Questions and rulings"): Record passes `--holds <ids>` (or `--holds none`) to the
-  `board ruling revise` or `board create --graph` (a decision node) that creates its record, which records the
+  `agents board ruling revise` or `agents board create --graph` (a decision node) that creates its record, which records the
   blocks edges (the settled items' inherited links above are separate). It is content: an update of it
   counts as a change; `show --json` questions carry `holds`.
 - Every round opens with the pre-pass (step `prepass`, before Collect; r1-q7): the
@@ -316,11 +316,11 @@ A round:
   it reads the tool): `autopilot` means away, `solo` means back. At Ask while away
   there is no batch, dialog or print; the text asks for `settle` (stdin
   `{"settle": {"q1": "act", "q2": "park"}}`, an entry for every question waiting to be
-  settled) by the classes of unattended.md, and names `session activate
+  settled) by the classes of unattended.md, and names `agents session activate
   solo` for a person who is back. `act` takes the recommendation as the answer
   (origin `away`, which no verb accepts from a caller, so no person origin can pass as
   it): Record then asks `reversal` beside the rationale and rule owner, writes a
-  `## Reversal` section, runs `board ruling record … --unratified`, which releases the
+  `## Reversal` section, runs `agents board ruling record … --unratified`, which releases the
   ruling and files a related `Confirm or revise` question, and the
   record's source line reads `Away round (autopilot took the recommendation; no
   person answered), <date>: "<option>"`. `park` leaves the question an open, unassigned
@@ -345,7 +345,7 @@ A round:
   new record keeps the old Question and Alternatives (agents r11-q42). The text read
   first is kept on the question, so a rerun after a partial write sees the same.
 - Record is safe to run again: each record it creates carries the external ref
-  `protocol:<session>:<round>:<question>` (also through `board ruling revise --external-ref`),
+  `protocol:<session>:<round>:<question>` (also through `agents board ruling revise --external-ref`),
   looked up and reused before a create, and the round is saved after each question. A
   cut Record (the console's time limit) reports again with the same report: the
   questions already recorded are skipped, the rest continue. Unknown or unanswered
@@ -367,7 +367,7 @@ A round:
   comes back without it; `until` is a date or duration `bd` reads). Record has no `defer`
   input (a report with one is refused) and files every deferral through one writer: on a board
   the question's item (a decision created for a draft, never a revision) is unclaimed and
-  `board defer <id> --reason <the quote> [--until <date>]`d, outside waits too (no date);
+  `agents board defer <id> --reason <the quote> [--until <date>]`d, outside waits too (no date);
   `recorded` is set only after the defer succeeds, so a rerun creates nothing twice. A round
   without a board files nothing: the history (`deferred`) and the Closed text note it. `protocol
   restart` of a deferred question takes it back, with the questions deferred with it. A
@@ -392,7 +392,7 @@ session's records`), one run per session, on a board only:
   record from the set (its reason shows at the next round's Stage); spreads
   stops the run (nothing releases, the records stay decided and held, the
   close names the round for them). Contained + own keeps the record
-  `revised`: the engine runs `board ruling record <id> <file>` (a failure refuses
+  `revised`: the engine runs `agents board ruling record <id> <file>` (a failure refuses
   the report), a conditional approval lapses, and before the approval one
   scoped `step-back` then one scoped `ground` pass run on the revised ids
   whose `## Decision` text changed (a correction leaving it alone still asks)
@@ -415,7 +415,7 @@ session's records`), one run per session, on a board only:
   board root, absolute and `~` as written; installed files as rendered),
   Markdown anchors match a GitHub heading slug or an explicit anchor, pending
   items are open, and the record's `## Rule owner` names each written path.
-- Release runs `board ruling release` with the answered closes, then the other
+- Release runs `agents board ruling release` with the answered closes, then the other
   supersedes; it reads statuses first and reruns only what remains after a
   failure.
 
@@ -446,7 +446,7 @@ message of the round when it never went out. The record then adds `Checks skippe
 them) and its dependents are released as by any answer.
 
 `protocol next` prints the top 5 available question sets for the next round
-from `board health`'s ordered `questionSeeds`. The board follows each waiting
+from `agents board health`'s ordered `questionSeeds`. The board follows each waiting
 work unit's open question prerequisites and counts the units those answers
 release. Work with outstanding non-question waits stays out. Milestone work
 ranks first, then effective priority and work freed per question. The engine
@@ -456,7 +456,7 @@ the open-item list (waiting questions, `in_review` designs, ready milestones,
 finished epics, what waits on the user: whole the first time between
 compactions, counts and the listing command after), the open questions by topic
 label and priority (`orm-schema-migrations 7 p1, 7 p2`, every time, a question with two labels under both; the labels
-come from `board health --json`, whose item rows carry `labels`) and the stored
+come from `agents board health --json`, whose item rows carry `labels`) and the stored
 proposal, and saves the board's count of a bare release; without a board it has no
 seeds. `next` tells the lead to rank rows by priority and by how many questions
 each settles, to state the trade in `why`, and to put a follow-up that reuses what

@@ -65,8 +65,8 @@ permissions and `env` stay yours. The `settings/` folder holds the unmerged hook
 
 Inside a project repository, with your go:
 
-    ~/.agents/bin/board setup                # creates the board, or updates an existing one's settings
-    ~/.agents/bin/board setup --server       # converts an existing embedded board to server mode
+    agents board setup                       # creates the board, or updates an existing one's settings
+    agents board setup --server              # converts an existing embedded board to server mode
 
 A new board runs in server mode, so several sessions can write at once; `--embedded` makes a
 single-writer board instead. Pause the sessions writing to a board before converting it. Safe to
@@ -79,16 +79,16 @@ for the settings that stay on their machine.
 
 To share a beads board between people, inside the project repository:
 
-    ~/.agents/bin/board share [url]          # first person: says what goes out, changes nothing
-    ~/.agents/bin/board share [url] --yes    # then shares, on an existing server-mode board
-    ~/.agents/bin/board join [url]           # everyone else
+    agents board share [url]                 # first person: says what goes out, changes nothing
+    agents board share [url] --yes           # then shares, on an existing server-mode board
+    agents board join [url]                  # everyone else
 
 The url defaults to the project's own repository, which needs at least one commit. `share` without
 `--yes` says what goes out (the whole board, git emails included) and stops. Both are safe to
 repeat; a failed join cleans up after itself. Afterwards `board` syncs by itself and each person's
 sessions work their own queue. A Dolt remote added by hand shares nothing. Upgrade bd and Dolt
-together: one person migrates and pushes. When the board grows large, `board move <url>` moves it to
-a fresh repository and the others rejoin with `board join <url>`.
+together: one person migrates and pushes. When the board grows large, `agents board move <url>` moves it to
+a fresh repository and the others rejoin with `agents board join <url>`.
 
 ## Uninstall
 

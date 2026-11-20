@@ -895,7 +895,7 @@ def status_line_reports_the_trash(e: Env):
     first = e.scratch('trash', f'{mine}/a', cwd=repo).stdout.strip()
     e.scratch('trash', f'{mine}/b', cwd=repo)
     out = e.scratch('status', '--line', cwd=repo)
-    check(re.fullmatch(r'scratch: 2 trashed \([\d.]+ (B|KB|MB)\), the first is deleted within 7 days \(scratch restore\)\n', out.stdout), out.stdout)
+    check(re.fullmatch(r'scratch: 2 trashed \([\d.]+ (B|KB|MB)\), the first is deleted within 7 days \(agents scratch restore\)\n', out.stdout), out.stdout)
     age_entry(first, 5.5)
     out = e.scratch('status', '--line', cwd=repo)
     check('deleted within 2 days' in out.stdout, f'the oldest entry sets the time: {out.stdout!r}')

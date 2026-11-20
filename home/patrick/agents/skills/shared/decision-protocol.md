@@ -42,7 +42,7 @@ per step for a local, reversible choice.
    probe output, or the contract or ruling re-derived on its merits with its
    current status (superseded, closed, revised by a later ruling). Verify an
    absence by searching its owner docs and, where a board exists,
-   `$HOME/.agents/bin/board related <terms> --docs <paths>`. Verify each unverified premise now
+   `agents board related <terms> --docs <paths>`. Verify each unverified premise now
    or ask it first as its own question. When an earlier ruling, an existing owner or the platform
    already answers a question, present that answer with its re-derivation
    instead of an open question. Turn each released ruling the end state

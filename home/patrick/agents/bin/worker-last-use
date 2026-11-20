@@ -107,7 +107,7 @@ def identify_parent(parent):
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser = argparse.ArgumentParser(prog='agents worker-last-use', description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('parent', nargs='?', metavar='PARENT_SESSION_ID',
                         help='parent session ID (defaults to the current session from the environment)')
     arguments = parser.parse_args(argv)

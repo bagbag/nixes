@@ -13,7 +13,7 @@ milestones, recorded rulings and deferrals. The board model is
   (topic epic) it contributes to and its work items under the CR; loose CRs
   sit under the goal epic. An epic is a topic, never claimed; a CR without a
   parent epic is fine.
-  Topics are labels (`topic:<topic-slug>`). `board create --graph` copies
+  Topics are labels (`topic:<topic-slug>`). `agents board create --graph` copies
   no labels from the parent: give each node its `topic:` label.
 - Title: the outcome. Description: two to four sentences on what will be true,
   why, scope and the owner link. Acceptance: checkable done criteria.
@@ -22,8 +22,8 @@ milestones, recorded rulings and deferrals. The board model is
 - An outcome's own verification is its epic acceptance; name the user there
   when the outcome needs the user's judgment.
 - The planning session closes an epic as soon as its criteria hold and no
-  child is open (`board bd epic close-eligible --dry-run`), detaching deferred
-  children first (`board update <id> --parent ""`). A
+  child is open (`agents board bd epic close-eligible --dry-run`), detaching deferred
+  children first (`agents board update <id> --parent ""`). A
   [deciding session](../role/SKILL.md#roles) walks the user through an epic
   whose acceptance names the user and closes it on acceptance; it or the user
   closes the goal epic once the user confirms the goal is reached.
@@ -33,14 +33,14 @@ milestones, recorded rulings and deferrals. The board model is
 - Track each release checkpoint as one `milestone` item (`1.0-beta`) under
   the goal epic. Its acceptance names the checkpoint's evidence and the user;
   the goal owner states which work belongs to it.
-- Add members with `board block <milestone> --on <member>`, without a reason
+- Add members with `agents board block <milestone> --on <member>`, without a reason
   line (a milestone needs none). Everything a member waits on belongs to the milestone too. Block the
   milestone by the last release step as well.
 - When release checks must run on the finished scope, members block a
   `<release> scope` milestone instead, and it blocks the first checks.
 - A member epic or CR brings all its descendants (epic, CR, item); file work
   that ships later under another outcome.
-- Membership orders work and never cuts it. `board claim` order: P0 items,
+- Membership orders work and never cuts it. `agents board claim` order: P0 items,
   then planning of released rulings, then milestone work, then reviewing
   (CR reviews and refresh work), ratifying and accepting, then the rest. Within
   each, priority, then kind (plan, review, ratify, accept, design, question,
@@ -57,7 +57,7 @@ milestones, recorded rulings and deferrals. The board model is
 ### Change-request queue
 
 - **Accept queue:** CRs in `needs_acceptance`: parents before the CRs stacked
-  on them, then the `board claim` order without kind
+  on them, then the `agents board claim` order without kind
   ([Milestones](#milestones)), then age (stacks:
   [Change requests](../shared/change-requests.md#change-requests)).
 - **Unlock rank:** Within a tier and effective priority, take the larger
@@ -66,7 +66,7 @@ milestones, recorded rulings and deferrals. The board model is
   it among its ready blockers when several contribute. Count solo and
   shared unlocks separately. A design checkpoint delivers its design items.
   A landing delivers its CR and implementation items.
-- **Check state** (`board queue`, `board health`, console): every live CR's
+- **Check state** (`agents board queue`, `agents board health`, console): every live CR's
   check against the current refs.
 - **Refresh work:** the first CR of the accept queue that lands (not a design
   checkpoint), waits on no other CR and whose check is not
@@ -76,14 +76,14 @@ milestones, recorded rulings and deferrals. The board model is
 
 ### Rulings
 
-- At decision time, write the record with `board ruling record <id> <file>`:
+- At decision time, write the record with `agents board ruling record <id> <file>`:
   it replaces the packet and sets status `decided`; an autopilot ruling or a
   standing two-way default uses `--unratified`, which releases it and files a
   related Confirm-or-revise question. `--replaces <old>[,<old>]` links each
   ruling it replaces, decided, released or closed after planning; each is
   superseded when the new ruling comes into force: at its release, or at once
-  with `--unratified`. Rerun it after a stop; `board ruling supersede <old>
-  --with <new>` alone for one rule or by hand. The file holds these `##` sections, which `board ruling record`
+  with `--unratified`. Rerun it after a stop; `agents board ruling supersede <old>
+  --with <new>` alone for one rule or by hand. The file holds these `##` sections, which `agents board ruling record`
   checks: `Question`, `Alternatives Considered`, `Decision`, `Rationale` (with
   provenance: user or the ruling session's role, and date) and `Rule owner`;
   `--unratified` also requires `Reversal`.
@@ -91,9 +91,9 @@ milestones, recorded rulings and deferrals. The board model is
   <cleanliness test, principle or correctness property>". For a consequential
   ruling without a question, create and answer one at once.
 - Open a revision with
-  `board ruling revise <old> --title "<question>" --body-file <packet> --holds <ids>|none`; the old ruling may be released or closed after planning. For one rule
+  `agents board ruling revise <old> --title "<question>" --body-file <packet> --holds <ids>|none`; the old ruling may be released or closed after planning. For one rule
   of a record add `--partial "<rule>"`, and the rest stays in force. Its
-  record restates the rule in full. `board ruling release` supersedes a released
+  record restates the rule in full. `agents board ruling release` supersedes a released
   old record. A revision
   question blocks only the work items whose part it would change.
 - Owner text contradicting a newer released ruling is a missed owner write:
@@ -106,5 +106,5 @@ milestones, recorded rulings and deferrals. The board model is
 
 | Item | Lifecycle |
 |---|---|
-| Deferral | `board defer <id> --reason "<revisit condition>"`, plus `--until <date>` for a date condition; `board undefer` other conditions on named new evidence. Deferred items are the project backlog: deferred work holds up no live item, and a deferred question no work in progress, in review or at Accept (write a wait under [Dependencies](board-core.md#dependencies); `board defer` and `board check` enforce it). |
-| Environment fact | `board bd --raw --yes remember --key <key>` (no board command) for temporary repository-wide facts needed by every current session, a user's broad stop (area, paths, kind of action) included with its words and date; state a removal condition; remove with `board bd --raw --yes forget`. |
+| Deferral | `agents board defer <id> --reason "<revisit condition>"`, plus `--until <date>` for a date condition; `agents board undefer` other conditions on named new evidence. Deferred items are the project backlog: deferred work holds up no live item, and a deferred question no work in progress, in review or at Accept (write a wait under [Dependencies](board-core.md#dependencies); `agents board defer` and `agents board check` enforce it). |
+| Environment fact | `agents board bd --raw --yes remember --key <key>` (no board command) for temporary repository-wide facts needed by every current session, a user's broad stop (area, paths, kind of action) included with its words and date; state a removal condition; remove with `agents board bd --raw --yes forget`. |

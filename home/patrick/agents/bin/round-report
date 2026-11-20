@@ -142,7 +142,7 @@ def effort(sessions: set[str], since: datetime.datetime | None) -> str:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__.split('\n', 1)[0])
+    parser = argparse.ArgumentParser(prog='agents round-report', description=__doc__.split('\n', 1)[0])
     parser.add_argument('--since', help='only events from this ISO time on, e.g. 2026-11-05T12:00:00Z')
     parser.add_argument('--transcripts', action='store_true', help="also read Claude's transcripts for tool use and tokens per pass")
     args = parser.parse_args()

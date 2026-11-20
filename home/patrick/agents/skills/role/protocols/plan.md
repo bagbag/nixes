@@ -17,8 +17,8 @@ Your session pulls `plan`. Only these sessions plan; others record gaps and rema
 Give each step's output as one line when it passes; add detail only for
 findings or stops.
 
-1. **Position.** Run `board queue` and
-   `board position`; read your session's checkpoint
+1. **Position.** Run `agents board queue` and
+   `agents board position`; read your session's checkpoint
    ([Arc state](../../shared/project-memory.md#arc-state)).
    Output: ready CRs and items, rulings to plan, idle holds, questions holding work.
 2. **Released rulings.** Plan each under [Released rulings](#released-rulings).
@@ -26,7 +26,7 @@ findings or stops.
 3. **Frame.** Frame new or reframed outcome work under [Frame](#frame).
    Output: one line per frame field; open premises as question ids.
 4. **Cut.** Cut and order items under [Cut work](#cut-work) and
-   [Queue](#queue); run `board bd dep cycles`.
+   [Queue](#queue); run `agents board bd dep cycles`.
    Output: created ids, edge changes, `no cycles`.
 5. **Dispatch.** When your session runs CRs through workers, dispatch under
    [Dispatch](#dispatch).
@@ -55,17 +55,17 @@ findings or stops.
 ## Exit
 
 No released ruling waits unplanned except on what its planning needs
-([board-core.md](../../shared/board-core.md) released row); `board check`
+([board-core.md](../../shared/board-core.md) released row); `agents board check`
 reports no deviation on the items this pass touched; ready work is
 dispatched or claimable; the checkpoint file is current; the report is given.
 
 ## Released rulings
 
 Plan a ruling right after its release; give one whose planning creates a new
-item set (`board create --graph`) to a `plan` worker ([Cut work](#cut-work)).
+item set (`agents board create --graph`) to a `plan` worker ([Cut work](#cut-work)).
 
-1. Claim it: `board claim` when pulling `plan`,
-   `board claim <id>` otherwise. Read the record and its
+1. Claim it: `agents board claim` when pulling `plan`,
+   `agents board claim <id>` otherwise. Read the record and its
    rule owner section. A ruling settles only its stated choice; linked reports
    are evidence and hints are planning input; a supersession is an authorized
    revision. Act on each `fix:` line the claim prints, or state why it does
@@ -73,12 +73,12 @@ item set (`board create --graph`) to a `plan` worker ([Cut work](#cut-work)).
 2. Block each open item the ruling changes on it, except CRs and the designs
    and spikes outside a CR in review
    ([Questions and rulings](../../shared/board-core.md#questions-and-rulings))
-   (`board block <item>… --on <ruling> --reason "<what changes>"`); relate
-   items it only informs (`board link <ruling> <item> --type relates-to`).
+   (`agents board block <item>… --on <ruling> --reason "<what changes>"`); relate
+   items it only informs (`agents board link <ruling> <item> --type relates-to`).
    Return an unclaimed review the ruling changes with
-   `board return <cr> "<what changes>" --ruling <ruling>`; for a held one,
+   `agents board return <cr> "<what changes>" --ruling <ruling>`; for a held one,
    comment the change on the CR for its reviewer. Add the ruling id and owner anchor to each item's design,
-   then unblock the designs and spikes (`board unblock <item> --on <ruling>`).
+   then unblock the designs and spikes (`agents board unblock <item> --on <ruling>`).
    Create missing work items; when cutting them needs a design or spike first,
    create it, block the ruling on it and stop: the ruling returns to planning
    when that prerequisite closes.
@@ -87,10 +87,10 @@ item set (`board create --graph`) to a `plan` worker ([Cut work](#cut-work)).
 3. For a revision, update every consumer of the changed decision: related
    items, briefs, dependencies and active workers whose premise changed. Refresh questions written against
    the superseded state. Repoint duplicate dependents to the keeper before
-   `board bd --raw --yes duplicate <duplicate> --of <keeper>`.
+   `agents board bd --raw --yes duplicate <duplicate> --of <keeper>`.
 4. Undefer items the ruling resolves; clear superseded authority and resolve
    the gates it covers.
-5. Close: `board close <id> --reason "planned in <ids>"`.
+5. Close: `agents board close <id> --reason "planned in <ids>"`.
 
 ## Frame
 
@@ -198,13 +198,13 @@ Establish the outcome's contribution to its milestone:
 ## Dispatch
 
 - Repairs name the work they unblock; return there at closure.
-- Keep a worker on every CR `board queue` lists for your pulls, up to the session's worker cap
-  (`board position`: `workers <active>/<cap>`).
+- Keep a worker on every CR `agents board queue` lists for your pulls, up to the session's worker cap
+  (`agents board position`: `workers <active>/<cap>`).
   When a worker ends, finish the bookkeeping the next dispatch depends on (its
   hand-over, the board state a new worker relies on), integrate its result
   under [Integrate](#integrate), then refill before other bookkeeping.
 - Brief a worker on each no-commit task you claim, or hand a step only the
-  user can do to them: `board update <id> --assignee user`.
+  user can do to them: `agents board update <id> --assignee user`.
 - Give each worker one CR. Brief: the CR id, the protocol path for its kind
   (`$HOME/.agents/skills/role/SKILL.md`, claimed-item table) and only the
   deltas under [Brief](#brief).
@@ -267,7 +267,7 @@ end state for missing general mechanisms, asymmetric cases, duplicate owners,
 silent failures, dead weight and doc drift; name the next executable outcome
 and blockers. When the next run is set or changes, defer each open item of the
 outcome it does not need (revisit: after that run), undefer the deferred ones
-it needs, and list both in the report. Close each finished epic `board position`
+it needs, and list both in the report. Close each finished epic `agents board position`
 lists under board-coordination [Epics](../../shared/board-coordination.md#epics);
 list in the report the ones left open for the user's acceptance. Bring
 material changes to the decider before dependent dispatch. End rethinking

@@ -36,22 +36,22 @@ lock_wait=10  # seconds a registration write waits for the lock
 
 help_text() {
   cat <<'EOF'
-usage: session <verb> [args]
-  session activate solo --without review --workers 3         register this session's role (lead|agent|solo|autopilot)
-  session set-workers <id> --workers 2                       change a session's worker cap
-  session actor                                              this session's actor name
-  session get <id>                                           a session's role
-  session show <id>                                          a session's registration as JSON
-  session list                                               every registration, one JSON line each
-  session ended                                              actors of pruned registrations
-  session find <id>                                          transcripts and scratch folders of a session id (6+ characters)
-  session state-dir                                          the registry folder
-  session alive                                              record this Claude Code process (hook)
-  session session-active                                     touch the session's activity mark (hook)
-  session worker-started <agent-id>                          mark a worker running (hook)
-  session worker-active <agent-id>                           touch a worker's mark (hook)
-  session worker-ended <agent-id>                            remove a worker's mark (hook)
-  session help                                               this list; a call with no arguments prints it too
+usage: agents session <verb> [args]
+  agents session activate solo --without review --workers 3  register this session's role (lead|agent|solo|autopilot)
+  agents session set-workers <id> --workers 2                change a session's worker cap
+  agents session actor                                       this session's actor name
+  agents session get <id>                                    a session's role
+  agents session show <id>                                   a session's registration as JSON
+  agents session list                                        every registration, one JSON line each
+  agents session ended                                       actors of pruned registrations
+  agents session find <id>                                   transcripts and scratch folders of a session id (6+ characters)
+  agents session state-dir                                   the registry folder
+  agents session alive                                       record this Claude Code process (hook)
+  agents session session-active                              touch the session's activity mark (hook)
+  agents session worker-started <agent-id>                   mark a worker running (hook)
+  agents session worker-active <agent-id>                    touch a worker's mark (hook)
+  agents session worker-ended <agent-id>                     remove a worker's mark (hook)
+  agents session help                                        this list; a call with no arguments prints it too
 `--pulls` sets the session's pulls; `--without` takes pulls out of the role's preset (lead: plan; solo, autopilot: all; agent:
 none, so it needs `--pulls`). Without either, activate keeps the pulls set before, and a first registration takes the preset.
 `--workers` sets the session's worker cap; without it, activate keeps the one set.

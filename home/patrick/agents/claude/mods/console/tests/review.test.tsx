@@ -35,7 +35,7 @@ async function queued($: any, on: any, crs: Crs, r: Repo = repo(), init: Paramet
 
 const WAITING = (): Crs => [cr({ id: 'p-cr1' })]
 const BLOCKED = (paths: string[]) => ({ kind: 'land-blocked', text: `land blocked: ${paths.join(', ')}`, next: { action: 'ask-user', paths } })
-const REFRESH = (id: string) => ({ kind: 'check', text: 'check stale', next: { action: 'refresh', command: `board cr refresh ${id}` } })
+const REFRESH = (id: string) => ({ kind: 'check', text: 'check stale', next: { action: 'refresh', command: `agents board cr refresh ${id}` } })
 const short = (n: number) => sha(n).slice(0, 7)
 
 describe('change request queue', () => {
@@ -123,7 +123,7 @@ describe('change request queue', () => {
     expect(await ui.find({ key: 'cr-update-p-cr2' })).toBeUndefined()
     await ui.press({ key: 'cr-update-p-cr1' })
     await clock.settle()
-    expect(w.prompts).toEqual(["Update p-cr1 (Title of p-cr1): its check stale; dispatch its refresh (`board cr refresh p-cr1`) under the review protocol's Refresh."])
+    expect(w.prompts).toEqual(["Update p-cr1 (Title of p-cr1): its check stale; dispatch its refresh (`agents board cr refresh p-cr1`) under the review protocol's Refresh."])
     await ui.unmount()
   })
 
@@ -451,7 +451,7 @@ describe('scratch line', () => {
 describe('Accept, Return', () => {
   /** The board's `review` for a request open for your review since the tip `opened`. */
   const viewAt = (opened: string, over: Record<string, unknown> = {}) => ({ opened, edited: false, files: [], ...over })
-  const landLine = (n: number, base = 1) => `board cr land p-cr1 --tip ${short(n)} --base ${short(base)}`
+  const landLine = (n: number, base = 1) => `agents board cr land p-cr1 --tip ${short(n)} --base ${short(base)}`
 
   test('Accept of a request not open for review names its own tip and the board command that lands it', async ($, on) => {
     const { ui, clock, w, r } = await queued($, on, [cr({ id: 'p-cr1', title: 'Remove X', tip: sha(4) })])
@@ -722,7 +722,7 @@ describe('what holds a request up', () => {
 
 describe('a stale check', () => {
   test('a request waiting for its Accept says so; the board decides whether it is refresh work', () => {
-    const stale = cr({ id: 'p-cr1', problems: [{ kind: 'check', text: 'check stale', next: { action: 'refresh', command: 'board cr refresh p-cr1' } }] }) as unknown as ConsoleCr
+    const stale = cr({ id: 'p-cr1', problems: [{ kind: 'check', text: 'check stale', next: { action: 'refresh', command: 'agents board cr refresh p-cr1' } }] }) as unknown as ConsoleCr
     expect(crMarks(stale)).toEqual([])
     expect(canUpdateCr(stale, false, ['review'])).toBe(true)
     expect(canUpdateCr(stale, true, [])).toBe(true)

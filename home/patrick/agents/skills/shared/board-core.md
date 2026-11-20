@@ -1,13 +1,12 @@
 ## Board core (beads)
 
-**Commands:** `board` in every skill command is `$HOME/.agents/bin/board`
-(not on `PATH`): type `$HOME/.agents/bin/board show <id>`, never bare `board`
-or bare `bd`. `board help [<verb>]` lists every verb. Board
-verbs own every write. `board bd <args>` runs bd with `--readonly`: reads pass
+**Commands:** run the board as `agents board <verb>`, never bare `bd`.
+`agents board help [<verb>]` lists every verb. Board
+verbs own every write. `agents board bd <args>` runs bd with `--readonly`: reads pass
 and bd refuses a write, naming the board command (it does not catch every
 write: `import`, `rename`, `config set` and `dolt remote add` pass on a server
 board). **Raw bd writes only when no board command does it, or the user
-authorized it:** `board bd --raw --yes <args>` (`--raw` alone prints this rule
+authorized it:** `agents board bd --raw --yes <args>` (`--raw` alone prints this rule
 and runs nothing). When board output stops early, run the command it prints
 before relying on the missing part.
 
@@ -19,7 +18,7 @@ before relying on the missing part.
   evidence summaries, verdicts, block reasons. Reference rulings, rule owners
   and items by id and anchor instead of restating their text.
 - Keep working drafts and data files in the item's scratch folder
-  (`$HOME/.agents/bin/scratch dir --for <id>`); move a draft's result
+  (`agents scratch dir --for <id>`); move a draft's result
   into the item before hand-over or closure.
 - Name each data file the work consumes or produces (dumps, diagnostics, logs,
   fixtures, generated output) in the item with path, size or hash, and how to
@@ -27,8 +26,7 @@ before relying on the missing part.
   holder.
 
 Without `.beads/`: a project with existing trackers or backlog files moves onto
-the board through `/board-migrate`; otherwise run `$HOME/.agents/bin/board
-setup` with the user's confirmation
+the board through `/board-migrate`; otherwise run `agents board setup` with the user's confirmation
 (`$HOME/.agents/skills/shared/beads-setup.md`). Leave `bd setup` unrun. Share or join a board only on the user's request
 ([Shared boards](../shared/beads-setup.md#shared-boards)); `board` syncs a
 shared board, the user an unshared one (`bd dolt push`/`pull`).
@@ -43,24 +41,24 @@ shared board, the user an unshared one (`bd dolt push`/`pull`).
   the CR's items go to its workers. Each doer claims, hands over
   and closes as itself; a session owns every hold under its actor prefix.
   Only the exact assignee can close an item.
-- Claim with `board claim` (the next CR or item routed to your
-  session under [Routing](#routing)) or `board claim <ids>`
+- Claim with `agents board claim` (the next CR or item routed to your
+  session under [Routing](#routing)) or `agents board claim <ids>`
   (named). Claiming a named item held within your own session (your
   actor or one of your workers) takes it over.
 - Finish, hand over or unclaim each hold you still have. Hand back your
-  unfinished work with `board block <id> --on <blocker> --reason "<why it
-  waits>"` while it waits on something, else `board unclaim <id> --resume
+  unfinished work with `agents board block <id> --on <blocker> --reason "<why it
+  waits>"` while it waits on something, else `agents board unclaim <id> --resume
   "<next action>"`.
 - Free another doer's hold only with
-  `board take <id>` (reassign to you with a comment) or
-  `board unclaim <id>`. Take an item from a gone holder (`board position` or
+  `agents board take <id>` (reassign to you with a comment) or
+  `agents board unclaim <id>`. Take an item from a gone holder (`agents board position` or
   the claim report marks it gone) whenever your role could claim it; free any
   other session's hold only as the user or a
   [deciding session](../role/SKILL.md#roles), once you judge an idle-marked
-  holder gone. For your own workers' holds marked stopped in `board mine`:
+  holder gone. For your own workers' holds marked stopped in `agents board mine`:
   continue the worker, hand the item over or free it.
 - At your worker cap, hand over or unclaim partial work before
-  `board claim <id> --force "<reason>"`.
+  `agents board claim <id> --force "<reason>"`.
 - A CR that leaves its holder unfinished (unclaimed, returned, freed from a
   gone holder) keeps its worktree, branch and uncommitted edits; its next
   claimer reuses the worktree as it stands. Git states stopping a CR:
@@ -82,12 +80,12 @@ Titles carry no prefixes; use only these types (a check others wait on is a
 task, [Work items](#work-items)). Review is a status, not
 a kind: create a findings-only review (outside any CR) as an
 unassigned task directly in review,
-`board create <title> -t task --status in_review …`.
+`agents board create <title> -t task --status in_review …`.
 
 ### Routing
 
-A bare `board claim` takes the unassigned ready CRs and items routed to the
-session's role or pulls (`board position` counts them). A claim by id checks
+A bare `agents board claim` takes the unassigned ready CRs and items routed to the
+session's role or pulls (`agents board position` counts them). A claim by id checks
 no role; follow these rules yourself:
 
 - CRs by pull: `open` to `design` when its open items are design items, else
@@ -115,9 +113,9 @@ On a shared board (`.beads/board-shared.json` exists):
   takes its parent's queue, else its creator's. Your person: `git config
   agents.person`. Claims take only your queue's items.
 - **Moves:** only lead and solo sessions and a person's terminal move items
-  (`board route <person> <ids…>`, `board send <person> <ids…>` into their
+  (`agents board route <person> <ids…>`, `agents board send <person> <ids…>` into their
   inbox); others ask a deciding session. File a find for another person with
-  `board create --for <person>`; decide.md Inbox routes it.
+  `agents board create --for <person>`; decide.md Inbox routes it.
 - **Sync:** run the fix a `board: sync …` line names; other work continues
   unless beads refuses the write.
 - Raw bd never creates with `--id` or dotted child ids: parent.N ids stop sync.
@@ -139,18 +137,18 @@ On a shared board (`.beads/board-shared.json` exists):
   `spec_id` (specification reference; a key of a `create --graph` node, set
   at creation), `blocks` edges.
 - Keep every field of every item (description, design, acceptance,
-  `notes`) at its current state. Change fields with `board field export <id>…
-  [--field F]…`, edit the files in place, `board field apply <id>…` (one update
+  `notes`) at its current state. Change fields with `agents board field export <id>…
+  [--field F]…`, edit the files in place, `agents board field apply <id>…` (one update
   per item; `discard` drops an export); never rewrite a field from memory. Comments hold only one-line events (a failed attempt is one line);
-  history lives in `board bd history`.
+  history lives in `agents board bd history`.
 - Before creating an item or question, search with
-  `board related --like <draft>` (or `board related <terms>`); extend an open
+  `agents board related --like <draft>` (or `agents board related <terms>`); extend an open
   item on the same decision, files or migration instead.
-- Create items with one `board create --graph <plan.json>` per wave (a single item: `board create <title> --type … --description-file …`). Let Beads
+- Create items with one `agents board create --graph <plan.json>` per wave (a single item: `agents board create <title> --type … --description-file …`). Let Beads
   generate every id; confirm creation before creating dependents.
 - When an open item becomes redundant, move its leftover work into the owning
-  item's `--acceptance`, then `board bd --raw --yes supersede <id> --with <owner>`, or
-  `board bd --raw --yes duplicate <id> --of <canonical>` for an exact duplicate (no board command does either).
+  item's `--acceptance`, then `agents board bd --raw --yes supersede <id> --with <owner>`, or
+  `agents board bd --raw --yes duplicate <id> --of <canonical>` for an exact duplicate (no board command does either).
 
 ### Questions and rulings
 
@@ -160,10 +158,10 @@ On a shared board (`.beads/board-shared.json` exists):
 | `in_progress` | Unanswered; claimed by the session running its round. Blocks its dependents. |
 | `decided` | Answered, release pending. Still blocks. |
 | `released` | Binding. Blocks the open items it changes until a `plan` session plans it and closes it; planning unblocks a design or spike once its text carries the ruling. Waits only on what its planning needs: a live decision, a `user <date>` gate, a design or a spike. Holds no decided record resting on it. |
-| closed | Planned, superseded or withdrawn. A reversal is a revision record (`board ruling revise <id>`, [Rulings](../shared/board-coordination.md#rulings)). |
+| closed | Planned, superseded or withdrawn. A reversal is a revision record (`agents board ruling revise <id>`, [Rulings](../shared/board-coordination.md#rulings)). |
 
 - Withdraw a question the user drops with
-  `board close <id> --reason "withdrawn: <why>"`, quoting the user.
+  `agents board close <id> --reason "withdrawn: <why>"`, quoting the user.
 - In role `agent`, put every user-facing question in Beads, including
   clarifications, blockers and approvals a governing rule reserves for the
   user; quote that rule in an approval question. Reuse the existing question
@@ -175,15 +173,15 @@ On a shared board (`.beads/board-shared.json` exists):
 - Name the affected items, never their CR, when creating a question or
   ruling; create missing items first. Pass the affected ids with
   `--holds <ids>` (shorthand for blocking links; also
-  `--deps blocks:<id>` on `board create --type decision` and `board ruling
+  `--deps blocks:<id>` on `agents board create --type decision` and `agents board ruling
   revise`; a plan's links from its decision node; in a round, the question's
   `holds`, which Record passes) or `--holds none`. Depend on each open question its options
-  assume (`board block <id> --on <other>`; no reason line when the blocker is a
+  assume (`agents board block <id> --on <other>`; no reason line when the blocker is a
   question).
 - Implementation steps, file lists and test lists become work items, never
   ruling text.
-- Answer provenance questions from the record (`board show`,
-  `board bd history <id> --events`).
+- Answer provenance questions from the record (`agents board show`,
+  `agents board bd history <id> --events`).
 - Deciding and planning sessions record rulings under
   [Rulings](../shared/board-coordination.md#rulings).
 
@@ -214,14 +212,14 @@ Statuses carry the lifecycle; labels only classify (`topic:<topic-slug>`,
 | `deferred` | [Deferral](../shared/board-coordination.md#deferrals-and-environment-facts). |
 
 Question statuses: [Questions and rulings](#questions-and-rulings). Assign `user`
-(`board update --assignee user`) only tasks that need the user's authority, credentials or judgment; agents do
+(`agents board update --assignee user`) only tasks that need the user's authority, credentials or judgment; agents do
 the rest, using the user's logins only with their consent per run. A deciding
 session prepares user tasks up to the user's step and brings the ready ones in
 one batch.
 
 ### Dependencies
 
-Use the first matching row. `board block` and the `board ruling` verbs replace an existing link; by hand,
+Use the first matching row. `agents board block` and the `agents board ruling` verbs replace an existing link; by hand,
 first remove the pair's `relates-to` edge. When an input and context
 coincide, keep `blocks`. Put a wanted order in priority and wanted evidence in
 acceptance, never in `blocks`; when only part of B uses A, split B ([Work
@@ -229,12 +227,12 @@ items](#work-items)).
 
 | Relation | Use |
 |---|---|
-| B uses A's output (an artifact, contract, decision or environment) or changes code A changes, or released ruling A changes B | `blocks`: `board block B --on A --reason "<the input B uses>"` (an outside wait goes on B's change request: [Waiting and stacks](change-requests.md#change-requests); [Milestones](../shared/board-coordination.md#milestones) members: `board block <milestone> --on <member>`, no reason line). |
+| B uses A's output (an artifact, contract, decision or environment) or changes code A changes, or released ruling A changes B | `blocks`: `agents board block B --on A --reason "<the input B uses>"` (an outside wait goes on B's change request: [Waiting and stacks](change-requests.md#change-requests); [Milestones](../shared/board-coordination.md#milestones) members: `agents board block <milestone> --on <member>`, no reason line). |
 | B is part of outcome A | `--parent A` |
-| B found while working on A | `discovered-from`: `board create … --deps discovered-from:A` |
-| Shared context, alternatives, a ruling's context-only item | `relates-to`: `board link A B --type relates-to` |
-| B revises ruling A | `board ruling revise A` links B at creation; release supersedes A ([Rulings](../shared/board-coordination.md#rulings)) |
-| B waits on the user's go (no open decision) | On the user's instruction only; raise your own caution as a question. `board gate create --blocks B --reason "<why>" --title "user <date>: '<words>'"`; more items: `board block <item> --on <gate>`; lift on the user's word or a covering released ruling: `board gate resolve <gate>`. |
+| B found while working on A | `discovered-from`: `agents board create … --deps discovered-from:A` |
+| Shared context, alternatives, a ruling's context-only item | `relates-to`: `agents board link A B --type relates-to` |
+| B revises ruling A | `agents board ruling revise A` links B at creation; release supersedes A ([Rulings](../shared/board-coordination.md#rulings)) |
+| B waits on the user's go (no open decision) | On the user's instruction only; raise your own caution as a question. `agents board gate create --blocks B --reason "<why>" --title "user <date>: '<words>'"`; more items: `agents board block <item> --on <gate>`; lift on the user's word or a covering released ruling: `agents board gate resolve <gate>`. |
 | External wait on another project's delivery | gate; read `$HOME/.agents/skills/shared/upstream-waits.md` first |
 
 ### Hand-over and acceptance
@@ -244,11 +242,11 @@ items](#work-items)).
 2. Keep active work `in_progress` with its current state in `notes` (resume
    point, what it waits on; edit fields as under [Work items](#work-items)). Hand over only with
    complete evidence for the CR's acceptance. When an item starts waiting on a
-   blocker, block the item with notes: `board block` on your own held item
+   blocker, block the item with notes: `agents board block` on your own held item
    unclaims it.
-3. Hand over: `board handover <cr> "<evidence>"` ([Change requests](../shared/change-requests.md#change-requests)).
-4. The acceptor passes with `board handover <cr> "<verdict>"` or returns it
-   with `board return <cr> "<findings>"`. The user's accept is a deciding
+3. Hand over: `agents board handover <cr> "<evidence>"` ([Change requests](../shared/change-requests.md#change-requests)).
+4. The acceptor passes with `agents board handover <cr> "<verdict>"` or returns it
+   with `agents board return <cr> "<findings>"`. The user's accept is a deciding
    session's [Accept](../role/protocols/decide.md#accept).
 5. A hold leaves the review stage in place. Apply
    [Released rulings](../role/protocols/plan.md#released-rulings) when a ruling
@@ -267,20 +265,20 @@ items](#work-items)).
 - Use P0, the highest priority, for a broken shared build/environment, data loss
   or a live security hole; running work continues. Use `deferred` for backlog;
   leave P4 unused.
-- Inspect what an item holds up with `board bd dep tree <id> --direction=up` or
-  `board holders`; include committed nonblocking consumers
+- Inspect what an item holds up with `agents board bd dep tree <id> --direction=up` or
+  `agents board holders`; include committed nonblocking consumers
   when ranking it.
 
 ### Views
 
-`board check` lists deviations from these conventions on live
+`agents board check` lists deviations from these conventions on live
 items; a board with deviations moves through
 `/board-migrate`.
 
-Other queries: `board bd query`, `search`, `blocked`, `lint`, `dep tree`; the
-decision log, `board bd list --type decision --all --label topic:<slug>`; the
-topic backlog, `board bd list --status deferred --label topic:<slug>`; before
-dispatch, `board bd dep cycles`.
+Other queries: `agents board bd query`, `search`, `blocked`, `lint`, `dep tree`; the
+decision log, `agents board bd list --type decision --all --label topic:<slug>`; the
+topic backlog, `agents board bd list --status deferred --label topic:<slug>`; before
+dispatch, `agents board bd dep cycles`.
 
 ### Limits
 
@@ -290,8 +288,8 @@ dispatch, `board bd dep cycles`.
   needs elevation too (`.git` is read-only in its sandbox).
 - On an embedded board, run `board` commands one at a time and never
   interrupt a running one.
-- `board bd ready` returns 100 rows; use `--limit 0` for inventories. Read
-  inventories with one `board bd export` or
-  `board bd list --all --limit 0 --json` instead of per-item `board show`.
-- Give `board create` a description of 20+ characters.
-- Inspect board-wide changes with `board bd events tail --since <seq>`.
+- `agents board bd ready` returns 100 rows; use `--limit 0` for inventories. Read
+  inventories with one `agents board bd export` or
+  `agents board bd list --all --limit 0 --json` instead of per-item `agents board show`.
+- Give `agents board create` a description of 20+ characters.
+- Inspect board-wide changes with `agents board bd events tail --since <seq>`.

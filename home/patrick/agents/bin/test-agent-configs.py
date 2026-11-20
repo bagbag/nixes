@@ -1142,8 +1142,8 @@ def validate_compact_reorient(root: Path) -> None:
         "current task and newer user instructions",
         "the approved checkpoint",
         "deferrals, return boundary and authority",
-        "`$HOME/.agents/bin/board mine`",
-        "`$HOME/.agents/bin/board position`",
+        "`agents board mine`",
+        "`agents board position`",
         "session's checkpoint",
         "canonical project goal",
         "topic goal and milestone",
@@ -1251,13 +1251,13 @@ def validate_bd_guard(root: Path) -> None:
     for command in ("bd create x -t task", "cd r && bd update x --notes y", "bd comments add x y", "bd close x --reason z", "bd dep add a b"):
         result = guard(command, session_id=SESSION)
         reason = result["hookSpecificOutput"]["permissionDecisionReason"] if denied(result) else ""
-        if not all(word in reason for word in ("board create", "board field", "board comment", "board close", "board claim", "board block")):
+        if "agents board" not in reason or not all(f"{verb}," in reason for verb in ("create", "field", "comment", "close", "claim", "block")):
             raise ValueError(f"bd-guard must name the board verbs for {command!r}: {reason}")
     # A bare bd read (dep list, label list, gate list) gets the short message, not the write verbs.
     for command in ("bd dep list a", "bd label list a", "bd gate list", "bd ready", "bd list --json"):
         result = guard(command, session_id=SESSION)
         reason = result["hookSpecificOutput"]["permissionDecisionReason"] if denied(result) else ""
-        if not reason or "every write has a board verb" in reason:
+        if not reason or "every write has" in reason:
             raise ValueError(f"bd-guard named the write verbs for the read {command!r}: {reason}")
     for command in passing:
         for payload in ({}, {"session_id": SESSION}, {"session_id": SESSION, "turn_id": "t"}):
@@ -2532,7 +2532,7 @@ def validate_board(root: Path) -> None:
                     raise ValueError(f"board position lacks {expected!r}:\n{recent}")
             if "IDLE" in recent or "board take <id>" in recent:
                 raise ValueError("board position flagged fresh holds as idle")
-            if later.count("IDLE") != 3 or "If that session is gone, take the item when your role could claim it: board take <id>" not in later:
+            if later.count("IDLE") != 3 or "If that session is gone, take the item when your role could claim it: agents board take <id>" not in later:
                 raise ValueError(f"board position missed idle holds:\n{later}")
 
             # Session scope (r26-q115/q116/q120): a session lists when it holds items here, or when its project is this
@@ -2655,7 +2655,7 @@ def validate_board(root: Path) -> None:
                 raise ValueError(f"board health must route the legacy ruling repair to /board-migrate: {legacy_health}")
             # A fix check --fix applies on its own is named with its count before the migration hint.
             _, retired_health, _ = invoke(["health"], Fake([{**legacy, "metadata": {"triaged_tip": "abc"}}]))
-            if "convention deviations: 2 — board check --fix: 1 fixes; run /board-migrate" not in retired_health:
+            if "convention deviations: 2 — agents board check --fix: 1 fixes; run /board-migrate" not in retired_health:
                 raise ValueError(f"board health must name board check --fix with its count: {retired_health}")
             with tempfile.TemporaryDirectory() as directory:
                 record_file = Path(directory, "legacy.md")
@@ -2685,7 +2685,7 @@ def validate_board(root: Path) -> None:
             protocol_docs = (root / "docs" / "protocol-engine.md").read_text(encoding="utf-8")
             if "/board-migrate` Upgrade/Reconcile" not in board_docs or "convert-unratified-rulings.py" not in board_docs + migrate_docs \
                     or "--status needs_ratification" in protocol_docs \
-                    or "runs `board ruling record … --unratified`" not in protocol_docs \
+                    or "runs `agents board ruling record … --unratified`" not in protocol_docs \
                     or "files a related `Confirm or revise` question" not in protocol_docs:
                 raise ValueError("migration and away-ruling docs must describe related confirmation questions and the lead-run conversion")
             # The user view lists gates titled with the user's words and items assigned to the user.
@@ -2751,7 +2751,7 @@ def validate_board(root: Path) -> None:
             help_output = io.StringIO()
             with patch.object(board.subprocess, "run", help_fake), contextlib.redirect_stdout(help_output):
                 help_code = board.main(["help"])
-            if help_code != 0 or "usage: board" not in help_output.getvalue() or help_fake.calls:
+            if help_code != 0 or "usage: agents board" not in help_output.getvalue() or help_fake.calls:
                 raise ValueError(f"board help must print usage without reading the board:\n{help_output.getvalue()}")
 
             # board field export|apply|discard: edit the exported text in place; the base is each field's own text, not the item's revision.
@@ -2835,7 +2835,7 @@ def validate_board(root: Path) -> None:
                 # an export edited and not applied is never overwritten; an untouched one is refreshed
                 fake = Fake(held)
                 code, output, errors = field(["export", "fx-fld", "--field", "design"], fake)
-                if code != 2 or "board field apply fx-fld --field design" not in errors or "board field discard fx-fld --field design" not in errors \
+                if code != 2 or "agents board field apply fx-fld --field design" not in errors or "agents board field discard fx-fld --field design" not in errors \
                         or Path(folder, "fx-fld", "design.md").read_text(encoding="utf-8") != "Design from memory\n":
                     raise ValueError(f"board field export must refuse to overwrite an edited export, naming apply and discard: {code} {errors!r}")
                 fake = Fake(held)
@@ -2870,7 +2870,7 @@ def validate_board(root: Path) -> None:
                     code, _, errors = field(args, fake)
                     if code != 2 or word not in errors:
                         raise ValueError(f"board field {args}: {code} {errors!r}")
-                    if args[0] == "apply" and (f"board field export fx-fld" not in errors or "or discard with board field discard fx-fld" not in errors
+                    if args[0] == "apply" and (f"agents board field export fx-fld" not in errors or "or discard with agents board field discard fx-fld" not in errors
                                                 or fake.writes() or held[0]["notes"] != before):
                         raise ValueError(f"board field apply refusal must offer re-export and discard without changing the board: {errors!r}")
 
@@ -2880,14 +2880,14 @@ def validate_board(root: Path) -> None:
                 Path(folder, "fx-fld", "notes.md").unlink()
                 before = held[0]["notes"]
                 code, _, errors = field(["apply", "fx-fld", "--field", "notes"], fake)
-                if code != 2 or "board field export fx-fld --field notes" not in errors \
-                        or "board field discard fx-fld --field notes" not in errors or fake.writes() or held[0]["notes"] != before:
+                if code != 2 or "agents board field export fx-fld --field notes" not in errors \
+                        or "agents board field discard fx-fld --field notes" not in errors or fake.writes() or held[0]["notes"] != before:
                     raise ValueError(f"board field apply must offer both recoveries for a missing export without changing the board: {code} {errors!r}")
                 exported(["fx-fld", "--field", "notes"], fake)
                 Path(folder, "fx-fld", "notes.md").write_bytes(b"\xff")
                 code, _, errors = field(["apply", "fx-fld", "--field", "notes"], fake)
-                if code != 2 or "board field export fx-fld --field notes" not in errors \
-                        or "board field discard fx-fld --field notes" not in errors or fake.writes() or held[0]["notes"] != before:
+                if code != 2 or "agents board field export fx-fld --field notes" not in errors \
+                        or "agents board field discard fx-fld --field notes" not in errors or fake.writes() or held[0]["notes"] != before:
                     raise ValueError(f"board field apply must offer both recoveries for an unreadable export without changing the board: {code} {errors!r}")
 
             with tempfile.TemporaryDirectory() as docs:
@@ -3007,13 +3007,13 @@ def validate_board(root: Path) -> None:
                     raise ValueError(f"{session}'s bare claim of the queue head that needs its refresh: {fake.writes()}")
             fake = Fake(variant(**{"CR ready": waiting_cr, **no_plan, "Handed task": {"status": "closed"}}))
             _, claimed, _ = invoke(["claim"], fake, "aaaa1111/build-87654321")
-            if "claimed fx-ovo.c1 (refresh)" not in claimed or "board cr refresh fx-ovo.c1, then board unclaim fx-ovo.c1" not in claimed \
+            if "claimed fx-ovo.c1 (refresh)" not in claimed or "agents board cr refresh fx-ovo.c1, then agents board unclaim fx-ovo.c1" not in claimed \
                     or fake.plain_writes()[:1] != [["update", "fx-ovo.c1", "--assignee", "aaaa1111/build-87654321", "--if-assignee", "", "--json"]]:
                 raise ValueError(f"a review pull did not take the queue head's refresh:\n{claimed}\n{fake.writes()}")
             # The console's Refresh follows the same mark: the stale queue head only (r27-q252).
             shown = json.loads(invoke(["console"], Fake(variant(**{"CR ready": waiting_cr, "CR design": waiting_cr})), "aaaa1111")[1])["crs"]
             if [c["id"] for c in shown if cr_refresh_work(c)] != [shown[0]["id"]] or len(shown) < 2 \
-                    or cr_problem(shown[0], "check")["next"] != {"action": "refresh", "command": f"board cr refresh {shown[0]['id']}"} \
+                    or cr_problem(shown[0], "check")["next"] != {"action": "refresh", "command": f"agents board cr refresh {shown[0]['id']}"} \
                     or cr_problem(shown[1], "check")["next"] != {"action": "wait"}:
                 raise ValueError(f"board console must offer the refresh at the stale queue head (the list's first) only: {[(c['id'], c['problems']) for c in shown]}")
             rows = {c["id"]: cr_refresh_work(c) for c in json.loads(invoke(["console"], Fake(variant(**{"CR ready": current_cr})), "aaaa1111")[1])["crs"]}
@@ -3101,15 +3101,15 @@ def validate_board(root: Path) -> None:
             # The earlier no_code mark counts no more: the check names its fix (agent work keeps the route, a person's item drops the mark).
             for changes, fix in (({}, "makes it no_commit"), ({"assignee": "user"}, "drops it")):
                 shown = invoke(["check"], Fake(variant(**{"Loose item": {"metadata": {"no_code": 1}, **changes}})))[1]
-                if f"{loose}  unknown-metadata" not in shown or f"metadata no_code: retired: board check --fix {fix}" not in shown:
+                if f"{loose}  unknown-metadata" not in shown or f"metadata no_code: retired: agents board check --fix {fix}" not in shown:
                     raise ValueError(f"board check must flag a live no_code mark with its fix {fix}: {shown}")
             # Anything else outside the board's vocabularies is flagged with its fix: a stray metadata key, the earlier `related` link, a bare label.
             target = ids["Ready task"]
             shown = invoke(["check"], Fake(variant(**{"Loose item": {"metadata": {"triaged_tip": "abc", "vendor_key": "v"}, "labels": ["orm-schema", "topic:x"],
                                                                      "dependencies": [{"issue_id": loose, "depends_on_id": target, "type": "related"}]}})))[1]
-            for needle in (f"{loose}  unknown-metadata", "metadata triaged_tip: retired: board check --fix drops it",
-                           f"metadata vendor_key: not the board's: drop it if nothing else uses it (board bd --raw --yes update {loose} --unset-metadata vendor_key)", f"{loose}  unknown-link",
-                           "link related to " + target + ": board check --fix makes it relates-to", f"{loose}  label-form", "--unlabel orm-schema --label topic:orm-schema"):
+            for needle in (f"{loose}  unknown-metadata", "metadata triaged_tip: retired: agents board check --fix drops it",
+                           f"metadata vendor_key: not the board's: drop it if nothing else uses it (agents board bd --raw --yes update {loose} --unset-metadata vendor_key)", f"{loose}  unknown-link",
+                           "link related to " + target + ": agents board check --fix makes it relates-to", f"{loose}  label-form", "--unlabel orm-schema --label topic:orm-schema"):
                 if needle not in shown:
                     raise ValueError(f"board check must name {needle!r}: {shown}")
             # check --fix applies only the fixes that need no judgment (retired metadata, the earlier link spelling), planning's call; a label and a
@@ -3174,7 +3174,7 @@ def validate_board(root: Path) -> None:
                 held = variant(**{"CR ready": {"dependencies": [{"issue_id": cr, "depends_on_id": "fx-ovo", "type": "parent-child"},
                                                                 {"issue_id": cr, "depends_on_id": decision, "type": "blocks"}]}})
                 report = invoke(["check"], Fake(held))[1]
-                if f"  {cr}  decision-blocks-cr" not in report or f"board unblock {cr} --on {decision}" not in report:
+                if f"  {cr}  decision-blocks-cr" not in report or f"agents board unblock {cr} --on {decision}" not in report:
                     raise ValueError(f"board check must flag a decision blocking a CR:\n{report}")
             fake = Fake(fixture)
             if invoke(["block", cr, "--on", question], fake, "lead0001")[0] == 0 or fake.writes():
@@ -3185,7 +3185,7 @@ def validate_board(root: Path) -> None:
                 body.write_text("Backlog work, deferred later.\n", encoding="utf-8")
                 fake = Fake(fixture)
                 code, _, errors = invoke(["create", "Later", "--description-file", str(body), "--status", "deferred"], fake, "lead0001")
-            if code == 0 or fake.writes() or "board defer" not in errors:
+            if code == 0 or fake.writes() or "agents board defer" not in errors:
                 raise ValueError(f"board create must refuse the deferred status and name board defer: {code} {errors} {fake.writes()}")
             # A deferred item is backlog and holds no live item up (board-coordination.md Deferrals): defer refuses, check flags.
             ready, loose = ids["Ready task"], ids["Loose item"]
@@ -3409,7 +3409,7 @@ def validate_board(root: Path) -> None:
                 if any(w[1] == ids["Loose item"] for w in fake.plain_writes()) != taken:
                     raise ValueError(f"a bare claim of no-commit work must keep the worker cap ({holder}): {fake.writes()}")
             shown = invoke(["claim"], Fake(variant(**{"Loose item": {"metadata": {"no_commit": True}, "priority": 0}, "Held task": {"assignee": "solo0001"}})), "solo0001")[1]
-            if f'board claim {ids["Loose item"]} --force "<reason>"' not in shown:
+            if f'agents board claim {ids["Loose item"]} --force "<reason>"' not in shown:
                 raise ValueError(f"a bare claim must name the work it passed at the cap and the forced claim: {shown}")
             # A bare claim takes change requests, which no cap counts.
             fake = Fake(variant(**{"Held task": {"assignee": "agnt0001"}, "Handed task": {"status": "closed"}}))
@@ -3483,7 +3483,7 @@ def validate_board(root: Path) -> None:
                     or "STALE" in row(shown, ids["Open cache question"]):
                 raise ValueError(f"board position did not flag the stale work hold only:\n{shown}")
             # The position legend speaks to the holder of another session's hold: only the holder, the user or a deciding session frees it.
-            if "board unclaim it" in shown or "Only the holder, the user or a deciding session frees it" not in shown:
+            if "agents board unclaim it" in shown or "Only the holder, the user or a deciding session frees it" not in shown:
                 raise ValueError(f"board position's STALE legend must not tell the reader to unclaim another session's hold:\n{shown}")
             commented = variant(**{"Held task": {"comments": [{"author": "aaaa1111", "text": "waits on CI",
                                                               "created_at": "2026-10-22T16:30:00Z"}]}})
@@ -4028,15 +4028,15 @@ def validate_board(root: Path) -> None:
             for expected in (f"{new}  decided  decision  p", "\nStore choice\ndeep-review: a wrong cache hides\nlinks:\n", f"  blocks: {ready}  open  Ready task",
                              f"  relates to: {old}  released  Old store ruling",
                              "  revision pending: fx-rev  open  Revise the store  (partial: Rule 2)",
-                             "description:\n## Question\nWhich cache?", f'more chars: board show {new} --section \'Alternatives Considered\'',
+                             "description:\n## Question\nWhich cache?", f'more chars: agents board show {new} --section \'Alternatives Considered\'',
                              "### Detail\nfine print", "## Decision\nUse A.", "comments: 7, newest 5\n--- a6 ",
-                             f"… 2 older: board show {new} --comments"):
+                             f"… 2 older: agents board show {new} --comments"):
                 if expected not in text:
                     raise ValueError(f"board show lacks {expected!r}:\n{text[:3000]}")
             if code or len(text) > board.READ_BUDGET or "--- a1 " in text or text.index("--- a6") > text.index("--- a2"):
                 raise ValueError(f"board show broke the budget or the comment order ({len(text)} chars)")
             # A plain read cuts each comment at the comment limit with the --comments pointer (r16-q88, q89); --comments prints whole.
-            if "y" * 2001 in text or "y" * 2000 + f"\n… cut at 2000 of 2500 characters: board show {new} --comments" not in text:
+            if "y" * 2001 in text or "y" * 2000 + f"\n… cut at 2000 of 2500 characters: agents board show {new} --comments" not in text:
                 raise ValueError(f"board show must cut a long comment at 2000 with the --comments pointer:\n{text[-1500:]}")
             if "y" * 2500 not in invoke(["show", new, "--comments"], Fake(shown))[1]:
                 raise ValueError("board show --comments must print a long comment whole")
@@ -4055,7 +4055,7 @@ def validate_board(root: Path) -> None:
             if code != 1 or "ambiguous" not in errors or "--section 'Decision log'" not in errors or "--section description" not in errors:
                 raise ValueError(f"board show --section must list ambiguous matches:\n{errors}")
             _, text, _ = invoke(["show", new, "--comments"], Fake(shown))
-            if text.count("--- a") != 7 or "older" in text or f"comments only: board show {new} --full prints the whole item" not in text:
+            if text.count("--- a") != 7 or "older" in text or f"comments only: agents board show {new} --full prints the whole item" not in text:
                 raise ValueError(f"board show --comments must print every comment and say the rest is left out:\n{text}")
             _, text, _ = invoke(["show", new, "--json", "--field", "holds", "--field", "holdsAll"], Fake(shown))
             if json.loads(text) != {new: {"holds": 3, "holdsAll": 4}}:
@@ -4083,7 +4083,7 @@ def validate_board(root: Path) -> None:
             if invoke(["show", "fx-nope"], Fake(shown))[0] != 1 or invoke(["show", new, "--field", "desc"], Fake(shown))[0] != 1:
                 raise ValueError("board show must refuse unknown ids and unknown fields")
             _, text, _ = invoke(["show", new, old], Fake(shown))
-            if len(text) > board.READ_BUDGET or f"\n{old}  released" not in text or f"board show {old} --section description" not in text:
+            if len(text) > board.READ_BUDGET or f"\n{old}  released" not in text or f"agents board show {old} --section description" not in text:
                 raise ValueError(f"several ids must share one budget:\n{text[-1500:]}")
             if "more chars" in invoke(["show", new, old, "--full"], Fake(shown))[1]:
                 raise ValueError("board show --full must not cut")
@@ -4391,15 +4391,15 @@ def validate_board(root: Path) -> None:
             if designed_board.claimable(designed_board.by_id[ruling]) is not None or designed_board.foreign_waits(designed_board.by_id[ruling]):
                 raise ValueError("a released ruling waiting on a design must stay unclaimable")
             code, output, _ = invoke(["claim", ruling], Fake(stuck), "solo0001")
-            if f"  fix: {ruling} waits on {ids['Ready task']}" not in output or f"board unblock {ruling} --on {ids['Ready task']}" not in output:
+            if f"  fix: {ruling} waits on {ids['Ready task']}" not in output or f"agents board unblock {ruling} --on {ids['Ready task']}" not in output:
                 raise ValueError(f"board claim must print the fix for a ruling's work wait:\n{output}")
             code, report, _ = invoke(["check"], Fake(stuck))
             if f"  {ruling}  ruling-blocked  board-core.md#statuses-and-labels  released ruling waits on {ids['Ready task']}" not in report \
-                    or f"board unblock {ruling} --on {ids['Ready task']}" not in report:
+                    or f"agents board unblock {ruling} --on {ids['Ready task']}" not in report:
                 raise ValueError(f"board check lacks ruling-blocked:\n{report}")
             if "ruling-blocked" in invoke(["check"], Fake(designed))[1].replace("ruling-blocked (", ""):
                 raise ValueError("board check flagged a ruling waiting on a design")
-            if "board fixes: 1 (board check)" not in invoke(["health"], Fake(stuck))[1]:
+            if "board fixes: 1 (agents board check)" not in invoke(["health"], Fake(stuck))[1]:
                 raise ValueError("board health lacks the hint for command-fixed deviations")
 
             # Counts: ready = can be taken now, waiting = the rest of the step.
@@ -4761,7 +4761,7 @@ def validate_board(root: Path) -> None:
 
             for kind in ("task", "bug", "spike"):
                 code, _, errors, fake = bd_make("-t", kind, "--deps", f"blocks:{ready}", deck=without_request())
-                if code != 2 or f"board block {ready} --on <new id> --reason" not in errors or any(a[0] == "create" for a, _ in fake.calls):
+                if code != 2 or f"agents board block {ready} --on <new id> --reason" not in errors or any(a[0] == "create" for a, _ in fake.calls):
                     raise ValueError(f"a new {kind} must not hold an existing item up without a reason: {code} {errors} {fake.calls}")
             code, _, errors, fake = bd_make("-t", "gate", "--deps", f"blocks:{ready}", deck=without_request())
             if code or not any(a[:2] == ["create", "--graph"] for a, _ in fake.calls) or not any(w[:2] == ["unclaim", ready] for w in fake.writes()) \
@@ -4962,7 +4962,7 @@ def validate_board(root: Path) -> None:
                 if invoke([*view, "--limit", "2"], Fake(many), "aaaa1111")[0] not in (0, 1):
                     raise ValueError(f"board {view[0]} must take --limit")
             code, text, _ = invoke(["queue", "--limit", "0"], Fake(many))
-            page = re.search(r"… (\d+) more rows: board queue --limit 0 --offset (\d+)\n$", text)
+            page = re.search(r"… (\d+) more rows: agents board queue --limit 0 --offset (\d+)\n$", text)
             if len(text) > board.READ_BUDGET or not page:
                 raise ValueError(f"board queue must cut at READ_BUDGET and name the --offset of the next rows:\n{text[-400:]}")
             shown = [r for r in text.splitlines() if r.startswith("  ")]
@@ -5038,7 +5038,7 @@ def validate_board(root: Path) -> None:
             with contextlib.redirect_stdout(help_output):
                 board.main(["help"])
             for name in ("show", "cr", "ruling", "block", "related", "handover"):
-                if f"usage: board {name}" not in help_output.getvalue() or board.EXAMPLES[name] not in help_output.getvalue():
+                if f"usage: agents board {name}" not in help_output.getvalue() or board.EXAMPLES[name] not in help_output.getvalue():
                     raise ValueError(f"board help lacks {name} or its example")
             with contextlib.redirect_stdout(io.StringIO()) as sub_help:
                 try:
@@ -5065,15 +5065,15 @@ def validate_board(root: Path) -> None:
                 result = refusal([old, "x-1", "two words"])
                 if result != (2, f"board: no verb '{old}'; run: board {group} {old} x-1 'two words'\n", []):
                     raise ValueError(f"board {old} refusal: {result}")
-            for argv, message in ((["ready", "fx-1", "a note", "-m"], "board: no verb 'ready'; run: board bd ready fx-1 'a note' -m\n"),
-                                  (["ready"], "board: no verb 'ready'; run: board bd ready\n")):
+            for argv, message in ((["ready", "fx-1", "a note", "-m"], "board: no verb 'ready'; run: agents board bd ready fx-1 'a note' -m\n"),
+                                  (["ready"], "board: no verb 'ready'; run: agents board bd ready\n")):
                 result = refusal(argv)
                 if result != (2, message, [["ready", "--help"]]):
                     raise ValueError(f"board {argv} refusal: {result}")
             # a bd write word names its board command (BOARD_FOR), or the raw form where no board command does it; a read word runs board bd
-            for argv, message in ((["dep", "add", "a", "b"], "board: no verb 'dep'; use board block / unblock / link / unlink\n"),
-                                  (["priority", "a", "1"], "board: no verb 'priority'; use board update --priority\n"),
-                                  (["sync"], "board: no verb 'sync'; run: board bd --raw --yes sync\n")):
+            for argv, message in ((["dep", "add", "a", "b"], "board: no verb 'dep'; use agents board block / unblock / link / unlink\n"),
+                                  (["priority", "a", "1"], "board: no verb 'priority'; use agents board update --priority\n"),
+                                  (["sync"], "board: no verb 'sync'; run: agents board bd --raw --yes sync\n")):
                 result = refusal(argv)
                 if result[:2] != (2, message):
                     raise ValueError(f"board {argv} refusal: {result}")
@@ -5092,15 +5092,15 @@ def validate_board(root: Path) -> None:
                 except SystemExit as stop:
                     if stop.code:
                         raise ValueError(f"board cr land --help: {stop.code}") from None
-            if "usage: board cr land" not in land_help.getvalue() or not land_help.getvalue().rstrip().endswith(f"example: {board.EXAMPLES['cr land']}"):
+            if "usage: agents board cr land" not in land_help.getvalue() or not land_help.getvalue().rstrip().endswith(f"example: {board.EXAMPLES['cr land']}"):
                 raise ValueError(f"board cr land must parse and end its help with its example:\n{land_help.getvalue()}")
             for group, verbs in (("cr", ("land", "refresh", "reject")), ("ruling", ("record", "revise", "release", "supersede"))):
                 with contextlib.redirect_stdout(io.StringIO()) as listing:
                     code = board.main([group])
                 for verb in verbs:
-                    if code or f"usage: board {group} {verb}" not in listing.getvalue() or board.EXAMPLES[f"{group} {verb}"] not in listing.getvalue():
+                    if code or f"usage: agents board {group} {verb}" not in listing.getvalue() or board.EXAMPLES[f"{group} {verb}"] not in listing.getvalue():
                         raise ValueError(f"board {group} must list {verb} with its example:\n{listing.getvalue()}")
-            if "board cr" not in help_output.getvalue() or "board ruling" not in help_output.getvalue():
+            if "agents board cr" not in help_output.getvalue() or "agents board ruling" not in help_output.getvalue():
                 raise ValueError("board help must list the groups cr and ruling")
 
             fake = Fake(fixture)
@@ -5121,7 +5121,7 @@ def validate_board(root: Path) -> None:
             # never plainly; --resume is for that hand-back only. board claim shows the latest next action.
             fake = Fake(fixture)
             code, _, errors = invoke(["unclaim", ids["Held task"]], fake, "aaaa1111")
-            if code != 1 or fake.writes() or f"board block {ids['Held task']} --on" not in errors:
+            if code != 1 or fake.writes() or f"agents board block {ids['Held task']} --on" not in errors:
                 raise ValueError(f"board unclaim of the session's own work in progress must ask for block or --resume: {fake.writes()}\n{errors}")
             fake = Fake(fixture)
             invoke(["unclaim", ids["Held task"], "--resume", "rerun the probe"], fake, "aaaa1111")
@@ -5430,7 +5430,7 @@ def validate_board(root: Path) -> None:
             legacy = [row if row["id"] != legacy_item["id"] else legacy_item for row in others]
             _, output, _ = invoke(["check", "--json"], Fake(legacy), "lead0001")
             findings = [entry for entry in json.loads(output)["deviations"] if entry["class"] == "outside-wait"]
-            if len(findings) != 1 or findings[0]["id"] != "fx-dest-task" or "board unblock fx-dest-task --on fx-source-task" not in findings[0]["detail"]:
+            if len(findings) != 1 or findings[0]["id"] != "fx-dest-task" or "agents board unblock fx-dest-task --on fx-source-task" not in findings[0]["detail"]:
                 raise ValueError(f"board check must locate the old link and its migration commands: {findings}")
             if readiness(*legacy, complete=True)["fx-dest"] != (None, (["fx-source"], [])):
                 raise ValueError("the old outside wait must still hold the change request before migration")
@@ -5541,7 +5541,7 @@ def validate_board(root: Path) -> None:
                 before_v = at_main()
                 fake = Fake(issues_e)
                 code, output, errors = invoke(["cr", "land", "landve", "--tip", tip_e[:8], "--base", at_main()], fake, "lead0001")
-                if code != 1 or "your review holds edits" not in errors or "board cr edits landve --tip" not in errors \
+                if code != 1 or "your review holds edits" not in errors or "agents board cr edits landve --tip" not in errors \
                         or at_main() != before_v or not wt_e.is_dir() \
                         or not any(w[:2] == ["update", "landve"] and f"user_seen_tip={tip_e}" in w and f"user_seen_base_tip={base_e}" in w for w in fake.writes()) \
                         or any(w[:2] == ["close", "landve"] or (w[:2] == ["update", "landve"] and "--status" in w) for w in fake.writes()):
@@ -5864,7 +5864,7 @@ def validate_board(root: Path) -> None:
                     raise ValueError(f"board cr land without --checkpoint must refuse a pending design checkpoint: {errors}")
                 fake = Fake(issues)
                 code, _, errors = invoke(["cr", "land", "cpuser", "--checkpoint"], fake, "lead0001")
-                if code != 1 or "--design" not in errors or "board claim cpuser" not in errors or fake.writes():
+                if code != 1 or "--design" not in errors or "agents board claim cpuser" not in errors or fake.writes():
                     raise ValueError(f"board cr land --checkpoint without --design must refuse and name board claim: {code} {errors} {fake.writes()}")
                 fake = Fake(issues)
                 code, output, errors = invoke(["cr", "land", "cpuser", "--checkpoint", "--design", design_hash(issues)], fake, "lead0001")
@@ -6069,7 +6069,7 @@ def validate_board(root: Path) -> None:
                     raise ValueError(f"a refresh must say when the review no longer matches: {code} {errors}\n{output}")
                 fake = Fake(issues)
                 code, _, errors = invoke(["handover", "rv", "the new helper replaces its copy"], fake, "bbbb2222")
-                if code != 1 or "use board cr request-review" not in errors or fake.writes():
+                if code != 1 or "use agents board cr request-review" not in errors or fake.writes():
                     raise ValueError(f"handover from Accept must refuse and direct the user to request-review: {code} {errors} {fake.writes()}")
                 # r11-q38: the refresh's gate option stores what ran: --no-gate no check (never a pass), --gate a targeted check of that tip.
                 for flags, stored, said in ((["--no-gate", "docs only"], ["check_kind=none", "check_reason=docs only"], "no check: docs only"),
@@ -6381,7 +6381,7 @@ def validate_board(root: Path) -> None:
                 refused = io.StringIO()  # board close refuses a change request: it closes by landing or rejecting
                 with contextlib.redirect_stderr(refused), patch.object(board.subprocess, "run", Fake([cr_issue("closing", "needs_acceptance")])):
                     code = board.main(["close", "closing", "--reason", "closing a change request by hand is refused"])
-                if code != 2 or "board cr land" not in refused.getvalue():
+                if code != 2 or "agents board cr land" not in refused.getvalue():
                     raise ValueError(f"risk: board close of a change request must be refused: {code} {refused.getvalue()}")
                 # board update, link, unlink, unblock, reopen, defer, undefer, gate: the writes bd's read-only passthrough refuses, with the board's value rules.
                 def verb(argv, issues, actor=""):
@@ -6449,10 +6449,10 @@ def validate_board(root: Path) -> None:
                     if code or writes != [["dep", "remove", "t-k", "t-a"]]:
                         raise ValueError(f"board unblock must remove a {kind} wait: {code} {output!r} {errors!r} {writes}")
                     code, _, errors, writes = verb(["unlink", "t-k", "t-a"], kinds)
-                    if code != 2 or "board unblock t-k --on t-a" not in errors or writes:
+                    if code != 2 or "agents board unblock t-k --on t-a" not in errors or writes:
                         raise ValueError(f"board unlink must refuse a {kind} wait, naming unblock: {code} {errors!r} {writes}")
                     code, _, errors, writes = verb(["link", "t-k", "t-a", "--type", kind], kinds)
-                    if code != 2 or "board block" not in errors or writes:
+                    if code != 2 or "agents board block" not in errors or writes:
                         raise ValueError(f"board link must refuse {kind}, naming block: {code} {errors!r} {writes}")
                 code, _, errors, writes = verb(["unblock", "t-b", "--on", "t-a"], world)
                 if code != 2 or "not waiting on t-a" not in errors or writes:
@@ -6479,7 +6479,7 @@ def validate_board(root: Path) -> None:
                            decision("O1", "closed", dependencies=[edge("O1", "N", "supersedes")]), decision("O2", "closed", dependencies=[edge("O2", "N", "supersedes")]),
                            decision("P", "released", dependencies=[edge("P", "N", "supersedes")]), plain("R", dependencies=[edge("R", "N", "relates-to")])]
                 for argv, word in ((["link", "T1", "N", "--type", "supersedes"], "board ruling supersede"), (["link", "T1", "N", "--type", "tracks"], "board ruling revise"),
-                                   (["unlink", "O1", "N"], "board ruling supersede|revise own it"), (["reopen", "O1"], "record a revision to put it back in force (board ruling revise O1)")):
+                                   (["unlink", "O1", "N"], "agents board ruling supersede|revise own it"), (["reopen", "O1"], "record a revision to put it back in force (agents board ruling revise O1)")):
                     code, _, errors, writes = verb(argv, rulings, "lead0001")
                     if code != 2 or word not in errors or writes:
                         raise ValueError(f"board {argv} must be refused ({word}): {code} {errors!r} {writes}")
@@ -6492,7 +6492,7 @@ def validate_board(root: Path) -> None:
 
                 gate_fake = Gating(world)
                 code, output, _ = invoke(["gate", "create", "--blocks", "t-a", "--reason", "user 2026-11-16: wait"], gate_fake, "")
-                if code or "board gate resolve t-gate" not in output or "bd gate resolve" in output.replace("board gate resolve", ""):
+                if code or "agents board gate resolve t-gate" not in output or "bd gate resolve" in output.replace("agents board gate resolve", ""):
                     raise ValueError(f"board gate create must print the board form of the resolve: {code} {output!r}")
                 low_i, _, _ = make_cr("rl", "rl.txt", "x\n")
                 up_i, _, _ = make_cr("ru", "ru.txt", "y\n", base="rl")
@@ -6880,10 +6880,10 @@ def validate_board(root: Path) -> None:
                 if code != 1 or "open for your review" not in errors or git("rev-parse", "cr/ed1") != tip:
                     raise ValueError(f"handover must refuse a CR open for review: {code} {output} {errors}")
                 code, output, errors = invoke(["cr", "land", "ed1", "--tip", tip[:8], "--base", at_main()], Fake(issues), "lead0001")
-                if code != 1 or "your review holds edits" not in errors or f"board cr edits ed1 --tip {tip[:12]}" not in errors or at_main() == tip:
+                if code != 1 or "your review holds edits" not in errors or f"agents board cr edits ed1 --tip {tip[:12]}" not in errors or at_main() == tip:
                     raise ValueError(f"land must refuse an open review with edits and name the cr edits line: {code} {output} {errors}")
                 code, output, errors = invoke(["return", "ed1", "findings"], Fake(issues), "lead0001")
-                if code != 1 or "your review holds edits" not in errors or f"board cr edits ed1 --tip {tip[:12]}" not in errors or git("rev-parse", "cr/ed1") != tip:
+                if code != 1 or "your review holds edits" not in errors or f"agents board cr edits ed1 --tip {tip[:12]}" not in errors or git("rev-parse", "cr/ed1") != tip:
                     raise ValueError(f"return must not drop the user's edits: {code} {output} {errors}")
                 # An amend or reset of reviewed work is refused (Accept and Return), naming the opened tip: it never passes as the user's edit.
                 amend_world, amend_tip, amend_wt = make_cr("ed1a", "a.txt", "a\n")
@@ -7132,7 +7132,7 @@ def validate_board(root: Path) -> None:
                 fake.settings["custom.board.checks"] = "grep -q changed e17.txt && { echo 'e17.txt X1'; exit 1; }; exit 0"
                 code, output, errors = invoke(["cr", "edits", "ed17", "--tip", tip17, "--commit", "-m", "Fix", "--checks"], fake, "lead0001")
                 head17 = git("rev-parse", "HEAD", cwd=wt17)
-                if code != 1 or "board review open ed17" not in output or attached(wt17) != "refs/heads/cr/ed17" or git("rev-parse", f"{head17}^^") != at_main() \
+                if code != 1 or "agents board review open ed17" not in output or attached(wt17) != "refs/heads/cr/ed17" or git("rev-parse", f"{head17}^^") != at_main() \
                         or not any("--unset-metadata" in w and "opened_tip" in w for w in fake.writes()):
                     raise ValueError(f"a failed --checks that rebased must end the review with the branch rebased and say to open it again: {code} {output} {errors}")
                 # Recording edits on a moved base checks the rebased tip and keeps prior coverage until Accept.
@@ -7299,7 +7299,7 @@ def validate_board(root: Path) -> None:
                 fake_dl = Fake(issues_dl)
                 edited_tip_dl = git("rev-parse", "cr/dl1")
                 code, output, errors = invoke(["cr", "land", "dl1", "--tip", edited_tip_dl, "--base", main_dl], fake_dl, "lead0001")
-                if code != 1 or "your review holds edits" not in errors or "board cr edits dl1" not in errors or "board cr refresh" in errors \
+                if code != 1 or "your review holds edits" not in errors or "agents board cr edits dl1" not in errors or "agents board cr refresh" in errors \
                         or git("rev-parse", "cr/dl1") != edited_tip_dl or at_main() != main_dl or "opened_tip" in flat(fake_dl):
                     raise ValueError(f"land on a review with edits and a moved base must name the edits line, which rebases: {code} {output} {errors}")
                 accept_walk("dl1", issues_dl, (["cr", "edits", "dl1", "--tip", tip_dl, "--commit", "-m", "Fix dl"],))
@@ -7764,7 +7764,7 @@ def validate_board(root: Path) -> None:
                 if code or board.rebase_target(wt_fx) is not None or git("rev-parse", f"{resolved}^") != main_c \
                         or board.review_current({"metadata": {"review_edits": kept["metadata"]["review_edits"]}}, {"tip": resolved, "baseTip": main_c, "main": Path(repo_root)}):
                     raise ValueError(f"after the merge the commit is an agent change until the user confirms it: {code} {output} {errors}")
-                if f"board cr edits fx-new --merged {resolved[:12]}" not in output:
+                if f"agents board cr edits fx-new --merged {resolved[:12]}" not in output:
                     raise ValueError(f"a refresh that continues past the user's edit commit must print the exact --merged step: {output}")
                 # --merged: refusals first (not alone, a commit off the branch, a commit that is no merge of a recorded edit), then the record.
                 code, _, errors = invoke(["cr", "edits", "fx-new", "--merged", resolved, "--tip", resolved], Fake([holder_c]), "lead0001")
@@ -7949,7 +7949,7 @@ def validate_board(root: Path) -> None:
         if own_start and (", active 10 min ago" not in row(fresh, "fx-running") or ", active 1 min ago" not in row(fresh, "fx-active") or "active" in row(fresh, "fx-idle")
                           or ", active 5 min ago" not in row(fresh, "fx-ended")):
             raise ValueError(f"board position activity ages:\n{fresh}")
-        if own_start and ("Take fx-gone, fx-stale when your role could claim it: board take <id>" not in fresh
+        if own_start and ("Take fx-gone, fx-stale when your role could claim it: agents board take <id>" not in fresh
                           or not row(fresh, "live0001").endswith("  process alive")
                           or not row(fresh, "gone0001").endswith("  GONE")
                           or "  workers 1/3  " not in row(fresh, "work0001")
@@ -7990,7 +7990,7 @@ def validate_board(root: Path) -> None:
                     or "WORKER STOPPED" in row(own, "fx-running") or "WORKER STOPPED" in row(own, "fx-quiet") \
                     or "WORKER STOPPED" in row(own, "fx-late") or "WORKER STOPPED" in row(own, "fx-upd") \
                     or "WORKER STOPPED = the holding worker finished its last turn (fx-ended): continue the worker, " \
-                       "hand the item over, or free it (board unclaim <id>)" not in own:
+                       "hand the item over, or free it (agents board unclaim <id>)" not in own:
                 raise ValueError(f"board mine did not mark the session's stopped worker:\n{own}")
         _, other, _ = invoke(["mine"], Fake(crowd), "live0001")
         if "fx-other" not in other or "WORKER STOPPED" in other:
@@ -8303,7 +8303,7 @@ else:
         if not writes_of(calls, "create") or not blocked:
             raise ValueError(f"board create --holds <ids> must block the held items on the new question: {result.returncode} {result.stderr!r} {calls}")
         # close: a reason of at least 20 characters, never a change request
-        for args, needle in ((("fx-a", "--reason", "too short"), "wants at least 20"), (("fx-cr", "--reason", "closing a change request by hand"), "board cr land")):
+        for args, needle in ((("fx-a", "--reason", "too short"), "wants at least 20"), (("fx-cr", "--reason", "closing a change request by hand"), "agents board cr land")):
             result, calls = run_fake("close", *args)
             if result.returncode != 2 or needle not in result.stderr or writes_of(calls, "close"):
                 raise ValueError(f"board close {args} must be refused ({needle}): {result.returncode} {result.stderr!r} {calls}")
@@ -8312,11 +8312,11 @@ else:
                 or "fx-a: closed" not in result.stdout:
             raise ValueError(f"board close must close the items with the reason: {result.returncode} {result.stdout!r} {result.stderr!r} {calls}")
         # help <verb>: that verb's help with its example; a group verb by its two words; an unknown verb is an error
-        for words, usage in ((("show",), "usage: board show"), (("cr", "land"), "usage: board cr land"), (("field", "apply"), "usage: board field apply"),
-                             (("create",), "usage: board create")):
+        for words, usage in ((("show",), "usage: agents board show"), (("cr", "land"), "usage: agents board cr land"), (("field", "apply"), "usage: agents board field apply"),
+                             (("create",), "usage: agents board create")):
             result, _ = run_fake("help", *words)
             example = board.EXAMPLES[" ".join(words)]
-            if result.returncode != 0 or usage not in result.stdout or not result.stdout.rstrip().endswith(f"example: {example}") or "usage: board [-h]" in result.stdout:
+            if result.returncode != 0 or usage not in result.stdout or not result.stdout.rstrip().endswith(f"example: {example}") or "usage: agents board [-h]" in result.stdout:
                 raise ValueError(f"board help {words} must print that verb's help and example: {result.returncode} {result.stdout!r} {result.stderr!r}")
         for words in (("nonsense",), ("cr", "nonsense"), ("show", "extra")):
             result, _ = run_fake("help", *words)
@@ -8354,7 +8354,7 @@ else:
         for args in (("show", "x"), ("view", "x", "y"), ("show", "x", "--json"), ("comments", "x"), ("comments", "x", "--json"), ("-C", repo, "show", "x"),
                      ("--actor", "9999aaaa", "comments", "x"), ("show", "x", "--refs")):
             result, seen = run_board("bd", *args)
-            if result.returncode != 2 or seen or "board show <ids>" not in result.stderr:
+            if result.returncode != 2 or seen or "agents board show <ids>" not in result.stderr:
                 raise ValueError(f"board bd {args} must be refused, naming board show: {result.returncode} {seen!r} {result.stderr!r}")
         for args in (("show", "--help"), ("comments", "add", "--help"), ("update", "x", "--help")):
             result, seen = run_board("bd", *args)
@@ -8369,15 +8369,15 @@ else:
                            (("assign", "x", "ben"), "board claim"), (("todo", "done", "x"), "board close")):
             result, seen = run_board("bd", *args, FAKE_BD_READONLY="1")
             lines = result.stderr.splitlines()
-            if result.returncode != 1 or "not allowed in read-only mode" not in lines[0] or verb not in lines[-1] or "board bd --raw --yes" not in lines[-1] \
+            if result.returncode != 1 or "not allowed in read-only mode" not in lines[0] or verb not in lines[-1] or "agents board bd --raw --yes" not in lines[-1] \
                     or "--readonly" not in seen:
                 raise ValueError(f"board bd {args}: bd's refusal, then the board command {verb} and the raw rule: {result.returncode} {result.stderr!r} {seen!r}")
         result, seen = run_board("bd", "remember", "--key", "k", FAKE_BD_READONLY="1")
-        if "No board command does this" not in result.stderr or "board bd --raw --yes" not in result.stderr:
+        if "No board command does this" not in result.stderr or "agents board bd --raw --yes" not in result.stderr:
             raise ValueError(f"a write no board command does says so: {result.stderr!r}")
         # --raw alone prints the rule and runs nothing; --raw --yes runs bd without --readonly; --yes alone is a usage error.
         result, seen = run_board("bd", "--raw", "update", "x", "--notes", "n")
-        if result.returncode != 2 or seen or "board bd --raw --yes" not in result.stderr or "Raw bd writes only when no board command" not in result.stderr:
+        if result.returncode != 2 or seen or "agents board bd --raw --yes" not in result.stderr or "Raw bd writes only when no board command" not in result.stderr:
             raise ValueError(f"board bd --raw alone must print the rule and run nothing: {result.returncode} {seen!r} {result.stderr!r}")
         result, seen = run_board("bd", "--raw", "--yes", "update", "x", "--notes", "n")
         if result.returncode != 7 or seen != "9999aaaa update x --notes n\n" or result.stderr:
@@ -8404,7 +8404,7 @@ else:
             raise ValueError(f"bin/board writes metadata keys missing from BOARD_METADATA: {sorted(written - board.BOARD_METADATA)}")
         # bd edit blocks on an editor: refused in one line naming the way on; a user's own --readonly is just bd's flag.
         result, seen = run_board("bd", "edit", "x")
-        if result.returncode != 2 or seen or "board field export <id>" not in result.stderr or len(result.stderr.strip().splitlines()) != 1:
+        if result.returncode != 2 or seen or "agents board field export <id>" not in result.stderr or len(result.stderr.strip().splitlines()) != 1:
             raise ValueError(f"board bd edit must be refused in one line naming the alternative: {result.returncode} {seen!r} {result.stderr!r}")
         upstream = Path(repo) / "upstream"
         (upstream / ".beads").mkdir(parents=True)
@@ -10009,7 +10009,7 @@ def validate_protocol(root: Path, part: str) -> None:
                 raise ValueError("question holds must come from item show JSON, not the position dashboard")
             refused("step", stdin={**ROUND_INFO, "questions": [question("Released question?", board="fx-question", holds=[]),
                                                                     question("Deferred question?", board="fx-deferred")]},
-                    needle="board block` / `board unblock", cwd=repo, **hold_case)
+                    needle="agents board block` / `agents board unblock", cwd=repo, **hold_case)
             proto("step", stdin={**ROUND_INFO, "questions": [question("Released question?", board="fx-question"),
                                                                 question("Deferred question?", board="fx-deferred")]}, cwd=repo, **hold_case)
             converge(cwd=repo, **hold_case)
@@ -10036,7 +10036,7 @@ def validate_protocol(root: Path, part: str) -> None:
             if [c["args"][-2:] for c in writes if c["args"][:2] == ["create", "--graph"]] != [["--holds", "fx-design"]]:
                 raise ValueError(f"the decision record must hold its design work item: {[c['args'] for c in writes]}")
             accept = (root / "skills" / "role" / "protocols" / "accept.md").read_text(encoding="utf-8")
-            if 'board return <cr> "<records>"' not in accept or "board block <item> --on <record>" in accept \
+            if 'agents board return <cr> "<records>"' not in accept or "agents board block <item> --on <record>" in accept \
                     or "create or reopen" in accept or "Decision records hold work items" in accept:
                 raise ValueError("Accept must rely on round holds and return a design checkpoint directly")
             # A stored pre-sequence pass migrates at the console's read entry points and keeps one stamp until reported.
@@ -10929,7 +10929,7 @@ def validate_protocol(root: Path, part: str) -> None:
             calls()
             report = {"records": {qid: {"rationale": "Replaces fx-u9.", "ruleOwner": "o"}}}
             out = proto("step", stdin=report, cwd=repo).stdout
-            if "Not recorded" not in out or "board ruling record fx-n7" not in out or shown(cwd=repo)["step"] != "record" or item_status("fx-u9") != "decided":
+            if "Not recorded" not in out or "agents board ruling record fx-n7" not in out or shown(cwd=repo)["step"] != "record" or item_status("fx-u9") != "decided":
                 raise ValueError(f"a failed close must leave the question unrecorded:\n{out}")
             patch_config(fail=[])
             out = proto("step", stdin=report, cwd=repo).stdout
@@ -11214,7 +11214,7 @@ def validate_protocol(root: Path, part: str) -> None:
             held, _, mailbox = out.partition("Your inbox")
             if "Finds held for you to check" not in held or "fx-f1" not in held.split("Finds held for you to check")[1] or "for ben" not in held \
                     or "fx-i1" not in mailbox or "send, keep or close" not in out or "take, pass on or close with a reason" not in out \
-                    or "Keep or take: board route <you> <id>; send or pass on: board send <person> <id>" not in out \
+                    or "Keep or take: agents board route <you> <id>; send or pass on: agents board send <person> <id>" not in out \
                     or "waiting on the user" in out.split("Finds held for you to check")[0] and "fx-f1" in out.split("Finds held for you to check")[0]:
                 raise ValueError(f"protocol next must list the finds held for the person and the inbox, apart from the open items:\n{out}")
             config.write_text(before_inbox, encoding="utf-8")
@@ -11502,7 +11502,7 @@ def validate_protocol(root: Path, part: str) -> None:
                                   ({"written": {"path": "docs/x.md", "anchor": "not-a-heading"}}, "has no heading or anchor #not-a-heading"),
                                   ({"written": {"path": "docs/x.md", "anchor": "x"}, "none": {"reason": "r"}}, "one of"),
                                   ({"written": {"path": "docs/flat.md", "anchor": "a"}}, "docs/flat.md has no headings: give the path without an anchor"),
-                                  ({"written": {"path": "docs/y.md"}}, "does not name docs/y.md; fix the record text and run `board ruling record fx-r1 <file>`"),
+                                  ({"written": {"path": "docs/y.md"}}, "does not name docs/y.md; fix the record text and run `agents board ruling record fx-r1 <file>`"),
                                   ({"pending": {"item": "fx-done"}}, "pending item fx-done is closed, not open")):
                 refused("step", stdin={"owners": {"fx-r1": [entry]}}, needle=needle, cwd=repo)
             # Owner paths git ignores are refused; untracked (docs/x.md below) and installed paths are not.
@@ -11601,7 +11601,7 @@ def validate_protocol(root: Path, part: str) -> None:
             refused("step", stdin={"records": {"fx-s1": "unchanged", "fx-s2": {**own, "file": None}}}, needle="`file` must be a non-empty string", cwd=repo)
             calls()
             refused("step", stdin={"records": {"fx-s1": "unchanged", "fx-s2": {**own, "file": "missing-s2.md"}}},
-                    needle="`board ruling record fx-s2 missing-s2.md` exited", cwd=repo)
+                    needle="`agents board ruling record fx-s2 missing-s2.md` exited", cwd=repo)
             if shown(cwd=repo)["step"] != "recheck":
                 raise ValueError("a failed board ruling record must leave the re-check where it was")
             calls()
@@ -14018,7 +14018,7 @@ def validate_protocol(root: Path, part: str) -> None:
             again = proto("next", **listing_session).stdout
             if "Open items (" in again or "- fx-a: A?" in again or "open questions · open" in again \
                     or "Open items: 1 decided, 2 open questions, 1 waiting on the user, 1 ready milestones, 1 finished epics" not in again \
-                    or f"`{engine_module.base.LIST_COMMAND}`" not in again or "board position" not in again or "Seeds for the next round" not in again:
+                    or f"`{engine_module.base.LIST_COMMAND}`" not in again or "agents board position" not in again or "Seeds for the next round" not in again:
                 raise ValueError(f"protocol next lists nothing the second time between compactions: counts and the command:\n{again}")
             calls()
             bare = proto("start", "round", prepass=False, **listing_session).stdout
@@ -14260,7 +14260,7 @@ def validate_protocol(root: Path, part: str) -> None:
             ask = proto("step", stdin={}, **away).stdout
             if view["step"] != "ask" or view["batch"] is not None or view["pending"] is not None \
                     or "no dialog opens, nothing prints and the person is not asked" not in ask or "AskUserQuestion" in ask \
-                    or "run `session activate solo` first" not in ask \
+                    or "run `agents session activate solo` first" not in ask \
                     or f"- {q1}: fx-a? Recommendation: Keep (lean)" not in ask or "Text to show first" in ask:
                 raise ValueError(f"an away Ask opens no batch and asks for act or park per question:\n{ask}\n{view}")
             refused("step", stdin={"settle": {}}, needle=f"settle: no entry for {q1}", **away)
@@ -14286,7 +14286,7 @@ def validate_protocol(root: Path, part: str) -> None:
             if shown(**away)["step"] != "record":
                 raise ValueError(f"Record follows the acted answer: {shown(**away)}")
             asking = proto("show", **away).stdout
-            if "answer (away): Keep" not in asking or "`board ruling record --unratified` releases it and files a related `Confirm or revise` question" not in asking:
+            if "answer (away): Keep" not in asking or "`agents board ruling record --unratified` releases it and files a related `Confirm or revise` question" not in asking:
                 raise ValueError(f"Record asks the reversal of an away answer:\n{asking}")
             refused("step", stdin={"records": {q1: {"rationale": "Took fx-a.", "ruleOwner": "docs/x.md"}}}, needle="an away answer needs a `reversal`", **away)
             refused("step", stdin={"records": {q1: {"rationale": "Took fx-a.", "ruleOwner": "docs/x.md", "reversal": ["undo it"]}}}, needle="`reversal` must be a string", **away)
@@ -14366,7 +14366,7 @@ def validate_protocol(root: Path, part: str) -> None:
             closes = [args[1] for args in close_calls]
             if closes != ["fx-a", "fx-b"] \
                     or any(args[args.index("--reason") + 1] != "Settled by released away ruling fx-rule" for args in close_calls) \
-                    or "`board reopen fx-a fx-b`" not in reversal \
+                    or "`agents board reopen fx-a fx-b`" not in reversal \
                     or any(args[0] == "unclaim" and ("fx-a" in args or "fx-b" in args) for args in acted):
                 raise ValueError(f"an away ruling closes what it settles, and its reversal reopens them:\n{acted}\n{reversal}")
 
@@ -14392,7 +14392,7 @@ def validate_protocol(root: Path, part: str) -> None:
             for args, needle in ((("start", "release"), "only the person approves a release"),
                                  (("start", "round", "--no-board"), "--no-board is refused on autopilot")):
                 result = proto(*args, stdin={"points": ["x"]} if args[1] == "round" else None, ok=False, **away)
-                if needle not in result.stderr or "run `" + "session activate solo` first" not in result.stderr:
+                if needle not in result.stderr or "run `" + "agents session activate solo` first" not in result.stderr:
                     raise ValueError(f"{args} under autopilot is refused, naming the switch to solo: {result.stderr}")
             refused("pass", "--origin", "composer", stdin={"command": "release-round", "args": "", "pending": None},
                     needle="only the person approves a release", **away)

@@ -125,7 +125,7 @@ def record_file(q: dict, fields: dict, topic: str | None = None) -> str:
             + ('## Earlier rulings\n' + '\n'.join(f"- {x['ruling'].strip()}: {x['verdict']}. {x['why'].strip()}" for x in q['priorRulings']) + '\n\n' if q.get('priorRulings') else '')
             + f"## Rule owner\n{fields['ruleOwner'].strip()}\n"
             + (f"\n## Reversal\n{fields['reversal'].strip()}\n" if q['origin'] == AWAY else '')
-            + (f"Reopen the questions it closed: `board reopen {' '.join(board_keys(q.get('settles')))}`.\n"
+            + (f"Reopen the questions it closed: `agents board reopen {' '.join(board_keys(q.get('settles')))}`.\n"
                if q['origin'] == AWAY and board_keys(q.get('settles')) else ''))
 
 
@@ -382,7 +382,7 @@ def record_accept(ctx: Context, report: dict) -> str:
             if result.returncode != 0:
                 left = [old for old, status in statuses(ctx, replaces).items() if status != 'closed'] if away else replaces
                 if left or not replaces:  # the record, a link or a close did not happen: the rerun picks up what is left
-                    fail(f"`board ruling record {item}` exited {result.returncode}: {(result.stderr or result.stdout).strip()}")
+                    fail(f"`agents board ruling record {item}` exited {result.returncode}: {(result.stderr or result.stdout).strip()}")
                 ctx.messages.append(words.record_exited(item, result.returncode, (result.stderr or result.stdout).strip()))  # all closed: only the items waiting on the old ones are not blocked
             if q['origin'] == AWAY:
                 close_settled_away(ctx, q, item)

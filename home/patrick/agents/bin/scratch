@@ -45,22 +45,22 @@ NAME = re.compile(r'[A-Za-z0-9][A-Za-z0-9._-]*')  # one path component, never hi
 
 HELP = """scratch: scratch folders outside the checkout (one tree per repository; idle ones go to the trash on their own)
 
-  scratch dir [--for <id> | --shared <name>]   print (and create) a folder; default: this session's folder
-      scratch dir                      /Users/me/.local/state/agents/scratch/-repo/sessions/<actor>
-      scratch dir --for tstdl-1ab      the board item's folder (needs the repo's board and an existing id)
-      scratch dir --shared fixtures    a named folder for work spanning sessions or items (data, never handovers)
-  scratch trash <path>...              move paths inside this repo's scratch folder to the trash (restorable 7 days)
-      scratch trash "$(scratch dir)/dump"
-  scratch restore [<name | path>]      list the trash, or move one entry back: by trash name, or by the path it was trashed
-                                       from (the newest wins when it was trashed more than once)
-      scratch restore dump
-      scratch restore ~/.local/state/agents/scratch/-repo/sessions/<actor>/dump
-  scratch list [--all] [--json]        entries (owner, size, last change, idle days when the next scan trashes it); --all: every repo folder
-                                       an item's entry idle 14 days is kept while the item is open (the board is read) or unreachable
-  scratch status [--line]              totals; --line: what the trash holds (empty when nothing)
-  scratch sweep                        run the expiry scan now over every repository (14-day rule; open items' entries stay) and print what it trashed
-  scratch migrate                      one-time move of every .scratch folder's entries (any depth) into shared/<name>/, then the expiry scan
-  scratch help                         this text
+  agents scratch dir [--for <id> | --shared <name>]   print (and create) a folder; default: this session's folder
+      agents scratch dir                      /Users/me/.local/state/agents/scratch/-repo/sessions/<actor>
+      agents scratch dir --for tstdl-1ab      the board item's folder (needs the repo's board and an existing id)
+      agents scratch dir --shared fixtures    a named folder for work spanning sessions or items (data, never handovers)
+  agents scratch trash <path>...              move paths inside this repo's scratch folder to the trash (restorable 7 days)
+      agents scratch trash "$(agents scratch dir)/dump"
+  agents scratch restore [<name | path>]      list the trash, or move one entry back: by trash name, or by the path it was trashed
+                                              from (the newest wins when it was trashed more than once)
+      agents scratch restore dump
+      agents scratch restore ~/.local/state/agents/scratch/-repo/sessions/<actor>/dump
+  agents scratch list [--all] [--json]        entries (owner, size, last change, idle days when the next scan trashes it); --all: every repo folder
+                                              an item's entry idle 14 days is kept while the item is open (the board is read) or unreachable
+  agents scratch status [--line]              totals; --line: what the trash holds (empty when nothing)
+  agents scratch sweep                        run the expiry scan now over every repository (14-day rule; open items' entries stay) and print what it trashed
+  agents scratch migrate                      one-time move of every .scratch folder's entries (any depth) into shared/<name>/, then the expiry scan
+  agents scratch help                         this text
 """
 
 
@@ -193,7 +193,7 @@ def has_board() -> bool:
 
 def board_item(item: str) -> str:
     """The board's full id for the item, or a refusal."""
-    refusal = (f'cannot give a folder for item {item!r}: use scratch dir --shared <name> for work without a board item')
+    refusal = (f'cannot give a folder for item {item!r}: use agents scratch dir --shared <name> for work without a board item')
     if not has_board():
         raise ScratchError(f'this repo has no board (.beads); {refusal}')
     result = board('show', item, '--json', '--field', 'status')
@@ -702,7 +702,7 @@ def cmd_status(args) -> int:
             oldest = min(trashed_at(e) for e in entries)
             days = max(math.ceil(TRASH_DAYS - (now() - oldest) / 86400), 1)
             print(f'scratch: {len(entries)} trashed ({human(sum(entry_size(e) for e in entries))}), '
-                  f"the first is deleted within {days} day{'' if days == 1 else 's'} (scratch restore)")
+                  f"the first is deleted within {days} day{'' if days == 1 else 's'} (agents scratch restore)")
         return 0
     if folder is None:
         print(f'scratch: no scratch folder yet for {repo_path()}')
@@ -851,7 +851,7 @@ def cmd_migrate(args) -> int:
     for t in trashed or []:
         print(f"trashed {t['entry']}\t{human(t['size'])}\tidle {t['idle']} days\t{t['path']}")
     if trashed:
-        print(f'to bring one back: scratch restore <name or original path> (within {TRASH_DAYS} days)')
+        print(f'to bring one back: agents scratch restore <name or original path> (within {TRASH_DAYS} days)')
     print(f'scratch: {moved} moved, {skipped} skipped', file=sys.stderr)
     return 0
 
@@ -869,13 +869,13 @@ def cmd_sweep(args) -> int:
         for t in trashed or []:
             swept += 1
             print(f"{folder.name}\t{t['path']}\t{human(t['size'])}\tidle {t['idle']} days")
-    print(f'to bring one back, inside its repository: scratch restore <original path> (within {TRASH_DAYS} days)' if swept
+    print(f'to bring one back, inside its repository: agents scratch restore <original path> (within {TRASH_DAYS} days)' if swept
           else 'nothing to sweep')
     return 0
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog='scratch', add_help=False)
+    parser = argparse.ArgumentParser(prog='agents scratch', add_help=False)
     sub = parser.add_subparsers(dest='verb')
     d = sub.add_parser('dir', add_help=False)
     d.add_argument('--for', dest='for_item')

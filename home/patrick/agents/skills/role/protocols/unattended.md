@@ -28,7 +28,7 @@ setup, run `/role autopilot` again.
     revise, the classes above decide who: `act` on a trivial or entailed
     revision, naming the evidence in the record; `park` every other.
   - **One-way door or scope-changing:** `park` as an unassigned
-    question for the user with a recommendation (`board unclaim <id>` when you
+    question for the user with a recommendation (`agents board unclaim <id>` when you
     hold it outside a round). Parked questions form the user's next round;
     their dependents wait. Continue independent tracks.
 - Judge a CR at a `user` checkpoint in the user's place under
@@ -71,7 +71,7 @@ findings or stops.
      checkpoint file.
    - Ask last whether to start now, first naming a round or release still open
      (`protocol status --line`) for the user to answer or abandon. On the user's
-     go run `$HOME/.agents/bin/session activate autopilot`. When
+     go run `agents session activate autopilot`. When
      the user returns and leaves again, confirm only the budget and the go.
    Output: ratified budget, authority and baseline, one line each;
    `registered autopilot`.
@@ -103,11 +103,11 @@ findings or stops.
    are back, or when the user asks for a round: report verified
    outcomes with actual gate numbers; ratification tasks and parked decisions
    with recommendations
-   (`board health --root <epic> --items ratification,questions`);
+   (`agents board health --root <epic> --items ratification,questions`);
    failure and park diagnoses; and the CRs and epics waiting for the user's
    Accept.
    Keep incompleteness explicit.
-   Then run `$HOME/.agents/bin/session activate solo`. Stay on
+   Then run `agents session activate solo`. Stay on
    autopilot through a passing message that does not end the run.
    Output: the return report; `registered solo`.
 

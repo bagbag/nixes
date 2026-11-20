@@ -227,11 +227,11 @@ def items_counted(named_rows: list[dict] | None, counts: str, bare: bool) -> str
     return lines(
         *(['Named:', *map(item_row, named_rows)] if named_rows is not None else []),
         f'Open items: {counts or "none"} (listed earlier). List them again with `{LIST_COMMAND}`, '
-        'and `board position` for the ready milestones and finished epics.' + (' List them before you select.' if bare else ''))
+        'and `agents board position` for the ready milestones and finished epics.' + (' List them before you select.' if bare else ''))
 
 
 GROUP_BY = 'every ready question sharing a premise, root cause, consumer concept, flow, or the module and sources the grounding reads'
-GROUP_STEER = f'Group by default: the round takes {GROUP_BY} (`board related` finds them); a round of a single question names why no other shares one.'
+GROUP_STEER = f'Group by default: the round takes {GROUP_BY} (`agents board related` finds them); a round of a single question names why no other shares one.'
 
 
 def collect_intro(round_id: str) -> str:
@@ -291,7 +291,7 @@ def stage_instructions(round_id: str, selected: list[str], has_board: bool, prop
         f'one answer settles the same way (a rule question); an open decision outside the selection named there or in `board` joins the round. {MERGE_TEST}',
         '- `holds` lists the board ids of the work items this draft question holds up (board-core.md "Questions and rulings"; absent or empty: none); '
         'Record passes it once when creating the board question. For an existing board question, change its links with '
-        '`board block` / `board unblock <item> --on <question>`.',
+        '`agents board block` / `agents board unblock <item> --on <question>`.',
         f'- `waitsOn` names the questions a decision rests on; it holds a dependent back until its premise is answered; {WAITS_FOR}',
         '- Cut under question-format.md: the first part keeps the item in `board`, the others are drafts (`for`: the item or point id); '
         'a detail `waitsOn` the direction it rests on.',
@@ -354,9 +354,9 @@ def related_instructions(round_id: str) -> str:
         'one clause is no replacement;',
         '- unrelated.',
         'Mark `supersedes` on any decided record the question replaces, a hit or '
-        'not (name the id under outcomes). Inspect with `board show <id>`; comment on or hand off overlaps '
+        'not (name the id under outcomes). Inspect with `agents board show <id>`; comment on or hand off overlaps '
         'other sessions hold. Also search the exact names of the modules, APIs and sibling cases the options build on '
-        f'(`board related <terms>`). A hit that widens the round: list the open items with `{LIST_COMMAND}`.')
+        f'(`agents board related <terms>`). A hit that widens the round: list the open items with `{LIST_COMMAND}`.')
 
 
 def related_row(q: dict, hit: dict) -> str:
@@ -412,7 +412,7 @@ def away_ask_intro(round_id: str) -> str:
     return (f"Round {round_id} · Ask (away: the role is autopilot, so no dialog opens, nothing prints and the person is not asked). "
             'Settle each question by the Authority classes of unattended.md: `act` takes the recommendation as the answer (Record then asks '
             'its rationale, rule owner and reversal), `park` leaves it open and unassigned on the board for the person; a question waiting '
-            'on a parked one parks with it. If the person is back, run `session activate solo` first.')
+            'on a parked one parks with it. If the person is back, run `agents session activate solo` first.')
 
 
 def settle_example(first: list[str]) -> dict:
@@ -502,7 +502,7 @@ def record_row(q: dict, note: str | None, prior: str | None = None) -> str:
             + (f"\n  replaces {', '.join(q['replaces'])}: name each in the rationale or decision with what the new "
                'record keeps or changes' if q.get('replaces') else '')
             + ('\n  away answer: the record also needs `reversal`, the steps that undo it (a `## Reversal` section; '
-               '`board ruling record --unratified` releases it and files a related `Confirm or revise` question)' if q['origin'] == AWAY else ''))
+               '`agents board ruling record --unratified` releases it and files a related `Confirm or revise` question)' if q['origin'] == AWAY else ''))
 
 
 def waits_on_deferred(premise: str, reason: str, kind: str) -> str:
@@ -563,15 +563,15 @@ def not_recorded(errors: list[str]) -> str:
 
 
 def claims_not_released(error, release: list[str]) -> str:
-    return f"Claims not released ({error}); run `board unclaim {' '.join(release)}`."
+    return f"Claims not released ({error}); run `agents board unclaim {' '.join(release)}`."
 
 
 def counts_unavailable(error) -> str:
-    return f'Board counts unavailable ({error}); run `board health`.'
+    return f'Board counts unavailable ({error}); run `agents board health`.'
 
 
 def record_exited(item: str, returncode: int, output: str) -> str:
-    return f"`board ruling record {item}` recorded it and superseded the records it replaces but exited {returncode}: {output}"
+    return f"`agents board ruling record {item}` recorded it and superseded the records it replaces but exited {returncode}: {output}"
 
 
 def abandoned_records(kept: list[str]) -> str:
@@ -961,7 +961,7 @@ def blocker_waits(blockers: list[str], found: dict) -> str:
 
 TOUCHES_HINT = ('touches: "own" (only your own rationale, evidence, a clause the chosen option did not state, or a correction '
                 "that follows a later decision of the user's in the set, which you name: the record stays, revised and shown as revised at "
-                'approval; give `file`, the path of the corrected record text, which the engine writes with `board ruling record`, and '
+                'approval; give `file`, the path of the corrected record text, which the engine writes with `agents board ruling record`, and '
                 'a scoped step-back and ground pass check it before the approval) or "decision" (what the user decided: '
                 'the record leaves the set for a round); unsure is decision.')
 
@@ -1028,7 +1028,7 @@ def board_exited(argv: list[str], returncode: int, output: str) -> str:
 
 
 def supersede_failed(old: str, new: str, returncode: int, output: str) -> str:
-    return f"`board ruling supersede {old} --with {new}` exited {returncode}: " + output
+    return f"`agents board ruling supersede {old} --with {new}` exited {returncode}: " + output
 
 
 def statuses_unavailable(error) -> str:
@@ -1048,7 +1048,7 @@ def owners_intro(round_id: str, files: bool = False) -> str:
         f"Release {round_id} · Owner writes (decide.md Release 5): write each rule into its one owner, replacing the text it supersedes. "
         "A rule a topic's design-target doc or a project's convention owner (coding style, module authoring) states is written now, not pending; "
         'only READMEs, other skills and source may be pending.',
-        "Name each path, with its anchor, in the record's `## Rule owner` (rewrite the record with `board ruling record <id> <file>`)."
+        "Name each path, with its anchor, in the record's `## Rule owner` (rewrite the record with `agents board ruling record <id> <file>`)."
         if not files else
         "Name each path, with its anchor, in the record file's `## Rule owner`. Relative paths start at the directory the release "
         'started in. Owner writes stay uncommitted for the user: no commit by the engine or the session. A `pending` item needs a board.',
@@ -1146,7 +1146,7 @@ def round_abandoned(headline_line: str, messages: list[str], round_id: str, note
 
 
 def board_check_intro(round_id: str) -> str:
-    return (f"Release {round_id} · Board check (decide.md Release 2): run `board related <terms>` across the set, "
+    return (f"Release {round_id} · Board check (decide.md Release 2): run `agents board related <terms>` across the set, "
             'closed items and canonical docs included (`--docs <paths>`), and act on every hit. Report per record one '
             'entry per hit class ("none", or rows {item, action}):')
 
@@ -1165,7 +1165,7 @@ def not_closed(rid: str, items: list[str]) -> str:
             'record it changes at Re-check (relate) or replace it (supersedes).')
 
 
-BOARD_CHECK_NAMES = ('Name the supersedes and the answered questions: the engine runs `board ruling supersede` and closes those questions '
+BOARD_CHECK_NAMES = ('Name the supersedes and the answered questions: the engine runs `agents board ruling supersede` and closes those questions '
                      'after the release ("Answered by released <record>"); every other action is yours. A ruling the check changes '
                      f'goes under `changed` with its reach and, when contained, what it {TOUCHES_HINT}')
 
@@ -1266,7 +1266,7 @@ def inbox_text(held: list[dict], inbox: list[dict]) -> str:
         'Inbox step (decide.md): show each item to the user, who picks; never decide these alone.',
         *([f'Finds held for you to check, filed for another person: send, keep or close ({len(held)}):', *map(row, held)] if held else []),
         *([f'Your inbox, sent to you: take, pass on or close with a reason ({len(inbox)}):', *map(row, inbox)] if inbox else []),
-        'Keep or take: board route <you> <id>; send or pass on: board send <person> <id>.',
+        'Keep or take: agents board route <you> <id>; send or pass on: agents board send <person> <id>.',
     )
 
 

@@ -22,7 +22,7 @@ HIT_CLASSES = {
     'revises': 'earlier ruling it revises or contradicts, closed included (supersede it)',
     'answers': 'open question it duplicates or answers (merge, or the engine closes it)',
     'premise': 'open question its own premise rests on (the record leaves the set)',
-    'assumes': 'open item assuming the old state (board block <item> --on <record> --reason "<revised clause>")',
+    'assumes': 'open item assuming the old state (agents board block <item> --on <record> --reason "<revised clause>")',
     'deferred': 'deferred item assuming the old state, or one it unblocks (relate it; comment the revised clause)',
     'held': 'item another session holds on the same concepts (comment or hand off)',
     'doc': "doc stating the old rule (a design-target doc: owner write now; a README or skill: owner write, or a task when it changes with the work)",
@@ -205,7 +205,7 @@ def apply_changes(ctx: Context, raw, where: str, every: bool, scope: list[str] |
         if value['touches'] == 'own' and ctx.board is not None:
             result = ctx.board.run('ruling', 'record', rid, value['file'].strip())
             if result.returncode != 0:
-                fail(f"{where}.{rid}: `board ruling record {rid} {value['file']}` exited {result.returncode}: "
+                fail(f"{where}.{rid}: `agents board ruling record {rid} {value['file']}` exited {result.returncode}: "
                      + (result.stderr.strip() or result.stdout.strip()) + '; fix the file and report again')
     for rid, value in contained:
         if value['touches'] == 'own':

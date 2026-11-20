@@ -145,7 +145,7 @@ Workflow owners:
 
 Component references (behavior, verbs and rulings of each tool):
 
-- [Board and sessions](docs/board.md): `bin/board` (`board setup` owns a board's
+- [Board and sessions](docs/board.md): `bin/board` (`agents board setup` owns a board's
   settings), shared boards, change-request review, `bin/session`.
 - [Scratch](docs/scratch.md): `bin/scratch`, working files outside the repositories.
 - [Protocol engine](docs/protocol-engine.md): `bin/protocol`, rounds, releases,

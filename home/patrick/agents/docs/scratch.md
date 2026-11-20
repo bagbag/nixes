@@ -2,7 +2,7 @@
 
 Reference for `bin/scratch`; the README links here.
 
-`bin/scratch` (installed as `$HOME/.agents/bin/scratch`) owns working files outside the
+`bin/scratch` (installed privately in `~/.agents/bin`, run as `agents scratch`) owns working files outside the
 repositories: `${XDG_STATE_HOME:-~/.local/state}/agents/scratch/<repo>/` with `<repo>` the
 resolved repository path (`--git-common-dir`, so worktrees share it) with `/` as `-`, a `.repo`
 file naming that path and a `-2` suffix on a clash (r15-q71). Owners sit in the path:

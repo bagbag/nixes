@@ -431,7 +431,7 @@ def restart(ctx: Context, ids: list[str], quote: str, *, internal_think_more: bo
         batch_back(ctx)
     for q in targets:
         if q.get('recorded'):
-            fail(f"{q['id']} is recorded; a later change is a new question (board ruling revise)")
+            fail(f"{q['id']} is recorded; a later change is a new question (agents board ruling revise)")
         if q['answer'] is not None:
             ctx.state['answers'].pop(q['id'], None)
         q.pop('typed', None)

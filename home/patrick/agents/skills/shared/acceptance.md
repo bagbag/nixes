@@ -29,7 +29,7 @@ open), sized to stakes; a role protocol may tighten it.
   tenant, money moved or messages sent to outside parties, a one-way
   migration of production data.
 - Use agent review by default. As the author of a look-before CR, use
-  `board handover <cr> "<evidence>" --no-agent-review "<reason>"` only when
+  `agents board handover <cr> "<evidence>" --no-agent-review "<reason>"` only when
   the user can settle the change by looking and it changes no behavior, rule
   or contract.
 

@@ -15,7 +15,7 @@ from .record import board_item
 # model reports `act` (the recommendation is the answer; Record releases it with its reversal) or `park`
 # (an open, unassigned decision on the board) per question. unattended.md Authority owns which question gets which.
 
-SWITCH_TO_SOLO = 'run `session activate solo` first'
+SWITCH_TO_SOLO = 'run `agents session activate solo` first'
 
 
 def away_guard(ctx: Context) -> None:

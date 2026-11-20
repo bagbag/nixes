@@ -57,7 +57,7 @@ def view_rows(found: dict, view: str) -> list[dict]:
     missing key is a rename the engine must name and not read as no items (r22-q158)."""
     items = found.get('items')
     if not isinstance(items, dict) or view not in items:
-        raise ProtocolError(f"`board health --json` has no items view `{view}`: the board and the engine disagree on its name")
+        raise ProtocolError(f"`agents board health --json` has no items view `{view}`: the board and the engine disagree on its name")
     return items[view] or []
 
 
@@ -66,7 +66,7 @@ def read_counts(found: dict) -> dict[str, dict]:
     counts = found.get('counts')
     missing = [key for key in COUNT_KEYS if not isinstance(counts, dict) or key not in counts]
     if missing:
-        raise ProtocolError(f"`board health --json` has no count `{missing[0]}`: the board and the engine disagree on its name")
+        raise ProtocolError(f"`agents board health --json` has no count `{missing[0]}`: the board and the engine disagree on its name")
     return {key: counts[key] for key in COUNT_KEYS}
 
 
@@ -138,7 +138,7 @@ def question_holds(ctx: Context, ids: list[str]) -> dict[str, str]:
     states = statuses(ctx, targets)
     missing = [target for target in targets if states.get(target) is None]
     if missing:
-        raise ProtocolError(f"`board show --field status` has no status for held item `{missing[0]}`")
+        raise ProtocolError(f"`agents board show --field status` has no status for held item `{missing[0]}`")
     result = {}
     for qid, targets in edges.items():
         opened = [target for target in targets if states[target] != 'closed']
@@ -146,6 +146,6 @@ def question_holds(ctx: Context, ids: list[str]) -> dict[str, str]:
             row = rows.get(qid) or {}
             counts = (row.get('holds'), row.get('holdsAll'))
             if not counts or not all(isinstance(count, int) for count in counts):
-                raise ProtocolError(f"`board show --json` has no reach for question `{qid}`")
+                raise ProtocolError(f"`agents board show --json` has no reach for question `{qid}`")
             result[qid] = f"{', '.join(opened)} (holds {counts[0]}/{counts[1]})"
     return result

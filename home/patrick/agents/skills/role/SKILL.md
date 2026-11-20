@@ -33,7 +33,7 @@ Protocol files:
 - review: `$HOME/.agents/skills/role/protocols/review.md`
 - unattended: `$HOME/.agents/skills/role/protocols/unattended.md`
 
-Pulls: **plan**, **design**, **implement**, **review**; `board claim` takes
+Pulls: **plan**, **design**, **implement**, **review**; `agents board claim` takes
 each pull's item kinds, and board-core [Routing](../shared/board-core.md#routing)
 (`$HOME/.agents/skills/shared/board-core.md`) keeps the rules a claim does not
 enforce.
@@ -69,7 +69,7 @@ Give each step's output as one line.
 3. **Register.**
 
    ```sh
-   $HOME/.agents/bin/session activate <role> --pulls <pull>,<pull> [--workers <n>]
+   agents session activate <role> --pulls <pull>,<pull> [--workers <n>]
    ```
 
    Pass the chosen pulls, and `--workers`
@@ -83,20 +83,20 @@ Give each step's output as one line.
    Also read those of the session's pulls: plan → plan, design and implement →
    work, review → review.
    Output: `loaded <protocols>`.
-5. **Holds.** Where the repository has `.beads/`, run `board mine`.
+5. **Holds.** Where the repository has `.beads/`, run `agents board mine`.
    Output: held ids, or `none held`.
 6. **Continue** the current task under the loaded protocols; with none,
    report and wait. Run the claim loop only when the user asks for it (in
    words, or a loop command such as `/goal`). With
-   pulls, loop: dispatch the CRs `board queue` lists for your
+   pulls, loop: dispatch the CRs `agents board queue` lists for your
    pulls, in its order, to workers in parallel under the plan protocol's
    [Dispatch](protocols/plan.md#dispatch), each running
    its protocol from the table above through its Exit, and refill as it says.
-   Without workers in the runtime, `board claim` one CR, run its protocol through its Exit,
+   Without workers in the runtime, `agents board claim` one CR, run its protocol through its Exit,
    skipping its Claim step, and claim again. Take readiness from the queue:
-   claim what it lists rather than judging it yourself. When `board claim` finds nothing and no
+   claim what it lists rather than judging it yourself. When `agents board claim` finds nothing and no
    worker runs, report the session's results and stop; when the user asked you to keep watching, run
-   `board wait` in the background instead (exit 0 names a candidate: claim again; a claim that fails twice on the same
+   `agents board wait` in the background instead (exit 0 names a candidate: claim again; a claim that fails twice on the same
    id is a blocker to report, not to wait out).
    Output per CR or item: `<id> → <protocol>: <exit result>`.
 

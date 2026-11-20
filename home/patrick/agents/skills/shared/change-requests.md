@@ -23,14 +23,14 @@ queue order and refresh work: [Board coordination](board-coordination.md).
   CR), `base_sha` (fork point, set at creation and after every rebase),
   `setup_sha`, `check` and `review` = {tip, baseTip, result, at}.
 - **Settings** (project bd config): `target`, `setup`, `checks`, `look`,
-  `view`, set only through `board setup --target … --setup … --checks … --look
+  `view`, set only through `agents board setup --target … --setup … --checks … --look
   … --view …`. `setup` establishes every prerequisite used by `checks`, and fails
   when one is missing; `checks` only checks. Setup and checks are commands run
   with `/bin/sh` in the checkout; board setup refuses one whose first word the
   shell cannot resolve. A new
   CR takes the defaults; its own `look` or `view` only overrides them (clear
-  the ones a changing `board setup` lists); a bad or missing
-  value fails closed where used; `board check` lists them. The `checks` exit
+  the ones a changing `agents board setup` lists); a bad or missing
+  value fails closed where used; `agents board check` lists them. The `checks` exit
   status is a contract: 0 = ran, the `file code` lines on stdout are the
   failures; 1 = ran with failures, at least one such line; any other
   status, or 1 with no line, is a broken check and fails closed.
@@ -44,8 +44,8 @@ queue order and refresh work: [Board coordination](board-coordination.md).
   resolves packages missing from its install from `<main>/node_modules`:
   when a CR drops a dependency, check that nothing still imports it.
 - **Git authorization:** AGENTS.md Authorized workflows. Resolve a conflict
-  that `board handover` or `board cr refresh` stops on in the worktree (edit,
-  `git add`), then rerun that command, which continues the rebase. `board cr
+  that `agents board handover` or `agents board cr refresh` stops on in the worktree (edit,
+  `git add`), then rerun that command, which continues the rebase. `agents board cr
   edits --merged` follows the user's confirmation of a conflict merge on their
   edit commit; resolve such a conflict with the user.
   Removing an unlanded CR's worktree or branch needs the user's confirmation.
@@ -56,7 +56,7 @@ queue order and refresh work: [Board coordination](board-coordination.md).
   claim and blocks hand-over until the holder reruns setup by claiming again.
 - **Items:** a worker claims an item of the held CR, commits its pass on
   `cr/<id>` (one commit per pass; no git notes), then
-  `board close <item> --reason "<sha>: <what>"`. Items carry no review of
+  `agents board close <item> --reason "<sha>: <what>"`. Items carry no review of
   their own.
 - **Check:** valid for the (branch tip, base tip) pair it ran on, recorded only
   from a clean tree. Queue state: `current`, `stale` (base moved), `conflict`
@@ -93,16 +93,16 @@ queue order and refresh work: [Board coordination](board-coordination.md).
 - **Rebase:** always `rebase --onto <current base tip> <base_sha>`. A child
   follows a rebased parent through its own holder or refresher, never the
   parent's. A rebase the board started and stopped on a conflict stays the
-  CR's: `board claim` accepts the CR mid-rebase, and `handover` or `cr refresh`
+  CR's: `agents board claim` accepts the CR mid-rebase, and `handover` or `cr refresh`
   continues it once its files are resolved and added (only one whose target is
   the recorded `rebase_onto`). A conflict on a commit of the user's edits
-  (`board cr edits`, a ratification follow-up) is merged by a deciding session
+  (`agents board cr edits`, a ratification follow-up) is merged by a deciding session
   with the user; on the user's confirmation the board
   records the merged commit as the user's edit in place of the pre-rebase one,
   otherwise it counts as an agent change. A rebase,
   merge, cherry-pick, revert or bisect the board
   did not start takes the CR out of the claim queue and shows on its pane row
-  and in `board check`; the board never continues or aborts it, its owner ends
+  and in `agents board check`; the board never continues or aborts it, its owner ends
   it. Uncommitted changes alone keep a CR claimable.
 - **Shared append-lists:** design away files that parallel CRs would each add
   entries to (changelogs, registries, catalogs, route or export lists): each
@@ -120,20 +120,20 @@ queue order and refresh work: [Board coordination](board-coordination.md).
   `ratification=landing|design` identifies what the user reviews. The board
   creates one only when no child of that kind is currently `needs_ratification`;
   a closed child does not block a later review. The user's verdict goes through
-  `board ratify` (accept.md Ratification).
-- **User review:** from `board review open` until the user's Accept or Return
+  `agents board ratify` (accept.md Ratification).
+- **User review:** from `agents board review open` until the user's Accept or Return
   (ratification: verdict), refresh and agent steps leave the item alone; Open
   does not refresh it. Opening, reading and recording edits: accept.md User
   review.
 
 | Command | Effect |
 |---|---|
-| `board handover <cr> "<evidence>" [<gate>] [--no-agent-review "<reason>"]` | Rebases onto the base tip, runs setup and the gate, stores the check. Author work enters `in_review` by default. A user checkpoint or the [eligible author flag](acceptance.md#review-policy) sends it to `needs_acceptance`; the flag shows its reason. A reviewer pass records coverage and goes to `needs_acceptance` (`look` `before`), lands (`look` `after`, or a CR with nothing to merge), or opens planning (agent checkpoint; in a `look` `after` project also a design ratification). |
-| `board return <cr> "<findings>" [--ruling <id>]` | `open`, unassigned; a design checkpoint also moves its in-review design items back to `open`; also the user's "changes". `--ruling`: the planner holding that released ruling returns an unclaimed review ([Released rulings](../role/protocols/plan.md#released-rulings)). |
-| `board cr request-review <cr> ["<reason>"]` | From Accept, send the change since its last review to agent review. |
-| `board cr refresh <cr> [<gate>]` | Rebases and reruns setup and the gate. An uncovered agent-reviewed result goes to agent review. |
-| `board cr land <cr> --tip <sha> --base <sha>` | Pass the tip and base shown at Accept. Land rebases and checks first when the check is not a pass for that pair. Land only a covered series with a passing check. If the base has moved since the look, land refuses and shows the incoming commits. A `look` `after` CR on a `needs_acceptance` parent waits marked `after <base>`; landing the parent lands each such child whose check and coverage still match, else leaves it as refresh work. Advances `custom.board.target`. Removes worktree and branch; stacked children get `base` = target; `look` `after` creates the ratification, unless nothing was merged. |
-| `board cr reject <cr> "<reason>"` | Closes unlanded; items reopen, children return to planning. Branch `cr/<id>` and worktree stay until the user confirms deletion (the only copy). |
-| `board unclaim <cr>`, `board take <cr>` | Release, take over. Your own work in progress needs `--resume "<next action>"`, which the next `board claim` prints. `take` clears the taker's seen tip. |
+| `agents board handover <cr> "<evidence>" [<gate>] [--no-agent-review "<reason>"]` | Rebases onto the base tip, runs setup and the gate, stores the check. Author work enters `in_review` by default. A user checkpoint or the [eligible author flag](acceptance.md#review-policy) sends it to `needs_acceptance`; the flag shows its reason. A reviewer pass records coverage and goes to `needs_acceptance` (`look` `before`), lands (`look` `after`, or a CR with nothing to merge), or opens planning (agent checkpoint; in a `look` `after` project also a design ratification). |
+| `agents board return <cr> "<findings>" [--ruling <id>]` | `open`, unassigned; a design checkpoint also moves its in-review design items back to `open`; also the user's "changes". `--ruling`: the planner holding that released ruling returns an unclaimed review ([Released rulings](../role/protocols/plan.md#released-rulings)). |
+| `agents board cr request-review <cr> ["<reason>"]` | From Accept, send the change since its last review to agent review. |
+| `agents board cr refresh <cr> [<gate>]` | Rebases and reruns setup and the gate. An uncovered agent-reviewed result goes to agent review. |
+| `agents board cr land <cr> --tip <sha> --base <sha>` | Pass the tip and base shown at Accept. Land rebases and checks first when the check is not a pass for that pair. Land only a covered series with a passing check. If the base has moved since the look, land refuses and shows the incoming commits. A `look` `after` CR on a `needs_acceptance` parent waits marked `after <base>`; landing the parent lands each such child whose check and coverage still match, else leaves it as refresh work. Advances `custom.board.target`. Removes worktree and branch; stacked children get `base` = target; `look` `after` creates the ratification, unless nothing was merged. |
+| `agents board cr reject <cr> "<reason>"` | Closes unlanded; items reopen, children return to planning. Branch `cr/<id>` and worktree stay until the user confirms deletion (the only copy). |
+| `agents board unclaim <cr>`, `agents board take <cr>` | Release, take over. Your own work in progress needs `--resume "<next action>"`, which the next `agents board claim` prints. `take` clears the taker's seen tip. |
 
-Close a CR only through `board cr land` or `board cr reject`.
+Close a CR only through `agents board cr land` or `agents board cr reject`.

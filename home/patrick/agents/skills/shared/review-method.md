@@ -5,7 +5,7 @@
 2. **Check claims.** Spot-check factual claims against their authoritative
    sources. Run the smallest permitted read-only probe when needed, in the
    scratch folder the brief names, else one named after your task in your
-   session's (`$HOME/.agents/bin/scratch dir`).
+   session's (`agents scratch dir`).
    Output: verified facts and source locations, the probes run; label
    assumptions.
 3. **Assess.** Check correctness, counterexamples, requirement coverage,

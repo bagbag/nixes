@@ -1,6 +1,6 @@
 ## Beads setup
 
-With the user's confirmation, run `$HOME/.agents/bin/board setup` in the
+With the user's confirmation, run `agents board setup` in the
 repository; it is safe to rerun. Without a board it runs `bd init --server
 --stealth` (`--embedded` for a board one session writes at a time, never
 shared; `--prefix` overrides the origin repository's name), then the settings;
@@ -9,41 +9,41 @@ settings set. `--server` converts an existing embedded board in place, keeping
 the old folder as `.beads.before-server-<time>/`; pause the sessions writing to
 it first.
 
-- Initialize a board only through `board setup` or `board join`, never plain
+- Initialize a board only through `agents board setup` or `agents board join`, never plain
   `bd init` (it stages agent files and replaces `core.hooksPath`).
 - Remove the exclude lines setup reports as matching tracked project files
   (1.3 adds `*.db`), unless new files like them should stay hidden.
 - On a shared board, the settings in the database travel by sync; each person
-  reruns `board setup` for the local ones in `.beads/config.yaml`.
+  reruns `agents board setup` for the local ones in `.beads/config.yaml`.
 
 ## Shared boards
 
-Run these on the user's request. Only `board share` and `board join` make a
+Run these on the user's request. Only `agents board share` and `agents board join` make a
 board shared (they write `.beads/board-shared.json`); `board` then syncs it and
 applies queues ([board-core Routing](board-core.md#routing)). A Dolt remote alone
 shares nothing; `board` runs bd with `BD_NO_REMOTE_ADOPT=1`, so bd never adopts
 git origin itself.
 
-- `board share [url]` says what goes out and changes nothing;
-  `board share --yes` shares (default remote: the project's repository) and
+- `agents board share [url]` says what goes out and changes nothing;
+  `agents board share --yes` shares (default remote: the project's repository) and
   labels the unlabelled top-level items `queue:<sharer>`.
-- `board join [url]` clones the board into a new `.beads/`; an existing board
+- `agents board join [url]` clones the board into a new `.beads/`; an existing board
   stays as it is unless it moved ([History](#history)).
 - Both are safe to repeat and need the person: `git config [--global]
   agents.person <name>`, labels `queue:<name>`.
 - `board` commits and syncs by itself about 60 seconds after a write, in a
   detached process, and pulls before
-  commands; `board bd --raw --yes sync` syncs at once.
+  commands; `agents board bd --raw --yes sync` syncs at once.
 
 ### History
 
 `board` warns at about 1 GB of local store. A flatten moves the board to a
 fresh private repository with at least one commit, agreed with everyone:
 
-1. Everyone: `board bd --raw --yes sync`, then stop writing.
-2. One person, from a terminal or a lead or solo session: `board move <url>`.
-3. Others: once `board` refuses writes, `board join <url>`; it keeps the old
-   `.beads/` and names the `board bd --raw --yes import` for items written after the move.
+1. Everyone: `agents board bd --raw --yes sync`, then stop writing.
+2. One person, from a terminal or a lead or solo session: `agents board move <url>`.
+3. Others: once `board` refuses writes, `agents board join <url>`; it keeps the old
+   `.beads/` and names the `agents board bd --raw --yes import` for items written after the move.
    New joiners name the new url too.
 4. Once everyone rejoined (a stale clone's sync hangs without the old data),
    delete the old board data:
@@ -55,5 +55,5 @@ Never run `bd dolt remote reset-data` (it deletes the remote's data and hung in
 ### Versions
 
 Upgrade bd and Dolt together, agreed between everyone; one person migrates and
-pushes. At a person's terminal `board bd` keeps bd's prompts and doesn't
+pushes. At a person's terminal `agents board bd` keeps bd's prompts and doesn't
 retry: rerun a write failing with `foreign key conflicts` by hand.

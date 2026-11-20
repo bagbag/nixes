@@ -21,8 +21,8 @@ Parts: **Tracker** (Target through Exit), [Upgrade](#upgrade) and
 
 1. **Scan.** Read-only, a few commands:
    - trackers: `TODO.md`, `REVIEW.md`, Markdown boards, `docs/` backlogs;
-   - board: `.beads/`, `board check --limit 0` classes with counts, `board
-     holders`, stored settings (`board bd config list`);
+   - board: `.beads/`, `agents board check --limit 0` classes with counts, `board
+     holders`, stored settings (`agents board bd config list`);
    - scratch: in-repo `.scratch` folders (count, size);
    - dirty main-tree paths.
    Output: one line per part: open work found, done, or not applicable.
@@ -82,8 +82,8 @@ Parts: **Tracker** (Target through Exit), [Upgrade](#upgrade) and
 ## Tracker
 
 1. **Discover.**
-   - Where a board exists, run `board check --limit 0` for its mechanical
-     deviations and flags, and save one `board bd export` as
+   - Where a board exists, run `agents board check --limit 0` for its mechanical
+     deviations and flags, and save one `agents board bd export` as
      `board-baseline.jsonl` in the plan's directory (step 2); derive every
      board mapping from it.
    - Inventory what it can't see: backlog and review files, Markdown boards,
@@ -96,7 +96,7 @@ Parts: **Tracker** (Target through Exit), [Upgrade](#upgrade) and
      stated in comments or deferral reasons (convert those in force under
      [Dependencies](../shared/board-core.md#dependencies) or
      [Deferrals and environment facts](../shared/board-coordination.md#deferrals-and-environment-facts),
-     drop lifted ones); `board bd memories` past their removal condition (to
+     drop lifted ones); `agents board bd memories` past their removal condition (to
      the user).
    - Classify every doc under `docs/` as current owner, proposal (to the
      board) or history (to `history/`).
@@ -108,7 +108,7 @@ Parts: **Tracker** (Target through Exit), [Upgrade](#upgrade) and
    their reason. Map every remaining entry and deviation to its target owner or
    to history, with source path or id; backlog work not yet due becomes a
    deferred item, never a new CR. Write it to
-   `board-migrate-plan.md` in `$HOME/.agents/bin/scratch dir --shared board-migrate`, with the rule
+   `board-migrate-plan.md` in `agents scratch dir --shared board-migrate`, with the rule
    findings and the order of changes. Write every command with its full text
    into one change-set file beside it. Have an independent `verify`
    sample retained, archived and merged entries and each class of generated
@@ -119,8 +119,8 @@ Parts: **Tracker** (Target through Exit), [Upgrade](#upgrade) and
    Output: the user's confirmation, quoted.
 4. **Apply.** Before the first write, ask the user to pause sessions that
    write the board or the sources; re-check every source hash and diff a
-   fresh `board bd export` against `board-baseline.jsonl` (no board: hashes
-   only), and stop on drift; report when they may resume. Run `$HOME/.agents/bin/board setup`, which creates or
+   fresh `agents board bd export` against `board-baseline.jsonl` (no board: hashes
+   only), and stop on drift; report when they may resume. Run `agents board setup`, which creates or
    updates the board, and act on the exclude lines it reports
    (`$HOME/.agents/skills/shared/beads-setup.md`).
    Apply only from the change set, directly, or for large boards through
@@ -130,7 +130,7 @@ Parts: **Tracker** (Target through Exit), [Upgrade](#upgrade) and
    its owner.
    Output: one line per applied part; each moot close with its reason.
 5. **Reconcile.** Compare counts per source with the target and history; read
-   back mapped dependencies (`board bd dep list <id>`); run `board check --fix --limit 0`
+   back mapped dependencies (`agents board bd dep list <id>`); run `agents board check --fix --limit 0`
    until it reports no deviation (flags are reported, not required clean);
    resolve every gap.
    Output: reconciliation table.
@@ -142,7 +142,7 @@ Parts: **Tracker** (Target through Exit), [Upgrade](#upgrade) and
 
 ## Stop
 
-- Counts don't reconcile or `board check` still reports deviations: stop
+- Counts don't reconcile or `agents board check` still reports deviations: stop
   before Retire and report the gap.
 - A rule lacks an owner the user accepts: keep its source in place and report
   it.
@@ -161,17 +161,17 @@ Per project (model:
 [Change requests](../shared/change-requests.md#change-requests)); every git
 step goes in a change set and runs on the user's confirmation.
 
-1. **Inspect.** `board check --limit 0`, `board holders`, items in review, dirty
+1. **Inspect.** `agents board check --limit 0`, `agents board holders`, items in review, dirty
    main-tree paths. A project whose tests share one database needs
    per-checkout test databases landed first.
    Output: holds by holder, in-review items, dirty path count.
 2. **Drain.** The user stops starting pull sessions; holds and agent reviews
-   of in-review tasks finish (`board mine` per session); after the board
+   of in-review tasks finish (`agents board mine` per session); after the board
    switched, such a review closes as a standalone review (review.md step 7).
    Stop no holder. Designs waiting for the user's
    accept stay; step 5 wraps them. Holds left from before the board switched
    (no drain first) cannot hand over: their edits stay in the main tree for
-   the start, their holders `board unclaim` them, and planning cuts them into
+   the start, their holders `agents board unclaim` them, and planning cuts them into
    CRs with the rest.
    Output: `no holds`, or the holders still working.
 3. **Start.** The user finishes and commits the main tree; that commit is the
@@ -179,7 +179,7 @@ step goes in a change set and runs on the user's confirmation.
    Output: the start commit.
 4. **Settings.** Add the project's setup and check scripts under
    [Change requests](../shared/change-requests.md#change-requests) Settings,
-   then `board setup --target … --setup … --checks … --look … --view …`
+   then `agents board setup --target … --setup … --checks … --look … --view …`
    (`look` and `view`: ask the user). Make each tool that
    scans from the repository root skip `.worktrees/`. A git commit hook that
    runs the same checks: ask the user whether agents commit with
@@ -189,8 +189,8 @@ step goes in a change set and runs on the user's confirmation.
    Output: the settings as stored; the hook answer.
 5. **Reconcile.** Wrap each design still waiting for the user's accept in a
    CR under its topic: the design its child, `checkpoint` `user`, status
-   `needs_acceptance`. `board check --fix --limit 0` clean but for user-accepted
-   deviations; one `board claim` of a CR works end to end. Defer each open
+   `needs_acceptance`. `agents board check --fix --limit 0` clean but for user-accepted
+   deviations; one `agents board claim` of a CR works end to end. Defer each open
    backlog work item; a plan pass groups the rest into CRs as they become due.
    For live legacy decisions at `needs_ratification`, run
    `python3 "$HOME/.agents/skills/board-migrate/scripts/convert-unratified-rulings.py"`,
@@ -201,14 +201,14 @@ step goes in a change set and runs on the user's confirmation.
 ## Scratch
 
 Scripts: `$HOME/.agents/skills/board-migrate/scripts/`; save each output as a
-log in `$HOME/.agents/bin/scratch dir`.
+log in `agents scratch dir`.
 
 1. **Records.** Ask the user to pause every session of the repository.
    `python3 <scripts>/move-scratch-records.py`; show the user its dry run,
    then rerun with `--apply` (the records log). Show the user each skipped
    record that differs from the file at its target.
    Output: moved and skipped counts.
-2. **Migrate.** `$HOME/.agents/bin/scratch migrate` (the migrate log); resolve
+2. **Migrate.** `agents scratch migrate` (the migrate log); resolve
    each skipped or broken-link line: loose files go to `shared/loose`; a name
    clash goes to `shared/<name>-<folder that held the .scratch>` (`base/.scratch/orm`
    becomes `shared/orm-base`); anything else goes to the user. Show the user
@@ -225,13 +225,13 @@ log in `$HOME/.agents/bin/scratch dir`.
 ## Tool facts (bd 1.3.1)
 
 - Comments are permanent (no edit or delete). Read them as JSON with
-  `board show <id> --json --field comments`.
-- Merge duplicates after import: `board bd --raw --yes duplicate <dup> --of <keeper>`.
-- `board bd --raw --yes import --dry-run <file>` first; it must report every issue as new,
+  `agents board show <id> --json --field comments`.
+- Merge duplicates after import: `agents board bd --raw --yes duplicate <dup> --of <keeper>`.
+- `agents board bd --raw --yes import --dry-run <file>` first; it must report every issue as new,
   otherwise choose other ids. On retry, import only missing entries.
 - Import skips a dependency whose target is missing and still succeeds:
   resolve every `Skipped dependency` it reports.
-- Import file uses the `board bd export` schema (`board bd import --help`); an
+- Import file uses the `agents board bd export` schema (`agents board bd import --help`); an
   omitted `priority` means P0; labels are not inherited from epics; set
   `external_ref` to the old id and `source_system` to the source file; add
   `parent-child` dependencies explicitly.

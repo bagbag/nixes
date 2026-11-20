@@ -98,7 +98,7 @@ Output: withdrawn items; each open question as ruled or a user decision.
 ## 5. Write and close the round
 
 - Write the round under `round<N>/` in the reviewed item's scratch folder
-  (`$HOME/.agents/bin/scratch dir --for <id>`, else `--shared <change name>`) and
+  (`agents scratch dir --for <id>`, else `--shared <change name>`) and
   follow the artifact schema in [Round artifacts](#round-artifacts).
 - Carry every earlier finding ID and its status (open, fixed, withdrawn or
   ruled no-change) in the finding ledger. Record withdrawals and supersessions

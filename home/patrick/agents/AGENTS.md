@@ -88,8 +88,8 @@ authorized work and pause the work that depends on that decision.
 
 **Authorized workflows.** The user's standing authorization for exactly these git steps:
 
-- **Holding a change request** (its session and workers): the git steps of `board claim`, `board handover` and `board cr refresh` on its `cr/<id>` branch and worktree, rebases and conflict resolution included, and `git add`, `git mv` and one commit per pass there; a reviewer's passing `handover` of a `look` `after` CR also lands it.
-- **Deciding session:** `board cr land` in the user's Accept; with the user, the git steps of `board review open`, `board cr edits` and `board ratify`; committing a release's owner writes after the user approves the release.
+- **Holding a change request** (its session and workers): the git steps of `agents board claim`, `agents board handover` and `agents board cr refresh` on its `cr/<id>` branch and worktree, rebases and conflict resolution included, and `git add`, `git mv` and one commit per pass there; a reviewer's passing `handover` of a `look` `after` CR also lands it.
+- **Deciding session:** `agents board cr land` in the user's Accept; with the user, the git steps of `agents board review open`, `agents board cr edits` and `agents board ratify`; committing a release's owner writes after the user approves the release.
 
 **Files.** Before deleting or overwriting anything you did not create in this session — `rm`, `mv` over an existing file, truncating, discarding content — inspect the target first. Stop and surface anything that contradicts its description or seems unwanted.
 
@@ -125,7 +125,7 @@ Write brief progress notes and findings as you work. Everything the user needs t
 - **Working and transient artifacts** (working plans, review drafts,
   inventories, evidence, notes, intermediate reports, dumps, throwaway probes
   and one-off tests) go in a scratch folder outside the repository; promote
-  their conclusions to the durable owners. `$HOME/.agents/bin/scratch dir` prints the session's folder (`--for <item
+  their conclusions to the durable owners. `agents scratch dir` prints the session's folder (`--for <item
   id>`: an item's; `--shared <name>`: a shared one). Data a later session may
   need goes in an item's or a shared folder; your session folder is yours alone. Scratch
   code names the checkout it runs against by absolute path. Keep scratch free
@@ -135,8 +135,8 @@ Write brief progress notes and findings as you work. Everything the user needs t
   given and check its claims against source. Open work and handovers go on
   the board (without one, to the user), never in scratch; only a session's own
   checkpoint (project-memory Arc state) holds its next steps there.
-- **Removing scratch:** entries expire (`scratch help`);
-  `$HOME/.agents/bin/scratch trash <path>` what you are sure is no longer needed.
+- **Removing scratch:** entries expire (`agents scratch help`);
+  `agents scratch trash <path>` what you are sure is no longer needed.
 
 ## Writing code
 
@@ -232,7 +232,7 @@ constraints, and expected report and its length directly in the brief. Model bin
 in native agent configuration, never in plans or worker briefs.
 
 For artifact-producing assignments, assign output paths in a scratch folder
-(`scratch dir`, `--for <item id>` for an item's work), named after subject and kind
+(`agents scratch dir`, `--for <item id>` for an item's work), named after subject and kind
 (`union-dispatch-review.md`), unless the assignment names the artifact's
 canonical owner (`docs/`, a skill, source); instruct the specialist to write
 those files directly. Provide the required permissions and
@@ -252,7 +252,7 @@ conditions; escalate the decisions workers return as beyond them.
 **Warm reuse:** continue an existing agent instead of spawning when its context
 covers the next task, its permissions allow the work, and it did not author
 what it would assess. Continue only while the agent's last turn ended at most 30 minutes
-ago (`$HOME/.agents/bin/worker-last-use`, a recency hint: if continuation
+ago (`agents worker-last-use`, a recency hint: if continuation
 fails, start fresh). Start fresh for independent
 judgments, a changed premise the verdict rested on, or at the retry limit; an addition is an amendment to the same agent. Brief
 warm agents with the delta: new task, changes since, and superseded context.

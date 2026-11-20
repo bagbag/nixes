@@ -452,7 +452,7 @@ export const isCrAccepting = (cr: ConsoleCr): boolean => cr.status === 'needs_ac
 
 /** The person's Review action sends an Accept-waiting request for the change since its last review to agent review. */
 export const requestReviewText = (cr: ConsoleCr): string =>
-  `Request agent review of ${cr.id} (${cr.title}) for the change since its last review with \`board cr request-review ${cr.id}\`.`
+  `Request agent review of ${cr.id} (${cr.title}) for the change since its last review with \`agents board cr request-review ${cr.id}\`.`
 
 /** Whether Accept can land it: waiting for you, and no parent or blocker it waits on (the board's `waits` problems). Return still can. */
 export const canAcceptCr = (cr: ConsoleCr): boolean => isCrAccepting(cr) && !cr.problems.some(one => one.kind === 'waits')
@@ -465,12 +465,12 @@ export const canUpdateCr = (cr: ConsoleCr, isDeciding: boolean, pulls: readonly 
 export type ReviewEditsRef = { tree: string; tip: string }
 
 /** The line the session runs to read the edits; Accept adds `--commit -m "<msg>" <gate>` (decide.md step 4). */
-export const editsLine = (cr: ConsoleCr, edits: ReviewEditsRef): string => `board cr edits ${cr.id} --tip ${edits.tip}`
+export const editsLine = (cr: ConsoleCr, edits: ReviewEditsRef): string => `agents board cr edits ${cr.id} --tip ${edits.tip}`
 
 /** The Accept request for the lead (decide.md Accept), naming the tip it was looked at in so a moved branch is refused, and the edits you made in the review. A design without a branch has no tip to name. */
 export function acceptText(cr: ConsoleCr, tip: string | null, baseTip: string | null, edits: ReviewEditsRef | null = null): string {
   if (cr.checkpoint === 'user') return `Accept the design of ${cr.id} (${cr.title})${tip === null ? '' : ` at ${short(tip)}`}: planning continues in the same request, nothing lands.`
-  const land = `board cr land ${cr.id} --tip ${short(tip ?? '')} --base ${short(baseTip ?? '')}`
+  const land = `agents board cr land ${cr.id} --tip ${short(tip ?? '')} --base ${short(baseTip ?? '')}`
   if (edits === null) return `Accept ${cr.id} (${cr.title}): land the exact tip/base pair shown on this row with \`${land}\`.`
   return `Accept ${cr.id} (${cr.title}) at ${short(edits.tip)}: I edited it in the review folder ${edits.tree}: read my edits with \`${editsLine(cr, edits)}\`, check and commit them (\`--commit -m "<msg>"\` with a gate) as decide.md says, then use the current row's tip/base pair to land it.`
 }
@@ -481,7 +481,7 @@ export const walkText = (cr: ConsoleCr): string =>
   `Walk me through ${cr.id}'s ${cr.checkpoint === 'user' ? 'design' : cr.view === 'result' ? 'result' : 'change'} (${cr.title}).`
 export const refreshText = (cr: ConsoleCr): string => `Refresh ${cr.id} under the review protocol's Refresh.`
 /** The deciding session's Update: it dispatches the refresh the board names, which then holds the row. */
-export const updateText = (cr: ConsoleCr): string => `Update ${cr.id} (${cr.title}): its ${cr.problems.filter(one => one.next.action === 'refresh').map(one => one.text).join(' and ')}; dispatch its refresh (\`${cr.problems.find(one => one.next.action === 'refresh')?.next.command ?? `board cr refresh ${cr.id}`}\`) under the review protocol's Refresh.`
+export const updateText = (cr: ConsoleCr): string => `Update ${cr.id} (${cr.title}): its ${cr.problems.filter(one => one.next.action === 'refresh').map(one => one.text).join(' and ')}; dispatch its refresh (\`${cr.problems.find(one => one.next.action === 'refresh')?.next.command ?? `agents board cr refresh ${cr.id}`}\`) under the review protocol's Refresh.`
 
 export const crUnblocksText = (cr: ConsoleCr): string | null => [
   ...(cr.unblocks > 0 ? [`unblocks ${cr.unblocks}`] : []),

@@ -221,7 +221,7 @@ def owners_accept(ctx: Context, report: dict) -> str:
         for rid, paths in written.items():
             section = rule_owner_text(texts[rid])
             problems += [f'{rid}: its ## Rule owner does not name {shown}; fix the record text and run '
-                         + (f'`board ruling record {rid} <file>`' if ctx.board else f'edit {set_record(ctx, rid)["file"]}')
+                         + (f'`agents board ruling record {rid} <file>`' if ctx.board else f'edit {set_record(ctx, rid)["file"]}')
                          for shown, _ in paths if shown not in section]
     if problems:
         fail('owner writes: ' + '; '.join(problems))

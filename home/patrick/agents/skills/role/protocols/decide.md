@@ -61,7 +61,7 @@ Never decide these alone.
 - Create a challenge of decided records at the user's request; propose one
   when designs will build on them. It is a standalone review
   ([Kinds](../../shared/board-core.md#kinds)) that blocks the records
-  (`board block <record>… --on <challenge> --reason "<scope>"`), run under the
+  (`agents board block <record>… --on <challenge> --reason "<scope>"`), run under the
   review protocol's [Challenge](review.md#challenge).
 - Turn the decisions a `staged-review` raises into questions.
 - While the user is away (autopilot), settle a round's Ask under the
@@ -71,7 +71,7 @@ Never decide these alone.
   the checkpoint file up to date, and recommend compaction at a cheap-loss
   point; the user decides.
 - End replies that touch rulings with counts from
-  `board health` run in that turn: open questions, decided
+  `agents board health` run in that turn: open questions, decided
   records awaiting release, released rulings awaiting planning.
 
 ## Round
@@ -82,7 +82,7 @@ for open items, a new request's decisions, or an asking skill's interview
 (`--subject`; a design checkpoint: accept.md step 3). A go-ahead on a proposal
 stays in chat; Accept and Release keep their own asks otherwise.
 
-Run the round through `protocol` (`$HOME/.agents/bin/protocol`; in Claude the
+Run the round through `protocol` (`agents protocol`; in Claude the
 console's `protocol` tool): `start round` (stdin `{"points": [...]}` for
 pasted points), then `step` with each step's report; resume an open round from
 `protocol show`. Add `--discussion` for a round of the discussion's points
@@ -204,7 +204,7 @@ reported.
 
 **Entry:** a CR in `needs_acceptance` (finished, or at a user design checkpoint), a
 `needs_ratification` ratification, a ready milestone, or a
-finished epic whose acceptance names the user (`board position`). The CR queue
+finished epic whose acceptance names the user (`agents board position`). The CR queue
 is in order, bases first
 ([Change-request queue](../../shared/board-coordination.md#change-request-queue)).
 

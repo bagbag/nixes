@@ -2,7 +2,7 @@
 
 Entry: [decide.md](decide.md#accept) Accept. Read `$HOME/.agents/skills/shared/change-requests.md` for Git authorization and the CR model.
 
-1. **Claim** a CR, ratification or milestone: `board claim <id>`.
+1. **Claim** a CR, ratification or milestone: `agents board claim <id>`.
    Output: `claimed <cr> (look <look>, view <view>, checkpoint <c>); author
    <actor>`, `claimed <id> (milestone)`, or `epic <id>`.
 2. **Evidence.** Read `$HOME/.agents/skills/shared/acceptance.md`; check the
@@ -27,10 +27,10 @@ Entry: [decide.md](decide.md#accept) Accept. Read `$HOME/.agents/skills/shared/c
    [Changed premises](../../shared/decision-protocol.md#changed-premises).
    Output: the walkthrough; for a design, the round's answers.
 4. **Land or return.**
-   - **Accept:** `board cr land <cr> --tip <tip> --base <base>` with the pair
+   - **Accept:** `agents board cr land <cr> --tip <tip> --base <base>` with the pair
      shown at Accept.
      **Accept with edits** (the user's commits since Open or uncommitted
-     changes in the review folder; the prompt names the `board cr edits`
+     changes in the review folder; the prompt names the `agents board cr edits`
      line): run that line and read the edits like a reviewer. On a likely
      mistake (a missed rename, a broken reference) stop and ask the user before
      landing; never change the edits. Pick the gate by stakes: none for docs
@@ -39,29 +39,29 @@ Entry: [decide.md](decide.md#accept) Accept. Read `$HOME/.agents/skills/shared/c
      show the newly checked pair and any delta before running Accept. If the
      gate fails, tell the user what `board` printed.
    - **Review:** the user's Review action (or
-     `board cr request-review <cr> ["<reason>"]`) sends the change since the last
+     `agents board cr request-review <cr> ["<reason>"]`) sends the change since the last
      review to agent review.
    - **Design checkpoint:** name the outcome the round's answers entail for
-     one confirmation. Nothing changes the design: `board cr land <cr>
+     one confirmation. Nothing changes the design: `agents board cr land <cr>
      --checkpoint --design <hash>` (the hash from step 2). Otherwise
-     `board return <cr> "<records>"`.
+     `agents board return <cr> "<records>"`.
    - **Changes wanted:** talk the root fix through with the user, then
-     `board return <cr> "<findings>"`; add follow-up items to the CR.
-     **Return with edits:** `board cr edits <cr> --tip <tip> --commit -m
+     `agents board return <cr> "<findings>"`; add follow-up items to the CR.
+     **Return with edits:** `agents board cr edits <cr> --tip <tip> --commit -m
      "<msg>" --no-gate "returned"`. Claim it again if it went to agent review,
-     then run `board return <cr> "<findings>"`.
-   - **Rejected:** `board cr reject <cr> "<reason>"`; delete branch `cr/<id>` and its worktree only on the user's
+     then run `agents board return <cr> "<findings>"`.
+   - **Rejected:** `agents board cr reject <cr> "<reason>"`; delete branch `cr/<id>` and its worktree only on the user's
      confirmation (they hold the only copy).
-   - **Ratification:** `board ratify <id> yes|edits|no` with the user's
+   - **Ratification:** `agents board ratify <id> yes|edits|no` with the user's
      verdict. `edits`: read the edits first, as
      for an Accept, and pick the gate the same way; the follow-up CR it starts
-     waits for the user's Accept and lands with `board cr land` like any CR.
-     `no`: ask what the user wants (fix or revert); `board ratify` files it as
+     waits for the user's Accept and lands with `agents board cr land` like any CR.
+     `no`: ask what the user wants (fix or revert); `agents board ratify` files it as
      the follow-up CR.
    - **Epic, milestone:** close on the user's acceptance
-     (`board close <id> --reason "<verdict>"`). Otherwise for an epic, create
+     (`agents board close <id> --reason "<verdict>"`). Otherwise for an epic, create
      the findings as items under it; for a milestone, as members, and unclaim
-     it (`board unclaim <id>`).
+     it (`agents board unclaim <id>`).
    When the item received a ruling, check that the rule sits in its owner and
    every conflict became a question.
    Output: `landed <cr>`, `checkpoint passed <cr>`, `returned <cr>`,
@@ -80,7 +80,7 @@ members.
 
 The landing or design ratification task
 ([Change requests](../../shared/change-requests.md#change-requests)) takes the
-user's verdict through `board ratify`: `yes` closes it (a default reason names the CR) and
+user's verdict through `agents board ratify`: `yes` closes it (a default reason names the CR) and
 removes its review worktree and `ratify/<id>` branch, refused while they
 hold the user's edits; `edits` makes them the follow-up CR's (branch renamed
 to `cr/<follow-up>`), commits uncommitted edits as the user's, rebased
@@ -91,16 +91,16 @@ follow-up the user wants (fix or revert).
 ## User review
 
 The user reviews an item in its own worktree on its own branch.
-`board review open <item>` opens it at the recorded tip. A ratification
+`agents board review open <item>` opens it at the recorded tip. A ratification
 opens branch `ratify/<id>` at the landed tip. The user's edits are their
 commits after the opened tip plus uncommitted changes. Before Accept or
-Return, use `board cr edits` to commit the uncommitted changes as the user's
-and record all of their edits. `board show <item>` names whether it is open for review
+Return, use `agents board cr edits` to commit the uncommitted changes as the user's
+and record all of their edits. `agents board show <item>` names whether it is open for review
 and whether the user edited it.
 
 ## Commands
 
 | Command | Effect |
 |---|---|
-| `board cr land <cr> --checkpoint --design <hash>` | The user's design checkpoint accept: closes the in-review design items, returns the CR to `open`, and clears the checkpoint for planning; nothing lands. Accepted by autopilot, it also files a `design` ratification. `<hash>` is the `design hash` `board claim <cr>` printed, still matching the design items' description, design, acceptance and notes. |
-| `board cr edits <cr> --tip <sha> [--commit …]` | Prints, or with `--commit` commits and records as the user's, the user's edits in the CR's review; flags and gates: `board cr edits --help`. A failing gate keeps the commit and the CR waits for the user. |
+| `agents board cr land <cr> --checkpoint --design <hash>` | The user's design checkpoint accept: closes the in-review design items, returns the CR to `open`, and clears the checkpoint for planning; nothing lands. Accepted by autopilot, it also files a `design` ratification. `<hash>` is the `design hash` `agents board claim <cr>` printed, still matching the design items' description, design, acceptance and notes. |
+| `agents board cr edits <cr> --tip <sha> [--commit …]` | Prints, or with `--commit` commits and records as the user's, the user's edits in the CR's review; flags and gates: `agents board cr edits --help`. A failing gate keeps the commit and the CR waits for the user. |

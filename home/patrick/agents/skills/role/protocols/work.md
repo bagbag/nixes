@@ -18,12 +18,12 @@ items of a CR your session holds (then [Item worker](#item-worker)).
 Give each step's output as one line when it passes; add detail only for
 findings or stops.
 
-1. **Claim.** `board claim` for your pulls or `board claim <cr>` for a named
+1. **Claim.** `agents board claim` for your pulls or `agents board claim <cr>` for a named
    CR ([Change requests](../../shared/change-requests.md#change-requests)).
    Work only inside its worktree from here.
    Output: `claimed <cr> (<kind>) at <path>, base <base>`, plus the holds you
    still have.
-2. **Read.** The CR and its items (`board show <cr>`), the briefs, the
+2. **Read.** The CR and its items (`agents board show <cr>`), the briefs, the
    project instructions, and every released ruling linked to them with that
    ruling's owner section; linked rulings bind, planned (closed) ones
    included. Raise a better evidence-backed alternative to a ruling as a
@@ -60,7 +60,7 @@ findings or stops.
    Output: one line per gate: command, exit code, and passed/failed/skipped
    counts for tests.
 5. **Hand over.** With every item closed and complete evidence,
-   `board handover <cr> "<evidence>"` under
+   `agents board handover <cr> "<evidence>"` under
    [Hand-over and acceptance](../../shared/board-core.md#hand-over-and-acceptance);
    for a CR the project checks cannot test (docs only), `--no-gate "<reason>"`.
    Apply [Review policy](../../shared/acceptance.md#review-policy) and
@@ -78,7 +78,7 @@ findings or stops.
 
 ## Item worker
 
-A worker briefed with items of a CR its session holds: `board claim <item>`,
+A worker briefed with items of a CR its session holds: `agents board claim <item>`,
 read the item and its rulings, work by absolute path in the CR's worktree,
 run the gates, then commit and close under
 [Change requests](../../shared/change-requests.md#change-requests) Items;
