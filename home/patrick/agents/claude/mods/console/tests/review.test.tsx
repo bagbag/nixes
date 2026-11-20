@@ -110,7 +110,7 @@ describe('change request queue', () => {
     await ui.unmount()
   })
 
-  const agent = (pulls: string[]) => ({ sessions: [{ session: SESSION, role: 'agent', actor: 'a1', pulls, holds: 0, workers: null, state: 'active', idleSince: null, claimable: 0 }],
+  const agent = (pulls: string[]) => ({ sessions: [{ session: SESSION, role: 'agent', actor: 'a1', pulls, holds: 0, workers: null, state: 'active' }],
     role: { session: SESSION, role: 'agent', actor: 'a1', tool: 'claude' } })
 
   test('a review-pulling session runs the refresh itself', async ($, on) => {

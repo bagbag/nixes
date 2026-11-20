@@ -135,7 +135,7 @@ export function world(on: On, init: Partial<Pick<World, 'round' | 'role' | 'surf
     calls: [], commands: [], prompts: [], asUser: [], opened: [], placed: [], isPlacing: true, tools: [], registered: [], toasts: [], notified: [], views: [],
     files: new Map(),
     sessions: init.sessions ?? [
-      { session: SESSION, role: 'lead', actor: '617adf08', pulls: [], holds: 2, workers: null, state: 'active', idleSince: null, claimable: 0 },
+      { session: SESSION, role: 'lead', actor: '617adf08', pulls: [], holds: 2, workers: null, state: 'active' },
     ],
     items: init.items ?? [{ id: 'tstdl-x1', type: 'decision', status: 'in_progress', title: 'Which engine name?', holder: '617adf08' }],
     forYou: init.forYou ?? [],

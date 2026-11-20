@@ -1689,18 +1689,14 @@ def iso(moment: datetime | None) -> str | None:
     return moment.astimezone(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ') if moment else None
 
 
-def session_json(board: Board, args, entry: dict, holds: int, now: datetime) -> dict:
-    state = session_state(entry, now)
-    kinds = session_kinds(entry)
+def session_json(entry: dict, holds: int, now: datetime) -> dict:
     return {'session': entry.get('session'), 'role': entry.get('role'), 'actor': entry.get('actor'),
             'pulls': entry.get('pulls') or [], 'tool': entry.get('tool'),
             'handles': list(session_kinds(entry, ROLE_HANDLES)), 'registeredAt': entry.get('registered_at'), 'holds': holds,
             # Without live activity hooks no worker marker is trustworthy.
             'workers': {'active': len(active_workers(entry)), 'cap': worker_cap(entry)} if hooks_live(entry) else None,
             'process': {'alive': 'alive', 'GONE': 'gone'}.get(liveness(entry) or ''),
-            'state': state, 'idleSince': iso(session_activity(entry)) if state == 'idle' else None,
-            # what its bare `board claim` would take
-            'claimable': sum(1 for issue in board.listed(args.root) if board.claimable(issue) in kinds)}
+            'state': session_state(entry, now)}
 
 
 def position_json(board: Board, args) -> dict:
@@ -1708,7 +1704,7 @@ def position_json(board: Board, args) -> dict:
     return {
         **queues_json(board, args.root),
         'ready': data['kinds'],
-        'sessions': [session_json(board, args, entry, count, data['now']) for entry, count in data['sessions']],
+        'sessions': [session_json(entry, count, data['now']) for entry, count in data['sessions']],
         'held': [item_json(board, issue, updatedAt=iso(updated), activeAt=iso(recorded), mark=mark,
                            stale=stale_since(board, issue) is not None, forced=forced_reason(issue))
                  for issue, _, updated, recorded, mark in data['held']],

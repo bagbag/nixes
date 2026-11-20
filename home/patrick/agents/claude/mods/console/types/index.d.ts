@@ -184,8 +184,6 @@ export type ConsoleSession = {
   holds: number
   workers: { active: number; cap: number } | null
   state: string
-  idleSince: string | null
-  claimable: number
 }
 
 export type ConsoleAgent = { id: string; description: string; type: string; status: string }

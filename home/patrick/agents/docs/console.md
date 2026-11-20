@@ -86,9 +86,8 @@ and compacts on a later tick: the host refuses a compaction inside the hook); a
 skipped or failed compaction starts nothing and says so with a notice naming the
 command.
 `/console` prints a line per proposal below the board (`<n>. <first line> ·
-<summary> · type /start-round <n>`); the idle-agent notification goes out
-once per idle episode across consoles, and so does the accept notification for
-a request that newly reaches to-accept (not those waiting when the console
+<summary> · type /start-round <n>`); the accept notification goes out once
+across consoles for a request that newly reaches to-accept (not those waiting when the console
 starts; an agent session gets none; its marker goes when the request leaves
 to-accept). The model's `protocol` tool reads as one transcript row: the engine's headline, or on a
 failed call its reason (`refused: <engine message>` on exit 1, `usage error: <argparse message>` on exit 2);

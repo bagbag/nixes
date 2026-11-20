@@ -1,4 +1,4 @@
-// The pane, the band, presses, /console and the idle-agent notification.
+// The pane, the band, presses, /console and the accept notification.
 import { describe, expect, test } from 'claude-code/testing'
 
 import { cr } from './board-console-contract'
@@ -502,7 +502,7 @@ describe('band', () => {
 
     describe('worker selects in the session rows', () => {
       const row = (session: string, role: string, workers: { active: number; cap: number } | null, state = 'active') =>
-        ({ session, role, actor: session.slice(-8), tool: 'claude', pulls: [], holds: 0, workers, state, idleSince: null, claimable: 0 })
+        ({ session, role, actor: session.slice(-8), tool: 'claude', pulls: [], holds: 0, workers, state })
       const set = (w: { calls: { argv: string[] }[] }) => w.calls.filter(one => one.argv.includes('set-workers')).map(one => one.argv.slice(2))
 
       test('a pick on another session sets that session, without a model turn', async ($, on) => {
@@ -667,25 +667,6 @@ describe('/console', () => {
     await ready($, clock)
     const ran = await $.command.run({ command: 'console-item', args: 'tstdl-x1', origin: { kind: 'composer' }, presentation: { isFullscreen: true, columns: 160 } })
     expect(ran.text).toContain('tstdl-x1: Which engine name?')
-  })
-})
-
-describe('notification', () => {
-  test('an idle agent with claimable work notifies once per idle episode', async ($, on) => {
-    const idle = { session: 's-2', role: 'agent', actor: 'eef8ae5c', pulls: ['implement'], holds: 0, workers: { active: 0, cap: 6 }, state: 'idle', idleSince: '2026-10-31T10:00:00Z', claimable: 3 }
-    const { w, clock } = world(on, { sessions: [idle] })
-    await ready($, clock)
-    await clock.advance(62_000)  // a refresh tick plus the claim's settle time
-    expect(w.notified).toEqual(['agent eef8ae5c is idle with 3 claimable items'])
-    w.sessions = [{ ...idle, idleSince: '2026-10-31T11:00:00Z' }, { ...idle, session: 's-3', role: 'lead', actor: 'lead0002' }]
-    await clock.advance(62_000)
-    expect(w.notified).toHaveLength(2)  // the new episode only: an idle lead waits on the user
-    // Another console's later claim on the same marker wins: this one stays quiet.
-    w.sessions = [{ ...idle, idleSince: '2026-10-31T12:00:00Z' }]
-    await clock.advance(56_500)  // the next tick (at 180 s) has written this console's claim and waits
-    w.files.set(`${HOME}/.local/state/agents/sessions/console-notified/s-2`, '2026-10-31T12:00:00Z s-other\n')
-    await clock.advance(2_000)
-    expect(w.notified).toHaveLength(2)
   })
 })
 
@@ -941,7 +922,7 @@ describe('long lists', () => {
 
   test('board lists cap at 10 rows, active sessions first', async ($, on) => {
     const items = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].map(n => ({ id: `tstdl-i${n}`, type: 'decision', status: 'open', title: `Item ${n}`, holder: '617adf08' }))
-    const session = (n: number, state: string) => ({ session: `s-${n}`, role: 'agent', actor: `actor00${n}`, pulls: [], holds: 0, workers: null, state, idleSince: null, claimable: 0 })
+    const session = (n: number, state: string) => ({ session: `s-${n}`, role: 'agent', actor: `actor00${n}`, pulls: [], holds: 0, workers: null, state })
     const sessions = [session(1, 'gone'), ...[2, 3, 4, 5, 6, 7, 8, 9, 10, 11].map(n => session(n, 'active'))]
     const { clock } = world(on, { items, sessions })
     await ready($, clock)
@@ -956,7 +937,7 @@ describe('long lists', () => {
   })
 
   test('the role column shows autopilot as auto, so the row keeps to one line', async ($, on) => {
-    const row = { session: 's-a', role: 'autopilot', actor: 'auto0001', tool: 'claude', pulls: [], holds: 0, workers: null, state: 'active', idleSince: null, claimable: 0 }
+    const row = { session: 's-a', role: 'autopilot', actor: 'auto0001', tool: 'claude', pulls: [], holds: 0, workers: null, state: 'active' }
     const { clock } = world(on, { sessions: [row] })
     await ready($, clock)
     const drawn = await texts(await $.ui.mount({ ...PANE, surface: 'terminal' }))
@@ -966,7 +947,7 @@ describe('long lists', () => {
 
   test('stale sessions become one stale-holds line; pulls read as fixed-position initials', async ($, on) => {
     const session = (actor: string, state: string, holds: number) =>
-      ({ session: `s-${actor}`, role: 'agent', actor, tool: 'codex', pulls: ['plan', 'design', 'implement', 'review'], holds, workers: null, state, idleSince: null, claimable: 0 })
+      ({ session: `s-${actor}`, role: 'agent', actor, tool: 'codex', pulls: ['plan', 'design', 'implement', 'review'], holds, workers: null, state })
     const sessions = [session('live0001', 'active', 1), session('dead0001', '', 2), session('busy0001', '', 1)]
     const held = [
       { id: 'tstdl-l1', holder: 'live0001', mark: null },

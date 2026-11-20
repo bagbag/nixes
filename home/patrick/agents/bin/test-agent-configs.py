@@ -3463,9 +3463,9 @@ def validate_board(root: Path) -> None:
             sessions = {s["actor"]: s for s in position_json["sessions"]}
             lead = sessions.get("lead0001") or {}
             if set(lead) != {"session", "role", "actor", "pulls", "tool", "handles", "registeredAt", "holds", "workers",
-                             "process", "state", "idleSince", "claimable"} \
+                             "process", "state"} \
                     or lead["role"] != "lead" or lead["holds"] != 1 or lead["workers"] is not None or lead["state"] is not None \
-                    or sessions["aaaa1111"]["claimable"] != 2 or sessions["aaaa1111"]["pulls"] != ["implement", "review"] \
+                    or sessions["aaaa1111"]["pulls"] != ["implement", "review"] \
                     or position_json["ready"]["implement"] != {"ready": 1, "held": 1, "waiting": 1, "sessions": 2} \
                     or {h["id"] for h in position_json["held"]} != {ids["Held task"], ids["Open cache question"], "fx-ovo.c2"} \
                     or len(position_json["questionsHoldingWork"]) != 2 or len(position_json["finishedEpics"]) != 1:
@@ -7488,14 +7488,12 @@ def validate_board(root: Path) -> None:
             return next(r for r in text.splitlines() if r.startswith(f"  {key} "))
 
         # position --json session state (R-B5): gone from the process, active/idle from the session's own or a running
-        # worker's last tool call, null without activity data; idleSince only when idle.
-        for now, expected in (("2026-10-22T15:30:00+00:00", {"actv0001": ("active", None), "work0001": ("active", None),
-                                                             "idle0001": (None, None)}),
-                              ("2026-10-22T17:30:00+00:00", {"actv0001": ("idle", shift_dates("2026-10-22T15:29:00Z")),
-                                                             "work0001": ("idle", shift_dates("2026-10-22T15:25:00Z"))})):
+        # worker's last tool call, null without activity data.
+        for now, expected in (("2026-10-22T15:30:00+00:00", {"actv0001": "active", "work0001": "active", "idle0001": None}),
+                              ("2026-10-22T17:30:00+00:00", {"actv0001": "idle", "work0001": "idle"})):
             states = {e["actor"]: e for e in json.loads(invoke(["position", "--json"], Fake(crowd), now=now)[1])["sessions"]}
-            for actor, (state, since) in expected.items():
-                if (states[actor]["state"], states[actor]["idleSince"]) != (state, since):
+            for actor, state in expected.items():
+                if states[actor]["state"] != state:
                     raise ValueError(f"position --json state of {actor} at {now}: {states[actor]}")
             if own_start and states["gone0001"]["state"] != "gone":
                 raise ValueError(f"position --json must mark a gone session: {states['gone0001']}")

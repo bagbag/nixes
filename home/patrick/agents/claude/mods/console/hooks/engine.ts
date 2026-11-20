@@ -29,7 +29,7 @@ async function registry($: $, args: readonly string[]): Promise<Ran> {
   return { exitCode: ran.exitCode, stdout: ran.stdout, stderr: ran.stderr }
 }
 
-/** The registry's state dir (`session state-dir`, its owner); console-notified markers live there. */
+/** The registry's state dir (`session state-dir`, its owner); console-accept-notified markers live there. */
 export async function stateDir($: $): Promise<string> {
   const ran = await registry($, ['state-dir'])
   if (ran.exitCode !== 0 || ran.stdout.trim() === '') throw new EngineError(`session state-dir: exit ${ran.exitCode}: ${ran.stderr.trim()}`)
@@ -496,8 +496,6 @@ function parseSession(value: unknown): ConsoleSession {
     holds: count(raw.holds),
     workers: workers === null ? null : { active: count(workers.active), cap: count(workers.cap) },
     state: text(raw.state),
-    idleSince: nullableText(raw.idleSince),
-    claimable: count(raw.claimable),
   }
 }
 

@@ -533,7 +533,6 @@ export async function refreshBoard($: $, ctx: Context): Promise<ConsoleBoard> {
   const before = await getBoard($)
   await setBoard($, board)
   // Off the caller's path: the claim waits CLAIM_SETTLE_MS.
-  $.clock.after(0, () => notifyIdleAgents($, ctx.session, board).catch(failOpen($, 'the idle-agent notification')))
   $.clock.after(0, () => notifyAcceptances($, ctx.session, before, board).catch(failOpen($, 'the accept notification')))
   return board
 }
@@ -564,28 +563,9 @@ export function refreshLater($: $): void {
 const CLAIM_SETTLE_MS = 2_000
 
 /**
- * An agent session idle with claimable work notifies once across consoles. Each watched
- * session has one marker, `<idle since> <claiming console>`: every console that sees a new
- * episode writes its claim, waits, and only the console whose claim survived notifies ($.fs has
- * no exclusive create; the last writer wins). Markers of sessions the board no longer lists go.
+ * True when this console owns the notice of `episode` at `marker`: the first writer, or the last of several that wrote within the
+ * settle time ($.fs has no exclusive create; the last writer wins).
  */
-async function notifyIdleAgents($: $, session: string, board: ConsoleBoard): Promise<void> {
-  const dir = `${await stateDir($)}/console-notified`
-  const listed = new Set(board.sessions.map(one => one.session))
-  if (await $.fs.exists(dir)) {
-    for (const entry of await $.fs.list(dir)) {
-      if (!listed.has(entry.name)) await $.process.run(['rm', '-f', `${dir}/${entry.name}`], { timeoutMs: 5_000 })
-    }
-  }
-  for (const one of board.sessions) {
-    // Agents only (console-spec 3): an idle lead or solo waits on the user, and its claimable questions are no news.
-    if (one.session === session || one.role !== 'agent' || one.state !== 'idle' || one.idleSince === null || one.claimable <= 0) continue
-    if (!(await claimEpisode($, `${dir}/${one.session}`, one.idleSince, session))) continue
-    await $.ui.notify(`${one.role} ${one.actor} is idle with ${one.claimable} claimable item${one.claimable === 1 ? '' : 's'}`, { title: 'Console' })
-  }
-}
-
-/** True when this console owns the notice of `episode` at `marker`: the first writer, or the last of several that wrote within the settle time. */
 async function claimEpisode($: $, marker: string, episode: string, session: string): Promise<boolean> {
   if ((await $.fs.exists(marker)) && String(await $.fs.read(marker)).startsWith(`${episode} `)) return false
   const claim = `${episode} ${session}\n`
