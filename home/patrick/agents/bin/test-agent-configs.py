@@ -3064,6 +3064,40 @@ def validate_board(root: Path) -> None:
             if f"{loose}  no-cr" in invoke(["check"], Fake(no_commit))[1] or f"{loose}  no-cr" not in invoke(["check"], Fake(fixture))[1] \
                     or f"{loose}  no-cr" in invoke(["check"], Fake(variant(**{"Loose item": {"assignee": "user"}})))[1]:
                 raise ValueError("board check must flag a work item outside any CR, but not a no-commit one or a person's")
+            # Open, ready no-commit work is plan work: the dispatcher triages it; no worker pull takes it, and a person's item drops the mark.
+            deck = bare_deck(no_commit)
+            if deck.claimable(deck.by_id[loose]) != "plan" or loose not in invoke(["queue"], Fake(no_commit))[1].split("design:")[0]:
+                raise ValueError("open no-commit work outside a CR must be claimable as plan work and listed under plan")
+            deck = bare_deck(variant(**{"Loose item": {"metadata": {"no_commit": True}, "assignee": "user"}}))
+            if deck.claimable(deck.by_id[loose]) is not None:
+                raise ValueError("a no-commit item assigned to the user is no agent's claim")
+            fake = Fake(variant(**{"Loose item": {"metadata": {"no_commit": True}, "assignee": "lead0001", "status": "in_progress"}}))
+            code, _, errors = invoke(["update", loose, "--assignee", "user"], fake, "lead0001")  # its holder hands it over directly
+            if code or ["update", loose, "--assignee", "user", "--status", "open", "--unset-metadata", "no_commit", "--json"] not in fake.writes():
+                raise ValueError(f"a session must hand its own hold to the user, reopened and unmarked: {code} {errors} {fake.writes()}")
+            fake = Fake(variant(**{"Loose item": {"metadata": {"no_commit": True}, "assignee": "solo0001", "status": "in_progress"}}))
+            code, _, errors = invoke(["update", loose, "--assignee", "user"], fake, "lead0001")
+            if not code or fake.writes() or "held by solo0001" not in errors:
+                raise ValueError(f"another session's hold must not be handed to the user: {code} {errors} {fake.writes()}")
+            fake = Fake(no_commit)
+            code, _, errors = invoke(["update", loose, "--assignee", "user"], fake, "lead0001")
+            if code or ["update", loose, "--assignee", "user", "--unset-metadata", "no_commit", "--json"] not in fake.writes():
+                raise ValueError(f"handing no-commit work to the user must drop its mark: {code} {errors} {fake.writes()}")
+            # A CR waiting on outside work names the wait wherever it is held up: the refused claim and its queue row.
+            cr_ready = next(i for i in fixture if i["title"] == "CR ready")
+            waiting = variant(**{"CR ready": {"status": "in_review", "assignee": None, "metadata": {},
+                                              "dependencies": [*cr_ready["dependencies"], {"issue_id": cr_ready["id"], "depends_on_id": loose, "type": "blocks"}]}})
+            fake = Fake(waiting)
+            code, _, errors = invoke(["claim", cr_ready["id"]], fake, "agnt0001")
+            if not code or fake.writes() or f"waits on {loose} (open)" not in errors:
+                raise ValueError(f"a refused claim of a waiting CR must name its wait: {code} {errors} {fake.writes()}")
+            deck = bare_deck(waiting)
+            if board.waiting_skips(deck, deck.issues, ("review",)) != [f"  waiting: {cr_ready['id']} on {loose}"] \
+                    or any(cr_ready["id"] in one for one in board.waiting_skips(deck, deck.issues, ("implement",))):
+                raise ValueError("a bare claim that finds nothing must name what of its kinds waits, and on what")
+            row = next((r for r in invoke(["queue"], Fake(waiting))[1].splitlines() if r.startswith(f"  {cr_ready['id']} ")), "")
+            if f"waits on {loose} (open)" not in row:
+                raise ValueError(f"the queue row of a waiting CR in review must name its wait: {row!r}")
             # The earlier no_code mark counts no more: the check names its fix (agent work keeps the route, a person's item drops the mark).
             for changes, fix in (({}, "makes it no_commit"), ({"assignee": "user"}, "drops it")):
                 shown = invoke(["check"], Fake(variant(**{"Loose item": {"metadata": {"no_code": 1}, **changes}})))[1]
@@ -3368,6 +3402,15 @@ def validate_board(root: Path) -> None:
             invoke(["claim", ids["Released ruling"]], fake, "solo0001")
             if fake.writes() != [["update", ids["Released ruling"], "--assignee", "solo0001", "--if-assignee", "", "--json"]]:
                 raise ValueError(f"board claim refused a planning hold past the cap: {fake.writes()}")
+            # A bare claim passes open no-commit work past the cap, as a named claim refuses it.
+            for holder, taken in ((None, True), ("solo0001", False)):  # P0 ranks it first: within the cap the bare claim takes it
+                fake = Fake(variant(**{"Loose item": {"metadata": {"no_commit": True}, "priority": 0}, "Held task": {"assignee": holder}}))
+                invoke(["claim"], fake, "solo0001")
+                if any(w[1] == ids["Loose item"] for w in fake.plain_writes()) != taken:
+                    raise ValueError(f"a bare claim of no-commit work must keep the worker cap ({holder}): {fake.writes()}")
+            shown = invoke(["claim"], Fake(variant(**{"Loose item": {"metadata": {"no_commit": True}, "priority": 0}, "Held task": {"assignee": "solo0001"}})), "solo0001")[1]
+            if f'board claim {ids["Loose item"]} --force "<reason>"' not in shown:
+                raise ValueError(f"a bare claim must name the work it passed at the cap and the forced claim: {shown}")
             # A bare claim takes change requests, which no cap counts.
             fake = Fake(variant(**{"Held task": {"assignee": "agnt0001"}, "Handed task": {"status": "closed"}}))
             invoke(["claim"], fake, "agnt0001")

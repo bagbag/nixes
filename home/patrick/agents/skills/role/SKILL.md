@@ -46,6 +46,7 @@ An agent session runs each claimed CR or item under the protocol for its kind:
 | `open` CR | work (design or implement pull) |
 | `in_review` CR (agent review or agent checkpoint); refresh work | review |
 | standalone `in_review` task, bug, spike | review |
+| `open` no-commit task | plan, its Dispatch |
 
 ## Entry
 

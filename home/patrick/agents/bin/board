@@ -1125,9 +1125,11 @@ class Board:
         if status == 'needs_ratification' and kind in WORK_TYPES:
             return 'ratify'  # the ratification of a landed change request or an accepted design
         # Work items are claimed through their change request (by id, by the session holding it): no pull of their own;
-        # a standalone review (an in_review task outside any CR, findings and no commits) is the exception.
+        # a standalone review (an in_review task outside any CR, findings and no commits) and open no-commit work are the exceptions.
         if status == 'in_review' and kind in WORK_TYPES and self.cr_of(issue['id']) is None:
             return 'review'
+        if status == 'open' and is_no_commit(issue) and self.cr_of(issue['id']) is None:
+            return 'plan'  # work that commits nothing: the dispatcher triages it (a worker's brief, or the user's assignment)
         return 'milestone' if status == 'open' and kind == 'milestone' else None
 
     def is_cr(self, item_id: str) -> bool:
@@ -3050,6 +3052,12 @@ def held_skips(board: Board, scoped: list[dict], kinds: list[str], actor: str) -
     return lines
 
 
+def waiting_skips(board: Board, scoped: list[dict], kinds: tuple[str, ...]) -> list[str]:
+    """What a bare claim passed over as waiting: unheld items of its kinds and what each waits on."""
+    return [f"  waiting: {issue['id']} on {', '.join(board.waits_of(issue))}" for issue in scoped
+            if not issue.get('assignee') and board.kind(issue) in kinds and board.waits_of(issue)]
+
+
 WAIT_SECONDS = 60  # poll gap of `board wait`: a read of the board takes about a second
 
 
@@ -3058,8 +3066,9 @@ def wait_command(board: Board, args) -> int:
     Exit 3 once --timeout passes, 1 when the session's registration is gone. Each poll reads the board anew."""
     actor, end = caller(), None if args.timeout is None else time.monotonic() + args.timeout
     while True:
-        kinds = claim_kinds(board, own_entry(board, actor), actor)
-        found = next(claim_candidates(board, board.listed(args.root), kinds, actor), None)
+        entry = own_entry(board, actor)
+        kinds = claim_kinds(board, entry, actor)
+        found = next(claim_candidates(board, board.listed(args.root), kinds, actor, entry), None)
         if found is not None:
             print(f"claimable: {found['id']} ({board.claimable(found)}) {found.get('title', '')}")
             return 0
@@ -3083,13 +3092,18 @@ def claim_kinds(board: Board, entry: dict | None, actor: str) -> tuple[str, ...]
     return session_kinds(entry)
 
 
-def claim_candidates(board: Board, scoped: list[dict], kinds: tuple[str, ...], actor: str) -> Iterator[dict]:
+def claim_candidates(board: Board, scoped: list[dict], kinds: tuple[str, ...], actor: str, entry: dict,
+                     passed: list[str] | None = None) -> Iterator[dict]:
     """What a bare claim tries, in claim order: claimable in the session's kinds, minus its own hand-overs (lazily, the
-    authorship lookup reads history)."""
+    authorship lookup reads history) and open work past the worker cap, which a named claim refuses too (noted in `passed`)."""
     for issue in sorted((i for i in scoped if board.claimable(i) in kinds), key=lambda i: claim_order(board, i)):
         if issue['status'] == 'in_review' and board.claimable(issue) == 'review' and (author := authorship(board, issue)[0]) \
                 and session_actor(author) == session_actor(actor):
             continue  # your own hand-over needs another reviewer
+        if is_work_hold(issue) and issue['status'] == 'open' and (over := cap_refusal(board, entry, actor, [])):
+            if passed is not None:
+                passed.append(f'  at your worker cap ({over}): {issue["id"]}; board claim {issue["id"]} --force "<reason>" takes it')
+            continue  # a review hold counts against no cap
         yield issue
 
 
@@ -3164,9 +3178,10 @@ def claim(board: Board, args) -> int:
                     kind = 'accept'  # named: the Accept protocol may still return or reject it; landing refuses while it waits
                 if kind is None:
                     failed.append(item_id)
-                    waits = board.cr_waits(issue)[0] if board.kind(issue) in ('plan', 'design', 'implement') else []
-                    print(f"{item_id}: not claimable ({issue['status']})"
-                          + (f", waits on {', '.join(waits)}" if waits else ''), file=sys.stderr)
+                    why = [problem_line(one) for one in cr_problems(board, issue, cr_info(board, issue), refresh_target(board))]
+                    if refusal := open_refusal(item_id, issue, 'a claim'):
+                        why.append(refusal)
+                    print(f"{item_id}: not claimable ({issue['status']})" + ''.join(f'\n  {line}' for line in why), file=sys.stderr)
                     continue
                 if claim_cr_checked(board, issue, actor, kind, claimed, failed):
                     issue['claim_kind'] = kind
@@ -3184,9 +3199,11 @@ def claim(board: Board, args) -> int:
                 failed.append(item_id)
                 print(f'{item_id}: not claimed: {message}', file=sys.stderr)
     else:
-        kinds = claim_kinds(board, entry, actor)
+        if args.force is not None:
+            raise BoardError('--force holds a named item past your worker cap: board claim <id> --force "<reason>"')
+        kinds, passed = claim_kinds(board, entry, actor), []
         scoped = board.listed(args.root)
-        for issue in claim_candidates(board, scoped, kinds, actor):
+        for issue in claim_candidates(board, scoped, kinds, actor, entry, passed):
             if issue.get('issue_type') == CR_TYPE:
                 kind = board.claimable(issue)
                 if claim_cr_checked(board, issue, actor, kind, claimed, failed):
@@ -3197,9 +3214,11 @@ def claim(board: Board, args) -> int:
             if ok:
                 claimed.append(issue)
                 break
+        for hint in passed:
+            print(hint)
         if not claimed:
             print(f"nothing claimable for {entry.get('role')} ({','.join(kinds)})")
-            for skipped in held_skips(board, scoped, kinds, actor):
+            for skipped in [*held_skips(board, scoped, kinds, actor), *waiting_skips(board, scoped, kinds)]:
                 print(skipped)
     args.claimed = [issue['id'] for issue in claimed]
     for issue in claimed:
@@ -4059,12 +4078,16 @@ def refuse_unrecorded(cid: str, review: dict, then: str) -> None:
         raise BoardError(f"{cid}: your review holds edits ({shown or 'commits'}): {then}")
 
 
-def refuse_open(cid: str, cr: dict, step: str) -> None:
+def open_refusal(cid: str, cr: dict, step: str) -> str | None:
     """Agent steps never take an item open for the user's review: nothing moves its branch from Open until their Accept or Return."""
     opened = opened_tip(cr)
-    if opened:
-        raise BoardError(f'{cid}: open for your review since {opened[:12]}: {step} refuses it until the user\'s Accept or Return ends it '
-                         f'({edits_line(cid, opened)} records their edits)')
+    return (f'{cid}: open for your review since {opened[:12]}: {step} refuses it until the user\'s Accept or Return ends it '
+            f'({edits_line(cid, opened)} records their edits)') if opened else None
+
+
+def refuse_open(cid: str, cr: dict, step: str) -> None:
+    if refusal := open_refusal(cid, cr, step):
+        raise BoardError(refusal)
 
 
 def stopped_on_user_edit(board: Board, cr: dict) -> bool:
@@ -4298,14 +4321,16 @@ def cr_problems(board: Board, cr: dict, info: dict, refresh_id: str | None) -> l
     state = cr_worktree_state(board, cr)
     if state:
         out.append({'kind': 'git-state', 'text': f"mid {state} (not the board's)", 'next': {'action': 'owner', 'paths': [info['worktree']]}})
-    if cr['status'] == ACCEPT and m.get('checkpoint') != 'user':  # a design checkpoint lands nothing: its check and review hold nothing up
-        parent = live_parent(board, cr)
-        for wait in accept_waits(board, cr):
-            status = board.by_id.get(wait, {}).get('status', 'unknown')
-            # a parent left the Accept only by a return (open, then rework) or a re-review: it never stacks in another state
-            said = {'open': 'returned', 'in_progress': 'in rework', 'in_review': 'in review'}.get(status, status) if wait == parent else status
-            text = f'lands after {wait} (accept it first)' if status == ACCEPT else f'waits on {wait} ({said})'
-            out.append({'kind': 'waits', 'text': text, 'next': {'action': 'wait'}})
+    accepting = cr['status'] == ACCEPT and m.get('checkpoint') != 'user'  # a design checkpoint lands nothing: its check and review hold nothing up
+    parent = live_parent(board, cr) if accepting else None
+    waits = accept_waits(board, cr) if accepting else [] if cr['status'] == ACCEPT else board.cr_waits(cr)[0]  # nor do waits its Accept
+    for wait in waits:
+        status = board.by_id.get(wait, {}).get('status', 'unknown')
+        # a parent left the Accept only by a return (open, then rework) or a re-review: it never stacks in another state
+        said = {'open': 'returned', 'in_progress': 'in rework', 'in_review': 'in review'}.get(status, status) if wait == parent else status
+        text = f'lands after {wait} (accept it first)' if status == ACCEPT else f'waits on {wait} ({said})'
+        out.append({'kind': 'waits', 'text': text, 'next': {'action': 'wait'}})
+    if accepting:
         if info['state'] != 'current':  # every state needs_refresh counts
             out.append({'kind': 'check', 'text': f"check {info['state']}", 'next': stale_next})
     if info['blocked']:
@@ -6663,11 +6688,15 @@ def update_command(board: Board, args) -> int:
     if args.assignee is not None:
         for item_id in args.ids:
             held = board.by_id[item_id].get('assignee')
-            if held and held != 'user':
-                raise BoardError(f'{item_id}: held by {held}; board unclaim or board take it first')
+            if held and held != 'user' and not (args.assignee == USER_HOLD and session_actor(held) == session_actor(caller())):
+                raise BoardError(f'{item_id}: held by {held}; board unclaim or board take it first')  # a session hands its own to the user
             if board.by_id[item_id].get('issue_type') not in WORK_TYPES or board.cr_of(item_id):
                 raise BoardError(f'{item_id}: user work is a task, bug or spike outside any change request')
         changes += ['--assignee', args.assignee]
+        if any(board.by_id[i].get('assignee') not in (None, '', USER_HOLD) for i in args.ids):
+            changes += ['--status', 'open']  # its holder's hand-off: the user starts it
+        if args.assignee == USER_HOLD and args.no_commit is None and any(is_no_commit(board.by_id[i]) for i in args.ids):
+            changes += ['--unset-metadata', NO_COMMIT]  # a person's item carries no mark (retired_move)
     changes += setting_changes(board, args)
     if not changes:
         raise BoardError('nothing to change: give --title, --priority, --label, --unlabel, --parent, --assignee, --no-commit, --commits, --look, --view '

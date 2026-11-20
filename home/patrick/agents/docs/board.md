@@ -87,7 +87,7 @@ later role switch keeps; a non-lead session row's select in the console pane
 sets it with no model turn (`set-workers`); Codex's thread limits lower it.
 The cap also limits holds (r13-q71): `board claim` refuses a task, bug, design or spike that would take
 the claiming actor past it (counted per actor: in-progress work items only, not decisions or in-review
-items) unless `--force "<reason>"`; a takeover of a work item held in progress (the session's own worker, or
+items) unless `--force "<reason>"`; a bare claim passes such an item at the cap and names it with that command (`--force` is for named items); a takeover of a work item held in progress (the session's own worker, or
 `board take`) counts the same way and takes `--force` past the cap (r16-q93); position, mine, claim and check flag a forced hold `FORCED: <reason>`
 (item metadata `forced_hold_by`/`forced_hold`, shown while that actor holds it). A held work item
 with no update (fields, notes, comments) for an hour is `STALE` in position, mine, check and the
@@ -112,7 +112,7 @@ Linking or releasing a ruling leaves the review stage in place until a return.
 (`board cr land` or `reject` closes it).
 `--force` closes past open blockers. The other writes `board bd` no longer carries have verbs: `board update <id>... [--title] [--priority] [--label L]...
 [--unlabel L]... [--parent P|""] [--assignee user|""]` (a `queue:` or `for:` label goes through `send`, `route` or `create --for`; `--parent` keeps a change request and its held
-items where they are; `--assignee` hands a task, bug or spike outside any change request to the user and back, never one a session holds), `board link <a> <b> --type T` and `board unlink <a> <b>` (links that hold nothing up; a blocking one is `board block` /
+items where they are; `--assignee` hands a task, bug or spike outside any change request to the user and back (its holding session hands it over reopened; another session's hold is refused; a no-commit mark is dropped)), `board link <a> <b> --type T` and `board unlink <a> <b>` (links that hold nothing up; a blocking one is `board block` /
 `board unblock <ids> --on <blocker>`, whose `--reason` a work item needs and a decision or gate blocker or a milestone item does not),
 `board reopen <id>...` (not a change request), `board defer <id>... --reason [--until]` / `board undefer` (defer refuses work a live item waits on, unless deferred with it, and a decision that work in progress, in review or at Accept waits on; `board check` flags both as `deferred-blocker`), and `board gate create|resolve`. Refused
 calls of these verbs exit 2, as every verb that writes an item from its flags does (`REFUSAL_EXIT_2` in `bin/board` is the list). Plain
@@ -156,7 +156,8 @@ setting (`no reason in its text` otherwise) and a note when it now equals the de
 `ITEM_TYPES` in `bin/board` is the one list of item types (board-core.md Kinds, a test compares them):
 `board create` (flags or `--graph`) and `update --type` refuse any other type, `question` is refused naming
 `--type decision` (never rewritten), and `board check` flags a live item of another type (class `unknown-type`).
-`no_commit` marks agent work that commits nothing to this repository: it is claimed outside a CR. Neither it nor an item assigned
+`no_commit` marks agent work that commits nothing to this repository: it is claimed outside a CR, and open, ready and unassigned it is
+kind `plan` (the dispatcher triages it). Neither it nor an item assigned
 to a person gets a `no-cr` flag. `board check` flags what lies outside the board's vocabularies on a live item, each with its fix:
 a metadata key not in `BOARD_METADATA` (`unknown-metadata`), a link type it does not write (`unknown-link`), and a label outside
 `LABEL_PREFIXES` (`label-form`). `board check --fix` (lead, solo or person) applies the fixes that need no judgment first: a key the
@@ -267,8 +268,8 @@ lists it as `cr-git-state`, and `board console` gives the row a `git-state` prob
 Each `crs[]` row's `problems` lists what holds the request up with the step that clears it, `{kind, text, next: {action, command?, paths?}}`
 (`cr_problems`): `setup-failed` (claim again), `git-state` (its owner ends it), `check` (any state but current) while it waits for the
 Accept, never for a design checkpoint, which lands nothing (`refresh` when the check is stale, `merge` when stopped on the user's
-edit commit, else `wait`), `waits` (`wait`) for each unlanded parent and effective wait of a request waiting for its Accept (`accept_waits`: the
-console hides its Accept, the next claim passes it, a named claim still takes it to return or reject), `land-blocked` (`ask-user`, the paths). A hold is no problem: the row's `holder` says it, and the console marks it while
+edit commit, else `wait`), `waits` (`wait`) for each effective wait (`cr_waits`) but at a design checkpoint's Accept, plus the unlanded parent at any other Accept (`accept_waits`: the
+console hides its Accept, the next claim passes it, a named claim still takes it to return or reject), which a refused claim prints too, `land-blocked` (`ask-user`, the paths). A hold is no problem: the row's `holder` says it, and the console marks it while
 the request waits for the Accept. The console maps the problems to marks and the Update button; `board queue` and `board show` print the same
 problems with their step. A rebase the board started and stopped on a conflict stays claimable: `sync_branch` (handover, `cr refresh`, `cr edits
 --commit`) refuses while unmerged paths remain and otherwise runs `git rebase --continue` with `GIT_EDITOR=true` itself (r1-q2, q4).

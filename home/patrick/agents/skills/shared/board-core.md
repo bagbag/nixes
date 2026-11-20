@@ -60,7 +60,7 @@ shared board, the user an unshared one (`bd dolt push`/`pull`).
   holder gone. For your own workers' holds marked stopped in `board mine`:
   continue the worker, hand the item over or free it.
 - At your worker cap, hand over or unclaim partial work before
-  `board claim --force "<reason>"`.
+  `board claim <id> --force "<reason>"`.
 - A CR that leaves its holder unfinished (unclaimed, returned, freed from a
   gone holder) keeps its worktree, branch and uncommitted edits; its next
   claimer reuses the worktree as it stands. Git states stopping a CR:
@@ -98,8 +98,8 @@ no role; follow these rules yourself:
   plan and milestone kinds, findings-only reviews and challenges, and work
   items marked no-commit need no CR.
 - Pull `plan` also claims the board restructuring tasks it creates itself,
-  and an `open` CR with no open items or marked for replanning (returned from
-  an agent checkpoint, or a child of a rejected CR).
+  ready no-commit work, and an `open` CR with no open items or marked for
+  replanning (returned from an agent checkpoint, or a child of a rejected CR).
 - A session with the decide set (lead, solo) claims by id its round's open
   decisions, ratification tasks, CRs in `needs_acceptance`, passed
   `look` `after` children marked `after <base>` and ready milestones, and

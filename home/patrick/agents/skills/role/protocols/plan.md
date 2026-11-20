@@ -203,6 +203,8 @@ Establish the outcome's contribution to its milestone:
   When a worker ends, finish the bookkeeping the next dispatch depends on (its
   hand-over, the board state a new worker relies on), integrate its result
   under [Integrate](#integrate), then refill before other bookkeeping.
+- Brief a worker on each no-commit task you claim, or hand a step only the
+  user can do to them: `board update <id> --assignee user`.
 - Give each worker one CR. Brief: the CR id, the protocol path for its kind
   (`$HOME/.agents/skills/role/SKILL.md`, claimed-item table) and only the
   deltas under [Brief](#brief).
