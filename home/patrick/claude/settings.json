@@ -21,6 +21,7 @@
       "Edit(~/.local/share/agents/decisions/**)"
     ]
   },
+  "model": "sonnet",
   "disableClaudeAiConnectors": true,
   "hooks": {
     "SessionStart": [
@@ -176,7 +177,17 @@
       "autoUpdate": true
     }
   },
-  "effortLevel": "medium",
+  "modelSettings": {
+    "claude-opus-5-5": {
+      "effortLevel": "medium"
+    },
+    "claude-sonnet-5-5": {
+      "effortLevel": "medium"
+    },
+    "claude-haiku-5-5": {
+      "effortLevel": "medium"
+    }
+  },
   "autoCompactWindow": 409000,
   "advisorModel": "opus",
   "tui": "fullscreen",
