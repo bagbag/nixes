@@ -76,7 +76,7 @@ members.
 
 ## Ratification
 
-The landing or design ratification task
+The landing ratification task
 ([Change requests](../../shared/change-requests.md#change-requests)) takes the
 user's verdict through `agents board ratify`: `yes` closes it (a default reason names the CR) and
 removes its review worktree and `ratify/<id>` branch, refused while they

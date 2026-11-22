@@ -150,7 +150,6 @@ Establish the outcome's contribution to its milestone:
   its acceptance.
 - Item text states acceptance, not reviewer or review depth
   ([Review policy](../../shared/acceptance.md#review-policy)).
-- State each interim check the CR needs in the CR.
 - Place each new CR in or out of the open milestone under
   [Milestones](../../shared/board-coordination.md#milestones).
 - Use a separate plan for cross-item reasoning, blast-radius integration
