@@ -5,7 +5,7 @@ import type { EngineInterface } from 'claude-code'
 
 import type {
   ConsoleAction, ConsoleAgent, ConsoleBoard, ConsoleBoardCounts, ConsoleReview, ConsoleRetired, ConsoleCheckState, ConsoleCount, ConsoleCounts, ConsoleCr, ConsoleDialogQuestion, ConsoleHeld, ConsoleItem, ConsolePassOrigin, ConsolePending, ConsoleProblem, ConsoleProgress, ConsoleProposal, ConsoleQuestion,
-  ConsoleRatification, ConsoleRecord, ConsoleRole, ConsoleRound, ConsoleSession,
+  ConsoleRecord, ConsoleRole, ConsoleRound, ConsoleSession,
 } from '../types'
 
 type $ = EngineInterface
@@ -195,14 +195,6 @@ export async function boardRead($: $, session: string, id: string): Promise<{ te
   return ran.exitCode === 0 ? { text: ran.stdout.trim(), isFailed: false } : { text: `board show ${id}: exit ${ran.exitCode}: ${ran.stderr.trim()}`, isFailed: true }
 }
 
-/** The user's verdict on a ratification (`board ratify <id> yes|edits|no`); `edits` reruns the project's checks on the follow-up, so it gets more time. A refusal comes back as `error` (the board's stderr). */
-export async function boardRatify($: $, session: string, id: string, verdict: 'yes' | 'edits' | 'no', message?: string): Promise<{ error: string | null }> {
-  const homeDir = await home($)
-  const ran = await $.process.run([binary(homeDir, 'board'), 'ratify', id, verdict, ...(message === undefined ? [] : ['-m', message])],
-    { timeoutMs: verdict === 'edits' ? RATIFY_EDITS_TIMEOUT_MS : 60_000, env: { CLAUDE_CODE_SESSION_ID: session } })
-  return { error: ran.exitCode === 0 ? null : (ran.stderr.trim() || ran.stdout.trim() || `exit ${ran.exitCode}`) }
-}
-
 /** `board review open <id>`: the board opens the item for your review in its own worktree, on its own branch, and prints the path to open (stdout); a refusal comes back as `error` (its stderr). */
 export async function boardReviewOpen($: $, session: string, id: string): Promise<{ open: string | null; error: string | null }> {
   const ran = await $.process.run([binary(await home($), 'board'), 'review', 'open', id], { timeoutMs: 60_000, env: { CLAUDE_CODE_SESSION_ID: session } })
@@ -259,7 +251,6 @@ export function parseBoardConsole(raw: unknown): Omit<ConsoleBoard, 'agents' | '
     waitingOnYou: view === null ? 0 : count(view.waitingOnYou),
     queued: view === null ? 0 : count(view.queued),
     prefix: view === null ? null : nullableText(view.prefix),
-    ratifications: view === null ? [] : list(view.ratifications).map(parseRatification).filter(one => one.id !== ''),
     sync: view === null ? null : nullableText(view.sync),
     queues: view === null ? null : nullableText(view.queueLine),
   }
@@ -309,7 +300,7 @@ function parseCounts(value: unknown): ConsoleCounts | null {
   const raw = record(value)
   return {
     questions: parseCount(raw.questions), decided: parseCount(raw.decided), toPlan: parseCount(raw.toPlan),
-    toReview: parseCount(raw.toReview), toAccept: parseCount(raw.toAccept), toRatify: parseCount(raw.toRatify), forUser: parseCount(raw.forUser),
+    toReview: parseCount(raw.toReview), toAccept: parseCount(raw.toAccept), forUser: parseCount(raw.forUser),
   }
 }
 
@@ -463,13 +454,6 @@ function parseProblem(value: unknown): ConsoleProblem {
   const raw = record(value)
   const next = record(raw.next)
   return { kind: text(raw.kind), text: text(raw.text), next: { action: text(next.action), command: nullableText(next.command), paths: list(next.paths).map(text).filter(one => one !== '') } }
-}
-
-function parseRatification(value: unknown): ConsoleRatification {
-  const raw = record(value)
-  return { id: text(raw.id), cr: text(raw.cr), title: text(raw.title), kind: oneOf(raw.kind, ['landing']), priority: typeof raw.priority === 'number' ? raw.priority : 9,
-    tip: nullableText(raw.tip), baseTip: nullableText(raw.baseTip), stale: list(raw.stale).map(value => ({ sha: text(record(value).sha), subject: text(record(value).subject) })).filter(one => one.sha !== ''),
-    conflict: raw.conflict === true, review: parseReview(raw.review) }
 }
 
 function parseReview(value: unknown): ConsoleReview | null {

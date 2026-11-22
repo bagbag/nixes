@@ -58,7 +58,7 @@ export type ConsoleBatch = { marker: string; questions: ConsoleDialogQuestion[];
 /** One count of the board's views (r21-q141): `ready` can be taken now, `waiting` is the rest of that step. */
 export type ConsoleCount = { ready: number; held: number; waiting: number }
 
-export type ConsoleCounts = { questions: ConsoleCount; decided: ConsoleCount; toPlan: ConsoleCount; toReview: ConsoleCount; toAccept: ConsoleCount; toRatify: ConsoleCount; forUser: ConsoleCount }
+export type ConsoleCounts = { questions: ConsoleCount; decided: ConsoleCount; toPlan: ConsoleCount; toReview: ConsoleCount; toAccept: ConsoleCount; forUser: ConsoleCount }
 
 /** The board's counts: the protocol's seven, the two agent steps between plan and review (`board console`; the round carries no such step) and the deferred backlog. */
 export type ConsoleBoardCounts = ConsoleCounts & { toDesign: ConsoleCount; toImplement: ConsoleCount; deferred: ConsoleCount }
@@ -71,7 +71,7 @@ export type ConsoleCrAcceptance = {
 }
 
 /**
- * One live change request from `board console` `crs`, in accept-queue order (parents before children). Waiting for you is status `needs_acceptance`; agent review is `in_review`.
+ * One live change request from `board console` `crs`, in accept-queue order (parents before children). Waiting for you is status passed (look before); agent review is `in_review`.
  * `base`: the target branch or the parent CR's id; `parent`: the CR it stacks on.
  * `tip`, `baseTip`: the branch and its base as the board read them now; `check` holds the pair the checks ran on.
  */
@@ -108,9 +108,6 @@ export type ConsoleCr = {
  * waits (an unlanded parent or a blocker its Accept waits on), land-blocked; `text` the board's words; `next.action` refresh (only the queue head's refresh work, never on an open review), claim, merge (with you), owner, ask-user or wait.
  */
 export type ConsoleProblem = { kind: string; text: string; next: { action: string; command: string | null; paths: string[] } }
-
-/** A look-after landing's ratification item (`board console` `ratifications`): it waits for your look and blocks nothing. */
-export type ConsoleRatification = { id: string; cr: string; title: string; kind: 'landing' | null; priority: number; tip: string | null; baseTip: string | null; stale: { sha: string; subject: string }[]; conflict: boolean; review: ConsoleReview | null }  // the landed range and its drift from the target
 
 /** What a request or ratification open for your review holds (`board console` `crs[].review`, `ratifications[].review`): `opened` the tip it was opened at; `edited` you made commits after it or have uncommitted changes (null: the board cannot read it, e.g. an amended opened tip); `files` the paths that differ from `opened`. Null: it is not open for review. */
 export type ConsoleReview = { opened: string; edited: boolean | null; files: string[] }
@@ -208,7 +205,7 @@ export type ConsoleBoard = {
   items: ConsoleItem[]
   sessions: ConsoleSession[]
   held: ConsoleHeld[]
-  /** Requests waiting for you (`needs_acceptance`) and in work (`in_progress`, `in_review`), the accept queue first. */
+  /** Requests waiting for you (passed (look before)) and in work (`in_progress`, `in_review`), the accept queue first. */
   crs: ConsoleCr[]
   /** Queued requests (`open`) whose work unit waits on a question not yet released: counted apart, never listed. */
   waitingOnYou: number
@@ -216,7 +213,6 @@ export type ConsoleBoard = {
   queued: number
   /** The board's own id prefix: the pane shows ids without it. Null without a board. */
   prefix: string | null
-  ratifications: ConsoleRatification[]
   agents: ConsoleAgent[]
   /** The repository's scratch line (`scratch status --line`): what the trash holds (informational, no button); null when empty or scratch fails. Every session's console shows it; no model context gets it. */
   scratch: string | null
@@ -253,7 +249,6 @@ export type ConsoleOpened =
   | { kind: 'item'; id: string; from: string | null; phase: 'reading' | 'read' | 'failed'; text: string; slot: ConsoleItemSlot | null }  // `from`: the question whose overlaps listed it; `text`: the failure
   | { kind: 'overlaps'; question: string; overlaps: { id: string; title: string }[] }
   | { kind: 'settles'; question: string; ids: string[] }
-  | { kind: 'reason'; id: string }  // a ratification's Not OK field, open
   | { kind: 'suggestion'; key: string; leads: { id: string; title: string }[] }
 
 /** The command a compacting suggestion runs once its compaction succeeded (`title`: the proposal's, for the summary and the notice); it goes with the next compaction, typed prompt or round start. */
@@ -262,7 +257,7 @@ export type ConsoleOpened =
 export type ConsoleDeferred = { command: string; args: string }
 
 /** Pane lists the person expanded past their cap. */
-export type ConsoleSection = 'questions' | 'held' | 'items' | 'forYou' | 'sessions' | 'log' | 'crs' | 'ratify'
+export type ConsoleSection = 'questions' | 'held' | 'items' | 'forYou' | 'sessions' | 'log' | 'crs'
 
 declare module 'claude-code' {
   /** The console's tool, by hand: the generated snapshot (`.claude-plugin/types/claude-code-mcp`) can miss it at a save, while the mod reloads. Keep in step with the inputSchema in hooks/core.ts. */

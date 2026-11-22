@@ -47,9 +47,9 @@ describe('change request queue', () => {
   })
 
   test('a stack: the child stands under its parent with stage, check state and look', async ($, on) => {
-    const { ui } = await queued($, on, [...BOARD_CONSOLE_CONTRACT.crs] as unknown as Crs, repo(), { ratifications: [...BOARD_CONSOLE_CONTRACT.ratifications] })
+    const { ui } = await queued($, on, [...BOARD_CONSOLE_CONTRACT.crs] as unknown as Crs, repo())
     const drawn = await texts(ui)
-    for (const part of ['Change requests', 'Remove the legacy cache', 'Drop the cache config', 'code', '2 new', 'in review', 'stale', 'to ratify', 'Move the clock']) {
+    for (const part of ['Change requests', 'Remove the legacy cache', 'Drop the cache config', 'code', '2 new', 'in review']) {
       expect(drawn, part).toContain(part)
     }
     expect(drawn).not.toContain('checks current')  // the normal state stays off the row
@@ -76,7 +76,7 @@ describe('change request queue', () => {
   })
 
   test('an open request in work shows no check line until it has one', async ($, on) => {
-    const { ui } = await queued($, on, [cr({ id: 'p-cr1', status: 'in_progress', holder: 'a1', check: { state: 'unchecked', tip: null, baseTip: null, at: null, result: null, newFailures: null, baseCount: null, tipCount: null } })])
+    const { ui } = await queued($, on, [cr({ id: 'p-cr1', status: 'open', holder: 'a1', check: { state: 'unchecked', tip: null, baseTip: null, at: null, result: null, newFailures: null, baseCount: null, tipCount: null } })])
     const drawn = await texts(ui)
     expect(drawn).toContain('in work')
     expect(drawn).not.toContain('unchecked')
@@ -215,30 +215,13 @@ describe('Open', () => {
     await ui.unmount()
   })
 
-  test('a ratification row presses `board review open` for its own id, and has no Open without a landed range', async ($, on) => {
-    const r = repo()
-    const ratifications = [{ id: 'p-rat1', cr: 'p-cr0', title: 'Move the clock', tip: sha(6), baseTip: sha(5), review: null }, { id: 'p-rat2', cr: '', title: 'unknown', tip: null, baseTip: null, review: null }]
-    const { ui, clock, w } = await queued($, on, [cr({ id: 'p-cr1' })], r, { ratifications })
-    expect(await ui.find({ key: 'ratify-p-rat2-open' })).toBeUndefined()
-    await ui.press({ key: 'ratify-p-rat1-open' })
-    await clock.settle()
-    expect(boardCalls(w, 'review')).toEqual([['open', 'p-rat1']])
-    expect(r.opened).toEqual(['/main/.worktrees/p-rat1'])
-    expect(r.all).toEqual([])
-    await ui.unmount()
-  })
-
   test('the board\'s refusal is the toast, as it said it; nothing opens', async ($, on) => {
     const r = repo()
-    const ratifications = [{ id: 'p-rat1', cr: 'p-cr0', title: 'Move the clock', tip: sha(6), baseTip: sha(5), review: null }]
-    const { ui, clock, w } = await queued($, on, WAITING(), r, { ratifications })
+    const { ui, clock, w } = await queued($, on, WAITING(), r)
     w.reviewOpen = { exit: 1, stdout: '', stderr: 'p-cr1: held by a1b2, an agent session at work in its worktree (a refresh): open it once that session releases it\n' }
     await ui.press({ key: 'cr-open-p-cr1' })
     await clock.settle()
     expect(w.toasts.at(-1)).toBe('Change request: p-cr1: held by a1b2, an agent session at work in its worktree (a refresh): open it once that session releases it')
-    await ui.press({ key: 'ratify-p-rat1-open' })
-    await clock.settle()
-    expect(w.toasts.at(-1)).toMatch(/^Ratification: p-cr1: held by a1b2/)
     expect(r.opened).toEqual([])
     await ui.unmount()
   })
@@ -290,9 +273,8 @@ describe('Open', () => {
   })
 
   test('after any press the board refreshes once the action is done (r3-q14)', async ($, on) => {
-    const ratifications = [{ id: 'p-rat1', cr: 'p-cr0', title: 'Move the clock', tip: sha(6), baseTip: sha(5), review: null }]
-    const { w, ui, clock } = await queued($, on, [cr({ id: 'p-cr1' }), cr({ id: 'p-cr2', view: 'result' })], repo(), { ratifications })
-    for (const key of ['cr-open-p-cr1', 'cr-accept-p-cr1', 'cr-return-p-cr1', 'cr-walk-p-cr2', 'ratify-p-rat1-open', 'ratify-p-rat1-yes']) {
+    const { w, ui, clock } = await queued($, on, [cr({ id: 'p-cr1' }), cr({ id: 'p-cr2', view: 'result' })], repo())
+    for (const key of ['cr-open-p-cr1', 'cr-accept-p-cr1', 'cr-return-p-cr1', 'cr-walk-p-cr2']) {
       const before = boardReads(w)
       await ui.press({ key })
       await clock.settle()
@@ -332,25 +314,6 @@ describe('Open', () => {
     expect(await texts(ui)).not.toContain('opening your review')
     expect(await isInverse()).toBe(false)
     expect(w.prompts).toEqual([])  // the busy Accept sent nothing
-    await ui.unmount()
-  })
-
-  test('a pressed ratification Open shows its step in its hover hint: the row gains nothing', async ($, on) => {
-    const ratifications = [{ id: 'p-rat1', cr: 'p-cr0', title: 'Move the clock', tip: sha(6), baseTip: sha(5), review: null }]
-    const { w, ui, clock } = await queued($, on, [], repo(), { ratifications })
-    const rowChildren = async () => ((await ui.find({ key: 'ratify-p-rat1' })) as { children?: unknown[] }).children?.length
-    const calm = await rowChildren()
-    let release = () => {}
-    w.hold = { verb: 'board review', until: new Promise<void>(resolve => { release = resolve }) }
-    await ui.press({ key: 'ratify-p-rat1-open' })
-    await clock.settle()
-    const drawn = (await texts(ui)).split('\n')
-    expect(drawn).toContain('Open · opening your review…')  // the button's hover hint, at the pane's bottom
-    expect(drawn[drawn.indexOf('Move the clock') + 1]).not.toContain('opening your review')
-    expect(await rowChildren()).toBe(calm)
-    release()
-    w.hold = null
-    await clock.settle()
     await ui.unmount()
   })
 
@@ -614,13 +577,12 @@ describe('change requests in the /console text', () => {
   }
   const PRESSES = /Open|Accept|Review|Return|Refresh/
 
-  test('the stack, each request\'s state, and the ratifications: no press labels', async ($, on) => {
-    const { ui, clock } = await queued($, on, [...BOARD_CONSOLE_CONTRACT.crs] as unknown as Crs, repo(), { ratifications: [...BOARD_CONSOLE_CONTRACT.ratifications] })
+  test('the stack, each request\'s state, no press labels', async ($, on) => {
+    const { ui, clock } = await queued($, on, [...BOARD_CONSOLE_CONTRACT.crs] as unknown as Crs, repo())
     const out = await text($, ui, clock)
     expect(out).toContain('Change requests')
     expect(out).toContain('  p-cr1  Remove the legacy cache · to accept · P2 · unblocks 14 · shares 2 · 1.0-beta scope · checks current · 0 new (base 3012, tip 2972) · look before · code')
     expect(out).toContain('    p-cr2  Drop the cache config · in review · P2 · stale · 2 new: src/a.ts TS2322, src/b.ts TS2345 (base 3012, tip 3014) · look after · result · held by a1b2')
-    expect(out).toContain('To ratify\n  p-rat1  Move the clock · landed in p-cr0')
     expect(out.split('\n').filter(line => line.includes('p-cr')).join('\n')).not.toMatch(PRESSES)
   })
 
@@ -639,7 +601,7 @@ describe('counts', () => {
   test('each count is ready now plus (k wait); the labels follow the step', async ($, on) => {
     const { ui } = await queued($, on, [])
     const drawn = await texts(ui)
-    for (const part of ['questions', '186 (2 held)', 'to plan', '0 (57 wait)', 'to review', 'to accept', '13 (1 wait)', 'to ratify', 'for you', '3']) expect(drawn, part).toContain(part)
+    for (const part of ['questions', '186 (2 held)', 'to plan', '0 (57 wait)', 'to review', 'to accept', '13 (1 wait)', 'for you', '3']) expect(drawn, part).toContain(part)
     expect(drawn).not.toContain('in review')
     await ui.unmount()
   })
@@ -653,14 +615,14 @@ describe('counts', () => {
   })
 
   test('the /console text prints the same labels', () => {
-    const text = consoleText({ session: 's', role: 'lead', actor: 'a', tool: 'claude' }, { isMissing: false, counts: { ...COUNTS, toDesign: { ready: 6, held: 1, waiting: 0 }, toImplement: { ready: 90, held: 1, waiting: 1 }, deferred: { ready: 4, held: 0, waiting: 0 } }, forYou: [], items: [], sessions: [], held: [], crs: [], queued: 0, waitingOnYou: 0, prefix: null, ratifications: [], agents: [], scratch: null, sync: null, queues: null, error: null }, null, false, [])
-    expect(text).toContain('you: for you 3 · to accept 13 (1 wait) · to ratify 1 · decided 0 · questions 186 (2 held)')
+    const text = consoleText({ session: 's', role: 'lead', actor: 'a', tool: 'claude' }, { isMissing: false, counts: { ...COUNTS, toDesign: { ready: 6, held: 1, waiting: 0 }, toImplement: { ready: 90, held: 1, waiting: 1 }, deferred: { ready: 4, held: 0, waiting: 0 } }, forYou: [], items: [], sessions: [], held: [], crs: [], queued: 0, waitingOnYou: 0, prefix: null, agents: [], scratch: null, sync: null, queues: null, error: null }, null, false, [])
+    expect(text).toContain('you: for you 3 · to accept 13 (1 wait) · decided 0 · questions 186 (2 held)')
     expect(text).toContain('agents: to plan 0 (57 wait) · to design 6 (1 held) · to implement 90 (1 held, 1 wait) · to review 0')
   })
 
   test('the engine counts parse as ready/waiting; a bare number reads as all ready', () => {
     const round = parseRound({ version: 1, counts: { questions: { ready: 2, held: 4, waiting: 1 }, toPlan: 5 } })
-    expect(round.counts).toMatchObject({ questions: { ready: 2, held: 4, waiting: 1 }, toPlan: { ready: 5, held: 0, waiting: 0 }, toAccept: { ready: 0, held: 0, waiting: 0 }, toRatify: { ready: 0, held: 0, waiting: 0 } })
+    expect(round.counts).toMatchObject({ questions: { ready: 2, held: 4, waiting: 1 }, toPlan: { ready: 5, held: 0, waiting: 0 }, toAccept: { ready: 0, held: 0, waiting: 0 } })
   })
 })
 
@@ -675,7 +637,7 @@ describe('what holds a request up', () => {
       { kind: 'land-blocked', text: 'land blocked: a, b, c, d', next: { action: 'ask-user', paths: ['a', 'b', 'c', 'd'] } }] }) as unknown as ConsoleCr)
     expect(marks).toEqual([
       { text: 'setup failed', isProblem: true }, { text: 'land blocked: a, b, c, …', isProblem: true },
-      { text: 'held by b2c3', isProblem: false, isWarning: true }, { text: 'lands with p-cr0', isProblem: false },
+      { text: 'lands with p-cr0', isProblem: false },
     ])
   })
 
@@ -761,7 +723,7 @@ describe('request rows', () => {
   })
 
   test('a bar in the first cell of the title line marks each request and shows its kind: code, result, or in work', async ($, on) => {
-    const { ui } = await mounted($, on, [cr({ id: 'p-cr1' }), cr({ id: 'p-cr2', view: 'result' }), cr({ id: 'p-cr3', status: 'in_progress' })], WIDE)
+    const { ui } = await mounted($, on, [cr({ id: 'p-cr1' }), cr({ id: 'p-cr2', view: 'result' }), cr({ id: 'p-cr3', status: 'open' })], WIDE)
     for (const id of ['p-cr1', 'p-cr2', 'p-cr3']) {
       expect((await ui.find({ key: `cr-${id}-bar1` }))?.text, id).toBe('▌')
       expect((await ui.find({ key: `cr-${id}-bar2` }))?.text, `${id} line two`).toBe(' ')  // the second line only keeps the cell
@@ -846,7 +808,7 @@ describe('request rows', () => {
   })
 
   test('zero parts of the banner are left out', async ($, on) => {
-    const { ui } = await queued($, on, [cr({ id: 'p-c', status: 'in_progress', holder: 'a1' })], repo(), { queued: 0 })
+    const { ui } = await queued($, on, [cr({ id: 'p-c', status: 'open', holder: 'a1' })], repo(), { queued: 0 })
     const banner = (await ui.find({ key: 'cr-banner' }))?.text ?? ''
     expect(banner).toContain('1 in work')
     for (const part of ['to accept', 'queued', '0']) expect(banner, part).not.toContain(part)
@@ -868,12 +830,12 @@ describe('request rows', () => {
   })
 
   test('the /console text shows the block when only waiting-on-you is non-zero', () => {
-    const board = { isMissing: false, counts: null, forYou: [], items: [], sessions: [], held: [], queued: 0, waitingOnYou: 3, prefix: null, crs: [], ratifications: [], agents: [], sync: null, queues: null, error: null }
+    const board = { isMissing: false, counts: null, forYou: [], items: [], sessions: [], held: [], queued: 0, waitingOnYou: 3, prefix: null, crs: [], agents: [], sync: null, queues: null, error: null }
     expect(consoleText({ session: 's', role: 'lead', actor: 'a', tool: 'claude' }, board as unknown as ConsoleBoard, null, false, [])).toContain('Change requests · 3 wait on your answers')
   })
 
   test('the /console text names the same parts', () => {
-    const board = { isMissing: false, counts: null, forYou: [], items: [], sessions: [], held: [], queued: 92, waitingOnYou: 5, prefix: null, crs: [cr({ id: 'p-cr1' }), cr({ id: 'p-cr2', status: 'in_review' })] as unknown as ConsoleCr[], ratifications: [], agents: [], sync: null, queues: null, error: null }
+    const board = { isMissing: false, counts: null, forYou: [], items: [], sessions: [], held: [], queued: 92, waitingOnYou: 5, prefix: null, crs: [cr({ id: 'p-cr1' }), cr({ id: 'p-cr2', status: 'in_review' })] as unknown as ConsoleCr[], agents: [], sync: null, queues: null, error: null }
     const text = consoleText({ session: 's', role: 'lead', actor: 'a', tool: 'claude' }, board as unknown as ConsoleBoard, null, false, [])
     expect(text).toContain('Change requests · 1 to accept · 1 in work · 5 wait on your answers · 92 queued')
     expect(consoleText({ session: 's', role: 'lead', actor: 'a', tool: 'claude' }, { ...board, crs: [], queued: 0, waitingOnYou: 0 } as unknown as ConsoleBoard, null, false, [])).not.toContain('Change requests')
@@ -903,7 +865,7 @@ describe('request rows', () => {
   })
 
   test('the /console text row names unblocks and the milestone', () => {
-    const board = { isMissing: false, counts: null, forYou: [], items: [], sessions: [], held: [], queued: 0, waitingOnYou: 0, prefix: null, crs: [cr({ id: 'p-cr1', unblocks: 14, unblocksDirect: 7, milestone: '1.0-beta scope' }), cr({ id: 'p-cr2' })] as unknown as ConsoleCr[], ratifications: [], agents: [], sync: null, queues: null, error: null }
+    const board = { isMissing: false, counts: null, forYou: [], items: [], sessions: [], held: [], queued: 0, waitingOnYou: 0, prefix: null, crs: [cr({ id: 'p-cr1', unblocks: 14, unblocksDirect: 7, milestone: '1.0-beta scope' }), cr({ id: 'p-cr2' })] as unknown as ConsoleCr[], agents: [], sync: null, queues: null, error: null }
     const text = consoleText({ session: 's', role: 'lead', actor: 'a', tool: 'claude' }, board as unknown as ConsoleBoard, null, false, [])
     const [first, second] = ['p-cr1', 'p-cr2'].map(id => text.split('\n').find(line => line.includes(`${id}  `)) ?? '')
     expect(first).toContain('unblocks 14 · 1.0-beta scope')
@@ -928,16 +890,6 @@ describe('request rows', () => {
     await ui.press({ key: 'crs-toggle' })
     expect(await ui.find({ key: 'cr-p-cr5-show' })).toBeDefined()
     expect((await ui.find({ key: 'crs-toggle' }))?.text).toBe('show fewer ▾')
-    await ui.unmount()
-  })
-
-  test('the to-ratify list folds the same way, and holds its own toggle', async ($, on) => {
-    const ratifications = [1, 2, 3, 4].map(n => ({ id: `p-rat${n}`, cr: 'p-cr0', title: `${n}` }))
-    const { ui } = await mounted($, on, [cr({ id: 'p-cr1' })], WIDE, { ratifications })
-    expect(await ui.find({ key: 'ratify-p-rat3-show' })).toBeDefined()
-    expect(await ui.find({ key: 'ratify-p-rat4-show' })).toBeUndefined()
-    expect((await ui.find({ key: 'ratify-toggle' }))?.text).toBe('+1 more ▸')
-    expect(await ui.find({ key: 'crs-toggle' })).toBeUndefined()
     await ui.unmount()
   })
 
@@ -979,7 +931,7 @@ describe('priority, waiting on answers and the board prefix', () => {
   const raised = cr({ id: 'p-cr1', priority: 1, ownPriority: 2, raisedBy: { id: 'p-x1', isItem: false } })
 
   test('the banner puts "wait on your answers" between in work and queued', async ($, on) => {
-    const { ui } = await queued($, on, [cr({ id: 'p-a' }), cr({ id: 'p-c', status: 'in_progress', holder: 'a1' })], repo(), { queued: 92, waitingOnYou: 5 })
+    const { ui } = await queued($, on, [cr({ id: 'p-a' }), cr({ id: 'p-c', status: 'open', holder: 'a1' })], repo(), { queued: 92, waitingOnYou: 5 })
     expect((await ui.find({ key: 'cr-banner' }))?.text).toContain('1 to accept · 1 in work · 5 wait on your answers · 92 queued')
     await ui.unmount()
   })
@@ -1006,9 +958,9 @@ describe('priority, waiting on answers and the board prefix', () => {
   })
 
   test('the pane leaves the board prefix off ids, presses keep the full id, another prefix stays', async ($, on) => {
-    const { ui, clock, w } = await queued($, on, [cr({ id: 'p-cr1', title: 'Long', children: ['p-cr2'] }), cr({ id: 'p-cr2', parent: 'p-cr1', base: 'p-cr1' }), cr({ id: 'o-cr7' })], repo(), { prefix: 'p', ratifications: [{ id: 'p-rat1', cr: 'p-cr0', title: 'it' }] })
+    const { ui, clock, w } = await queued($, on, [cr({ id: 'p-cr1', title: 'Long', children: ['p-cr2'] }), cr({ id: 'p-cr2', parent: 'p-cr1', base: 'p-cr1' }), cr({ id: 'o-cr7' })], repo(), { prefix: 'p' })
     const drawn = (await texts(ui)).split('\n')
-    for (const id of ['cr1', 'cr2', 'rat1', 'o-cr7']) expect(drawn, id).toContain(id)
+    for (const id of ['cr1', 'cr2', 'o-cr7']) expect(drawn, id).toContain(id)
     expect(drawn).not.toContain('p-cr1')
     expect(drawn).toContain('cr1: open its summary here')
     await ui.press({ key: 'cr-open-p-cr1' })
@@ -1028,10 +980,9 @@ describe('priority, waiting on answers and the board prefix', () => {
   })
 
   test('the /console text drops the prefix too', () => {
-    const board = { isMissing: false, counts: null, forYou: [], items: [], sessions: [], held: [], queued: 0, waitingOnYou: 0, prefix: 'p', crs: [raised, cr({ id: 'o-cr7' })] as unknown as ConsoleCr[], ratifications: [{ id: 'p-rat1', cr: 'p-cr0', title: 'T' }], agents: [], sync: null, queues: null, error: null }
+    const board = { isMissing: false, counts: null, forYou: [], items: [], sessions: [], held: [], queued: 0, waitingOnYou: 0, prefix: 'p', crs: [raised, cr({ id: 'o-cr7' })] as unknown as ConsoleCr[], agents: [], sync: null, queues: null, error: null }
     const text = consoleText(lead, board as unknown as ConsoleBoard, null, false, [])
     expect(text).toContain('  cr1  Title of p-cr1 · ')
     expect(text).toContain('  o-cr7  Title of o-cr7')
-    expect(text).toContain('rat1  T · landed in cr0')
   })
 })

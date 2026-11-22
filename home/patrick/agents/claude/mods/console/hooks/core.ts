@@ -2,9 +2,9 @@
 // declarations throughout: past an import, the engine follows $ only into those.
 import type { EngineInterface, ToolCallResult } from 'claude-code'
 
-import type { ConsoleAction, ConsoleBatch, ConsoleBoard, ConsoleCr, ConsolePassOrigin, ConsolePassRun, ConsolePending, ConsoleQueued, ConsoleRatification, ConsoleRound, ConsoleSuggestion } from '../types'
+import type { ConsoleAction, ConsoleBatch, ConsoleBoard, ConsoleCr, ConsolePassOrigin, ConsolePassRun, ConsolePending, ConsoleQueued, ConsoleRound, ConsoleSuggestion } from '../types'
 
-import { boardItem, boardRatify, boardReviewOpen, boardViews, decline, dropped, isRoundOpen, nudged, pass, PASS_COMMANDS, pending as readPending, readRole, RELEASE_COMMAND, ROUND_ROLES, setWorkers, show, stampRelease, START_COMMAND, startScope, stateDir, statusLine } from './engine'
+import { boardItem, boardReviewOpen, boardViews, decline, dropped, isRoundOpen, nudged, pass, PASS_COMMANDS, pending as readPending, readRole, RELEASE_COMMAND, ROUND_ROLES, setWorkers, show, stampRelease, START_COMMAND, startScope, stateDir, statusLine } from './engine'
 import type { ConsoleNudge } from './engine'
 import {
   addPlaced, claimPressing, claimRefresh, getAskSent, getBoard, getDrawn, getPaneDismissed, getPass, getQueued, getRole, getRound, getTurnRunning, releasePressing, releaseRefresh, setAskSent, setBoard, setContinueAsked, setDrawn, setPass, setPrinted, setRole,
@@ -907,11 +907,6 @@ export async function pressOpenItem($: $, id: string, from: string | null = null
   })
 }
 
-/** Opens (or closes) the reason field a ratification's Not OK collects below its row. */
-export async function pressOpenReason($: $, id: string): Promise<void> {
-  await updateOpened($, current => current?.kind === 'reason' && current.id === id ? null : { kind: 'reason', id })
-}
-
 /** Opens (or closes) a question's unresolved overlaps inline below its row; each listed id opens its item. */
 export async function pressOpenOverlaps($: $, question: string, overlaps: readonly { id: string; title: string }[]): Promise<void> {
   await updateOpened($, current => current?.kind === 'overlaps' && current.question === question ? null
@@ -933,7 +928,7 @@ export async function pressView($: $, agentId: string | undefined): Promise<void
 // Single flight (git works on one tree at a time), held in state so the pane marks the pressed button and its step from the press on.
 type Step = (step: string) => Promise<void>
 
-export const crPressKey = (kind: 'walk' | 'open' | 'accept' | 'review' | 'return' | 'update' | 'ratify', id: string): string => kind === 'ratify' ? `ratify-${id}-open` : `cr-${kind}-${id}`
+export const crPressKey = (kind: 'walk' | 'open' | 'accept' | 'review' | 'return' | 'update', id: string): string => `cr-${kind}-${id}`
 
 async function crPress($: $, pressed: { key: string; id: string; verb: string }, press: (step: Step) => Promise<string | null>): Promise<void> {
   const since = await $.clock.now()
@@ -992,44 +987,6 @@ export async function pressOpenCr($: $, cr: ConsoleCr): Promise<void> {
   await crPress($, { key: crPressKey('open', cr.id), id: cr.id, verb: 'Open' }, async step => {
     if (cr.tip === null || cr.baseTip === null) return `Change request: ${cr.id} has no branch tip to open`
     return openReview($, cr.id, 'Change request', step)
-  })
-}
-
-/** Open on a ratification: its worktree on branch `ratify/<id>` at the landed tip, opened for your review in VS Code. */
-export async function pressOpenRatification($: $, one: ConsoleRatification): Promise<void> {
-  await crPress($, { key: crPressKey('ratify', one.id), id: one.id, verb: 'Open' }, async step => {
-    if (one.tip === null || one.baseTip === null) return `Ratification: ${one.id} has no landed range to open`
-    return openReview($, one.id, 'Ratification', step)
-  })
-}
-
-/** Sends the walk-through request for the landed range represented by a ratification row. */
-export async function pressWalkRatification($: $, one: ConsoleRatification): Promise<void> {
-  await crPress($, { key: crPressKey('walk', one.id), id: one.id, verb: 'Walk through' }, () => sendRequest($, `Walk me through ${one.id}'s landed change (${one.title}).`))
-}
-
-export type RatifyVerdict = 'yes' | 'edits' | 'no'
-export const ratifyPressKey = (verdict: RatifyVerdict, id: string): string => `ratify-${id}-${verdict}`
-const RATIFY_VERBS: Record<RatifyVerdict, { verb: string; done: string }> = {
-  yes: { verb: 'Ratify', done: 'is ratified' }, edits: { verb: 'Ratify with edits', done: 'is ratified with your edits as a follow-up request' }, no: { verb: 'Not OK', done: 'is closed; its follow-up is filed' },
-}
-
-/**
- * Ratify, Ratify with edits and Not OK: the person's verdict, run as `board ratify <id> yes|edits|no` (the board owns what it
- * refuses: edits unrecorded for `yes`, none for `edits`); its stderr comes back as the toast. `no` takes the reason (`board ratify` requires it).
- */
-export async function pressRatify($: $, one: ConsoleRatification, verdict: RatifyVerdict, reason = ''): Promise<void> {
-  const { verb, done } = RATIFY_VERBS[verdict]
-  if (verdict === 'no' && reason.trim() === '') {
-    $.ui.toast(`Ratification: ${verb} needs what you want instead of ${one.id}`)
-    return
-  }
-  await crPress($, { key: ratifyPressKey(verdict, one.id), id: one.id, verb }, async step => {
-    await step('asking the board')
-    const ran = await boardRatify($, await $.session.id(), one.id, verdict, verdict === 'no' ? reason.trim() : undefined)
-    if (ran.error !== null) return `Ratification: ${one.id}: ${ran.error}`
-    if (verdict === 'no') await updateOpened($, current => current?.kind === 'reason' && current.id === one.id ? null : current)
-    return `${one.id} ${done}`
   })
 }
 

@@ -23,7 +23,7 @@ export type Question = { id: string; text: string; title: string; status: string
 /** `board console` counts (r21-q141, q146): ready now, and the k waiting. */
 export const COUNTS = {
   questions: { ready: 186, held: 2, waiting: 0 }, decided: { ready: 0, held: 0, waiting: 0 }, toPlan: { ready: 0, held: 0, waiting: 57 },
-  toReview: { ready: 0, held: 0, waiting: 0 }, toAccept: { ready: 13, held: 0, waiting: 1 }, toRatify: { ready: 1, held: 0, waiting: 0 }, forUser: { ready: 3, held: 0, waiting: 0 },
+  toReview: { ready: 0, held: 0, waiting: 0 }, toAccept: { ready: 13, held: 0, waiting: 1 }, forUser: { ready: 3, held: 0, waiting: 0 },
 }
 
 /** `board console` counts: the round's, plus the agent steps the board adds. */
@@ -78,7 +78,7 @@ export type World = {
   /** `board console` `forYou`: the ready items assigned to the user. */
   forYou: unknown[]
   held: unknown[]
-  /** `board console` `crs` and `ratifications` (Front B's shape, tests/board-console-contract.ts). */
+  /** `board console` `crs` (Front B's shape, tests/board-console-contract.ts). */
   crs: unknown[]
   /** `board console` `queued`: the requests waiting for an agent, counted not listed. */
   queued: number
@@ -88,11 +88,8 @@ export type World = {
   prefix: string | null
   /** `board console` `noBoard`: the directory has no board. */
   noBoard: boolean
-  ratifications: unknown[]
   /** What `board review open` answers: stdout (the path to open; empty: the item's worktree) and, with a nonzero exit, its stderr. */
   reviewOpen: { exit: number; stdout: string; stderr: string }
-  /** What `board ratify` answers: an exit code with its stderr. */
-  ratify: { exit: number; stderr: string }
   /** What `scratch status --line` answers: its stdout, or an exit code (null: the tool is missing). */
   scratch: { line: string; exit: number } | null
   agents: { id: string; description: string; type: string; status: string }[]
@@ -126,7 +123,7 @@ export type World = {
 }
 
 /** Registers the world's hooks beneath the console; returns it, the clock and the session record. */
-export function world(on: On, init: Partial<Pick<World, 'round' | 'role' | 'surfaces' | 'sessions' | 'items' | 'forYou' | 'held' | 'crs' | 'queued' | 'waitingOnYou' | 'prefix' | 'noBoard' | 'ratifications' | 'scratch' | 'agents' | 'sync' | 'queueLine' | 'activateError'>> = {}) {
+export function world(on: On, init: Partial<Pick<World, 'round' | 'role' | 'surfaces' | 'sessions' | 'items' | 'forYou' | 'held' | 'crs' | 'queued' | 'waitingOnYou' | 'prefix' | 'noBoard' | 'scratch' | 'agents' | 'sync' | 'queueLine' | 'activateError'>> = {}) {
   const w: World = {
     round: init.round ?? roundJson(),
     role: init.role === undefined ? { session: SESSION, role: 'lead', actor: '617adf08', tool: 'claude' } : init.role,
@@ -137,7 +134,7 @@ export function world(on: On, init: Partial<Pick<World, 'round' | 'role' | 'surf
     sessions: init.sessions ?? [
       { session: SESSION, role: 'lead', actor: '617adf08', pulls: [], holds: 2, workers: null, state: 'active' },
     ],
-    items: init.items ?? [{ id: 'tstdl-x1', type: 'decision', status: 'in_progress', title: 'Which engine name?', holder: '617adf08' }],
+    items: init.items ?? [{ id: 'tstdl-x1', type: 'decision', status: 'open', title: 'Which engine name?', holder: '617adf08' }],
     forYou: init.forYou ?? [],
     held: init.held ?? [],
     crs: init.crs ?? [],
@@ -145,9 +142,7 @@ export function world(on: On, init: Partial<Pick<World, 'round' | 'role' | 'surf
     waitingOnYou: init.waitingOnYou ?? 0,
     prefix: init.prefix ?? null,
     noBoard: init.noBoard ?? false,
-    ratifications: init.ratifications ?? [],
     reviewOpen: { exit: 0, stdout: '', stderr: '' },
-    ratify: { exit: 0, stderr: '' },
     scratch: init.scratch ?? null,
     sync: init.sync,
     queueLine: init.queueLine,
@@ -251,18 +246,17 @@ export function world(on: On, init: Partial<Pick<World, 'round' | 'role' | 'surf
     if (argv[0] === SCRATCH && w.scratch !== null) return { value: { exitCode: w.scratch.exit, stdout: w.scratch.line, stderr: w.scratch.exit === 0 ? '' : 'boom', isStdoutTruncated: false, isStderrTruncated: false } }
     if (argv[0] === BOARD) {
       if (argv[1] === 'console' && w.hold?.verb === 'board console') {  // a slow board read
-        const answered = ok({ noBoard: w.noBoard, counts: w.noBoard ? null : BOARD_COUNTS, forYou: w.forYou, items: w.items, sessions: w.sessions, held: w.held, crs: w.crs, queued: w.queued, waitingOnYou: w.waitingOnYou, prefix: w.prefix, ratifications: w.ratifications, sync: w.sync, queueLine: w.queueLine })
+        const answered = ok({ noBoard: w.noBoard, counts: w.noBoard ? null : BOARD_COUNTS, forYou: w.forYou, items: w.items, sessions: w.sessions, held: w.held, crs: w.crs, queued: w.queued, waitingOnYou: w.waitingOnYou, prefix: w.prefix, sync: w.sync, queueLine: w.queueLine })
         return w.hold.until.then(() => answered)
       }
-      if (argv[1] === 'console') return ok({ noBoard: w.noBoard, counts: w.noBoard ? null : BOARD_COUNTS, forYou: w.forYou, items: w.items, sessions: w.sessions, held: w.held, crs: w.crs, queued: w.queued, waitingOnYou: w.waitingOnYou, prefix: w.prefix, ratifications: w.ratifications, sync: w.sync, queueLine: w.queueLine })
+      if (argv[1] === 'console') return ok({ noBoard: w.noBoard, counts: w.noBoard ? null : BOARD_COUNTS, forYou: w.forYou, items: w.items, sessions: w.sessions, held: w.held, crs: w.crs, queued: w.queued, waitingOnYou: w.waitingOnYou, prefix: w.prefix, sync: w.sync, queueLine: w.queueLine })
       if (argv[1] === 'review' && argv[2] === 'open') {
         const served = { value: { exitCode: w.reviewOpen.exit, stdout: w.reviewOpen.exit === 0 ? w.reviewOpen.stdout || `/main/.worktrees/${argv[3]}\n` : '', stderr: w.reviewOpen.stderr, isStdoutTruncated: false, isStderrTruncated: false } }
         return w.hold?.verb === 'board review' ? w.hold.until.then(() => served) : served
       }
-      if (argv[1] === 'ratify') return { value: { exitCode: w.ratify.exit, stdout: w.ratify.exit === 0 ? 'ok' : '', stderr: w.ratify.stderr, isStdoutTruncated: false, isStderrTruncated: false } }
       if (argv[1] === 'show' && w.show.exit !== 0) return { value: { exitCode: w.show.exit, stdout: '', stderr: 'no such item', isStdoutTruncated: false, isStderrTruncated: false } }
       if (argv[1] === 'show' && argv.includes('--json')) return ok(w.show.bad ? 'not json' : { [argv[2] as string]: w.show.record })
-      if (argv[1] === 'show') return ok(`${argv[2]}: Which engine name?\nstatus: in_progress`)
+      if (argv[1] === 'show') return ok(`${argv[2]}: Which engine name?\nstatus: open`)
     }
     return { value: { exitCode: 127, stdout: '', stderr: `unknown ${argv[0]}`, isStdoutTruncated: false, isStderrTruncated: false } }
   })

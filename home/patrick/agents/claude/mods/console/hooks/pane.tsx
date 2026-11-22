@@ -3,9 +3,9 @@
 // ` • ` = toggle or link, secondary text `inactive`, hover hints gathered at the bottom.
 import type { EngineInterface, RenderPropsOf } from 'claude-code'
 
-import type { ConsoleBoard, ConsoleCr, ConsoleItem, ConsoleRatification, ConsoleQuestion, ConsoleRecord, ConsoleRole, ConsoleRound, ConsoleSection, ConsoleSession, ConsoleSuggestion } from '../types'
+import type { ConsoleBoard, ConsoleCr, ConsoleItem, ConsoleQuestion, ConsoleRecord, ConsoleRole, ConsoleRound, ConsoleSection, ConsoleSession, ConsoleSuggestion } from '../types'
 
-import { crPressKey, ratifyPressKey, pressAcceptCr, pressContinue, pressOpenCr, pressOpenItem, pressOpenOverlaps, pressOpenRatification, pressOpenReason, pressOpenSettles, pressOpenSuggestion, pressRatify, pressRequestReviewCr, pressReturnCr, pressUpdateCr, pressRole, pressRun, pressStart, pressView, pressWalkCr, pressWalkRatification, pressWorkers, queuedRuns, runKey } from './core'
+import { crPressKey, pressAcceptCr, pressContinue, pressOpenCr, pressOpenItem, pressOpenOverlaps, pressOpenSettles, pressOpenSuggestion, pressRequestReviewCr, pressReturnCr, pressUpdateCr, pressRole, pressRun, pressStart, pressView, pressWalkCr, pressWorkers, queuedRuns, runKey } from './core'
 import { isRoundOpen, RELEASE_COMMAND, ROUND_ROLES, START_COMMAND } from './engine'
 import { getBoard, getExpanded, getFocus, getOpened, getPass, getPlaced, getPressing, getRole, getRound, getRoundError, getTurnRunning, setFocus, toggleExpanded } from './state'
 import { answerText, canUpdateCr, COUNT_GROUPS, countText, crDetailsText, crFailureParts, crFileHref, crMarks, crNewCountText, crKind, crPriorityHint, crPriorityText, crRowCheckText, crRows, crRowStageText, crSummaryText, crTreeText, crUnblocksHint, crUnblocksText, displayId, displayIds, fitText, canAcceptCr, isCrAccepting, GROUND_BASE, plural, pullsText, recommendationMark, recommendationText, roleText, roundWords, runNoun, staleHolds, staleSessions, startHint, STEP_BACK_BASE, suggestionText } from './words'
@@ -666,17 +666,8 @@ export async function drawPane($: $, e: { surface: string; props: RenderPropsOf[
       </Box>
     )
   }
-  // Not OK asks its reason inline (`board ratify no` needs one); submitting runs the verdict.
-  const reasonRow = (one: ConsoleRatification) => {
-    if (opened?.kind !== 'reason' || opened.id !== one.id || Input === undefined) return null
-    return (
-      <Box key={`ratify-${one.id}-reason-box`} paddingLeft={2}>
-        <Input key={`ratify-${one.id}-reason`} placeholder="what you want instead (fix or revert)…" submitLabel="Not OK" onSubmit={(typed: string) => pressRatify($, one, 'no', typed)} />
-      </Box>
-    )
-  }
   const crBlock = (view: ConsoleBoard | null) => {
-    if (view === null || (view.crs.length === 0 && view.queued === 0 && view.waitingOnYou === 0 && view.ratifications.length === 0)) return []
+    if (view === null || (view.crs.length === 0 && view.queued === 0 && view.waitingOnYou === 0)) return []
     const pulls = view.sessions.find(one => one.session === role?.session)?.pulls ?? []
     const rows: any[] = [banner('cr-banner', 'Change requests', crSummaryText(view), 1)]
     if (view.crs.length > 0) {
@@ -775,50 +766,6 @@ export async function drawPane($: $, e: { surface: string; props: RenderPropsOf[
             )
           })}
           {more('crs', queue.hidden, 'change requests')}
-        </Box>,
-      )
-    }
-    if (view.ratifications.length > 0) {
-      const ratify = capped('ratify', view.ratifications, CR_ROWS_SHOWN)
-      const ratifyIdWidth = idWidth(ratify.shown.map(one => one.id))
-      rows.push(
-        <Box key="cr-ratify" flexDirection="column" marginTop={1}>
-          <Text color="warning">to ratify</Text>
-          {ratify.shown.map(one => {
-            hint.add(`item-${one.id}`, `${shown(one.id)}: open its summary here`)
-            hint.add(`bar-${one.id}`, `${shown(one.id)}: ${one.kind ?? 'ratification'}`)
-            // What its review holds (the board's read): your edits make Ratify wait for Ratify with edits.
-            const isEdited = one.review?.edited === true
-            const buttons = [
-              act(crPressKey('walk', one.id), CR_BUTTONS.walk, () => pressWalkRatification($, one), `Walk me through ${shown(one.id)}'s landed change (${one.title}).`, 'suggestion'),
-              ...(one.tip !== null && one.baseTip !== null ? [act(crPressKey('ratify', one.id), CR_BUTTONS.open, () => pressOpenRatification($, one), 'Opens the landed change for your review in VS Code', 'suggestion')] : []),
-              isEdited
-                ? <Box key={`ratify-${one.id}-yes-wait`} hover={{ scope: `ratify-${one.id}-yes` }}><Text color="inactive">Ratify</Text></Box>
-                : act(ratifyPressKey('yes', one.id), 'Ratify', () => pressRatify($, one, 'yes'), 'Closes the ratification: you accept what landed', 'success'),
-              ...(isEdited ? [act(ratifyPressKey('edits', one.id), 'Ratify with edits', () => pressRatify($, one, 'edits'), `Records your ${one.review?.files.length ?? 0} edited file(s) in the review as a follow-up request waiting for your Accept`, 'success')] : []),
-              act(ratifyPressKey('no', one.id), 'Not OK', () => pressOpenReason($, one.id), 'Asks what you want instead; closes the ratification and files the follow-up', undefined, true),
-            ]
-            if (isEdited) hint.add(`ratify-${one.id}-yes`, 'Your edits in the review are not recorded: Ratify with edits records them first')
-            const marks = [
-              ...(one.stale.length === 0 ? [] : [{ key: 'stale', text: 'stale', color: 'warning', hint: `Behind main on landed lines: ${one.stale.map(commit => `${commit.sha.slice(0, 12)} ${commit.subject}`).join('; ')}` }]),
-              ...(one.conflict ? [{ key: 'conflict', text: 'conflict', color: 'error', hint: 'Your review edits conflict with the target branch' }] : []),
-            ]
-            for (const mark of marks) hint.add(`ratify-${one.id}-${mark.key}`, mark.hint)
-            const actionLabels = [CR_BUTTONS.walk, ...(one.tip !== null && one.baseTip !== null ? [CR_BUTTONS.open] : []), 'Ratify', ...(isEdited ? ['Ratify with edits'] : []), 'Not OK']
-            return (
-              <AcceptRatifyRow key={`ratify-${one.id}`} id={one.id} rowKey={`ratify-${one.id}`} title={one.title} idLabel={dimId(one.id)} showKey={`ratify-${one.id}-show`} kind="code"
-                idWidth={ratifyIdWidth} striped={ratify.shown.indexOf(one) % 2 === 1} actions={buttons} actionWidth={buttonsWidth(actionLabels)} barHover={`bar-${one.id}`}
-                onOpen={() => pressOpenItem($, one.id)} lineTwo={<Box key={`ratify-${one.id}-facts`} flexDirection="row" flexGrow={1} flexShrink={1} minWidth={0}>
-                  <Text color="inactive">P{one.priority}</Text>
-                  <Box flexGrow={1} minWidth={0} />
-                  {marks.map(mark => <Box key={`ratify-${one.id}-${mark.key}`} marginLeft={PART_GAP} flexShrink={0} hover={{ scope: `ratify-${one.id}-${mark.key}` }}><Text color={mark.color}>{mark.text}</Text></Box>)}
-                </Box>}>
-                {reasonRow(one)}
-                {slot(one.id)}
-              </AcceptRatifyRow>
-            )
-          })}
-          {more('ratify', ratify.hidden, 'ratifications')}
         </Box>,
       )
     }

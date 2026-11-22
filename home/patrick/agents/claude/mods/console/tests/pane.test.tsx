@@ -37,7 +37,7 @@ describe('pane', () => {
       await ready($, clock)
       const ui = await $.ui.mount({ ...PANE, surface })
       const drawn = await texts(ui)
-      for (const part of ['Board', 'lead 617adf08', 'for you', 'Round r4', 'checking 2/3', 'step-back changed 2, ground none', '1 held', 'Engine name', 'overlaps', 'Pane layout', 'waits on q3', 'Step Back', 'Ground', 'Decide', 'Actions', 'in_progress']) {
+      for (const part of ['Board', 'lead 617adf08', 'for you', 'Round r4', 'checking 2/3', 'step-back changed 2, ground none', '1 held', 'Engine name', 'overlaps', 'Pane layout', 'waits on q3', 'Step Back', 'Ground', 'Decide', 'Actions', 'open']) {
         expect(drawn, part).toContain(part)
       }
       expect(await ui.find({ key: 'item-tstdl-x1-show' })).toBeDefined()
@@ -795,7 +795,7 @@ describe('board block', () => {
     const text = ran.text ?? ''
     expect(text).toContain('  for you: tstdl-u1  task  Your task 1')
     expect(text.indexOf('for you: tstdl-u1')).toBeLessThan(text.indexOf('holds 2'))
-    expect(text).toContain('  this session holds:\n    tstdl-x1  in_progress  Which engine name?')
+    expect(text).toContain('  this session holds:\n    tstdl-x1  open  Which engine name?')
     expect(text.indexOf('holds 2')).toBeLessThan(text.indexOf('this session holds'))
   })
 })
@@ -812,10 +812,10 @@ describe('header counts', () => {
     const you = await group('board-counts-you')
     const agents = await group('board-counts-agents')
     expect((await ui.find({ key: 'board-counts-you-label' }))?.text).toBe('you')
-    expect(labels(you)).toEqual(['for you', 'to accept', 'to ratify', 'decided', 'questions', 'deferred'])
+    expect(labels(you)).toEqual(['for you', 'to accept', 'decided', 'questions', 'deferred'])
     expect((await ui.find({ key: 'board-counts-agents-label' }))?.text).toBe('agents')
     expect(labels(agents)).toEqual(['to plan', 'to design', 'to implement', 'to review'])
-    expect(you.map(one => one.props?.dimColor === true)).toEqual([false, false, false, true, false, false])  // only decided is zero
+    expect(you.map(one => one.props?.dimColor === true)).toEqual([false, false, true, false, false])  // only decided is zero
     expect(agents.map(one => one.props?.dimColor === true)).toEqual([true, true, true, true])  // the agents' group is dim whatever it holds
     await ui.unmount()
   })

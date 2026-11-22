@@ -1,4 +1,4 @@
-// `board console` `crs` / `ratifications` / `toRatify`, to the spec of build-r24-r25-plan.md Front B ("JSON for the console").
+// `board console` `crs`, to the spec of build-r24-r25-plan.md Front B ("JSON for the console").
 // Each key here must exist in the board's real row (bin/test-agent-configs.py checks it); the contract test pins
 // every field the console reads.
 export const sha = (n: number): string => String(n).padStart(2, '0').repeat(20)
@@ -8,7 +8,7 @@ type CrInit = Partial<Record<string, unknown>> & { id: string }
 /** One `crs` entry in the spec's shape; `over` replaces fields. */
 export function cr(over: CrInit): Record<string, unknown> {
   return {
-    title: `Title of ${over.id}`, status: 'needs_acceptance', holder: null, look: 'before', view: 'code',
+    title: `Title of ${over.id}`, status: 'passed', holder: null, look: 'before', view: 'code',
     base: 'main', branch: `cr/${over.id}`, worktree: `/main/.worktrees/${over.id}`, tip: sha(2), baseTip: sha(1),
     check: { state: 'current', tip: sha(2), baseTip: sha(1), at: '2026-11-11T09:00:00Z', result: 'pass', kind: 'full', command: null, reason: null, newFailures: [], baseCount: 3012, tipCount: 2972 },
     parent: null, children: [], unblocks: 0, unblocksDirect: 0, shares: 0, milestone: null,
@@ -21,7 +21,7 @@ export function cr(over: CrInit): Record<string, unknown> {
 export const BOARD_CONSOLE_CONTRACT = {
   counts: {
     questions: { ready: 0, held: 0, waiting: 0 }, decided: { ready: 0, held: 0, waiting: 0 }, toPlan: { ready: 0, held: 0, waiting: 0 },
-    toDesign: { ready: 6, held: 1, waiting: 0 }, toImplement: { ready: 90, held: 1, waiting: 1 }, toReview: { ready: 2, held: 0, waiting: 0 }, toAccept: { ready: 1, held: 0, waiting: 1 }, toRatify: { ready: 1, held: 0, waiting: 0 }, forUser: { ready: 0, held: 0, waiting: 0 }, deferred: 4,
+    toDesign: { ready: 6, held: 1, waiting: 0 }, toImplement: { ready: 90, held: 1, waiting: 1 }, toReview: { ready: 2, held: 0, waiting: 0 }, toAccept: { ready: 1, held: 0, waiting: 1 }, forUser: { ready: 0, held: 0, waiting: 0 }, deferred: 4,
   },
   crs: [
     cr({ id: 'p-cr1', title: 'Remove the legacy cache', children: ['p-cr2'], unblocks: 14, unblocksDirect: 7, shares: 2, milestone: '1.0-beta scope', review: { opened: sha(2), edited: true, files: ['src/a.ts'] } }),
@@ -35,5 +35,4 @@ export const BOARD_CONSOLE_CONTRACT = {
   queued: 92,
   prefix: 'p',
   noBoard: false,
-  ratifications: [{ id: 'p-rat1', cr: 'p-cr0', title: 'Move the clock', kind: 'landing', priority: 2, tip: sha(6), baseTip: sha(5), stale: [{ sha: sha(7), subject: 'Touch landed lines' }], conflict: false, review: { opened: sha(6), edited: false, files: [] } }],
 } as const

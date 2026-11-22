@@ -50,15 +50,13 @@ describe('engine contract', () => {
 
 // `board console` change requests, to the spec in build-r24-r25-plan.md Front B (a stub fixture until the board's own output replaces it).
 describe('board console contract', () => {
-  test('every crs and ratifications field is read, and the counts carry toRatify', () => {
+  test('every crs field is read', () => {
     const board = parseBoardConsole(BOARD_CONSOLE_CONTRACT)
     BOARD_CONSOLE_CONTRACT.crs.forEach((raw, i) => {
       const parsed = board.crs[i] as unknown as Record<string, unknown>
       for (const key of Object.keys(raw)) expect(Object.keys(parsed), `cr field ${key}`).toContain(key)
       expect(parsed).toMatchObject(raw)
     })
-    expect(board.ratifications).toEqual(BOARD_CONSOLE_CONTRACT.ratifications)
-    expect(board.counts?.toRatify).toEqual({ ready: 1, held: 0, waiting: 0 })
   })
 
   test('the agent steps design and implement are counted, the queue is a count, and a board is there', () => {
@@ -71,7 +69,7 @@ describe('board console contract', () => {
   })
 
   test('no board is data: the board says so and the rest reads empty', () => {
-    const missing = parseBoardConsole({ noBoard: true, counts: null, forYou: [], items: [], crs: [], queued: 0, ratifications: [], sessions: [], held: [] })
+    const missing = parseBoardConsole({ noBoard: true, counts: null, forYou: [], items: [], crs: [], queued: 0, sessions: [], held: [] })
     expect(missing).toMatchObject({ isMissing: true, counts: null, crs: [], queued: 0, items: [], sessions: [] })
   })
 

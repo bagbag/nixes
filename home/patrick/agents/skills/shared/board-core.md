@@ -72,7 +72,6 @@ shared board, the user an unshared one (`bd dolt push`/`pull`).
 | `design` | Design item: the architecture and package graph a slice still needs, and the decisions they raise. |
 | `decision` | Question, later the ruling's record ([Questions and rulings](#questions-and-rulings)). |
 | `change-request` | The claimed, reviewed and landed unit ([Change requests](../shared/change-requests.md#change-requests)). |
-| `epic` | Topic or outcome, never claimed ([Epics](../shared/board-coordination.md#epics)). |
 | `milestone` | Release checkpoint ([Milestones](../shared/board-coordination.md#milestones)). |
 | `gate` | Upstream wait or the user's go ([Dependencies](#dependencies)). |
 

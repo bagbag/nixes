@@ -292,7 +292,7 @@ type CountKey = keyof NonNullable<ConsoleBoard['counts']>
 
 /** The header counts split by who acts: what waits on the person (a release needs them too, so `decided` counts; the person undefers, so `deferred` counts), then the agents' queues. */
 export const COUNT_GROUPS: readonly { key: 'you' | 'agents'; counts: readonly (readonly [CountKey, string])[] }[] = [
-  { key: 'you', counts: [['forUser', 'for you'], ['toAccept', 'to accept'], ['toRatify', 'to ratify'], ['decided', 'decided'], ['questions', 'questions'], ['deferred', 'deferred']] },
+  { key: 'you', counts: [['forUser', 'for you'], ['toAccept', 'to accept'], ['decided', 'decided'], ['questions', 'questions'], ['deferred', 'deferred']] },
   { key: 'agents', counts: [['toPlan', 'to plan'], ['toDesign', 'to design'], ['toImplement', 'to implement'], ['toReview', 'to review']] },
 ]
 
@@ -321,9 +321,9 @@ export function countText(count: ConsoleCount | undefined): string {
 const short = (sha: string): string => sha.slice(0, 7)
 
 export function crStageText(cr: ConsoleCr): string {
-  if (cr.status === 'needs_acceptance') return 'to accept'
-  if (cr.status === 'in_review') return 'in review'
-  return cr.status === 'in_progress' ? 'in work' : cr.status.replace(/_/g, ' ')
+  if (isCrAccepting(cr)) return 'to accept'
+  if (cr.status === 'in_review' || cr.status === 'passed') return 'in review'
+  return cr.holder === null ? 'returned' : 'in work'
 }
 
 export type CrKind = 'code' | 'result' | 'in work'
@@ -341,7 +341,7 @@ const CHECK_WORDS: Record<ConsoleCr['check']['state'], string> = { current: 'che
 
 /** The check state as a word; null while the change request has not reached review and nothing ran. A targeted or no-gate result says so (r15-q78). */
 export function crCheckText(cr: ConsoleCr): string | null {
-  if (cr.check.state === 'unchecked' && (cr.status !== 'in_review' && cr.status !== 'needs_acceptance')) return null
+  if (cr.check.state === 'unchecked' && (cr.status !== 'in_review' && cr.status !== 'passed')) return null
   const word = CHECK_WORDS[cr.check.state]
   if (cr.check.kind === 'full' || cr.check.state === 'unchecked') return word
   if (cr.check.kind === 'none') return cr.check.state === 'current' ? 'no check run' : word
@@ -448,7 +448,7 @@ export function crRows(crs: readonly ConsoleCr[]): { cr: ConsoleCr; depth: numbe
 }
 
 /** Whether the person can look at, accept or return it: the board waits for them. */
-export const isCrAccepting = (cr: ConsoleCr): boolean => cr.status === 'needs_acceptance'
+export const isCrAccepting = (cr: ConsoleCr): boolean => cr.status === 'passed' && cr.after === null
 
 /** The person's Review action sends an Accept-waiting request for the change since its last review to agent review. */
 export const requestReviewText = (cr: ConsoleCr): string =>
@@ -534,10 +534,6 @@ export function consoleText(role: ConsoleRole, board: ConsoleBoard | null, round
     if (board.crs.length > 0 || board.queued > 0 || board.waitingOnYou > 0) {
       lines.push('', `Change requests · ${crSummaryText(board)}`)
       for (const { cr, depth } of crRows(board.crs)) lines.push(crLine(cr, depth, prefix))
-    }
-    if (board.ratifications.length > 0) {
-      lines.push('', 'To ratify')
-      for (const one of board.ratifications) lines.push(`  ${shown(one.id)}  ${one.title} · landed in ${shown(one.cr)}`)
     }
   }
   const proposed = isRoundRole ? offered.flatMap(one => one.kind === 'round' ? [one] : []) : []
