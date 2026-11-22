@@ -5717,6 +5717,14 @@ def validate_board(root: Path) -> None:
                 if code != 1 or fake.writes() or "close rej2.i --outcome dropped" not in errors or "move rej2.i --to" not in errors:
                     raise ValueError(f"board cr reject must refuse while an item is open, naming close and move: {code} {errors} {fake.writes()}")
 
+                # A CR with commits of its own and no review cannot land: nothing but a stored review, or the user's own look, covers its series.
+                issues_nr, tip_nr, wt_nr = make_cr("nr1", "nr.txt", "n\n")
+                issues_nr[0]["metadata"] = {k: v for k, v in issues_nr[0]["metadata"].items() if not k.startswith("review")}
+                fake = Fake(issues_nr)
+                code, _, errors = invoke(["cr", "land", "nr1", "--tip", tip_nr[:8], "--base", at_main()], fake, "lead0001")
+                if code != 1 or "review" not in errors or any(w[0] == "close" for w in fake.writes()):
+                    raise ValueError(f"a CR with no review and commits of its own must not land: {code} {errors}")
+
                 # A landed base lands the look-after CR waiting on it when its check is current (A1).
                 x_issues, x_tip, x_wt = make_cr("lx", "lx.txt", "x\n")
                 y_issues, y_tip, y_wt = make_cr("ly", "ly.txt", "y\n", base="lx")

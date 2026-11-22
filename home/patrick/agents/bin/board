@@ -4341,10 +4341,7 @@ def review_current(cr: dict, info: dict) -> bool:
     one of the user's recorded review edits (r15-q77); `info['main']` lets it read them."""
     m = meta(cr)
     reviewed = m.get('review_tip')
-    if not reviewed:  # no agent review: a CR made only of the user's recorded edits needs none
-        main, base_tip, tip = info.get('main'), info['baseTip'], info['tip']  # the CR is the user's own recorded edits on its base, else not
-        return bool(main and base_tip and tip) and edits_only(main, cr, base_tip, tip)
-    if m.get('review_base_tip') != info['baseTip']:
+    if not reviewed or m.get('review_base_tip') != info['baseTip']:
         return False
     return reviewed == info['tip'] or edits_only(info.get('main'), cr, reviewed, info['tip'])
 
