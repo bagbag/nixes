@@ -1478,6 +1478,9 @@ elif args[:4] == ['bd', '--raw', '--yes', 'update']:
     if flags[:1] == ['--unset-metadata']:
         item['metadata'].pop(flags[1], None)
     elif flags[:1] == ['--status']:
+        if state.get('fail_status'):
+            state['fail_status'] -= 1
+            fail('status write refused')
         item['status'] = flags[1]
     else:
         fail('unexpected raw update ' + repr(flags))
@@ -1578,7 +1581,7 @@ def checkpoint_board(e: Env) -> Convert:
     c.wait('w-cr', 'cp-user')
     c.wait('w-passed', 'd-passed')
     c.wait('w-held', 'd-agent')
-    # tstdl's shape: a closed design inside an unlanded CR, waited on from another CR whose item the first CR waits on.
+    # A closed design inside an unlanded CR, waited on from another CR whose item the first CR waits on: a cycle on the new runtime.
     c.item('other', 'change-request', 'open')
     c.item('x-src', 'task', 'open', 'other')
     c.wait('x-src', 'd-passed')
@@ -1641,6 +1644,13 @@ def convert_checkpoints_applies_reruns_and_refuses_divergence(e: Env):
     check(stopped.returncode and 'cp-user diverged' in stopped.stderr and 'holder' in stopped.stderr and c.writes() == 0,
           f'a changed hold stops before any write: {stopped.stderr}')
     c.load()['cp-user']['assignee'] = None
+
+    # A stop between the return and the reopen of its design items: the rerun resumes without returning again.
+    c.state['fail_status'] = 1
+    stopped = c.run('apply', c.mapping, '--apply')
+    items = c.load()
+    check(stopped.returncode and items['cp-user']['status'] == 'open' and items['d-user']['status'] == 'in_review'
+          and items['cp-user']['metadata'].get('checkpoint'), f'the run stopped after the return, before the reopen: {stopped.stderr}')
 
     # A write failing midway leaves a partial conversion; the rerun finishes it without repeating writes.
     c.state['fail_block'] = 1

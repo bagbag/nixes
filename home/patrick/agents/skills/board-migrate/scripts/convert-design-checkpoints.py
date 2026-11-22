@@ -302,19 +302,24 @@ def convert_record(entry: dict, main: Path, write: bool, log: list[str]) -> None
         log.append(f'{cr_id}: converted already (no checkpoint marker)')
         return
     returned = {**expect, 'status': 'open', 'design': {key: 'open' if status == 'in_review' else status for key, status in expect['design'].items()}}
+    partial = {**expect, 'status': 'open'}  # returned, its design items not reopened yet: a run stopped between the two writes
     needs_return = 'return' in steps and current == expect
-    if not needs_return and current not in (expect, returned):
+    if not needs_return and current not in (expect, returned, partial):
         raise diverged(cr_id, expect, current, ('status', 'holder', 'checkpoint', 'tip', 'design', 'opened_review', 'dirty'))
     if needs_return:
         log.append(f'{cr_id}: return to authoring')
         if write:
             board('return', cr_id, RETURN_NOTE)
-            for key, status in current_state(main, cr_id)['design'].items():
-                if status == 'in_review':  # the new runtime's return leaves design items as they are
-                    raw('update', key, '--status', 'open')
-            after = current_state(main, cr_id)
-            if after != returned:
-                raise diverged(cr_id, returned, after, tuple(returned))
+    reopen = [key for key, status in (current_state(main, cr_id) if write and needs_return else current)['design'].items() if status == 'in_review']
+    if reopen:  # the new runtime's return leaves design items as they are; idempotent on a rerun
+        log.append(f"{cr_id}: reopen design items {', '.join(reopen)}")
+        if write:
+            for key in reopen:
+                raw('update', key, '--status', 'open')
+    if write and 'return' in steps:
+        after = current_state(main, cr_id)
+        if after != returned:
+            raise diverged(cr_id, returned, after, tuple(returned))
     log.append(f'{cr_id}: clear the checkpoint marker')
     if write:
         raw('update', cr_id, '--unset-metadata', 'checkpoint')
@@ -355,8 +360,8 @@ def to_relates(edge: dict, write: bool, log: list[str]) -> None:
     rows = {row['id']: row for row in json.loads(board('bd', 'list', '--all', '--json', '--limit', '0'))}
     edges = {(dep['issue_id'], dep['depends_on_id']): dep['type'] for row in rows.values() for dep in row.get('dependencies') or []}
     kind = edges.get((waiter, on))
-    if kind == 'relates-to':
-        log.append(f'{waiter}: relates to {on} already')
+    if kind is not None and kind not in BLOCKING:  # relates-to from an earlier run, or another link (bd keeps one per pair)
+        log.append(f'{waiter}: linked to {on} already ({kind})')
         return
     if kind in BLOCKING and rows.get(on, {}).get('status') != 'closed':
         raise ConversionError(f'{on} was reopened since the inventory, so {waiter} waits on it again; stopped before writing, re-inventory')

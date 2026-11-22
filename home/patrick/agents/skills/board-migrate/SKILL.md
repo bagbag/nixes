@@ -242,7 +242,7 @@ else it lists as a manual step.
    implementation items into a dependent CR, add waits for held waiters.
 6. **Verify.** `convert-design-checkpoints.py verify` exits 0 only with no
    live checkpoint metadata, design ratification or met design wait left; then
-   writers resume. Keep the backup until the board's next ordinary landing.
+   the owner resumes writers. Keep the backup until the owner's transition smoke passes.
    Output: the verify result.
 
 ## Scratch

@@ -53,14 +53,15 @@ design lands.
 
 ## Existing records and rollout
 
-Use the existing board-migrate process. Inventory each adopting board before
+Use the existing board-migrate process, per board after the new runtime is
+installed and the board's sessions restarted. Inventory each board before
 writing: live CRs with `checkpoint`, design children, open design
 ratifications, their linked dependents and ruling records, and known document
 or scratch body references. Include record status, holder, base and tip,
 dirty and open review worktrees, and exact edge directions. Resolve each
 source body and compare its provenance to the approved or reviewed range.
-The owner approves the per-board mapping, backup, any live review exits, and
-installation. Pause affected writers while moving data. Treat the user’s
+The owner approves the per-board mapping, backup and any live review exits.
+Pause affected writers while moving data. Treat the user’s
 unrecorded edits and held work as exclusions until their owners resolve them.
 
 | Existing record | Transition |
@@ -68,11 +69,11 @@ unrecorded edits and held work as exclusions until their owners resolve them.
 | Dropped or superseded checkpoint | Use its recorded disposition through the current deciding workflow. Keep its branch, worktree, and history under existing retention authority. |
 | Live checkpoint with an outstanding design | Preserve the CR and item identities when possible. End an open review through the current workflow, return the work to authoring, place the remaining design text in the topic document on the branch, and send that commit through ordinary review and the required Accept. Move implementation items into a distinct dependent CR if they already exist. |
 | Passed checkpoint with implementation still live | Preserve the prior verdict and implementation branch. If the accepted text has no durable owner, carry it unchanged into a documentation CR, linked to the former record and verdict, and land it before new dependent authoring. A new change to the design follows normal design review. |
-| Existing waiters | Retain unsatisfied delivery waits as dependencies on the ordinary design CR. Block already-filed waiters that require the landed design on the design CR. Preserve historical, already-satisfied design waits and ordinary implementation waits. Quiesce affected work until linked replacement edges are reconciled. |
-| Live design ratification | Preserve its verdict opportunity and review worktree. Resolve it through the current workflow while the old runtime is available, preserving any user edits. Closed ratifications stay intact. |
+| Existing waiters | Retain unsatisfied delivery waits as dependencies on the ordinary design CR. Block already-filed waiters that require the landed design on the design CR. Turn already-satisfied design waits (on a closed design inside an unlanded CR) into `relates-to` links; keep ordinary implementation waits. Quiesce affected work until linked replacement edges are reconciled. |
+| Live design ratification | Preserve its verdict opportunity and review worktree. Resolve it through `agents board ratify`, preserving any user edits. Closed ratifications stay intact. |
 | Missing or conflicting body or verdict | Preserve the record and data, block the affected work, and bring the choice to its owner. A scratch reference alone establishes neither the approved text nor authority to publish it. |
 
-While the old tools are available, prepare the durable bodies, validate the
+Prepare the durable bodies, validate the
 mapping against a read-only re-export, and close or resolve obsolete stages
 through their owners. Once an approved checkpoint has returned to authoring,
 clear its live checkpoint marker and obsolete review or check coverage before
@@ -80,13 +81,11 @@ its ordinary handover. Preserve the base and fork, holds and dependencies that s
 apply, and the earlier review evidence in history.
 Recheck the expected status, hold, tip, and edges before each write. On an
 interruption, reconcile completed writes with that mapping and stop at any
-divergence. Confirm that live checkpoint metadata and actionable design
-ratifications are gone before enabling the new runtime and instructions on
-that board. Preserve historical fields. Boards whose owners have yet to
-approve and finish conversion continue with their existing release.
+divergence. Before resuming writers, confirm that no live checkpoint
+metadata, actionable design ratification or satisfied design wait remains.
+Preserve historical fields.
 
-Keep the old compatible tools and an owner-approved recovery baseline until
-the transition smoke passes. A failed verification pauses that board’s
+Keep an owner-approved recovery baseline until the transition smoke passes. A failed verification pauses that board’s
 cutover. Before resuming writers, reconcile to the saved baseline or finish
 the approved conversion. Any restore or reversal after new writes requires
 the owner's approval and reconciliation of those writes.
@@ -107,7 +106,7 @@ the owner's approval and reconciliation of those writes.
   progress, deferrals and dependent edges, one design ratification, a
   scratch-held body, and missing provenance. Verify rerun after partial
   conversion, refusal on a changed hold or tip, preservation of legacy
-  history and user edits, and pre-cutover tool recovery.
+  history and user edits, and a satisfied design wait across CRs.
 - Run the configured check, shared-board CR integration, and console
   contracts on the implementation. The exact migration inventory belongs
   to each board's reviewed mapping. Local planning evidence is an export
