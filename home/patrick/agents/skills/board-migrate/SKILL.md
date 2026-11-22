@@ -2,8 +2,9 @@
 name: board-migrate
 description: >-
   Bring a project onto the current model: trackers and TODO/REVIEW files onto
-  the board, an older board to change requests, in-repo `.scratch` folders
-  out of the repository.
+  the board, an older board to change requests, live design checkpoints to
+  ordinary design change requests, in-repo `.scratch` folders out of the
+  repository.
 argument-hint: "[project or arc] [focus, e.g. scratch]"
 disable-model-invocation: true
 ---
@@ -16,20 +17,22 @@ only findings and stops.
 
 ## Start
 
-Parts: **Tracker** (Target through Exit), [Upgrade](#upgrade) and
-[Scratch](#scratch).
+Parts: **Tracker** (Target through Exit), [Upgrade](#upgrade),
+[Checkpoints](#checkpoints) and [Scratch](#scratch).
 
 1. **Scan.** Read-only, a few commands:
    - trackers: `TODO.md`, `REVIEW.md`, Markdown boards, `docs/` backlogs;
    - board: `.beads/`, `agents board check --limit 0` classes with counts, `board
-     holders`, stored settings (`agents board bd config list`);
+     holders`, stored settings (`agents board bd config list`), live change
+     requests with `checkpoint` metadata or an open design ratification;
    - scratch: in-repo `.scratch` folders (count, size);
    - dirty main-tree paths.
    Output: one line per part: open work found, done, or not applicable.
 2. **Ask.** One dialog: a question per part with open work, with its scan
    line and a recommendation (the argument's focus recommended), plus each
    finding that changes a part's scope (an unclassifiable file, a running
-   hold). Run only the picked parts, in the order Tracker, Upgrade, Scratch.
+   hold). Run only the picked parts, in the order Tracker, Upgrade, Checkpoints,
+   Scratch.
    Output: the picks, quoted.
 
 ## Target
@@ -188,8 +191,8 @@ step goes in a change set and runs on the user's confirmation.
    agent docs.
    Output: the settings as stored; the hook answer.
 5. **Reconcile.** Wrap each design still waiting for the user's accept in a
-   CR under its topic: the design its child, `checkpoint` `user`, status
-   `needs_acceptance`. `agents board check --fix --limit 0` clean but for user-accepted
+   CR under its topic: the design its child, its text in the topic document
+   on the CR's branch for ordinary review. `agents board check --fix --limit 0` clean but for user-accepted
    deviations; one `agents board claim` of a CR works end to end. Defer each open
    backlog work item; a plan pass groups the rest into CRs as they become due.
    For live legacy decisions at `needs_ratification`, run
@@ -197,6 +200,48 @@ step goes in a change set and runs on the user's confirmation.
    follow its output, then rerun the check.
    Tell the user pulls may start.
    Output: check result.
+
+## Checkpoints
+
+Per board, before its owner installs the runtime without design checkpoints
+(design: `docs/board/ordinary-design-requests.md`, Existing records and
+rollout). The script runs the installed old board from the project checkout:
+`python3 "$HOME/.agents/skills/board-migrate/scripts/convert-design-checkpoints.py"`.
+It writes only through `agents board return`, `update --checkpoint ""` and
+`block`; everything else it lists as a manual step.
+
+1. **Inventory.** `convert-design-checkpoints.py inventory --mapping <file>`
+   (read-only; the file goes in `agents scratch dir --shared board-migrate`).
+   One row per live checkpoint, passed design and design ratification: status,
+   holder, tip, design items, body source, the transition from the spec table,
+   hold reasons, dependent edges with direction, manual steps.
+   Output: the rows; the draft mapping path.
+2. **Approve.** Show the owner the rows, the manual steps and each `hold`; the
+   owner approves the mapping, an `agents board bd export` backup, any live
+   review exits and the installation, and has writers paused. A scratch
+   reference or a missing provenance line alone approves no text: bring each
+   to the owner. The owner sets `approved_by` in the mapping and removes or
+   edits rows.
+   Output: the owner's approval, quoted.
+3. **Resolve holds.** Per reason, in a lead or solo session: end a review or
+   hold through its workflow, record the user's edits, resolve each design
+   ratification with `agents board ratify`, then rerun step 1 and re-approve
+   the changed rows. Block work behind missing bodies on a question to the
+   owner.
+4. **Convert.** `convert-design-checkpoints.py apply <mapping>` (dry run), then
+   with `--apply`. It rechecks every row's status, holder, tip and waits before
+   the first write and again before each write, stops at any divergence, and
+   skips what is done: rerun it after an interruption. Return a changed
+   record to step 1.
+5. **Manual steps.** Do each listed step through its owner: place the design
+   text in the topic document on the branch (compare it with the reviewed
+   range), a documentation CR for a passed design without a doc owner, move
+   implementation items into a dependent CR, add waits for held waiters.
+6. **Verify and install.** `convert-design-checkpoints.py verify` exits 0 only
+   with no live checkpoint metadata and no design ratification left; then the
+   owner installs the new runtime and runs the transition smoke. Keep the old
+   tools and the backup until it passes.
+   Output: the verify result.
 
 ## Scratch
 
