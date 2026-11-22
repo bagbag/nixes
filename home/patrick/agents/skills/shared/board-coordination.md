@@ -64,12 +64,10 @@ milestones, recorded rulings and deferrals. The board model is
   unlock score, then the larger immediate solo count, then the claim order's remaining ties.
   Count one credit per work unit that can become dependency-ready. Divide
   it among its ready blockers when several contribute. Count solo and
-  shared unlocks separately. A design checkpoint delivers its design items.
-  A landing delivers its CR and implementation items.
+  shared unlocks separately. A landing delivers its CR and its work items.
 - **Check state** (`agents board queue`, `agents board health`, console): every live CR's
   check against the current refs.
-- **Refresh work:** the first CR of the accept queue that lands (not a design
-  checkpoint), waits on no other CR and whose check is not
+- **Refresh work:** the first CR of the accept queue that lands, waits on no other CR and whose check is not
   `current` is claimable by `review` pulls as
   kind `refresh`; that CR only. Protocol: review.md
   [Refresh](../role/protocols/review.md#refresh).

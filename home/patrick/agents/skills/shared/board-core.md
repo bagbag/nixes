@@ -89,7 +89,7 @@ session's role or pulls (`agents board position` counts them). A claim by id che
 no role; follow these rules yourself:
 
 - CRs by pull: `open` to `design` when its open items are design items, else
-  `implement`; `in_review` (agent review or agent checkpoint) to `review`;
+  `implement`; `in_review` to `review`;
   refresh work to `review`, kind `refresh`
   ([queue](../shared/board-coordination.md#change-request-queue)).
 - A work item is claimed by id only inside a CR your session holds. Decision,
@@ -97,7 +97,7 @@ no role; follow these rules yourself:
   items marked no-commit need no CR.
 - Pull `plan` also claims the board restructuring tasks it creates itself,
   ready no-commit work, and an `open` CR with no open items or marked for
-  replanning (returned from an agent checkpoint, or a child of a rejected CR).
+  replanning (a child of a rejected CR).
 - A session with the decide set (lead, solo) claims by id its round's open
   decisions, ratification tasks, CRs in `needs_acceptance`, passed
   `look` `after` children marked `after <base>` and ready milestones, and

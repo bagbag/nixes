@@ -37,9 +37,9 @@ findings or stops.
      only under
      [Question format](../../shared/question-format.md#question-format); no
      implementation. Invoke the step-back skill once on the
-     design before raising questions and once before handover. A CR with
-     `checkpoint` set holds only its design:
-     implementation items arrive after the checkpoint passes.
+     design before raising questions and once before handover. Commit the
+     design to the topic doc the item names, with its scope, constraints,
+     authority and validation criteria; scratch never holds it.
    - Implementation items: tests alongside the change; changelog and doc
      duties are in the item's acceptance.
      When writing skill, agent-definition, instruction or engine-printed

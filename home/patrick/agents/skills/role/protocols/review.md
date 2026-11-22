@@ -9,8 +9,7 @@ Read
 
 ## Entry
 
-One of: an `in_review` change request (CR: agent review or agent
-checkpoint), or refresh work ([Refresh](#refresh)), or a standalone review
+One of: an `in_review` change request (CR), or refresh work ([Refresh](#refresh)), or a standalone review
 (findings only, outside any CR), is ready for your session's `review` pull; a
 dispatch brief names an id and this protocol.
 
@@ -34,8 +33,7 @@ steps 3-7.
    and verdicts.
    Output: ids and owners read.
 3. **Gate.** Select the gate under [Review policy](../../shared/acceptance.md#review-policy)
-   (a checkpoint review covers the checkpoint's scope: the design, or the
-   work so far).
+   (a design CR's scope is its doc diff).
    Output: gate and reason.
 4. **Evidence.** Apply [Evidence and gates](../../shared/acceptance.md#evidence-and-gates) to every
    required gate.

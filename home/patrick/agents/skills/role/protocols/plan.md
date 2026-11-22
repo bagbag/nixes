@@ -131,14 +131,14 @@ Establish the outcome's contribution to its milestone:
   plausibly accept one part and reject another; five small cleanups are one
   CR. Every item gets `--parent <cr>`; a CR sits under its topic epic. Split,
   merge or reorder items for a cleaner end state.
-- Designed work is one CR that starts with only its design items and a
-  `checkpoint`: `user` when the design opens a
+- Designed work is a design-only CR of `design` items that commit the design
+  to its topic doc under `docs/`, then an implementation CR cut after the
+  design CR lands, its brief citing the doc section. Set the design CR's `look`
+  to `before` when the design opens a
   [one-way door](../../shared/decision-protocol.md#decision-authority) on the
-  next run's path, else `agent`. When the
-  checkpoint passes, the CR returns to you: add the implementation items to
-  it. Dependent CRs wait under
-  [Waiting and stacks](../../shared/change-requests.md#change-requests);
-  design-only dependents read the accepted design on its branch.
+  next run's path, else leave the project default. Dependents that need the
+  design wait on the design CR
+  ([Waiting and stacks](../../shared/change-requests.md#change-requests)).
 - Group items that sit in no CR into CRs per topic when they become due
   (items waiting on a decision, design or spike stay ungrouped until it closes).
 - Set a CR's `look` or `view` only to override the defaults, naming the reason
@@ -150,7 +150,7 @@ Establish the outcome's contribution to its milestone:
   its acceptance.
 - Item text states acceptance, not reviewer or review depth
   ([Review policy](../../shared/acceptance.md#review-policy)).
-- State each agent checkpoint the CR needs in the CR.
+- State each interim check the CR needs in the CR.
 - Place each new CR in or out of the open milestone under
   [Milestones](../../shared/board-coordination.md#milestones).
 - Use a separate plan for cross-item reasoning, blast-radius integration

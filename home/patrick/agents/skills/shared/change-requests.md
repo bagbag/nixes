@@ -11,14 +11,13 @@ queue order and refresh work: [Board coordination](board-coordination.md).
 |---|---|
 | `open` | Ready, or returned (worktree kept). |
 | `in_progress` | Held by its session. |
-| `in_review` | Agent review, or checkpoint review by an agent (metadata `checkpoint` is set). |
-| `needs_acceptance` | Waiting for the user: a finished CR (`look` `before`) or a user design checkpoint. Shown as "to accept". |
+| `in_review` | Agent review. |
+| `needs_acceptance` | Waiting for the user: a finished CR (`look` `before`). Shown as "to accept". |
 | closed | Landed, or rejected unlanded. |
 
 - **Metadata:** `look` (`before`: lands on the user's Accept; `after`: lands
   after agent review), `view` (`code`: the user reads the diff; `result`: walked through the
-  outcome), `checkpoint` (`agent|user`: a
-  design checkpoint, cleared when passed), `deep_review` (the path a review
+  outcome), `deep_review` (the path a review
   escalated, removed by the deep-review), `base` (target or
   CR), `base_sha` (fork point, set at creation and after every rebase),
   `setup_sha`, `check` and `review` = {tip, baseTip, result, at}.
@@ -80,12 +79,12 @@ queue order and refresh work: [Board coordination](board-coordination.md).
 - **Waiting and stacks:** declare outside work and gate waits on the CR they
   hold. Use links within a CR to order that session's items. See
   [Questions and rulings](board-core.md#questions-and-rulings) for decision
-  holds. A closed design delivers at its checkpoint. A wait on an
-  implementation item still waits on its CR's landing. A CR waits while a
-  CR it depends on is unlanded,
-  except one in `needs_acceptance` that is no user design checkpoint: the CR
-  stacks on it (`base` = that CR). At most one unlanded parent, else wait for
-  the rest. Parents in agent review, at any checkpoint, `open` or in work are
+  holds. A wait on a work item, a design included, waits on its CR's landing. A CR
+  waits while a CR it depends on is unlanded,
+  except one in `needs_acceptance` that is not design-only (every work item a
+  `design`): the CR stacks on it (`base` = that CR); a dependent of a
+  design-only CR waits until it lands. At most one unlanded parent, else wait for
+  the rest. Parents in agent review, `open` or in work are
   waited for, so in `look` `after` projects children wait for the landing.
   Closed means landed. A returned parent holds its children: they cannot
   land and their reviews wait. A child's Accept waits until its parent has
@@ -109,17 +108,13 @@ queue order and refresh work: [Board coordination](board-coordination.md).
   change adds its own file to one folder; a generator composes the files
   only where a program needs them as one file. Ordinary code edited often and
   generated files (lockfiles) are not such lists. A review flags a new one.
-- **Nothing to merge:** a CR whose branch holds no commit of its own and is
-  at no design checkpoint lands when its review passes, in either `look`,
+- **Nothing to merge:** a CR whose branch holds no commit of its own lands when its review passes, in either `look`,
   without the Accept and without a ratification. Plan work that commits
   nothing here as a no-commit task ([Work items](../shared/board-core.md#work-items)).
-- **Ratification:** after a `look` `after` landing, an agent design
-  checkpoint pass in such a project, or autopilot's accept of a `user`
-  checkpoint, a child task titled `<CR title>` sits in
-  `needs_ratification` under the CR and blocks nothing. Metadata
-  `ratification=landing|design` identifies what the user reviews. The board
-  creates one only when no child of that kind is currently `needs_ratification`;
-  a closed child does not block a later review. The user's verdict goes through
+- **Ratification:** after a `look` `after` landing, a child task titled
+  `<CR title>` sits in `needs_ratification` under the CR and blocks nothing.
+  The board creates one only when no landing ratification is currently
+  `needs_ratification`; a closed one does not block a later review. The user's verdict goes through
   `agents board ratify` (accept.md Ratification).
 - **User review:** from `agents board review open` until the user's Accept or Return
   (ratification: verdict), refresh and agent steps leave the item alone; Open
@@ -128,8 +123,8 @@ queue order and refresh work: [Board coordination](board-coordination.md).
 
 | Command | Effect |
 |---|---|
-| `agents board handover <cr> "<evidence>" [<gate>] [--no-agent-review "<reason>"]` | Rebases onto the base tip, runs setup and the gate, stores the check. Author work enters `in_review` by default. A user checkpoint or the [eligible author flag](acceptance.md#review-policy) sends it to `needs_acceptance`; the flag shows its reason. A reviewer pass records coverage and goes to `needs_acceptance` (`look` `before`), lands (`look` `after`, or a CR with nothing to merge), or opens planning (agent checkpoint; in a `look` `after` project also a design ratification). |
-| `agents board return <cr> "<findings>" [--ruling <id>]` | `open`, unassigned; a design checkpoint also moves its in-review design items back to `open`; also the user's "changes". `--ruling`: the planner holding that released ruling returns an unclaimed review ([Released rulings](../role/protocols/plan.md#released-rulings)). |
+| `agents board handover <cr> "<evidence>" [<gate>] [--no-agent-review "<reason>"]` | Rebases onto the base tip, runs setup and the gate, stores the check. Author work enters `in_review` by default. The [eligible author flag](acceptance.md#review-policy) sends it to `needs_acceptance`; the flag shows its reason. A reviewer pass records coverage and goes to `needs_acceptance` (`look` `before`) or lands (`look` `after`, or a CR with nothing to merge). |
+| `agents board return <cr> "<findings>" [--ruling <id>]` | `open`, unassigned; also the user's "changes". `--ruling`: the planner holding that released ruling returns an unclaimed review ([Released rulings](../role/protocols/plan.md#released-rulings)). |
 | `agents board cr request-review <cr> ["<reason>"]` | From Accept, send the change since its last review to agent review. |
 | `agents board cr refresh <cr> [<gate>]` | Rebases and reruns setup and the gate. An uncovered agent-reviewed result goes to agent review. |
 | `agents board cr land <cr> --tip <sha> --base <sha>` | Pass the tip and base shown at Accept. Land rebases and checks first when the check is not a pass for that pair. Land only a covered series with a passing check. If the base has moved since the look, land refuses and shows the incoming commits. A `look` `after` CR on a `needs_acceptance` parent waits marked `after <base>`; landing the parent lands each such child whose check and coverage still match, else leaves it as refresh work. Advances `custom.board.target`. Removes worktree and branch; stacked children get `base` = target; `look` `after` creates the ratification, unless nothing was merged. |

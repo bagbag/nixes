@@ -3,21 +3,20 @@
 Entry: [decide.md](decide.md#accept) Accept. Read `$HOME/.agents/skills/shared/change-requests.md` for Git authorization and the CR model.
 
 1. **Claim** a CR, ratification or milestone: `agents board claim <id>`.
-   Output: `claimed <cr> (look <look>, view <view>, checkpoint <c>); author
+   Output: `claimed <cr> (look <look>, view <view>); author
    <actor>`, `claimed <id> (milestone)`, or `epic <id>`.
 2. **Evidence.** Read `$HOME/.agents/skills/shared/acceptance.md`; check the
    named evidence under its
    [Evidence and gates](../../shared/acceptance.md#evidence-and-gates). For a
    code CR, inspect the check shown for the current tip. A conflict on the
    user's edit commit follows change-requests.md Rebase.
-   Note the tip and base the walkthrough starts on. For a user design checkpoint, note the
-   `design hash` the claim printed.
-   Output: one line per gate: command, result; check state and tip, or the
-   design hash.
+   Note the tip and base the walkthrough starts on.
+   Output: one line per gate: command, result; check state and tip.
 3. **Walk through** with the user under
    [Asking the user](../../shared/asking.md#asking-the-user), by the CR's
    `view`: `code`, the row's delta since the user's last look and its incoming
-   commits. For `result`, show the outcome. A user checkpoint: a [Round](decide.md#round) (`start round --discussion --subject <cr>`);
+   commits. For `result`, show the outcome. A design CR: walk the doc diff, and for a ruling
+   it opens, a [Round](decide.md#round) (`start round --discussion --subject <cr>`);
    its pre-pass report is the walkthrough (verdict and findings first, then the
    design). A ratification: the
    landed result, in its user review or at the result. If the refresh changed
@@ -41,9 +40,8 @@ Entry: [decide.md](decide.md#accept) Accept. Read `$HOME/.agents/skills/shared/c
    - **Review:** the user's Review action (or
      `agents board cr request-review <cr> ["<reason>"]`) sends the change since the last
      review to agent review.
-   - **Design checkpoint:** name the outcome the round's answers entail for
-     one confirmation. Nothing changes the design: `agents board cr land <cr>
-     --checkpoint --design <hash>` (the hash from step 2). Otherwise
+   - **Design CR:** name the outcome the round's answers entail for one
+     confirmation: the design stands (Accept above), or
      `agents board return <cr> "<records>"`.
    - **Changes wanted:** talk the root fix through with the user, then
      `agents board return <cr> "<findings>"`; add follow-up items to the CR.
@@ -64,7 +62,7 @@ Entry: [decide.md](decide.md#accept) Accept. Read `$HOME/.agents/skills/shared/c
      it (`agents board unclaim <id>`).
    When the item received a ruling, check that the rule sits in its owner and
    every conflict became a question.
-   Output: `landed <cr>`, `checkpoint passed <cr>`, `returned <cr>`,
+   Output: `landed <cr>`, `returned <cr>`,
    `rejected <cr>`, `closed <id>` or `findings <ids>`.
 
 **Stop:** the user rejects the CR or result: return it, reject it, file the
@@ -102,5 +100,4 @@ and whether the user edited it.
 
 | Command | Effect |
 |---|---|
-| `agents board cr land <cr> --checkpoint --design <hash>` | The user's design checkpoint accept: closes the in-review design items, returns the CR to `open`, and clears the checkpoint for planning; nothing lands. Accepted by autopilot, it also files a `design` ratification. `<hash>` is the `design hash` `agents board claim <cr>` printed, still matching the design items' description, design, acceptance and notes. |
 | `agents board cr edits <cr> --tip <sha> [--commit …]` | Prints, or with `--commit` commits and records as the user's, the user's edits in the CR's review; flags and gates: `agents board cr edits --help`. A failing gate keeps the commit and the CR waits for the user. |

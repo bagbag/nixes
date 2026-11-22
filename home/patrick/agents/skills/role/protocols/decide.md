@@ -56,7 +56,7 @@ Never decide these alone.
 - Create a `design` item blocking a slice's items at the user's request;
   propose one for a slice meeting the plan protocol's
   [Frame](plan.md#frame) design-item triggers. Designed work lives in its
-  change request (CR) behind a checkpoint
+  own design-only change request (CR)
   ([Cut work](plan.md#cut-work)).
 - Create a challenge of decided records at the user's request; propose one
   when designs will build on them. It is a standalone review
@@ -79,7 +79,7 @@ Never decide these alone.
 **Entry:** open questions, a pasted list or consumer report, the user asks
 for open items, a new request's decisions, or an asking skill's interview
 (define-goal, question-me), or an artifact under the user's judgment
-(`--subject`; a design checkpoint: accept.md step 3). A go-ahead on a proposal
+(`--subject`; a design CR: accept.md step 3). A go-ahead on a proposal
 stays in chat; Accept and Release keep their own asks otherwise.
 
 Run the round through `protocol` (`agents protocol`; in Claude the
@@ -202,7 +202,7 @@ reported.
 
 ## Accept
 
-**Entry:** a CR in `needs_acceptance` (finished, or at a user design checkpoint), a
+**Entry:** a CR in `needs_acceptance`, a
 `needs_ratification` ratification, a ready milestone, or a
 finished epic whose acceptance names the user (`agents board position`). The CR queue
 is in order, bases first

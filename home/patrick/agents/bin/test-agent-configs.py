@@ -9969,7 +9969,7 @@ def validate_protocol(root: Path, part: str) -> None:
             accept = (root / "skills" / "role" / "protocols" / "accept.md").read_text(encoding="utf-8")
             if 'agents board return <cr> "<records>"' not in accept or "agents board block <item> --on <record>" in accept \
                     or "create or reopen" in accept or "Decision records hold work items" in accept:
-                raise ValueError("Accept must rely on round holds and return a design checkpoint directly")
+                raise ValueError("Accept must rely on round holds and return a design CR directly")
             # A stored pre-sequence pass migrates at the console's read entry points and keeps one stamp until reported.
             migration_session = "0000-cdx00001"
             migration_dir = state / f"{migration_session}.protocol"
