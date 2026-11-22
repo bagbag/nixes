@@ -4136,6 +4136,18 @@ def validate_board(root: Path) -> None:
                     fake = Fake(fixture)
                     if invoke(["ruling", "record", refused, str(draft)], fake, actor)[0] != 1 or fake.writes():
                         raise ValueError(f"board ruling record wrote {refused} for {actor}")
+                # The batch line follows the table's held rule like move(): a record another session holds is not written by this one.
+                holder_row = {"id": "fx-held", "issue_type": "decision", "status": "open", "assignee": "lead0001"}
+                with patch.dict(os.environ, {"BEADS_ACTOR": "aaaa1111", "CODEX_SESSION_ID": "", "CLAUDE_CODE_SESSION_ID": ""}):
+                    try:
+                        board.move_line(holder_row, "ruling record")
+                    except board.BoardError:
+                        pass
+                    else:
+                        raise ValueError("move_line wrote a ruling record the calling session does not hold")
+                with patch.dict(os.environ, {"BEADS_ACTOR": "lead0001", "CODEX_SESSION_ID": "", "CLAUDE_CODE_SESSION_ID": ""}):
+                    if board.move_line(holder_row, "ruling record") != "update fx-held status=decided":
+                        raise ValueError("move_line must write the ruling record for the session that holds it")
                 # An unratified ruling is released and creates one related, non-blocking confirmation question.
                 fake = Fake(fixture)
                 if invoke(["ruling", "record", question, str(draft), "--unratified"], fake, "lead0001")[0] != 1 \

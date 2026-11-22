@@ -369,6 +369,15 @@ def group_of(board: 'Board | None', issue: dict) -> str | None:
     return ITEM_GROUP if group == WORK_GROUP and board is not None and board.cr_of(issue['id']) else group
 
 
+def refuse_held(issue: dict, row: Move, command: str, actor: str | None) -> None:
+    """The row's held rule: '-' needs the record unheld, 'you' needs the caller's session holding it."""
+    current = issue.get('assignee') or ''
+    if row.held == '-' and current:
+        raise BoardError(f"{issue['id']}: {command} needs it unheld; held by {current}")
+    if row.held == 'you' and (not current or session_actor(current) != session_actor(actor or caller())):
+        raise BoardError(f"{issue['id']}: {command} needs your session to hold it; held by {current or 'nobody'}")
+
+
 def move(issue: dict, command: str, *, to: str | None = None, actor: str | None = None, fields: dict | None = None,
          reason: str | None = None, force: bool = False, via: str | None = None, check: bool = True,
          board: 'Board | None' = None, outcome: str | None = None) -> subprocess.CompletedProcess:
@@ -392,10 +401,7 @@ def move(issue: dict, command: str, *, to: str | None = None, actor: str | None 
             raise BoardError(f"{issue['id']}: {command} records {' or '.join(row.outcomes)}, not {outcome}")
         fields = {**(fields or {}), 'outcome': outcome or row.outcomes[0]}
     current = issue.get('assignee') or ''
-    if row.held == '-' and current:
-        raise BoardError(f"{issue['id']}: {command} needs it unheld; held by {current}")
-    if row.held == 'you' and (not current or session_actor(current) != session_actor(actor or caller())):
-        raise BoardError(f"{issue['id']}: {command} needs your session to hold it; held by {current or 'nobody'}")
+    refuse_held(issue, row, command, actor)
     target = issue['status'] if row.to == '=' else row.to
     holder_after = '' if row.holds == '-' else (actor or caller()) if row.holds == 'you' else current
     if group == CR_GROUP and row.holds == '-' and HOLD in meta(issue) and target != 'closed':
@@ -436,6 +442,7 @@ def move_line(issue: dict, command: str, *, to: str | None = None) -> str:  # de
     rows = [m for m in MOVES if m.command == command and m.group == group and issue['status'] in m.frm and (to is None or m.to == to)]
     if len(rows) != 1:
         raise BoardError(f"{issue['id']}: {command} does not apply to a {group} that is {issue['status']}")
+    refuse_held(issue, rows[0], command, None)
     return f"update {issue['id']} status={rows[0].to}" + (' assignee=""' if rows[0].holds == '-' else '')
 
 
