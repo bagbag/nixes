@@ -301,10 +301,13 @@ def convert_record(entry: dict, main: Path, write: bool, log: list[str]) -> None
     if current['checkpoint'] is None:
         log.append(f'{cr_id}: converted already (no checkpoint marker)')
         return
-    returned = {**expect, 'status': 'open', 'design': {key: 'open' if status == 'in_review' else status for key, status in expect['design'].items()}}
-    partial = {**expect, 'status': 'open'}  # returned, its design items not reopened yet: a run stopped between the two writes
+    reopened = {key: 'open' if status == 'in_review' else status for key, status in expect['design'].items()}
+    returned = {**expect, 'status': 'open', 'design': reopened}
+    # Returned with any of its design items still unreopened: a run stopped between the return and the last reopen.
+    resumable = ({**current, 'design': expect['design']} == {**expect, 'status': 'open'} and current['design'].keys() == expect['design'].keys()
+                 and all(status in (expect['design'][key], reopened[key]) for key, status in current['design'].items()))
     needs_return = 'return' in steps and current == expect
-    if not needs_return and current not in (expect, returned, partial):
+    if not needs_return and current != expect and not resumable:
         raise diverged(cr_id, expect, current, ('status', 'holder', 'checkpoint', 'tip', 'design', 'opened_review', 'dirty'))
     if needs_return:
         log.append(f'{cr_id}: return to authoring')

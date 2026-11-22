@@ -1556,6 +1556,7 @@ def checkpoint_board(e: Env) -> Convert:
     pending = {'checkpoint': 'user', 'review_tip': 'abc'}
     c.item('cp-user', 'change-request', 'needs_acceptance', metadata=pending, comments=['board handover: checks green'])
     c.item('d-user', 'design', 'in_review', 'cp-user', design=body)
+    c.item('d-user2', 'design', 'in_review', 'cp-user', design=body)
     c.item('cp-agent', 'change-request', 'open', metadata={'checkpoint': 'agent'})
     c.item('d-agent', 'design', 'open', 'cp-agent', design=body)
     c.item('cp-ret', 'change-request', 'open', metadata={'checkpoint': 'user'}, comments=['board return: findings'])
@@ -1651,6 +1652,7 @@ def convert_checkpoints_applies_reruns_and_refuses_divergence(e: Env):
     items = c.load()
     check(stopped.returncode and items['cp-user']['status'] == 'open' and items['d-user']['status'] == 'in_review'
           and items['cp-user']['metadata'].get('checkpoint'), f'the run stopped after the return, before the reopen: {stopped.stderr}')
+    items['d-user']['status'] = 'open'  # or after the first of two reopens
 
     # A write failing midway leaves a partial conversion; the rerun finishes it without repeating writes.
     c.state['fail_block'] = 1
