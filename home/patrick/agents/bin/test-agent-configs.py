@@ -6014,6 +6014,12 @@ def validate_board(root: Path) -> None:
                 output += errors
                 if "already held by lead0001" not in output or "setup failed" not in output or "not yet" not in output:
                     raise ValueError(f"claiming a held CR again must rerun its setup: {output}")
+                # Re-claiming a CR the session holds from a plan claim (no worktree yet) creates the worktree as a fresh claim does (nixes-17ap8).
+                planned = [cr_issue("replan", "open", assignee="lead0001", hold="plan", base="main", base_sha=at_main()), cr_item("replan.i", "replan")]
+                code, output, errors = invoke(["claim", "replan"], Fake(planned), "lead0001")
+                if code or "Traceback" in errors or not Path(repo_root, ".worktrees", "replan").is_dir() \
+                        or subprocess.run(["git", "-C", str(repo_root), "rev-parse", "--verify", "-q", "refs/heads/cr/replan"], capture_output=True).returncode:
+                    raise ValueError(f"re-claiming a plan-held CR must create its worktree and branch: {code} {output} {errors}")
 
                 # ---- deep review findings F1-F10 and risks ----
                 # F1: refuse landing when the current series has no valid prior coverage.
