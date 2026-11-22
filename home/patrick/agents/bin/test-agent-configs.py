@@ -5200,19 +5200,19 @@ def validate_board(root: Path) -> None:
                                 target["status"] = status
                     return result
 
-            agent_design = {"id": "fx-ovo.c2.d", "title": "design", "issue_type": "design", "status": "closed", "priority": 2,
+            agent_design = {"id": "fx-ovo.c2.d", "title": "design", "issue_type": "task", "status": "closed", "priority": 2,
                             "description": "d", "created_at": "2026-10-22T15:29:00Z", "updated_at": "2026-10-22T15:29:00Z",
                             "dependencies": [{"issue_id": "fx-ovo.c2.d", "depends_on_id": "fx-ovo.c2", "type": "parent-child"}]}
             fake = StatusWrites([*variant(**ready_cr, **done_item), agent_design])
             code, _, errors = invoke(["handover", "fx-ovo.c2", "ok"], fake, "aaaa1111")
             if code or not any(args[:4] == ["update", "fx-ovo.c2", "--status", "in_review"] for args in fake.writes()) \
                     or any(args[:2] == ["update", agent_design["id"]] for args in fake.writes()):
-                raise ValueError(f"a design-only CR hands over to review like any CR: {code} {errors} {fake.writes()}")
+                raise ValueError(f"a CR of one closed item hands over to review like any CR: {code} {errors} {fake.writes()}")
             open_design = {**agent_design, "status": "open"}
             fake = StatusWrites([*variant(**ready_cr, **done_item), open_design])
             code, _, errors = invoke(["handover", "fx-ovo.c2", "ok"], fake, "aaaa1111")
             if code != 1 or "items still open" not in errors or any(args[0] in ("update", "comments", "close") for args in fake.writes()):
-                raise ValueError(f"a design item still open refuses the hand-over: {code} {errors} {fake.writes()}")
+                raise ValueError(f"an item still open refuses the hand-over: {code} {errors} {fake.writes()}")
             # The reviewer's pass: look before goes to accept (the user's Accept), the holder released; a returned item goes back to open.
             reviewing = {"CR held": {"status": "in_review", "assignee": "bbbb2222", "metadata": {**ready_cr["CR held"]["metadata"], "reviewing_tip": cr_tip}}}
             fake = Fake(variant(**reviewing, **done_item))
@@ -5222,6 +5222,14 @@ def validate_board(root: Path) -> None:
                 raise ValueError(f"board handover by a reviewer must pass the change request to accept: {code} {fake.writes()} {errors}")
             if not any(any(a.startswith("review_tip=") for a in args) and any(a.startswith("review_base_tip=") for a in args) for args in fake.writes()):
                 raise ValueError(f"a reviewer's pass must record the (tip, base tip) it reviewed: {fake.writes()}")
+
+            # A pass or a look-after landing needs every item closed: a Return that stopped after filing findings leaves them open.
+            for look in ("before", "after"):
+                unfinished = {"CR held": {**reviewing["CR held"], "metadata": {**reviewing["CR held"]["metadata"], "look": look}}}
+                fake = Fake(variant(**unfinished, **{**done_item, "Handed task": {"status": "open"}}))
+                code, _, errors = invoke(["handover", "fx-ovo.c2", "reviewed: fine"], fake, "bbbb2222")
+                if code != 1 or fake.writes() or "items still open" not in errors:
+                    raise ValueError(f"a reviewer's pass (look {look}) must refuse while an item is open: {code} {fake.writes()} {errors}")
 
             # return: back to the queue, open and unassigned, with the findings; the worktree and branch stay.
             fake = Fake(variant(**{"CR ready": {"status": "in_review", "assignee": "lead0001", "metadata": {}}}))
@@ -5236,6 +5244,16 @@ def validate_board(root: Path) -> None:
             if code or len(created) != 2 or "Finding on fx-ovo.c1 (returned by lead0001): name y is misleading" not in " ".join(created[1]) \
                     or not any(w[:4] == ["update", "fx-ovo.c1", "--status", "open"] for w in fake.writes()):
                 raise ValueError(f"board return must make one open item of the CR per finding and reopen it: {code} {errors} {fake.writes()}")
+            # A retry of a Return that stopped after filing its findings reuses the open item with the same title: nothing is filed twice.
+            earlier = {"id": "fx-ovo.c1.f", "title": "test x fails", "issue_type": "task", "status": "open", "priority": 2, "description": "d",
+                       "created_at": "2026-10-22T15:29:00Z", "updated_at": "2026-10-22T15:29:00Z",
+                       "dependencies": [{"issue_id": "fx-ovo.c1.f", "depends_on_id": "fx-ovo.c1", "type": "parent-child"}]}
+            fake = Fake([*variant(**{"CR ready": {"status": "in_review", "assignee": "lead0001", "metadata": {}}}), earlier])
+            code, output, errors = invoke(["return", "fx-ovo.c1", "test x fails", "name y is misleading"], fake, "lead0001")
+            created = [w for w in fake.writes() if w[0] == "create"]
+            if code or len(created) != 1 or "name y is misleading" not in " ".join(created[0]) or "fx-ovo.c1.f" not in output \
+                    or not any(w[:4] == ["update", "fx-ovo.c1", "--status", "open"] for w in fake.writes()):
+                raise ValueError(f"board return must reuse an open finding item with the same title: {code} {errors} {fake.writes()}")
             fake = Fake(variant(**{"CR ready": {"status": "in_review", "assignee": "aaaa1111", "metadata": {}}}))
             if invoke(["return", "fx-ovo.c1", "x"], fake, "lead0001")[0] != 1 or fake.writes():
                 raise ValueError("board return accepted a review the caller does not hold")
@@ -5318,12 +5336,8 @@ def validate_board(root: Path) -> None:
                         "dependencies": [{"issue_id": item_id, "depends_on_id": cr, "type": "parent-child"},
                                          *({"issue_id": item_id, "depends_on_id": b, "type": "blocks"} for b in blocks)]}
 
-            def readiness(*issues, complete=False, closed=()):
-                deck = bare_deck(list(issues), complete)
-                children = lambda _, cid: [i for i in (*issues, *closed) if any(d["depends_on_id"] == cid and d["type"] == "parent-child"
-                                                                                 for d in i.get("dependencies") or [])]
-                with patch.object(board, "cr_closed_items", children):
-                    return readiness_of(deck, issues)
+            def readiness(*issues, complete=False):
+                return readiness_of(bare_deck(list(issues), complete), issues)
 
             def readiness_of(deck, issues):
                 return {i["id"]: (deck.claimable(i), deck.cr_waits(i)) for i in issues if i["issue_type"] == "change-request" and i["status"] != "closed"}
@@ -5672,19 +5686,24 @@ def validate_board(root: Path) -> None:
                 if code != 1 or "held by bbbb2222" not in errors:
                     raise ValueError(f"board cr refresh took a CR another session holds: {errors}")
 
-                # Reject: the CR closes unlanded, its closed items reopen, a CR stacked on it returns to planning on the target.
+                # Reject: the CR closes unlanded, its closed items stay closed, a CR stacked on it returns to planning on the target.
                 rejected = [cr_issue("rej", "passed", look="before"), cr_item("rej.i", "rej", "closed"),
                             cr_issue("kid", "in_progress", assignee="aaaa1111", base="rej", base_sha="0" * 40)]
                 fake = Fake(rejected)
                 code, output, errors = invoke(["cr", "reject", "rej", "the approach cannot work"], fake, "lead0001")
                 written = fake.writes()
-                if code or ["update", "rej.i", "--status", "open", "--assignee", "", "--if-assignee", "", "--if-status", "closed", "--json"] not in written \
+                if code or any(w[:2] == ["update", "rej.i"] for w in written) \
                         or not any(w[:2] == ["close", "rej"] and "--force" in w for w in written) \
                         or not any(w[:2] == ["update", "kid"] and "base=main" in w and any(a.startswith("replan=") for a in w) for w in written) \
                         or not any(w[:4] == ["update", "kid", "--assignee", ""] and "--if-status" in w for w in written) or "back to planning: kid" not in output:
                     raise ValueError(f"board cr reject: {code} {errors}\n{written}\n{output}")
                 if invoke(["cr", "reject", "rej", "x"], Fake(rejected), "aaaa1111")[0] != 1:
                     raise ValueError("an agent session rejected a change request")
+                # An open item under a closed CR is no shape of the model: reject refuses and names the two ways out.
+                fake = Fake([cr_issue("rej2", "passed", look="before"), cr_item("rej2.i", "rej2", "open")])
+                code, _, errors = invoke(["cr", "reject", "rej2", "the approach cannot work"], fake, "lead0001")
+                if code != 1 or fake.writes() or "close rej2.i --outcome dropped" not in errors or "move rej2.i --to" not in errors:
+                    raise ValueError(f"board cr reject must refuse while an item is open, naming close and move: {code} {errors} {fake.writes()}")
 
                 # A landed base lands the look-after CR waiting on it when its check is current (A1).
                 x_issues, x_tip, x_wt = make_cr("lx", "lx.txt", "x\n")

@@ -312,15 +312,15 @@ MOVES = (
     Move('take', CR_GROUP, _ANY_CR, '=', '*', 'you', 'anyone who could claim it, once its holder is gone', 'own-handover'),
     Move('unclaim', CR_GROUP, _ANY_CR, '=', '*', '-', 'the holder, or a deciding session once it is gone', 'resume-note'),
     Move('handover', CR_GROUP, ('open',), 'in_review', 'you', '-', 'the holder', 'items-closed, checks-pass, not-open-for-review'),
-    Move('handover --no-agent-review', CR_GROUP, ('open',), 'passed', 'you', '-', 'the holder', 'look-before, checks-pass, not-open-for-review'),
-    Move('handover (reviewer passes)', CR_GROUP, ('in_review',), 'passed', 'you', '-', 'the reviewer', 'tip-seen, checks-pass'),
+    Move('handover --no-agent-review', CR_GROUP, ('open',), 'passed', 'you', '-', 'the holder', 'items-closed, look-before, checks-pass, not-open-for-review'),
+    Move('handover (reviewer passes)', CR_GROUP, ('in_review',), 'passed', 'you', '-', 'the reviewer', 'items-closed, tip-seen, checks-pass'),
     Move('send to review', CR_GROUP, ('passed',), 'in_review', '*', '-', '`cr request-review` (a deciding session or the holder); `cr land`, `cr refresh` and `cr edits` on a series no review covers',
          'edits-recorded'),
     Move('return', CR_GROUP, ('in_review', 'passed'), 'open', '*', '-', 'the reviewer, or a deciding session', 'edits-recorded'),
     Move('return --ruling', CR_GROUP, ('in_review',), 'open', 'you', '-', 'a planner holding the ruling', 'ruling-holds-item'),
     Move('landing', CR_GROUP, _ANY_CR, 'closed', '*', '-', "`cr land` (the user's Accept), a reviewer's pass in look after, or the next change-request command after a landing that stopped",
-         'tip-on-target; for the Accept: tip-and-base-seen, not-stacked, items-closed, check-passes', ('landed',)),
-    Move('cr reject', CR_GROUP, (*_ANY_CR, 'deferred'), 'closed', '*', '-', 'a deciding session', 'reason', ('dropped',)),
+         'tip-on-target, items-closed; for the Accept: tip-and-base-seen, not-stacked, check-passes', ('landed',)),
+    Move('cr reject', CR_GROUP, (*_ANY_CR, 'deferred'), 'closed', '*', '-', 'a deciding session', 'reason, items-closed', ('dropped',)),
     Move('base rejected', CR_GROUP, _ANY_CR, 'open', '*', '-', '`cr reject` of the change request it stacks on', ''),
     Move('defer', CR_GROUP, ('open',), 'deferred', '*', '-', 'anyone', 'no-condition'),
     Move('undefer', CR_GROUP, ('deferred',), 'open', '-', '-', 'anyone', ''),
@@ -1061,7 +1061,6 @@ class Board:
         self.git_view: GitView | None = None  # set by `read_git_view` on a read-only command; dropped when the command changes git state
         self._ref_format: dict[str, bool] = {}
         self._cr: dict[str, dict] = {}  # change request id -> git facts read so far (cr_info)
-        self._cr_items: dict[str, list[dict]] = {}
         self._queues: dict[str, list[str]] = {}
         self.children: dict[str, list[str]] = {}
         self.blockers: dict[str, list[str]] = {}  # waiting id -> ids it waits on
@@ -4276,13 +4275,6 @@ def cr_claimable(board: Board, cr: dict, kind: str) -> str | None:
     return kind
 
 
-def cr_closed_items(board: Board, cr_id: str) -> list[dict]:
-    """The CR's items from bd, closed ones included (a status snapshot holds none)."""
-    if cr_id not in board._cr_items:
-        board._cr_items[cr_id] = json.loads(bd_checked('list', '--parent', cr_id, '--all', '--json', '--limit', '0') or '[]')
-    return board._cr_items[cr_id]
-
-
 def cr_stage(cr: dict) -> str | None:
     """The place of a change request as the views show it: review, accept (waiting for the user)."""
     if cr['status'] == PASSED:
@@ -5137,8 +5129,15 @@ def return_item(board: Board, args) -> None:
             refuse_unrecorded(args.id, review, f'{edits_line(args.id, review["opened"])} --no-gate "returned" records them, then return')
         clear = [key for key in ('since', 'reviewing_tip', 'no_agent_review_reason', *([OPENED] if review else []))
                  if key in meta(cr)]  # the covered review pair stays (change-requests.md Review coverage)
-        made = [create_item(board, finding_title(text), 'task', parent=args.id, description=f'Finding on {args.id} (returned by {actor}): {text}')
-                for text in findings]  # before the move: a stop leaves open items on a CR still in review, never a returned CR without them
+        # Before the move: a stop leaves open items on a CR still in review, never a returned CR without them; the retry of a stopped
+        # Return finds them again by title instead of filing them twice.
+        filed = {item['title']: item['id'] for item in board.cr_items(args.id)}
+        made = []
+        for text in findings:
+            title = finding_title(text)
+            if title not in filed:
+                filed[title] = create_item(board, title, 'task', parent=args.id, description=f'Finding on {args.id} (returned by {actor}): {text}')
+            made.append(filed[title])
         move(cr, 'return --ruling' if args.ruling else 'return', fields=dict.fromkeys(clear))
     except BoardError as error:
         if args.ruling:
@@ -5247,12 +5246,12 @@ def reject(board: Board, args) -> int:
     if not may_move(board):
         raise BoardError('only a lead or solo session, or a person, rejects a change request')
     refuse_long_comment(f'board cr reject: {args.reason}')
+    if open_items := board.cr_items(args.id):
+        ids = ' '.join(item['id'] for item in open_items)
+        raise BoardError(f'{args.id}: items still open: {ids}; no open item stays under a closed change request: '
+                         f'agents board close {ids} --outcome dropped --reason "<why>", or agents board move {ids} --to <change request>')
     comment(args.id, f'board cr reject: {actor}: {args.reason}')
-    reopened = [c for c in cr_closed_items(board, args.id) if c['status'] == 'closed']
-    for child in reopened:
-        move(child, 'reopen')
-        comment(child['id'], f'board cr reject: {args.id} was rejected ({args.reason}); the work is not landed.')
-    move(cr, 'cr reject', reason=f"rejected: {args.reason}"[:300].ljust(20, '.'), force=True)  # open items stay open for replanning
+    move(cr, 'cr reject', reason=f"rejected: {args.reason}"[:300].ljust(20, '.'), force=True)
     target = board_setting(board, 'target')
     back = []
     for other in live_crs(board):
@@ -5261,7 +5260,7 @@ def reject(board: Board, args) -> int:
             move(other, 'base rejected')
             comment(other['id'], f"board cr reject: {args.id}, which this stacked on, was rejected ({args.reason}); back to planning with the base reset to the target.")
             back.append(other['id'])
-    print(f"rejected {args.id}; reopened {len(reopened)} items" + (f"; back to planning: {', '.join(back)}" if back else '')
+    print(f"rejected {args.id}" + (f"; back to planning: {', '.join(back)}" if back else '')
           + f"; branch {cr_branch(args.id)} and its worktree stay until you confirm deleting them")
     return 0
 
