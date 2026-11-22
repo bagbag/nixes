@@ -5989,6 +5989,29 @@ def plan_parents(plan: dict, links: list[tuple[str, str, str]]) -> dict[str, lis
     return parents
 
 
+def wait_cycle(board: Board | None, edges: list[tuple[str, str]]) -> list[str] | None:
+    """The chain an added wait would close into a cycle, [waiter, target, ..., waiter], else None. `edges` are the new (waiter, target) waits; the
+    existing ones are the open items' open blockers. A wait on a closed item is met and never part of a cycle."""
+    graph: dict[str, list[str]] = {}
+    for waiter, target in edges:
+        graph.setdefault(waiter, []).append(target)
+
+    def blockers(item: str) -> list[str]:
+        return [*(board.open_blockers(item) if board and board.is_open(item) else []), *graph.get(item, [])]
+
+    for waiter, target in edges:
+        path, seen = [[target]], {target}  # breadth first from the target: does it reach the waiter?
+        while path:
+            chain = path.pop(0)
+            if chain[-1] == waiter:
+                return [waiter, *chain]
+            for blocker in blockers(chain[-1]):
+                if blocker not in seen:
+                    seen.add(blocker)
+                    path.append([*chain, blocker])
+    return None
+
+
 def link_rules(board: Board | None, links: list[tuple[str, str, str]], verb: str, new: dict[str, str] | None = None,
                holds: list[str] = (), parents: dict[str, list[str]] | None = None) -> tuple[list[str], Waits]:
     """The rules every link meets. `links` are (waiting or starting end, other end, kind); `new` marks a plan's new items {key: type} (None: every
@@ -6015,6 +6038,8 @@ def link_rules(board: Board | None, links: list[tuple[str, str, str]], verb: str
 
     waits: Waits = {key: ([], []) for key in new}
     ops = []
+    if chain := wait_cycle(board, [(waiting, other) for waiting, other, kind in links if blocking(kind)]):
+        raise BoardError(f"these waits would form a cycle, nothing would ever start: {' waits on '.join(chain)}")
     for waiting, other, kind in links + [(one, key, 'blocks') for one in holds for key, type_ in new.items() if type_ == 'decision']:
         if kind in RULING_LINKS and verb not in ('ruling', 'record'):
             raise BoardError(f'{kind} links belong to rulings: agents board ruling supersede <old> --with <new>, agents board ruling revise <old> ...')
@@ -6442,6 +6467,8 @@ def block_one(board: Board, item_id: str, blocker: str, reason: str | None, acto
     if issue.get('issue_type') == 'decision' and issue['status'] == 'released' and not planning_wait(record):
         raise BoardError(f'{item_id}: a released ruling waits for planning only (a live decision, a human gate, a design or a spike), '
                          f"not on {blocker} ({record.get('issue_type')} {record.get('status')}); plan the work the ruling changes and block that work on {blocker}")
+    if chain := wait_cycle(board, [(item_id, blocker)]):
+        raise BoardError(f"{item_id} cannot wait on {blocker}: it would form a cycle, nothing would ever start: {' waits on '.join(chain)}")
     edges = board.between(item_id, blocker)
     waits = any(blocking(kind) and a == item_id for a, _, kind in edges)  # whatever blocking spelling made the wait stays as it is
     other = [kind for a, _, kind in edges if kind not in ('relates-to', 'related') and not (blocking(kind) and a == item_id)]

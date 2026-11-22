@@ -4367,6 +4367,12 @@ def validate_board(root: Path) -> None:
                 code, _, errors = invoke(["block", ruling, "--on", ids[blocker], "--reason", "r"], fake, "lead0001")
                 if (code == 0) != allowed or (not allowed and (fake.writes() or "planning only" not in errors)):
                     raise ValueError(f"board block of a released ruling on a {blocker}: {code} {errors} {fake.writes()}")
+            # A wait that would close a cycle is refused at the write, naming the chain: the design waits on the ruling, so the ruling cannot wait on it.
+            cyclic = with_edges(wait_on(ids["Design cache"], ruling))
+            fake = Fake(cyclic)
+            code, _, errors = invoke(["block", ruling, "--on", ids["Design cache"], "--reason", "r"], fake, "lead0001")
+            if code == 0 or fake.writes() or "cycle" not in errors or f"{ruling} waits on {ids['Design cache']} waits on {ruling}" not in errors:
+                raise ValueError(f"board block must refuse a wait cycle naming the chain: {code} {errors} {fake.writes()}")
             fake = Fake(fixture)
             code, _, errors = invoke(["block", ids["Wire caller"], "--on", ids["Ready task"], "--reason", "r"], fake, "lead0001")
             if not code or fake.writes() or "change request" not in errors:
