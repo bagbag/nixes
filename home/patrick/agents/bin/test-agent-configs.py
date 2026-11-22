@@ -3072,11 +3072,11 @@ def validate_board(root: Path) -> None:
             # A work item is claimed by id inside a change request its session holds (a worker of it); outside one it is refused.
             fake = Fake(fixture)
             code, _, errors = invoke(["claim", ids["Ready task"]], fake, "lead0001")
-            if code != 1 or fake.writes() or "fx-ovo.c1" not in errors or "claims it for its workers" not in errors:
+            if code != 1 or fake.writes() or "fx-ovo.c1" not in errors or "has no holder of its own" not in errors:
                 raise ValueError(f"board claim took an item of a change request its session does not hold: {code} {fake.writes()} {errors}")
             fake = Fake(fixture)
             code, _, errors = invoke(["claim", ids["Loose item"]], fake, "lead0001")
-            if code != 1 or fake.writes() or "outside any change request" not in errors or "--parent" not in errors:
+            if code != 1 or fake.writes() or "outside any change request" not in errors or "board move" not in errors:
                 raise ValueError(f"board claim took a work item outside any change request: {code} {fake.writes()} {errors}")
             # Work that commits nothing here (no_commit) is claimed outside any CR and is no `no-cr` deviation; neither is a person's item.
             loose = ids["Loose item"]
@@ -3201,7 +3201,11 @@ def validate_board(root: Path) -> None:
                 raise ValueError(f"board defer must refuse a condition and name wait: {code} {errors} {fake.writes()}")
             # A deferred item is backlog and holds no live item up (board-coordination.md Deferrals): defer refuses, check flags.
             ready, loose = ids["Ready task"], ids["Loose item"]
-            waits = {"Loose item": {"dependencies": [{"issue_id": loose, "depends_on_id": ready, "type": "blocks"}]}}
+            waits = {"Loose item": {"dependencies": [{"issue_id": loose, "depends_on_id": ready, "type": "blocks"}]}, "Ready task": {"dependencies": []}}  # a task outside a CR
+            fake = Fake(variant(**{"Loose item": waits["Loose item"]}))
+            code, _, errors = invoke(["defer", ready, "--reason", "later"], fake, "lead0001")
+            if code == 0 or fake.writes():
+                raise ValueError(f"an item has no deferral of its own (move it into its own CR first): {code} {errors} {fake.writes()}")
             fake = Fake(variant(**waits))
             code, _, errors = invoke(["defer", ready, "--reason", "later"], fake, "lead0001")
             if code == 0 or fake.writes() or loose not in errors:
@@ -3209,7 +3213,7 @@ def validate_board(root: Path) -> None:
             fake = Fake(variant(**waits))
             if invoke(["defer", ready, loose, "--reason", "later"], fake, "lead0001")[0]:
                 raise ValueError("board defer must take an item together with the items waiting on it")
-            report = invoke(["check"], Fake(variant(**waits, **{"Ready task": {"status": "deferred"}})))[1]
+            report = invoke(["check"], Fake(variant(**{**waits, "Ready task": {**waits["Ready task"], "status": "deferred"}})))[1]
             if f"  {ready}  deferred-blocker" not in report or loose not in report:
                 raise ValueError(f"board check must flag a deferred item a live item waits on:\n{report}")
             # A question is answered or waits; it is never deferred (a deferral is someday work or change requests).
@@ -3218,8 +3222,8 @@ def validate_board(root: Path) -> None:
             held_cr = variant(**{"CR ready": {"assignee": "lead0001", "metadata": {"hold": "work"}}})
             fake = Fake(held_cr)
             code, _, _ = invoke(["claim", ids["Ready task"]], fake, "lead0001/build-00000001")
-            if code or fake.writes() != [["update", ids["Ready task"], "--assignee", "lead0001/build-00000001", "--if-assignee", "", "--if-status", "open", "--json"]]:
-                raise ValueError(f"a worker could not claim an item of its session's change request: {code} {fake.writes()}")
+            if code == 0 or fake.writes():
+                raise ValueError(f"an item has no holder: not even a worker of its change request's session claims it: {code} {fake.writes()}")
             fake = Fake(fixture)
             code, _, _ = invoke(["claim", ids["Open cache question"]], fake, "lead0001")  # decisions need no change request
             if code:
@@ -3338,12 +3342,21 @@ def validate_board(root: Path) -> None:
                 raise ValueError(f"board claim <id> took a milestone with open work: {fake.writes()}")
 
             # Within one session an item hands down to the caller; other sessions stay refused.
-            fake = Fake(fixture)
+            loose_task = {"dependencies": [], "metadata": {"no_commit": True}}  # a task outside any CR: an item has no holder, a task keeps the cap
+
+            def as_tasks(**changes):
+                """The fixture with the work items these tests hold or claim made tasks outside any CR (an item has no holder)."""
+                base = {title: dict(loose_task) for title in ("Ready task", "Held task", "Spike perf")}
+                for title, given in changes.items():
+                    base[title] = {**base.get(title, {}), **given, **({"metadata": {**base.get(title, {}).get("metadata", {}), **given["metadata"]}} if "metadata" in given else {})}
+                return variant(**base)
+
+            fake = Fake(variant(**{"Held task": loose_task}))
             code, _, _ = invoke(["claim", ids["Held task"]], fake, worker)
             if code or fake.writes()[0] != ["update", ids["Held task"], "--assignee", worker, "--if-assignee", "aaaa1111/build-12345678", "--if-status", "open", "--json"] \
                     or fake.writes()[1][:3] != ["comments", "add", ids["Held task"]]:
                 raise ValueError(f"board claim did not hand down a same-session hold: {fake.writes()}")
-            fake = Fake(fixture)
+            fake = Fake(variant(**{"Held task": loose_task}))
             if invoke(["claim", ids["Held task"]], fake, "lead0001")[0] == 0 or fake.writes():
                 raise ValueError("board claim forced another session's hold")
 
@@ -3363,7 +3376,7 @@ def validate_board(root: Path) -> None:
 
             def in_held_cr(session, **changes):
                 """The fixture with CR ready held in progress by this session: its workers may claim its items."""
-                return variant(**{"CR ready": {"assignee": session, "metadata": {"hold": "work"}}, **changes})
+                return as_tasks(**{"CR ready": {"assignee": session, "metadata": {"hold": "work"}}, **changes})
 
             holding = in_held_cr("solo0001", **{"Held task": {"assignee": "solo0001"}})
             fake = Fake(holding)
@@ -3438,7 +3451,7 @@ def validate_board(root: Path) -> None:
                 raise ValueError(f"board claim kept an earlier holder's forced mark: {fake.writes()}")
             # A takeover counts against the cap like a claim (r16-q93): a same-session claim and board take of a work item
             # held in progress are refused past it unless --force "<reason>", which flags the hold.
-            stopped_worker = variant(**{"Held task": {"assignee": "solo0001/build-12345678"},
+            stopped_worker = as_tasks(**{"Held task": {"assignee": "solo0001/build-12345678"},
                                         "Ready task": {"assignee": "solo0001", "status": "open"}})
             for verb in ("claim", "take"):
                 fake = Fake(stopped_worker)
@@ -3452,12 +3465,12 @@ def validate_board(root: Path) -> None:
                         or writes[-1] != ["update", ids["Held task"], "--set-metadata", "forced_hold_by=solo0001",
                                           "--set-metadata", "forced_hold=gate down", "--json"]:
                     raise ValueError(f"board {verb} --force did not take over and flag the hold: {writes}")
-                fake = Fake(variant(**{"Held task": {"assignee": "solo0001/build-12345678"}}))
+                fake = Fake(as_tasks(**{"Held task": {"assignee": "solo0001/build-12345678"}}))
                 code, _, _ = invoke([verb, ids["Held task"]], fake, "solo0001")
                 if code or [w[0] for w in fake.writes()] != ["update", "comments"]:
                     raise ValueError(f"board {verb} refused or flagged a takeover within the cap: {fake.writes()}")
             # Two takeovers in one call: the first counts against the second.
-            fake = Fake(variant(**{"Held task": {"assignee": "solo0001/build-12345678"},
+            fake = Fake(as_tasks(**{"Held task": {"assignee": "solo0001/build-12345678"},
                                    "Ready task": {"assignee": "solo0001/build-12345678", "status": "open"}}))
             code, _, errors = invoke(["take", ids["Held task"], ready], fake, "solo0001")
             if code != 1 or len(fake.writes()) != 2 or "not taken" not in errors:
@@ -4705,7 +4718,7 @@ def validate_board(root: Path) -> None:
             plain_design["status"] = "closed"
             fake = Fake([plain_cr, plain_design])
             code, output, errors = invoke(["return", "cp-plain", "Changes wanted"], fake, "lead0001")
-            if code or fake.writes() != [["update", "cp-plain", "--status", "open", "--assignee", "", "--if-assignee", "", "--if-status", "passed", "--json"], ["comments", "add", "cp-plain", "board return: Changes wanted"]]:
+            if code or [w for w in fake.writes() if w[0] != "create"] != [["update", "cp-plain", "--status", "open", "--assignee", "", "--if-assignee", "", "--if-status", "passed", "--json"], ["comments", "add", "cp-plain", "board return: findings as items: fx-new"]]:
                 raise ValueError(f"Return of a design-only CR is the ordinary Return, no design item touched: {code} {errors} {fake.writes()}")
             code, _, errors, fake = bd_create("--holds", ready, deck=Creating(list(mine_rows)))
             if code or not any((w[:2] == ["update", ready] and w[2:4] == ["--assignee", ""]) for w in fake.writes()):
@@ -5137,7 +5150,7 @@ def validate_board(root: Path) -> None:
             done_item = {"Held task": {"status": "closed", "assignee": None}, "Handed task": {"status": "closed"}}
             fake = Fake(variant(**ready_cr))
             code, _, errors = invoke(["handover", "fx-ovo.c2", "done"], fake, "aaaa1111")
-            if code != 1 or fake.writes() or "items still open" not in errors or ids["Held task"] not in errors:
+            if code != 1 or fake.writes() or "items still open" not in errors or ids["Held task"] not in errors or "agents board close fx-ovo.9 fx-ovo.10 --reason" not in errors:
                 raise ValueError(f"board handover took a change request with open items: {code} {fake.writes()} {errors}")
             code, _, errors = invoke(["handover", ids["Held task"], "done"], Fake(variant(**ready_cr)), "aaaa1111")
             if code != 1 or "its change request is fx-ovo.c2" not in errors:
@@ -5203,9 +5216,16 @@ def validate_board(root: Path) -> None:
             # return: back to the queue, open and unassigned, with the findings; the worktree and branch stay.
             fake = Fake(variant(**{"CR ready": {"status": "in_review", "assignee": "lead0001", "metadata": {}}}))
             invoke(["return", "fx-ovo.c1", "test x fails"], fake, "lead0001")
-            if fake.plain_writes() != [["update", "fx-ovo.c1", "--status", "open", "--assignee", "", "--if-assignee", "lead0001", "--if-status", "in_review", "--json"],
-                                       ["comments", "add", "fx-ovo.c1", "board return: test x fails"]]:
+            if [w for w in fake.plain_writes() if w[0] != "create"] != [["update", "fx-ovo.c1", "--status", "open", "--assignee", "", "--if-assignee", "lead0001", "--if-status", "in_review", "--json"],
+                                                                       ["comments", "add", "fx-ovo.c1", "board return: findings as items: fx-new"]]:
                 raise ValueError(f"board return: {fake.writes()}")
+            # Each finding becomes an open item of the change request: two findings, two items, then the CR is open again.
+            fake = Fake(variant(**{"CR ready": {"status": "in_review", "assignee": "lead0001", "metadata": {}}}))
+            code, output, errors = invoke(["return", "fx-ovo.c1", "test x fails", "name y is misleading"], fake, "lead0001")
+            created = [w for w in fake.writes() if w[0] == "create"]
+            if code or len(created) != 2 or "Finding on fx-ovo.c1 (returned by lead0001): name y is misleading" not in " ".join(created[1]) \
+                    or not any(w[:4] == ["update", "fx-ovo.c1", "--status", "open"] for w in fake.writes()):
+                raise ValueError(f"board return must make one open item of the CR per finding and reopen it: {code} {errors} {fake.writes()}")
             fake = Fake(variant(**{"CR ready": {"status": "in_review", "assignee": "aaaa1111", "metadata": {}}}))
             if invoke(["return", "fx-ovo.c1", "x"], fake, "lead0001")[0] != 1 or fake.writes():
                 raise ValueError("board return accepted a review the caller does not hold")
@@ -5230,11 +5250,12 @@ def validate_board(root: Path) -> None:
 
             fake = Fake(planner_return_fixture())
             code, _, errors = invoke(command, fake, "plan0001")
-            writes = fake.writes()
+            writes = [w for w in fake.writes() if w[0] != "create"]
             if code or writes[0] != reserve or fake.issues[-1]["status"] != "open" \
                     or writes[1][:10] != ["update", "fx-ovo.c1", "--status", "open", "--assignee", "",
                                          "--if-assignee", "plan0001", "--if-status", "in_review"] \
-                    or writes[-1] != ["comments", "add", "fx-ovo.c1", f"board return: {ruling_id}: revise the design"]:
+                    or writes[-1] != ["comments", "add", "fx-ovo.c1", "board return: findings as items: fx-new"] \
+                    or not any(w[0] == "create" and f"{ruling_id}: revise the design" in " ".join(w) for w in fake.writes()):
                 raise ValueError(f"planner return must reserve, reopen the CR, and record its ruling: {errors} {writes}")
             for actor, changes in (("plan0001", {"status": "passed"}), ("plan0001", {"holder": "bbbb2222"}),
                                    ("plan0001", {"ruling_holder": ""}), ("plan0001", {"released": False}),
@@ -5380,9 +5401,9 @@ def validate_board(root: Path) -> None:
             for argv in (["block", "fx-dest-task", "--on", "fx-source-task", "--reason", "dependency"],
                          ["create", "A task", "--parent", "fx-dest", "--description-file", "-", "--deps", "fx-source-task"],
                          ["create", "--graph", str(graph), "--dry-run"],
-                         ["update", "fx-move", "--parent", "fx-dest"],
+                         ["move", "fx-move", "--to", "fx-dest"],
                          ["link", "fx-move", "fx-dest", "--type", "parent-child"],
-                         ["update", "fx-source-task", "--parent", "fx-dest"],
+                         ["move", "fx-source-task", "--to", "fx-dest"],
                          ["gate", "create", "--blocks", "fx-dest-task", "--reason", "external approval"]):
                 fake = Fake(others)
                 with patch.object(board.sys, "stdin", io.StringIO("This work needs an outside blocker.")):
@@ -6265,15 +6286,20 @@ def validate_board(root: Path) -> None:
                         or "t-a: updated" not in output:
                     raise ValueError(f"board update must make one bd update with the short fields: {code} {output!r} {errors!r} {writes}")
                 for argv, word in ((["update", "t-a", "--label", "queue:ben"], "board send"), (["update", "t-a", "--unlabel", "for:ben"], "board route"),
-                                   (["update", "t-a"], "nothing to change"), (["update", "t-cr", "--parent", "t-a"], "is a change request"),
-                                   (["update", "t-cr.h", "--parent", "t-a"], "belong to it"), (["update", "t-nope", "--title", "x"], "unknown t-nope")):
+                                   (["update", "t-a"], "nothing to change"), (["move", "t-cr", "--to", "t-a"], "is a change request"),
+                                   (["move", "t-cr.h", "--to", "t-a"], "belong to it"), (["update", "t-nope", "--title", "x"], "unknown t-nope")):
                     code, _, errors, writes = verb(argv, world)
                     if code != 2 or word not in errors or writes:
                         raise ValueError(f"board {argv} must be refused ({word}) before any write: {code} {errors!r} {writes}")
-                for argv in (["update", "t-cr.o", "--parent", "t-a"], ["update", "t-a", "--parent", ""]):
+                code, _, errors, writes = verb(["move", "t-cr.o", "--to", "t-a"], world)
+                if code or writes != [["update", "t-cr.o", "--parent", "t-a", "--json"]]:
+                    raise ValueError(f"board move: an open item re-parents: {code} {errors!r} {writes}")
+                for argv, outcome in ((["close", "t-a", "--reason", "finished with the cache change"], "done"),
+                                      (["close", "t-a", "--reason", "moot after the ruling", "--outcome", "dropped"], "dropped")):
                     code, _, errors, writes = verb(argv, world)
-                    if code or writes != [["update", argv[1], "--parent", argv[3], "--json"]]:
-                        raise ValueError(f"board {argv}: an open unheld item moves, and a parent is removed with an empty one: {code} {errors!r} {writes}")
+                    if code or writes[0] != ["update", "t-a", "--assignee", "", "--if-assignee", "", "--if-status", "open", "--set-metadata", f"outcome={outcome}", "--json"] \
+                            or writes[1][:2] != ["close", "t-a"]:
+                        raise ValueError(f"board close records its outcome ({outcome}) with the holder compare-and-set: {code} {errors!r} {writes}")
                 code, _, errors, writes = verb(["link", "t-a", "t-b", "--type", "relates-to"], world)
                 if code or writes != [["batch", "-m", "board link t-a t-b", "--json"]]:
                     raise ValueError(f"board link: {code} {errors!r} {writes}")

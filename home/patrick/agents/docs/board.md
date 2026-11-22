@@ -17,7 +17,7 @@ makes a board shared, so a board without it costs no bd call and a stray Dolt re
 first push or the clone; a failed join removes what it made. Every bd call sets `BD_NO_REMOTE_ADOPT=1`.
 `agents board route`, `agents board send` and `agents board create --for` move items between queues and inboxes (`for:`
 labels; every send stamps `sent_at` metadata, and an inbox item's row and `waitingSince` count from
-it); `agents board move` flattens to a fresh repository, leaving a moved note (`custom.board.moved`) on
+it); `agents board relocate` flattens to a fresh repository, leaving a moved note (`custom.board.moved`) on
 the old board that `Shared.check_moved` reads after each pull, so stale clones refuse writes until
 `agents board join` rejoins them. `Shared` in `bin/board` owns sync: `before` pulls,
 `after` opens the window, a detached `board _sync-wait` commits and syncs, and `.beads/board-sync/`

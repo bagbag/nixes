@@ -41,7 +41,7 @@ git origin itself.
 fresh private repository with at least one commit, agreed with everyone:
 
 1. Everyone: `agents board bd --raw --yes sync`, then stop writing.
-2. One person, from a terminal or a lead or solo session: `agents board move <url>`.
+2. One person, from a terminal or a lead or solo session: `agents board relocate <url>`.
 3. Others: once `board` refuses writes, `agents board join <url>`; it keeps the old
    `.beads/` and names the `agents board bd --raw --yes import` for items written after the move.
    New joiners name the new url too.

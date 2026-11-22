@@ -1608,7 +1608,7 @@ def t_cr() -> None:
 
 
 def t_move() -> None:
-    """board move (beads-setup.md#history) to a local fresh repository, a stale clone told, its rejoin, a new joiner."""
+    """board relocate (beads-setup.md#history) to a local fresh repository, a stale clone told, its rejoin, a new joiner."""
     settle('a', 'b')
     wait_until(lambda: not waits(), options.seconds * 3)
     item = create('a', 'survives the move')
@@ -1617,12 +1617,12 @@ def t_move() -> None:
     git('init', '-q', '--bare', 'fresh.git')
     git('push', '-q', str(ROOT / 'fresh.git'), 'main', cwd=ROOT / 'seed')
     fresh = f'git+file://{ROOT}/fresh.git'
-    rc, _, err, _ = run('a', 'move', fresh, role='agent')
+    rc, _, err, _ = run('a', 'relocate', fresh, role='agent')
     check(rc == 1 and 'only lead' in err, 'move: an agent is refused', err)
-    rc, _, err, _ = run('a', 'move', f'git+file://{ROOT}/empty.git')
+    rc, _, err, _ = run('a', 'relocate', f'git+file://{ROOT}/empty.git')
     check(rc == 1 and 'empty' in err and 'not set' in bd('a', 'config', 'get', 'custom.board.moved')[1], 'move: an empty repository is refused before the note', err)
     before = commits('a')
-    rc, out, err, _ = run('a', 'move', fresh)
+    rc, out, err, _ = run('a', 'relocate', fresh)
     check(rc == 0 and commits('a') < before, 'move: flattened and pushed', err + out)
     check('refs/dolt/data' in git('for-each-ref', cwd=ROOT / 'remote.git') and 'refs/dolt/data' in git('for-each-ref', cwd=ROOT / 'fresh.git'),
           'move: the old data stays, the new repository holds the board')

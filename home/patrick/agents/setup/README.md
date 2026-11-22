@@ -86,7 +86,7 @@ The url defaults to the project's own repository, which needs at least one commi
 `--yes` says what goes out (the whole board, git emails included) and stops. Both are safe to
 repeat; a failed join cleans up after itself. Afterwards `board` syncs by itself and each person's
 sessions work their own queue. A Dolt remote added by hand shares nothing. Upgrade bd and Dolt
-together: one person migrates and pushes. When the board grows large, `agents board move <url>` moves it to
+together: one person migrates and pushes. When the board grows large, `agents board relocate <url>` moves it to
 a fresh repository and the others rejoin with `agents board join <url>`.
 
 ## Uninstall

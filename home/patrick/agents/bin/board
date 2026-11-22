@@ -125,7 +125,7 @@ FOR_PREFIX = 'for:'  # an item filed for a person: unclaimable, held for its cre
 # share's first push or join's clone, so a stray Dolt remote shares nothing.
 MARK_FILE = 'board-shared.json'
 SHARED_BY = 'custom.board.shared'  # travels with the database: the sharer labelled the existing items
-MOVED = 'custom.board.moved'  # travels with the database: the board moved to this url (board move); its clones rejoin there
+MOVED = 'custom.board.moved'  # travels with the database: the board moved to this url (board relocate); its clones rejoin there
 # The board settings, owned here (board setup applies them; share and join add the shared ones). In the database: they travel
 # with a shared board's sync. min_hash_length is a real key bd warns about as unrecognized: top-level ids of 5+ characters.
 STATUS_CUSTOM = 'decided:wip,released:active,in_review:wip,passed:wip'  # the statuses beyond bd's open, closed and deferred
@@ -283,10 +283,10 @@ def bd_checked(*args: str, stdin: str | None = None) -> str:
 # The board model: one table of states per type, one of transitions, and `move`, the one function that writes a status.
 # docs/board/model.md prints both tables (`agents board model`) and the doc/code test keeps them equal; the prose there
 # gives the meaning and the reasons.
-CR_GROUP, WORK_GROUP = 'change request', 'work item'
+CR_GROUP, WORK_GROUP, ITEM_GROUP = 'change request', 'task', 'item'
 GROUP_OF = {CR_TYPE: CR_GROUP, 'task': WORK_GROUP, 'bug': WORK_GROUP, 'spike': WORK_GROUP, 'design': WORK_GROUP,
-            'decision': 'decision', 'milestone': 'milestone', 'gate': 'gate'}
-STATES = {CR_GROUP: ('open', 'in_review', 'passed', 'deferred', 'closed'), WORK_GROUP: ('open', 'deferred', 'closed'),
+            'decision': 'decision', 'milestone': 'milestone', 'gate': 'gate'}  # a work-type record inside a change request is an item (group_of)
+STATES = {CR_GROUP: ('open', 'in_review', 'passed', 'deferred', 'closed'), WORK_GROUP: ('open', 'deferred', 'closed'), ITEM_GROUP: ('open', 'closed'),
           'decision': ('open', 'decided', 'released', 'deferred', 'closed'), 'milestone': ('open', 'closed'), 'gate': ('open', 'closed')}
 
 
@@ -301,6 +301,7 @@ class Move(NamedTuple):
     holds: str
     who: str
     guards: str
+    outcomes: tuple[str, ...] = ()  # a closing row: the outcomes it records (the first is the default), in metadata `outcome`
 
 
 _ANY_CR = ('open', 'in_review', 'passed')
@@ -318,16 +319,21 @@ MOVES = (
     Move('return', CR_GROUP, ('in_review', 'passed'), 'open', '*', '-', 'the reviewer, or a deciding session', 'edits-recorded'),
     Move('return --ruling', CR_GROUP, ('in_review',), 'open', 'you', '-', 'a planner holding the ruling', 'ruling-holds-item'),
     Move('landing', CR_GROUP, _ANY_CR, 'closed', '*', '-', "`cr land` (the user's Accept), a reviewer's pass in look after, or the next change-request command after a landing that stopped",
-         'tip-on-target; for the Accept: tip-and-base-seen, not-stacked, items-closed, check-passes'),
-    Move('cr reject', CR_GROUP, (*_ANY_CR, 'deferred'), 'closed', '*', '-', 'a deciding session', 'reason'),
+         'tip-on-target; for the Accept: tip-and-base-seen, not-stacked, items-closed, check-passes', ('landed',)),
+    Move('cr reject', CR_GROUP, (*_ANY_CR, 'deferred'), 'closed', '*', '-', 'a deciding session', 'reason', ('dropped',)),
     Move('base rejected', CR_GROUP, _ANY_CR, 'open', '*', '-', '`cr reject` of the change request it stacks on', ''),
     Move('defer', CR_GROUP, ('open',), 'deferred', '*', '-', 'anyone', 'no-condition'),
     Move('undefer', CR_GROUP, ('deferred',), 'open', '-', '-', 'anyone', ''),
     Move('claim', WORK_GROUP, ('open',), '=', '-', 'you', 'a worker of the session holding its change request', 'in-held-change-request, worker-cap'),
     Move('take', WORK_GROUP, ('open',), '=', '*', 'you', 'anyone who could claim it, once its holder is gone', 'worker-cap'),
     Move('unclaim', WORK_GROUP, ('open',), '=', '*', '-', 'the holder, or a deciding session once it is gone', 'resume-note'),
-    Move('close', WORK_GROUP, ('open',), 'closed', '*', '-', 'anyone', 'reason'),
+    Move('close', WORK_GROUP, ('open',), 'closed', '*', '-', 'anyone', 'reason', ('done', 'dropped')),
     Move('reopen', WORK_GROUP, ('closed',), 'open', '*', '-', 'anyone', ''),
+    Move('close', ITEM_GROUP, ('open',), 'closed', '*', '-', 'anyone', 'reason', ('done', 'dropped')),
+    Move('reopen', ITEM_GROUP, ('closed',), 'open', '*', '-', 'anyone', ''),
+    # Holds left from before items had none: taken over or freed until board-migrate clears them, then these two rows go. No claim row: nothing new is held.
+    Move('take', ITEM_GROUP, ('open',), '=', '*', 'you', 'the session of the hold, or anyone who could claim it once its holder is gone', 'worker-cap'),
+    Move('unclaim', ITEM_GROUP, ('open',), '=', '*', '-', 'the holder, or a deciding session once it is gone', 'resume-note'),
     Move('defer', WORK_GROUP, ('open',), 'deferred', '*', '-', 'anyone', 'no-condition, nothing-waits-on-it'),
     Move('undefer', WORK_GROUP, ('deferred',), 'open', '-', '-', 'anyone', ''),
     Move('defer', 'decision', ('open',), 'deferred', '*', '-', 'anyone', 'nothing-live-waits-on-it'),
@@ -360,20 +366,34 @@ def model_tables() -> str:
     return '\n'.join([*states, '', *moves])
 
 
+def group_of(board: 'Board | None', issue: dict) -> str | None:
+    """The table group of a record: a task, bug, spike or design inside a change request is an item (no holder, no deferral), outside one a task."""
+    group = GROUP_OF.get(issue.get('issue_type'))
+    return ITEM_GROUP if group == WORK_GROUP and board is not None and board.cr_of(issue['id']) else group
+
+
 def move(issue: dict, command: str, *, to: str | None = None, actor: str | None = None, fields: dict | None = None,
-         reason: str | None = None, force: bool = False, via: str | None = None, check: bool = True) -> subprocess.CompletedProcess:
+         reason: str | None = None, force: bool = False, via: str | None = None, check: bool = True,
+         board: 'Board | None' = None, outcome: str | None = None) -> subprocess.CompletedProcess:
     """The one status write. Finds the table row for the command, the item's type and its status (`to` picks among rows that
     differ only in where they go), refuses what the row forbids, then writes status and holder in one bd compare-and-set on
     the status and holder just read. A close takes the item by the same compare-and-set (a no-op holder write), then `bd close` records the reason, so bd's close validation still runs. `via='supersede'` closes
     through bd supersede, whose `reason` names the new record. `fields` are metadata keys written with it (None removes one), as
-    `put_meta` writes them. The issue is updated in place."""
-    group = GROUP_OF.get(issue.get('issue_type'))
+    `put_meta` writes them. A closing row records its `outcome` (default: the row's first) in the same write. `board` tells an item
+    (inside a change request) from a task. The issue is updated in place."""
+    group = group_of(board, issue)
     rows = [m for m in MOVES if m.command == command and m.group == group and issue['status'] in m.frm
             and (to is None or m.to in (to, '='))]
     if len(rows) != 1:
         raise BoardError(f"{issue['id']}: {command} does not apply to a {group or issue.get('issue_type')} that is {issue['status']}" if not rows
                          else f'internal: {len(rows)} rows for {command} of {issue["id"]}')
     row = rows[0]
+    if outcome and not row.outcomes:
+        raise BoardError(f"{issue['id']}: {command} records no outcome")
+    if row.outcomes:
+        if outcome not in (None, *row.outcomes):
+            raise BoardError(f"{issue['id']}: {command} records {' or '.join(row.outcomes)}, not {outcome}")
+        fields = {**(fields or {}), 'outcome': outcome or row.outcomes[0]}
     current = issue.get('assignee') or ''
     if row.held == '-' and current:
         raise BoardError(f"{issue['id']}: {command} needs it unheld; held by {current}")
@@ -386,7 +406,7 @@ def move(issue: dict, command: str, *, to: str | None = None, actor: str | None 
     meta_args = [arg for key, value in (fields or {}).items()
                  for arg in (('--unset-metadata', key) if value is None else ('--set-metadata', f'{key}={value}'))]
     if target == 'closed':
-        guard = bd('update', issue['id'], '--assignee', current, '--if-assignee', current, '--if-status', issue['status'], '--json')
+        guard = bd('update', issue['id'], '--assignee', current, '--if-assignee', current, '--if-status', issue['status'], *meta_args, '--json')
         if guard.returncode == 13:
             raise BoardError(f"{issue['id']}: {command} refused, it changed meanwhile: {bd_message(guard)}")
         if guard.returncode != 0:
@@ -412,7 +432,7 @@ def move(issue: dict, command: str, *, to: str | None = None, actor: str | None 
     return result
 
 
-def move_line(issue: dict, command: str, *, to: str | None = None) -> str:
+def move_line(issue: dict, command: str, *, to: str | None = None) -> str:  # decisions only: no item/task split
     """The `update` line of a bd batch for a move whose status write shares a transaction with other writes (ruling record and
     release): the same row checks as `move`, without the compare-and-set a batch cannot carry."""
     group = GROUP_OF.get(issue.get('issue_type'))
@@ -669,7 +689,7 @@ class Shared:
         return self.state().get('moved') or None
 
     def check_moved(self) -> None:
-        """After each pull: whether the board brought a moved note (board move). A failed read keeps what was known."""
+        """After each pull: whether the board brought a moved note (board relocate). A failed read keeps what was known."""
         ensure_server(self.root)
         result = subprocess.run(['bd', 'sql', '--json', f"select value from config where `key` = '{MOVED}'"], cwd=self.root,
                                 capture_output=True, text=True, env=bd_env())
@@ -2193,8 +2213,9 @@ def deviations(board: Board, root: str | None) -> list[tuple[str, str, str]]:
             found.append((item_id, 'holder', f'held by {holder}'))
         if kind and kind not in ITEM_TYPES:
             found.append((item_id, 'unknown-type', f'type {kind}'))
-        if GROUP_OF.get(kind) and issue['status'] not in STATES[GROUP_OF[kind]]:
-            found.append((item_id, 'unknown-status', f"{kind} status {issue['status']} (a {GROUP_OF[kind]} is {', '.join(STATES[GROUP_OF[kind]])}): follow /board-migrate"))
+        group = group_of(board, issue)
+        if group and issue['status'] not in STATES[group]:
+            found.append((item_id, 'unknown-status', f"{kind} status {issue['status']} (a {group} is {', '.join(STATES[group])}): follow /board-migrate"))
         prefix = next((p for p in (*TITLE_PREFIXES, *(('user ',) if kind == 'gate' else ())) if title.startswith(p)), None)
         if prefix:
             found.append((item_id, 'title-prefix', f'title starts with {prefix}'))
@@ -2223,7 +2244,7 @@ def deviations(board: Board, root: str | None) -> list[tuple[str, str, str]]:
                 found.append((item_id, 'outside-wait', f'{refusal}; then agents board unblock {item_id} --on {blocker}'))
         if is_work_hold(issue) and board.cr_of(item_id) is None and issue['status'] != 'deferred' and not is_no_commit(issue) \
                 and not board.waits_on_decision_design_or_spike(item_id):
-            found.append((item_id, 'no-cr', f'work item outside any change request: agents board update {item_id} --parent <change request>, '
+            found.append((item_id, 'no-cr', f'work item outside any change request: agents board move {item_id} --to <change request>, '
                                             f'or --no-commit for work that commits nothing to this repository'))
         for key in sorted(set(meta(issue)) - BOARD_METADATA - {'checkpoint'}):
             found.append((item_id, 'unknown-metadata', f'metadata {key}: {metadata_fix(issue, key)}'))
@@ -3271,6 +3292,10 @@ def claim(board: Board, args) -> int:
         for item_id in args.ids:
             issue = board.by_id[item_id]
             holder = issue.get('assignee')
+            if item_cr := item_of(board, issue):
+                failed.append(item_id)
+                print(f'{item_id}: an item has no holder of its own; its change request {item_cr} holds it: agents board claim {item_cr}, then close the item when it is done', file=sys.stderr)
+                continue
             if holder == actor:
                 print(f'{item_id}: already held by {actor}')  # bin/protocol reads this line (claim_items)
                 kind = board.kind(issue) if board.is_cr(item_id) else None
@@ -3418,20 +3443,16 @@ def claim_cr_checked(board: Board, issue: dict, actor: str, kind: str, claimed: 
     return True
 
 
+def item_of(board: Board, issue: dict) -> str | None:
+    """The change request a work-type record belongs to: it is then an item, which has no holder, deferral or review of its own."""
+    return board.cr_of(issue['id']) if issue.get('issue_type') in (*WORK_TYPES, 'design') else None
+
+
 def work_item_refusal(board: Board, issue: dict, actor: str) -> str | None:
-    """A work item is claimed by a worker of the session holding its change request (q203); one outside any is refused."""
-    if issue.get('issue_type') not in (*WORK_TYPES, 'design'):
+    """A task is claimed outside any change request only when it commits nothing here (an item is held with its change request)."""
+    if issue.get('issue_type') not in (*WORK_TYPES, 'design') or is_no_commit(issue):
         return None
-    item_id = issue['id']
-    cr_id = board.cr_of(item_id)
-    if cr_id is None and is_no_commit(issue):
-        return None  # work that commits nothing here
-    if cr_id is None:
-        return f'{item_id}: outside any change request; put it in one: agents board update {item_id} --parent <change request>'
-    cr = board.by_id[cr_id]
-    if not in_work(cr) or not holds_cr(cr, actor):
-        return f"{item_id}: in {cr_id} ({cr['status']}, held by {cr.get('assignee') or 'nobody'}); the session holding {cr_id} for work claims it for its workers"
-    return None
+    return f"{issue['id']}: outside any change request; put it in one: agents board move {issue['id']} --to <change request>"
 
 
 def refuse_long_comment(text: str) -> None:
@@ -4067,7 +4088,7 @@ def needs_refresh(board: Board, cr: dict) -> bool:
 
 OPENED = 'opened_tip'  # metadata of an item open for the user's review: the tip it was opened at (accept.md User review)
 BOARD_METADATA = {  # every metadata key the board writes, the one list (a test compares it with the writes); board check flags any other
-    NO_COMMIT, *CR_SETTINGS, HOLD, DEEP_REVIEW, FORCED_BY, FORCED_REASON, SENT_AT, REVISES_RULE, OPENED,
+    NO_COMMIT, *CR_SETTINGS, HOLD, DEEP_REVIEW, FORCED_BY, FORCED_REASON, SENT_AT, REVISES_RULE, OPENED, DEFERRED_BY, REVISIT, 'outcome',
     'base', 'base_sha', 'setup_sha', 'since', 'landing', 'replan', 'rebase_from', 'rebase_onto', 'review_tip', 'review_base_tip',
     'reviewing_tip', 'review_edits', 'user_seen_tip', 'user_seen_base_tip', 'no_agent_review_reason',
     'check_at', 'check_base_count', 'check_base_tip', 'check_command', 'check_kind', 'check_new', 'check_output', 'check_reason',
@@ -4781,7 +4802,7 @@ def claim_cr(board: Board, cr: dict, actor: str, kind: str) -> tuple[bool, str]:
 
 def open_item_refusal(board: Board, cr: dict) -> str | None:
     items = board.cr_items(cr['id'])
-    return f"{cr['id']}: items still open: {', '.join(i['id'] for i in items)}; close them (agents board close <item> --reason \"<sha>: …\") or move them out" if items else None
+    return f"{cr['id']}: items still open: {', '.join(i['id'] for i in items)}; close them (agents board close {' '.join(i['id'] for i in items)} --reason \"<sha>: …\"), or the planner moves one out (agents board move <item> --to <change request>)" if items else None
 
 
 class LandedError(BoardError):
@@ -5093,11 +5114,18 @@ def reserve_planner_return(board: Board, cr: dict, ruling_id: str, actor: str) -
     move(cr, 'claim', actor=actor)
 
 
+def finding_title(text: str) -> str:
+    """An item's title from a finding: its first line, cut at a word within 80 characters."""
+    line = text.strip().splitlines()[0]
+    return line if len(line) <= 80 else line[:80].rsplit(' ', 1)[0].rstrip(',;:') + ' ...'
+
+
 def return_item(board: Board, args) -> None:
     actor = derived_actor() or 'user'
     cr = cr_arg(board, args.id, 'return')
-    findings = f'board return: {args.findings}' if not args.ruling else f'board return: {args.ruling}: {args.findings}'
-    refuse_long_comment(findings)
+    findings = [f'{args.ruling}: {text}' if args.ruling else text for text in args.findings]
+    for text in findings:
+        refuse_long_comment(f'board return: {text}')
     if args.ruling:
         reserve_planner_return(board, cr, args.ruling, caller())
     elif cr['status'] not in ('in_review', PASSED):
@@ -5116,6 +5144,8 @@ def return_item(board: Board, args) -> None:
             refuse_unrecorded(args.id, review, f'{edits_line(args.id, review["opened"])} --no-gate "returned" records them, then return')
         clear = [key for key in ('since', 'reviewing_tip', 'no_agent_review_reason', *([OPENED] if review else []))
                  if key in meta(cr)]  # the covered review pair stays (change-requests.md Review coverage)
+        made = [create_item(board, finding_title(text), 'task', parent=args.id, description=f'Finding on {args.id} (returned by {actor}): {text}')
+                for text in findings]  # before the move: a stop leaves open items on a CR still in review, never a returned CR without them
         move(cr, 'return --ruling' if args.ruling else 'return', fields=dict.fromkeys(clear))
     except BoardError as error:
         if args.ruling:
@@ -5123,8 +5153,8 @@ def return_item(board: Board, args) -> None:
             if released is not None and released.returncode not in (0, 13):
                 raise BoardError(f'{error}; releasing the temporary return hold failed: {bd_message(released)}') from error
         raise
-    comment(args.id, findings)
-    print(f'returned {args.id} to the queue (worktree and branch kept)')
+    comment(args.id, f"board return: findings as items: {', '.join(made)}")
+    print(f"returned {args.id} to the queue (worktree and branch kept); open items: {', '.join(made)}")
 
 
 def land(board: Board, args) -> int:
@@ -5723,7 +5753,7 @@ def close_command(args) -> int:
     if missing := [item_id for item_id in ids if item_id not in found]:
         raise BoardError(f"unknown {', '.join(missing)}")
     for item_id in ids:
-        move(found[item_id], 'close', reason=reason, force=args.force)
+        move(found[item_id], 'close', reason=reason, force=args.force, outcome=args.outcome)
         print(f'{item_id}: closed')
     return 0
 
@@ -6468,11 +6498,23 @@ def known_items(board: Board, ids: list[str]) -> None:
         raise BoardError(f"unknown {', '.join(unknown)}")
 
 
+def move_command(board: Board, args) -> int:
+    """`board move <id>... --to <parent>`: re-parents items where the board's invariants allow it (parent_move_refusal), the planner's call
+    on a partial commit; an item then belongs to its new change request."""
+    known_items(board, [*args.ids, args.to])
+    if refusal := parent_move_refusal(board, args.ids, args.to):
+        raise BoardError(refusal)
+    bd_checked('update', *args.ids, '--parent', args.to, '--json')
+    for item_id in args.ids:
+        print(f'{item_id}: moved to {args.to}')
+    return 0
+
+
 def update_command(board: Board, args) -> int:
-    """`board update <id>... [--title] [--priority] [--label L]... [--unlabel L]... [--parent P|""] [--no-commit|--commits]
+    """`board update <id>... [--title] [--priority] [--label L]... [--unlabel L]... [--no-commit|--commits]
     [--look|--view V|""]`: the short fields bd
     leaves to bd, with the board's value rules: labels the board routes on (queue:, for:) change through send, route and create --for; a parent
-    moves an item only where the board's invariants allow (parent_move_refusal); a step for a person is a human gate (gate create)."""
+    a parent moves through `move`; a step for a person is a human gate (gate create)."""
     known_items(board, args.ids)
     changes = []
     if args.title is not None:
@@ -6483,16 +6525,9 @@ def update_command(board: Board, args) -> int:
     if refusal := label_refusal([*labels, *unlabels]):
         raise BoardError(refusal)
     changes += [flag for label in labels for flag in ('--add-label', label)] + [flag for label in unlabels for flag in ('--remove-label', label)]
-    if args.parent is not None:
-        target = args.parent or None
-        if target:
-            known_items(board, [target])
-        if refusal := parent_move_refusal(board, args.ids, target):
-            raise BoardError(refusal)
-        changes += ['--parent', args.parent]
     changes += setting_changes(board, args)
     if not changes:
-        raise BoardError('nothing to change: give --title, --priority, --label, --unlabel, --parent, --no-commit, --commits, --look or --view '
+        raise BoardError('nothing to change: give --title, --priority, --label, --unlabel, --no-commit, --commits, --look or --view '
                          '(long fields: agents board field; claim: agents board claim)')
     bd_checked('update', *args.ids, *changes, '--json')
     for item_id in args.ids:
@@ -6641,7 +6676,7 @@ def defer_command(args) -> int:
         if waiting:
             raise BoardError(f"{item_id}: {', '.join(waiting)} would hang on it deferred: {deferred_fix(board, item_id, waiting)}")
     for item_id in args.ids:
-        move(board.by_id[item_id], 'defer', fields={DEFERRED_BY: by, REVISIT: args.until})  # --until: a date that only surfaces it
+        move(board.by_id[item_id], 'defer', board=board, fields={DEFERRED_BY: by, REVISIT: args.until})  # --until: a date that only surfaces it
         comment(item_id, f'board defer: {args.reason}')
         print(f'{item_id}: deferred')
     return 0
@@ -6654,7 +6689,7 @@ def undefer_command(args) -> int:
         by = meta(board.by_id[item_id]).get(DEFERRED_BY)
         if by == 'user' and not may_move(board):
             raise BoardError(f"{item_id}: the user deferred it; only the user, through a deciding session, undefers it")
-        move(board.by_id[item_id], 'undefer', fields={DEFERRED_BY: None, REVISIT: None})
+        move(board.by_id[item_id], 'undefer', board=board, fields={DEFERRED_BY: None, REVISIT: None})
         print(f'{item_id}: undeferred')
     return 0
 
@@ -7192,7 +7227,7 @@ def share(args) -> int:
         remote = 'origin' if 'origin' in remotes else sorted(remotes)[0]
         url = remotes[remote]
         if args.url and normalized_remote(args.url) != url:
-            raise BoardError(f'this board already syncs with {url} ({remote}); moving it: agents board move <url> (beads-setup.md#history)')
+            raise BoardError(f'this board already syncs with {url} ({remote}); moving it: agents board relocate <url> (beads-setup.md#history)')
     else:
         remote, url = 'origin', normalized_remote(args.url or project_remote())
     known = remote in remotes and remote_branches(remote) > 0  # the remote already holds this board
@@ -7328,11 +7363,11 @@ def rejoin(sharing: Shared, url: str) -> None:
 
 
 def move_board(args) -> int:
-    """board move <url>: the note on the old board, then flatten, switch the remote and push (beads-setup.md#history). The
+    """board relocate <url>: the note on the old board, then flatten, switch the remote and push (beads-setup.md#history). The
     note goes out before the flatten and is removed from the local copy first: it travels with the data and would say the
     new board moved too."""
     if shared is None:
-        raise BoardError('agents board move moves a shared board; this one is not shared')
+        raise BoardError('agents board relocate moves a shared board; this one is not shared')
     if not may_move():
         raise BoardError("only lead and solo sessions, or a person's terminal, move a board")
     if shared.moved():
@@ -7355,7 +7390,7 @@ def move_board(args) -> int:
         sent = bd('sync', '--remote', shared.remote)
         if sent.returncode != 0:
             bd('config', 'unset', MOVED)
-            bd('dolt', 'commit', '-m', 'board move abandoned')
+            bd('dolt', 'commit', '-m', 'board relocate abandoned')
             raise BoardError(f'sending the moved note failed, nothing moved: {last_line(sent.stderr + sent.stdout)}')
         bd_checked('config', 'unset', MOVED)
         bd_checked('dolt', 'commit', '-m', 'board moved: the note stays on the old board')
@@ -7576,7 +7611,8 @@ EXAMPLES = {
     'setup': 'agents board setup --target main --setup scripts/setup.sh --checks scripts/check.sh --look before --view code',
     'share': 'agents board share git@github.com:me/project.git',
     'join': 'agents board join',
-    'move': 'agents board move git@github.com:me/project-board.git',
+    'relocate': 'agents board relocate git@github.com:me/project-board.git',
+    'move': 'agents board move <item> <item> --to <change request>',
     'route': 'agents board route ben <id> <id>',
     'send': 'agents board send ben <id>',
     'create': 'agents board create "Login fails on Safari" -t bug --description-file report.md [--for ben] [--parent <id>] [--label a,b] [--dry-run]  |  agents board create --graph plan.json [--dry-run]',
@@ -7599,7 +7635,7 @@ EXAMPLES = {
     'claim': 'agents board claim [<id>] [--force "waits on the cache ruling"]',
     'ruling record': 'agents board ruling record <id> record.md [--unratified] [--replaces <old>,<old>]',
     'ruling check-replaces': 'agents board ruling check-replaces <old> [<old>]',
-    'update': 'agents board update <id> <id> --title "New title" --priority 1 --label topic:x --unlabel topic:y --parent <id>',
+    'update': 'agents board update <id> <id> --title "New title" --priority 1 --label topic:x --unlabel topic:y',
     'link': 'agents board link <a> <b> --type relates-to',
     'unlink': 'agents board unlink <a> <b>',
     'unblock': 'agents board unblock <item> <item> --on <blocker>',
@@ -7632,13 +7668,13 @@ EXAMPLES = {
 
 
 # Commands that say nothing about the board, or that fix or run sync themselves: no pull first.
-NO_PULL = {'help', '-h', '--help', 'share', 'join', 'move'}
+NO_PULL = {'help', '-h', '--help', 'share', 'join', 'relocate'}
 # bd verbs that never open the database: no server needed, so they also run inside a sandbox that cannot reach it.
 BD_NO_DATABASE = {'where', 'version', 'help'}
 BD_NO_PULL = {'dolt', 'sync', 'init', 'conflicts', 'sql', 'rename', 'flatten', 'vc', 'version', 'where', 'help', 'bootstrap'}
 # Commands that write nothing: a wrong entry costs a late sync, a missing one a cheap check.
 READS = {'health', 'position', 'holders', 'check', 'related', 'queue', 'wait', 'mine', 'console', 'show', 'help', '-h', '--help', 'share', 'join',
-         'move'}
+         'relocate'}
 BD_READS = {'list', 'ready', 'show', 'view', 'query', 'search', 'where', 'version', 'help', 'export', 'stats', 'blocked', 'lint',
             'history', 'count', 'events'}
 
@@ -7689,7 +7725,7 @@ def main(argv: list[str] | None = None) -> int:
     bare = bool({'-h', '--help'} & set(argv)) or argv in (['cr'], ['ruling'], ['review'])  # a bare group only lists its verbs
     if not bare and not dry_run and word not in (BD_NO_PULL if argv[:1] == ['bd'] else NO_PULL):
         quietly(shared.before)
-    if not bare and shared.moved() and (writes(argv) or argv[:1] in (['share'], ['move'])):
+    if not bare and shared.moved() and (writes(argv) or argv[:1] in (['share'], ['relocate'])):
         print(f'board: {moved_refusal(shared.moved())}', file=sys.stderr)
         return 1
     try:
@@ -7731,7 +7767,7 @@ def set_view(board: Board, chosen: str | None) -> None:
 
 
 # The verbs whose refusal exits 2 (the rest exit 1): the verbs that write an item from the flags and arguments they are given.
-REFUSAL_EXIT_2 = (create_command, comment_command, close_command, field_discard, field_export, field_apply, update_command, link_command, unlink_command,
+REFUSAL_EXIT_2 = (create_command, comment_command, close_command, field_discard, field_export, field_apply, update_command, move_command, link_command, unlink_command,
                   unblock, reopen_command, defer_command, undefer_command, gate_create, gate_resolve)
 
 
@@ -7857,6 +7893,7 @@ def run_command(argv: list[str]) -> int:
     sub.add_argument('ids', nargs='+', type=board_id)
     sub.add_argument('--reason', required=True, metavar='TEXT')
     sub.add_argument('--force', action='store_true', help='close an item that is blocked or has open children (bd close --force)')
+    sub.add_argument('--outcome', choices=('done', 'dropped'), help='how an item or task ends: done (default), or dropped when a ruling or a duplicate makes it moot')
     sub = add('claim', 'claim the next item routed to your role, or the given ids; a work item past your worker cap needs --force', claim, [scope])
     sub.add_argument('ids', nargs='*', type=board_id)
     sub.add_argument('--force', metavar='REASON', type=nonempty,
@@ -7878,7 +7915,6 @@ def run_command(argv: list[str]) -> int:
     sub.add_argument('-p', '--priority', type=priority, help='0-4 or P0-P4 (0 highest)')
     sub.add_argument('--label', action=Values, default=[], metavar='LABEL[,LABEL...]', help='add; repeatable, commas separate')
     sub.add_argument('--unlabel', action=Values, default=[], metavar='LABEL[,LABEL...]', help='remove; repeatable, commas separate')
-    sub.add_argument('--parent', type=board_id, metavar='ID', help='the new parent ("" removes it)')
     commits = sub.add_mutually_exclusive_group()  # not `route`: that name is the route verb, registered below
     commits.add_argument('--no-commit', dest='no_commit', action='store_const', const=True,
                          help='the work commits nothing to this repository: it needs no change request')
@@ -7974,9 +8010,9 @@ def run_command(argv: list[str]) -> int:
     sub.add_argument('evidence', type=nonempty)
     sub.add_argument('--no-agent-review', metavar='REASON', type=nonempty, help="route an authored change to the user's Accept without agent review; see skills/shared/acceptance.md Review policy")
     gate_options(sub, nonempty)
-    sub = add('return', 'return a change request to the work queue with its findings', return_item)
+    sub = add('return', 'return a change request to the work queue; each finding becomes an open item of it', return_item)
     sub.add_argument('id', type=board_id)
-    sub.add_argument('findings', type=nonempty)
+    sub.add_argument('findings', nargs='+', type=nonempty, metavar='FINDING')
     sub.add_argument('--ruling', type=board_id, help='return an unclaimed review whose items wait on this released ruling you hold')
     for name, run, text in (('take', take, 'reassign held items to yourself (with a comment)'),
                             ('unclaim', unclaim, "free a hold, yours or another's (with a comment)")):
@@ -8034,8 +8070,11 @@ def run_command(argv: list[str]) -> int:
     sub = add('join', "join a shared board (default: the project's repository's); an existing board stays as it is, a moved "
               "one rejoins", join)
     sub.add_argument('url', nargs='?')
-    sub = add('move', 'move this shared board to a fresh repository: a moved note on the old one, flatten, push', move_board)
+    sub = add('relocate', 'move this shared board to a fresh repository: a moved note on the old one, flatten, push', move_board)
     sub.add_argument('url')
+    sub = add('move', 'move items into another change request (re-parent)', move_command)
+    sub.add_argument('ids', nargs='+', type=board_id)
+    sub.add_argument('--to', required=True, type=board_id, metavar='ID', help='the new parent')
     sub = add('help', 'every command with an example; with a verb (agents board help cr land): that verb\'s help and example', None)
     sub.add_argument('words', nargs='*', metavar='VERB')
 
