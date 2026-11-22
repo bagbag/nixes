@@ -615,9 +615,9 @@ describe('counts', () => {
   })
 
   test('the /console text prints the same labels', () => {
-    const text = consoleText({ session: 's', role: 'lead', actor: 'a', tool: 'claude' }, { isMissing: false, counts: { ...COUNTS, toDesign: { ready: 6, held: 1, waiting: 0 }, toImplement: { ready: 90, held: 1, waiting: 1 }, deferred: { ready: 4, held: 0, waiting: 0 } }, forYou: [], items: [], sessions: [], held: [], crs: [], queued: 0, waitingOnYou: 0, prefix: null, agents: [], scratch: null, sync: null, queues: null, error: null }, null, false, [])
+    const text = consoleText({ session: 's', role: 'lead', actor: 'a', tool: 'claude' }, { isMissing: false, counts: { ...COUNTS, toImplement: { ready: 90, held: 1, waiting: 1 }, deferred: { ready: 4, held: 0, waiting: 0 } }, forYou: [], items: [], sessions: [], held: [], crs: [], queued: 0, waitingOnYou: 0, prefix: null, agents: [], scratch: null, sync: null, queues: null, error: null }, null, false, [])
     expect(text).toContain('you: for you 3 · to accept 13 (1 wait) · decided 0 · questions 186 (2 held)')
-    expect(text).toContain('agents: to plan 0 (57 wait) · to design 6 (1 held) · to implement 90 (1 held, 1 wait) · to review 0')
+    expect(text).toContain('agents: to plan 0 (57 wait) · to implement 90 (1 held, 1 wait) · to review 0')
   })
 
   test('the engine counts parse as ready/waiting; a bare number reads as all ready', () => {

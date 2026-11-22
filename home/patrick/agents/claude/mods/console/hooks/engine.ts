@@ -307,7 +307,7 @@ function parseCounts(value: unknown): ConsoleCounts | null {
 function parseBoardCounts(value: unknown): ConsoleBoardCounts | null {
   const counts = parseCounts(value)
   const raw = record(value)
-  return counts === null ? null : { ...counts, toDesign: parseCount(raw.toDesign), toImplement: parseCount(raw.toImplement), deferred: parseCount(raw.deferred) }
+  return counts === null ? null : { ...counts, toImplement: parseCount(raw.toImplement), deferred: parseCount(raw.deferred) }
 }
 
 const STATUSES: readonly string[] = ['draft', 'ready', 'asked', 'answered', 'held', 'parked']

@@ -27,7 +27,7 @@ export const COUNTS = {
 }
 
 /** `board console` counts: the round's, plus the agent steps the board adds. */
-export const BOARD_COUNTS = { ...COUNTS, toDesign: { ready: 6, held: 1, waiting: 0 }, toImplement: { ready: 90, held: 1, waiting: 1 }, deferred: { ready: 4, held: 0, waiting: 0 } }
+export const BOARD_COUNTS = { ...COUNTS, toImplement: { ready: 90, held: 1, waiting: 1 }, deferred: { ready: 4, held: 0, waiting: 0 } }
 
 export function roundJson(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {

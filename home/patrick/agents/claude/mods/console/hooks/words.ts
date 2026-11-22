@@ -8,7 +8,7 @@ export type LensCommand = 'step-back' | 'ground'
 export const STEP_BACK_BASE = 'Rethink the direction; judge the cleanest end state against the whole design.'
 export const GROUND_BASE = 'Ground every open recommendation until it is strong; re-verify the premises of every reversed one.'
 
-const PULLS: readonly string[] = ['plan', 'design', 'implement', 'review']
+const PULLS: readonly string[] = ['plan', 'implement', 'review']
 
 /** A session's role for the pane's fixed column, which `autopilot` would overflow. */
 export const roleText = (role: string): string => role === 'autopilot' ? 'auto' : role
@@ -293,7 +293,7 @@ type CountKey = keyof NonNullable<ConsoleBoard['counts']>
 /** The header counts split by who acts: what waits on the person (a release needs them too, so `decided` counts; the person undefers, so `deferred` counts), then the agents' queues. */
 export const COUNT_GROUPS: readonly { key: 'you' | 'agents'; counts: readonly (readonly [CountKey, string])[] }[] = [
   { key: 'you', counts: [['forUser', 'for you'], ['toAccept', 'to accept'], ['decided', 'decided'], ['questions', 'questions'], ['deferred', 'deferred']] },
-  { key: 'agents', counts: [['toPlan', 'to plan'], ['toDesign', 'to design'], ['toImplement', 'to implement'], ['toReview', 'to review']] },
+  { key: 'agents', counts: [['toPlan', 'to plan'], ['toImplement', 'to implement'], ['toReview', 'to review']] },
 ]
 
 /** An id as the pane shows it: without the board's own prefix (`tstdl-28g0i` is `28g0i`), another prefix stays. Display only: presses and prompts keep the full id. */

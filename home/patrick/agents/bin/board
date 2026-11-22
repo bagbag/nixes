@@ -49,29 +49,29 @@ IDLE_HOURS = 1  # holds without activity (holder's tool call, else item update) 
 WORKER_CAP = 3  # workers a session targets unless registered with its own (activate --workers); Codex thread limits lower it
 WORKER_ACTIVE_MINUTES = 15  # a running worker with a tool call this recently counts as active
 CODEX_SYSTEM_CONFIG = Path('/etc/codex/config.toml')  # Codex's system layer, under $CODEX_HOME/config.toml
-WORK_HOLD_TYPES = ('task', 'bug', 'spike', 'design')  # items a worker cap counts and a stale hold flags
 STALE_HOURS = 1  # a held work item without an update (fields, notes, comments) for longer is flagged stale
 DEEP_REVIEW = 'deep_review'  # item metadata a review sets to the failure path it escalates to deep-review; board show prints it
 FORCED_BY, FORCED_REASON = 'forced_hold_by', 'forced_hold'  # item metadata: who held it past the cap with --force, and why
 FIELD_LIMIT = 2000  # characters a work item's description, design, acceptance or notes, and a comment a session writes, may hold (refused above)
-WORKER_KINDS = ('design', 'implement', 'review')  # kinds workers take; an agent's pulls narrow them
+WORKER_KINDS = ('implement', 'review')  # kinds workers take; an agent's pulls narrow them
 ROWS = 50  # rows per view section unless --limit (0: all)
 READ_BUDGET = 35_000  # characters per command output; Codex cuts a call's output above ~40,000 from the middle
 PREVIEW = 600  # characters a cut section still prints
 SHOWN_COMMENTS = 5  # newest comments a plain board show prints, each cut at FIELD_LIMIT
 SESSION_HOURS = 24  # position lists sessions of this project active or registered this recently (plus any holding items)
-PULLS = ('plan', 'design', 'implement', 'review')
+PULLS = ('plan', 'implement', 'review')  # an item's kind (a `kind:` label) is no pull: no rule reads it
 KINDS = (*PULLS, 'question', 'accept', 'milestone', 'refresh')  # refresh: review pulls take it (session_kinds)
-WORK_TYPES = ('task', 'bug', 'spike')
+WORK_TYPE = 'task'  # an item and a task are one bd type; a `kind:` label (KIND_LABELS) says what sort, and no rule reads it
+KIND_LABEL, KIND_LABELS = 'kind:', ('bug', 'feature', 'design', 'cleanup')
 # A released ruling waits only for planning (r21-q139): a live decision (an open question, or an unreleased revision
-# record), a human gate, a design or a spike. Any other wait is work or a container: refused by `board block`,
+# record) or a human gate. Any other wait is work or a container: refused by `board block`,
 # ignored when claiming (q140).
 LIVE_DECISIONS = ('open', 'decided')
 
 
 def planning_wait(record: dict) -> bool:
     kind = record.get('issue_type')
-    return kind in ('design', 'spike') or is_human_gate(record) or (kind == 'decision' and record.get('status') in LIVE_DECISIONS)
+    return is_human_gate(record) or (kind == 'decision' and record.get('status') in LIVE_DECISIONS)
 
 
 def is_human_gate(record: dict) -> bool:
@@ -80,10 +80,10 @@ def is_human_gate(record: dict) -> bool:
 
 
 # Rank of a kind within one claim-order tier at equal priority (r22-q177).
-CLAIM_RANK = {kind: at for at, kind in enumerate(('plan', 'review', 'refresh', 'accept', 'design', 'question', 'implement', 'milestone'))}
+CLAIM_RANK = {kind: at for at, kind in enumerate(('plan', 'review', 'refresh', 'accept', 'question', 'implement', 'milestone'))}
 FINISHING = ('review', 'refresh', 'accept')
 # Kinds a bare `board claim` takes for a role's authority (with the user: lead, solo; unattended: autopilot); the session's
-# registered pulls (plan, design, implement, review) come on top, for every role.
+# registered pulls (plan, implement, review) come on top, for every role.
 ROLE_KINDS = {'lead': ('question', 'accept'), 'agent': (), 'solo': ('question', 'accept'),
               'autopilot': ('question',)}
 # Kinds each role handles, by bare claim or by id; `board position` counts sessions from these.
@@ -284,7 +284,7 @@ def bd_checked(*args: str, stdin: str | None = None) -> str:
 # docs/board/model.md prints both tables (`agents board model`) and the doc/code test keeps them equal; the prose there
 # gives the meaning and the reasons.
 CR_GROUP, WORK_GROUP, ITEM_GROUP = 'change request', 'task', 'item'
-GROUP_OF = {CR_TYPE: CR_GROUP, 'task': WORK_GROUP, 'bug': WORK_GROUP, 'spike': WORK_GROUP, 'design': WORK_GROUP,
+GROUP_OF = {CR_TYPE: CR_GROUP, WORK_TYPE: WORK_GROUP,
             'decision': 'decision', 'milestone': 'milestone', 'gate': 'gate'}  # a work-type record inside a change request is an item (group_of)
 STATES = {CR_GROUP: ('open', 'in_review', 'passed', 'deferred', 'closed'), WORK_GROUP: ('open', 'deferred', 'closed'), ITEM_GROUP: ('open', 'closed'),
           'decision': ('open', 'decided', 'released', 'deferred', 'closed'), 'milestone': ('open', 'closed'), 'gate': ('open', 'closed')}
@@ -367,7 +367,7 @@ def model_tables() -> str:
 
 
 def group_of(board: 'Board | None', issue: dict) -> str | None:
-    """The table group of a record: a task, bug, spike or design inside a change request is an item (no holder, no deferral), outside one a task."""
+    """The table group of a record: a task inside a change request is an item (no holder, no deferral), outside one a task."""
     group = GROUP_OF.get(issue.get('issue_type'))
     return ITEM_GROUP if group == WORK_GROUP and board is not None and board.cr_of(issue['id']) else group
 
@@ -1274,13 +1274,13 @@ class Board:
                 if self.is_open(blocker)
                 or (self.complete and blocker not in self.by_id and not blocker.startswith('external:'))]
 
-    def waits_on_decision_design_or_spike(self, item_id: str, seen: set[str] | None = None) -> bool:
-        """An open decision, design or spike holds it, directly or through open blockers: it stays out of a CR until that closes."""
+    def waits_on_decision(self, item_id: str, seen: set[str] | None = None) -> bool:
+        """An open decision holds it, directly or through open blockers: it stays out of a CR until that closes."""
         seen = set() if seen is None else seen
         for blocker in self.open_blockers(item_id):
             if blocker not in seen:
                 seen.add(blocker)
-                if self.by_id.get(blocker, {}).get('issue_type') in ('decision', 'design', 'spike') or self.waits_on_decision_design_or_spike(blocker, seen):
+                if self.by_id.get(blocker, {}).get('issue_type') == 'decision' or self.waits_on_decision(blocker, seen):
                     return True
         return False
 
@@ -1330,26 +1330,14 @@ class Board:
             open_items = self.cr_items(issue['id'])
             if not open_items or m.get('replan'):
                 return 'plan'
-            return 'design' if all(i.get('issue_type') == 'design' for i in open_items) else 'implement'
+            return 'implement'
         if issue['status'] == PASSED:
             return None if after_base(self, issue) else 'accept'  # a passed child of an unlanded parent (look after) waits for it to land
         return 'review' if issue['status'] == 'in_review' else None
 
     def stackable(self, issue: dict) -> bool:
-        """May a change request build on this one: only a parent waiting for the user (look before), never one in agent review
-        (q235) or a design-only one, whose dependents wait for it to land."""
-        return self.cr_kind(issue) == 'accept' and not self.design_only(issue['id'])
-
-    def design_only(self, cr_id: str) -> bool:
-        """Every work item of the CR, closed ones included, is a design. A status snapshot
-        holds no closed items, so it reads them unless an open one already settles it."""
-        def work(rows):
-            return [i for i in rows if i.get('issue_type') != CR_TYPE]
-        known = work(self.by_id[c] for c in self.children.get(cr_id, []) if c in self.by_id)
-        if any(i.get('issue_type') != 'design' for i in known):
-            return False
-        items = known if self.complete else work(cr_closed_items(self, cr_id))
-        return bool(items) and all(i.get('issue_type') == 'design' for i in items)
+        """May a change request build on this one: only a parent waiting for the user (look before), never one in agent review (q235)."""
+        return self.cr_kind(issue) == 'accept'
 
     def cr_blockers(self, issue: dict) -> list[str]:
         """What the CR and its open items wait on, apart from each other."""
@@ -2167,7 +2155,7 @@ def holders(board: Board, args) -> None:
 # Conformance with skills/shared/board-core.md and board-coordination.md: mechanical classes only.
 ACTOR = re.compile(r'[0-9a-f]{8}(/.+)?')
 TITLE_PREFIXES = ('[Design]', '[Gate]', '[Checkpoint]', '[Review]')
-ITEM_TYPES = ('task', 'bug', 'spike', 'design', 'decision', 'change-request', 'milestone', 'gate')  # board-core.md Kinds: the one list
+ITEM_TYPES = (WORK_TYPE, 'decision', 'change-request', 'milestone', 'gate')  # board-core.md Kinds: the one list
 CHECK_CLASSES = {  # class -> board-core anchor
     'holder': 'actors-and-holds',
     'unknown-type': 'kinds',
@@ -2243,7 +2231,7 @@ def deviations(board: Board, root: str | None) -> list[tuple[str, str, str]]:
                                                board.by_id.get(blocker, {}).get('issue_type')):
                 found.append((item_id, 'outside-wait', f'{refusal}; then agents board unblock {item_id} --on {blocker}'))
         if is_work_hold(issue) and board.cr_of(item_id) is None and issue['status'] != 'deferred' and not is_no_commit(issue) \
-                and not board.waits_on_decision_design_or_spike(item_id):
+                and not board.waits_on_decision(item_id):
             found.append((item_id, 'no-cr', f'work item outside any change request: agents board move {item_id} --to <change request>, '
                                             f'or --no-commit for work that commits nothing to this repository'))
         for key in sorted(set(meta(issue)) - BOARD_METADATA - {'checkpoint'}):
@@ -2957,7 +2945,7 @@ CR_SETTINGS = {'look': ('before', 'after'), 'view': ('code', 'result')}  # a CR'
 def retired_move(issue: dict, key: str) -> str | None:
     """The key a retired one moves to on this item: no_code becomes no_commit on work items only."""
     new = RETIRED_METADATA[key]
-    return new if new != NO_COMMIT or issue.get('issue_type') in WORK_TYPES else None
+    return new if new != NO_COMMIT or issue.get('issue_type') == WORK_TYPE else None
 
 
 def metadata_fix(issue: dict, key: str) -> str:
@@ -2970,7 +2958,7 @@ def metadata_fix(issue: dict, key: str) -> str:
 
 
 def is_no_commit(issue: dict) -> bool:
-    return issue.get('issue_type') in WORK_TYPES and meta(issue).get(NO_COMMIT) is True
+    return issue.get('issue_type') == WORK_TYPE and meta(issue).get(NO_COMMIT) is True
 
 
 def setting_refusal(item_id: str, kind: str | None, settings: dict[str, object]) -> str | None:
@@ -2980,8 +2968,8 @@ def setting_refusal(item_id: str, kind: str | None, settings: dict[str, object])
         if name == NO_COMMIT:
             if value is not True:
                 return f'{item_id}: no_commit is true or absent'
-            if kind not in WORK_TYPES:
-                return f'{item_id}: no_commit marks a task, bug or spike'
+            if kind != WORK_TYPE:
+                return f'{item_id}: no_commit marks a task'
             continue
         if kind != CR_TYPE:
             return f'{item_id}: {name} is a change request setting'
@@ -2991,7 +2979,7 @@ def setting_refusal(item_id: str, kind: str | None, settings: dict[str, object])
 
 
 def is_work_hold(issue: dict) -> bool:
-    return issue.get('issue_type') in WORK_HOLD_TYPES
+    return issue.get('issue_type') == WORK_TYPE
 
 
 def in_hand(issue: dict, actor: str) -> bool:
@@ -3070,7 +3058,7 @@ def mine_data(board: Board, args) -> tuple[str, list[tuple[dict, bool]]]:
 
 
 def console_counts(board: Board, views: dict, position: dict) -> dict:
-    """The health counts, the agents' steps (plan, design, implement, review) as `board position` counts what a claim gives
+    """The health counts, the agents' steps (plan, implement, review) as `board position` counts what a claim gives
     each pull: a review pull takes refresh work too."""
     counts = health_counts(board, views)
     step = lambda *kinds: {name: sum(position['ready'][kind][name] for kind in kinds) for name in ('ready', 'held', 'waiting')}
@@ -3079,7 +3067,7 @@ def console_counts(board: Board, views: dict, position: dict) -> dict:
         if name == 'toPlan':
             value = step('plan')
         if name == 'toReview':
-            ordered |= {'toDesign': step('design'), 'toImplement': step('implement')}
+            ordered |= {'toImplement': step('implement')}
             value = step('review', 'refresh')
         ordered[name] = value
     return ordered
@@ -3299,7 +3287,7 @@ def claim(board: Board, args) -> int:
             if holder == actor:
                 print(f'{item_id}: already held by {actor}')  # bin/protocol reads this line (claim_items)
                 kind = board.kind(issue) if board.is_cr(item_id) else None
-                if kind in ('design', 'implement') and meta(issue).get(HOLD) == 'plan':  # a planner's hold becomes work: worktree and setup as a fresh claim
+                if kind == 'implement' and meta(issue).get(HOLD) == 'plan':  # a planner's hold becomes work: worktree and setup as a fresh claim
                     if claim_cr_checked(board, issue, actor, kind, claimed, failed):
                         issue['claim_kind'] = kind
                 elif in_work(issue):  # a failed setup is rerun by claiming again (q222)
@@ -3445,12 +3433,12 @@ def claim_cr_checked(board: Board, issue: dict, actor: str, kind: str, claimed: 
 
 def item_of(board: Board, issue: dict) -> str | None:
     """The change request a work-type record belongs to: it is then an item, which has no holder, deferral or review of its own."""
-    return board.cr_of(issue['id']) if issue.get('issue_type') in (*WORK_TYPES, 'design') else None
+    return board.cr_of(issue['id']) if issue.get('issue_type') == WORK_TYPE else None
 
 
 def work_item_refusal(board: Board, issue: dict, actor: str) -> str | None:
     """A task is claimed outside any change request only when it commits nothing here (an item is held with its change request)."""
-    if issue.get('issue_type') not in (*WORK_TYPES, 'design') or is_no_commit(issue):
+    if issue.get('issue_type') != WORK_TYPE or is_no_commit(issue):
         return None
     return f"{issue['id']}: outside any change request; put it in one: agents board move {issue['id']} --to <change request>"
 
@@ -4451,7 +4439,7 @@ def after_base(board: Board, cr: dict) -> str | None:
         return None
 
 
-UNBLOCKED_TYPES = (*WORK_TYPES, 'design', 'decision', CR_TYPE)  # what a request's count holds: work, not containers (milestone, gate)
+UNBLOCKED_TYPES = (WORK_TYPE, 'decision', CR_TYPE)  # what a request's count holds: work, not containers (milestone, gate)
 
 
 def cr_milestone(board: Board, cr_id: str) -> str | None:
@@ -4775,14 +4763,14 @@ def claim_cr(board: Board, cr: dict, actor: str, kind: str) -> tuple[bool, str]:
     if kind != 'accept':  # only a deciding session's accept claim takes an item open for the user's review
         refuse_open(cid, cr, f'a {kind} claim')
     created, made_tip = open_worktree(board, cr, main)
-    ok, message = (True, '') if holds_cr(cr, actor) else claim_one(cr, actor, {HOLD: 'work'} if kind in ('design', 'implement') else None)  # a planner's hold carries on
-    if ok and kind in ('design', 'implement') and meta(cr).get(HOLD) != 'work':
+    ok, message = (True, '') if holds_cr(cr, actor) else claim_one(cr, actor, {HOLD: 'work'} if kind == 'implement' else None)  # a planner's hold carries on
+    if ok and kind == 'implement' and meta(cr).get(HOLD) != 'work':
         put_meta(cr, **{HOLD: 'work'})
     if not ok:
-        if created and kind in ('design', 'implement'):
+        if created and kind == 'implement':
             drop_worktree(main, cid, made_tip)
         return False, message
-    if kind in ('design', 'implement'):
+    if kind == 'implement':
         print(f'  worktree {cr_worktree(main, cid)} on {cr_branch(cid)}; base {meta(cr).get("base") or target_branch(board, main)}')
         failure = ensure_setup(board, cr, cr_worktree(main, cid))
         if failure is not None:
@@ -5657,7 +5645,7 @@ def type_refusal(types: list[str]) -> str | None:
     """A creation with a type outside ITEM_TYPES (r9-q42): `board create` and the nodes of `create --graph`."""
     bad = sorted({kind for kind in types if kind not in ITEM_TYPES})
     return (f"type {', '.join(bad)} is not a board type ({', '.join(ITEM_TYPES)}; board-core.md Kinds); "
-            'a check others wait on is a task, a question is --type decision') if bad else None
+            'a bug, feature, design or cleanup is a task labelled kind:<kind>, a question is --type decision') if bad else None
 
 
 def default_look_refusal(given: list[tuple[str, str]]) -> str | None:
@@ -5686,7 +5674,7 @@ def size_refusal(issue: dict, texts: dict[str, str], update: bool = True) -> str
     characters, so items hold current state and not history. An edit that shrinks an over-limit field or only replaces paths in it
     (a move of the files it names) passes. Decisions and other types are not work items: records are long by design.
     `issue` is the item (or {'id', 'issue_type'} of a new one); `texts` the new text per field."""
-    if issue.get('issue_type') not in WORK_HOLD_TYPES:
+    if issue.get('issue_type') != WORK_TYPE:
         return None
     for field, text in texts.items():
         old = issue.get(field) or ''
@@ -5761,7 +5749,7 @@ def close_command(args) -> int:
 GLOBAL_VALUES = ('-C', '--directory', '--db', '--database', '--actor', '--dolt-auto-commit', '--mem-profile')
 PASS_LINKS = ('tracks', 'relates-to', 'discovered-from', 'parent-child', 'until', 'caused-by', 'validates', 'supersedes')  # the link types that hold nothing up
 BOARD_LABEL_PREFIXES = (QUEUE_PREFIX, FOR_PREFIX)  # labels the board routes on: they change through send, route and create --for
-LABEL_PREFIXES = ('topic:', 'export:', 'provides:', *BOARD_LABEL_PREFIXES)  # every label's form (board-core.md Statuses and labels)
+LABEL_PREFIXES = ('topic:', 'export:', 'provides:', KIND_LABEL, *BOARD_LABEL_PREFIXES)  # every label's form (board-core.md Statuses and labels)
 LEGACY_LINKS = {'related': 'relates-to'}  # an earlier spelling the board still reads on closed history; board check moves a live one
 RAW_RULE = 'raw bd writes only when no board command does it, or the user authorized it: agents board bd --raw --yes <args>'
 READ_GUARD = 'items are read through agents board show <ids> [--section …] [--field …] [--comments] [--full] [--json]: one read path, whole items'
@@ -5852,6 +5840,12 @@ def run_bd(argv: list[str], flags: set[str], command: str, rest: list[str], read
 
 def queue_labels(labels: list[str]) -> list[str]:
     return [label for label in labels if label.startswith(QUEUE_PREFIX)]
+
+
+def kind_refusal(labels: list[str]) -> str | None:
+    """A `kind:` label outside KIND_LABELS: the one place the board reads the label, to keep its spelling."""
+    bad = [label for label in labels if label.startswith(KIND_LABEL) and label[len(KIND_LABEL):] not in KIND_LABELS]
+    return f"{', '.join(bad)}: a kind is one of {', '.join(KIND_LABEL + kind for kind in KIND_LABELS)}" if bad else None
 
 
 def label_refusal(labels: list[str]) -> str | None:
@@ -6433,7 +6427,7 @@ def reason_optional(issue: dict, record: dict) -> bool:
 
 def outside_wait_refusal(waiting: str, waiting_type: str | None, cr: str | None, blocker: str,
                          blocker_cr: str | None, blocker_type: str | None, new: dict[str, str] | None = None) -> str | None:
-    if cr and waiting_type in (*WORK_TYPES, 'design') and blocker_cr != cr and blocker_type != 'decision':
+    if cr and waiting_type == WORK_TYPE and blocker_cr != cr and blocker_type != 'decision':
         command_cr = '<new change request id>' if new and cr in new else cr
         command_blocker = '<new blocker id>' if new and blocker in new else blocker
         return (f'{waiting} is in {cr}: an open outside wait belongs on its change request. '
@@ -6465,7 +6459,7 @@ def block_one(board: Board, item_id: str, blocker: str, reason: str | None, acto
         raise BoardError(f'{item_id}: a work item waits with a reason: agents board block {item_id} --on {blocker} --reason "<why it waits>" '
                          '(optional only when the blocker is a decision or a gate, or the waiting item a milestone)')
     if issue.get('issue_type') == 'decision' and issue['status'] == 'released' and not planning_wait(record):
-        raise BoardError(f'{item_id}: a released ruling waits for planning only (a live decision, a human gate, a design or a spike), '
+        raise BoardError(f'{item_id}: a released ruling waits for planning only (a live decision or a human gate), '
                          f"not on {blocker} ({record.get('issue_type')} {record.get('status')}); plan the work the ruling changes and block that work on {blocker}")
     if chain := wait_cycle(board, [(item_id, blocker)]):
         raise BoardError(f"{item_id} cannot wait on {blocker}: it would form a cycle, nothing would ever start: {' waits on '.join(chain)}")
@@ -6549,7 +6543,7 @@ def update_command(board: Board, args) -> int:
     if args.priority is not None:
         changes += ['--priority', str(args.priority)]
     labels, unlabels = args.label, args.unlabel
-    if refusal := label_refusal([*labels, *unlabels]):
+    if refusal := label_refusal([*labels, *unlabels]) or kind_refusal(labels):
         raise BoardError(refusal)
     changes += [flag for label in labels for flag in ('--add-label', label)] + [flag for label in unlabels for flag in ('--remove-label', label)]
     changes += setting_changes(board, args)
@@ -6580,8 +6574,8 @@ def setting_changes(board: Board, args) -> list[str]:
                              'its route changes while it is open or deferred outside any change request')
         if cr_given and issue['status'] != 'open':
             raise BoardError(f"{item_id}: {issue['status']}; a change request's settings change while it is open")
-        if args.no_commit is False and kind not in WORK_TYPES:
-            raise BoardError(f'{item_id}: --commits takes a task, bug or spike')
+        if args.no_commit is False and kind != WORK_TYPE:
+            raise BoardError(f'{item_id}: --commits takes a task')
         if cr_given and kind != CR_TYPE:
             raise BoardError(f'{item_id}: look and view are change request settings')
         given = {**({NO_COMMIT: True} if args.no_commit else {}), **{name: value for name, value in cr_given.items() if value}}
@@ -6728,7 +6722,7 @@ def gate_create(args) -> int:
         require_person_on_shared_board(args.for_, 'gate create --for')
     board = Board.load('all')
     issue = board.by_id.get(args.blocks, {})
-    cr = board.cr_of(args.blocks) if issue.get('issue_type') in (*WORK_TYPES, 'design') else None
+    cr = board.cr_of(args.blocks) if issue.get('issue_type') == WORK_TYPE else None
     if cr:
         raise BoardError(f'{args.blocks} is in {cr}: this outside wait belongs on its change request. '
                          f'Use agents board gate create --blocks {cr} --reason "<why it waits>", or split the waiting work into its own change request')
@@ -7592,6 +7586,8 @@ def create_command(args) -> int:
     nodes = plan['nodes']
     if refusal := type_refusal([str(node['type']) for node in nodes if node.get('type')]):
         raise BoardError(refusal)
+    if refusal := kind_refusal([label for node in nodes for label in node.get('labels') or []]):
+        raise BoardError(refusal)
     if any(node.get('status') in ('closed', 'done') for node in nodes):
         raise BoardError('an item is not created closed: agents board close <id> --reason "<why>" closes it')
     if any(node.get('status') == 'deferred' for node in nodes):
@@ -8075,7 +8071,7 @@ def run_command(argv: list[str]) -> int:
                           '(discovered-from, relates-to …) as bd; repeatable')
     sub.add_argument('--holds', action=Values, default=[], metavar='ID[,ID...]|none',
                      help='a question or ruling names the items it holds up (they wait on it), or none; repeatable')
-    sub.add_argument('--no-commit', action='store_true', help='a task, bug or spike that by design commits nothing to this repository: it needs no change request')
+    sub.add_argument('--no-commit', action='store_true', help='a task that by design commits nothing to this repository: it needs no change request')
     sub.add_argument('--look', choices=CR_SETTINGS['look'], help="a change request's look, overriding the project default")
     sub.add_argument('--view', choices=CR_SETTINGS['view'], help="a change request's view, overriding the project default")
     sub.add_argument('--for', dest='for_', metavar='PERSON',

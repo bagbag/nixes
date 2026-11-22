@@ -814,9 +814,9 @@ describe('header counts', () => {
     expect((await ui.find({ key: 'board-counts-you-label' }))?.text).toBe('you')
     expect(labels(you)).toEqual(['for you', 'to accept', 'decided', 'questions', 'deferred'])
     expect((await ui.find({ key: 'board-counts-agents-label' }))?.text).toBe('agents')
-    expect(labels(agents)).toEqual(['to plan', 'to design', 'to implement', 'to review'])
+    expect(labels(agents)).toEqual(['to plan', 'to implement', 'to review'])
     expect(you.map(one => one.props?.dimColor === true)).toEqual([false, false, true, false, false])  // only decided is zero
-    expect(agents.map(one => one.props?.dimColor === true)).toEqual([true, true, true, true])  // the agents' group is dim whatever it holds
+    expect(agents.map(one => one.props?.dimColor === true)).toEqual([true, true, true])  // the agents' group is dim whatever it holds
     await ui.unmount()
   })
 
@@ -947,7 +947,7 @@ describe('long lists', () => {
 
   test('stale sessions become one stale-holds line; pulls read as fixed-position initials', async ($, on) => {
     const session = (actor: string, state: string, holds: number) =>
-      ({ session: `s-${actor}`, role: 'agent', actor, tool: 'codex', pulls: ['plan', 'design', 'implement', 'review'], holds, workers: null, state })
+      ({ session: `s-${actor}`, role: 'agent', actor, tool: 'codex', pulls: ['plan', 'implement', 'review'], holds, workers: null, state })
     const sessions = [session('live0001', 'active', 1), session('dead0001', '', 2), session('busy0001', '', 1)]
     const held = [
       { id: 'tstdl-l1', holder: 'live0001', mark: null },
@@ -962,14 +962,14 @@ describe('long lists', () => {
     expect(drawn).toContain('tstdl-d1')
     expect(drawn).not.toContain('tstdl-b1')  // unknown state with a live hold stays a session row
     expect(drawn).toContain('busy0001')
-    expect(drawn).toContain('p d i r')
+    expect(drawn).toContain('p i r')
     expect(drawn).toContain('codex')
     expect(drawn).toContain('Controls')
   })
 
   test('pull initials keep their positions', () => {
-    expect(pullsText(['plan', 'design', 'implement', 'review'])).toBe('p d i r')
-    expect(pullsText(['implement', 'design'])).toBe('· d i ·')
+    expect(pullsText(['plan', 'implement', 'review'])).toBe('p i r')
+    expect(pullsText(['implement'])).toBe('· i ·')
     expect(pullsText([])).toBe('')
   })
 

@@ -711,16 +711,19 @@ def validate_session_registry(root: Path) -> None:
             raise ValueError("session did not store the Codex agent's pulls in canonical order")
 
         # --pulls sets any role's pulls.
-        for role, given, stored in (("lead", "implement,plan", ["plan", "implement"]), ("solo", "review", ["review"]), ("autopilot", "design", ["design"])):
+        for role, given, stored in (("lead", "implement,plan", ["plan", "implement"]), ("solo", "review", ["review"]), ("autopilot", "implement,review", ["implement", "review"])):
             run("activate", role, "--pulls", given, env={**env, **as_session(other)}).check_returncode()
             if json.loads(run("show", other, env=env).stdout)["pulls"] != stored:
                 raise ValueError(f"session did not store {role}'s pulls {given}")
+        # A kind is a label no rule reads, so there is no design pull.
+        if run("activate", "agent", "--pulls", "design", env={**env, **as_session(other)}).returncode == 0:
+            raise ValueError("session accepted a design pull")
         # A first registration stores the role's preset; --without drops pulls from it; without either flag the stored pulls
         # stay, so going away (autopilot) and back keeps a solo without review.
         fresh = "abcdefgh-presets"
-        for args, stored in ((("activate", "solo"), ["plan", "design", "implement", "review"]),
-                             (("activate", "solo", "--without", "review"), ["plan", "design", "implement"]),
-                             (("activate", "autopilot"), ["plan", "design", "implement"]), (("activate", "solo"), ["plan", "design", "implement"])):
+        for args, stored in ((("activate", "solo"), ["plan", "implement", "review"]),
+                             (("activate", "solo", "--without", "review"), ["plan", "implement"]),
+                             (("activate", "autopilot"), ["plan", "implement"]), (("activate", "solo"), ["plan", "implement"])):
             run(*args, env={**env, **as_session(fresh)}).check_returncode()
             if json.loads(run("show", fresh, env=env).stdout)["pulls"] != stored:
                 raise ValueError(f"session {args} must store {stored}")
@@ -2587,7 +2590,7 @@ def validate_board(root: Path) -> None:
         with patch.dict(os.environ, session_env(state_dir)):
             _, health, _ = invoke(["health", "--items", "ready"], Fake(fixture))
             for expected in ("claimable now (unassigned, unblocked): 4\n",
-                             "by kind: plan 2, design 1, implement 1, review 0, question 0, accept 0, milestone 0, refresh 0",
+                             "by kind: plan 2, implement 2, review 0, question 0, accept 0, milestone 0, refresh 0",
                              "released rulings to plan: 2\n"):
                 if expected not in health:
                     raise ValueError(f"board health lacks {expected!r}:\n{health}")
@@ -2610,13 +2613,13 @@ def validate_board(root: Path) -> None:
                 if bare_deck(gated_issues, complete=False).open_blockers(ready_task["id"]):
                     raise ValueError(f"a status snapshot must count a blocker outside it as closed: {blocker}")
             _, queue, _ = invoke(["queue", "--root", goal], Fake(fixture))
-            if "implement: 1\n" not in queue or "Loose item" in queue:
+            if "implement: 2\n" not in queue or "Loose item" in queue:
                 raise ValueError(f"board queue ignored --root or routing:\n{queue}")
 
             _, recent, _ = invoke(["position"], Fake(fixture))
             _, later, _ = invoke(["position"], Fake(fixture), now="2026-10-22T17:30:00+00:00")
             # Sessions count by the kinds a role handles and its stored pulls (solo and autopilot store every pull by preset).
-            for expected in ("implement: 1 ready (1 held, 1 wait), 3 sessions", "question: 0 ready (1 held), 3 sessions",
+            for expected in ("implement: 2 ready (1 held, 1 wait), 3 sessions", "question: 0 ready (1 held), 3 sessions",
                              "accept: 0 ready, 2 sessions",
                              "aaaa1111/build-12345678 (agent implement+review, codex)", "lead0001 (lead plan, claude)",  # the lead preset's pull
                              "open questions holding work: 2"):
@@ -3174,15 +3177,13 @@ def validate_board(root: Path) -> None:
             # Deferred work is backlog (board-coordination.md Deferrals): no CR until planning takes it up; undeferred, it is flagged.
             if f"{ids['Loose item']}  no-cr" in invoke(["check"], Fake(variant(**{"Loose item": {"status": "deferred"}})))[1]:
                 raise ValueError("board check must not flag a deferred work item outside any CR")
-            # Items waiting on an open decision, design or spike stay ungrouped until it closes (plan.md Cut work), directly or through a chain.
+            # Items waiting on an open decision stay ungrouped until it closes (plan.md Cut work), directly or through a chain.
             loose, question, ready = ids["Loose item"], ids["Open cache question"], ids["Ready task"]
             for waiting in ({"Loose item": {"dependencies": [{"issue_id": loose, "depends_on_id": question, "type": "blocks"}]}},
                             {"Loose item": {"dependencies": [{"issue_id": loose, "depends_on_id": ready, "type": "blocks"}]},
-                             "Ready task": {"dependencies": [{"issue_id": ready, "depends_on_id": question, "type": "blocks"}]}},
-                            *({"Loose item": {"dependencies": [{"issue_id": loose, "depends_on_id": ready, "type": "blocks"}]},
-                               "Ready task": {"issue_type": kind}} for kind in ("design", "spike"))):
+                             "Ready task": {"dependencies": [{"issue_id": ready, "depends_on_id": question, "type": "blocks"}]}}):
                 if f"{loose}  no-cr" in invoke(["check"], Fake(variant(**waiting)))[1]:
-                    raise ValueError(f"board check must not flag a work item waiting on an open decision, design or spike: {waiting}")
+                    raise ValueError(f"board check must not flag a work item waiting on an open decision: {waiting}")
             # A decision holds work items, never a CR, which waits on its items' blockers (board-core.md Questions and rulings).
             cr = ids["CR ready"]
             for decision in (question, ids["Released ruling"]):
@@ -3535,7 +3536,7 @@ def validate_board(root: Path) -> None:
                 return board.size_refusal(issue, texts, update=command == "update"), None
 
             long = "x" * 2001
-            refusal, _ = guarded(["create", "T", "-t", "bug", "--description", long])
+            refusal, _ = guarded(["create", "T", "--description", long])
             if not refusal or "description is 2001 characters" not in refusal or "2000" not in refusal \
                     or "current state" not in refusal or "dated history leaves" not in refusal or "still in force stays" not in refusal \
                     or "may go in a doc" not in refusal or "append" in refusal or "old text" in refusal:
@@ -3656,7 +3657,7 @@ def validate_board(root: Path) -> None:
                                                  "toPlan": {"ready": 2, "held": 0, "waiting": 0}, "toReview": {"ready": 0, "held": 0, "waiting": 0},
                                                  "toAccept": {"ready": 0, "held": 0, "waiting": 0}, "forUser": {"ready": 0, "held": 0, "waiting": 0},
                                                  "ready": 4, "held": 3, "blocked": 3} \
-                    or health_json["claimable"] != {"plan": 2, "design": 1, "implement": 1, "review": 0, "question": 0,
+                    or health_json["claimable"] != {"plan": 2, "implement": 2, "review": 0, "question": 0,
                                                     "accept": 0, "milestone": 0, "refresh": 0} \
                     or len(health_json["items"]["ready"]) != 4 or set(health_json["items"]) != {"questions", "ready"} \
                     or set(health_json["items"]["questions"][0]) != {"id", "type", "status", "priority", "holder", "title", "labels", "blockedBy"} \
@@ -3682,7 +3683,7 @@ def validate_board(root: Path) -> None:
                              "process", "state"} \
                     or lead["role"] != "lead" or lead["holds"] != 1 or lead["workers"] is not None or lead["state"] is not None \
                     or sessions["aaaa1111"]["pulls"] != ["implement", "review"] \
-                    or position_json["ready"]["implement"] != {"ready": 1, "held": 1, "waiting": 1, "sessions": 4} \
+                    or position_json["ready"]["implement"] != {"ready": 2, "held": 1, "waiting": 1, "sessions": 4} \
                     or {h["id"] for h in position_json["held"]} != {ids["Held task"], ids["Open cache question"], "fx-ovo.c2"} \
                     or len(position_json["questionsHoldingWork"]) != 2:
                 raise ValueError(f"board position --json: {text[:2000]}")
@@ -3770,7 +3771,7 @@ def validate_board(root: Path) -> None:
                 raise ValueError(f"board console: noBoard false, the board's prefix, and the 3 waiting requests split into waiting on your answers and queued: {text[:300]}")
             console_counts = console_json.pop("counts")
             position_ready = position_view["ready"]
-            steps = {"toPlan": ("plan",), "toDesign": ("design",), "toImplement": ("implement",), "toReview": ("review", "refresh")}
+            steps = {"toPlan": ("plan",), "toImplement": ("implement",), "toReview": ("review", "refresh")}
             deferred = console_counts.pop("deferred")  # the backlog the person undefers; health counts no such view
             if deferred != sum(1 for issue in fixture if issue["status"] == "deferred") \
                     or {k: v for k, v in console_counts.items() if k not in steps} != {k: v for k, v in json.loads(health_text)["counts"].items() if k not in steps} \
@@ -4361,23 +4362,23 @@ def validate_board(root: Path) -> None:
             def wait_on(item_id, blocker):
                 return {item_id: [{"issue_id": item_id, "depends_on_id": blocker, "type": "blocks"}]}
 
-            for blocker, allowed in (("Ready task", False), ("Goal", False), ("Design cache", True), ("Spike perf", True),
+            for blocker, allowed in (("Ready task", False), ("Goal", False), ("Design cache", False), ("Spike perf", False),
                                      ("Open cache question", True)):
                 fake = Fake(fixture)
                 code, _, errors = invoke(["block", ruling, "--on", ids[blocker], "--reason", "r"], fake, "lead0001")
                 if (code == 0) != allowed or (not allowed and (fake.writes() or "planning only" not in errors)):
                     raise ValueError(f"board block of a released ruling on a {blocker}: {code} {errors} {fake.writes()}")
-            # A wait that would close a cycle is refused at the write, naming the chain: the design waits on the ruling, so the ruling cannot wait on it.
-            cyclic = with_edges(wait_on(ids["Design cache"], ruling))
+            # A wait that would close a cycle is refused at the write, naming the chain: the question waits on the ruling, so the ruling cannot wait on it.
+            cyclic = with_edges(wait_on(ids["Open cache question"], ruling))
             fake = Fake(cyclic)
-            code, _, errors = invoke(["block", ruling, "--on", ids["Design cache"], "--reason", "r"], fake, "lead0001")
-            if code == 0 or fake.writes() or "cycle" not in errors or f"{ruling} waits on {ids['Design cache']} waits on {ruling}" not in errors:
+            code, _, errors = invoke(["block", ruling, "--on", ids["Open cache question"], "--reason", "r"], fake, "lead0001")
+            if code == 0 or fake.writes() or "cycle" not in errors or f"{ruling} waits on {ids['Open cache question']} waits on {ruling}" not in errors:
                 raise ValueError(f"board block must refuse a wait cycle naming the chain: {code} {errors} {fake.writes()}")
             fake = Fake(fixture)
             code, _, errors = invoke(["block", ids["Wire caller"], "--on", ids["Ready task"], "--reason", "r"], fake, "lead0001")
             if not code or fake.writes() or "change request" not in errors:
                 raise ValueError(f"board block accepted a new outside wait on a task: {code} {errors} {fake.writes()}")
-            # Only a live decision, a human gate, a design or a spike is a planning wait (q139).
+            # Only a live decision, a human gate is a planning wait (q139).
             def stub(item_id, kind, status, title, **more):
                 return {"id": item_id, "title": title, "issue_type": kind, "status": status, "priority": 2,
                         "created_at": "2026-10-20T10:00:00Z", "dependencies": [], **more}
@@ -4399,16 +4400,16 @@ def validate_board(root: Path) -> None:
                 if bool(deck.foreign_waits(deck.by_id[ruling])) != ignored or (deck.claimable(deck.by_id[ruling]) == "plan") != ignored:
                     raise ValueError(f"a released ruling waiting on {blocker}: ignored should be {ignored}")
 
-            # A ruling already waiting on work is claimable for plan; the claim names the fix. Design waits still hold it.
+            # A ruling already waiting on work is claimable for plan; the claim names the fix. A live decision's wait still holds it.
             stuck = with_edges(task_wait)
             snapshot = bare_deck([i for i in stuck if i["status"] != "closed"], complete=False)
             ruling_issue = snapshot.by_id[ruling]
             if snapshot.claimable(ruling_issue) != "plan" or snapshot.foreign_waits(ruling_issue) != [ids["Ready task"]]:
                 raise ValueError("a released ruling waiting only on work must be claimable for plan")
-            designed = with_edges(wait_on(ruling, ids["Design cache"]))
+            designed = with_edges(wait_on(ruling, ids["Open cache question"]))
             designed_board = bare_deck([i for i in designed if i["status"] != "closed"], complete=False)
             if designed_board.claimable(designed_board.by_id[ruling]) is not None or designed_board.foreign_waits(designed_board.by_id[ruling]):
-                raise ValueError("a released ruling waiting on a design must stay unclaimable")
+                raise ValueError("a released ruling waiting on a live decision must stay unclaimable")
             code, output, _ = invoke(["claim", ruling], Fake(stuck), "solo0001")
             if f"  fix: {ruling} waits on {ids['Ready task']}" not in output or f"agents board unblock {ruling} --on {ids['Ready task']}" not in output:
                 raise ValueError(f"board claim must print the fix for a ruling's work wait:\n{output}")
@@ -4417,14 +4418,14 @@ def validate_board(root: Path) -> None:
                     or f"agents board unblock {ruling} --on {ids['Ready task']}" not in report:
                 raise ValueError(f"board check lacks ruling-blocked:\n{report}")
             if "ruling-blocked" in invoke(["check"], Fake(designed))[1].replace("ruling-blocked (", ""):
-                raise ValueError("board check flagged a ruling waiting on a design")
+                raise ValueError("board check flagged a ruling waiting on a live decision")
             if "board fixes: 1 (agents board check)" not in invoke(["health"], Fake(stuck))[1]:
                 raise ValueError("board health lacks the hint for command-fixed deviations")
 
             # Counts: ready = can be taken now, waiting = the rest of the step.
             _, text, _ = invoke(["health", "--json"], Fake(designed))
             counts = json.loads(text)["counts"]
-            if counts["toPlan"] != {"ready": 1, "held": 0, "waiting": 1} or {k: v for k, v in json.loads(invoke(["console"], Fake(designed), "aaaa1111")[1])["counts"].items() if k not in ("toDesign", "toImplement", "deferred")} != counts:
+            if counts["toPlan"] != {"ready": 1, "held": 0, "waiting": 1} or {k: v for k, v in json.loads(invoke(["console"], Fake(designed), "aaaa1111")[1])["counts"].items() if k not in ("toImplement", "deferred")} != counts:
                 raise ValueError(f"toPlan must split claimable and waiting rulings, console equal to health: {counts}")
             if "released rulings to plan: 1 (1 wait)\n" not in invoke(["health"], Fake(designed))[1] \
                     or "plan: 1 ready (1 wait), " not in invoke(["position"], Fake(designed))[1] \
@@ -4473,7 +4474,7 @@ def validate_board(root: Path) -> None:
 
             def unit(item_id, kind, status, priority, **more):
                 """What a claim finds for work: a change request with one open item (a pull's kind comes from the item's)."""
-                if kind not in ("task", "design"):
+                if kind != "task":
                     return [entry(item_id, kind, status, priority, **more)]
                 item = entry(f"{item_id}.i", kind, "open", priority, dependencies=[{"issue_id": f"{item_id}.i", "depends_on_id": item_id, "type": "parent-child"}])
                 return [entry(item_id, "change-request", status, priority, **more), item]
@@ -4487,7 +4488,7 @@ def validate_board(root: Path) -> None:
             back = {"issue_id": "running", "depends_on_id": "ruling-back", "type": "blocks"}
             waiting_review = {}
             sequence = order_of(
-                unit("impl-p1", "task", "open", 1), unit("design-p2", "design", "open", 2), unit("ruling-free", "decision", "released", 3),
+                unit("impl-p1", "task", "open", 1), unit("ruling-free", "decision", "released", 3),
                 unit("ruling-linked", "decision", "released", 3, dependencies=[link]), unit("ruling-back", "decision", "released", 3),
                 unit("running", "task", "in_progress", 2, assignee="aaaa1111", dependencies=[back]),
                 unit("review-p3", "change-request", "in_review", 3, **waiting_review),
@@ -4495,12 +4496,11 @@ def validate_board(root: Path) -> None:
                 unit("question-p1", "decision", "open", 1),
                 unit("zero", "task", "open", 0), unit("impl-p2", "task", "open", 2))
             if sequence != ["zero", "ruling-back", "ruling-free", "ruling-linked", "review-p3", "accept-p3", "question-p1",
-                            "impl-p1", "design-p2", "impl-p2"]:
+                            "impl-p1", "impl-p2"]:
                 raise ValueError(f"board claim order: {sequence}")
-            equal = order_of(unit("a-impl", "task", "open", 2), unit("b-question", "decision", "open", 2), unit("c-design", "design", "open", 2),
-                             unit("d-plan", "decision", "released", 2))
-            if equal != ["d-plan", "c-design", "b-question", "a-impl"]:
-                raise ValueError(f"at equal priority plan > design > question > implement: {equal}")
+            equal = order_of(unit("a-impl", "task", "open", 2), unit("b-question", "decision", "open", 2), unit("d-plan", "decision", "released", 2))
+            if equal != ["d-plan", "b-question", "a-impl"]:
+                raise ValueError(f"at equal priority plan > question > implement: {equal}")
 
             def waits_on(item_id, blocker):
                 return {"issue_id": item_id, "depends_on_id": blocker, "type": "blocks"}
@@ -4759,10 +4759,9 @@ def validate_board(root: Path) -> None:
                 return Creating([{**row, "dependencies": [d for d in row.get("dependencies") or [] if d["type"] != "parent-child"]}
                                  if row["id"] == ready else row for row in mine_rows])
 
-            for kind in ("task", "bug", "spike"):
-                code, _, errors, fake = bd_make("-t", kind, "--deps", f"blocks:{ready}", deck=without_request())
-                if code != 2 or f"agents board block {ready} --on <new id> --reason" not in errors or any(a[0] == "create" for a, _ in fake.calls):
-                    raise ValueError(f"a new {kind} must not hold an existing item up without a reason: {code} {errors} {fake.calls}")
+            code, _, errors, fake = bd_make("-t", "task", "--deps", f"blocks:{ready}", deck=without_request())
+            if code != 2 or f"agents board block {ready} --on <new id> --reason" not in errors or any(a[0] == "create" for a, _ in fake.calls):
+                raise ValueError(f"a new task must not hold an existing item up without a reason: {code} {errors} {fake.calls}")
             code, _, errors, fake = bd_make("-t", "gate", "--deps", f"blocks:{ready}", deck=without_request())
             if code or not any(a[:2] == ["create", "--graph"] for a, _ in fake.calls) or not any((w[:2] == ["update", ready] and w[2:4] == ["--assignee", ""]) for w in fake.writes()) \
                     or any(w[0] == "comments" for w in fake.writes()):
@@ -5343,23 +5342,6 @@ def validate_board(root: Path) -> None:
             gone = readiness(cr_issue("b", "closed"), cr_issue("w", blocks=("b",)), *item_of(cr_issue("w")), complete=True)["w"]
             if gone[0] != "implement" or gone[1] != ([], []):
                 raise ValueError(f"a landed (closed) blocker holds nothing: {gone}")
-            # A design-only CR is never a stack base, at Accept or earlier: its dependent waits until it lands, then runs on the target.
-            design_item = lambda cr, status="closed": {**cr_item(f"{cr}.d", cr, status=status, kind="design")}
-            for status in ("in_review", "passed"):
-                waiting = cr_issue("w", blocks=("b",))
-                kind, (waits, bases) = readiness(cr_issue("b", status), design_item("b"), waiting, *item_of(waiting))["w"]
-                if (kind, waits, bases) != (None, ["b"], []):
-                    raise ValueError(f"a CR must wait for a design-only CR in {status}, not stack on it: {(kind, waits, bases)}")
-            waiting = cr_issue("w", blocks=("b.d",))
-            if readiness(cr_issue("b", "passed"), design_item("b"), waiting, *item_of(waiting))["w"] != (None, (["b"], [])):
-                raise ValueError("an item blocked by the design item of a design-only CR must wait for that CR's landing")
-            mixed = cr_issue("w", blocks=("b",))
-            if readiness(cr_issue("b", "passed"), design_item("b"), cr_item("b.i", "b", status="closed"), mixed, *item_of(mixed))["w"] \
-                    != ("implement", ([], ["b"])):
-                raise ValueError("a CR with a work item besides its design stays a stack base at Accept")
-            landed = readiness(cr_issue("b", "closed"), design_item("b"), cr_issue("w", blocks=("b",)), *item_of(cr_issue("w")), complete=True)["w"]
-            if landed != ("implement", ([], [])):
-                raise ValueError(f"a landed design-only CR holds nothing: {landed}")
             # Item edges lift to their CRs; edges inside a CR order its own work only; a plain open blocker waits.
             lifted = readiness(cr_issue("b", "passed"), cr_item("b.i", "b"),
                                cr_issue("w"), cr_item("w.i", "w", blocks=("b.i",)), cr_item("w.j", "w", blocks=("w.i",)))["w"]
@@ -5743,7 +5725,7 @@ def validate_board(root: Path) -> None:
                     issues, tip, wt = make_cr(f"cp{look}", f"cp{look}.txt", "d\n")
                     issues[0].update(assignee="bbbb2222", status="in_review")
                     issues[0]["metadata"].update(look=look, reviewing_tip=tip)
-                    issues[1] = cr_item(f"cp{look}.d", f"cp{look}", "closed", kind="design")
+                    issues[1] = cr_item(f"cp{look}.d", f"cp{look}", "closed", kind="task")
                     fake = Fake(issues)
                     code, output, errors = invoke(["handover", f"cp{look}", "design reads well"], fake, "bbbb2222")
                     written = fake.writes()
@@ -5799,7 +5781,7 @@ def validate_board(root: Path) -> None:
                     raise ValueError(f"an empty stacked look-before CR must land with its base: {code} {errors}\n{output}\n{fake.writes()}")
                 # A design-only CR at the user's Accept lands like any CR, on the pair shown, and files no design ratification.
                 issues, tip, wt = make_cr("cpuser", "cpuser.txt", "d\n")
-                issues[1] = cr_item("cpuser.d", "cpuser", "closed", kind="design")
+                issues[1] = cr_item("cpuser.d", "cpuser", "closed", kind="task")
                 before = at_main()
                 code, _, errors = invoke(["cr", "land", "cpuser"], Fake(issues), "lead0001")
                 if code != 1 or "--tip" not in errors or at_main() != before:
@@ -7590,7 +7572,7 @@ def validate_board(root: Path) -> None:
         for args, session, tool in ((("solo",), "0000-solo0001", "claude"), (("lead",), "0000-lead0001", "claude"),
                                     (("autopilot",), "0000-auto0001", "claude"), (("lead", "--pulls", "implement"), "0000-lead0002", "claude"),
                                     (("agent", "--pulls", "implement,review"), "0000-cdx00001", "codex"),
-                                    (("agent", "--pulls", "plan,design,review"), "0000-cdx00002", "codex")):
+                                    (("agent", "--pulls", "plan,implement"), "0000-cdx00002", "codex")):
             subprocess.run(["bash", str(registry), "activate", *args, "--workers", "6"], check=True,
                            env={**os.environ, **as_session(session, tool), **capacity_env})
         snapshot = bare_deck([issue for issue in fixture if issue.get("_type", "issue") == "issue"])
@@ -7608,7 +7590,7 @@ def validate_board(root: Path) -> None:
                 raise ValueError(f"board {argv[0]} printed more than one capacity line:\n{out}")
             return last if last.startswith("capacity: ") else None
 
-        worker_kinds = ("design", "implement", "review")  # a solo or autopilot session's own kinds never count
+        worker_kinds = ("implement", "review")  # a solo or autopilot session's own kinds never count
         line = f"capacity: 0 of 6 workers active in the last 15 min; ready for your pulls: {ready_for(worker_kinds)} → refill (plan Dispatch)"
         for argv in (["queue"], ["mine"]):
             if capacity_of(argv, "solo0001") != line:
@@ -7620,7 +7602,7 @@ def validate_board(root: Path) -> None:
         if ready_for(("plan",)) == "" or capacity_of(["queue"], "solo0001", own_only) is not None:
             raise ValueError("board printed a capacity line for work only the solo session itself takes")
         if not (capacity_of(["queue"], "cdx00002") or "").endswith(
-                f"ready for your pulls: {ready_for(('design', 'review'))} → refill (plan Dispatch)"):
+                f"ready for your pulls: {ready_for(('implement',))} → refill (plan Dispatch)"):
             raise ValueError(f"an agent's capacity line counted work outside its pulls: {capacity_of(['queue'], 'cdx00002')!r}")
         if capacity_of(["queue"], "lead0002") != f"capacity: 0 of 6 workers active in the last 15 min; ready for your pulls: " \
                                                  f"{ready_for(('implement',))} → refill (plan Dispatch)":
@@ -7720,13 +7702,13 @@ def validate_board(root: Path) -> None:
                 else {**issue, "status": "in_review", "assignee": None, "metadata": {}} if issue["id"] == "fx-ovo.c2" else issue
                 for issue in fixture]
         if capacity_of(["return", "fx-ovo.c1", "done"], "cdx00001", held) != \
-                "capacity: 0 of 4 workers active in the last 15 min; ready for your pulls: review 1 → refill (plan Dispatch)":
+                "capacity: 0 of 4 workers active in the last 15 min; ready for your pulls: implement 1, review 1 → refill (plan Dispatch)":
             raise ValueError(f"board return capacity line: {invoke(['return', 'fx-ovo.c1', 'done'], Fake(held), 'cdx00001', now=real_now)}")
         fake = Fake([{**issue, "status": "in_review", "assignee": None, "metadata": {}} if issue["id"] == "fx-ovo.c2" else issue for issue in fixture])
         _, out, _ = invoke(["claim"], fake, "cdx00001", now=real_now)
         taken = next(args[1] for args in fake.writes() if args[0] == "update")
         if taken != "fx-ovo.c2" or out.rstrip("\n").splitlines()[-1] != "capacity: 0 of 4 workers active in the last 15 min; " \
-                "ready for your pulls: implement 1 → refill (plan Dispatch)":
+                "ready for your pulls: implement 2 → refill (plan Dispatch)":
             raise ValueError(f"board claim capacity line must leave out the claimed item:\n{out}")
 
     # The actor comes from BEADS_ACTOR, else the Codex session[/thread], else the Claude session.
@@ -7840,14 +7822,15 @@ else:
         if result.returncode != 2 or "--parent" not in result.stderr or writes_of(calls, "create"):
             raise ValueError(f"--deps parent-child: must name --parent: {result.returncode} {result.stderr!r}")
         # a whole plan: its ids print as `key id`; node flags beside it are refused; an unreadable or empty plan too
-        files["plan.json"].write_text(json.dumps({"nodes": [{"key": "a", "title": "A", "description": "d", "type": "task"}, {"key": "b", "title": "B", "description": "d", "type": "spike", "parent": "a"}]}), encoding="utf-8")
+        files["plan.json"].write_text(json.dumps({"nodes": [{"key": "a", "title": "A", "description": "d", "type": "task"}, {"key": "b", "title": "B", "description": "d", "type": "task", "parent": "a"}]}), encoding="utf-8")
         result, calls = run_fake("create", "--graph", str(files["plan.json"]))
         if result.returncode != 0 or result.stdout != "a fx-a-new\nb fx-b-new\n" or writes_of(calls, "create")[0]["plan"]["nodes"][1]["parent"] != "a":
             raise ValueError(f"board create --graph must create the plan and print key and id: {result.returncode} {result.stdout!r} {result.stderr!r}")
         for args, needle in ((("--graph", str(files["plan.json"]), "--title", "x"), "whole plan"), (("--graph", str(files["plan.json"]), "-t", "bug"), "whole plan"),
                              (("--graph", "/nonexistent/plan.json"), "cannot read the plan"), ((), "name the item once"),
                              (("T", "--title", "U"), "name the item once"), (("T", "-t", "question"), "--type decision"),
-                             (("T", "-t", "feature"), "is not a board type"), (("T", "--metadata", "k=v"), "unrecognized arguments"),
+                             (("T", "-t", "feature"), "is not a board type"), (("T", "-t", "bug"), "labelled kind:<kind>"), (("T", "-t", "spike"), "is not a board type"),
+                             (("T", "-t", "design"), "is not a board type"), (("T", "-l", "kind:nonsense"), "a kind is one of"), (("T", "--metadata", "k=v"), "unrecognized arguments"),
                              (("T", "-t", "decision", "--no-commit"), "marks a task"), (("T", "--look", "after"), "change request setting"),
                              (("T", "--assignee", "user"), "unrecognized arguments"),
                              (("T", "--description-file", "/nonexistent/d.md"), "cannot read"), (("T", "--parent", "fx-nope"), "unknown parent"),
@@ -8703,9 +8686,9 @@ def validate_console_unblocks(root: Path) -> None:
         return {"id": id, "issue_type": kind, "status": status, "title": title or id, "dependencies": deps}
 
     deck = board.Board([
-        item("cr", "change-request", "passed"), item("cr.d", "design", parent="cr"),
-        item("t1", "task", waits=["cr"]), item("t2", "bug", waits=["t1"]), item("q", "decision", waits=["cr.d"]),
-        item("t5", "spike", waits=["cr", "t1"]),                      # reached twice: counted once
+        item("cr", "change-request", "passed"), item("cr.d", "task", parent="cr"),
+        item("t1", "task", waits=["cr"]), item("t2", "task", waits=["t1"]), item("q", "decision", waits=["cr.d"]),
+        item("t5", "task", waits=["cr", "t1"]),                      # reached twice: counted once
         item("done", "task", "closed", waits=["cr"]),                 # closed: not waiting
         item("gate", "gate", waits=["cr"]), item("after-gate", "task", waits=["gate"]),
         item("ms", "milestone", waits=["cr"]), item("after-ms", "task", waits=["ms"]),
@@ -8713,12 +8696,12 @@ def validate_console_unblocks(root: Path) -> None:
         item("lone", "change-request"),
         item("m-b", "milestone", title="Second", waits=["cr.d2"]), item("m-a", "milestone", title="First", waits=["cr"]),
         item("gone", "milestone", "closed", title="Closed", waits=["lone"]),
-        item("cr2", "change-request"), item("cr2.d", "design", parent="cr2"),
-        item("cr.d2", "design", parent="cr3"), item("cr3", "change-request"), item("stack", "change-request", parent="cr3"),
+        item("cr2", "change-request"), item("cr2.d", "task", parent="cr2"),
+        item("cr.d2", "task", parent="cr3"), item("cr3", "change-request"), item("stack", "change-request", parent="cr3"),
         item("m-c", "milestone", title="Third", waits=["cr2.d"]),
         item("wt", "change-request"), item("t-wt", "task", waits=["wt"]),  # a member waits on the request: Board.in_milestone owns that
         item("m-e", "milestone", title="Fifth", waits=["t-wt"]),
-        item("cr4", "change-request"), item("cr4.d", "design", "closed", parent="cr4"),  # a closed design child brings no membership
+        item("cr4", "change-request"), item("cr4.d", "task", "closed", parent="cr4"),  # a closed item child brings no membership
         item("m-f", "milestone", title="Sixth", waits=["cr4.d"]),
     ])
     for cr_id, wanted in (("cr", (5, 2, 0)), ("lone", (0, 0, 0)), ("cr2", (0, 0, 0))):
@@ -8773,7 +8756,7 @@ def validate_console_unblocks(root: Path) -> None:
         item("a", "change-request", "passed"), item("b", "change-request", "passed"),
         item("both", "change-request", waits=["a", "b"]), item("one", "change-request", waits=["a"]),
         item("design-cr", "change-request", "in_review"),
-        item("design", "design", "in_review", parent="design-cr"), item("implementation", "task", "closed", parent="design-cr"),
+        item("design", "task", "in_review", parent="design-cr"), item("implementation", "task", "closed", parent="design-cr"),
         item("design-waiter", "change-request", waits=["design"]), item("code-waiter", "change-request", waits=["implementation"]),
     ])
     want = {"a": (Fraction(1, 2), 1, 1, 0), "b": (Fraction(1, 2), 1, 1, 0),
@@ -12015,8 +11998,8 @@ def validate_protocol(root: Path, part: str) -> None:
             proto("step", stdin={**ROUND_INFO, "questions": [question("Store choice?", board="fx-ovo.1"),
                                                question("Which store backs the cache?")]}, **real_session)
             overlaps = next(q for q in shown(**real_session)["questions"] if q["board"] is None)["overlaps"]
-            if overlaps != [{"id": "fx-ovo.6", "title": "Design cache", "outcome": None},
-                            {"id": "fx-ovo.3", "title": "Open cache question", "outcome": None},
+            if overlaps != [{"id": "fx-ovo.3", "title": "Open cache question", "outcome": None},
+                            {"id": "fx-ovo.6", "title": "Design cache", "outcome": None},
                             {"id": "fx-ovo.1", "title": "Store choice", "outcome": None},
                             {"id": "fx-ovo.2", "title": "Old store ruling", "outcome": None},
                             {"id": "fx-ovo.4", "title": "Implement store A", "outcome": None}]:  # four change requests more in the fixture: "store" is no longer a template word

@@ -59,9 +59,9 @@ describe('board console contract', () => {
     })
   })
 
-  test('the agent steps design and implement are counted, the queue is a count, and a board is there', () => {
+  test('the agent step implement is counted, the queue is a count, and a board is there', () => {
     const board = parseBoardConsole(BOARD_CONSOLE_CONTRACT)
-    expect(board.counts).toMatchObject({ toDesign: { ready: 6, held: 1, waiting: 0 }, toImplement: { ready: 90, held: 1, waiting: 1 } })
+    expect(board.counts).toMatchObject({ toImplement: { ready: 90, held: 1, waiting: 1 } })
     expect(board.queued).toBe(92)
     expect(board.waitingOnYou).toBe(5)
     expect(board.prefix).toBe('p')
@@ -73,10 +73,10 @@ describe('board console contract', () => {
     expect(missing).toMatchObject({ isMissing: true, counts: null, crs: [], queued: 0, items: [], sessions: [] })
   })
 
-  test('a board without the new fields reads as a board with none queued and nothing to design or implement', () => {
+  test('a board without the new fields reads as a board with none queued and nothing to implement', () => {
     const board = parseBoardConsole({ counts: { toPlan: { ready: 1, held: 0, waiting: 0 } } })
     expect(board).toMatchObject({ isMissing: false, queued: 0 })
-    expect(board.counts?.toDesign).toEqual({ ready: 0, held: 0, waiting: 0 })
+    expect(board.counts?.toImplement).toEqual({ ready: 0, held: 0, waiting: 0 })
   })
 
   test('an unknown check state reads as unchecked, a missing check as nothing run', () => {

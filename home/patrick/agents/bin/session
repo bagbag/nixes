@@ -23,7 +23,7 @@
 set -euo pipefail
 
 state_dir=${AGENT_SESSION_STATE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/agents/sessions}
-pull_order=(plan design implement review)
+pull_order=(plan implement review)
 preset_pulls() {  # the pulls a role starts with: lead plans, solo and autopilot take every pull, agent picks its own
   case $1 in
     lead) echo plan ;;

@@ -60,8 +60,8 @@ export type ConsoleCount = { ready: number; held: number; waiting: number }
 
 export type ConsoleCounts = { questions: ConsoleCount; decided: ConsoleCount; toPlan: ConsoleCount; toReview: ConsoleCount; toAccept: ConsoleCount; forUser: ConsoleCount }
 
-/** The board's counts: the protocol's seven, the two agent steps between plan and review (`board console`; the round carries no such step) and the deferred backlog. */
-export type ConsoleBoardCounts = ConsoleCounts & { toDesign: ConsoleCount; toImplement: ConsoleCount; deferred: ConsoleCount }
+/** The board's counts: the protocol's seven, the agent step between plan and review (`board console`; the round carries no such step) and the deferred backlog. */
+export type ConsoleBoardCounts = ConsoleCounts & { toImplement: ConsoleCount; deferred: ConsoleCount }
 
 /** A change request's check against the current refs (`board console`): `stale` the base moved, `conflict` it would not rebase cleanly, `failed` the checks failed, `unchecked` none ran yet. */
 export type ConsoleCheckState = 'current' | 'stale' | 'conflict' | 'failed' | 'unchecked'

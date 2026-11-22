@@ -236,7 +236,7 @@ def setup() -> None:
             if role == 'none':
                 continue
             env = {**base_env(side), 'CLAUDE_CODE_SESSION_ID': session(side, role)}
-            subprocess.run(['bash', REGISTRY, 'activate', role, *(['--pulls', 'implement,design,review,plan'] if role == 'agent' else [])],
+            subprocess.run(['bash', REGISTRY, 'activate', role, *(['--pulls', 'implement,review,plan'] if role == 'agent' else [])],
                            cwd=ROOT / side, env=env, capture_output=True, check=True)
     rc, out, err, _ = bd('a', 'init', '--server', '--stealth', '--prefix', 'sb', '--skip-hooks', '--skip-agents', role=None)
     if rc:
