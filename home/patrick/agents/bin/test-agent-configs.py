@@ -3195,11 +3195,6 @@ def validate_board(root: Path) -> None:
             fake = Fake(fixture)
             if invoke(["block", cr, "--on", question], fake, "lead0001")[0] == 0 or fake.writes():
                 raise ValueError("board block must refuse a decision blocking a CR")
-            # A deferral has no condition: a condition on an item is a wait, which defer refuses naming `wait`.
-            fake = Fake(fixture)
-            code, _, errors = invoke(["defer", ids["Loose item"], "--reason", "after the cache ruling lands"], fake, "lead0001")
-            if code == 0 or fake.writes() or "agents board wait" not in errors:
-                raise ValueError(f"board defer must refuse a condition and name wait: {code} {errors} {fake.writes()}")
             # A deferred item is backlog and holds no live item up (board-coordination.md Deferrals): defer refuses, check flags.
             ready, loose = ids["Ready task"], ids["Loose item"]
             waits = {"Loose item": {"dependencies": [{"issue_id": loose, "depends_on_id": ready, "type": "blocks"}]}, "Ready task": {"dependencies": []}}  # a task outside a CR
@@ -3217,9 +3212,12 @@ def validate_board(root: Path) -> None:
             report = invoke(["check"], Fake(variant(**{**waits, "Ready task": {**waits["Ready task"], "status": "deferred"}})))[1]
             if f"  {ready}  deferred-blocker" not in report or loose not in report:
                 raise ValueError(f"board check must flag a deferred item a live item waits on:\n{report}")
-            # A question is answered or waits; it is never deferred (a deferral is someday work or change requests).
-            if invoke(["defer", ids["Open cache question"], "--reason", "after the next run"], Fake(fixture), "lead0001")[0] == 0:
-                raise ValueError("board defer must refuse a decision")
+            # A milestone and a gate are no deferral types, whatever the reason says.
+            for kind in ("milestone", "gate"):
+                fake = Fake(variant(**{"Ready task": {"issue_type": kind}}))
+                code, _, errors = invoke(["defer", ids["Ready task"], "--reason", "someday"], fake, "lead0001")
+                if code == 0 or fake.writes() or "does not apply" not in errors:
+                    raise ValueError(f"board defer must refuse a {kind}, outside deferral: {code} {errors!r} {fake.writes()}")
             held_cr = variant(**{"CR ready": {"assignee": "lead0001", "metadata": {"hold": "work"}}})
             fake = Fake(held_cr)
             code, _, _ = invoke(["claim", ids["Ready task"]], fake, "lead0001/build-00000001")

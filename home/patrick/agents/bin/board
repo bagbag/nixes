@@ -6688,10 +6688,7 @@ def deferred_fix(board: Board, item_id: str, waiting: list[str]) -> str:
 
 def defer_command(args) -> int:
     """`board defer <id>... --reason "<why>" [--until <date>]`: set aside, blocked by nothing. No date: someday, only `undefer`
-    reopens it; a date only surfaces it as due. A condition on an item or event is a wait: refused, naming `wait`."""
-    if re.search(r'\b(after|until|when|once|waits? on|blocked by)\b', args.reason, re.I) and not args.until:
-        raise BoardError('a deferral has no condition: --reason says why it is set aside. A condition on another item or event is a wait: '
-                         'agents board wait <item> --on <item> --for "<what it waits for>"')
+    reopens it; a date only surfaces it as due. A deferral records no condition (a condition on an item or event is a wait)."""
     if args.until and not re.fullmatch(r'\d{4}-\d{2}-\d{2}', args.until):
         raise BoardError(f'--until takes a day, YYYY-MM-DD: {args.until}')
     board = Board.load('status')
