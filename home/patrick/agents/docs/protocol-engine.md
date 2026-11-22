@@ -204,7 +204,8 @@ A round:
   verdict (required with a subject, refused without one); its findings are added points (r1-q1, q2, q6). `--subject` is refused with `--proposal` (the row brings its
   own topic and items) and on `start release`. Stage's text points to the cut in question-format.md and adds its
   mechanics (the first part keeps the item, the others are drafts).
-- Related searches each new draft and needs an outcome per hit.
+- Related searches each new draft and needs an outcome per hit. A `duplicate` or `extend` hit becomes the question's `board`;
+  without one, a question asked on a board item keeps that item (`ownBoard`, kept from the first Related report).
 - Check runs one complete `step-back` over the ready questions, then a fresh
   confirming `step-back` on the same questions, then `challenge-rulings` before
   a batch. The step-back skill checks all 11 lenses deeply by default and owns

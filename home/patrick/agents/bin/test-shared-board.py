@@ -109,6 +109,15 @@ def run(side: str, *args: str, role: str | None = 'lead', stdin: str | None = No
     return result.returncode, result.stdout, result.stderr, time.time() - started
 
 
+def run_piped(side: str, *args: str, role: str = 'lead', timeout: float = 200) -> tuple[int, str]:
+    """A board call whose stdout and stderr share one pipe, as `2>&1 | tail` gives a session: what it reads last is what it acts on."""
+    env = base_env(side)
+    env['CLAUDE_CODE_SESSION_ID'] = session(side, role)
+    result = subprocess.run([sys.executable, '-B', BOARD, *args], cwd=ROOT / side, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                            text=True, timeout=timeout, env=env, stdin=subprocess.DEVNULL)
+    return result.returncode, result.stdout
+
+
 def bd(side: str, *args: str, **kwargs):
     """A bd call as the board offers it: the writes go through their board verbs (create, close --force, block, link, update, label); setup
     and maintenance no verb offers (dolt, sync, sql, delete, conflicts) run `board bd --raw --yes`."""
@@ -732,6 +741,12 @@ def t_soak() -> None:
     check(not sync_state('a').get('kind') and not sync_state('b').get('kind'), 'parallel writers: no problem reported', (sync_state('a'), sync_state('b')))
 
 
+def pulled_just_now(side: str) -> None:
+    """The side's commands skip their due pull for a window: its next write stays ahead of what the other side just sent,
+    however long the setup took (a slow parallel run would otherwise pull it first)."""
+    (ROOT / side / '.beads' / 'board-sync' / 'pulled').touch()
+
+
 def conflicted() -> str:
     """Delete against edit: b's next sync stops."""
     settle('a', 'b')
@@ -740,7 +755,13 @@ def conflicted() -> str:
     settle('a', 'b')
     bd('a', 'delete', victim, '--force')
     bd('a', 'sync')
-    set_field('b', victim, 'description', 'edited on b')
+    pulled_just_now('b')
+    rc, out, err, _ = run('b', 'field', 'export', victim, '--field', 'description')
+    if rc == 0:
+        Path(out.strip().splitlines()[0]).write_text('edited on b', encoding='utf-8')
+        pulled_just_now('b')
+        rc, _, err, _ = run('b', 'field', 'apply', victim, '--field', 'description')
+    check(rc == 0, 'conflict setup: b edits the item a deleted', err)
     return victim
 
 
@@ -769,6 +790,7 @@ def t_stopped() -> None:
     wait_until(lambda: not waits(), options.seconds * 3)
     bd('a', 'create', 'same a', '-t', 'task', '--description', 'x', '--id', 'sb-collide', '--silent')
     bd('a', 'sync')
+    pulled_just_now('b')
     bd('b', 'create', 'same b', '-t', 'task', '--description', 'x', '--id', 'sb-collide', '--silent')
     check(wait_until(lambda: sync_state('b').get('kind') == 'conflict', options.seconds * 4), 'an id collision reports a conflict', sync_state('b'))
     rc, _, err, _ = run('b', 'position')
@@ -1049,7 +1071,15 @@ def t_cr() -> None:
     check(rc == 1 and 'base moved since the pair you saw' in err and 'move base after refresh' in out
           and items('a')[a_stale]['status'] == 'needs_acceptance',
           'cr: concurrent target movement invalidates the exact refreshed pins', err + out)
-    rc, out, err, _ = run('a', 'cr', 'land', a_stale, '--tip', stale_seen, '--base', newest_base)
+    rc, piped = run_piped('a', 'cr', 'land', a_stale, '--tip', stale_seen, '--base', moved_again)
+    lines = piped.strip().splitlines()
+    step = lines[-1] if lines else ''
+    command = step.split('then ', 1)[1].split() if 'then agents board cr land ' in step else []
+    check(rc == 1 and step.startswith('next: ask the user to Accept the incoming commits')
+          and piped.index('move base after refresh') < piped.index('base moved since the pair you saw')
+          and command[:5] == ['agents', 'board', 'cr', 'land', a_stale] and command[-1] == newest_base,
+          'cr: a piped stale-base refusal ends with the reason, then the next step naming the current pair', piped)
+    rc, out, err, _ = run('a', *command[2:])
     next_tip = meta_of(a_stale).get('check_tip')
     check(rc == 0 and items('a')[a_stale]['status'] == 'closed'
           and git('rev-parse', target, cwd=side).strip() == next_tip,

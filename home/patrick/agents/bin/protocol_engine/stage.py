@@ -132,7 +132,9 @@ def related_accept(ctx: Context, report: dict) -> str:
         if takeover and q.get('holds'):
             fail(draft_only_holds(f'{qid} (takes over {takeover[0]})'))
         resolve_replaced(ctx, q)
-        q['board'] = takeover[0] if takeover else None  # the item it records onto from here on: one place holds it
+        # the item it records onto from here on (one place holds it): a takeover, else the question's own item from before Related
+        own = q.setdefault('ownBoard', q['board'])
+        q['board'] = takeover[0] if takeover else own
     missing = unresolved(ctx)
     if missing:
         fail('outcomes missing: ' + ', '.join(f"{q['id']}→{hit['id']}" for q, hit in missing))

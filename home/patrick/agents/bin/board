@@ -140,7 +140,34 @@ ACCEPT = 'needs_acceptance'  # a change request waiting for the user: finished (
 
 
 class BoardError(Exception):
-    pass
+    """A refusal or failure; `next` holds the steps that clear it, in the views' step shape ({action, command|text|paths})."""
+
+    def __init__(self, message: str = '', next: list[dict] | None = None):
+        super().__init__(message)
+        self.next = list(next or [])
+
+
+class PairMoved(BoardError):
+    """A refusal because the pair to land moved: `part` is 'branch' or 'base'."""
+
+    def __init__(self, message: str, next: list[dict], part: str):
+        super().__init__(message, next)
+        self.part = part
+
+
+STEP_WORDS = {'wait': 'it waits', 'merge': 'a deciding session merges it with the user', 'owner': 'its owner ends it',
+              'ask-user': 'ask the user to commit or move those edits'}
+
+
+def step_text(step: dict) -> str:
+    return step.get('command') or step.get('text') or STEP_WORDS.get(step['action'], step['action'])
+
+
+def report_error(error: BoardError) -> None:
+    sys.stdout.flush()  # a piped listing must not land after, and bury, the reason
+    print(f'board: {error}', file=sys.stderr)
+    for step in error.next:
+        print(f'next: {step_text(step)}', file=sys.stderr)
 
 
 def ids_of(records: list[dict]) -> set[str]:
@@ -2670,7 +2697,7 @@ def field_apply(board: Board, args) -> int:
             for line in field_apply_one(board, item_id, names):
                 print(line)
         except BoardError as error:
-            print(f'board: {error}', file=sys.stderr)
+            report_error(error)
             failed = True
     return 2 if failed else 0
 
@@ -3233,7 +3260,7 @@ def claim(board: Board, args) -> int:
             print(f'  resume: {resume}')
         if kind == 'accept' and meta(issue).get('checkpoint') == 'user':
             pin, designs = design_pin(board, issue)
-            print(f"  design hash {pin} ({', '.join(designs) or 'no design item'}); accept it with agents board cr land {issue['id']} --checkpoint --design {pin}")
+            print(f"  design hash {pin} ({', '.join(designs) or 'no design item'}); next: {step_text(checkpoint_step(board, issue))}")
         for blocker in board.foreign_waits(issue):  # a released ruling waits for planning only (r21-q139): the plan session removes it
             print(f"  fix: {issue['id']} waits on {blocker}, which is work and not planning; check what the ruling changes there, "
                   f"then {dep_fix(issue['id'], blocker)}")
@@ -4340,10 +4367,7 @@ def cr_problems(board: Board, cr: dict, info: dict, refresh_id: str | None) -> l
 
 def problem_line(problem: dict) -> str:
     """A problem as the text views print it: what holds it up, then its step."""
-    step = problem['next']
-    said = step.get('command') or {'wait': 'it waits', 'merge': 'a deciding session merges it with the user', 'owner': 'its owner ends it',
-                                   'ask-user': 'ask the user to commit or move those edits'}.get(step['action'], step['action'])
-    return f"{problem['text']}: {said}"
+    return f"{problem['text']}: {step_text(problem['next'])}"
 
 
 def cr_json(board: Board, cr: dict, children: dict[str, list[str]], refresh_id: str | None) -> dict:
@@ -4795,6 +4819,16 @@ def settle_landed(board: Board) -> bool:
     return changed
 
 
+def pair_moved_refusal(cid: str, part: str, seen: str | None, tip: str, base: str) -> PairMoved:
+    """`part` moved since the pair the user saw (`seen`; None: while the check ran). Land re-syncs and checks a moved pair
+    itself, so the step is the user's Accept of the current pair, not a refresh."""
+    now = tip if part == 'branch' else base
+    since = f'since the pair you saw ({seen[:12]}); now {now[:12]}' if seen else 'while the check ran'
+    look = 'the current change' if part == 'branch' else 'the incoming commits (listed above)'
+    return PairMoved(f'{cid}: the {part} moved {since}.',
+                     [{'action': 'ask-user', 'text': f'ask the user to Accept {look}, then agents board cr land {cid} --tip {tip} --base {base}'}], part)
+
+
 def land_core(board: Board, cr: dict, main: Path, tip: str, base_tip: str) -> list[str]:
     """Fast-forwards the target to the CR's tip and finishes the landing. Refuses unless the base is the target, the items
     are closed and the check and review pairs are the current (branch tip, target tip) with a pass (q183, q209, q236, A1, A6)."""
@@ -4811,9 +4845,9 @@ def land_core(board: Board, cr: dict, main: Path, tip: str, base_tip: str) -> li
     if branch_tip is None:
         raise BoardError(f'{cid}: no branch {cr_branch(cid)}')
     if rev(main, tip) != branch_tip:
-        raise BoardError(f'{cid}: the branch moved since {tip[:12]}: now {branch_tip[:12]}; look at the change again (agents board cr refresh, then re-show the range)')
+        raise pair_moved_refusal(cid, 'branch', tip, branch_tip, old)
     if old != base_tip:
-        raise BoardError(f'{cid}: the base moved since {base_tip[:12]}: now {old[:12]}; look at the incoming commits again (agents board cr refresh, then re-show the range)')
+        raise pair_moved_refusal(cid, 'base', base_tip, branch_tip, old)
     review = review_read(board, cr)
     if review:  # the user's Accept: an unedited review ends with it; one with edits is recorded first (it rebases and checks them)
         refuse_unrecorded(cid, review, f'{edits_line(cid, review["opened"])} records them, then land')
@@ -4821,12 +4855,14 @@ def land_core(board: Board, cr: dict, main: Path, tip: str, base_tip: str) -> li
     pair = check_pair(cr)
     if pair is None or pair['result'] != 'pass' or pair['tip'] != branch_tip or pair['baseTip'] != old:
         state = check_state(main, cr, branch_tip, old)
-        raise BoardError(f'{cid}: not landed, its check is {state} (it must pass for tip {branch_tip[:12]} on {name} {old[:12]}): {refresh_step}')
+        raise BoardError(f'{cid}: not landed, its check is {state} (it must pass for tip {branch_tip[:12]} on {name} {old[:12]}): {refresh_step}',
+                         next=[{'action': 'refresh', 'command': refresh_step}])
     if not accept_covered(cr, {'tip': branch_tip, 'baseTip': old, 'main': main}):
         if cr['status'] == ACCEPT:
             send_to_review(board, cr)
-            raise BoardError(f'{cid}: the series changed since its last review; sent to agent review')
-        raise BoardError(f'{cid}: the series changed since its last review; review the current change')
+            raise BoardError(f'{cid}: the series changed since its last review; sent to agent review', next=[{'action': 'wait'}])
+        raise BoardError(f'{cid}: the series changed since its last review; review the current change',
+                         next=[{'action': 'review', 'text': f'review the current change, then pass it again (agents board handover {cid} "<evidence>")'}])
     where, rebasing = checked_out_at(main, ref)
     if rebasing:
         raise BoardError(f'{cid}: not landed, {rebasing}')
@@ -4885,11 +4921,13 @@ def handover(board: Board, args) -> None:
     cr = cr_arg(board, args.id, 'handover')
     holder = cr.get('assignee')
     if not holds_cr(cr, actor):
-        raise BoardError(f"{args.id}: {cr['status']}, held by {holder or 'nobody'}; claim it first")
+        raise BoardError(f"{args.id}: {cr['status']}, held by {holder or 'nobody'}; claim it first",
+                         next=[{'action': 'wait'} if holder else {'action': 'claim', 'command': f'agents board claim {args.id}'}])
     m, status = meta(cr), cr['status']
     author = status == 'in_progress'
     if not author and status != 'in_review':
-        raise BoardError(f'{args.id}: {status}; only work in hand is handed over or an agent review is passed (use agents board cr request-review at Accept)')
+        raise BoardError(f'{args.id}: {status}; only work in hand is handed over or an agent review is passed (use agents board cr request-review at Accept)',
+                         next=[{'action': 'review', 'command': f'agents board cr request-review {args.id} "<reason>"'} if status == ACCEPT else {'action': 'wait'}])
     no_agent_reason = args.no_agent_review
     if no_agent_reason is not None:
         if not author:
@@ -4903,18 +4941,21 @@ def handover(board: Board, args) -> None:
     if author and m.get('checkpoint') in ('agent', 'user'):
         busy_designs = checkpoint_design_items(board, args.id, 'in_progress')
         if busy_designs:
-            raise BoardError(f"{args.id}: checkpoint design items still in progress: {', '.join(busy_designs)}; finish each design pass and release its hold before handover")
+            raise BoardError(f"{args.id}: checkpoint design items still in progress: {', '.join(busy_designs)}; finish each design pass and release its hold before handover",
+                             next=[{'action': 'owner', 'text': f'finish and release each design pass ({", ".join(busy_designs)}), then hand over again'}])
     refusal = open_item_refusal(board, cr)
     if refusal:
         raise BoardError(refusal)
     main = main_root()
     wt = cr_worktree(main, args.id)
     if not wt.is_dir():
-        raise BoardError(f'{args.id}: no worktree {wt}: git worktree add {wt} {cr_branch(args.id)}')
+        raise BoardError(f'{args.id}: no worktree {wt}: git worktree add {wt} {cr_branch(args.id)}',
+                         next=[{'action': 'worktree', 'command': f'git worktree add {wt} {cr_branch(args.id)}'}])
     refuse_open(args.id, cr, 'handover')
     result = checked_sync(board, cr, main, wt, args)
     if result['code']:
-        raise BoardError(f"{args.id}: checks failed, not handed over:\n{result['output']}")
+        raise BoardError(f"{args.id}: checks failed, not handed over:\n{result['output']}",
+                         next=[{'action': 'fix', 'text': 'fix the failing checks (output above), then hand over again'}])
     look = cr_look(board, cr)
     expect = ['--if-assignee', holder]
     seen = meta(cr).get('reviewing_tip')
@@ -5009,11 +5050,11 @@ def request_review(board: Board, args) -> int:
     actor = derived_actor() or 'user'
     cr = cr_arg(board, args.id, 'request-review')
     if cr['status'] != ACCEPT:
-        raise BoardError(f"{args.id}: {cr['status']}; request-review works only at the user's Accept")
+        raise BoardError(f"{args.id}: {cr['status']}; request-review works only at the user's Accept", next=[{'action': 'wait'}])
     if meta(cr).get('checkpoint') == 'user':
-        raise BoardError(f'{args.id}: this is a design checkpoint with no change range to send for review')
+        raise BoardError(f'{args.id}: this is a design checkpoint with no change range to send for review', next=[checkpoint_step(board, cr)])
     if cr.get('assignee') and not holds_cr(cr, actor):
-        raise BoardError(f"{args.id}: held by {cr['assignee']}; request review once that session releases it")
+        raise BoardError(f"{args.id}: held by {cr['assignee']}; request review once that session releases it", next=[{'action': 'wait'}])
     review = review_read(board, cr)
     if review:
         refuse_unrecorded(args.id, review, f'{edits_line(args.id, review["opened"])} records them, then request review')
@@ -5064,9 +5105,10 @@ def return_item(board: Board, args) -> None:
         if not may_judge(board, cr):
             raise BoardError(f'{args.id}: waiting for your Accept; the lead returns it with the findings you gave (autopilot: a user design checkpoint)')
         if cr.get('assignee') and not holds_cr(cr, actor):
-            raise BoardError(f"{args.id}: held by {cr['assignee']} (a refresh); return it once that is released")
+            raise BoardError(f"{args.id}: held by {cr['assignee']} (a refresh); return it once that is released", next=[{'action': 'wait'}])
     elif not holds_cr(cr, actor):
-        raise BoardError(f"{args.id}: {cr['status']}, held by {cr.get('assignee') or 'nobody'}; claim it first")
+        raise BoardError(f"{args.id}: {cr['status']}, held by {cr.get('assignee') or 'nobody'}; claim it first",
+                         next=[{'action': 'wait'} if cr.get('assignee') else {'action': 'claim', 'command': f'agents board claim {args.id}'}])
     guard = ['--if-assignee', actor, '--if-status', 'in_review'] if args.ruling else []
     try:
         review = review_read(board, cr)
@@ -5105,6 +5147,12 @@ def design_pin(board: Board, cr: dict) -> tuple[str, list[str]]:
     return hashlib.sha256(text.encode()).hexdigest()[:12], [i['id'] for i in designs]
 
 
+def checkpoint_step(board: Board, cr: dict) -> dict:
+    """The user design checkpoint's Accept step, pinned to the design text as it stands."""
+    pin = design_pin(board, cr)[0]
+    return {'action': 'ask-user', 'text': f"walk the user through the design, then agents board cr land {cr['id']} --checkpoint --design {pin}"}
+
+
 def land(board: Board, args) -> int:
     caller_actor = derived_actor() or 'user'
     cr = cr_arg(board, args.id, 'land')
@@ -5114,17 +5162,19 @@ def land(board: Board, args) -> int:
     if cr['status'] != ACCEPT:
         raise BoardError(f"{args.id}: {cr['status']}; only a change request waiting for its Accept lands")
     if cr.get('assignee') and not holds_cr(cr, derived_actor() or ''):
-        raise BoardError(f"{args.id}: held by {cr['assignee']}: land it once that session releases it")
+        raise BoardError(f"{args.id}: held by {cr['assignee']}: land it once that session releases it", next=[{'action': 'wait'}])
     main = main_root()
     if args.design is not None and not args.checkpoint:
         raise BoardError('--design pins a design checkpoint: use it with --checkpoint')
     if args.checkpoint and args.design is None:
-        raise BoardError(f'{args.id}: --checkpoint needs --design <hash>, the design hash agents board claim {args.id} printed')
+        raise BoardError(f'{args.id}: --checkpoint needs --design <hash>, the design hash agents board claim {args.id} printed',
+                         next=[checkpoint_step(board, cr)])
     if args.checkpoint:
         if m.get('checkpoint') != 'user':
             raise BoardError(f'{args.id}: no user checkpoint is pending')
         if (pin := design_pin(board, cr)[0]) != args.design:
-            raise BoardError(f'{args.id}: the design changed since the claim (hash {pin}, not {args.design}); walk through it again, then land with --design {pin}')
+            raise BoardError(f'{args.id}: the design changed since the claim (hash {pin}, not {args.design}); walk through it again, then land with --design {pin}',
+                             next=[checkpoint_step(board, cr)])
         designs = checkpoint_design_items(board, cr['id'], 'in_review')
         if designs:
             bd_checked('close', *designs, '--reason', f'{args.id}: accepted design checkpoint')
@@ -5135,21 +5185,26 @@ def land(board: Board, args) -> int:
         print(f'accepted the design checkpoint of {args.id}: open for planning' + (f'; ratification {made}' if made else ''))
         return 0
     if m.get('checkpoint') == 'user':
-        raise BoardError(f'{args.id}: a design checkpoint is pending: agents board cr land {args.id} --checkpoint')
+        raise BoardError(f'{args.id}: a design checkpoint is pending: agents board cr land {args.id} --checkpoint', next=[checkpoint_step(board, cr)])
     stacked, _ = cr_base(board, cr, main)
     if board.is_cr(stacked):
-        raise BoardError(f'{args.id}: stacked on {stacked}, which has not landed: agents board cr land {stacked} first')
+        raise BoardError(f'{args.id}: stacked on {stacked}, which has not landed: agents board cr land {stacked} first',
+                         next=[{'action': 'land', 'text': f'land {stacked} first (its own Accept), then {args.id}'}])
     if not args.tip or not args.base:
-        raise BoardError(f'{args.id}: --tip <sha> and --base <sha> are required: pass the pair shown at Accept')
+        now = cr_info(board, cr)
+        raise BoardError(f'{args.id}: --tip <sha> and --base <sha> are required: pass the pair shown at Accept',
+                         next=[{'action': 'ask-user', 'text': f"ask the user to Accept the current pair, then agents board cr land {args.id} "
+                                                               f"--tip {now.get('tip') or '<tip>'} --base {now.get('baseTip') or '<base>'}"}])
     incoming_base = incoming_base_of(cr)
     try:
         branch_tip, branch_base = prepare_land(board, cr, main, args.tip, args.base)
         notes = land_core(board, cr, main, branch_tip, branch_base)
     except LandedError:
         raise
-    except BoardError:
+    except BoardError as error:
         board._cr.pop(args.id, None)
-        print(incoming_main_section(main, cr, cr_info(board, cr), incoming_base)[1])
+        if isinstance(error, PairMoved) and error.part == 'base':  # the commits the user Accepts next
+            print(incoming_main_section(main, cr, cr_info(board, cr), incoming_base)[1])
         raise
     if reason := m.get('no_agent_review_reason'):
         comment(args.id, f'board user review: {caller_actor} accepted {branch_tip[:12]} ({reason})')
@@ -5171,9 +5226,9 @@ def prepare_land(board: Board, cr: dict, main: Path, tip: str, base: str) -> tup
     if seen_tip is None or seen_base is None:
         raise BoardError(f'{cid}: --tip and --base must name reachable commits')
     if seen_tip != branch_tip:
-        raise BoardError(f'{cid}: the branch moved since the pair you saw ({seen_tip[:12]}); now {branch_tip[:12]}. Look at the current change and Accept it again.')
+        raise pair_moved_refusal(cid, 'branch', seen_tip, branch_tip, branch_base)
     if seen_base != branch_base:
-        raise BoardError(f'{cid}: the base moved since the pair you saw ({seen_base[:12]}); now {branch_base[:12]}. Look at the incoming commits and Accept the current pair.')
+        raise pair_moved_refusal(cid, 'base', seen_base, branch_tip, branch_base)
     put_meta(cr, user_seen_tip=seen_tip, user_seen_base_tip=seen_base)
     review = review_read(board, cr)
     if review:
@@ -5186,22 +5241,28 @@ def prepare_land(board: Board, cr: dict, main: Path, tip: str, base: str) -> tup
     if info['state'] != 'current':
         wt = cr_worktree(main, cid)
         if not wt.is_dir():
-            raise BoardError(f'{cid}: no worktree {wt}: git worktree add {wt} {cr_branch(cid)}')
+            raise BoardError(f'{cid}: no worktree {wt}: git worktree add {wt} {cr_branch(cid)}',
+                             next=[{'action': 'worktree', 'command': f'git worktree add {wt} {cr_branch(cid)}'}])
         result = sync_branch(board, cr, main, wt)
         info = cr_info(board, cr)
         branch_tip, branch_base = info['tip'], info['baseTip']
         if result['oldTip'] != seen_tip or result['tip'] != branch_tip:
-            raise BoardError(f'{cid}: the branch moved while the check ran; look at the current change and Accept it again')
+            raise pair_moved_refusal(cid, 'branch', None, branch_tip, branch_base)
         if branch_base != seen_base or result['baseTip'] != seen_base:
-            raise BoardError(f'{cid}: the base moved while the check ran; look at the incoming commits and Accept the current pair')
+            raise pair_moved_refusal(cid, 'base', None, branch_tip, branch_base)
         # The no-agent route covers the series the user saw, not a conflict resolution made after it.
         if meta(cr).get('no_agent_review_reason') and branch_tip != seen_tip and not replays(
                 main, cr, result['oldBase'], seen_tip, branch_base, branch_tip):
-            raise BoardError(f'{cid}: the change differs from the series you saw. Review its delta and Accept the current pair.')
+            raise BoardError(f'{cid}: the change differs from the series you saw. Review its delta and Accept the current pair.',
+                             next=[{'action': 'ask-user', 'text': f'ask the user to review the delta and Accept the current change, '
+                                                                   f'then agents board cr land {cid} --tip {branch_tip} --base {branch_base}'}])
     if result and result['code']:
-        if route_uncovered(board, cr, info):
+        sent = route_uncovered(board, cr, info)
+        if sent:
             print(f'{cid}: the series changed since its last review; sent to agent review')
-        raise BoardError(f"{cid}: not landed, its check failed after rebase:\n{result['output']}")
+        # land ran it on this pair, so a rerun cannot pass: the author fixes it (sent: its reviewer finds it and returns it)
+        raise BoardError(f"{cid}: not landed, its check failed after rebase:\n{result['output']}",
+                         next=[{'action': 'wait'} if sent else {'action': 'return', 'command': f'agents board return {cid} "<the failing check>"'}])
     return branch_tip, branch_base
 
 
@@ -5265,13 +5326,14 @@ def refresh(board: Board, args) -> int:
     actor = caller()
     cr = cr_arg(board, args.id, 'refresh')
     if cr.get('assignee') and not holds_cr(cr, actor):
-        raise BoardError(f"{args.id}: held by {cr['assignee']}; refresh waits until that session releases it")
+        raise BoardError(f"{args.id}: held by {cr['assignee']}; refresh waits until that session releases it", next=[{'action': 'wait'}])
     if cr['status'] not in ('in_review', 'in_progress', ACCEPT):
         raise BoardError(f"{args.id}: {cr['status']}, no worktree in use to refresh")
     main = main_root()
     wt = cr_worktree(main, args.id)
     if not wt.is_dir():
-        raise BoardError(f'{args.id}: no worktree {wt}: git worktree add {wt} {cr_branch(args.id)}')
+        raise BoardError(f'{args.id}: no worktree {wt}: git worktree add {wt} {cr_branch(args.id)}',
+                         next=[{'action': 'worktree', 'command': f'git worktree add {wt} {cr_branch(args.id)}'}])
     refuse_open(args.id, cr, 'a refresh')
     merging_user_edit = stopped_edit_commit(cr, wt) is not None
     result = checked_sync(board, cr, main, wt, args)
@@ -7929,7 +7991,7 @@ def run_command(argv: list[str]) -> int:
         try:
             return passthrough(argv[1:])
         except BoardError as error:
-            print(f'board: {error}', file=sys.stderr)
+            report_error(error)
             return 1
     parser = argparse.ArgumentParser(prog='agents board', description=__doc__.split('\n\n')[0], allow_abbrev=False)
     scope = argparse.ArgumentParser(add_help=False, allow_abbrev=False)
@@ -8069,10 +8131,10 @@ def run_command(argv: list[str]) -> int:
     sub.add_argument('--unlabel', action=Values, default=[], metavar='LABEL[,LABEL...]', help='remove; repeatable, commas separate')
     sub.add_argument('--parent', type=board_id, metavar='ID', help='the new parent ("" removes it)')
     sub.add_argument('--assignee', choices=('user', ''), help='user hands the items to the user, "" back to agents')
-    route = sub.add_mutually_exclusive_group()
-    route.add_argument('--no-commit', dest='no_commit', action='store_const', const=True,
-                       help='the work commits nothing to this repository: it needs no change request')
-    route.add_argument('--commits', dest='no_commit', action='store_const', const=False, help='the work commits here: it goes in a change request')
+    commits = sub.add_mutually_exclusive_group()  # not `route`: that name is the route verb, registered below
+    commits.add_argument('--no-commit', dest='no_commit', action='store_const', const=True,
+                         help='the work commits nothing to this repository: it needs no change request')
+    commits.add_argument('--commits', dest='no_commit', action='store_const', const=False, help='the work commits here: it goes in a change request')
     for name, values in CR_SETTINGS.items():
         sub.add_argument(f'--{name}', choices=(*values, ''), help=f'a change request\'s {name} ("" drops it{", back to the project default" if name != "checkpoint" else ""})')
     sub = add('link', 'link two items with a type that holds nothing up (a blocking link is agents board block)', link_command)
@@ -8276,7 +8338,7 @@ def run_command(argv: list[str]) -> int:
         try:
             return args.run(args)
         except BoardError as error:
-            print(f'board: {error}', file=sys.stderr)
+            report_error(error)
             return refused
     JSON_VIEWS = {health: health_json, position: position_json, related: related_json, check: check_json}
     try:
@@ -8311,7 +8373,7 @@ def run_command(argv: list[str]) -> int:
             capacity(board, args)
         return code
     except BoardError as error:
-        print(f'board: {error}', file=sys.stderr)
+        report_error(error)
         return refused
 
 

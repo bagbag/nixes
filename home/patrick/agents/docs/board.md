@@ -271,7 +271,9 @@ Accept, never for a design checkpoint, which lands nothing (`refresh` when the c
 edit commit, else `wait`), `waits` (`wait`) for each effective wait (`cr_waits`) but at a design checkpoint's Accept, plus the unlanded parent at any other Accept (`accept_waits`: the
 console hides its Accept, the next claim passes it, a named claim still takes it to return or reject), which a refused claim prints too, `land-blocked` (`ask-user`, the paths). A hold is no problem: the row's `holder` says it, and the console marks it while
 the request waits for the Accept. The console maps the problems to marks and the Update button; `agents board queue` and `agents board show` print the same
-problems with their step. A rebase the board started and stopped on a conflict stays claimable: `sync_branch` (handover, `cr refresh`, `cr edits
+problems with their step. A refusal (`BoardError`) carries its steps in the same shape (`next`); `report_error` prints the reason, then one
+`next: <step>` line per step, on stderr after flushing stdout, so a piped listing never buries the reason. `cr land` lists the incoming
+commits only when the base moved (`PairMoved`); its step asks the user to Accept the current pair, which land re-syncs and checks itself. A rebase the board started and stopped on a conflict stays claimable: `sync_branch` (handover, `cr refresh`, `cr edits
 --commit`) refuses while unmerged paths remain and otherwise runs `git rebase --continue` with `GIT_EDITOR=true` itself (r1-q2, q4).
 Board-made commits and branch moves (`commit-tree`, `rebase --onto`/`--continue`, `merge --ff-only`) run no git hooks; what a hook
 enforces belongs in `custom.board.checks` (r11-q39); board-migrate step 4 asks per project about a commit hook running the same checks (r11-q40).

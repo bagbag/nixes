@@ -5840,6 +5840,15 @@ def validate_board(root: Path) -> None:
                 code, output, errors = invoke(["cr", "land", "emplate", "--tip", tip[:8], "--base", at_main()], fake, "lead0001")
                 if code or not any(w[:2] == ["close", "emplate"] for w in fake.writes()) or any(w[0] == "create" for w in fake.writes()):
                     raise ValueError(f"landing an empty CR from the Accept queue opens no ratification: {code} {errors}\n{fake.writes()}")
+                # A check that fails in land's own run cannot pass on a rerun: land names the return, not a refresh.
+                issues, tip, wt = make_empty_cr("emfail", "before", status="needs_acceptance", check_tip=git("rev-parse", "main"), check_base_tip=git("rev-parse", "main"),
+                                                check_result="fail", check_at="2026-10-22T15:00:00Z", review_tip=git("rev-parse", "main"), review_base_tip=git("rev-parse", "main"))
+                fake = Fake(issues)
+                fake.settings["custom.board.checks"] = "false"  # land reruns a failed check itself: only a failing rerun reaches the refusal
+                code, output, errors = invoke(["cr", "land", "emfail", "--tip", tip[:8], "--base", at_main()], fake, "lead0001")
+                if code != 1 or "its check failed after rebase" not in errors or not errors.strip().splitlines()[-1].startswith("next: agents board return emfail") \
+                        or "cr refresh" in errors or any(w[:2] == ["close", "emfail"] for w in fake.writes()):
+                    raise ValueError(f"a failed check at land must refuse and name the return: {code} {errors}\n{fake.writes()}")
                 # A stacked CR with nothing to merge, passed in a look-before project, lands with its base (review F5).
                 p_issues, p_tip, _ = make_cr("ep", "ep.txt", "x\n")
                 c_wt = Path(repo_root, ".worktrees", "ec")
@@ -10784,6 +10793,24 @@ def validate_protocol(root: Path, part: str) -> None:
             proto("step", stdin={"outcomes": {shared: {"fx-own": "relate"}}}, cwd=repo)
             if shown(cwd=repo)["step"] == "related" or shown(cwd=repo)["questions"][1]["board"] is not None:
                 raise ValueError("Related must accept relating another round question's item")
+            proto("abandon", cwd=repo)
+            # A question on its own board item whose linked items are only related keeps that item as its `board`
+            # (fb4c7250 r1: the reset left the selected item uncovered, and the round could not go on).
+            configure(health={"counts": counts, "items": {"questions": [
+                {"id": "fx-home", "status": "open", "type": "decision", "title": "Home?", "priority": 1, "blockedBy": []}]}},
+                      items={"fx-home": {"status": "open", "issue_type": "decision",
+                                         "dependencies": [{"issue_id": "fx-home", "depends_on_id": "fx-link", "type": "relates-to"}]},
+                             "fx-link": {"status": "open", "issue_type": "task", "title": "Linked work"}})
+            proto("start", "round", stdin={"points": []}, cwd=repo)
+            proto("step", stdin={"classes": {"fx-home": "user"}}, cwd=repo)
+            proto("step", stdin={"select": ["fx-home"]}, cwd=repo)
+            proto("step", stdin={**ROUND_INFO, "questions": [question("Home?", board="fx-home")]}, cwd=repo)
+            home = shown(cwd=repo)["questions"][0]
+            if [hit["id"] for hit in home["overlaps"]] != ["fx-link"]:
+                raise ValueError(f"Related must offer the own item's linked items: {home['overlaps']}")
+            proto("step", stdin={"outcomes": {home["id"]: {"fx-link": "relate"}}}, cwd=repo)
+            if shown(cwd=repo)["questions"][0]["board"] != "fx-home":
+                raise ValueError(f"a question relating its own item's links must keep its board item: {shown(cwd=repo)['questions'][0]}")
             proto("abandon", cwd=repo)
             configure()
             # Beta5: a takeover is the question's `board` from Related on: the item joins the round, claimed like a selected one,
