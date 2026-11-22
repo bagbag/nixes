@@ -331,9 +331,6 @@ MOVES = (
     Move('reopen', WORK_GROUP, ('closed',), 'open', '*', '-', 'anyone', ''),
     Move('close', ITEM_GROUP, ('open',), 'closed', '*', '-', 'anyone', 'reason', ('done', 'dropped')),
     Move('reopen', ITEM_GROUP, ('closed',), 'open', '*', '-', 'anyone', ''),
-    # Holds left from before items had none: taken over or freed until board-migrate clears them, then these two rows go. No claim row: nothing new is held.
-    Move('take', ITEM_GROUP, ('open',), '=', '*', 'you', 'the session of the hold, or anyone who could claim it once its holder is gone', 'worker-cap'),
-    Move('unclaim', ITEM_GROUP, ('open',), '=', '*', '-', 'the holder, or a deciding session once it is gone', 'resume-note'),
     Move('defer', WORK_GROUP, ('open',), 'deferred', '*', '-', 'anyone', 'no-condition, nothing-waits-on-it'),
     Move('undefer', WORK_GROUP, ('deferred',), 'open', '-', '-', 'anyone', ''),
     Move('defer', 'decision', ('open',), 'deferred', '*', '-', 'anyone', 'nothing-live-waits-on-it'),
@@ -3280,9 +3277,9 @@ def claim(board: Board, args) -> int:
         for item_id in args.ids:
             issue = board.by_id[item_id]
             holder = issue.get('assignee')
-            if item_cr := item_of(board, issue):
+            if refusal := item_hold_refusal(board, issue):
                 failed.append(item_id)
-                print(f'{item_id}: an item has no holder of its own; its change request {item_cr} holds it: agents board claim {item_cr}, then close the item when it is done', file=sys.stderr)
+                print(refusal, file=sys.stderr)
                 continue
             if holder == actor:
                 print(f'{item_id}: already held by {actor}')  # bin/protocol reads this line (claim_items)
@@ -3436,6 +3433,14 @@ def item_of(board: Board, issue: dict) -> str | None:
     return board.cr_of(issue['id']) if issue.get('issue_type') == WORK_TYPE else None
 
 
+def item_hold_refusal(board: Board, issue: dict) -> str | None:
+    """An item has no holder of its own: its change request holds it. A hold left on one from before is cleared by /board-migrate."""
+    if item_cr := item_of(board, issue):
+        return (f"{issue['id']}: an item has no holder of its own; its change request {item_cr} holds it: agents board claim {item_cr}, "
+                'then close the item when it is done')
+    return None
+
+
 def work_item_refusal(board: Board, issue: dict, actor: str) -> str | None:
     """A task is claimed outside any change request only when it commits nothing here (an item is held with its change request)."""
     if issue.get('issue_type') != WORK_TYPE or is_no_commit(issue):
@@ -3475,7 +3480,7 @@ def take(board: Board, args) -> int:
     entry = own_entry(board, actor)
     taken, failed = [], False
     for issue in require_open(board, args.ids):
-        refusal = foreign_claim(board, issue['id']) or elsewhere_refusal(board, issue, 'take', args.agreed)
+        refusal = item_hold_refusal(board, issue) or foreign_claim(board, issue['id']) or elsewhere_refusal(board, issue, 'take', args.agreed)
         if refusal:
             raise BoardError(refusal)
         if board.is_cr(issue['id']) and issue['status'] == 'in_review' and (author := authorship(board, issue)[0]) \
@@ -3512,7 +3517,7 @@ def unclaim(board: Board, args) -> int:
         if not holder:
             print(f"{issue['id']}: not held")
             continue
-        refusal = elsewhere_refusal(board, issue, 'unclaim', args.agreed)
+        refusal = item_hold_refusal(board, issue) or elsewhere_refusal(board, issue, 'unclaim', args.agreed)
         if refusal:
             print(refusal, file=sys.stderr)
             failed = True

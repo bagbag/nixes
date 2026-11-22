@@ -4425,10 +4425,10 @@ def validate_board(root: Path) -> None:
             # Counts: ready = can be taken now, waiting = the rest of the step.
             _, text, _ = invoke(["health", "--json"], Fake(designed))
             counts = json.loads(text)["counts"]
-            if counts["toPlan"] != {"ready": 1, "held": 0, "waiting": 1} or {k: v for k, v in json.loads(invoke(["console"], Fake(designed), "aaaa1111")[1])["counts"].items() if k not in ("toImplement", "deferred")} != counts:
+            if counts["toPlan"] != {"ready": 1, "held": 0, "waiting": 1} or {k: v for k, v in json.loads(invoke(["console"], Fake(designed), "aaaa1111")[1])["counts"].items() if k not in ("toPlan", "toImplement", "deferred")} != {k: v for k, v in counts.items() if k != "toPlan"}:  # the console's plan step also counts the held no-commit task
                 raise ValueError(f"toPlan must split claimable and waiting rulings, console equal to health: {counts}")
             if "released rulings to plan: 1 (1 wait)\n" not in invoke(["health"], Fake(designed))[1] \
-                    or "plan: 1 ready (1 wait), " not in invoke(["position"], Fake(designed))[1] \
+                    or "plan: 1 ready (1 held, 1 wait), " not in invoke(["position"], Fake(designed))[1] \
                     or json.loads(invoke(["position", "--json"], Fake(designed))[1])["ready"]["plan"]["waiting"] != 1:
                 raise ValueError("board health and position must print '(k wait)' beside the ready count")
             accepting = variant(**{"CR design": {"status": "passed"},
@@ -5103,6 +5103,13 @@ def validate_board(root: Path) -> None:
             if "agents board cr" not in help_output.getvalue() or "agents board ruling" not in help_output.getvalue():
                 raise ValueError("board help must list the groups cr and ruling")
 
+            # An item has no holder of its own: a hold left on one from before is neither taken nor freed (board-migrate clears it).
+            for verb in ("take", "unclaim", "claim"):
+                fake = Fake(variant(**{"Handed task": {"assignee": "aaaa1111/build-12345678"}}))
+                code, _, errors = invoke([verb, ids["Handed task"]], fake, "aaaa1111")
+                if code != 1 or fake.writes() or "an item has no holder of its own" not in errors:
+                    raise ValueError(f"board {verb} of an item must refuse, its change request holds it: {code} {errors!r} {fake.writes()}")
+
             fake = Fake(fixture)
             invoke(["take", ids["Held task"]], fake, "lead0001")
             if fake.writes()[0] != ["update", ids["Held task"], "--assignee", "lead0001", "--if-assignee", "aaaa1111/build-12345678", "--if-status", "open", "--json"] \
@@ -5155,9 +5162,9 @@ def validate_board(root: Path) -> None:
             done_item = {"Held task": {"status": "closed", "assignee": None}, "Handed task": {"status": "closed"}}
             fake = Fake(variant(**ready_cr))
             code, _, errors = invoke(["handover", "fx-ovo.c2", "done"], fake, "aaaa1111")
-            if code != 1 or fake.writes() or "items still open" not in errors or ids["Held task"] not in errors or "agents board close fx-ovo.9 fx-ovo.10 --reason" not in errors:
+            if code != 1 or fake.writes() or "items still open" not in errors or ids["Handed task"] not in errors or "agents board close fx-ovo.9 --reason" not in errors:
                 raise ValueError(f"board handover took a change request with open items: {code} {fake.writes()} {errors}")
-            code, _, errors = invoke(["handover", ids["Held task"], "done"], Fake(variant(**ready_cr)), "aaaa1111")
+            code, _, errors = invoke(["handover", ids["Handed task"], "done"], Fake(variant(**ready_cr)), "aaaa1111")
             if code != 1 or "its change request is fx-ovo.c2" not in errors:
                 raise ValueError(f"board handover of an item must name its change request: {errors}")
             fake = Fake(variant(**ready_cr, **done_item))
