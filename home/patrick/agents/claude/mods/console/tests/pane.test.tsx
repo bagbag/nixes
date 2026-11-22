@@ -689,11 +689,11 @@ describe('accept notification', () => {
     expect(w.notified).toHaveLength(1)
   })
 
-  test('a design checkpoint says so; one in agent review is not yours yet', async ($, on) => {
+  test('a request ready to accept is announced; one in agent review is not yours yet', async ($, on) => {
     const { w, clock } = await start($, on, [])
-    w.crs = [cr({ id: 'p-d', title: 'Design Y', checkpoint: 'user', tip: null }), cr({ id: 'p-r', status: 'in_review' })]
+    w.crs = [cr({ id: 'p-d', title: 'Design Y' }), cr({ id: 'p-r', status: 'in_review' })]
     await clock.advance(62_000)
-    expect(w.notified).toEqual(['p-d is ready to accept (design): Design Y'])
+    expect(w.notified).toEqual(['p-d is ready to accept: Design Y'])
   })
 
   test('a request that waits on its parent notifies once the wait is gone', async ($, on) => {

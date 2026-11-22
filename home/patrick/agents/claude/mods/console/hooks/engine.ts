@@ -436,7 +436,7 @@ function parseCr(value: unknown): ConsoleCr {
   const check = record(raw.check)
   return {
     id: text(raw.id), title: text(raw.title), status: text(raw.status), holder: nullableText(raw.holder),
-    look: oneOf(raw.look, ['before', 'after']), view: oneOf(raw.view, ['code', 'result']), checkpoint: oneOf(raw.checkpoint, ['agent', 'user']),
+    look: oneOf(raw.look, ['before', 'after']), view: oneOf(raw.view, ['code', 'result']),
     base: text(raw.base), branch: text(raw.branch), worktree: nullableText(raw.worktree), tip: nullableText(raw.tip), baseTip: nullableText(raw.baseTip),
     check: {
       state: oneOf(check.state, CHECK_STATES as readonly ConsoleCheckState[]) ?? 'unchecked', tip: nullableText(check.tip), baseTip: nullableText(check.baseTip),
@@ -467,7 +467,7 @@ function parseProblem(value: unknown): ConsoleProblem {
 
 function parseRatification(value: unknown): ConsoleRatification {
   const raw = record(value)
-  return { id: text(raw.id), cr: text(raw.cr), title: text(raw.title), kind: oneOf(raw.kind, ['landing', 'design']), priority: typeof raw.priority === 'number' ? raw.priority : 9,
+  return { id: text(raw.id), cr: text(raw.cr), title: text(raw.title), kind: oneOf(raw.kind, ['landing']), priority: typeof raw.priority === 'number' ? raw.priority : 9,
     tip: nullableText(raw.tip), baseTip: nullableText(raw.baseTip), stale: list(raw.stale).map(value => ({ sha: text(record(value).sha), subject: text(record(value).subject) })).filter(one => one.sha !== ''),
     conflict: raw.conflict === true, review: parseReview(raw.review) }
 }

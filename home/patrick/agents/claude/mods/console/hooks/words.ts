@@ -321,15 +321,15 @@ export function countText(count: ConsoleCount | undefined): string {
 const short = (sha: string): string => sha.slice(0, 7)
 
 export function crStageText(cr: ConsoleCr): string {
-  if (cr.status === 'needs_acceptance') return cr.checkpoint === 'user' ? 'to accept (design)' : 'to accept'
-  if (cr.status === 'in_review') return cr.checkpoint === null ? 'in review' : 'checkpoint review'
+  if (cr.status === 'needs_acceptance') return 'to accept'
+  if (cr.status === 'in_review') return 'in review'
   return cr.status === 'in_progress' ? 'in work' : cr.status.replace(/_/g, ' ')
 }
 
-export type CrKind = 'design' | 'code' | 'result' | 'in work'
+export type CrKind = 'code' | 'result' | 'in work'
 
-/** What a request is to the person: a design or code or result to look at, or in work with the agents (built or under agent review). */
-export const crKind = (cr: ConsoleCr): CrKind => !isCrAccepting(cr) ? 'in work' : cr.checkpoint === 'user' ? 'design' : cr.view === 'result' ? 'result' : 'code'
+/** What a request is to the person: a code or result to look at, or in work with the agents (built or under agent review). */
+export const crKind = (cr: ConsoleCr): CrKind => !isCrAccepting(cr) ? 'in work' : cr.view === 'result' ? 'result' : 'code'
 
 /** The stage the bar's hover names: for a request waiting on you, what you look at; else the stage. */
 export const crRowStageText = (cr: ConsoleCr): string => {
@@ -339,9 +339,9 @@ export const crRowStageText = (cr: ConsoleCr): string => {
 
 const CHECK_WORDS: Record<ConsoleCr['check']['state'], string> = { current: 'checks current', stale: 'stale', conflict: 'conflict', failed: 'checks failed', unchecked: 'unchecked' }
 
-/** The check state as a word; null while the change request has not reached review and nothing ran, and for a design checkpoint with no check (`board cr land --checkpoint` ignores checks). A targeted or no-gate result says so (r15-q78). */
+/** The check state as a word; null while the change request has not reached review and nothing ran. A targeted or no-gate result says so (r15-q78). */
 export function crCheckText(cr: ConsoleCr): string | null {
-  if (cr.check.state === 'unchecked' && (cr.checkpoint === 'user' || (cr.status !== 'in_review' && cr.status !== 'needs_acceptance'))) return null
+  if (cr.check.state === 'unchecked' && (cr.status !== 'in_review' && cr.status !== 'needs_acceptance')) return null
   const word = CHECK_WORDS[cr.check.state]
   if (cr.check.kind === 'full' || cr.check.state === 'unchecked') return word
   if (cr.check.kind === 'none') return cr.check.state === 'current' ? 'no check run' : word
@@ -467,9 +467,8 @@ export type ReviewEditsRef = { tree: string; tip: string }
 /** The line the session runs to read the edits; Accept adds `--commit -m "<msg>" <gate>` (decide.md step 4). */
 export const editsLine = (cr: ConsoleCr, edits: ReviewEditsRef): string => `agents board cr edits ${cr.id} --tip ${edits.tip}`
 
-/** The Accept request for the lead (decide.md Accept), naming the tip it was looked at in so a moved branch is refused, and the edits you made in the review. A design without a branch has no tip to name. */
+/** The Accept request for the lead (decide.md Accept), naming the tip it was looked at in so a moved branch is refused, and the edits you made in the review. */
 export function acceptText(cr: ConsoleCr, tip: string | null, baseTip: string | null, edits: ReviewEditsRef | null = null): string {
-  if (cr.checkpoint === 'user') return `Accept the design of ${cr.id} (${cr.title})${tip === null ? '' : ` at ${short(tip)}`}: planning continues in the same request, nothing lands.`
   const land = `agents board cr land ${cr.id} --tip ${short(tip ?? '')} --base ${short(baseTip ?? '')}`
   if (edits === null) return `Accept ${cr.id} (${cr.title}): land the exact tip/base pair shown on this row with \`${land}\`.`
   return `Accept ${cr.id} (${cr.title}) at ${short(edits.tip)}: I edited it in the review folder ${edits.tree}: read my edits with \`${editsLine(cr, edits)}\`, check and commit them (\`--commit -m "<msg>"\` with a gate) as decide.md says, then use the current row's tip/base pair to land it.`
@@ -478,7 +477,7 @@ export const returnText = (cr: ConsoleCr, edits: ReviewEditsRef | null = null): 
   edits === null ? `Return ${cr.id} (${cr.title}): ` : `Return ${cr.id} (${cr.title}) with my edits from the review folder ${edits.tree}, which you commit without a check (\`${editsLine(cr, edits)} --commit -m "<msg>" --no-gate "returned"\`): `
 
 export const walkText = (cr: ConsoleCr): string =>
-  `Walk me through ${cr.id}'s ${cr.checkpoint === 'user' ? 'design' : cr.view === 'result' ? 'result' : 'change'} (${cr.title}).`
+  `Walk me through ${cr.id}'s ${cr.view === 'result' ? 'result' : 'change'} (${cr.title}).`
 export const refreshText = (cr: ConsoleCr): string => `Refresh ${cr.id} under the review protocol's Refresh.`
 /** The deciding session's Update: it dispatches the refresh the board names, which then holds the row. */
 export const updateText = (cr: ConsoleCr): string => `Update ${cr.id} (${cr.title}): its ${cr.problems.filter(one => one.next.action === 'refresh').map(one => one.text).join(' and ')}; dispatch its refresh (\`${cr.problems.find(one => one.next.action === 'refresh')?.next.command ?? `agents board cr refresh ${cr.id}`}\`) under the review protocol's Refresh.`

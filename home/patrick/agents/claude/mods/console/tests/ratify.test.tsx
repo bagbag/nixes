@@ -55,7 +55,7 @@ describe('the board\'s review', () => {
 
 describe('ratification verdicts', () => {
   test('the shared row shows kind, priority and drift marks, and Walk through names the landed change', async ($, on) => {
-    const stale = { ...RATIFICATION, kind: 'design', priority: 1, stale: [{ sha: sha(7), subject: 'Touch landed lines' }], conflict: true }
+    const stale = { ...RATIFICATION, priority: 1, stale: [{ sha: sha(7), subject: 'Touch landed lines' }], conflict: true }
     const { ui, clock, w } = await mounted($, on, { ratifications: [stale] })
     const drawn = await texts(ui)
     expect(drawn).toContain('P1')

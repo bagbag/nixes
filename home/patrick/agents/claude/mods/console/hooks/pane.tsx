@@ -23,7 +23,7 @@ const MILESTONE_MIN = 8  // cells the milestone title keeps however narrow the p
 const BUTTON_SEP = ' • '  // between a row's buttons, as in Decide and Actions
 const STRIPE = 'rgb(50,50,50)'  // a fixed color a little darker than the dark theme's own message background (no theme key is darker); behind every second request
 const PART_GAP = 2  // cells between the parts of line two
-const KIND_COLOR: Record<CrKind, string> = { design: 'planMode', code: 'claude', result: 'ide', 'in work': 'success' }  // the bar's color per kind; the legend reads the same map
+const KIND_COLOR: Record<CrKind, string> = { code: 'claude', result: 'ide', 'in work': 'success' }  // the bar's color per kind; the legend reads the same map
 const BAR = '▌'  // the first cell of a request's title line: marks where it starts and shows the kind
 const CR_BUTTONS = { walk: 'Walk through', open: 'Open', accept: 'Accept', review: 'Review', return: 'Return', update: 'Update' } as const
 /** The cells a row of plain buttons takes (labels and the separators between): they sit at the right edge, so Return lines up on every row. */
@@ -682,11 +682,11 @@ export async function drawPane($: $, e: { surface: string; props: RenderPropsOf[
     if (view.crs.length > 0) {
       const queue = capped('crs', crRows(view.crs), CR_ROWS_SHOWN)
       const buttonsOf = (cr: ConsoleCr) => {
-        const opening = cr.checkpoint !== 'user' && cr.view === 'code'
+        const opening = cr.view === 'code'
         const accepting = isCrAccepting(cr)
         const landing = canAcceptCr(cr)
         const updating = canUpdateCr(cr, isRoundRole, pulls)
-        const review = accepting && cr.checkpoint !== 'user' && !!cr.acceptance?.noAgentReviewReason
+        const review = accepting && !!cr.acceptance?.noAgentReviewReason
         return {
           accepting, opening, landing, review, updating,
           width: buttonsWidth([...(accepting ? [CR_BUTTONS.walk, ...(opening ? [CR_BUTTONS.open] : []), ...(landing ? [CR_BUTTONS.accept] : []), ...(review ? [CR_BUTTONS.review] : []), CR_BUTTONS.return] : []), ...(updating ? [CR_BUTTONS.update] : [])]),
@@ -806,7 +806,7 @@ export async function drawPane($: $, e: { surface: string; props: RenderPropsOf[
             for (const mark of marks) hint.add(`ratify-${one.id}-${mark.key}`, mark.hint)
             const actionLabels = [CR_BUTTONS.walk, ...(one.tip !== null && one.baseTip !== null ? [CR_BUTTONS.open] : []), 'Ratify', ...(isEdited ? ['Ratify with edits'] : []), 'Not OK']
             return (
-              <AcceptRatifyRow key={`ratify-${one.id}`} id={one.id} rowKey={`ratify-${one.id}`} title={one.title} idLabel={dimId(one.id)} showKey={`ratify-${one.id}-show`} kind={one.kind === 'design' ? 'design' : 'code'}
+              <AcceptRatifyRow key={`ratify-${one.id}`} id={one.id} rowKey={`ratify-${one.id}`} title={one.title} idLabel={dimId(one.id)} showKey={`ratify-${one.id}-show`} kind="code"
                 idWidth={ratifyIdWidth} striped={ratify.shown.indexOf(one) % 2 === 1} actions={buttons} actionWidth={buttonsWidth(actionLabels)} barHover={`bar-${one.id}`}
                 onOpen={() => pressOpenItem($, one.id)} lineTwo={<Box key={`ratify-${one.id}-facts`} flexDirection="row" flexGrow={1} flexShrink={1} minWidth={0}>
                   <Text color="inactive">P{one.priority}</Text>

@@ -71,13 +71,13 @@ export type ConsoleCrAcceptance = {
 }
 
 /**
- * One live change request from `board console` `crs`, in accept-queue order (parents before children). Waiting for you is status `needs_acceptance`; agent review and an agent checkpoint are `in_review`.
+ * One live change request from `board console` `crs`, in accept-queue order (parents before children). Waiting for you is status `needs_acceptance`; agent review is `in_review`.
  * `base`: the target branch or the parent CR's id; `parent`: the CR it stacks on.
  * `tip`, `baseTip`: the branch and its base as the board read them now; `check` holds the pair the checks ran on.
  */
 export type ConsoleCr = {
   id: string; title: string; status: string; holder: string | null
-  look: 'before' | 'after' | null; view: 'code' | 'result' | null; checkpoint: 'agent' | 'user' | null
+  look: 'before' | 'after' | null; view: 'code' | 'result' | null
   base: string; branch: string; worktree: string | null; tip: string | null; baseTip: string | null
   check: { state: ConsoleCheckState; tip: string | null; baseTip: string | null; at: string | null; result: 'pass' | 'fail' | null
     /** What ran: the project's full check, a `targeted` command (`command`), or `none` (`reason`) for an edit of yours the session committed unchecked: never a full pass (r15-q78). */
@@ -110,7 +110,7 @@ export type ConsoleCr = {
 export type ConsoleProblem = { kind: string; text: string; next: { action: string; command: string | null; paths: string[] } }
 
 /** A look-after landing's ratification item (`board console` `ratifications`): it waits for your look and blocks nothing. */
-export type ConsoleRatification = { id: string; cr: string; title: string; kind: 'landing' | 'design' | null; priority: number; tip: string | null; baseTip: string | null; stale: { sha: string; subject: string }[]; conflict: boolean; review: ConsoleReview | null }  // the landed range and its drift from the target
+export type ConsoleRatification = { id: string; cr: string; title: string; kind: 'landing' | null; priority: number; tip: string | null; baseTip: string | null; stale: { sha: string; subject: string }[]; conflict: boolean; review: ConsoleReview | null }  // the landed range and its drift from the target
 
 /** What a request or ratification open for your review holds (`board console` `crs[].review`, `ratifications[].review`): `opened` the tip it was opened at; `edited` you made commits after it or have uncommitted changes (null: the board cannot read it, e.g. an amended opened tip); `files` the paths that differ from `opened`. Null: it is not open for review. */
 export type ConsoleReview = { opened: string; edited: boolean | null; files: string[] }

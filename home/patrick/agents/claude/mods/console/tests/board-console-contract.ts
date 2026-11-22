@@ -8,7 +8,7 @@ type CrInit = Partial<Record<string, unknown>> & { id: string }
 /** One `crs` entry in the spec's shape; `over` replaces fields. */
 export function cr(over: CrInit): Record<string, unknown> {
   return {
-    title: `Title of ${over.id}`, status: 'needs_acceptance', holder: null, look: 'before', view: 'code', checkpoint: null,
+    title: `Title of ${over.id}`, status: 'needs_acceptance', holder: null, look: 'before', view: 'code',
     base: 'main', branch: `cr/${over.id}`, worktree: `/main/.worktrees/${over.id}`, tip: sha(2), baseTip: sha(1),
     check: { state: 'current', tip: sha(2), baseTip: sha(1), at: '2026-11-11T09:00:00Z', result: 'pass', kind: 'full', command: null, reason: null, newFailures: [], baseCount: 3012, tipCount: 2972 },
     parent: null, children: [], unblocks: 0, unblocksDirect: 0, shares: 0, milestone: null,
@@ -27,7 +27,7 @@ export const BOARD_CONSOLE_CONTRACT = {
     cr({ id: 'p-cr1', title: 'Remove the legacy cache', children: ['p-cr2'], unblocks: 14, unblocksDirect: 7, shares: 2, milestone: '1.0-beta scope', review: { opened: sha(2), edited: true, files: ['src/a.ts'] } }),
     cr({
       id: 'p-cr2', title: 'Drop the cache config', status: 'in_review', holder: 'a1b2', base: 'p-cr1', parent: 'p-cr1', branch: 'cr/p-cr2', tip: sha(4), baseTip: sha(2),
-      look: 'after', view: 'result', checkpoint: 'agent', check: { state: 'stale', tip: sha(4), baseTip: sha(1), at: '2026-11-11T09:30:00Z', result: 'fail', kind: 'full', command: null, reason: null, newFailures: ['src/a.ts TS2322', 'src/b.ts TS2345'], baseCount: 3012, tipCount: 3014 },
+      look: 'after', view: 'result', check: { state: 'stale', tip: sha(4), baseTip: sha(1), at: '2026-11-11T09:30:00Z', result: 'fail', kind: 'full', command: null, reason: null, newFailures: ['src/a.ts TS2322', 'src/b.ts TS2345'], baseCount: 3012, tipCount: 3014 },
       problems: [{ kind: 'git-state', text: "mid rebase (not the board's)", next: { action: 'owner', paths: ['/main/.worktrees/p-cr2'] } }],
     }),
   ],

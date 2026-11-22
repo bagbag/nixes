@@ -596,7 +596,7 @@ async function notifyAcceptances($: $, session: string, before: ConsoleBoard | n
   const earlier = acceptingIds(before)
   for (const cr of board.crs.filter(one => waiting.has(one.id) && !earlier.has(one.id))) {
     if (!(await claimEpisode($, `${dir}/${cr.id}`, 'accept', session))) continue
-    await $.ui.notify(`${cr.id} is ready to accept${cr.checkpoint === 'user' ? ' (design)' : ''}: ${cr.title}`, { title: 'Console' })
+    await $.ui.notify(`${cr.id} is ready to accept: ${cr.title}`, { title: 'Console' })
   }
 }
 
@@ -1049,12 +1049,12 @@ function reviewState(cr: ConsoleCr): { said: string } | { tip: string | null; ed
   return { tip: review.opened, edits: { tree: cr.worktree, tip: review.opened } }
 }
 
-/** Accept: the lead's request, naming the tip you looked at (the board's `review.opened` when you edited), and your edits when you made any. A design without a branch names none. */
+/** Accept: the lead's request, naming the tip you looked at (the board's `review.opened` when you edited), and your edits when you made any. */
 export async function pressAcceptCr($: $, cr: ConsoleCr): Promise<void> {
   await crPress($, { key: crPressKey('accept', cr.id), id: cr.id, verb: 'Accept' }, async step => {
     const state = reviewState(cr)
     if ('said' in state) return state.said
-    if (cr.checkpoint !== 'user' && (cr.tip === null || cr.baseTip === null)) return `Change request: ${cr.id} has no branch tip/base pair`
+    if (cr.tip === null || cr.baseTip === null) return `Change request: ${cr.id} has no branch tip/base pair`
     return sendRequest($, acceptText(cr, state.tip, cr.baseTip, state.edits))
   })
 }

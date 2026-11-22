@@ -49,7 +49,7 @@ describe('change request queue', () => {
   test('a stack: the child stands under its parent with stage, check state and look', async ($, on) => {
     const { ui } = await queued($, on, [...BOARD_CONSOLE_CONTRACT.crs] as unknown as Crs, repo(), { ratifications: [...BOARD_CONSOLE_CONTRACT.ratifications] })
     const drawn = await texts(ui)
-    for (const part of ['Change requests', 'Remove the legacy cache', 'Drop the cache config', 'code', '2 new', 'checkpoint review', 'stale', 'to ratify', 'Move the clock']) {
+    for (const part of ['Change requests', 'Remove the legacy cache', 'Drop the cache config', 'code', '2 new', 'in review', 'stale', 'to ratify', 'Move the clock']) {
       expect(drawn, part).toContain(part)
     }
     expect(drawn).not.toContain('checks current')  // the normal state stays off the row
@@ -170,14 +170,14 @@ describe('no new failures', () => {
   })
 
   test('a request for you names what you look at on its row; its opened summary says it waits to accept', async ($, on) => {
-    const { ui, clock } = await queued($, on, [cr({ id: 'p-cr1', checkpoint: 'user' }), cr({ id: 'p-cr2', view: 'result' }), cr({ id: 'p-cr3' })])
+    const { ui, clock } = await queued($, on, [cr({ id: 'p-cr2', view: 'result' }), cr({ id: 'p-cr3' })])
     const legend = (await ui.find({ key: 'cr-legend' }))?.text ?? ''  // the kinds as words, above the rows
-    for (const kind of ['design', 'result', 'code']) expect(legend, kind).toContain(kind)
+    for (const kind of ['result', 'code']) expect(legend, kind).toContain(kind)
     expect(legend).not.toContain('in work')  // no request of that kind shows
-    for (const id of ['p-cr1', 'p-cr2', 'p-cr3']) expect((await ui.find({ key: `cr-${id}` }))?.text ?? '', id).not.toContain('to accept')
-    await ui.press({ key: 'cr-p-cr1-show' })
+    for (const id of ['p-cr2', 'p-cr3']) expect((await ui.find({ key: `cr-${id}` }))?.text ?? '', id).not.toContain('to accept')
+    await ui.press({ key: 'cr-p-cr2-show' })
     await clock.settle()
-    expect((await ui.find({ key: 'cr-p-cr1-details' }))?.text).toContain('to accept (design)')
+    expect((await ui.find({ key: 'cr-p-cr2-details' }))?.text).toContain('to accept')
     await ui.unmount()
   })
 
@@ -354,22 +354,19 @@ describe('Open', () => {
     await ui.unmount()
   })
 
-  test('Walk through sends only a prompt for design, result and code rows; code also keeps Open', async ($, on) => {
+  test('Walk through sends only a prompt for result and code rows; code also keeps Open', async ($, on) => {
     const r = repo()
-    const design = cr({ id: 'p-design', title: 'Design Y', checkpoint: 'user', tip: null, baseTip: null, worktree: null })
     const result = cr({ id: 'p-res', title: 'Remove X', view: 'result' })
     const code = cr({ id: 'p-code', title: 'Fix Z' })
-    const { ui, clock, w } = await queued($, on, [design, result, code], r)
-    for (const id of ['p-design', 'p-res', 'p-code']) {
+    const { ui, clock, w } = await queued($, on, [result, code], r)
+    for (const id of ['p-res', 'p-code']) {
       expect((await ui.find({ key: `cr-walk-${id}` }))?.text).toBe('Walk through')
       await ui.press({ key: `cr-walk-${id}` })
       await clock.settle()
     }
-    expect(await ui.find({ key: 'cr-open-p-design' })).toBeUndefined()
     expect(await ui.find({ key: 'cr-open-p-res' })).toBeUndefined()
     expect((await ui.find({ key: 'cr-open-p-code' }))?.text).toBe('Open')
     expect(w.prompts).toEqual([
-      "Walk me through p-design's design (Design Y).",
       "Walk me through p-res's result (Remove X).",
       "Walk me through p-code's change (Fix Z).",
     ])
@@ -491,23 +488,6 @@ describe('Accept, Return', () => {
       expect(w.toasts.some(one => one.includes('has no worktree to name your review from'))).toBe(true)
       await ui.unmount()
     })
-  })
-
-  test('a design checkpoint for you is accepted as a design: nothing lands', async ($, on) => {
-    const { ui, clock, w } = await queued($, on, [cr({ id: 'p-cr1', checkpoint: 'user', title: 'Design Y' })])
-    await ui.press({ key: 'cr-accept-p-cr1' })
-    await clock.settle()
-    expect(w.prompts).toEqual([`Accept the design of p-cr1 (Design Y) at ${short(2)}: planning continues in the same request, nothing lands.`])
-    await ui.unmount()
-  })
-
-  test('accepting a design with no branch sends no sha', async ($, on) => {
-    const { ui, clock, w } = await queued($, on, [cr({ id: 'p-cr1', checkpoint: 'user', title: 'Design Y', tip: null, baseTip: null, worktree: null })])
-    await ui.press({ key: 'cr-accept-p-cr1' })
-    await clock.settle()
-    expect(w.prompts).toEqual(['Accept the design of p-cr1 (Design Y): planning continues in the same request, nothing lands.'])
-    expect(w.toasts).toEqual([])
-    await ui.unmount()
   })
 
   test('a code request with no branch tip still refuses its Accept', async ($, on) => {
@@ -639,7 +619,7 @@ describe('change requests in the /console text', () => {
     const out = await text($, ui, clock)
     expect(out).toContain('Change requests')
     expect(out).toContain('  p-cr1  Remove the legacy cache · to accept · P2 · unblocks 14 · shares 2 · 1.0-beta scope · checks current · 0 new (base 3012, tip 2972) · look before · code')
-    expect(out).toContain('    p-cr2  Drop the cache config · checkpoint review · P2 · stale · 2 new: src/a.ts TS2322, src/b.ts TS2345 (base 3012, tip 3014) · look after · result · held by a1b2')
+    expect(out).toContain('    p-cr2  Drop the cache config · in review · P2 · stale · 2 new: src/a.ts TS2322, src/b.ts TS2345 (base 3012, tip 3014) · look after · result · held by a1b2')
     expect(out).toContain('To ratify\n  p-rat1  Move the clock · landed in p-cr0')
     expect(out.split('\n').filter(line => line.includes('p-cr')).join('\n')).not.toMatch(PRESSES)
   })
@@ -780,20 +760,20 @@ describe('request rows', () => {
     await ui.unmount()
   })
 
-  test('a bar in the first cell of the title line marks each request and shows its kind: design, code, or in work', async ($, on) => {
-    const { ui } = await mounted($, on, [cr({ id: 'p-cr1' }), cr({ id: 'p-cr2', checkpoint: 'user', tip: null, baseTip: null }), cr({ id: 'p-cr3', status: 'in_progress' })], WIDE)
+  test('a bar in the first cell of the title line marks each request and shows its kind: code, result, or in work', async ($, on) => {
+    const { ui } = await mounted($, on, [cr({ id: 'p-cr1' }), cr({ id: 'p-cr2', view: 'result' }), cr({ id: 'p-cr3', status: 'in_progress' })], WIDE)
     for (const id of ['p-cr1', 'p-cr2', 'p-cr3']) {
       expect((await ui.find({ key: `cr-${id}-bar1` }))?.text, id).toBe('▌')
       expect((await ui.find({ key: `cr-${id}-bar2` }))?.text, `${id} line two`).toBe(' ')  // the second line only keeps the cell
     }
     const color = async (id: string) => ((await ui.find({ key: `cr-${id}-bar1` }))?.children?.[0] as { props: { color?: string } } | undefined)?.props.color
-    expect([await color('p-cr1'), await color('p-cr2'), await color('p-cr3')]).toEqual(['claude', 'planMode', 'success'])  // code, design, in work
+    expect([await color('p-cr1'), await color('p-cr2'), await color('p-cr3')]).toEqual(['claude', 'ide', 'success'])  // code, result, in work
     expect(await texts(ui)).toContain('in work')  // the stage the legend's word cannot give, on the bar's hover
     await ui.unmount()
   })
 
   test('the priority and unblocks stand in columns as wide as the widest request, so what follows starts at one cell', async ($, on) => {
-    const { ui } = await mounted($, on, [cr({ id: 'p-cr1' }), cr({ id: 'p-cr2', checkpoint: 'user', tip: null, baseTip: null, unblocks: 14, unblocksDirect: 7 })], WIDE)
+    const { ui } = await mounted($, on, [cr({ id: 'p-cr1' }), cr({ id: 'p-cr2', unblocks: 14, unblocksDirect: 7 })], WIDE)
     for (const id of ['p-cr1', 'p-cr2']) {
       expect((await ui.find({ key: `cr-${id}-col-priority` }))?.props.width, `${id} priority`).toBe('P2'.length + 2)
       expect((await ui.find({ key: `cr-${id}-col-unblocks` }))?.props.width, `${id} unblocks`).toBe('unblocks 14'.length + 2)  // blank on the request without one
