@@ -1,14 +1,16 @@
 #!/usr/bin/env python3
-"""Convert a board's live design checkpoints to ordinary design change requests under the old runtime.
+"""Convert a board's design checkpoint records to ordinary design change requests, on the runtime without checkpoints.
 
     convert-design-checkpoints.py inventory [--mapping FILE]   read-only: records, transitions, manual steps
     convert-design-checkpoints.py apply MAPPING [--apply]      recheck, then write (a dry run without --apply)
-    convert-design-checkpoints.py verify                       read-only: live checkpoint metadata or design ratifications left
+    convert-design-checkpoints.py verify                       read-only: what is left to convert
 
-Run it in the project's checkout against the installed (old) board. The mapping is the owner-approved file that
-`inventory --mapping` drafts; `apply` writes only what it lists, and only through board verbs
-(`return`, `update --checkpoint ""`, `block`). Text placement, documentation CRs, ratification verdicts and the
-choices on missing provenance stay with their owners: `inventory` lists them.
+Run it in the project's checkout after installing the new runtime. The mapping is the owner-approved file that
+`inventory --mapping` drafts; `apply` writes only what it lists: `return`, `block`, `unblock`, `link`, and raw bd
+writes for what no board verb does any more (clearing the checkpoint marker, reopening a returned design item).
+Waits the old runtime counted as met (on a closed design inside an unlanded change request) become `relates-to`
+links, which keeps their meaning. Text placement, documentation CRs, ratification verdicts and the choices on
+missing provenance stay with their owners: `inventory` lists them.
 """
 from __future__ import annotations
 
@@ -49,6 +51,11 @@ def run(path: Path, *args: str, cwd: Path | None = None) -> str:
 
 def board(*args: str) -> str:
     return run(BOARD, *args)
+
+
+def raw(*args: str) -> str:
+    """A bd write no board verb does on the new runtime; the owner's approval of the mapping authorizes it."""
+    return board('bd', '--raw', '--yes', *args)
 
 
 def git(cwd: Path, *args: str) -> str | None:
@@ -141,7 +148,7 @@ def waiter_edges(data: dict, cr_id: str, design_ids: list[str]) -> tuple[list[di
         if blocker == cr_id:
             notes.append(f'{edge} (the change request: implementation wait, kept)')
         elif data['rows'][blocker]['status'] == 'closed':
-            notes.append(f'{edge} (design already satisfied: kept; owner decides whether {waiter} needs the landed design)')
+            notes.append(f'{edge} (met under the old runtime: apply makes it relates-to)')
         elif (waiter, cr_id) in data['waits']:
             notes.append(f'{edge} (also waits on {cr_id}: kept)')
         elif row.get('assignee'):
@@ -211,6 +218,19 @@ def classify(data: dict, main: Path, cr_id: str) -> dict:
     return row
 
 
+def met_waits(data: dict) -> list[dict]:
+    """Waits the old runtime counted as met and the new one reads as waiting for a landing: a live item waiting on a
+    closed design inside an unlanded change request other than its own."""
+    cr_of = {child: cr for cr, kids in data['children'].items() for child in kids}
+    found = []
+    for waiter, blocker in data['waits']:
+        w, b, cr = data['rows'].get(waiter), data['rows'].get(blocker), cr_of.get(blocker)
+        if (w and b and cr and b['issue_type'] == 'design' and b['status'] == 'closed' and w['status'] != 'closed'
+                and cr_of.get(waiter) != cr):
+            found.append({'waiter': waiter, 'on': blocker, 'cr': cr})
+    return found
+
+
 def inventory(data: dict, main: Path) -> dict:
     rows = [row for row in (classify(data, main, cr) for cr in data['live']) if row['kind']]
     ratifications = []
@@ -219,7 +239,7 @@ def inventory(data: dict, main: Path) -> dict:
         if (item.get('metadata') or {}).get('ratification') == 'design':
             ratifications.append({'id': item_id, 'cr': item.get('parent'), 'title': item['title'],
                                   'review_worktree': bool((item.get('metadata') or {}).get('opened_tip')) or (main / '.worktrees' / item_id / '.git').is_file()})
-    return {'records': rows, 'ratifications': ratifications}
+    return {'records': rows, 'ratifications': ratifications, 'met': met_waits(data)}
 
 
 def print_inventory(found: dict) -> None:
@@ -238,9 +258,11 @@ def print_inventory(found: dict) -> None:
             print(f'  manual: {text}')
     for item in found['ratifications']:
         print(f"{item['id']}  design ratification of {item['cr']}  review worktree={'yes' if item['review_worktree'] else 'no'}")
-        print('  transition: resolve through the current workflow while the old runtime is available (agents board ratify); closed ratifications stay')
-    if not found['records'] and not found['ratifications']:
-        print('no live checkpoint, passed design or design ratification')
+        print('  transition: resolve it with agents board ratify; closed ratifications stay')
+    for edge in found['met']:
+        print(f"{edge['waiter']} waits on {edge['on']}, a closed design in unlanded {edge['cr']}: met under the old runtime; apply makes it relates-to")
+    if not found['records'] and not found['ratifications'] and not found['met']:
+        print('no live checkpoint, passed design, design ratification or met design wait')
 
 
 def draft_mapping(found: dict) -> dict:
@@ -251,7 +273,8 @@ def draft_mapping(found: dict) -> dict:
         if row['kind'] != 'hold':
             entry['edges'] = row['edges']
         records.append(entry)
-    return {'version': 1, 'approved_by': '', 'records': records, 'ratifications': [item['id'] for item in found['ratifications']]}
+    return {'version': 1, 'approved_by': '', 'records': records, 'ratifications': [item['id'] for item in found['ratifications']],
+            'met': found['met']}
 
 
 # --- applying a mapping -------------------------------------------------------------------------------------------------
@@ -286,12 +309,15 @@ def convert_record(entry: dict, main: Path, write: bool, log: list[str]) -> None
         log.append(f'{cr_id}: return to authoring')
         if write:
             board('return', cr_id, RETURN_NOTE)
+            for key, status in current_state(main, cr_id)['design'].items():
+                if status == 'in_review':  # the new runtime's return leaves design items as they are
+                    raw('update', key, '--status', 'open')
             after = current_state(main, cr_id)
             if after != returned:
                 raise diverged(cr_id, returned, after, tuple(returned))
     log.append(f'{cr_id}: clear the checkpoint marker')
     if write:
-        board('update', cr_id, '--checkpoint', '')
+        raw('update', cr_id, '--unset-metadata', 'checkpoint')
         if current_state(main, cr_id)['checkpoint'] is not None:
             raise ConversionError(f'{cr_id}: the marker is still set after the update; inspect agents board show {cr_id}')
 
@@ -323,6 +349,24 @@ def add_wait(edge: dict, cr_id: str, main: Path, write: bool, log: list[str]) ->
             raise ConversionError(f'{waiter}: the wait on {cr_id} is not recorded after block')
 
 
+def to_relates(edge: dict, write: bool, log: list[str]) -> None:
+    """A met wait becomes relates-to; rerunnable, and stops when the design was reopened since the inventory."""
+    waiter, on = edge['waiter'], edge['on']
+    rows = {row['id']: row for row in json.loads(board('bd', 'list', '--all', '--json', '--limit', '0'))}
+    edges = {(dep['issue_id'], dep['depends_on_id']): dep['type'] for row in rows.values() for dep in row.get('dependencies') or []}
+    kind = edges.get((waiter, on))
+    if kind == 'relates-to':
+        log.append(f'{waiter}: relates to {on} already')
+        return
+    if kind in BLOCKING and rows.get(on, {}).get('status') != 'closed':
+        raise ConversionError(f'{on} was reopened since the inventory, so {waiter} waits on it again; stopped before writing, re-inventory')
+    log.append(f'{waiter}: wait on {on} becomes relates-to (met under the old runtime)')
+    if write:
+        if kind in BLOCKING:
+            board('unblock', waiter, '--on', on)
+        board('link', waiter, on, '--type', 'relates-to')
+
+
 def read_waits() -> list[tuple[str, str]]:
     rows = json.loads(board('bd', 'list', '--all', '--json', '--limit', '0'))
     return [(dep['issue_id'], dep['depends_on_id']) for row in rows for dep in row.get('dependencies') or [] if dep['type'] in BLOCKING]
@@ -338,6 +382,8 @@ def apply(mapping: dict, main: Path, write: bool) -> list[str]:
             convert_record(entry, main, write, log)
         for edge in entry.get('edges', []):
             add_wait(edge, entry['cr'], main, write, log)
+    for edge in mapping.get('met', []):
+        to_relates(edge, write, log)
     for item_id in mapping.get('ratifications', []):
         record = json.loads(board('show', '--json', item_id))[item_id]
         log.append(f"{item_id}: design ratification {record['status']}: resolve through agents board ratify" if record['status'] != 'closed'
@@ -348,7 +394,8 @@ def apply(mapping: dict, main: Path, write: bool) -> list[str]:
 def verify(found: dict, data: dict) -> list[str]:
     left = [f"{cr}: live checkpoint metadata ({(data['detail'][cr].get('metadata') or {}).get('checkpoint')})"
             for cr in data['live'] if (data['detail'][cr].get('metadata') or {}).get('checkpoint')]
-    return left + [f"{item['id']}: design ratification still needs ratification" for item in found['ratifications']]
+    return (left + [f"{item['id']}: design ratification still needs ratification" for item in found['ratifications']]
+            + [f"{edge['waiter']}: still waits on {edge['on']}, a closed design in unlanded {edge['cr']}" for edge in found['met']])
 
 
 def main() -> int:
@@ -384,7 +431,7 @@ def main() -> int:
             left = verify(inventory(data, main_root), data)
             for line in left:
                 print(line)
-            print('conversion incomplete' if left else 'no live checkpoint metadata and no design ratification left: the new runtime may be installed')
+            print('conversion incomplete' if left else 'no live checkpoint metadata, design ratification or met design wait left: conversion complete')
             return 1 if left else 0
     except (ConversionError, OSError, ValueError, KeyError) as error:
         print(f'checkpoint conversion stopped: {error}', file=sys.stderr)

@@ -203,22 +203,25 @@ step goes in a change set and runs on the user's confirmation.
 
 ## Checkpoints
 
-Per board, before its owner installs the runtime without design checkpoints
-(design: `docs/board/ordinary-design-requests.md`, Existing records and
-rollout). The script runs the installed old board from the project checkout:
+Per board, after the owner installs the runtime without design checkpoints
+and restarts its sessions (design: `docs/board/ordinary-design-requests.md`,
+Existing records and rollout). The script runs from the project checkout:
 `python3 "$HOME/.agents/skills/board-migrate/scripts/convert-design-checkpoints.py"`.
-It writes only through `agents board return`, `update --checkpoint ""` and
-`block`; everything else it lists as a manual step.
+It writes only through `agents board return`, `block`, `unblock`, `link` and
+raw bd writes for the checkpoint marker and returned design items; everything
+else it lists as a manual step.
 
 1. **Inventory.** `convert-design-checkpoints.py inventory --mapping <file>`
    (read-only; the file goes in `agents scratch dir --shared board-migrate`).
    One row per live checkpoint, passed design and design ratification: status,
    holder, tip, design items, body source, the transition from the spec table,
-   hold reasons, dependent edges with direction, manual steps.
+   hold reasons, dependent edges with direction, manual steps; and each wait the
+   old runtime counted as met (on a closed design inside an unlanded CR), which
+   `apply` turns into `relates-to`.
    Output: the rows; the draft mapping path.
 2. **Approve.** Show the owner the rows, the manual steps and each `hold`; the
-   owner approves the mapping, an `agents board bd export` backup, any live
-   review exits and the installation, and has writers paused. A scratch
+   owner approves the mapping, an `agents board bd export` backup and any live
+   review exits, and has writers paused. A scratch
    reference or a missing provenance line alone approves no text: bring each
    to the owner. The owner sets `approved_by` in the mapping and removes or
    edits rows.
@@ -237,10 +240,9 @@ It writes only through `agents board return`, `update --checkpoint ""` and
    text in the topic document on the branch (compare it with the reviewed
    range), a documentation CR for a passed design without a doc owner, move
    implementation items into a dependent CR, add waits for held waiters.
-6. **Verify and install.** `convert-design-checkpoints.py verify` exits 0 only
-   with no live checkpoint metadata and no design ratification left; then the
-   owner installs the new runtime and runs the transition smoke. Keep the old
-   tools and the backup until it passes.
+6. **Verify.** `convert-design-checkpoints.py verify` exits 0 only with no
+   live checkpoint metadata, design ratification or met design wait left; then
+   writers resume. Keep the backup until the board's next ordinary landing.
    Output: the verify result.
 
 ## Scratch

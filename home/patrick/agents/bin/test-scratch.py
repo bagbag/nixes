@@ -1467,20 +1467,24 @@ if args[:2] == ['bd', 'list']:
     print(json.dumps([row(i) for i in found]))
 elif args[0] == 'show':
     print(json.dumps({{i: full(items[i]) for i in args[2:]}}))
-elif args[0] == 'return':
+elif args[0] == 'return':  # the new runtime: the CR alone goes back, its items stay as they are
     cr = items[args[1]]
     if cr['status'] not in ('in_review', 'needs_acceptance') or cr.get('assignee'):
         fail('not returnable')
     cr['status'] = 'open'
     cr.setdefault('comments', []).append('board return: ' + args[2])
-    for i in state['items']:
-        if i.get('parent') == cr['id'] and i['issue_type'] == 'design' and i['status'] == 'in_review':
-            i['status'] = 'open'
-elif args[0] == 'update':
-    cr = items[args[1]]
-    if args[2:] != ['--checkpoint', ''] or cr['status'] != 'open' or cr.get('assignee'):
-        fail('refused update')
-    cr['metadata'].pop('checkpoint', None)
+elif args[:4] == ['bd', '--raw', '--yes', 'update']:
+    item, flags = items[args[4]], args[5:]
+    if flags[:1] == ['--unset-metadata']:
+        item['metadata'].pop(flags[1], None)
+    elif flags[:1] == ['--status']:
+        item['status'] = flags[1]
+    else:
+        fail('unexpected raw update ' + repr(flags))
+elif args[0] == 'unblock':
+    state['deps'] = [d for d in state['deps'] if not (d['issue_id'] == args[1] and d['depends_on_id'] == args[3] and d['type'] == 'blocks')]
+elif args[0] == 'link':
+    state['deps'].append({{'issue_id': args[1], 'depends_on_id': args[2], 'type': args[4]}})
 elif args[0] == 'block':
     if state.get('fail_block'):
         state['fail_block'] -= 1
@@ -1497,7 +1501,7 @@ print('lead0001' if sys.argv[1:] == ['actor'] else json.dumps({{'actor': 'lead00
 
 
 class Convert:
-    """A stateful fake board (the old runtime's verbs the conversion uses) beside a real git checkout with cr/<id> branches."""
+    """A stateful fake board (the new runtime's verbs the conversion uses: no checkpoint flag) beside a real git checkout with cr/<id> branches."""
 
     def __init__(self, e: Env):
         self.e = e
@@ -1540,7 +1544,7 @@ class Convert:
 
     def writes(self) -> int:
         self.load()
-        return sum(c[0] in ('return', 'update', 'block') for c in self.state['calls'])
+        return sum(c[0] in ('return', 'block', 'unblock', 'link') or c[:2] == ['bd', '--raw'] for c in self.state['calls'])
 
 
 def checkpoint_board(e: Env) -> Convert:
@@ -1574,6 +1578,11 @@ def checkpoint_board(e: Env) -> Convert:
     c.wait('w-cr', 'cp-user')
     c.wait('w-passed', 'd-passed')
     c.wait('w-held', 'd-agent')
+    # tstdl's shape: a closed design inside an unlanded CR, waited on from another CR whose item the first CR waits on.
+    c.item('other', 'change-request', 'open')
+    c.item('x-src', 'task', 'open', 'other')
+    c.wait('x-src', 'd-passed')
+    c.wait('impl', 'x-src')
     for cr in ('cp-user', 'cp-agent', 'cp-ret', 'cp-scratch', 'cp-noprov', 'cp-held', 'cp-review', 'passed'):
         c.branch(cr)
     return c
@@ -1593,7 +1602,8 @@ def convert_checkpoints_inventories_without_writing(e: Env):
         check(kind in section, f'{cr} maps to {kind}: {section}')
     check('missing provenance' in text and 'held by someone' in text and 'in review' in text, f'hold reasons are listed:\n{text}')
     check('w-design waits on d-user (unsatisfied delivery wait' in text and 'w-cr waits on cp-user (the change request' in text
-          and 'w-passed waits on d-passed (design already satisfied' in text and 'w-held waits on d-agent' in text and 'held by someone: quiesce' in text,
+          and 'w-passed waits on d-passed (met under the old runtime' in text
+          and 'x-src waits on d-passed, a closed design in unlanded passed: met under the old runtime' in text and 'w-held waits on d-agent' in text and 'held by someone: quiesce' in text,
           f'edge directions and kinds are listed:\n{text}')
     check('body held in scratch' in text and 'sha256' in text and 'documentation CR' in text and 'implementation items' not in text.split('\npassed')[0],
           f'manual steps are listed, not done:\n{text}')
@@ -1612,6 +1622,8 @@ def convert_checkpoints_applies_reruns_and_refuses_divergence(e: Env):
     mapping = json.loads(Path(c.mapping).read_text())
     mapping['approved_by'] = 'owner'
     Path(c.mapping).write_text(json.dumps(mapping))
+    before = c.run('verify')
+    check(before.returncode == 1 and 'x-src: still waits on d-passed' in before.stdout, f'verify names a met wait left: {before.stdout}')
     dry = c.run('apply', c.mapping)
     check(dry.returncode == 0 and 'cp-user: return to authoring' in dry.stdout and c.writes() == 0, f'a dry run writes nothing: {dry.stdout}{dry.stderr}')
     check(c.run('apply', c.mapping, '--apply', role='agent').returncode and c.writes() == 0, 'only a lead or solo session writes')
@@ -1648,6 +1660,10 @@ def convert_checkpoints_applies_reruns_and_refuses_divergence(e: Env):
     check({'issue_id': 'w-design', 'depends_on_id': 'cp-user', 'type': 'blocks'} in c.state['deps']
           and {'issue_id': 'w-design', 'depends_on_id': 'd-user', 'type': 'blocks'} in c.state['deps'],
           'the unsatisfied waiter also waits on the design CR and keeps its old edge')
+    for waiter in ('w-passed', 'x-src'):
+        kinds = [d['type'] for d in c.state['deps'] if (d['issue_id'], d['depends_on_id']) == (waiter, 'd-passed')]
+        check(kinds == ['relates-to'], f'{waiter}: the met wait on d-passed became relates-to: {kinds}')
+    check({'issue_id': 'impl', 'depends_on_id': 'x-src', 'type': 'blocks'} in c.state['deps'], 'an unrelated wait stays')
     check(not any(d['issue_id'] in ('w-passed', 'w-held', 'w-cr') and d['depends_on_id'] in ('cp-user', 'cp-agent', 'passed') and d['type'] == 'blocks'
                   and (d['issue_id'], d['depends_on_id']) != ('w-cr', 'cp-user') for d in c.state['deps']), 'satisfied, held and implementation waits get no new edge')
     writes = c.writes()
@@ -1660,7 +1676,7 @@ def convert_checkpoints_applies_reruns_and_refuses_divergence(e: Env):
         items[cr]['metadata'].pop('checkpoint')
     items['rat1']['status'] = 'closed'
     clean = c.run('verify')
-    check(clean.returncode == 0 and 'may be installed' in clean.stdout, f'a converted board verifies: {clean.stdout}{clean.stderr}')
+    check(clean.returncode == 0 and 'conversion complete' in clean.stdout, f'a converted board verifies: {clean.stdout}{clean.stderr}')
 
 
 def main() -> int:
