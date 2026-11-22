@@ -212,12 +212,9 @@ raw bd writes for the checkpoint marker and returned design items; everything
 else it lists as a manual step.
 
 1. **Inventory.** `convert-design-checkpoints.py inventory --mapping <file>`
-   (read-only; the file goes in `agents scratch dir --shared board-migrate`).
-   One row per live checkpoint, passed design and design ratification: status,
-   holder, tip, design items, body source, the transition from the spec table,
-   hold reasons, dependent edges with direction, manual steps; and each wait the
-   old runtime counted as met (on a closed design inside an unlanded CR), which
-   `apply` turns into `relates-to`.
+   (read-only; the file goes in `agents scratch dir --shared board-migrate`):
+   one row per live checkpoint, passed design, design ratification and met
+   design wait.
    Output: the rows; the draft mapping path.
 2. **Approve.** Show the owner the rows, the manual steps and each `hold`; the
    owner approves the mapping, an `agents board bd export` backup and any live
@@ -231,18 +228,20 @@ else it lists as a manual step.
    ratification with `agents board ratify`, then rerun step 1 and re-approve
    the changed rows. Block work behind missing bodies on a question to the
    owner.
+   Output: each hold resolved, or its question.
 4. **Convert.** `convert-design-checkpoints.py apply <mapping>` (dry run), then
-   with `--apply`. It rechecks every row's status, holder, tip and waits before
-   the first write and again before each write, stops at any divergence, and
-   skips what is done: rerun it after an interruption. Return a changed
-   record to step 1.
+   with `--apply`. After an interruption, rerun it; on a divergence, return
+   the record to step 1.
+   Output: the apply log.
 5. **Manual steps.** Do each listed step through its owner: place the design
    text in the topic document on the branch (compare it with the reviewed
    range), a documentation CR for a passed design without a doc owner, move
    implementation items into a dependent CR, add waits for held waiters.
+   Output: each step done, or the owner it waits on.
 6. **Verify.** `convert-design-checkpoints.py verify` exits 0 only with no
-   live checkpoint metadata, design ratification or met design wait left; then
-   the owner resumes writers. Keep the backup until the owner's transition smoke passes.
+   live checkpoint metadata, design ratification or met design wait left;
+   then the owner resumes writers. Keep the backup until the owner's
+   transition smoke passes.
    Output: the verify result.
 
 ## Scratch

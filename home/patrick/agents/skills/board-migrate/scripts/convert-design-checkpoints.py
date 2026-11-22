@@ -294,8 +294,8 @@ def diverged(cr_id: str, expected: dict, current: dict, fields: tuple[str, ...])
 
 
 def convert_record(entry: dict, main: Path, write: bool, log: list[str]) -> None:
-    """Three-way recheck: the approved state returns to authoring and clears; the returned state only clears; a cleared
-    marker is done; anything else stops."""
+    """Recheck: the approved state returns to authoring, reopens its design items and clears; a returned state finishes
+    the reopens and clears; a cleared marker is done; anything else stops."""
     cr_id, expect, steps = entry['cr'], entry['expect'], entry.get('steps', [])
     current = current_state(main, cr_id)
     if current['checkpoint'] is None:
