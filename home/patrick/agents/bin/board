@@ -136,7 +136,7 @@ SERVER_CONFIG = (('dolt.auto-start', 'false'),)  # a server-mode board: board st
 SHARED_CONFIG = (('dolt.auto-commit', 'batch'),)  # a shared board: one commit per sync
 SENT_AT = 'sent_at'  # item metadata: when board send last put the item in an inbox
 CR_TYPE = 'change-request'
-ACCEPT = 'needs_acceptance'  # a change request waiting for the user: finished (look before) or at a user design checkpoint
+ACCEPT = 'needs_acceptance'  # a change request waiting for the user: finished (look before)
 
 
 class BoardError(Exception):
@@ -681,14 +681,9 @@ def may_move(board: 'Board | None' = None) -> bool:
     return not derived_actor() or session_role(board) in MOVERS
 
 
-def may_judge(board: Board, cr: dict) -> bool:
-    """Who gives a change request's Accept verdict: a lead, solo or person any; autopilot a user design checkpoint, in the user's place."""
-    return may_move(board) or (session_role(board) == 'autopilot' and meta(cr).get('checkpoint') == 'user')
-
-
-def autopilot_barred(board: Board, cr: dict) -> bool:
+def autopilot_barred(board: Board) -> bool:
     """An autopilot session facing a finished change request: its Accept is the user's, so autopilot neither claims nor judges it."""
-    return session_role(board) == 'autopilot' and not may_judge(board, cr)
+    return session_role(board) == 'autopilot'
 
 
 def bd_show(ids: list[str], *flags: str, comments: bool = True) -> list[dict]:
@@ -1150,7 +1145,7 @@ class Board:
         if kind == 'decision':
             return {'released': 'plan', 'open': 'question', 'needs_ratification': 'ratify'}.get(status)
         if status == 'needs_ratification' and kind in WORK_TYPES:
-            return 'ratify'  # the ratification of a landed change request or an accepted design
+            return 'ratify'  # the ratification of a landed change request
         # Work items are claimed through their change request (by id, by the session holding it): no pull of their own;
         # a standalone review (an in_review task outside any CR, findings and no commits) and open no-commit work are the exceptions.
         if status == 'in_review' and kind in WORK_TYPES and self.cr_of(issue['id']) is None:
@@ -1191,8 +1186,19 @@ class Board:
 
     def stackable(self, issue: dict) -> bool:
         """May a change request build on this one: only a parent waiting for the user (look before), never one in agent review
-        or at a design checkpoint (q235, q230)."""
-        return issue['status'] == ACCEPT and not meta(issue).get('checkpoint')
+        (q235) or a design-only one, whose dependents wait for it to land."""
+        return issue['status'] == ACCEPT and not self.design_only(issue['id'])
+
+    def design_only(self, cr_id: str) -> bool:
+        """Every work item of the CR, closed ones included (ratifications and stacked requests aside), is a design. A status snapshot
+        holds no closed items, so it reads them unless an open one already settles it."""
+        def work(rows):
+            return [i for i in rows if i.get('issue_type') != CR_TYPE and not meta(i).get('ratification')]
+        known = work(self.by_id[c] for c in self.children.get(cr_id, []) if c in self.by_id)
+        if any(i.get('issue_type') != 'design' for i in known):
+            return False
+        items = known if self.complete else work(cr_closed_items(self, cr_id))
+        return bool(items) and all(i.get('issue_type') == 'design' for i in items)
 
     def cr_blockers(self, issue: dict) -> list[str]:
         """What the CR and its open items wait on, apart from each other."""
@@ -1223,8 +1229,6 @@ class Board:
         self.fetch_cr_blockers()
         for blocker in dict.fromkeys(blockers):
             record = self.by_id.get(blocker)
-            if self._closed_blockers.get(blocker) == 'design' or (record is not None and record['status'] == 'closed' and record.get('issue_type') == 'design'):
-                continue  # delivered at its checkpoint
             if record is not None and not self.is_open(blocker) and self.cr_of(blocker) is None:
                 continue  # closed
             if record is None and (blocker.startswith('external:') or
@@ -1242,9 +1246,6 @@ class Board:
             if target is None or target['status'] == 'closed':
                 continue  # landed
             if cr_id == issue['id']:
-                continue
-            if projected and record and record.get('issue_type') == 'design':
-                waits.append(blocker)
                 continue
             if self.stackable(target):
                 if cr_id not in bases:
@@ -1449,9 +1450,6 @@ class WorkUnlocks:
                     and issue['status'] != 'needs_ratification':
                 continue  # the parent is the work unit
             self.delivers[item_id] = {item_id}
-            if kind == CR_TYPE:
-                designs = {child['id'] for child in board.cr_items(item_id) if child.get('issue_type') == 'design'}
-                self.delivers[item_id] = designs if meta(issue).get('checkpoint') else {item_id, *designs}
             wait = self.waits[item_id] = self.wait_for(issue)
             if wait.ready(set()):
                 self.ready.add(item_id)
@@ -1479,7 +1477,7 @@ class WorkUnlocks:
             closed = record['status'] == 'closed' if record else blocker in board._closed_blockers
             kind = record.get('issue_type') if record else board._closed_blockers.get(blocker)
             parent = board.cr_of(blocker) if record or blocker in board._outside else None
-            if parent and parent != blocker and kind != 'design':
+            if parent and parent != blocker:
                 if board.is_open(parent):
                     hard.add(parent)  # an implementation item's delivery is its parent's landing
             elif not closed:
@@ -1625,7 +1623,7 @@ def health_views(board: Board, root: str | None) -> dict[str, tuple[str, list[di
     return {
         'questions': ('open questions', [i for i in decisions if i['status'] in ('open', 'in_progress')]),
         'decided': ('decided, not released', [i for i in decisions if i['status'] == 'decided']),
-        'ratify': ('ratifications of landed change requests and agent-passed designs (block nothing)',
+        'ratify': ('ratifications of landed change requests (block nothing)',
                    [i for i in items if i['status'] == 'needs_ratification' and i.get('issue_type') in WORK_TYPES]),
         'released': ('released rulings to plan', [i for i in decisions if i['status'] == 'released']),
         'review': ('to review (change requests in agent review)', [i for i in items if board.kind(i) == 'review']),
@@ -2037,6 +2035,7 @@ CHECK_CLASSES = {  # class -> board-core anchor
     'deferred-blocker': 'deferrals-and-environment-facts',
     'outside-wait': 'change-requests',
     'cr-settings': 'change-requests',
+    'cr-checkpoint': 'change-requests',
     'cr-worktree': 'change-requests',
     'cr-branch': 'change-requests',
     'cr-landing': 'change-requests',
@@ -2098,7 +2097,7 @@ def deviations(board: Board, root: str | None) -> list[tuple[str, str, str]]:
                 and not board.waits_on_decision_design_or_spike(item_id):
             found.append((item_id, 'no-cr', f'work item outside any change request: agents board update {item_id} --parent <change request>, '
                                             f'or --no-commit for work that commits nothing to this repository'))
-        for key in sorted(set(meta(issue)) - BOARD_METADATA):
+        for key in sorted(set(meta(issue)) - BOARD_METADATA - {'checkpoint'}):
             found.append((item_id, 'unknown-metadata', f'metadata {key}: {metadata_fix(issue, key)}'))
         for dep in issue.get('dependencies') or []:
             link, target = dep.get('type') or 'blocks', dep.get('depends_on_id')
@@ -2800,7 +2799,7 @@ def author_label(board: Board, issue: dict) -> str:
 NO_COMMIT = 'no_commit'  # a work item that by design commits nothing to this repository (a run, an external step): it needs no CR. Stored as
 # JSON true: bd parses `--set-metadata k=1` to a number and a graph node keeps a string, so a boolean is the one form both writes give
 RETIRED_METADATA = {'no_code': NO_COMMIT, 'triaged_tip': None, 'triaged_base_tip': None}  # keys the board once wrote: their new name, or none
-CR_SETTINGS = {'look': ('before', 'after'), 'view': ('code', 'result'), 'checkpoint': ('agent', 'user')}  # a CR's own settings (change-requests.md)
+CR_SETTINGS = {'look': ('before', 'after'), 'view': ('code', 'result')}  # a CR's own settings (change-requests.md)
 
 
 def retired_move(issue: dict, key: str) -> str | None:
@@ -3196,9 +3195,9 @@ def claim(board: Board, args) -> int:
                         failed.append(item_id)
                         print(f'{item_id}: not claimed: {message}', file=sys.stderr)
                     continue
-                if kind is None and board.kind(issue) == 'accept' and autopilot_barred(board, issue):
+                if kind is None and board.kind(issue) == 'accept' and autopilot_barred(board):
                     failed.append(item_id)
-                    print(f"{item_id}: not claimable: autopilot judges only user design checkpoints; a finished change request waits for the user's Accept",
+                    print(f"{item_id}: not claimable: a finished change request waits for the user's Accept",
                           file=sys.stderr)
                     continue
                 if kind is None and board.kind(issue) == 'accept' and accept_waits(board, issue) and not cr_worktree_state(board, issue):
@@ -3258,9 +3257,6 @@ def claim(board: Board, args) -> int:
             print(f"  refresh work: agents board cr refresh {issue['id']}, then agents board unclaim {issue['id']}")
         if resume := last_resume(board, issue['id']):
             print(f'  resume: {resume}')
-        if kind == 'accept' and meta(issue).get('checkpoint') == 'user':
-            pin, designs = design_pin(board, issue)
-            print(f"  design hash {pin} ({', '.join(designs) or 'no design item'}); next: {step_text(checkpoint_step(board, issue))}")
         for blocker in board.foreign_waits(issue):  # a released ruling waits for planning only (r21-q139): the plan session removes it
             print(f"  fix: {issue['id']} waits on {blocker}, which is work and not planning; check what the ruling changes there, "
                   f"then {dep_fix(issue['id'], blocker)}")
@@ -3449,7 +3445,7 @@ def git_text(root: Path, *args: str, env: dict[str, str] | None = None, input: s
 # session holding it. Its place in the flow is its status (open, in_progress, in_review, needs_acceptance); the flow is in
 # skills/shared/change-requests.md.
 SETTINGS = {name: f'custom.board.{name}' for name in ('target', 'setup', 'checks', 'look', 'view')}  # bd's namespace for custom keys
-LOOKS, VIEWS, CHECKPOINTS = ('before', 'after'), ('code', 'result'), ('agent', 'user')
+LOOKS, VIEWS = ('before', 'after'), ('code', 'result')
 # Worktrees live inside the main checkout, <main>/.worktrees/<cr id>, so every runtime's workspace sandbox covers them without
 # a grant (q239 reversed 2026-11-11); the repository's local exclude file hides them from git status.
 WORKTREES = '.worktrees'
@@ -3926,10 +3922,8 @@ def in_work_crs(board: Board) -> list[dict]:
 
 
 def queue_head(board: Board, queue: list[dict] | None = None) -> dict | None:
-    """The first queued CR that lands and is not itself waiting: the only one that can be refresh work (q196, q201). A design
-    checkpoint lands nothing (its Accept is pinned by the design hash), so it neither is refresh work nor holds the head."""
-    return next((i for i in (accept_queue(board) if queue is None else queue)
-                 if meta(i).get('checkpoint') != 'user' and not board.cr_waits(i)[0]), None)
+    """The first queued CR that is not itself waiting: the only one that can be refresh work (q196, q201)."""
+    return next((i for i in (accept_queue(board) if queue is None else queue) if not board.cr_waits(i)[0]), None)
 
 
 def needs_refresh(board: Board, cr: dict) -> bool:
@@ -4146,8 +4140,8 @@ def accept_waits(board: Board, cr: dict) -> list[str]:
 def cr_claimable(board: Board, cr: dict, kind: str) -> str | None:
     if board.cr_waits(cr)[0]:
         return None  # includes a review whose base was returned (q206); a named Accept claim takes one anyway (`claim`)
-    if kind == 'accept' and autopilot_barred(board, cr):
-        return None  # finished CRs wait for the user's Accept; autopilot takes only user design checkpoints
+    if kind == 'accept' and autopilot_barred(board):
+        return None  # finished CRs wait for the user's Accept
     if kind == 'accept' and accept_waits(board, cr):
         return None  # nothing of it can land yet: the next claim passes it
     if kind != 'plan' and cr_worktree_state(board, cr):
@@ -4167,11 +4161,11 @@ def cr_closed_items(board: Board, cr_id: str) -> list[dict]:
 
 
 def cr_stage(cr: dict) -> str | None:
-    """The place of a change request as the views show it: review, checkpoint (agent), accept (waiting for the user)."""
+    """The place of a change request as the views show it: review, accept (waiting for the user)."""
     if cr['status'] == ACCEPT:
         return 'accept'
     if cr['status'] == 'in_review':
-        return 'checkpoint' if meta(cr).get('checkpoint') == 'agent' else 'review'
+        return 'review'
     return None
 
 
@@ -4348,7 +4342,7 @@ def cr_problems(board: Board, cr: dict, info: dict, refresh_id: str | None) -> l
     state = cr_worktree_state(board, cr)
     if state:
         out.append({'kind': 'git-state', 'text': f"mid {state} (not the board's)", 'next': {'action': 'owner', 'paths': [info['worktree']]}})
-    accepting = cr['status'] == ACCEPT and m.get('checkpoint') != 'user'  # a design checkpoint lands nothing: its check and review hold nothing up
+    accepting = cr['status'] == ACCEPT
     parent = live_parent(board, cr) if accepting else None
     waits = accept_waits(board, cr) if accepting else [] if cr['status'] == ACCEPT else board.cr_waits(cr)[0]  # nor do waits its Accept
     for wait in waits:
@@ -4392,7 +4386,7 @@ def cr_json(board: Board, cr: dict, children: dict[str, list[str]], refresh_id: 
                       'incomingCommits': incoming}
     return {'id': cr['id'], 'title': cr.get('title', ''), 'status': cr['status'], 'stage': cr_stage(cr),
             'holder': cr.get('assignee') or None, 'look': m.get('look') or board.settings.get('look') or None,
-            'view': m.get('view') or board.settings.get('view') or None, 'checkpoint': m.get('checkpoint') or None,
+            'view': m.get('view') or board.settings.get('view') or None,
             'base': base or board.settings.get('target') or None, 'branch': info['branch'],
             'worktree': info['worktree'], 'tip': info['tip'], 'baseTip': info['baseTip'],
             'check': {'state': info['state'], 'tip': pair.get('tip'), 'baseTip': pair.get('baseTip'), 'at': pair.get('at'),
@@ -4495,6 +4489,11 @@ def cr_deviations(board: Board, root: str | None) -> list[tuple[str, str, str]]:
     if live:
         found += [(live[0]['id'], 'cr-settings', problem) for problem in settings_problems(board)]
     for cr in live:
+        legacy = [f"metadata checkpoint={meta(cr)['checkpoint']}"] if 'checkpoint' in meta(cr) else []
+        legacy += [f'open design ratification {c}' for c in board.children.get(cr['id'], [])
+                   if board.by_id[c]['status'] == 'needs_ratification' and meta(board.by_id[c]).get('ratification') == 'design']
+        if legacy:
+            found.append((cr['id'], 'cr-checkpoint', f"{', '.join(legacy)}: the design checkpoint is retired and no longer read; follow /board-migrate"))
         state = cr_worktree_state(board, cr)  # any live CR with a worktree, a returned (open) one included: it left the claim queue
         if state:
             found.append((cr['id'], 'cr-git-state', f"{cr_worktree(board._main, cr['id'])} is mid {state} the board did not start: out of the claim queue until "
@@ -4505,8 +4504,6 @@ def cr_deviations(board: Board, root: str | None) -> list[tuple[str, str, str]]:
         if info['main'] is None:
             continue
         if info['tip'] is None:
-            if cr['status'] == ACCEPT and meta(cr).get('checkpoint') == 'user':
-                continue  # a design checkpoint waiting for the user has no branch to land (change-requests.md)
             found.append((cr['id'], 'cr-branch', f"{cr['status']} without its branch {info['branch']}: restore it, or agents board return/unclaim the change request"))
         elif not Path(info['worktree']).is_dir():
             found.append((cr['id'], 'cr-worktree', f"{cr['status']} without its worktree {info['worktree']}: git worktree add {info['worktree']} {info['branch']}"))
@@ -4713,29 +4710,18 @@ def claim_cr(board: Board, cr: dict, actor: str, kind: str) -> tuple[bool, str]:
 
 def open_item_refusal(board: Board, cr: dict) -> str | None:
     items = board.cr_items(cr['id'])
-    if ((cr['status'] == 'in_progress' and meta(cr).get('checkpoint') in ('user', 'agent'))
-            or cr_at_design_checkpoint(cr)):
-        items = [item for item in items if item.get('issue_type') != 'design']
     return f"{cr['id']}: items still open: {', '.join(i['id'] for i in items)}; close them (agents board close <item> --reason \"<sha>: …\") or move them out" if items else None
 
 
-def checkpoint_design_items(board: Board, cr_id: str, status: str | None = None) -> list[str]:
-    """The design items in a checkpoint CR, optionally limited to one status."""
-    return [item['id'] for item in cr_closed_items(board, cr_id)
-            if item.get('issue_type') == 'design' and (status is None or item.get('status') == status)]
-
-
-def cr_ratification(board: Board, cr: dict, kind: str) -> str | None:
-    """The user's look at what landed or passed, while no same-kind ratification is active."""
-    if kind not in ('landing', 'design'):
-        raise BoardError(f'unknown change-request ratification kind {kind!r}')
+def cr_ratification(board: Board, cr: dict) -> str | None:
+    """The user's look at what landed, while no landing ratification is active."""
     for child in cr_closed_items(board, cr['id']):
         if (child.get('issue_type') in WORK_TYPES and child.get('status') == 'needs_ratification'
-                and meta(child).get('ratification') == kind):
+                and meta(child).get('ratification') == 'landing'):
             return None
     title = cr.get('title', '')
     made = create_item(board, title, 'task', parent=cr['id'], priority=cr.get('priority', 2),
-                       metadata={'ratification': kind},
+                       metadata={'ratification': 'landing'},
                        description=f"Look at {title} ({cr['id']}): branch {cr_branch(cr['id'])}. Close when ratified; "
                                    'a "no" becomes a follow-up change request.', status='needs_ratification')
     return made
@@ -4762,7 +4748,7 @@ def finish_landing(board: Board, cr: dict, tip: str, name: str, main: Path) -> l
     cid, notes = cr['id'], []
     look = cr_look(board, cr)
     if look == 'after' and not no_own_commits(main, cr, tip):  # nothing landed, nothing to ratify (r10-q50)
-        made = cr_ratification(board, cr, 'landing')
+        made = cr_ratification(board, cr)
         notes += [f'ratification {made}'] if made else []
     if cr['status'] != 'closed':
         bd_checked('close', cid, '--reason', f'landed {tip[:12]} on {name} from {cr_branch(cid)}', '--force')
@@ -4934,15 +4920,8 @@ def handover(board: Board, args) -> None:
             raise BoardError('--no-agent-review is only available on an author handover, not a reviewer pass')
         if cr_look(board, cr) != 'before':
             raise BoardError('--no-agent-review is refused in a look-after project')
-        if m.get('checkpoint'):
-            raise BoardError('--no-agent-review is for a change request, not a design checkpoint')
         refuse_long_comment(f'no agent review: {no_agent_reason}')
     refuse_long_comment(HANDOVER + args.evidence)
-    if author and m.get('checkpoint') in ('agent', 'user'):
-        busy_designs = checkpoint_design_items(board, args.id, 'in_progress')
-        if busy_designs:
-            raise BoardError(f"{args.id}: checkpoint design items still in progress: {', '.join(busy_designs)}; finish each design pass and release its hold before handover",
-                             next=[{'action': 'owner', 'text': f'finish and release each design pass ({", ".join(busy_designs)}), then hand over again'}])
     refusal = open_item_refusal(board, cr)
     if refusal:
         raise BoardError(refusal)
@@ -4969,18 +4948,6 @@ def handover(board: Board, args) -> None:
             said = f"no tip is recorded as seen by you (the CR was taken over); the tip is {result['tip'][:12]}"
         raise BoardError(f"{args.id}: {said}; nothing was recorded. Review the change, then pass again:\n{shown.rstrip() or '(nothing to show)'}")
     if author:
-        if m.get('checkpoint') == 'user':  # a design for the user goes straight to the user's Accept
-            designs = checkpoint_design_items(board, cr['id'], 'open')
-            if designs:
-                bd_checked('update', *designs, '--status', 'in_review', '--json')
-            waiting_for_user(cr, holder)
-            comment(args.id, HANDOVER + args.evidence)
-            print(f'handed over {args.id}: its design checkpoint waits for you ({check_said(args)} on {result["tip"][:12]})')
-            return
-        if m.get('checkpoint') == 'agent':
-            designs = checkpoint_design_items(board, cr['id'], 'open')
-            if designs:
-                bd_checked('update', *designs, '--status', 'in_review', '--json')
         if no_agent_reason is not None:
             waiting_for_user(cr, holder)
             put_meta(cr, no_agent_review_reason=no_agent_reason, reviewing_tip=None)
@@ -4991,19 +4958,10 @@ def handover(board: Board, args) -> None:
         put_meta(cr, no_agent_review_reason=None, reviewing_tip=None)
         bd_checked('update', args.id, '--status', 'in_review', '--assignee', '', *expect, '--json')
         comment(args.id, HANDOVER + args.evidence)
-        print(f'handed over {args.id} for {"checkpoint " if m.get("checkpoint") == "agent" else ""}review ({check_said(args)} on {result["tip"][:12]})')
+        print(f'handed over {args.id} for review ({check_said(args)} on {result["tip"][:12]})')
         return
     comment(args.id, f'board pass: {args.evidence}')
     put_meta(cr, review_tip=result['tip'], review_base_tip=result['baseTip'], no_agent_review_reason=None)
-    if m.get('checkpoint') == 'agent':  # the agent's design checkpoint passed: the CR goes to planning
-        designs = checkpoint_design_items(board, cr['id'], 'in_review')
-        if designs:
-            bd_checked('close', *designs, '--reason', f'{args.id}: passed agent design checkpoint')
-        bd_checked('update', args.id, '--status', 'open', '--assignee', '', *expect, '--json')
-        put_meta(cr, checkpoint=None, since=None)
-        made = cr_ratification(board, cr, 'design') if look == 'after' else None
-        print(f'passed the checkpoint of {args.id}: open for planning' + (f'; ratification {made}' if made else ''))
-        return
     base = cr_base(board, cr, main)[0]
     empty = no_own_commits(main, cr, result['tip'])  # nothing to merge: lands on its passed review, in either look, unseen (r10-q50)
     if (look == 'after' or empty) and not board.is_cr(base):
@@ -5040,7 +4998,7 @@ def send_to_review(board: Board, cr: dict) -> None:
 
 
 def route_uncovered(board: Board, cr: dict, info: dict) -> bool:
-    if cr['status'] != ACCEPT or meta(cr).get('checkpoint') == 'user' or accept_covered(cr, info):
+    if cr['status'] != ACCEPT or accept_covered(cr, info):
         return False
     send_to_review(board, cr)
     return True
@@ -5051,8 +5009,6 @@ def request_review(board: Board, args) -> int:
     cr = cr_arg(board, args.id, 'request-review')
     if cr['status'] != ACCEPT:
         raise BoardError(f"{args.id}: {cr['status']}; request-review works only at the user's Accept", next=[{'action': 'wait'}])
-    if meta(cr).get('checkpoint') == 'user':
-        raise BoardError(f'{args.id}: this is a design checkpoint with no change range to send for review', next=[checkpoint_step(board, cr)])
     if cr.get('assignee') and not holds_cr(cr, actor):
         raise BoardError(f"{args.id}: held by {cr['assignee']}; request review once that session releases it", next=[{'action': 'wait'}])
     review = review_read(board, cr)
@@ -5076,7 +5032,7 @@ def request_review(board: Board, args) -> int:
 
 
 def reserve_planner_return(board: Board, cr: dict, ruling_id: str, actor: str) -> None:
-    """Reserve an unclaimed review before changing its checkpoint items."""
+    """Reserve an unclaimed review before returning it for a ruling."""
     if cr['status'] != 'in_review' or cr.get('assignee'):
         raise BoardError(f"{cr['id']}: --ruling requires an unclaimed change request in review")
     entry = own_entry(board, actor)
@@ -5102,8 +5058,8 @@ def return_item(board: Board, args) -> None:
     elif cr['status'] not in ('in_review', ACCEPT):
         raise BoardError(f"{args.id}: {cr['status']}; only a change request in review or waiting for its Accept is returned (unclaim frees work in hand)")
     elif cr['status'] == ACCEPT:
-        if not may_judge(board, cr):
-            raise BoardError(f'{args.id}: waiting for your Accept; the lead returns it with the findings you gave (autopilot: a user design checkpoint)')
+        if not may_move(board):
+            raise BoardError(f'{args.id}: waiting for your Accept; the lead returns it with the findings you gave')
         if cr.get('assignee') and not holds_cr(cr, actor):
             raise BoardError(f"{args.id}: held by {cr['assignee']} (a refresh); return it once that is released", next=[{'action': 'wait'}])
     elif not holds_cr(cr, actor):
@@ -5114,10 +5070,6 @@ def return_item(board: Board, args) -> None:
         review = review_read(board, cr)
         if review:  # a review with edits must record them before Return
             refuse_unrecorded(args.id, review, f'{edits_line(args.id, review["opened"])} --no-gate "returned" records them, then return')
-        if cr_at_design_checkpoint(cr):
-            designs = checkpoint_design_items(board, cr['id'], 'in_review')
-            if designs:
-                bd_checked('update', *designs, '--status', 'open', '--json')
         clear = [key for key in ('since', 'reviewing_tip', 'no_agent_review_reason', *([OPENED] if review else []))
                  if key in meta(cr)]  # the covered review pair stays (change-requests.md Review coverage)
         if guard:
@@ -5136,56 +5088,17 @@ def return_item(board: Board, args) -> None:
     print(f'returned {args.id} to the queue (worktree and branch kept)')
 
 
-DESIGN_FIELDS = ('description', 'design', 'acceptance_criteria', 'notes')
-
-
-def design_pin(board: Board, cr: dict) -> tuple[str, list[str]]:
-    """(hash, ids) of a design checkpoint's design items (its children of type design, any status): the text the user
-    is walked through. `board cr land --checkpoint --design <hash>` accepts only that text."""
-    designs = sorted((i for i in cr_closed_items(board, cr['id']) if i.get('issue_type') == 'design'), key=lambda i: i['id'])
-    text = json.dumps([[i['id'], *(i.get(field) or '' for field in DESIGN_FIELDS)] for i in designs])
-    return hashlib.sha256(text.encode()).hexdigest()[:12], [i['id'] for i in designs]
-
-
-def checkpoint_step(board: Board, cr: dict) -> dict:
-    """The user design checkpoint's Accept step, pinned to the design text as it stands."""
-    pin = design_pin(board, cr)[0]
-    return {'action': 'ask-user', 'text': f"walk the user through the design, then agents board cr land {cr['id']} --checkpoint --design {pin}"}
-
-
 def land(board: Board, args) -> int:
     caller_actor = derived_actor() or 'user'
     cr = cr_arg(board, args.id, 'land')
-    if not may_judge(board, cr):
-        raise BoardError('only a lead or solo session, or a person, lands a change request (the Accept); autopilot accepts a user design checkpoint')
+    if not may_move(board):
+        raise BoardError('only a lead or solo session, or a person, lands a change request (the Accept)')
     m = meta(cr)
     if cr['status'] != ACCEPT:
         raise BoardError(f"{args.id}: {cr['status']}; only a change request waiting for its Accept lands")
     if cr.get('assignee') and not holds_cr(cr, derived_actor() or ''):
         raise BoardError(f"{args.id}: held by {cr['assignee']}: land it once that session releases it", next=[{'action': 'wait'}])
     main = main_root()
-    if args.design is not None and not args.checkpoint:
-        raise BoardError('--design pins a design checkpoint: use it with --checkpoint')
-    if args.checkpoint and args.design is None:
-        raise BoardError(f'{args.id}: --checkpoint needs --design <hash>, the design hash agents board claim {args.id} printed',
-                         next=[checkpoint_step(board, cr)])
-    if args.checkpoint:
-        if m.get('checkpoint') != 'user':
-            raise BoardError(f'{args.id}: no user checkpoint is pending')
-        if (pin := design_pin(board, cr)[0]) != args.design:
-            raise BoardError(f'{args.id}: the design changed since the claim (hash {pin}, not {args.design}); walk through it again, then land with --design {pin}',
-                             next=[checkpoint_step(board, cr)])
-        designs = checkpoint_design_items(board, cr['id'], 'in_review')
-        if designs:
-            bd_checked('close', *designs, '--reason', f'{args.id}: accepted design checkpoint')
-        put_meta(cr, checkpoint=None, since=None)
-        bd_checked('update', args.id, '--status', 'open', '--assignee', '', '--json')
-        comment(args.id, f'board cr land --checkpoint: {caller_actor} accepted the design; nothing landed, the planner adds the items.')
-        made = cr_ratification(board, cr, 'design') if session_role(board) == 'autopilot' else None
-        print(f'accepted the design checkpoint of {args.id}: open for planning' + (f'; ratification {made}' if made else ''))
-        return 0
-    if m.get('checkpoint') == 'user':
-        raise BoardError(f'{args.id}: a design checkpoint is pending: agents board cr land {args.id} --checkpoint', next=[checkpoint_step(board, cr)])
     stacked, _ = cr_base(board, cr, main)
     if board.is_cr(stacked):
         raise BoardError(f'{args.id}: stacked on {stacked}, which has not landed: agents board cr land {stacked} first',
@@ -6320,7 +6233,7 @@ GIVEN_NODE_KEYS = PLAN_NODE_KEYS - {'metadata'} | set(ITEM_SETTING_KEYS)  # a pl
 
 
 def validate_plan(plan: object, name: str = 'the plan', fields: set[str] = PLAN_NODE_KEYS) -> dict:
-    """The board's checkpoint of a `create --graph` plan: an object with a non-empty list of nodes (title, key, only the fields bd reads, labels a list of strings,
+    """The board's validation of a `create --graph` plan: an object with a non-empty list of nodes (title, key, only the fields bd reads, labels a list of strings,
     deps and edges objects). bd ignores what it does not know, so a typo would lose a field silently."""
     nodes = plan.get('nodes') if isinstance(plan, dict) else None
     if not isinstance(nodes, list) or not nodes:
@@ -6646,10 +6559,6 @@ def cr_hold_refusal(waiting: str, waiting_type: str | None, blocker_type: str | 
     return None
 
 
-def cr_at_design_checkpoint(cr: dict) -> bool:
-    """Whether a CR is at the design checkpoint awaiting its user or agent review."""
-    checkpoint = meta(cr).get('checkpoint')
-    return (checkpoint == 'user' and cr.get('status') == ACCEPT) or (checkpoint == 'agent' and cr.get('status') == 'in_review')
 
 
 def block_one(board: Board, item_id: str, blocker: str, reason: str | None, actor: str) -> tuple[str, bool]:
@@ -6727,7 +6636,7 @@ def known_items(board: Board, ids: list[str]) -> None:
 
 def update_command(board: Board, args) -> int:
     """`board update <id>... [--title] [--priority] [--label L]... [--unlabel L]... [--parent P|""] [--assignee user|""] [--no-commit|--commits]
-    [--look|--view|--checkpoint V|""]`: the short fields bd
+    [--look|--view V|""]`: the short fields bd
     leaves to bd, with the board's value rules: labels the board routes on (queue:, for:) change through send, route and create --for; a parent
     moves an item only where the board's invariants allow (parent_move_refusal); the assignee hands manual work to the user and back."""
     known_items(board, args.ids)
@@ -6761,8 +6670,8 @@ def update_command(board: Board, args) -> int:
             changes += ['--unset-metadata', NO_COMMIT]  # a person's item carries no mark (retired_move)
     changes += setting_changes(board, args)
     if not changes:
-        raise BoardError('nothing to change: give --title, --priority, --label, --unlabel, --parent, --assignee, --no-commit, --commits, --look, --view '
-                         'or --checkpoint (long fields: agents board field; claim: agents board claim)')
+        raise BoardError('nothing to change: give --title, --priority, --label, --unlabel, --parent, --assignee, --no-commit, --commits, --look or --view '
+                         '(long fields: agents board field; claim: agents board claim)')
     bd_checked('update', *args.ids, *changes, '--json')
     for item_id in args.ids:
         print(f'{item_id}: updated')
@@ -6790,7 +6699,7 @@ def setting_changes(board: Board, args) -> list[str]:
         if args.no_commit is False and kind not in WORK_TYPES:
             raise BoardError(f'{item_id}: --commits takes a task, bug or spike')
         if cr_given and kind != CR_TYPE:
-            raise BoardError(f'{item_id}: look, view and checkpoint are change request settings')
+            raise BoardError(f'{item_id}: look and view are change request settings')
         given = {**({NO_COMMIT: True} if args.no_commit else {}), **{name: value for name, value in cr_given.items() if value}}
         if refusal := setting_refusal(item_id, kind, holder, given):
             raise BoardError(refusal)
@@ -7766,7 +7675,7 @@ def create_command(args) -> int:
     the size limit of a work item's long fields) and goes to `bd create --graph`. Prints the ids created."""
     flags_used = any(value not in (None, [], False) for value in (args.type, args.title, args.positional_title, args.parent, args.label,
                                                                     args.priority, args.description_file, args.design_file,
-                                                                    args.acceptance_file, args.deps, args.no_commit, args.look, args.view, args.checkpoint,
+                                                                    args.acceptance_file, args.deps, args.no_commit, args.look, args.view,
                                                                     args.status, args.assignee))
     if args.for_ and args.parent:
         raise BoardError('agents board create --for files a top-level item: drop --parent (a child takes its parent\'s queue)')
@@ -8136,7 +8045,7 @@ def run_command(argv: list[str]) -> int:
                          help='the work commits nothing to this repository: it needs no change request')
     commits.add_argument('--commits', dest='no_commit', action='store_const', const=False, help='the work commits here: it goes in a change request')
     for name, values in CR_SETTINGS.items():
-        sub.add_argument(f'--{name}', choices=(*values, ''), help=f'a change request\'s {name} ("" drops it{", back to the project default" if name != "checkpoint" else ""})')
+        sub.add_argument(f'--{name}', choices=(*values, ''), help=f'a change request\'s {name} ("" drops it, back to the project default)')
     sub = add('link', 'link two items with a type that holds nothing up (a blocking link is agents board block)', link_command)
     sub.add_argument('a', type=board_id)
     sub.add_argument('b', type=board_id)
@@ -8166,12 +8075,10 @@ def run_command(argv: list[str]) -> int:
     sub.add_argument('ids', nargs='+', metavar='item', type=board_id)
     sub.add_argument('--on', dest='blocker', required=True, type=board_id)
     sub.add_argument('--reason', type=nonempty, help='why it waits; required for a work item, optional on a decision or gate blocker or a milestone')
-    sub = add('land', "Accept the tip/base pair shown at Accept; --checkpoint accepts a design", land, group='cr')
+    sub = add('land', "Accept the tip/base pair shown at Accept", land, group='cr')
     sub.add_argument('id', type=board_id)
     sub.add_argument('--tip', metavar='SHA', help='the tip shown at Accept; required for a change request')
     sub.add_argument('--base', metavar='SHA', help='the base tip shown at Accept; required for a change request')
-    sub.add_argument('--checkpoint', action='store_true', help="accept a user design checkpoint: the change request returns to planning, nothing lands")
-    sub.add_argument('--design', metavar='HASH', help='required with --checkpoint: the design hash `agents board claim` printed; refused when the design text changed since')
     sub = add('refresh', "rebase, set up, check, and show the CR files and incoming commits with their files", refresh, group='cr')
     sub.add_argument('id', type=board_id)
     gate_options(sub, nonempty)
@@ -8258,7 +8165,7 @@ def run_command(argv: list[str]) -> int:
     sub = add('create', 'create items: the flags describe one item, or --graph <plan.json> a whole plan (nodes, edges); prints the ids', create_command)
     sub.add_argument('positional_title', nargs='?', metavar='TITLE', help='the title (or --title)')
     sub.add_argument('--graph', metavar='PLAN', help="a bd graph plan: {nodes: [{key, title, type, description, design, acceptance_criteria, priority, labels, "
-                      "no_commit, look, view, checkpoint, parent_key|parent_id, deps: [{target, type}], status, …}], edges: [{from_key|from_id, to_key, type}]}; prints 'key id' lines")
+                      "no_commit, look, view, parent_key|parent_id, deps: [{target, type}], status, …}], edges: [{from_key|from_id, to_key, type}]}; prints 'key id' lines")
     sub.add_argument('--title')
     sub.add_argument('-t', '--type', help=f"one of {', '.join(ITEM_TYPES)} (default task)")
     sub.add_argument('--parent', type=board_id, help='an existing parent; its labels (not its queue) are copied')
@@ -8275,7 +8182,6 @@ def run_command(argv: list[str]) -> int:
     sub.add_argument('--no-commit', action='store_true', help='a task, bug or spike that by design commits nothing to this repository: it needs no change request')
     sub.add_argument('--look', choices=CR_SETTINGS['look'], help="a change request's look, overriding the project default")
     sub.add_argument('--view', choices=CR_SETTINGS['view'], help="a change request's view, overriding the project default")
-    sub.add_argument('--checkpoint', choices=CR_SETTINGS['checkpoint'], help='a design change request: who passes its checkpoint')
     sub.add_argument('--status', help='the initial status')
     sub.add_argument('-a', '--assignee', help='the assignee (not with --for, which holds the item for you)')
     sub.add_argument('--for', dest='for_', metavar='PERSON',

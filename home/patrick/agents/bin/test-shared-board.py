@@ -1210,13 +1210,13 @@ def t_cr() -> None:
           and not git('show-ref', '--verify', f'refs/heads/{base_branch}', cwd=side).strip(),
           'ratifying removes both the review branch and its board-owned landed-base ref', err + out)
 
-    design = create('a', 'design checkpoint C', '--look', 'after', '--checkpoint', 'agent')
-    design_item = task(design, 'C design')
-    affected_design = create('a', 'affected checkpoint design', '--parent', design, kind='design')
+    design = create('a', 'design CR C', '--look', 'after')
+    design_item = create('a', 'C design', '--parent', design, kind='design')
     run('a', 'claim', design, role='agent')
     worker_pass(design, design_item, 'design.txt')
     to_review(design)
-    ruling = create('a', 'change the checkpoint design', '-t', 'decision', kind='decision')
+    affected_design = create('a', 'affected design', '--parent', design, kind='design')  # work the review opens while the CR waits in review
+    ruling = create('a', 'change the design', '-t', 'decision', kind='decision')
     record = ROOT / 'planner-return-record.md'
     record.write_text('## Question\nq\n## Alternatives Considered\na\n## Decision\nd\n## Rationale\nr\n## Rule owner\no\n')
     rc, out, err, _ = run('a', 'block', affected_design, '--on', ruling)
@@ -1224,97 +1224,75 @@ def t_cr() -> None:
     rc, out, err, _ = run('a', 'claim', ruling)
     check(rc == 0, 'cr: the lead takes the question to record the ruling', err + out)
     rc, out, err, _ = run('a', 'ruling', 'record', ruling, str(record))
-    check(rc == 0, 'cr: record the ruling that changes the checkpoint', err + out)
+    check(rc == 0, 'cr: record the ruling that changes the design', err + out)
     rc, out, err, _ = run('a', 'ruling', 'release', ruling)
     check(rc == 0 and items('a')[design]['status'] == 'in_review', 'cr: release alone keeps the review phase', err + out)
     rc, out, err, _ = run('a', 'claim', ruling, role='solo')
     check(rc == 0, 'cr: planner takes the released ruling', err + out)
     review_tip = git('rev-parse', 'HEAD', cwd=wt(design)).strip()
-    rc, out, err, _ = run('a', 'return', design, 'Rework the checkpoint under this ruling', '--ruling', ruling, role='solo')
+    rc, out, err, _ = run('a', 'return', design, 'Rework the design under this ruling', '--ruling', ruling, role='solo')
     returned = items('a')
     check(rc == 0 and returned[design]['status'] == 'open' and not returned[design].get('assignee')
           and returned[affected_design]['status'] == 'open' and git('rev-parse', 'HEAD', cwd=wt(design)).strip() == review_tip,
-          'cr: explicit planner return reopens the affected review and its design without rewriting the branch', err + out)
-    rc, out, err, _ = run('a', 'close', ruling, '--reason', 'planned the checkpoint design rework', role='solo')
+          'cr: explicit planner return reopens the review without rewriting the branch', err + out)
+    rc, out, err, _ = run('a', 'close', ruling, '--reason', 'planned the design rework', role='solo')
     check(rc == 0, 'cr: the planner closes the applied ruling', err + out)
     run('a', 'claim', design, role='agent')
+    worker_pass(design, affected_design, 'design-rework.txt')
     to_review(design)
-    rc, out, err, _ = raw('a', 'create', 'historical checkpoint', '--type', 'task', '--description', 'x', '--metadata', '{"ratification":"design"}',
+    rc, out, err, _ = raw('a', 'create', 'historical design', '--type', 'task', '--description', 'x', '--metadata', '{"ratification":"design"}',
                           '--deps', f'parent-child:{design}', '--silent')
     check(rc == 0, 'cr: a historical design ratification is created', err + out)
     closed_design = out.strip()
-    rc, _, err, _ = bd('a', 'close', closed_design, '--reason', 'historical checkpoint', '--json')
+    rc, _, err, _ = bd('a', 'close', closed_design, '--reason', 'historical design ratification', '--json')
     check(rc == 0, f'{design}: a historical design ratification closes', err)
     closed_design_before = {key: items('a')[closed_design].get(key) for key in ('title', 'status', 'metadata')}
     rc, out, err = review_pass(design)
-    design_ratifications = [row for row in items('a').values()
-                            if row['title'] == 'design checkpoint C' and row['status'] == 'needs_ratification']
-    check(rc == 0 and items('a')[design]['status'] == 'open' and len(design_ratifications) == 1
-          and (design_ratifications[0].get('metadata') or {}).get('ratification') == 'design',
-          'cr: a closed same-kind ratification allows a new design ratification with its initial status', err + out)
+    ratifications = [row for row in items('a').values()
+                     if row['title'] == 'design CR C' and row['status'] == 'needs_ratification']
+    check(rc == 0 and items('a')[design]['status'] == 'closed' and len(ratifications) == 1
+          and (ratifications[0].get('metadata') or {}).get('ratification') == 'landing',
+          'cr: a look-after design CR lands on the reviewer pass and files only the landing ratification', err + out)
     check({key: items('a')[closed_design].get(key) for key in closed_design_before} == closed_design_before,
-          'cr: a repeated design checkpoint preserves the closed historical ratification', items('a')[closed_design])
-
-    for role, look, ratified in (("autopilot", "before", True), ("autopilot", "after", True), ("lead", "after", False)):
-        look_metadata = ['--look', look] if look != 'before' else []
-        user_checkpoint = create('a', f'{role} user checkpoint {look}', '--status', 'needs_acceptance',
-                                 *look_metadata, '--checkpoint', 'user')
-        create('a', f'{user_checkpoint} design', '--parent', user_checkpoint, kind='design')
-        rc, claimed, err, _ = run('a', 'claim', user_checkpoint, role=role)
-        pin = re.search(r'design hash ([0-9a-f]+)', claimed)
-        check(rc == 0 and pin is not None, f'{user_checkpoint}: {role} claims the user design checkpoint', err + claimed)
-        if not pin:
-            continue
-        rc, output, err, _ = run('a', 'cr', 'land', user_checkpoint, '--checkpoint', '--design', pin[1], role=role)
-        settle('a', 'b')
-        children = [row for row in items('a').values() if (row.get('metadata') or {}).get('ratification') == 'design'
-                    and any(edge.get('depends_on_id') == user_checkpoint for edge in row.get('dependencies') or [])
-                    and row['status'] == 'needs_ratification']
-        parent = items('a')[user_checkpoint]
-        check(rc == 0 and items('a')[user_checkpoint]['status'] == 'open' and 'checkpoint' not in meta_of(user_checkpoint)
-              and len(children) == int(ratified) and ('ratification ' in output) == ratified,
-              f'{user_checkpoint}: {role} accepts a user checkpoint in look-{look} with the correct ratification',
-              err + output + f"\nparent={parent}\nratifications={[row for row in items('a').values() if (row.get('metadata') or {}).get('ratification') == 'design']}")
+          'cr: landing preserves the closed historical design ratification', items('a')[closed_design])
 
     finished = create('a', 'autopilot finished CR', '--status', 'needs_acceptance')
     rc, _, err, _ = run('a', 'cr', 'land', finished, role='autopilot')
     check(rc != 0 and 'only a lead or solo' in err and items('a')[finished]['status'] == 'needs_acceptance',
-          f'{finished}: autopilot is refused a land outside a user checkpoint', err)
+          f'{finished}: autopilot is refused a land', err)
     waiting_finished = create('a', 'autopilot finished CR that waits', '--status', 'needs_acceptance')
     bd('a', 'dep', 'add', waiting_finished, create('a', 'autopilot finished CR blocker', kind='task'))
     for named in (finished, waiting_finished):  # the waiting one took the named Accept override before
         rc, _, err, _ = run('a', 'claim', named, role='autopilot')
         check(rc != 0 and "user's Accept" in err and not items('a')[named].get('assignee'),
               f'{named}: autopilot is refused a named claim of a finished CR', err)
-    for unused_accept in (finished, waiting_finished):
+    design_accept = create('a', 'design-only CR at Accept', '--status', 'needs_acceptance')
+    create('a', f'{design_accept} design', '--parent', design_accept, kind='design')
+    rc, _, err, _ = run('a', 'claim', design_accept, role='autopilot')
+    check(rc != 0 and "user's Accept" in err and not items('a')[design_accept].get('assignee'),
+          f'{design_accept}: autopilot has no Accept authority over a design-only CR', err)
+    rc, _, err, _ = run('a', 'return', design_accept, 'rework the design', role='autopilot')
+    check(rc != 0 and items('a')[design_accept]['status'] == 'needs_acceptance',
+          f'{design_accept}: autopilot is refused the return of a design-only CR', err)
+    accept_queue = create('a', 'autopilot bare Accept queue', kind='epic')
+    finished_in_queue = create('a', 'finished CR in autopilot queue', '--status', 'needs_acceptance', '--parent', accept_queue)
+    design_in_queue = create('a', 'design-only CR in autopilot queue', '--status', 'needs_acceptance', '--parent', accept_queue)
+    create('a', f'{design_in_queue} design', '--parent', design_in_queue, kind='design')
+    rc, output, err, _ = run('a', 'claim', '--root', accept_queue, role='autopilot')
+    accepted_queue_items = items('a')
+    check(accepted_queue_items[design_in_queue].get('assignee') is None and accepted_queue_items[finished_in_queue].get('assignee') is None,
+          'autopilot bare claim takes no CR waiting for the user, a design-only one included', err + output)
+    for unused_accept in (finished, waiting_finished, design_accept, finished_in_queue, design_in_queue):
         rc, out, err, _ = run('a', 'cr', 'reject', unused_accept, 'test fixture cleanup', role='solo')
         check(rc == 0 and items('a')[unused_accept]['status'] == 'closed',
               f'{unused_accept}: the negative Accept fixture leaves the queue', err + out)
-    waiting_checkpoint = create('a', 'autopilot user checkpoint that waits', '--status', 'needs_acceptance', '--checkpoint', 'user')
-    bd('a', 'dep', 'add', waiting_checkpoint, create('a', 'autopilot checkpoint blocker', kind='task'))
-    rc, _, err, _ = run('a', 'claim', waiting_checkpoint, role='autopilot')
-    check(rc == 0 and items('a')[waiting_checkpoint].get('assignee'), f'{waiting_checkpoint}: autopilot claims a waiting user checkpoint by name', err)
-    accept_queue = create('a', 'autopilot bare Accept queue', kind='epic')
-    finished_in_queue = create('a', 'finished CR in autopilot queue', '--status', 'needs_acceptance', '--parent', accept_queue)
-    checkpoint_in_queue = create('a', 'checkpoint in autopilot queue', '--status', 'needs_acceptance',
-                                 '--checkpoint', 'user', '--parent', accept_queue)
-    rc, output, err, _ = run('a', 'claim', '--root', accept_queue, role='autopilot')
-    accepted_queue_items = items('a')
-    check(rc == 0 and checkpoint_in_queue in output and accepted_queue_items[checkpoint_in_queue].get('assignee')
-          and accepted_queue_items[finished_in_queue].get('assignee') is None,
-          'autopilot bare claim skips a finished CR and takes the user design checkpoint', err + output)
-    rc, out, err, _ = run('a', 'cr', 'reject', finished_in_queue, 'test fixture cleanup', role='solo')
-    check(rc == 0 and items('a')[finished_in_queue]['status'] == 'closed',
-          f'{finished_in_queue}: the queue fixture leaves the refresh queue', err + out)
-    returned = create('a', 'autopilot returned checkpoint', '--status', 'needs_acceptance', '--checkpoint', 'user')
-    create('a', f'{returned} design', '--parent', returned, kind='design')
-    rc, _, err, _ = run('a', 'return', returned, 'rework the design', role='agent')
-    check(rc != 0 and items('a')[returned]['status'] == 'needs_acceptance',
-          f'{returned}: an agent session is refused the return of a user checkpoint', err)
-    rc, claimed, err, _ = run('a', 'claim', returned, role='autopilot')
-    rc2, output, err2, _ = run('a', 'return', returned, 'rework the design', role='autopilot')
-    check(rc == 0 and rc2 == 0 and items('a')[returned]['status'] == 'open',
-          f'{returned}: autopilot returns a user design checkpoint', err + claimed + err2 + output)
+    rc, out, err, _ = raw('a', 'create', 'legacy checkpoint CR', '--type', 'change-request', '--description', 'x', '--metadata', '{"checkpoint":"user"}', '--silent')
+    legacy_cr = out.strip().splitlines()[-1] if out.strip() else ''
+    rc, report, err, _ = run('a', 'check')
+    check(any(legacy_cr in row and 'cr-checkpoint' in row and 'board-migrate' in row for row in report.splitlines())
+          and not any(legacy_cr in row and 'unknown-metadata' in row for row in report.splitlines()),
+          'board check lists a live CR still carrying checkpoint metadata, naming board-migrate', err + report)  # check exits non-zero while a deviation stands
+    bd('a', 'close', legacy_cr, '--reason', 'test fixture cleanup', '--force')
 
     base_cr, child_cr = create('a', 'stack base P'), create('a', 'stack child C')
     p1, c1 = task(base_cr, 'P item'), task(child_cr, 'C item')
@@ -1573,11 +1551,27 @@ def t_cr() -> None:
     check(rc == 0, 'cr: declare a design wait on its dependent request', err)
     rc, _, err, _ = run('a', 'claim', dependent, role='agent')
     check(rc == 1 and not wt(dependent).exists(), 'cr: an open design still holds its dependent request', err)
-    rc, _, err, _ = bd('a', 'close', design, '--reason', 'the design checkpoint delivered', '--json')
-    check(rc == 0, 'cr: the design checkpoint closes the design item', err)
+    rc, _, err, _ = run('a', 'claim', design_cr, role='agent')
+    check(rc == 0, 'cr: the design-only CR is claimed like any CR', err)
+    worker_pass(design_cr, design, 'design-doc.txt')
     rc, _, err, _ = run('a', 'claim', dependent, role='agent')
-    check(rc == 0 and meta_of(dependent).get('base') == target and items('a')[design_cr]['status'] == 'open',
-          'cr: the closed design releases the dependent before its request lands', err)
+    check(rc == 1 and design_cr in err and not wt(dependent).exists(), 'cr: the closed design item does not release its dependent before the CR lands', err)
+    to_review(design_cr)
+    rc, _, err, _ = run('a', 'claim', dependent, role='agent')
+    check(rc == 1 and design_cr in err and not wt(dependent).exists(), 'cr: the dependent waits while the design-only CR is in review', err)
+    rc, out, err = review_pass(design_cr)
+    check(rc == 0 and items('a')[design_cr]['status'] == 'needs_acceptance' and not [r for r in items('a').values() if r['status'] == 'needs_ratification'
+                                                                                       and any(e.get('depends_on_id') == design_cr for e in r.get('dependencies') or [])],
+          'cr: a look-before design-only CR waits for the user\'s Accept after the reviewer pass', err + out)
+    rc, _, err, _ = run('a', 'claim', dependent, role='agent')
+    check(rc == 1 and design_cr in err and not wt(dependent).exists(), 'cr: a design-only CR at Accept is no stack base: the dependent waits', err)
+    design_tip = git('rev-parse', f'refs/heads/cr/{design_cr}', cwd=side).strip()
+    design_base = git('rev-parse', target, cwd=side).strip()
+    rc, out, err, _ = run('a', 'cr', 'land', design_cr, '--tip', design_tip, '--base', design_base)
+    check(rc == 0 and items('a')[design_cr]['status'] == 'closed' and items('a')[design]['status'] == 'closed'
+          and git('rev-parse', target, cwd=side).strip() == design_tip, 'cr: the design-only CR lands the doc commit on Accept', err + out)
+    rc, _, err, _ = run('a', 'claim', dependent, role='agent')
+    check(rc == 0 and meta_of(dependent).get('base') == target, 'cr: after the design lands the dependent starts on the target', err)
 
     first = create('a', 'first standalone item', kind='task')
     second = create('a', 'second standalone item', kind='task')

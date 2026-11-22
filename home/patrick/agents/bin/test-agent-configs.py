@@ -2436,9 +2436,6 @@ def validate_board(root: Path) -> None:
             # claim reads hand-over comments of in_review items, the comments of the session's other holds (staleness), and the
             # blockers a change request lifts (the closed items in a list, shows): after the one list
             expected = fake.reads()
-        elif argv[0] == "return" and any(i.get("issue_type") == "change-request" and i["status"] == "needs_acceptance"
-                                           and i.get("metadata", {}).get("checkpoint") == "user" for i in fake.issues):
-            expected = ["list"]  # the closed children are read separately, outside the status view
         elif argv[0] in ("position", "console") and (held or childless) or argv[0] == "mine" and held:
             expected = ["list", "show"]
         else:
@@ -2982,7 +2979,7 @@ def validate_board(root: Path) -> None:
             if fake.writes() != [["update", ids["Store choice"], "--claim", "--json"]]:
                 raise ValueError(f"a lead did not claim the open question: {fake.writes()}")
             # Lead and solo decide with the user alike: a current change request waiting for Accept goes to either bare claim; the queue
-            # head that is not current is refresh work, which only review pulls take; autopilot only takes user design checkpoints.
+            # head that is not current is refresh work, which only review pulls take; autopilot takes neither.
             main_tip = subprocess.run(["git", "rev-parse", "main"], capture_output=True, text=True, check=True).stdout.strip()
             waiting_cr = {"status": "needs_acceptance"}
             current_cr = {"status": "needs_acceptance", "metadata": {"check_tip": main_tip, "check_base_tip": main_tip, "check_result": "pass",
@@ -2996,11 +2993,6 @@ def validate_board(root: Path) -> None:
                         raise ValueError(f"{session}'s bare claim did not take the change request waiting for its Accept: {fake.writes()}")
                 elif any(write[1:2] == ["fx-ovo.c1"] for write in fake.writes()):  # its work pulls may take other work
                     raise ValueError(f"{session}'s bare claim took a finished change request waiting for the user's Accept: {fake.writes()}")
-                checkpoint_cr = {**current_cr, "metadata": {**current_cr["metadata"], "checkpoint": "user"}}
-                fake = Fake(variant(**{"CR ready": checkpoint_cr, **only_accept}))
-                invoke(["claim"], fake, session)
-                if fake.plain_writes()[:1] != [["update", "fx-ovo.c1", "--assignee", session, "--if-assignee", "", "--json"]]:
-                    raise ValueError(f"{session}'s bare claim did not take the user design checkpoint: {fake.writes()}")
                 fake = Fake(variant(**{"CR ready": waiting_cr, **only_accept}))
                 invoke(["claim"], fake, session)
                 if bool(fake.writes()) != (session != "lead0001"):  # refresh work goes with the review pull: solo and autopilot hold it
@@ -3019,12 +3011,10 @@ def validate_board(root: Path) -> None:
             rows = {c["id"]: cr_refresh_work(c) for c in json.loads(invoke(["console"], Fake(variant(**{"CR ready": current_cr})), "aaaa1111")[1])["crs"]}
             if rows.get("fx-ovo.c1") is not False:
                 raise ValueError(f"board console offered the refresh on a current change request: {rows}")
-            # A hold is the row's holder, no problem; a design checkpoint's check holds nothing up (it lands nothing).
-            rows = {c["id"]: c for c in json.loads(invoke(["console"], Fake(variant(**{"CR ready": {**waiting_cr, "assignee": "bbbb2222"},
-                                                                                        "CR design": {**waiting_cr, "metadata": {"checkpoint": "user"}}})), "aaaa1111")[1])["crs"]}
-            if any(p["kind"] == "held" for c in rows.values() for p in c["problems"]) or rows["fx-ovo.c1"]["holder"] != "bbbb2222" \
-                    or cr_problem(rows["fx-ovo.c4"], "check") is not None:
-                raise ValueError(f"board console: no held problem, and no check problem on a design checkpoint: {[(c['id'], c['problems']) for c in rows.values()]}")
+            # A hold is the row's holder, no problem.
+            rows = {c["id"]: c for c in json.loads(invoke(["console"], Fake(variant(**{"CR ready": {**waiting_cr, "assignee": "bbbb2222"}})), "aaaa1111")[1])["crs"]}
+            if any(p["kind"] == "held" for c in rows.values() for p in c["problems"]) or rows["fx-ovo.c1"]["holder"] != "bbbb2222":
+                raise ValueError(f"board console: no held problem: {[(c['id'], c['problems']) for c in rows.values()]}")
             fake = Fake(variant(**{"CR ready": waiting_cr}))
             invoke(["claim", "fx-ovo.c1"], fake, "lead0001")
             if fake.plain_writes() != [["update", "fx-ovo.c1", "--assignee", "lead0001", "--if-assignee", "", "--json"]]:
@@ -3136,16 +3126,16 @@ def validate_board(root: Path) -> None:
                     (["update", loose, "--no-commit"], variant(**{"Loose item": {"metadata": {"no_code": "1"}}}),
                      ["update", loose, "--set-metadata", "no_commit=true", "--unset-metadata", "no_code", "--json"]),
                     (["update", loose, "--commits"], no_commit, ["update", loose, "--unset-metadata", "no_commit", "--unset-metadata", "no_code", "--json"]),
-                    (["update", "fx-cr", "--look", "after", "--checkpoint", ""], [*fixture, cr],
-                     ["update", "fx-cr", "--set-metadata", "look=after", "--unset-metadata", "checkpoint", "--json"])):
+                    (["update", "fx-cr", "--look", "after", "--view", ""], [*fixture, cr],
+                     ["update", "fx-cr", "--set-metadata", "look=after", "--unset-metadata", "view", "--json"])):
                 fake = Fake(issues)
                 code, _, errors = invoke(argv, fake)
                 if code or fake.writes() != [want]:
                     raise ValueError(f"board {argv} must write {want}: {code} {errors} {fake.writes()}")
             for argv, issues, needle in ((["update", loose, ids["Ready task"], "--no-commit"], fixture, "outside any change request"),
                                          (["update", loose, "--no-commit"], variant(**{"Loose item": {"assignee": "user"}}), "needs no CR"),
-                                         (["update", "fx-cr", "--checkpoint", "user"], [*fixture, {**cr, "status": "in_progress", "assignee": "lead0001"}], "held by"),
-                                         (["update", "fx-cr", "--checkpoint", "user"], [*fixture, {**cr, "status": "in_review"}], "while it is open"),
+                                         (["update", "fx-cr", "--view", "result"], [*fixture, {**cr, "status": "in_progress", "assignee": "lead0001"}], "held by"),
+                                         (["update", "fx-cr", "--view", "result"], [*fixture, {**cr, "status": "in_review"}], "while it is open"),
                                          (["update", loose, "--look", "after"], fixture, "change request settings")):
                 fake = Fake(issues)
                 code, _, errors = invoke(argv, fake)
@@ -3765,7 +3755,7 @@ def validate_board(root: Path) -> None:
                            for name, kinds in steps.items()):
                 raise ValueError(f"board console counts: health's, with the agents' steps as position counts what a claim gives each pull: {console_counts}")
             if [c["id"] for c in crs_view] != ["fx-ovo.c2"] or ratifications_view != [] \
-                    or set(crs_view[0]) != {"id", "title", "status", "stage", "holder", "look", "view", "checkpoint", "base", "branch", "worktree", "tip",
+                    or set(crs_view[0]) != {"id", "title", "status", "stage", "holder", "look", "view", "base", "branch", "worktree", "tip",
                                             "baseTip", "check", "parent", "children", "baseSha", "problems", "review", "acceptance", "after",
                                             "unblocks", "unblocksDirect", "shares", "milestone", "priority", "ownPriority", "raisedBy"}:
                 raise ValueError(f"board console crs: {crs_view}")
@@ -4644,16 +4634,16 @@ def validate_board(root: Path) -> None:
             code, _, errors, fake = bd_create("--holds", "fx-nowhere", "--dry-run")
             if code == 0 or "unknown or closed" not in errors or fake.writes() or any(args[0] == "create" for args, _ in fake.calls):
                 raise ValueError(f"board create dry-run validates held ids before writes: {code} {errors} {fake.calls}")
-            def checkpoint_pair(cr_id):
+            def design_cr_pair(cr_id):
                 parent = {"id": cr_id, "title": f"CR {cr_id}", "issue_type": "change-request", "status": "needs_acceptance", "priority": 2,
                           "description": "d", "created_at": "2026-10-22T15:29:00Z", "updated_at": "2026-10-22T15:29:00Z",
-                          "metadata": {"checkpoint": "user"}, "dependencies": []}
+                          "metadata": {}, "dependencies": []}
                 design = {"id": f"{cr_id}.d", "title": f"design {cr_id}", "issue_type": "design", "status": "open", "priority": 2,
                           "description": "d", "created_at": "2026-10-22T15:29:00Z", "updated_at": "2026-10-22T15:29:00Z",
                           "dependencies": [{"issue_id": f"{cr_id}.d", "depends_on_id": cr_id, "type": "parent-child"}]}
                 return parent, design
-            checkpoint, checkpoint_design = checkpoint_pair("cp-hold")
-            class CheckpointWorkflow(Creating):
+            design_cr, cr_design_item = design_cr_pair("cp-hold")
+            class DesignWorkflow(Creating):
                 def __call__(self, command, **kwargs):
                     done_cmd = super().__call__(command, **kwargs)
                     if command[0] != "bd":
@@ -4676,56 +4666,47 @@ def validate_board(root: Path) -> None:
                         for item_id in command[2:command.index("--reason")]:
                             next(i for i in self.issues if i["id"] == item_id)["status"] = "closed"
                     return done_cmd
-            user_workflow = CheckpointWorkflow([*topical, checkpoint, checkpoint_design])
-            code, output, errors, fake = bd_create("--holds", checkpoint_design["id"], deck=user_workflow)
-            edge = {"issue_id": checkpoint_design["id"], "depends_on_id": "fx-new", "type": "blocks"}
-            held = next(i for i in fake.issues if i["id"] == checkpoint_design["id"])
+            user_workflow = DesignWorkflow([*topical, design_cr, cr_design_item])
+            code, output, errors, fake = bd_create("--holds", cr_design_item["id"], deck=user_workflow)
+            edge = {"issue_id": cr_design_item["id"], "depends_on_id": "fx-new", "type": "blocks"}
+            held = next(i for i in fake.issues if i["id"] == cr_design_item["id"])
             if code or output != "fx-new\n" or edge not in held["dependencies"] or held["status"] != "open":
-                raise ValueError(f"Record must hold open work in the active user checkpoint: {code} {errors} {fake.calls}")
+                raise ValueError(f"Record must hold open work in a design CR waiting for Accept: {code} {errors} {fake.calls}")
             user_design_item = held
-            non_design = {**checkpoint_design, "id": "cp-hold.t", "title": "task cp-hold", "issue_type": "task",
+            non_design = {**cr_design_item, "id": "cp-hold.t", "title": "task cp-hold", "issue_type": "task",
                           "status": "closed",
                           "dependencies": [{"issue_id": "cp-hold.t", "depends_on_id": "cp-hold", "type": "parent-child"}]}
-            code, _, errors, fake = bd_create("--holds", non_design["id"], deck=Creating([*topical, checkpoint, non_design]))
+            code, _, errors, fake = bd_create("--holds", non_design["id"], deck=Creating([*topical, design_cr, non_design]))
             if code == 0 or any(args[0] == "create" for args, _ in fake.calls):
                 raise ValueError(f"a question must not hold a closed work item: {code} {errors} {fake.calls}")
-            # Questions can hold a design while a reviewer is assessing the agent checkpoint.
-            agent_checkpoint, agent_design = checkpoint_pair("cp-agent-hold")
-            agent_checkpoint.update(status="in_review", assignee="lead0001", metadata={"checkpoint": "agent"})
+            # Questions can hold a design while a reviewer is assessing the design CR.
+            review_design_cr, agent_design = design_cr_pair("cp-agent-hold")
+            review_design_cr.update(status="in_review", assignee="lead0001", metadata={})
             agent_design["status"] = "in_review"
-            workflow = CheckpointWorkflow([*topical, agent_checkpoint, agent_design])
+            workflow = DesignWorkflow([*topical, review_design_cr, agent_design])
             code, output, errors, fake = bd_create("--holds", agent_design["id"], deck=workflow)
             held = next(i for i in fake.issues if i["id"] == agent_design["id"])
             if code or held["status"] != "in_review" or not any("dep add cp-agent-hold.d fx-new blocks" in (stdin or "")
                                                                     for args, stdin in fake.calls if args[0] == "batch"):
                 raise ValueError(f"Record must block an in-review design on its question: {code} {errors} {fake.calls}")
-            # A closed design is never a valid question hold target, even during another checkpoint.
-            checkpoint_design["status"] = "closed"
-            code, _, errors, fake = bd_create("--holds", checkpoint_design["id"], deck=Creating([*topical, checkpoint, checkpoint_design]))
+            # A closed design is never a valid question hold target, even during another design CR.
+            cr_design_item["status"] = "closed"
+            code, _, errors, fake = bd_create("--holds", cr_design_item["id"], deck=Creating([*topical, design_cr, cr_design_item]))
             if code == 0 or any(args[0] == "create" for args, _ in fake.calls):
                 raise ValueError(f"a question must not hold a closed design: {code} {errors} {fake.calls}")
-            checkpoint_design["status"] = "open"
+            cr_design_item["status"] = "open"
             user_workflow.calls = []
             user_design_item["status"] = "in_review"
             code, output, errors = invoke(["return", "cp-hold", "fx-new"], user_workflow, "lead0001")
-            if code or user_design_item["status"] != "open" \
-                    or not any(args == ["update", "cp-hold.d", "--status", "open", "--json"] for args, _ in user_workflow.calls) \
+            if code or user_design_item["status"] != "in_review" \
                     or any(args[0] == "dep" and args[1] == "remove" for args, _ in user_workflow.calls):
-                raise ValueError(f"Return must reopen the in-review design and preserve its blocker edge: {code} {errors} {user_workflow.calls}")
-            plain_checkpoint, plain_design = checkpoint_pair("cp-plain")
-            plain_design["status"] = "in_review"
-            fake = Fake([plain_checkpoint, plain_design])
+                raise ValueError(f"Return must leave the design item and its blocker edge as they are: {code} {errors} {user_workflow.calls}")
+            plain_cr, plain_design = design_cr_pair("cp-plain")
+            plain_design["status"] = "closed"
+            fake = Fake([plain_cr, plain_design])
             code, output, errors = invoke(["return", "cp-plain", "Changes wanted"], fake, "lead0001")
-            if code or fake.writes()[:2] != [["update", "cp-plain.d", "--status", "open", "--json"], ["update", "cp-plain", "--status", "open", "--assignee", "", "--json"]] \
-                    or any(args[:2] == ["dep", "add"] for args in fake.writes()):
-                raise ValueError(f"plain checkpoint Return must reopen its in-review design without adding a blocker: {code} {errors} {fake.writes()}")
-            agent_checkpoint, agent_design = checkpoint_pair("cp-agent")
-            agent_checkpoint.update(status="in_review", assignee="lead0001", metadata={"checkpoint": "agent"})
-            agent_design["status"] = "in_review"
-            fake = Fake([agent_checkpoint, agent_design])
-            code, output, errors = invoke(["return", "cp-agent", "Changes wanted"], fake, "lead0001")
-            if code or fake.writes()[:2] != [["update", "cp-agent.d", "--status", "open", "--json"], ["update", "cp-agent", "--status", "open", "--assignee", "", "--json"]]:
-                raise ValueError(f"agent checkpoint Return must reopen its in-review design: {code} {errors} {fake.writes()}")
+            if code or fake.writes() != [["update", "cp-plain", "--status", "open", "--assignee", "", "--json"], ["comments", "add", "cp-plain", "board return: Changes wanted"]]:
+                raise ValueError(f"Return of a design-only CR is the ordinary Return, no design item touched: {code} {errors} {fake.writes()}")
             code, _, errors, fake = bd_create("--holds", ready, deck=Creating(list(mine_rows)))
             if code or not any(w[:2] == ["unclaim", ready] for w in fake.writes()):
                 raise ValueError(f"board bd create --holds blocks on the board read after the create: the creator's claimed item is handed back: {code} {errors} {fake.writes()}")
@@ -5180,8 +5161,8 @@ def validate_board(root: Path) -> None:
                     or ["comments", "add", "fx-ovo.c2", "board handover: pnpm test: 0 failures"] not in fake.writes() \
                     or not any("check_result=pass" in args and f"check_base_tip={main_tip}" in args and f"check_tip={cr_tip}" in args for args in fake.writes()):
                 raise ValueError(f"board handover: {code} {fake.writes()} {errors}")
-            # A checkpoint set to the agent sends the hand-over to the checkpoint stage, a user checkpoint through review.
-            class CheckpointHandover(Fake):
+            # A design-only CR is handed over like any other: its closed design item stays closed, an open one refuses the hand-over.
+            class StatusWrites(Fake):
                 def __call__(self, command, **kwargs):
                     result = super().__call__(command, **kwargs)
                     if command[0] != "bd":
@@ -5192,45 +5173,21 @@ def validate_board(root: Path) -> None:
                             target = next((issue for issue in self.issues if issue["id"] == item_id), None)
                             if target:
                                 target["status"] = status
-                    elif command[1] == "close" and "--reason" in command:
-                        for item_id in command[2:command.index("--reason")]:
-                            target = next((issue for issue in self.issues if issue["id"] == item_id), None)
-                            if target:
-                                target["status"] = "closed"
                     return result
 
-            for checkpoint, status in (("agent", "in_review"), ("user", "needs_acceptance")):
-                fake = CheckpointHandover(variant(**{"CR held": {"metadata": {**ready_cr["CR held"]["metadata"], "checkpoint": checkpoint}}, **done_item}))
-                invoke(["handover", "fx-ovo.c2", "ok"], fake, "aaaa1111")
-                if not any(args[:4] == ["update", "fx-ovo.c2", "--status", status] for args in fake.writes()):
-                    raise ValueError(f"board handover with checkpoint {checkpoint} must go to {status}: {fake.writes()}")
-                design = {"id": "fx-ovo.c2.d", "title": "design checkpoint", "issue_type": "design", "status": "open", "priority": 2,
-                          "description": "d", "created_at": "2026-10-22T15:29:00Z", "updated_at": "2026-10-22T15:29:00Z",
-                          "dependencies": [{"issue_id": "fx-ovo.c2.d", "depends_on_id": "fx-ovo.c2", "type": "parent-child"}]}
-                fake = CheckpointHandover([*variant(**{"CR held": {"metadata": {**ready_cr["CR held"]["metadata"], "checkpoint": checkpoint}}, **done_item}), design])
-                invoke(["handover", "fx-ovo.c2", "ok"], fake, "aaaa1111")
-                if design["status"] != "in_review" or ["update", design["id"], "--status", "in_review", "--json"] not in fake.writes():
-                    raise ValueError(f"board handover at checkpoint {checkpoint} must move its open design to in_review: {fake.writes()}")
-            busy_design = {"id": "fx-ovo.c2.busy", "title": "held design checkpoint", "issue_type": "design", "status": "in_progress",
-                           "assignee": "cccc3333", "priority": 2, "description": "d", "created_at": "2026-10-22T15:29:00Z",
-                           "updated_at": "2026-10-22T15:29:00Z",
-                           "dependencies": [{"issue_id": "fx-ovo.c2.busy", "depends_on_id": "fx-ovo.c2", "type": "parent-child"}]}
-            for checkpoint in ("agent", "user"):
-                fake = CheckpointHandover([*variant(**{"CR held": {"metadata": {**ready_cr["CR held"]["metadata"], "checkpoint": checkpoint}}, **done_item}), busy_design])
-                code, _, errors = invoke(["handover", "fx-ovo.c2", "ok"], fake, "aaaa1111")
-                if code != 1 or "checkpoint design items still in progress" not in errors or busy_design["status"] != "in_progress" \
-                        or any(args[0] in ("update", "comments", "close") for args in fake.writes()):
-                    raise ValueError(f"a checkpoint cannot hand over while a design worker still holds an in-progress design: {code} {errors} {fake.writes()}")
-            agent_design = {"id": "fx-ovo.c2.d", "title": "design checkpoint", "issue_type": "design", "status": "in_review", "priority": 2,
+            agent_design = {"id": "fx-ovo.c2.d", "title": "design", "issue_type": "design", "status": "closed", "priority": 2,
                             "description": "d", "created_at": "2026-10-22T15:29:00Z", "updated_at": "2026-10-22T15:29:00Z",
                             "dependencies": [{"issue_id": "fx-ovo.c2.d", "depends_on_id": "fx-ovo.c2", "type": "parent-child"}]}
-            reviewing_checkpoint = {"status": "in_review", "assignee": "bbbb2222",
-                                    "metadata": {**ready_cr["CR held"]["metadata"], "checkpoint": "agent", "reviewing_tip": cr_tip}}
-            fake = CheckpointHandover([*variant(**{"CR held": reviewing_checkpoint, **done_item}), agent_design])
-            code, output, errors = invoke(["handover", "fx-ovo.c2", "checkpoint passed"], fake, "bbbb2222")
-            if code or agent_design["status"] != "closed" or ["close", agent_design["id"], "--reason", "fx-ovo.c2: passed agent design checkpoint"] not in fake.writes() \
-                    or not any(args[:4] == ["update", "fx-ovo.c2", "--status", "open"] for args in fake.writes()):
-                raise ValueError(f"review pass must close its design and return the CR to planning: {code} {errors} {fake.writes()}")
+            fake = StatusWrites([*variant(**ready_cr, **done_item), agent_design])
+            code, _, errors = invoke(["handover", "fx-ovo.c2", "ok"], fake, "aaaa1111")
+            if code or not any(args[:4] == ["update", "fx-ovo.c2", "--status", "in_review"] for args in fake.writes()) \
+                    or any(args[:2] == ["update", agent_design["id"]] for args in fake.writes()):
+                raise ValueError(f"a design-only CR hands over to review like any CR: {code} {errors} {fake.writes()}")
+            open_design = {**agent_design, "status": "open"}
+            fake = StatusWrites([*variant(**ready_cr, **done_item), open_design])
+            code, _, errors = invoke(["handover", "fx-ovo.c2", "ok"], fake, "aaaa1111")
+            if code != 1 or "items still open" not in errors or any(args[0] in ("update", "comments", "close") for args in fake.writes()):
+                raise ValueError(f"a design item still open refuses the hand-over: {code} {errors} {fake.writes()}")
             # The reviewer's pass: look before goes to accept (the user's Accept), the holder released; a returned item goes back to open.
             reviewing = {"CR held": {"status": "in_review", "assignee": "bbbb2222", "metadata": {**ready_cr["CR held"]["metadata"], "reviewing_tip": cr_tip}}}
             fake = Fake(variant(**reviewing, **done_item))
@@ -5261,22 +5218,22 @@ def validate_board(root: Path) -> None:
             reserve = ["update", "fx-ovo.c1", "--assignee", "plan0001", "--if-assignee", "", "--if-status", "in_review", "--json"]
 
             def planner_return_fixture(status="in_review", holder="", ruling_holder="plan0001", released=True, affected=True):
-                child = {**agent_design, "id": "fx-ovo.c1.d", "status": "in_review",
+                child = {**agent_design, "id": "fx-ovo.c1.d", "status": "open",
                          "dependencies": [{"issue_id": "fx-ovo.c1.d", "depends_on_id": "fx-ovo.c1", "type": "parent-child"}]}
                 if affected:
                     child["dependencies"].append({"issue_id": child["id"], "depends_on_id": ruling_id, "type": "blocks"})
-                rows = variant(**{"CR ready": {"status": status, "assignee": holder, "metadata": {"checkpoint": "agent"}},
+                rows = variant(**{"CR ready": {"status": status, "assignee": holder, "metadata": {}},
                                   "Released ruling": {"status": "released" if released else "decided", "assignee": ruling_holder}})
                 return [*rows, child]
 
-            fake = CheckpointHandover(planner_return_fixture())
+            fake = Fake(planner_return_fixture())
             code, _, errors = invoke(command, fake, "plan0001")
             writes = fake.writes()
             if code or writes[0] != reserve or fake.issues[-1]["status"] != "open" \
-                    or writes[2][:10] != ["update", "fx-ovo.c1", "--status", "open", "--assignee", "",
+                    or writes[1][:10] != ["update", "fx-ovo.c1", "--status", "open", "--assignee", "",
                                          "--if-assignee", "plan0001", "--if-status", "in_review"] \
                     or writes[-1] != ["comments", "add", "fx-ovo.c1", f"board return: {ruling_id}: revise the design"]:
-                raise ValueError(f"planner return must reserve, reopen the checkpoint, and record its ruling: {errors} {writes}")
+                raise ValueError(f"planner return must reserve, reopen the CR, and record its ruling: {errors} {writes}")
             for actor, changes in (("plan0001", {"status": "needs_acceptance"}), ("plan0001", {"holder": "bbbb2222"}),
                                    ("plan0001", {"ruling_holder": ""}), ("plan0001", {"released": False}),
                                    ("plan0001", {"affected": False}), ("aaaa1111", {"ruling_holder": "aaaa1111"})):
@@ -5326,19 +5283,23 @@ def validate_board(root: Path) -> None:
                         "dependencies": [{"issue_id": item_id, "depends_on_id": cr, "type": "parent-child"},
                                          *({"issue_id": item_id, "depends_on_id": b, "type": "blocks"} for b in blocks)]}
 
-            def readiness(*issues, complete=False):
+            def readiness(*issues, complete=False, closed=()):
                 deck = bare_deck(list(issues), complete)
+                children = lambda _, cid: [i for i in (*issues, *closed) if any(d["depends_on_id"] == cid and d["type"] == "parent-child"
+                                                                                 for d in i.get("dependencies") or [])]
+                with patch.object(board, "cr_closed_items", children):
+                    return readiness_of(deck, issues)
+
+            def readiness_of(deck, issues):
                 return {i["id"]: (deck.claimable(i), deck.cr_waits(i)) for i in issues if i["issue_type"] == "change-request" and i["status"] != "closed"}
 
-            # A2/A10: a CR waits while its blocker CR is open, in work or returned; in review (not at a checkpoint) or past its design
-            # checkpoint it is the base; two bases are one too many; closed is landed.
+            # A2/A10: a CR waits while its blocker CR is open, in work or returned; in review it waits too; at Accept it is the base,
+            # unless it is design-only (never a stack base); two bases are one too many; closed is landed.
             item_of = lambda cr, *, blocks=(): [cr_item(f"{cr['id']}.i", cr["id"], blocks=blocks)]
             for blocker, expect in ((cr_issue("b", "needs_acceptance"), ("implement", [], ["b"])),
                                     (cr_issue("b", "in_review"), (None, ["b"], [])),
                                     (cr_issue("b", "in_progress", assignee="x"), (None, ["b"], [])),
                                     (cr_issue("b", "open"), (None, ["b"], [])),
-                                    (cr_issue("b", "in_review", checkpoint="agent"), (None, ["b"], [])),
-                                    (cr_issue("b", "needs_acceptance", checkpoint="user"), (None, ["b"], [])),
                                     (cr_issue("b", "open", designed="1"), (None, ["b"], []))):
                 waiting = cr_issue("w", blocks=("b",))
                 kind, (waits, bases) = readiness(blocker, waiting, *item_of(waiting))["w"]
@@ -5351,11 +5312,23 @@ def validate_board(root: Path) -> None:
             gone = readiness(cr_issue("b", "closed"), cr_issue("w", blocks=("b",)), *item_of(cr_issue("w")), complete=True)["w"]
             if gone[0] != "implement" or gone[1] != ([], []):
                 raise ValueError(f"a landed (closed) blocker holds nothing: {gone}")
-            # A design checkpoint lands nothing: never refresh work, and it does not hold the queue head from the request behind it.
-            heads = readiness(cr_issue("dz", "needs_acceptance", checkpoint="user", since="2026-10-22T15:00:00Z"),
-                              cr_issue("lz", "needs_acceptance", since="2026-10-22T15:05:00Z"))
-            if heads["dz"][0] != "accept" or heads["lz"][0] != "refresh":
-                raise ValueError(f"a design checkpoint at the queue's front must stay an accept and pass the refresh to the next request: {heads}")
+            # A design-only CR is never a stack base, at Accept or earlier: its dependent waits until it lands, then runs on the target.
+            design_item = lambda cr, status="closed": {**cr_item(f"{cr}.d", cr, status=status, kind="design")}
+            for status in ("in_review", "needs_acceptance"):
+                waiting = cr_issue("w", blocks=("b",))
+                kind, (waits, bases) = readiness(cr_issue("b", status), design_item("b"), waiting, *item_of(waiting))["w"]
+                if (kind, waits, bases) != (None, ["b"], []):
+                    raise ValueError(f"a CR must wait for a design-only CR in {status}, not stack on it: {(kind, waits, bases)}")
+            waiting = cr_issue("w", blocks=("b.d",))
+            if readiness(cr_issue("b", "needs_acceptance"), design_item("b"), waiting, *item_of(waiting))["w"] != (None, (["b"], [])):
+                raise ValueError("an item blocked by the design item of a design-only CR must wait for that CR's landing")
+            mixed = cr_issue("w", blocks=("b",))
+            if readiness(cr_issue("b", "needs_acceptance"), design_item("b"), cr_item("b.i", "b", status="closed"), mixed, *item_of(mixed))["w"] \
+                    != ("implement", ([], ["b"])):
+                raise ValueError("a CR with a work item besides its design stays a stack base at Accept")
+            landed = readiness(cr_issue("b", "closed"), design_item("b"), cr_issue("w", blocks=("b",)), *item_of(cr_issue("w")), complete=True)["w"]
+            if landed != ("implement", ([], [])):
+                raise ValueError(f"a landed design-only CR holds nothing: {landed}")
             # Item edges lift to their CRs; edges inside a CR order its own work only; a plain open blocker waits.
             lifted = readiness(cr_issue("b", "needs_acceptance"), cr_item("b.i", "b"),
                                cr_issue("w"), cr_item("w.i", "w", blocks=("b.i",)), cr_item("w.j", "w", blocks=("w.i",)))["w"]
@@ -5392,14 +5365,6 @@ def validate_board(root: Path) -> None:
             with patch.object(board, "bd_show", show_outside), patch.object(board, "bd_closed", lambda: [closed_child]):
                 if readiness(*lifting)["lw"] != ("implement", ([], ["lb"])):
                     raise ValueError("a closed blocker that is an item of a live request must stack its CR on that request")
-            # A design delivered at its checkpoint releases the direct CR wait while its parent remains unlanded.
-            design = {**closed_child, "issue_type": "design"}
-            with patch.object(board, "bd_closed", lambda: [design]):
-                for complete in (False, True):
-                    snapshot = [*lifting, design] if complete else lifting
-                    if readiness(*snapshot, complete=complete)["lw"] != ("implement", ([], [])):
-                        raise ValueError("a closed design releases its dependent change request on every board view")
-
             # Refuse new open outside waits on CR items before any write, regardless of where the edge is declared.
             others = [cr_issue("fx-source"), cr_item("fx-source-task", "fx-source"), cr_issue("fx-dest"),
                       cr_item("fx-dest-task", "fx-dest"), cr_item("fx-move", "fx-source", blocks=("fx-source-task",)),
@@ -5750,56 +5715,56 @@ def validate_board(root: Path) -> None:
                 if code or at_main() != x_tip or any(w[:2] == ["close", "ly3"] for w in fake.writes()) or "(after lx3)" in output:
                     raise ValueError(f"a look-after CR whose review no longer matches must stay behind (a review pull again): {code} {errors}\n{output}")
 
-                # Design checkpoints: the agent's pass opens the CR for planning as a stack base (and a ratification in look-after projects);
-                # the user's accept is `land --checkpoint`; nothing lands.
-                for look, ratified in (("after", True), ("before", False)):
+                # A design-only CR is an ordinary CR: a look-after pass lands it with only the landing ratification, look before waits for the
+                # user's Accept (no design ratification, no planning stage).
+                for look in ("after", "before"):
                     issues, tip, wt = make_cr(f"cp{look}", f"cp{look}.txt", "d\n")
-                    issues[0].update(assignee="bbbb2222")
-                    issues[0].update(status="in_review")
-                    issues[0]["metadata"].update(checkpoint="agent", look=look, reviewing_tip=tip)
+                    issues[0].update(assignee="bbbb2222", status="in_review")
+                    issues[0]["metadata"].update(look=look, reviewing_tip=tip)
+                    issues[1] = cr_item(f"cp{look}.d", f"cp{look}", "closed", kind="design")
                     fake = Fake(issues)
                     code, output, errors = invoke(["handover", f"cp{look}", "design reads well"], fake, "bbbb2222")
                     written = fake.writes()
-                    ratifications = [node for graph in fake.graphs for node in graph["nodes"]
-                                     if node.get("title") == f"CR cp{look}" and node.get("metadata", {}).get("ratification") == "design"]
-                    if code or ["update", f"cp{look}", "--status", "open", "--assignee", "", "--if-assignee", "bbbb2222", "--json"] not in written \
-                            or not any(w[:2] == ["update", f"cp{look}"] and "checkpoint" in w for w in written) \
-                            or len(ratifications) != int(ratified) \
-                            or ratified and (ratifications[0].get("status") != "needs_ratification"
-                                            or ratifications[0].get("parent_id") != f"cp{look}") \
-                            or "passed the checkpoint" not in output:
-                        raise ValueError(f"the agent's checkpoint pass in a look-{look} project: {code} {errors}\n{written}\n{output}")
+                    kinds = [node.get("metadata", {}).get("ratification") for graph in fake.graphs for node in graph["nodes"]]
+                    landed = any(w[:2] == ["close", f"cp{look}"] for w in written)
+                    if code or landed != (look == "after") or kinds != (["landing"] if look == "after" else []) \
+                            or any(w[:4] == ["update", f"cp{look}", "--status", "open"] for w in written) \
+                            or any(w[:2] == ["update", f"cp{look}.d"] for w in written) \
+                            or (look == "before" and not any(w[:4] == ["update", f"cp{look}", "--status", "needs_acceptance"] for w in written)):
+                        raise ValueError(f"the pass of a design-only CR in a look-{look} project: {code} {errors}\n{written}\n{output}")
                 empty_ratification_board = types.SimpleNamespace(by_id={}, children={"parent": []}, _cr_items={"parent": []})
                 with patch.object(board, "create_item", return_value="rat-new") as create, patch.object(board, "bd_checked") as update:
-                    made = board.cr_ratification(empty_ratification_board, {"id": "parent", "title": "CR title", "priority": 2}, "design")
+                    made = board.cr_ratification(empty_ratification_board, {"id": "parent", "title": "CR title", "priority": 2})
                     if made != "rat-new" or create.call_args.args[1:3] != ("CR title", "task") \
-                            or create.call_args.kwargs.get("metadata") != {"ratification": "design"} \
+                            or create.call_args.kwargs.get("metadata") != {"ratification": "landing"} \
                             or create.call_args.kwargs.get("status") != "needs_ratification" or update.called:
-                        raise ValueError(f"a design ratification must create a plain-title child atomically with kind metadata and its status: {create.call_args} {update.call_args}")
+                        raise ValueError(f"a landing ratification must create a plain-title child atomically with kind metadata and its status: {create.call_args} {update.call_args}")
                 existing = {"id": "rat-old", "title": "CR title", "issue_type": "task", "status": "needs_ratification",
-                            "metadata": {"ratification": "design"}}
+                            "metadata": {"ratification": "landing"}}
                 existing_ratification_board = types.SimpleNamespace(by_id={"rat-old": existing}, children={"parent": ["rat-old"]},
                                                                     _cr_items={"parent": [existing]})
                 with patch.object(board, "create_item") as create, patch.object(board, "bd_checked") as update:
-                    made = board.cr_ratification(existing_ratification_board, {"id": "parent", "title": "CR title"}, "design")
+                    made = board.cr_ratification(existing_ratification_board, {"id": "parent", "title": "CR title"})
                     if made is not None or create.called or update.called:
                         raise ValueError(f"a second ratification of the same parent and kind must not create another item: {made} {create.call_args} {update.call_args}")
+                historical = {**existing, "metadata": {"ratification": "design"}}
+                historical_board = types.SimpleNamespace(by_id={"rat-old": historical}, children={"parent": ["rat-old"]}, _cr_items={"parent": [historical]})
                 with patch.object(board, "create_item", return_value="rat-new") as create, patch.object(board, "bd_checked") as update:
-                    made = board.cr_ratification(existing_ratification_board, {"id": "parent", "title": "CR title"}, "landing")
+                    made = board.cr_ratification(historical_board, {"id": "parent", "title": "CR title"})
                     if made != "rat-new" or not create.called or create.call_args.kwargs.get("metadata") != {"ratification": "landing"} or update.called:
-                        raise ValueError(f"an active ratification of another kind does not block this one: {made} {create.call_args} {update.call_args}")
+                        raise ValueError(f"a historical design ratification does not block a landing one: {made} {create.call_args} {update.call_args}")
                 partial = {**existing, "status": "open"}
                 partial_board = types.SimpleNamespace(by_id={"rat-old": partial}, children={"parent": ["rat-old"]},
                                                       _cr_items={"parent": [partial]})
                 with patch.object(board, "create_item") as create, patch.object(board, "bd_checked") as update:
-                    made = board.cr_ratification(partial_board, {"id": "parent", "title": "CR title"}, "design")
+                    made = board.cr_ratification(partial_board, {"id": "parent", "title": "CR title"})
                     if made is None or not create.called or update.called:
                         raise ValueError(f"an open same-kind child does not block a new ratification or get repaired: {made} {create.call_args} {update.call_args}")
                 completed = {**existing, "status": "closed"}
                 completed_board = types.SimpleNamespace(by_id={"rat-old": completed}, children={"parent": ["rat-old"]},
                                                         _cr_items={"parent": [completed]})
                 with patch.object(board, "create_item") as create, patch.object(board, "bd_checked") as update:
-                    made = board.cr_ratification(completed_board, {"id": "parent", "title": "CR title"}, "design")
+                    made = board.cr_ratification(completed_board, {"id": "parent", "title": "CR title"})
                     if made is None or not create.called or update.called:
                         raise ValueError(f"a closed same-kind ratification allows a fresh review: {made} {create.call_args} {update.call_args}")
                 legacy_closed = {"id": "rat-legacy", "title": "Ratify design: historical", "issue_type": "task",
@@ -5807,12 +5772,12 @@ def validate_board(root: Path) -> None:
                 legacy_closed_board = types.SimpleNamespace(by_id={"rat-legacy": legacy_closed}, children={"parent": ["rat-legacy"]},
                                                             _cr_items={"parent": [legacy_closed]})
                 with patch.object(board, "create_item") as create, patch.object(board, "bd_checked") as update:
-                    made = board.cr_ratification(legacy_closed_board, {"id": "parent", "title": "CR title"}, "design")
+                    made = board.cr_ratification(legacy_closed_board, {"id": "parent", "title": "CR title"})
                     if made is None or not create.called or update.called or legacy_closed != {
                             "id": "rat-legacy", "title": "Ratify design: historical", "issue_type": "task", "status": "closed", "metadata": {}}:
                         raise ValueError(f"a legacy title prefix does not affect ratification identity or rewrite history: {made} {legacy_closed}")
                 # r10-q50: a CR whose branch has no commits of its own lands when its review passes (nothing to merge), in either look,
-                # without a ratification and without the Accept; a design checkpoint is the exception.
+                # without a ratification and without the Accept.
                 def make_empty_cr(name, look, status="in_review", **extra):
                     base_tip = git("rev-parse", "main")
                     wt = Path(repo_root, ".worktrees", name)
@@ -5829,11 +5794,6 @@ def validate_board(root: Path) -> None:
                             or any(w[:4] == ["update", f"emp{look}", "--status", "needs_acceptance"] for w in written) \
                             or f"passed and landed emp{look}" not in output or at_main() != tip or wt.exists():
                         raise ValueError(f"a CR with no commits of its own lands on its passed review in a look-{look} project, with no ratification: {code} {errors}\n{written}\n{output}")
-                issues, tip, wt = make_empty_cr("empcp", "before", checkpoint="agent")
-                fake = Fake(issues)
-                code, output, errors = invoke(["handover", "empcp", "design reads well"], fake, "bbbb2222")
-                if code or any(w[:2] == ["close", "empcp"] for w in fake.writes()) or "passed the checkpoint" not in output:
-                    raise ValueError(f"an empty design checkpoint still goes to planning: {code} {errors}\n{fake.writes()}\n{output}")
                 issues, tip, wt = make_empty_cr("emplate", "after", status="needs_acceptance", check_tip=git("rev-parse", "main"), check_base_tip=git("rev-parse", "main"),
                                                 check_result="pass", check_at="2026-10-22T15:00:00Z", review_tip=git("rev-parse", "main"), review_base_tip=git("rev-parse", "main"))
                 fake = Fake(issues)
@@ -5859,64 +5819,17 @@ def validate_board(root: Path) -> None:
                 code, output, errors = invoke(["cr", "land", "ep", "--tip", p_tip[:8], "--base", at_main()], fake, "lead0001")
                 if code or not any(w[:2] == ["close", "ec"] for w in fake.writes()):
                     raise ValueError(f"an empty stacked look-before CR must land with its base: {code} {errors}\n{output}\n{fake.writes()}")
-                def design_hash(rows):
-                    """The pin of the design items in rows, worked out from the spec: sha256[:12] of their id, description, design, acceptance and notes."""
-                    designs = sorted((r for r in rows if r.get("issue_type") == "design"), key=lambda r: r["id"])
-                    text = json.dumps([[r["id"], *(r.get(f) or "" for f in ("description", "design", "acceptance_criteria", "notes"))] for r in designs])
-                    return hashlib.sha256(text.encode()).hexdigest()[:12]
-
+                # A design-only CR at the user's Accept lands like any CR, on the pair shown, and files no design ratification.
                 issues, tip, wt = make_cr("cpuser", "cpuser.txt", "d\n")
-                issues[0]["metadata"].update(checkpoint="user")
+                issues[1] = cr_item("cpuser.d", "cpuser", "closed", kind="design")
                 before = at_main()
                 code, _, errors = invoke(["cr", "land", "cpuser"], Fake(issues), "lead0001")
-                if code != 1 or "--checkpoint" not in errors or at_main() != before:
-                    raise ValueError(f"board cr land without --checkpoint must refuse a pending design checkpoint: {errors}")
+                if code != 1 or "--tip" not in errors or at_main() != before:
+                    raise ValueError(f"board cr land of a design-only CR needs the pair shown at Accept: {code} {errors}")
                 fake = Fake(issues)
-                code, _, errors = invoke(["cr", "land", "cpuser", "--checkpoint"], fake, "lead0001")
-                if code != 1 or "--design" not in errors or "agents board claim cpuser" not in errors or fake.writes():
-                    raise ValueError(f"board cr land --checkpoint without --design must refuse and name board claim: {code} {errors} {fake.writes()}")
-                fake = Fake(issues)
-                code, output, errors = invoke(["cr", "land", "cpuser", "--checkpoint", "--design", design_hash(issues)], fake, "lead0001")
-                if code or at_main() != before or not any(w[:2] == ["update", "cpuser"] and "checkpoint" in w for w in fake.writes()) \
-                        or ["update", "cpuser", "--status", "open", "--assignee", "", "--json"] not in fake.writes() or not wt.exists():
-                    raise ValueError(f"board cr land --checkpoint must open the CR for planning and land nothing: {code} {errors} {fake.writes()}")
-                # The design pin: the claim prints a hash of the design item's text; `--design <hash>` accepts only that text.
-                design = {**cr_item("cpuser.d", "cpuser", "in_review", kind="design"), "design": "the design", "acceptance_criteria": "ac", "notes": "n"}
-                consumer = cr_item("cpuser.consumer", "cpuser", kind="task", blocks=("cpuser.d",))
-                pinned = [*issues, design, consumer]
-                if not board.Board(pinned).waits_on_decision_design_or_spike(consumer["id"]):
-                    raise ValueError("a dependent must stay blocked while its checkpoint design is in review")
-                code, output, errors = invoke(["claim", "cpuser"], Fake(pinned), "lead0001")
-                found = re.search(r"design hash (\w+) \(cpuser\.d\)", output)
-                if code or found is None:
-                    raise ValueError(f"board claim of a user design checkpoint must print the design hash: {code} {errors}\n{output}")
-                pin = found.group(1)
-                if pin != design_hash(pinned):
-                    raise ValueError(f"the claim's design hash differs from the spec's: {pin} vs {design_hash(pinned)}")
-                for edit in ({"design": "the design, changed"}, {"notes": "n2"}, {"description": "d2"}, {"acceptance_criteria": "ac2"}):
-                    fake = Fake([*issues, {**design, **edit}])
-                    code, _, errors = invoke(["cr", "land", "cpuser", "--checkpoint", "--design", pin], fake, "lead0001")
-                    if code != 1 or "design changed" not in errors or fake.writes():
-                        raise ValueError(f"board cr land --checkpoint --design must refuse a changed design ({edit}): {code} {errors} {fake.writes()}")
-                fake = CheckpointWorkflow(json.loads(json.dumps(pinned)))
-                code, output, errors = invoke(["cr", "land", "cpuser", "--checkpoint", "--design", pin], fake, "lead0001")
-                accepted_design = next(i for i in fake.issues if i["id"] == "cpuser.d")
-                if code or accepted_design["status"] != "closed" or board.Board(fake.issues).waits_on_decision_design_or_spike(consumer["id"]) \
-                        or ["close", "cpuser.d", "--reason", "cpuser: accepted design checkpoint"] not in fake.writes() \
-                        or ["update", "cpuser", "--status", "open", "--assignee", "", "--json"] not in fake.writes():
-                    raise ValueError(f"board cr land --checkpoint --design with the claimed hash must accept: {code} {errors} {fake.writes()}")
-                code, _, errors = invoke(["cr", "land", "cpuser", "--design", pin], Fake(pinned), "lead0001")
-                if code != 1 or "--checkpoint" not in errors:
-                    raise ValueError(f"--design without --checkpoint must refuse: {code} {errors}")
-                # A CR made around an existing design item (waiting in review under the old model) is accepted like a native one.
-                legacy = cr_issue("legacycp", "needs_acceptance", checkpoint="user", since="2026-10-22T15:00:00Z")
-                legacy_design = cr_item("legacycp.d", "legacycp", "in_review", kind="design")
-                fake = CheckpointWorkflow([legacy, legacy_design])
-                code, output, errors = invoke(["cr", "land", "legacycp", "--checkpoint", "--design", design_hash([legacy, legacy_design])], fake, "lead0001")
-                if code or legacy_design["status"] != "closed" or ["update", "legacycp", "--status", "open", "--assignee", "", "--json"] not in fake.writes() or "accepted the design checkpoint" not in output:
-                    raise ValueError(f"land --checkpoint of a CR around a legacy design item: {code} {errors} {fake.writes()}")
-                if invoke(["cr", "land", "lx2", "--checkpoint", "--design", "0" * 12], Fake([*x_issues]), "lead0001")[0] != 1:
-                    raise ValueError("board cr land --checkpoint without a pending user checkpoint must refuse")
+                code, output, errors = invoke(["cr", "land", "cpuser", "--tip", tip[:8], "--base", before], fake, "lead0001")
+                if code or at_main() != tip or not any(w[:2] == ["close", "cpuser"] for w in fake.writes()) or any(w[0] == "create" for w in fake.writes()):
+                    raise ValueError(f"board cr land must land a design-only CR in a look-before project without a ratification: {code} {errors}\n{fake.writes()}")
 
                 # r26: checks pass when no (file, code) failure count rises from the base to the tip (q241); the base is run once per base commit.
                 commit(repo_root, "failures.txt", "a.ts E1\nb.ts E2\n", "baseline failures")
@@ -6720,12 +6633,18 @@ def validate_board(root: Path) -> None:
                 for needle in ("loose-task  no-cr", "nowt  cr-branch", "nowt2  cr-worktree", "cr-settings", "custom.board.look is not set"):
                     if needle not in report:
                         raise ValueError(f"board check lacks {needle!r}:\n{report}")
-                # A user design checkpoint waiting for the user has no branch to land; one still in work has (r5-q16).
+                # The retired checkpoint stage is not read for behaviour: a waiting CR is an ordinary one (no branch is flagged), and a live CR
+                # still carrying `checkpoint` or an open design ratification is a deviation naming board-migrate, not an unknown key.
                 waiting = cr_issue("cpwait", "needs_acceptance", base="main", base_sha=fresh_tip, checkpoint="user")
-                working = cr_issue("cpwork", "in_progress", assignee="aaaa1111", base="main", base_sha=fresh_tip, checkpoint="user")
-                _, report_cp, _ = invoke(["check"], Fake([waiting, working, *fresh]))
-                if "cpwait  cr-branch" in report_cp or "cpwork  cr-branch" not in report_cp:
-                    raise ValueError(f"board check on user design checkpoints:\n{report_cp}")
+                working = cr_issue("cpwork", "in_progress", assignee="aaaa1111", base="main", base_sha=fresh_tip, checkpoint="agent")
+                ratify = {**cr_item("cpwork.r", "cpwork", "needs_ratification"), "issue_type": "task", "metadata": {"ratification": "design"}}
+                plain = cr_issue("cpplain", "in_progress", assignee="aaaa1111", base="main", base_sha=fresh_tip)
+                _, report_cp, _ = invoke(["check"], Fake([waiting, working, ratify, plain, *fresh]))
+                rows_cp = [row for row in report_cp.splitlines() if "  cr-checkpoint  " in row]
+                if "cpwait  cr-branch" not in report_cp or "unknown-metadata" in report_cp or len(rows_cp) != 2 \
+                        or "checkpoint=user" not in rows_cp[0] or "checkpoint=agent" not in rows_cp[1] or "design ratification cpwork.r" not in rows_cp[1] \
+                        or not all("board-migrate" in row and "cpplain" not in row for row in rows_cp):
+                    raise ValueError(f"board check on legacy design checkpoints:\n{report_cp}")
                 if "freshcr  cr-" in report:
                     raise ValueError(f"board check flagged a change request with its worktree:\n{report}")
 
@@ -8247,11 +8166,14 @@ else:
                 or result.stdout != "fx-item-new\n":
             raise ValueError(f"board create must build one graph node from the flags and print its id: {result.returncode} {result.stdout!r} {result.stderr!r} {plan}")
         # item settings are typed: stored as the board's metadata, refused on an item they do not fit
-        for args, metadata in ((("T", "--no-commit"), {"no_commit": True}), (("T", "-t", "change-request", "--look", "after", "--checkpoint", "user"),
-                                                                            {"look": "after", "checkpoint": "user"})):
+        for args, metadata in ((("T", "--no-commit"), {"no_commit": True}), (("T", "-t", "change-request", "--look", "after", "--view", "result"),
+                                                                            {"look": "after", "view": "result"})):
             result, calls = run_fake("create", *args)
             if result.returncode != 0 or writes_of(calls, "create")[0]["plan"]["nodes"][0].get("metadata") != metadata:
                 raise ValueError(f"board create {args} must store {metadata}: {result.returncode} {result.stderr!r} {calls}")
+        result, calls = run_fake("create", "T", "-t", "change-request", "--checkpoint", "user")
+        if result.returncode != 2 or "unrecognized arguments" not in result.stderr or writes_of(calls, "create"):
+            raise ValueError(f"board create --checkpoint must be an unknown option: {result.returncode} {result.stderr!r} {calls}")
         # a node without a description (none, empty, blank) is refused before bd is called, flags and plans alike
         for args in (("T",), ("T", "-t", "decision", "--holds", "none")):
             result, calls = run_fake("create", *args, described=False)
@@ -9206,14 +9128,14 @@ def validate_console_unblocks(root: Path) -> None:
     phase = board.Board([
         item("a", "change-request", "needs_acceptance"), item("b", "change-request", "needs_acceptance"),
         item("both", "change-request", waits=["a", "b"]), item("one", "change-request", waits=["a"]),
-        {**item("design-cr", "change-request", "in_review"), "metadata": {"checkpoint": "agent"}},
+        item("design-cr", "change-request", "in_review"),
         item("design", "design", "in_review", parent="design-cr"), item("implementation", "task", "closed", parent="design-cr"),
         item("design-waiter", "change-request", waits=["design"]), item("code-waiter", "change-request", waits=["implementation"]),
     ])
     want = {"a": (Fraction(1, 2), 1, 1, 0), "b": (Fraction(1, 2), 1, 1, 0),
-            "design-cr": (Fraction(1), 1, 1, 0)}
+            "design-cr": (Fraction(2), 2, 2, 0)}  # a design item is delivered by its CR's landing, like any item
     if phase.unlocks.impact != want:
-        raise ValueError(f"checkpoint and stack threshold impacts have different completion effects: {phase.unlocks.impact!r}")
+        raise ValueError(f"stack threshold and CR-delivery impacts differ: {phase.unlocks.impact!r}")
 
     feedback = board.Board([
         item("other", "task"), item("independent", "change-request", "needs_acceptance"),

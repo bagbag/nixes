@@ -127,7 +127,7 @@ changed on the board since its export or an edited file is empty; an unedited fi
 Export never overwrites an export edited since and not applied (it names apply and discard); an untouched one is refreshed.
 `agents board field discard <id>...` removes the exports. The flow replaces rewriting a field from memory. Reading stays `agents board show --field`; `agents board show <ids> --json` without `--field` prints whole items `{id: item}` with comments.
 `agents board create [<title>] [--type T] [--parent ID] [--label L]... [--priority N] [--description-file F|-] [--design-file F] [--acceptance-file F]
-[--deps type:ID]... [--holds ID|none]... [--no-commit] [--look L] [--view V] [--checkpoint C] [--status S] [--assignee A] [--for PERSON] [--dry-run]` builds one node of a bd graph plan; `--graph <plan.json>`
+[--deps type:ID]... [--holds ID|none]... [--no-commit] [--look L] [--view V] [--status S] [--assignee A] [--for PERSON] [--dry-run]` builds one node of a bd graph plan; `--graph <plan.json>`
 takes a whole plan (no node flags beside it). Both pass the plan checks (types, a change request's look or view equal to the project default,
 decisions naming what they hold up, queue labels, `--for`: top-level nodes, your queue, held for you, a shared board only, the size
 limit of a work item's long fields) and go to `bd create --graph --json`; the ids print (`key id` per node for `--graph`). Node field names are
@@ -146,8 +146,8 @@ conventions mechanically; change both in the same change, so drifted boards
 surface in `agents board health` and move through `/board-migrate`.
 It flags a live `decision` in the legacy `needs_ratification` status as
 `unratified-ruling`; follow `/board-migrate` Upgrade/Reconcile to repair it.
-Item settings are typed: `create --no-commit|--look|--view|--checkpoint`, the same plan node fields (`"no_commit": true`), and
-`update --no-commit|--commits|--look|--view|--checkpoint` (`""` drops a setting); the board stores them as metadata, which plans and
+Item settings are typed: `create --no-commit|--look|--view`, the same plan node fields (`"no_commit": true`), and
+`update --no-commit|--commits|--look|--view` (`""` drops a setting); the board stores them as metadata, which plans and
 create flags do not take. `update` changes them only from a lead, solo or person, on an item no session holds, a work item open or deferred
 in no CR, a CR open. A look or view is refused when it equals the
 project default (an unreadable default lets bd answer); `agents board setup` that changes `look` or `view` prints, under the
@@ -162,10 +162,14 @@ to a person gets a `no-cr` flag. `agents board check` flags what lies outside th
 a metadata key not in `BOARD_METADATA` (`unknown-metadata`), a link type it does not write (`unknown-link`), and a label outside
 `LABEL_PREFIXES` (`label-form`). `agents board check --fix` (lead, solo or person) applies the fixes that need no judgment first: a key the
 board retired (`RETIRED_METADATA`) is dropped or moved (`no_code` becomes `no_commit` on agent work), the earlier `related` link becomes
-`relates-to`. A key the board never wrote may be another tool's, so it, a label and every other class stay for the reader. A CR whose branch has no commits of its own lands on its passed review in either look, with no
-ratification and no Accept (a stacked one with its base); a design checkpoint is the exception.
-Landing and design ratifications are child tasks titled after their change request. Their metadata
-(`ratification=landing|design`) identifies the kind; see [Change requests](../skills/shared/change-requests.md#change-requests)
+`relates-to`. A key the board never wrote may be another tool's, so it, a label and every other class stay for the reader.
+A live CR still carrying the retired `checkpoint` metadata, or an open `ratification=design` child, is flagged `cr-checkpoint` naming `/board-migrate`:
+the runtime no longer reads either, and `--fix` leaves them for the migration.
+A CR whose branch has no commits of its own lands on its passed review in either look, with no
+ratification and no Accept (a stacked one with its base). A design-only CR (every work item a `design`) goes through the same review, Accept
+and landing, and is never a stack base: a CR that depends on it waits until it lands, also while it waits for the Accept.
+Landing ratifications are child tasks titled after their change request. Their metadata
+(`ratification=landing`) identifies the kind; see [Change requests](../skills/shared/change-requests.md#change-requests)
 for the active-item deduplication rule.
 `agents board review open <cr|ratification>` opens the item for the user's review in its own worktree (`<main>/.worktrees/<id>`), on its own branch
 (r6-q24, r6-q25; accept.md User review) and prints the folder to open on stdout (the worktree's single root `*.code-workspace` file,
@@ -267,8 +271,8 @@ board's when its `onto` equals the CR's `rebase_onto`) leaves the claim queue (`
 lists it as `cr-git-state`, and `agents board console` gives the row a `git-state` problem.
 Each `crs[]` row's `problems` lists what holds the request up with the step that clears it, `{kind, text, next: {action, command?, paths?}}`
 (`cr_problems`): `setup-failed` (claim again), `git-state` (its owner ends it), `check` (any state but current) while it waits for the
-Accept, never for a design checkpoint, which lands nothing (`refresh` when the check is stale, `merge` when stopped on the user's
-edit commit, else `wait`), `waits` (`wait`) for each effective wait (`cr_waits`) but at a design checkpoint's Accept, plus the unlanded parent at any other Accept (`accept_waits`: the
+Accept (`refresh` when the check is stale, `merge` when stopped on the user's
+edit commit, else `wait`), `waits` (`wait`) for each effective wait (`cr_waits`), plus the unlanded parent at any other Accept (`accept_waits`: the
 console hides its Accept, the next claim passes it, a named claim still takes it to return or reject), which a refused claim prints too, `land-blocked` (`ask-user`, the paths). A hold is no problem: the row's `holder` says it, and the console marks it while
 the request waits for the Accept. The console maps the problems to marks and the Update button; `agents board queue` and `agents board show` print the same
 problems with their step. A refusal (`BoardError`) carries its steps in the same shape (`next`); `report_error` prints the reason, then one
