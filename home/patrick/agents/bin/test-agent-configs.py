@@ -6360,6 +6360,19 @@ def validate_board(root: Path) -> None:
                     code, _, errors, writes = verb(argv, world)
                     if code or writes != want:
                         raise ValueError(f"board {argv}: {code} {errors!r} {writes}")
+                # A deferral records its side and an optional revisit day; only that side undefers, and a due day only surfaces it.
+                parked = [plain("t-d1", "deferred", metadata={"deferred_by": "user", "revisit": "2000-01-01"}),
+                          plain("t-d2", "deferred", metadata={"deferred_by": "aaaa1111", "revisit": "2000-01-01"}),
+                          plain("t-d3", "deferred", metadata={"deferred_by": "user", "revisit": "2999-01-01"})]
+                code, _, errors, writes = verb(["undefer", "t-d1"], parked, "aaaa1111")
+                if code != 2 or "the user deferred it" not in errors or writes:
+                    raise ValueError(f"an agent session undeferred the user's deferral: {code} {errors!r} {writes}")
+                code, _, errors, writes = verb(["undefer", "t-d2"], parked, "aaaa1111")
+                if code or not writes or writes[0][:4] != ["update", "t-d2", "--status", "open"] or "deferred_by" not in " ".join(writes[0]):
+                    raise ValueError(f"the deferring session must undefer its own deferral and clear its fields: {code} {errors!r} {writes}")
+                due = lambda one, side: board.due_deferral(next(r for r in parked if r["id"] == one), side)
+                if not (due("t-d1", "user") and not due("t-d1", "plan") and due("t-d2", "plan") and not due("t-d2", "user") and not due("t-d3", "user")):
+                    raise ValueError("a due deferral belongs to the side that deferred it, and only from its revisit day")
                 # Rulings: link and unlink refuse the supersedes and tracks edges; reopen refuses a superseded ruling, naming the revision that puts it back.
                 decision = lambda item_id, status, **more: {**plain(item_id, status, **more), "issue_type": "decision"}
                 edge = lambda a, b, kind: {"issue_id": a, "depends_on_id": b, "type": kind}

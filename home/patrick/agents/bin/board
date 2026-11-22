@@ -36,7 +36,7 @@ import sys
 import tempfile
 import time
 import tomllib
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from collections import deque
 from collections.abc import Iterable, Iterator
@@ -1740,6 +1740,14 @@ HEALTH_VIEWS = ('questions', 'decided', 'released', 'review', 'accept', 'user', 
 LIFECYCLE_LABELS = ('human', 'decided', 'review', 'needs-ratification', 'waiting')  # labels never carry a status
 
 
+def due_deferral(issue: dict, side: str) -> bool:
+    """A deferred record whose revisit day has come, for the side that deferred it ('user', else a session's plan work). It stays
+    deferred until that side undefers it; nothing reopens by itself."""
+    m = meta(issue)
+    return issue['status'] == 'deferred' and bool(m.get(REVISIT)) and m[REVISIT] <= date.today().isoformat() \
+        and (m.get(DEFERRED_BY) == 'user') == (side == 'user')
+
+
 def health_views(board: Board, root: str | None) -> dict[str, tuple[str, list[dict]]]:
     """view -> (heading, open items), the counts `board health` prints."""
     items = [issue for issue in board.listed(root) if issue['status'] != 'closed']
@@ -1753,7 +1761,7 @@ def health_views(board: Board, root: str | None) -> dict[str, tuple[str, list[di
         'accept': ('to accept (change requests waiting for the user)', [i for i in items if board.kind(i) == 'accept']),
         'user': ('waiting on the user (gates titled user, items assigned to user)',
                  [i for i in items if (i.get('issue_type') == 'gate' and i.get('title', '').startswith('user '))
-                  or i.get('assignee') == 'user']),
+                  or i.get('assignee') == 'user' or due_deferral(i, 'user')]),
         'ready': ('claimable now (unassigned, unblocked)', [i for i in items if board.claimable(i)]),
         'held': ('held (assigned to a session, not closed)', [i for i in items if held_by_a_session(i)]),
         'blocked': ('waiting on open blockers', [i for i in items if board.open_blockers(i['id'])]),
@@ -1930,6 +1938,9 @@ def health(board: Board, args) -> None:
                 print(row)
             if args.limit and len(listed) > args.limit:
                 print(f'  ... {len(listed) - args.limit} more')
+    due = [i for i in board.listed(args.root) if due_deferral(i, 'plan')]
+    if due:
+        print(f"deferred, revisit day reached (plan work): {len(due)}: {', '.join(i['id'] for i in due)}")
     shown = {i['id'] for i in board.listed(args.root)}
     waiting = [i for i in accept_queue(board) if i['id'] in shown]
     if waiting:
