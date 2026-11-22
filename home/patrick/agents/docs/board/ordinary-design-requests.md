@@ -4,6 +4,10 @@ Design intent — validation-pending under `nixes-aq9ca`. This change request
 carries the design through ordinary review and Accept. The lifecycle change
 and conversion of existing records follow separately.
 
+Revised by `nixes-lwf8q` (22.11.2026, [workflow.md](workflow.md#designs)):
+a design lands with its implementation by default; this contract applies to
+a separate design CR, the exception that names its reason.
+
 ## Contract
 
 Plan a design-only change request (CR) with a `design` work item. Commit the
