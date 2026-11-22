@@ -2117,8 +2117,8 @@ def validate_shared_board(root: Path) -> None:
         return {**item(item_id, *labels), "created_at": created, **({"assignee": assignee} if assignee else {})}
 
     inbox = board.Board([aged("old", "2026-01-01T00:00:00Z"), aged("forme", "2026-03-01T00:00:00Z", "for:anna"),
-                         aged("forben", "2026-02-01T00:00:00Z", "for:ben"), aged("find", "2026-01-05T00:00:00Z", "queue:anna", "for:ben", assignee="user"),
-                         aged("plainhold", "2026-01-05T00:00:00Z", "queue:anna", assignee="user")], complete=False)
+                         aged("forben", "2026-02-01T00:00:00Z", "for:ben"), aged("find", "2026-01-05T00:00:00Z", "queue:anna", "for:ben"),
+                         aged("plainhold", "2026-01-05T00:00:00Z", "queue:anna")], complete=False)
     inbox.view = "anna"
     summary = board.queue_summary(inbox, None)
     expect([i["id"] for i in summary["unrouted"]] == ["forme", "old", "forben"], "unrouted: for you first, then oldest", summary["unrouted"])
@@ -2129,7 +2129,7 @@ def validate_shared_board(root: Path) -> None:
     row = next((r for r in shown.getvalue().splitlines() if "forben" in r), "")
     expect("for:ben" in row and " old" in row, "an unrouted row names for: and its age", shown.getvalue())
     queues = board.queues_json(inbox, None)["queues"]
-    expect([i["id"] for i in queues["inbox"]] == ["forme"] and [i["id"] for i in queues["toSend"]] == ["find"], "--json inbox and held finds", queues)
+    expect([i["id"] for i in queues["inbox"]] == ["forme"] and [i["id"] for i in queues["toSend"]] == ["find"], "--json inbox and finds to send", queues)
     # r38-q217: an inbox item waits since `board send` stamped sent_at; others since created. Rows and JSON say which.
     waiting = board.Board([aged("old", "2026-01-01T00:00:00Z"), {**aged("sentlate", "2025-12-01T00:00:00Z", "for:ben"), "metadata": {"sent_at": "2026-02-01T00:00:00Z"}},
                            aged("unstamped", "2025-12-15T00:00:00Z", "for:ben")], complete=False)
@@ -2177,7 +2177,7 @@ def validate_shared_board(root: Path) -> None:
         expect(made_plans[-1]["nodes"][0]["labels"] == ["queue:ben"], "an explicit queue stays", made_plans[-1])
         board.create_item(None, "t", "task", description="d", parent="fx-p")
         expect(made_plans[-1]["nodes"][0]["labels"] == ["topic:a"], "a child takes its parent's queue, not a label of its own", made_plans[-1])
-    # board create --for on a shared board: top-level nodes only, labelled for:<person> in the creator's queue and held for the creator;
+    # board create --for on a shared board: top-level nodes only, labelled for:<person> in the creator's queue;
     # a plan's child nodes (parent, parent_key, parent_id, a parent-child edge) take their parent's queue; a node that sets those itself is refused.
     with patch.object(board, "shared", SimpleNamespace()), patch.object(board, "person", lambda: "anna"):
         plan = {"nodes": [{"key": "a", "title": "A"}, {"key": "b", "title": "B", "parent": "a"}, {"key": "c", "title": "C", "parent_key": "a"},
@@ -2185,12 +2185,12 @@ def validate_shared_board(root: Path) -> None:
                 "edges": [{"from_key": "e", "to_key": "a", "type": "parent-child"}]}
         board.for_person(plan, "ben")
         by_key = {node["key"]: node for node in plan["nodes"]}
-        expect(by_key["a"]["labels"] == ["for:ben", "queue:anna"] and by_key["a"]["assignee"] == "user", "--for labels and holds a top-level node", by_key["a"])
+        expect(by_key["a"]["labels"] == ["for:ben", "queue:anna"] and "assignee" not in by_key["a"], "--for labels a top-level node, no holder", by_key["a"])
         expect(all("labels" not in by_key[key] and "assignee" not in by_key[key] for key in "bcde"), "--for leaves child nodes alone", by_key)
-        for bad in ({"labels": ["queue:ben"]}, {"assignee": "x"}):
+        for bad in ({"labels": ["queue:ben"]},):
             try:
                 board.for_person({"nodes": [{"key": "a", "title": "A", **bad}]}, "ben")
-                raise ValueError("--for must refuse a node that sets queue, for: or the assignee itself")
+                raise ValueError("--for must refuse a node that sets queue or for: itself")
             except board.BoardError:
                 pass
         try:
@@ -2750,13 +2750,13 @@ def validate_board(root: Path) -> None:
             _, retired_health, _ = invoke(["health"], Fake([{**legacy, "metadata": {"triaged_tip": "abc"}}]))
             if "convention deviations: 2 — agents board check --fix: 1 fixes; run /board-migrate" not in retired_health:
                 raise ValueError(f"board health must name board check --fix with its count: {retired_health}")
-            # The user view lists gates titled with the user's words and items assigned to the user.
-            waiting = [{**issue, "title": "user 2026-10-23: 'wait for my go'"} if issue["title"] == "Gate: human" else issue
-                       for issue in checked]
-            user_view = invoke(["health", "--items", "user"], Fake(waiting))[1]
-            if "waiting on the user (gates titled user, items assigned to user): 2\n" not in user_view \
-                    or gate not in user_view or cid["User action"] not in user_view:
+            # The user view lists the human gates (await_type human); a gate's title says nothing, a legacy "user " title is a deviation.
+            user_view = invoke(["health", "--items", "user"], Fake(checked))[1]
+            if "waiting on the user (human gates, due deferrals): 2\n" not in user_view or gate not in user_view or cid["User action"] in user_view:
                 raise ValueError(f"board health user view:\n{user_view}")
+            titled = [{**issue, "title": "user 2026-10-23: 'wait for my go'"} if issue["id"] == gate else issue for issue in checked]
+            if f"  {gate}  title-prefix" not in invoke(["check"], Fake(titled))[1]:
+                raise ValueError("board check must flag a gate with the legacy user title prefix")
             # The human gate sits outside the Goal epic; a lifecycle label on it is out of scope.
             outside = [{**issue, "labels": ["human"]} if issue["title"] == "Gate: human" else issue for issue in checked]
             _, scoped_check, _ = invoke(["check", "--root", cid["Goal"]], Fake(outside))
@@ -3085,28 +3085,20 @@ def validate_board(root: Path) -> None:
             code, _, errors = invoke(["claim", loose], fake, "lead0001")
             if code or not any(w[:2] == ["update", loose] and "--claim" in w or "lead0001" in w for w in fake.writes()):
                 raise ValueError(f"board claim refused a no-commit work item outside any change request: {code} {errors} {fake.writes()}")
-            if f"{loose}  no-cr" in invoke(["check"], Fake(no_commit))[1] or f"{loose}  no-cr" not in invoke(["check"], Fake(fixture))[1] \
-                    or f"{loose}  no-cr" in invoke(["check"], Fake(variant(**{"Loose item": {"assignee": "user"}})))[1]:
-                raise ValueError("board check must flag a work item outside any CR, but not a no-commit one or a person's")
+            if f"{loose}  no-cr" in invoke(["check"], Fake(no_commit))[1] or f"{loose}  no-cr" not in invoke(["check"], Fake(fixture))[1]:
+                raise ValueError("board check must flag a work item outside any CR, but not a no-commit one")
+            # Nothing is assigned to the user: a user step is a human gate, and an assignee user is a holder deviation.
+            if f"{loose}  holder" not in invoke(["check"], Fake(variant(**{"Loose item": {"assignee": "user"}})))[1]:
+                raise ValueError("board check must flag an item held by user")
+            try:
+                invoke(["update", loose, "--assignee", "user"], Fake(no_commit), "lead0001")
+                raise ValueError("board update must not hand an item to the user")
+            except SystemExit:
+                pass  # argparse: no such option
             # Open, ready no-commit work is plan work: the dispatcher triages it; no worker pull takes it, and a person's item drops the mark.
             deck = bare_deck(no_commit)
             if deck.claimable(deck.by_id[loose]) != "plan" or loose not in invoke(["queue"], Fake(no_commit))[1].split("design:")[0]:
                 raise ValueError("open no-commit work outside a CR must be claimable as plan work and listed under plan")
-            deck = bare_deck(variant(**{"Loose item": {"metadata": {"no_commit": True}, "assignee": "user"}}))
-            if deck.claimable(deck.by_id[loose]) is not None:
-                raise ValueError("a no-commit item assigned to the user is no agent's claim")
-            fake = Fake(variant(**{"Loose item": {"metadata": {"no_commit": True}, "assignee": "lead0001", "status": "open"}}))
-            code, _, errors = invoke(["update", loose, "--assignee", "user"], fake, "lead0001")  # its holder hands it over directly
-            if code or ["update", loose, "--assignee", "user", "--unset-metadata", "no_commit", "--json"] not in fake.writes():
-                raise ValueError(f"a session must hand its own hold to the user, reopened and unmarked: {code} {errors} {fake.writes()}")
-            fake = Fake(variant(**{"Loose item": {"metadata": {"no_commit": True}, "assignee": "solo0001", "status": "open"}}))
-            code, _, errors = invoke(["update", loose, "--assignee", "user"], fake, "lead0001")
-            if not code or fake.writes() or "held by solo0001" not in errors:
-                raise ValueError(f"another session's hold must not be handed to the user: {code} {errors} {fake.writes()}")
-            fake = Fake(no_commit)
-            code, _, errors = invoke(["update", loose, "--assignee", "user"], fake, "lead0001")
-            if code or ["update", loose, "--assignee", "user", "--unset-metadata", "no_commit", "--json"] not in fake.writes():
-                raise ValueError(f"handing no-commit work to the user must drop its mark: {code} {errors} {fake.writes()}")
             # A CR waiting on outside work names the wait wherever it is held up: the refused claim and its queue row.
             cr_ready = next(i for i in fixture if i["title"] == "CR ready")
             waiting = variant(**{"CR ready": {"status": "in_review", "assignee": None, "metadata": {},
@@ -3123,7 +3115,7 @@ def validate_board(root: Path) -> None:
             if f"waits on {loose} (open)" not in row:
                 raise ValueError(f"the queue row of a waiting CR in review must name its wait: {row!r}")
             # The earlier no_code mark counts no more: the check names its fix (agent work keeps the route, a person's item drops the mark).
-            for changes, fix in (({}, "makes it no_commit"), ({"assignee": "user"}, "drops it")):
+            for changes, fix in (({}, "makes it no_commit"),):
                 shown = invoke(["check"], Fake(variant(**{"Loose item": {"metadata": {"no_code": 1}, **changes}})))[1]
                 if f"{loose}  unknown-metadata" not in shown or f"metadata no_code: retired: agents board check --fix {fix}" not in shown:
                     raise ValueError(f"board check must flag a live no_code mark with its fix {fix}: {shown}")
@@ -3167,7 +3159,6 @@ def validate_board(root: Path) -> None:
                 if code or fake.writes() != [want]:
                     raise ValueError(f"board {argv} must write {want}: {code} {errors} {fake.writes()}")
             for argv, issues, needle in ((["update", loose, ids["Ready task"], "--no-commit"], fixture, "outside any change request"),
-                                         (["update", loose, "--no-commit"], variant(**{"Loose item": {"assignee": "user"}}), "needs no CR"),
                                          (["update", "fx-cr", "--view", "result"], [*fixture, {**cr, "assignee": "lead0001", "metadata": {**cr.get("metadata", {}), "hold": "work"}}], "held by"),
                                          (["update", "fx-cr", "--view", "result"], [*fixture, {**cr, "status": "in_review"}], "while it is open"),
                                          (["update", loose, "--look", "after"], fixture, "change request settings")):
@@ -4367,12 +4358,12 @@ def validate_board(root: Path) -> None:
             code, _, errors = invoke(["block", ids["Wire caller"], "--on", ids["Ready task"], "--reason", "r"], fake, "lead0001")
             if not code or fake.writes() or "change request" not in errors:
                 raise ValueError(f"board block accepted a new outside wait on a task: {code} {errors} {fake.writes()}")
-            # Only a live decision, a `user <date>` gate, a design or a spike is a planning wait (q139).
-            def stub(item_id, kind, status, title):
+            # Only a live decision, a human gate, a design or a spike is a planning wait (q139).
+            def stub(item_id, kind, status, title, **more):
                 return {"id": item_id, "title": title, "issue_type": kind, "status": status, "priority": 2,
-                        "created_at": "2026-10-20T10:00:00Z", "dependencies": []}
+                        "created_at": "2026-10-20T10:00:00Z", "dependencies": [], **more}
 
-            waits = [stub("w-user", "gate", "open", "user 2026-11-12: my go"), stub("w-gate", "gate", "open", "ci pipeline"),
+            waits = [stub("w-user", "gate", "open", "my go", await_type="human"), stub("w-gate", "gate", "open", "ci pipeline", await_type="gh:pr"),
                      stub("w-decided", "decision", "decided", "revision"),
                      stub("w-released", "decision", "released", "settled"), stub("w-deferred", "decision", "deferred", "later")]
             for blocker, allowed in (("w-user", True), ("w-gate", False), ("w-decided", True),
@@ -4442,27 +4433,17 @@ def validate_board(root: Path) -> None:
             if "to accept (change requests waiting for the user): 0 (1 wait)\n" not in invoke(["health"], Fake(rows))[1] \
                     or "to review (change requests in agent review): 0 (1 wait)\n" not in invoke(["health"], Fake(rows))[1]:
                 raise ValueError("health text prints '(h held, k wait)' with zero parts left out")
-            user_held = variant(**{"Ready task": {"assignee": "user"}, "Loose item": {"assignee": "user"}})
+            gate_step = {"issue_type": "gate", "await_type": "human"}
+            user_held = variant(**{"Ready task": gate_step, "Loose item": gate_step})
             if json.loads(invoke(["health", "--json"], Fake(user_held))[1])["counts"]["forUser"] != {"ready": 2, "held": 0, "waiting": 0}:
-                raise ValueError("the user view's own holds are not held")
+                raise ValueError("the user view counts the human gates")
             # board console forYou: the user view's ready items (a blocked one only counts as waiting), for the pane's list.
             blocked_user = [{**row, "dependencies": [*(row.get("dependencies") or []), {"issue_id": row["id"], "depends_on_id": question, "type": "blocks"}]}
                             if row["title"] == "Loose item" else row for row in user_held]
             for_you = json.loads(invoke(["console"], Fake(blocked_user), "aaaa1111")[1])["forYou"]
             if [row["id"] for row in for_you] != [next(r["id"] for r in user_held if r["title"] == "Ready task")] \
                     or set(for_you[0]) != {"id", "type", "status", "priority", "holder", "title", "labels", "blockedBy"}:
-                raise ValueError(f"board console forYou must list the ready items assigned to the user, not the blocked one: {for_you}")
-            # r22-q171: an item assigned to the user is never held, in any view; a session's hold still is.
-            mixed = variant(**{"Store choice": {"status": "open", "assignee": "user"}, "Ready task": {"assignee": "user"}})
-            unassigned = variant(**{"Store choice": {"status": "open", "assignee": None}, "Ready task": {"assignee": None}})
-            shown_views = ["--json", "--items", "held,questions"]
-            mixed_health, plain_health = (json.loads(invoke(["health", *shown_views], Fake(issues))[1]) for issues in (mixed, unassigned))
-            if mixed_health["counts"]["held"] != plain_health["counts"]["held"] or mixed_health["items"]["held"] != plain_health["items"]["held"] \
-                    or mixed_health["counts"]["questions"]["held"] != plain_health["counts"]["questions"]["held"] \
-                    or mixed_health["counts"]["held"] == 0:
-                raise ValueError(f"an item assigned to the user must not count as held: {mixed_health['counts']} {plain_health['counts']}")
-            if any(h["holder"] == "user" for h in json.loads(invoke(["position", "--json"], Fake(mixed))[1])["held"]):
-                raise ValueError("board position lists the user's item among the held")
+                raise ValueError(f"board console forYou must list the ready human gates, not the blocked one: {for_you}")
             if '"held"' not in invoke(["position", "--json"], Fake(rows))[1]:
                 raise ValueError("position JSON lacks held")
 
@@ -6289,15 +6270,6 @@ def validate_board(root: Path) -> None:
                     code, _, errors, writes = verb(argv, world)
                     if code != 2 or word not in errors or writes:
                         raise ValueError(f"board {argv} must be refused ({word}) before any write: {code} {errors!r} {writes}")
-                code, _, errors, writes = verb(["update", "t-a", "--assignee", "user"], world)
-                if code or writes != [["update", "t-a", "--assignee", "user", "--json"]]:
-                    raise ValueError(f"board update --assignee user must hand the item to the user: {code} {errors!r} {writes}")
-                for argv, word in ((["update", "t-cr.o", "--assignee", "user"], "change request"), (["update", "t-cr", "--assignee", "user"], "change request"),
-                                   (["update", "t-q", "--assignee", "user"], "change request"),
-                                   (["update", "t-h", "--assignee", ""], "held by w2")):
-                    code, _, errors, writes = verb(argv, [*world, plain("t-h", "in_progress", assignee="w2"), plain("t-q", issue_type="decision")])
-                    if code != 2 or word not in errors or writes:
-                        raise ValueError(f"board {argv} must be refused ({word}): {code} {errors!r} {writes}")
                 for argv in (["update", "t-cr.o", "--parent", "t-a"], ["update", "t-a", "--parent", ""]):
                     code, _, errors, writes = verb(argv, world)
                     if code or writes != [["update", argv[1], "--parent", argv[3], "--json"]]:
@@ -6395,6 +6367,16 @@ def validate_board(root: Path) -> None:
                 code, output, _ = invoke(["gate", "create", "--blocks", "t-a", "--reason", "user 2026-11-16: wait"], gate_fake, "")
                 if code or "agents board gate resolve t-gate" not in output or "bd gate resolve" in output.replace("agents board gate resolve", ""):
                     raise ValueError(f"board gate create must print the board form of the resolve: {code} {output!r}")
+                code, _, errors = invoke(["gate", "create", "--blocks", "t-a", "--reason", "wait", "--for", "ben"], Gating(world), "")
+                if code == 0 or "not shared" not in errors:
+                    raise ValueError(f"board gate create --for needs a shared board: {code} {errors!r}")
+                from types import SimpleNamespace
+                gate_fake = Gating(world)
+                with patch.object(board, "shared", SimpleNamespace()), patch.object(board.subprocess, "run", gate_fake), \
+                        patch.object(board, "has_board", lambda: True), contextlib.redirect_stdout(io.StringIO()):
+                    board.gate_create(SimpleNamespace(blocks="t-a", reason="wait", title=None, for_="ben"))
+                if ["update", "t-gate", "--add-label", "for:ben", "--json"] not in gate_fake.writes():
+                    raise ValueError(f"board gate create --for must label the gate for the person: {gate_fake.writes()}")
                 low_i, _, _ = make_cr("rl", "rl.txt", "x\n")
                 up_i, _, _ = make_cr("ru", "ru.txt", "y\n", base="rl")
                 up_i[0].update(status="passed")
@@ -7819,9 +7801,6 @@ else:
         result, calls = run_fake("create", "T", "--deps", "parent-child:fx-p")
         if result.returncode != 2 or "--parent" not in result.stderr or writes_of(calls, "create"):
             raise ValueError(f"--deps parent-child: must name --parent: {result.returncode} {result.stderr!r}")
-        result, calls = run_fake("create", "T", "--assignee", "user")
-        if result.returncode != 0 or writes_of(calls, "create")[0]["plan"]["nodes"][0].get("assignee") != "user":
-            raise ValueError(f"board create --assignee sets the node's assignee: {result.returncode} {result.stderr!r} {calls}")
         # a whole plan: its ids print as `key id`; node flags beside it are refused; an unreadable or empty plan too
         files["plan.json"].write_text(json.dumps({"nodes": [{"key": "a", "title": "A", "description": "d", "type": "task"}, {"key": "b", "title": "B", "description": "d", "type": "spike", "parent": "a"}]}), encoding="utf-8")
         result, calls = run_fake("create", "--graph", str(files["plan.json"]))
@@ -7832,7 +7811,7 @@ else:
                              (("T", "--title", "U"), "name the item once"), (("T", "-t", "question"), "--type decision"),
                              (("T", "-t", "feature"), "is not a board type"), (("T", "--metadata", "k=v"), "unrecognized arguments"),
                              (("T", "-t", "decision", "--no-commit"), "marks a task"), (("T", "--look", "after"), "change request setting"),
-                             (("T", "--no-commit", "--assignee", "user"), "needs no CR"),
+                             (("T", "--assignee", "user"), "unrecognized arguments"),
                              (("T", "--description-file", "/nonexistent/d.md"), "cannot read"), (("T", "--parent", "fx-nope"), "unknown parent"),
                              (("T", "--for", "ben"), "not shared"),
                              (("T", "--for", "ben", "--parent", "fx-p"), "drop --parent"), (("T", "--holds", "fx-a"), "goes with --type decision"),

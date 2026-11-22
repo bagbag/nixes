@@ -64,15 +64,19 @@ PULLS = ('plan', 'design', 'implement', 'review')
 KINDS = (*PULLS, 'question', 'accept', 'milestone', 'refresh')  # refresh: review pulls take it (session_kinds)
 WORK_TYPES = ('task', 'bug', 'spike')
 # A released ruling waits only for planning (r21-q139): a live decision (an open question, or an unreleased revision
-# record), a `user <date>` gate, a design or a spike. Any other wait is work or a container: refused by `board block`,
+# record), a human gate, a design or a spike. Any other wait is work or a container: refused by `board block`,
 # ignored when claiming (q140).
 LIVE_DECISIONS = ('open', 'decided')
 
 
 def planning_wait(record: dict) -> bool:
     kind = record.get('issue_type')
-    return kind in ('design', 'spike') or (kind == 'gate' and str(record.get('title', '')).startswith('user ')) \
-        or (kind == 'decision' and record.get('status') in LIVE_DECISIONS)
+    return kind in ('design', 'spike') or is_human_gate(record) or (kind == 'decision' and record.get('status') in LIVE_DECISIONS)
+
+
+def is_human_gate(record: dict) -> bool:
+    """A step only a person takes: a gate bd made with `await_type` human (`board gate create`); `for:<person>` names whose on a shared board."""
+    return record.get('issue_type') == 'gate' and record.get('await_type') == 'human'
 
 
 # Rank of a kind within one claim-order tier at equal priority (r22-q177).
@@ -116,8 +120,7 @@ STORE_WARN_BYTES = 1 << 30
 STORE_CHECK_SECONDS = 3600
 QUEUE_PREFIX = 'queue:'
 MOVERS = ('lead', 'solo')  # roles that may change an item's queue
-FOR_PREFIX = 'for:'  # an item filed for a person: held for its creator's check, then in that person's inbox
-USER_HOLD = 'user'  # the assignee of an item waiting on its person
+FOR_PREFIX = 'for:'  # an item filed for a person: unclaimable, held for its creator's check, then in that person's inbox
 # The mark that makes a board shared, in .beads: local, so an unshared board's check costs no bd call, and written only after
 # share's first push or join's clone, so a stray Dolt remote shares nothing.
 MARK_FILE = 'board-shared.json'
@@ -1416,7 +1419,7 @@ class Board:
 
     def claimable(self, issue: dict) -> str | None:
         kind = self.kind(issue)
-        if kind is None or issue.get('assignee'):
+        if kind is None or issue.get('assignee') or filed_for(issue):
             return None
         if issue.get('issue_type') == CR_TYPE:
             return cr_claimable(self, issue, kind)
@@ -1458,8 +1461,8 @@ def holder(issue: dict) -> str | None:
 
 
 def held_by_a_session(issue: dict) -> bool:
-    """'held' in every view: a session holds the item. An item assigned to the user waits on the person (r22-q171)."""
-    return holder(issue) not in (None, USER_HOLD)
+    """'held' in every view: a session holds the item."""
+    return holder(issue) is not None
 
 
 def line(issue: dict, *extra: str) -> str:
@@ -1759,9 +1762,7 @@ def health_views(board: Board, root: str | None) -> dict[str, tuple[str, list[di
         'released': ('released rulings to plan', [i for i in decisions if i['status'] == 'released']),
         'review': ('to review (change requests in agent review)', [i for i in items if board.kind(i) == 'review']),
         'accept': ('to accept (change requests waiting for the user)', [i for i in items if board.kind(i) == 'accept']),
-        'user': ('waiting on the user (gates titled user, items assigned to user)',
-                 [i for i in items if (i.get('issue_type') == 'gate' and i.get('title', '').startswith('user '))
-                  or i.get('assignee') == 'user' or due_deferral(i, 'user')]),
+        'user': ('waiting on the user (human gates, due deferrals)', [i for i in items if is_human_gate(i) or due_deferral(i, 'user')]),
         'ready': ('claimable now (unassigned, unblocked)', [i for i in items if board.claimable(i)]),
         'held': ('held (assigned to a session, not closed)', [i for i in items if held_by_a_session(i)]),
         'blocked': ('waiting on open blockers', [i for i in items if board.open_blockers(i['id'])]),
@@ -1838,7 +1839,7 @@ def queue_summary(board: Board, root: str | None) -> dict | None:
                       key=lambda issue: (board.view not in filed_for(issue), waiting_since(issue), issue['id']))
     return {'others': others, 'unrouted': unrouted,
             'inbox': [issue for issue in unrouted if board.view in filed_for(issue)],
-            'toSend': [issue for issue in mine if filed_for(issue) and issue.get('assignee') == USER_HOLD],
+            'toSend': [issue for issue in mine if filed_for(issue)],
             'blocking': sorted((board.by_id[item_id] for item_id in blocking), key=by_priority)}
 
 
@@ -2188,13 +2189,13 @@ def deviations(board: Board, root: str | None) -> list[tuple[str, str, str]]:
         if issue['status'] == 'closed':
             continue  # closed items are immutable history
         holder = issue.get('assignee')
-        if holder and holder != 'user' and not ACTOR.fullmatch(holder):
+        if holder and not ACTOR.fullmatch(holder):
             found.append((item_id, 'holder', f'held by {holder}'))
         if kind and kind not in ITEM_TYPES:
             found.append((item_id, 'unknown-type', f'type {kind}'))
         if GROUP_OF.get(kind) and issue['status'] not in STATES[GROUP_OF[kind]]:
             found.append((item_id, 'unknown-status', f"{kind} status {issue['status']} (a {GROUP_OF[kind]} is {', '.join(STATES[GROUP_OF[kind]])}): follow /board-migrate"))
-        prefix = next((p for p in TITLE_PREFIXES if title.startswith(p)), None)
+        prefix = next((p for p in (*TITLE_PREFIXES, *(('user ',) if kind == 'gate' else ())) if title.startswith(p)), None)
         if prefix:
             found.append((item_id, 'title-prefix', f'title starts with {prefix}'))
         if kind == 'gate' and title.startswith('[Gate] Release'):
@@ -2220,7 +2221,7 @@ def deviations(board: Board, root: str | None) -> list[tuple[str, str, str]]:
             if refusal := outside_wait_refusal(item_id, kind, board.cr_of(item_id), blocker, board.cr_of(blocker),
                                                board.by_id.get(blocker, {}).get('issue_type')):
                 found.append((item_id, 'outside-wait', f'{refusal}; then agents board unblock {item_id} --on {blocker}'))
-        if is_work_hold(issue) and board.cr_of(item_id) is None and issue['status'] != 'deferred' and not needs_no_cr(issue) \
+        if is_work_hold(issue) and board.cr_of(item_id) is None and issue['status'] != 'deferred' and not is_no_commit(issue) \
                 and not board.waits_on_decision_design_or_spike(item_id):
             found.append((item_id, 'no-cr', f'work item outside any change request: agents board update {item_id} --parent <change request>, '
                                             f'or --no-commit for work that commits nothing to this repository'))
@@ -2933,9 +2934,9 @@ CR_SETTINGS = {'look': ('before', 'after'), 'view': ('code', 'result')}  # a CR'
 
 
 def retired_move(issue: dict, key: str) -> str | None:
-    """The key a retired one moves to on this item: no_code becomes no_commit on agent work only (a person's item needs no mark)."""
+    """The key a retired one moves to on this item: no_code becomes no_commit on work items only."""
     new = RETIRED_METADATA[key]
-    return new if new != NO_COMMIT or (issue.get('issue_type') in WORK_TYPES and issue.get('assignee') != USER_HOLD) else None
+    return new if new != NO_COMMIT or issue.get('issue_type') in WORK_TYPES else None
 
 
 def metadata_fix(issue: dict, key: str) -> str:
@@ -2951,12 +2952,7 @@ def is_no_commit(issue: dict) -> bool:
     return issue.get('issue_type') in WORK_TYPES and meta(issue).get(NO_COMMIT) is True
 
 
-def needs_no_cr(issue: dict) -> bool:
-    """Work outside the agents' delivery: a person's item, or one that commits nothing here."""
-    return issue.get('assignee') == USER_HOLD or is_no_commit(issue)
-
-
-def setting_refusal(item_id: str, kind: str | None, assignee: str | None, settings: dict[str, object]) -> str | None:
+def setting_refusal(item_id: str, kind: str | None, settings: dict[str, object]) -> str | None:
     """Why these item settings (create, a graph node, update) do not fit the item: no_commit on unassigned or agent work items only, a CR's
     own settings on change requests from their value sets, look and view only to override the project default (r10-q52)."""
     for name, value in settings.items():
@@ -2965,8 +2961,6 @@ def setting_refusal(item_id: str, kind: str | None, assignee: str | None, settin
                 return f'{item_id}: no_commit is true or absent'
             if kind not in WORK_TYPES:
                 return f'{item_id}: no_commit marks a task, bug or spike'
-            if assignee == USER_HOLD:
-                return f"{item_id}: a person's item needs no CR; no_commit marks agent work"
             continue
         if kind != CR_TYPE:
             return f'{item_id}: {name} is a change request setting'
@@ -3020,7 +3014,7 @@ def stale_since(board: Board, issue: dict) -> datetime | None:
     """The last update of a held work item without one for STALE_HOURS, else None (needs its comments hydrated)."""
     holder = issue.get('assignee')
     updated = board.last_activity(issue)
-    if not holder or holder == USER_HOLD or not is_work_hold(issue) or updated is None:
+    if not holder or not is_work_hold(issue) or updated is None:
         return None
     return updated if (utcnow() - updated).total_seconds() > STALE_HOURS * 3600 else None
 
@@ -6068,7 +6062,7 @@ PLAN_NODE_KEYS = {'key', 'title', 'type', 'description', 'design', 'acceptance_c
                   'parent', 'parent_id', 'parent_key', 'deps', 'spec_id', 'external_ref', 'estimate'}  # the node fields bd's graph reads; it drops others silently
 PLAN_EDGE_KEYS = {'from_key', 'from_id', 'to_key', 'to_id', 'type'}
 ITEM_SETTING_KEYS = (NO_COMMIT, *CR_SETTINGS)  # typed node fields a plan gives; the board stores them as metadata
-GIVEN_NODE_KEYS = PLAN_NODE_KEYS - {'metadata'} | set(ITEM_SETTING_KEYS)  # a plan's own nodes: metadata stays the board's
+GIVEN_NODE_KEYS = PLAN_NODE_KEYS - {'metadata', 'assignee'} | set(ITEM_SETTING_KEYS)  # a plan's own nodes: metadata and the holder stay the board's
 
 
 def validate_plan(plan: object, name: str = 'the plan', fields: set[str] = PLAN_NODE_KEYS) -> dict:
@@ -6416,7 +6410,7 @@ def block_one(board: Board, item_id: str, blocker: str, reason: str | None, acto
         raise BoardError(f'{item_id}: a work item waits with a reason: agents board block {item_id} --on {blocker} --reason "<why it waits>" '
                          '(optional only when the blocker is a decision or a gate, or the waiting item a milestone)')
     if issue.get('issue_type') == 'decision' and issue['status'] == 'released' and not planning_wait(record):
-        raise BoardError(f'{item_id}: a released ruling waits for planning only (a live decision, a user <date> gate, a design or a spike), '
+        raise BoardError(f'{item_id}: a released ruling waits for planning only (a live decision, a human gate, a design or a spike), '
                          f"not on {blocker} ({record.get('issue_type')} {record.get('status')}); plan the work the ruling changes and block that work on {blocker}")
     edges = board.between(item_id, blocker)
     waits = any(blocking(kind) and a == item_id for a, _, kind in edges)  # whatever blocking spelling made the wait stays as it is
@@ -6475,10 +6469,10 @@ def known_items(board: Board, ids: list[str]) -> None:
 
 
 def update_command(board: Board, args) -> int:
-    """`board update <id>... [--title] [--priority] [--label L]... [--unlabel L]... [--parent P|""] [--assignee user|""] [--no-commit|--commits]
+    """`board update <id>... [--title] [--priority] [--label L]... [--unlabel L]... [--parent P|""] [--no-commit|--commits]
     [--look|--view V|""]`: the short fields bd
     leaves to bd, with the board's value rules: labels the board routes on (queue:, for:) change through send, route and create --for; a parent
-    moves an item only where the board's invariants allow (parent_move_refusal); the assignee hands manual work to the user and back."""
+    moves an item only where the board's invariants allow (parent_move_refusal); a step for a person is a human gate (gate create)."""
     known_items(board, args.ids)
     changes = []
     if args.title is not None:
@@ -6496,19 +6490,9 @@ def update_command(board: Board, args) -> int:
         if refusal := parent_move_refusal(board, args.ids, target):
             raise BoardError(refusal)
         changes += ['--parent', args.parent]
-    if args.assignee is not None:
-        for item_id in args.ids:
-            held = board.by_id[item_id].get('assignee')
-            if held and held != 'user' and not (args.assignee == USER_HOLD and session_actor(held) == session_actor(caller())):
-                raise BoardError(f'{item_id}: held by {held}; agents board unclaim or agents board take it first')  # a session hands its own to the user
-            if board.by_id[item_id].get('issue_type') not in WORK_TYPES or board.cr_of(item_id):
-                raise BoardError(f'{item_id}: user work is a task, bug or spike outside any change request')
-        changes += ['--assignee', args.assignee]
-        if args.assignee == USER_HOLD and args.no_commit is None and any(is_no_commit(board.by_id[i]) for i in args.ids):
-            changes += ['--unset-metadata', NO_COMMIT]  # a person's item carries no mark (retired_move)
     changes += setting_changes(board, args)
     if not changes:
-        raise BoardError('nothing to change: give --title, --priority, --label, --unlabel, --parent, --assignee, --no-commit, --commits, --look or --view '
+        raise BoardError('nothing to change: give --title, --priority, --label, --unlabel, --parent, --no-commit, --commits, --look or --view '
                          '(long fields: agents board field; claim: agents board claim)')
     bd_checked('update', *args.ids, *changes, '--json')
     for item_id in args.ids:
@@ -6527,7 +6511,7 @@ def setting_changes(board: Board, args) -> list[str]:
     for item_id in args.ids:
         issue = board.by_id[item_id]
         kind, holder = issue.get('issue_type'), issue.get('assignee')
-        if holder and holder != USER_HOLD:
+        if holder:
             raise BoardError(f'{item_id}: held by {holder}; agents board unclaim or agents board take it first')
         if args.no_commit is not None and (issue['status'] not in ('open', 'deferred') or board.cr_of(item_id)):
             raise BoardError(f"{item_id}: {issue['status']}{' in ' + board.cr_of(item_id) if board.cr_of(item_id) else ''}; "
@@ -6539,7 +6523,7 @@ def setting_changes(board: Board, args) -> list[str]:
         if cr_given and kind != CR_TYPE:
             raise BoardError(f'{item_id}: look and view are change request settings')
         given = {**({NO_COMMIT: True} if args.no_commit else {}), **{name: value for name, value in cr_given.items() if value}}
-        if refusal := setting_refusal(item_id, kind, holder, given):
+        if refusal := setting_refusal(item_id, kind, given):
             raise BoardError(refusal)
     changes = []
     if args.no_commit is not None:
@@ -6676,7 +6660,10 @@ def undefer_command(args) -> int:
 
 
 def gate_create(args) -> int:
-    """`board gate create --blocks <id> --reason "<why>" [--title T]`: a human gate that holds the item up (bd makes the gate and its link)."""
+    """`board gate create --blocks <id> --reason "<why>" [--title T] [--for <person>]`: a human gate (bd's await_type human) that holds the
+    item up (bd makes the gate and its link); on a shared board `--for` labels it `for:<person>`, whose step it is."""
+    if args.for_:
+        require_person_on_shared_board(args.for_, 'gate create --for')
     board = Board.load('all')
     issue = board.by_id.get(args.blocks, {})
     cr = board.cr_of(args.blocks) if issue.get('issue_type') in (*WORK_TYPES, 'design') else None
@@ -6685,6 +6672,11 @@ def gate_create(args) -> int:
                          f'Use agents board gate create --blocks {cr} --reason "<why it waits>", or split the waiting work into its own change request')
     out = bd_checked('gate', 'create', '--type=human', '--blocks', args.blocks, '--reason', args.reason, *(['--title', args.title] if args.title else []))
     print(re.sub(r'\bbd gate resolve\b', 'agents board gate resolve', out.strip()))  # bd's own "Resolve with:" line names the raw form
+    if args.for_:
+        created = re.search(r'Created gate (\S+)', out)
+        label = FOR_PREFIX + args.for_
+        if not created or bd('update', created[1], '--add-label', label, '--json').returncode != 0:
+            raise BoardError(f'the gate stands but is not routed to {args.for_}: agents board bd --raw --yes update <gate id> --add-label {label}')
     return 0
 
 
@@ -7404,15 +7396,13 @@ def mover(board: Board | None, args, command: str) -> list[dict]:
 
 
 def route(board: Board, args) -> int:
-    """Into a person's queue, replacing the queue label; an item filed for someone also leaves the inbox: its `for:` and
-    its `user` hold go. Other `user` holds stay: they mark a wait on a person's action."""
+    """Into a person's queue, replacing the queue label; an item filed for someone also leaves the inbox: its `for:` goes."""
     target = QUEUE_PREFIX + args.person
     for issue in mover(board, args, 'route'):
         labels = issue.get('labels') or []
         filed = [label for label in labels if label.startswith(FOR_PREFIX)]
         flags = [flag for label in queue_labels(labels) + filed if label != target for flag in ('--remove-label', label)]
         flags += ['--add-label', target] if target not in labels else []
-        flags += ['--assignee', ''] if filed and issue.get('assignee') == USER_HOLD else []
         if flags:
             bd_checked('update', issue['id'], *flags, '--json')
         print(f"routed {issue['id']} to {args.person}'s queue" + (' (out of the inbox)' if filed else ''))
@@ -7420,7 +7410,7 @@ def route(board: Board, args) -> int:
 
 
 def send(board: Board, args) -> int:
-    """Into a person's inbox: `for:<person>`, no queue label and no `user` hold, so the item is unrouted until their lead
+    """Into a person's inbox: `for:<person>` and no queue label, so the item is unrouted until their lead
     routes it. Only a top-level item: one with a parent would still take the parent's queue."""
     target = FOR_PREFIX + args.person
     issues = mover(board, args, 'send')
@@ -7434,7 +7424,6 @@ def send(board: Board, args) -> int:
         flags = [flag for label in labels if (label.startswith(QUEUE_PREFIX) or label.startswith(FOR_PREFIX)) and label != target
                  for flag in ('--remove-label', label)]
         flags += ['--add-label', target] if target not in labels else []
-        flags += ['--assignee', ''] if issue.get('assignee') == USER_HOLD else []
         # Every send stamps the time, a pass-on and a repeat included: the inbox shows how long an item waited there (r38-q217).
         bd_checked('update', issue['id'], *flags, '--set-metadata', f"{SENT_AT}={stamp()}", '--json')
         print(f"sent {issue['id']} to {args.person}'s inbox")
@@ -7459,8 +7448,6 @@ def flag_node(args) -> tuple[dict, list[dict]]:
     node: dict = {'key': 'item', 'title': title, 'type': args.type or 'task'}
     if args.priority is not None:
         node['priority'] = args.priority
-    if args.assignee:
-        node['assignee'] = args.assignee
     for flag, key in (('description_file', 'description'), ('design_file', 'design'), ('acceptance_file', 'acceptance_criteria')):
         if getattr(args, flag) is not None:
             node[key] = read_text_arg(getattr(args, flag))
@@ -7501,13 +7488,17 @@ def load_plan(path: str) -> dict:
     return validate_plan(plan, path, GIVEN_NODE_KEYS)
 
 
-def for_person(plan: dict, target: str) -> None:
-    """`--for`: a find for another person, top-level, in the creator's queue and held for them (`user`), labelled `for:<person>`;
-    the lead checks it with them before `board send`. Child nodes of the plan take their parent's queue."""
+def require_person_on_shared_board(target: str, verb: str) -> None:
     if shared is None:
-        raise BoardError('agents board create --for files for another person on a shared board; this board is not shared')
+        raise BoardError(f'agents board {verb} names another person on a shared board; this board is not shared')
     if not PERSON_NAME.fullmatch(target):
-        raise BoardError('name one person: agents board create --for <person>')
+        raise BoardError(f'name one person: agents board {verb} <person>')
+
+
+def for_person(plan: dict, target: str) -> None:
+    """`--for`: a find for another person, top-level, in the creator's queue, labelled `for:<person>`, and not claimable until the lead sends or routes it;
+    the lead checks it with them before `board send`. Child nodes of the plan take their parent's queue."""
+    require_person_on_shared_board(target, 'create --for')
     me = person()
     if not me:
         raise BoardError(PERSON_HELP)
@@ -7515,10 +7506,9 @@ def for_person(plan: dict, target: str) -> None:
     for node in plan['nodes']:
         if node.get('parent') or node.get('parent_key') or node.get('parent_id') or node.get('key') in children:
             continue
-        if any(label.startswith((QUEUE_PREFIX, FOR_PREFIX)) for label in node.get('labels') or []) or node.get('assignee'):
-            raise BoardError(f"{node.get('key')}: --for sets the queue, for: and the hold itself: drop those labels and the assignee")
+        if any(label.startswith((QUEUE_PREFIX, FOR_PREFIX)) for label in node.get('labels') or []):
+            raise BoardError(f"{node.get('key')}: --for sets the queue and for: itself: drop those labels")
         node['labels'] = [*(node.get('labels') or []), f'{FOR_PREFIX}{target}', f'{QUEUE_PREFIX}{me}']
-        node['assignee'] = USER_HOLD
 
 
 def create_command(args) -> int:
@@ -7527,8 +7517,7 @@ def create_command(args) -> int:
     the size limit of a work item's long fields) and goes to `bd create --graph`. Prints the ids created."""
     flags_used = any(value not in (None, [], False) for value in (args.type, args.title, args.positional_title, args.parent, args.label,
                                                                     args.priority, args.description_file, args.design_file,
-                                                                    args.acceptance_file, args.deps, args.no_commit, args.look, args.view,
-                                                                    args.assignee))
+                                                                    args.acceptance_file, args.deps, args.no_commit, args.look, args.view))
     if args.for_ and args.parent:
         raise BoardError('agents board create --for files a top-level item: drop --parent (a child takes its parent\'s queue)')
     if args.graph and flags_used:
@@ -7552,7 +7541,7 @@ def create_command(args) -> int:
             raise BoardError(refusal)
     for node in nodes:
         settings = {name: node.pop(name) for name in ITEM_SETTING_KEYS if name in node}
-        if refusal := setting_refusal(node['key'], node.get('type') or 'task', node.get('assignee'), settings):
+        if refusal := setting_refusal(node['key'], node.get('type') or 'task', settings):
             raise BoardError(refusal)
         if settings:
             node['metadata'] = settings
@@ -7617,7 +7606,7 @@ EXAMPLES = {
     'reopen': 'agents board reopen <id> <id>',
     'defer': 'agents board defer <id> --reason "someday: nobody needs it yet"',
     'undefer': 'agents board undefer <id>',
-    'gate create': 'agents board gate create --blocks <id> --reason "waits for <project>:<capability>" --title "user <date>: <words>"',
+    'gate create': 'agents board gate create --blocks <id> --reason "waits for <project>:<capability>"',
     'gate resolve': 'agents board gate resolve <gate> --reason "capability shipped"',
     'gate': 'agents board gate create --blocks <id> --reason "waits for the upstream"',
     'block': 'agents board block <item> <item> --on <blocker> --reason "waits for the cache ruling"  (--reason optional: decision or gate blocker, milestone item)',
@@ -7883,14 +7872,13 @@ def run_command(argv: list[str]) -> int:
                           'this record comes into force (its release; with --unratified at once); one already superseded by it is done; anything else refuses before any write (repeatable)')
     sub = add('check-replaces', 'validate and classify rulings a staged question proposes to replace', check_replaces, group='ruling')
     sub.add_argument('ids', nargs='+', type=board_id)
-    sub = add('update', 'change items: title, priority, labels (not queue: or for:), parent, user assignment, item settings', update_command)
+    sub = add('update', 'change items: title, priority, labels (not queue: or for:), parent, item settings', update_command)
     sub.add_argument('ids', nargs='+', type=board_id)
     sub.add_argument('--title', type=nonempty)
     sub.add_argument('-p', '--priority', type=priority, help='0-4 or P0-P4 (0 highest)')
     sub.add_argument('--label', action=Values, default=[], metavar='LABEL[,LABEL...]', help='add; repeatable, commas separate')
     sub.add_argument('--unlabel', action=Values, default=[], metavar='LABEL[,LABEL...]', help='remove; repeatable, commas separate')
     sub.add_argument('--parent', type=board_id, metavar='ID', help='the new parent ("" removes it)')
-    sub.add_argument('--assignee', choices=('user', ''), help='user hands the items to the user, "" back to agents')
     commits = sub.add_mutually_exclusive_group()  # not `route`: that name is the route verb, registered below
     commits.add_argument('--no-commit', dest='no_commit', action='store_const', const=True,
                          help='the work commits nothing to this repository: it needs no change request')
@@ -7919,6 +7907,7 @@ def run_command(argv: list[str]) -> int:
     sub.add_argument('--blocks', required=True, type=board_id, metavar='ID')
     sub.add_argument('--reason', required=True, type=nonempty, metavar='TEXT')
     sub.add_argument('--title', metavar='TEXT')
+    sub.add_argument('--for', dest='for_', metavar='PERSON', help='on a shared board: whose step it is (label for:<person>)')
     sub = add('resolve', 'resolve a gate: the items it held up proceed', gate_resolve, group='gate')
     sub.add_argument('gate', type=board_id)
     sub.add_argument('--reason', metavar='TEXT')
@@ -8026,9 +8015,8 @@ def run_command(argv: list[str]) -> int:
     sub.add_argument('--no-commit', action='store_true', help='a task, bug or spike that by design commits nothing to this repository: it needs no change request')
     sub.add_argument('--look', choices=CR_SETTINGS['look'], help="a change request's look, overriding the project default")
     sub.add_argument('--view', choices=CR_SETTINGS['view'], help="a change request's view, overriding the project default")
-    sub.add_argument('-a', '--assignee', help='the assignee (not with --for, which holds the item for you)')
     sub.add_argument('--for', dest='for_', metavar='PERSON',
-                     help='a find for another person on a shared board: top-level, in your queue, held for you (user), labelled for:<person>')
+                     help='a find for another person on a shared board: top-level, in your queue, labelled for:<person>, not claimable until sent or routed')
     sub.add_argument('--dry-run', action='store_true', help='validate the plan and its links without writing')
     sub = add('setup', 'create this project\'s board, or bring an existing one to the current settings (safe to rerun)', setup)
     modes = sub.add_mutually_exclusive_group()
