@@ -1254,7 +1254,7 @@ def validate_bd_guard(root: Path) -> None:
     for command in ("bd create x -t task", "cd r && bd update x --notes y", "bd comments add x y", "bd close x --reason z", "bd dep add a b"):
         result = guard(command, session_id=SESSION)
         reason = result["hookSpecificOutput"]["permissionDecisionReason"] if denied(result) else ""
-        if "agents board" not in reason or not all(f"{verb}," in reason for verb in ("create", "field", "comment", "close", "claim", "block")):
+        if "agents board" not in reason or not all(f"{verb}," in reason for verb in ("create", "field", "comment", "close", "claim", "wait")):
             raise ValueError(f"bd-guard must name the board verbs for {command!r}: {reason}")
     # A bare bd read (dep list, label list, gate list) gets the short message, not the write verbs.
     for command in ("bd dep list a", "bd label list a", "bd gate list", "bd ready", "bd list --json"):
@@ -2527,9 +2527,9 @@ def validate_board(root: Path) -> None:
             expected = fake.reads()  # reads only what it needs (none, the items it closes, a parent)
         elif argv[0] == "health":
             expected = fake.reads() if "export" in fake.reads() else ["list"]
-        elif argv[0] in ("related", "check", "block", "update", "link", "unlink", "unblock", "reopen") or argv[:2] in (["ruling", "check-replaces"], ["ruling", "revise"], ["ruling", "release"], ["ruling", "supersede"]):
+        elif argv[0] in ("related", "check", "wait", "update", "link", "unlink", "reopen") or argv[:2] in (["ruling", "check-replaces"], ["ruling", "revise"], ["ruling", "release"], ["ruling", "supersede"]):
             expected = ["export", "export"] if argv[:2] == ["check", "--fix"] and fake.writes() else ["export"]  # --fix reads again after its writes
-            if argv[:2] == ["ruling", "revise"] and (("--holds" in argv and argv[argv.index("--holds") + 1] != "none") or any(a.startswith("blocks:") for a in argv)):
+            if argv[:2] == ["ruling", "revise"] and (("--holds" in argv and argv[argv.index("--holds") + 1] != "none") ):
                 expected = ["export", "show"] if "fx-nowhere" in argv else ["export", "export"]  # unknown targets are checked before creation; otherwise read after to block the new question
         elif argv[:2] == ["ruling", "record"]:
             expected = fake.reads() if fake.reads() and set(fake.reads()) == {"export"} else ["export"]  # the export again before each supersede (the links just written)
@@ -2717,7 +2717,7 @@ def validate_board(root: Path) -> None:
                           "Unformatted ruling", "Old milestone"):
                 if any(f"  {cid[clean]}  " in row for row in deviation_lines):
                     raise ValueError(f"board check flagged conforming {clean}")
-            # A decision's blocker is its question (board block needs no reason for it); a work item's is not.
+            # A decision's blocker is its question (board wait needs no reason for it); a work item's is not.
             for blocker_kind, flagged in (("decision", []), ("task", [("w", "waits on b without naming it")])):
                 waits = [{"id": "w", "title": "W", "issue_type": "task", "status": "open", "priority": 2, "description": "d", "created_at": "2026-10-22T15:29:00Z",
                           "updated_at": "2026-10-22T15:29:00Z", "dependencies": [{"issue_id": "w", "depends_on_id": "b", "type": "blocks"}]},
@@ -3190,11 +3190,11 @@ def validate_board(root: Path) -> None:
                 held = variant(**{"CR ready": {"dependencies": [{"issue_id": cr, "depends_on_id": "fx-ovo", "type": "parent-child"},
                                                                 {"issue_id": cr, "depends_on_id": decision, "type": "blocks"}]}})
                 report = invoke(["check"], Fake(held))[1]
-                if f"  {cr}  decision-blocks-cr" not in report or f"agents board unblock {cr} --on {decision}" not in report:
+                if f"  {cr}  decision-blocks-cr" not in report or f"agents board unlink {cr} {decision}" not in report:
                     raise ValueError(f"board check must flag a decision blocking a CR:\n{report}")
             fake = Fake(fixture)
-            if invoke(["block", cr, "--on", question], fake, "lead0001")[0] == 0 or fake.writes():
-                raise ValueError("board block must refuse a decision blocking a CR")
+            if invoke(["wait", cr, "--on", question], fake, "lead0001")[0] == 0 or fake.writes():
+                raise ValueError("board wait must refuse a decision blocking a CR")
             # A deferred item is backlog and holds no live item up (board-coordination.md Deferrals): defer refuses, check flags.
             ready, loose = ids["Ready task"], ids["Loose item"]
             waits = {"Loose item": {"dependencies": [{"issue_id": loose, "depends_on_id": ready, "type": "blocks"}]}, "Ready task": {"dependencies": []}}  # a task outside a CR
@@ -3629,7 +3629,7 @@ def validate_board(root: Path) -> None:
             # handover evidence, return findings and block reasons are refused before any write.
             for argv, actor in ((["handover", "fx-ovo.c2", long], "aaaa1111"),
                                 (["return", "fx-ovo.c1", long], "lead0001"),
-                                (["block", ready, "--on", ids["Open cache question"], "--reason", long], "lead0001")):
+                                (["wait", ready, "--on", ids["Open cache question"], "--for", long], "lead0001")):
                 fake = Fake(variant(**{"CR ready": {"status": "in_review", "assignee": "lead0001", "metadata": {}}}))
                 code, _, errors = invoke(argv, fake, actor)
                 if code != 1 or fake.writes() or "comment is" not in errors:
@@ -3999,13 +3999,13 @@ def validate_board(root: Path) -> None:
             fake = Fake(linked)
             code, output, _ = invoke(["ruling", "supersede", old, "--with", new], fake, "lead0001")
             ready = ids["Ready task"]
-            reason = f"Blocked by {new}: supersedes {old}; replan against it (the whole item waits)"
+            reason = f"Waits on {new} for supersedes {old}; replan against it"
             batches = [stdin for args, stdin in fake.calls if args[0] == "batch"]
             if code or [w[:2] for w in fake.writes()] != [["batch", "-m"], ["batch", "-m"], ["comments", "add"], ["update", old], ["supersede", old]] \
                     or batches != [f"dep remove {new} {old}\n", f"dep add {ready} {new} blocks\n"] \
                     or fake.writes()[2] != ["comments", "add", ready, reason] \
-                    or f"blocked {ready} on {new}" not in output:
-                raise ValueError(f"board ruling supersede must block the old record's open items through board block: "
+                    or f"{ready} waits on {new}" not in output:
+                raise ValueError(f"board ruling supersede must block the old record's open items through board wait: "
                                  f"{fake.calls}\n{output}")
             fake = Fake(fixture)
             code, _, _ = invoke(["ruling", "supersede", old, "--with", new, "--partial"], fake, "lead0001")
@@ -4302,62 +4302,56 @@ def validate_board(root: Path) -> None:
                 if code or [stdin for args, stdin in fake.calls if args[0] == "batch"][0] != f"update {question} status=released\ndep remove {question} fx-d1\ndep add {question} fx-d1 tracks\n":
                     raise ValueError(f"board ruling record --replaces must replace another link on a closing record's pair: {code} {errors!r} {fake.calls}")
 
-            # board block: relates-to gives way, the reason is a comment (no field rewrite); a review is not returned (an item has none).
+            # board wait: relates-to gives way, the reason is a comment (no field rewrite); a review is not returned (an item has none).
             handed = ids["Handed task"]
             blocking = variant(**{"Handed task": {"design": "Plan.", "dependencies": [
                 {"issue_id": handed, "depends_on_id": "fx-ovo", "type": "parent-child"},
                 {"issue_id": question, "depends_on_id": handed, "type": "relates-to"}]}})
             fake = Fake(blocking)
-            code, output, _ = invoke(["block", handed, ready, "--on", question, "--reason", "waits for the cache"], fake, "lead0001")
+            code, output, _ = invoke(["wait", handed, ready, "--on", question, "--for", "waits for the cache"], fake, "lead0001")
             batches = [stdin for args, stdin in fake.calls if args[0] == "batch"]
-            line_text = f"Blocked by {question}: waits for the cache (the whole item waits)"
+            line_text = f"Waits on {question} for waits for the cache"
             if code or batches != [f'dep remove {question} {handed}\ndep add {handed} {question} blocks\n', f"dep add {ready} {question} blocks\n"] \
                     or any(w[0] == "update" for w in fake.writes()) or ["comments", "add", handed, line_text] not in fake.writes() \
-                    or output != f"blocked {handed} on {question}\nblocked {ready} on {question}\n":
-                raise ValueError(f"board block: {fake.calls}\n{output}")
+                    or output != f"{handed} waits on {question} for waits for the cache\n{ready} waits on {question} for waits for the cache\n":
+                raise ValueError(f"board wait: {fake.calls}\n{output}")
             fake = Fake(fixture)
-            code, output, errors = invoke(["block", ids["Done child"], ready, "--on", question, "--reason", "r"], fake, "lead0001")
-            if code != 1 or ids["Done child"] not in errors or f"blocked {ready} on {question}" not in output:
-                raise ValueError(f"board block must report a failed item and continue: {errors}")
-            if invoke(["block", ready, "--on", "fx-nope", "--reason", "r"], Fake(fixture), "lead0001")[0] != 1:
-                raise ValueError("board block accepted an unknown blocker")
+            code, output, errors = invoke(["wait", ids["Done child"], ready, "--on", question, "--for", "r"], fake, "lead0001")
+            if code != 1 or ids["Done child"] not in errors or f"{ready} waits on {question}" not in output:
+                raise ValueError(f"board wait must report a failed item and continue: {errors}")
+            if invoke(["wait", ready, "--on", "fx-nope", "--for", "r"], Fake(fixture), "lead0001")[0] != 1:
+                raise ValueError("board wait accepted an unknown blocker")
             # A blocks edge already there is no new edge; a reverse one is refused (one edge per pair).
             fake = Fake(fixture)
-            invoke(["block", ids["Implement store A"], "--on", new, "--reason", "r"], fake, "lead0001")
+            invoke(["wait", ids["Implement store A"], "--on", new, "--for", "r"], fake, "lead0001")
             if any(args[0] == "batch" for args, _ in fake.calls):
-                raise ValueError(f"board block re-added an existing edge: {fake.calls}")
-            if invoke(["block", new, "--on", ids["Implement store A"], "--reason", "r"], Fake(fixture), "lead0001")[0] != 1:
-                raise ValueError("board block accepted a pair already linked the other way")
+                raise ValueError(f"board wait re-added an existing edge: {fake.calls}")
+            if invoke(["wait", new, "--on", ids["Implement store A"], "--for", "r"], Fake(fixture), "lead0001")[0] != 1:
+                raise ValueError("board wait accepted a pair already linked the other way")
 
             # The same block twice adds one comment: a repeat with the same reason finds its line; a different reason is a new line.
-            said = f"Blocked by {new}: r (the whole item waits)"
+            said = f"Waits on {new} for r"
             held_again = variant(**{"Implement store A": {"comments": [{"text": said, "author": "x", "created_at": "2026-10-22T15:00:00Z"}]}})
             for rows, reason, posted in ((held_again, "r", False), (held_again, "another", True), (fixture, "r", True)):
                 fake = Fake(rows)
-                invoke(["block", ids["Implement store A"], "--on", new, "--reason", reason], fake, "lead0001")
+                invoke(["wait", ids["Implement store A"], "--on", new, "--for", reason], fake, "lead0001")
                 if any(w[0] == "comments" for w in fake.writes()) != posted:
-                    raise ValueError(f"board block with reason {reason!r} must {'post' if posted else 'not post'} its comment: {fake.writes()}")
+                    raise ValueError(f"board wait with reason {reason!r} must {'post' if posted else 'not post'} its comment: {fake.writes()}")
 
-            # board block --reason: a work item waits with a reason; a decision or gate blocker, or a milestone item, needs none (and no comment is posted).
+            # board wait --reason: a work item waits with a reason; a decision or gate blocker, or a milestone item, needs none (and no comment is posted).
             fake = Fake(fixture)
-            code, output, errors = invoke(["block", ready, "--on", ids["Spike perf"]], fake, "lead0001")
-            if code != 1 or "waits with a reason" not in errors or fake.writes():
-                raise ValueError(f"board block: a work item waiting on a work item needs a reason: {code} {errors!r} {fake.writes()}")
+            code, output, errors = invoke(["wait", ready, "--on", ids["Spike perf"]], fake, "lead0001")
+            if code != 1 or "waits for an input" not in errors or fake.writes():
+                raise ValueError(f"board wait: a work item waiting on a work item needs a reason: {code} {errors!r} {fake.writes()}")
             fake = Fake(fixture)
-            code, output, errors = invoke(["block", ready, "--on", question], fake, "lead0001")
+            code, output, errors = invoke(["wait", ready, "--on", question], fake, "lead0001")
             if code or [stdin for args, stdin in fake.calls if args[0] == "batch"] != [f"dep add {ready} {question} blocks\n"] or any(w[0] == "comments" for w in fake.writes()):
-                raise ValueError(f"board block on a decision needs no reason and posts no comment: {code} {errors!r} {fake.calls}")
-            for spelling in ("waits-for", "conditional-blocks"):  # a wait written under another blocking spelling stays; board block adds only its effects
-                spelled = variant(**{"Ready task": {"dependencies": [{"issue_id": ready, "depends_on_id": question, "type": spelling}]}})
-                fake = Fake(spelled)
-                code, output, errors = invoke(["block", ready, "--on", question], fake, "lead0001")
-                if code or any(args[0] == "batch" for args, _ in fake.calls) or f"blocked {ready} on {question}" not in output:
-                    raise ValueError(f"board block of an item that waits under {spelling} must add no second edge: {code} {errors!r} {fake.calls}")
+                raise ValueError(f"board wait on a decision needs no reason and posts no comment: {code} {errors!r} {fake.calls}")
             milestone = variant(**{"Ready task": {"issue_type": "milestone"}})
             fake = Fake(milestone)
-            code, output, errors = invoke(["block", ready, "--on", ids["Spike perf"]], fake, "lead0001")
+            code, output, errors = invoke(["wait", ready, "--on", ids["Spike perf"]], fake, "lead0001")
             if code or any(w[0] == "comments" for w in fake.writes()) or not any(args[0] == "batch" for args, _ in fake.calls):
-                raise ValueError(f"board block of a milestone item needs no reason: {code} {errors!r} {fake.calls}")
+                raise ValueError(f"board wait of a milestone item needs no reason: {code} {errors!r} {fake.calls}")
 
             # r21 steps: a released ruling waits for planning only (q139, q140), step counts split ready and waiting
             # (q141, q146), the claim order (q145), a holder's own block hands back (q144), --part splits (q150-q154).
@@ -4375,19 +4369,19 @@ def validate_board(root: Path) -> None:
             for blocker, allowed in (("Ready task", False), ("Goal", False), ("Design cache", False), ("Spike perf", False),
                                      ("Open cache question", True)):
                 fake = Fake(fixture)
-                code, _, errors = invoke(["block", ruling, "--on", ids[blocker], "--reason", "r"], fake, "lead0001")
+                code, _, errors = invoke(["wait", ruling, "--on", ids[blocker], "--for", "r"], fake, "lead0001")
                 if (code == 0) != allowed or (not allowed and (fake.writes() or "planning only" not in errors)):
-                    raise ValueError(f"board block of a released ruling on a {blocker}: {code} {errors} {fake.writes()}")
+                    raise ValueError(f"board wait of a released ruling on a {blocker}: {code} {errors} {fake.writes()}")
             # A wait that would close a cycle is refused at the write, naming the chain: the question waits on the ruling, so the ruling cannot wait on it.
             cyclic = with_edges(wait_on(ids["Open cache question"], ruling))
             fake = Fake(cyclic)
-            code, _, errors = invoke(["block", ruling, "--on", ids["Open cache question"], "--reason", "r"], fake, "lead0001")
+            code, _, errors = invoke(["wait", ruling, "--on", ids["Open cache question"], "--for", "r"], fake, "lead0001")
             if code == 0 or fake.writes() or "cycle" not in errors or f"{ruling} waits on {ids['Open cache question']} waits on {ruling}" not in errors:
-                raise ValueError(f"board block must refuse a wait cycle naming the chain: {code} {errors} {fake.writes()}")
+                raise ValueError(f"board wait must refuse a wait cycle naming the chain: {code} {errors} {fake.writes()}")
             fake = Fake(fixture)
-            code, _, errors = invoke(["block", ids["Wire caller"], "--on", ids["Ready task"], "--reason", "r"], fake, "lead0001")
+            code, _, errors = invoke(["wait", ids["Wire caller"], "--on", ids["Ready task"], "--for", "r"], fake, "lead0001")
             if not code or fake.writes() or "change request" not in errors:
-                raise ValueError(f"board block accepted a new outside wait on a task: {code} {errors} {fake.writes()}")
+                raise ValueError(f"board wait accepted a new outside wait on a task: {code} {errors} {fake.writes()}")
             # Only a live decision, a human gate is a planning wait (q139).
             def stub(item_id, kind, status, title, **more):
                 return {"id": item_id, "title": title, "issue_type": kind, "status": status, "priority": 2,
@@ -4399,9 +4393,9 @@ def validate_board(root: Path) -> None:
             for blocker, allowed in (("w-user", True), ("w-gate", False), ("w-decided", True),
                                      ("w-released", False), ("w-deferred", False)):
                 fake = Fake([*fixture, *waits])
-                code, _, errors = invoke(["block", ruling, "--on", blocker, "--reason", "r"], fake, "lead0001")
+                code, _, errors = invoke(["wait", ruling, "--on", blocker, "--for", "r"], fake, "lead0001")
                 if (code == 0) != allowed or (not allowed and (fake.writes() or "planning only" not in errors)):
-                    raise ValueError(f"board block of a released ruling on {blocker}: {code} {errors} {fake.writes()}")
+                    raise ValueError(f"board wait of a released ruling on {blocker}: {code} {errors} {fake.writes()}")
             for blocker, ignored in (("w-user", False), ("w-gate", True), ("w-decided", False), ("w-released", True), ("w-deferred", True)):
                 rows = [*fixture, *waits]
                 rows = [{**row, "dependencies": [*(row.get("dependencies") or []), *([{"issue_id": ruling, "depends_on_id": blocker, "type": "blocks"}]
@@ -4421,11 +4415,11 @@ def validate_board(root: Path) -> None:
             if designed_board.claimable(designed_board.by_id[ruling]) is not None or designed_board.foreign_waits(designed_board.by_id[ruling]):
                 raise ValueError("a released ruling waiting on a live decision must stay unclaimable")
             code, output, _ = invoke(["claim", ruling], Fake(stuck), "solo0001")
-            if f"  fix: {ruling} waits on {ids['Ready task']}" not in output or f"agents board unblock {ruling} --on {ids['Ready task']}" not in output:
+            if f"  fix: {ruling} waits on {ids['Ready task']}" not in output or f"agents board unlink {ruling} {ids['Ready task']}" not in output:
                 raise ValueError(f"board claim must print the fix for a ruling's work wait:\n{output}")
             code, report, _ = invoke(["check"], Fake(stuck))
             if f"  {ruling}  ruling-blocked  board-core.md#statuses-and-labels  released ruling waits on {ids['Ready task']}" not in report \
-                    or f"agents board unblock {ruling} --on {ids['Ready task']}" not in report:
+                    or f"agents board unlink {ruling} {ids['Ready task']}" not in report:
                 raise ValueError(f"board check lacks ruling-blocked:\n{report}")
             if "ruling-blocked" in invoke(["check"], Fake(designed))[1].replace("ruling-blocked (", ""):
                 raise ValueError("board check flagged a ruling waiting on a live decision")
@@ -4547,14 +4541,14 @@ def validate_board(root: Path) -> None:
             held_rows = variant(**{"Held task": {"notes": "Waits on the cache."}})
             for actor, handed_back in (("aaaa1111/build-12345678", True), ("aaaa1111", True), ("lead0001", False)):
                 fake = Fake(held_rows)
-                code, output, errors = invoke(["block", held_task, "--on", question, "--reason", "needs the cache"], fake, actor)
+                code, output, errors = invoke(["wait", held_task, "--on", question, "--for", "needs the cache"], fake, actor)
                 unclaims = [w for w in fake.writes() if w[0] == "update" and w[2:4] == ["--assignee", ""]]
                 if code or bool(unclaims) != handed_back or (handed_back and (unclaims[0][1] != held_task or "handed back" not in output)):
-                    raise ValueError(f"board block by {actor} on a held item: {fake.calls} {errors}")
+                    raise ValueError(f"board wait by {actor} on a held item: {fake.calls} {errors}")
             whole = Fake(fixture)
-            invoke(["block", ready, "--on", question, "--reason", "waits"], whole, "lead0001")
-            if ["comments", "add", ready, f"Blocked by {question}: waits (the whole item waits)"] not in whole.writes():
-                raise ValueError("a block must say the whole item waits")
+            invoke(["wait", ready, "--on", question, "--for", "waits"], whole, "lead0001")
+            if ["comments", "add", ready, f"Waits on {question} for waits"] not in whole.writes():
+                raise ValueError("a wait keeps its for as a comment")
 
             # board ruling revise: a linked open decision, parent and topic labels from the old record; prints the new id.
             Path("p.md").write_text("The revised question.\n", encoding="utf-8")  # the body file is read for the size limit (cwd: the scratch repository)
@@ -4604,17 +4598,8 @@ def validate_board(root: Path) -> None:
             code, output, errors = invoke(["ruling", "revise", ids["Released ruling"], "--title", "t", "--body-file", "p.md", "--holds", f"{ready},{handed}"], fake, "lead0001")
             edges = fake.graphs[-1].get("edges") if fake.graphs else None
             if code or output != "fx-new\n" or edges != [{"from_id": ready, "to_key": "item", "type": "blocks"}, {"from_id": handed, "to_key": "item", "type": "blocks"}] \
-                    or ["comments", "add", ready, "Blocked by fx-new: fx-new holds it up until answered or its ruling is planned. (the whole item waits)"] not in fake.writes():
+                    or ["comments", "add", ready, "Waits on fx-new for fx-new holds it up until answered or its ruling is planned."] not in fake.writes():
                 raise ValueError(f"board ruling revise --holds must block the held items on the new question: {code} {errors} {fake.writes()} {edges}")
-            # r3-q16: a blocks: link on revise is a hold too, in the same create; --holds is then optional; other link types are refused.
-            fake = Fake(topical)
-            code, output, errors = invoke(["ruling", "revise", ids["Released ruling"], "--title", "t", "--body-file", "p.md", "--deps", f"blocks:{ready}"], fake, "lead0001")
-            if code or len(fake.graphs) != 1 or fake.graphs[0].get("edges") != [{"from_id": ready, "to_key": "item", "type": "blocks"}]:
-                raise ValueError(f"board ruling revise --deps blocks:<id> holds that item up: {code} {errors} {fake.writes()} {fake.graphs}")
-            fake = Fake(topical)
-            code, _, errors = invoke(["ruling", "revise", ids["Released ruling"], "--title", "t", "--body-file", "p.md", "--deps", f"related:{ready}"], fake, "lead0001")
-            if code != 1 or "blocks:" not in errors or fake.writes():
-                raise ValueError(f"board ruling revise --deps takes blocks: links only: {code} {errors} {fake.writes()}")
             fake = Fake(topical)
             code, _, errors = invoke(["ruling", "revise", ids["Released ruling"], "--title", "t", "--body-file", "p.md", "--holds", "fx-nowhere"], fake, "lead0001")
             if code != 1 or "unknown or closed" not in errors or fake.writes():
@@ -4622,7 +4607,7 @@ def validate_board(root: Path) -> None:
             fake = Fake(topical)
             if invoke(["ruling", "revise", ids["Released ruling"], "--title", "t", "--body-file", "p.md", "--holds", "none"], fake, "lead0001")[0] or fake.graphs[-1].get("edges"):
                 raise ValueError("--holds none blocks nothing")
-            # The block edges use a board read after the create: the creator's own claimed item is handed back like board block does (r21-q144),
+            # The block edges use a board read after the create: the creator's own claimed item is handed back like board wait does (r21-q144),
             # and a released ruling may wait on the new open question.
             class Creating(Fake):
                 def __call__(self, command, **kwargs):
@@ -4742,22 +4727,15 @@ def validate_board(root: Path) -> None:
             code, _, errors, fake = bd_create("--holds", "fx-nowhere")
             if code != 2 or any(a[0] == "create" for a, _ in fake.calls):
                 raise ValueError(f"board bd create --holds with an unknown item must create nothing: {code} {errors} {fake.calls}")
-            # r3-q16: holds are the new question's blocking links however made: --deps blocks:<id> and a plan's edges count, get the same hold
-            # effects (the creator's claimed item handed back, the wait commented), and a decision with none needs --holds none.
-            code, output, errors, fake = bd_create("--deps", f"blocks:{ready}", deck=Creating(list(mine_rows)))
-            created_bd = [a for a, _ in fake.calls if a[0] == "create"]
-            if code or len(created_bd) != 1 or not any((w[:2] == ["update", ready] and w[2:4] == ["--assignee", ""]) for w in fake.writes()) \
-                    or not any(w[:3] == ["comments", "add", ready] and "fx-new" in w[3] for w in fake.writes()):
-                raise ValueError(f"a --deps blocks: link is a hold: the item is commented and handed back after the create: {code} {errors} {fake.writes()}")
-            code, output, errors, fake = bd_create("--deps", f"blocks:{ready}", "--holds", "none")
-            if code != 2 or "stands alone" not in errors or any(a[0] == "create" for a, _ in fake.calls):
-                raise ValueError(f"--holds none beside a blocking link is refused before anything is created: {code} {errors} {fake.calls}")
-            code, output, errors, fake = bd_create("--deps", f"discovered-from:{ready}")
+            # The old words are refused at the write, naming the new form (a wait is written on the waiter: agents board wait).
+            for word in ("blocks", "blocked-by", "depends-on", "waits-for", "conditional-blocks", "related", "discovered-from"):
+                code, _, errors, fake = bd_create("--deps", f"{word}:{ready}")
+                if code != 2 or "is not a link word" not in errors or any(a[0] == "create" for a, _ in fake.calls):
+                    raise ValueError(f"--deps {word}: is refused before anything is created: {code} {errors} {fake.calls}")
+            code, output, errors, fake = bd_create("--deps", f"relates-to:{ready}")
             if code != 2 or "names what it holds up" not in errors or any(a[0] == "create" for a, _ in fake.calls):
                 raise ValueError(f"a decision whose links block nothing needs --holds none: {code} {errors} {fake.calls}")
 
-            # A new item that holds an existing one up (--deps blocks:<id>) gets board block's effects (hand-back, no comment without a reason),
-            # only where board block needs no reason: a gate as the blocker, a milestone as the waiting item; a work item is refused.
             def bd_make(*argv, deck=None):
                 fake_bd, out_bd, err_bd = deck or Creating(list(mine_rows)), io.StringIO(), io.StringIO()
                 with patch.object(board.subprocess, "run", fake_bd), patch.object(board, "has_board", lambda: True), patch.object(board, "ensure_server", lambda *a: None), \
@@ -4769,18 +4747,7 @@ def validate_board(root: Path) -> None:
                 return Creating([{**row, "dependencies": [d for d in row.get("dependencies") or [] if d["type"] != "parent-child"]}
                                  if row["id"] == ready else row for row in mine_rows])
 
-            code, _, errors, fake = bd_make("-t", "task", "--deps", f"blocks:{ready}", deck=without_request())
-            if code != 2 or f"agents board block {ready} --on <new id> --reason" not in errors or any(a[0] == "create" for a, _ in fake.calls):
-                raise ValueError(f"a new task must not hold an existing item up without a reason: {code} {errors} {fake.calls}")
-            code, _, errors, fake = bd_make("-t", "gate", "--deps", f"blocks:{ready}", deck=without_request())
-            if code or not any(a[:2] == ["create", "--graph"] for a, _ in fake.calls) or not any((w[:2] == ["update", ready] and w[2:4] == ["--assignee", ""]) for w in fake.writes()) \
-                    or any(w[0] == "comments" for w in fake.writes()):
-                raise ValueError(f"a new gate holding an item up hands the creator's hold back, with no comment: {code} {errors} {fake.writes()}")
-            as_milestone = Creating(list(variant(**{"Ready task": {"issue_type": "milestone", "status": "open", "assignee": "lead0001"}})))
-            code, _, errors, fake = bd_make("-t", "task", "--deps", f"blocks:{ready}", deck=as_milestone)
-            if code or not any(a[:2] == ["create", "--graph"] for a, _ in fake.calls) or not any((w[:2] == ["update", ready] and w[2:4] == ["--assignee", ""]) for w in fake.writes()):
-                raise ValueError(f"a milestone item may wait on a new work item without a reason: {code} {errors} {fake.writes()}")
-            code, _, errors, fake = bd_make("-t", "task", "--deps", f"blocked-by:{ready}")
+            code, _, errors, fake = bd_make("-t", "task", "--deps", f"waits-on:{ready}")
             if code or any((w[:1] == ["update"] and w[2:4] == ["--assignee", ""]) for w in fake.writes()):
                 raise ValueError(f"a link that makes the new item wait stays as it is: {code} {errors} {fake.writes()}")
 
@@ -4805,26 +4772,38 @@ def validate_board(root: Path) -> None:
                     code_bd = board.main(["create", "--graph", str(plan_file), *extra])
                 return code_bd, out_bd.getvalue(), err_bd.getvalue(), fake_bd
             nodes = [{"key": "q", "title": "q", "type": "decision", "description": "d"}, {"key": "t", "title": "t", "type": "task", "description": "d"}]
-            code, output, errors, fake = bd_graph({"nodes": nodes, "edges": [{"from_key": "t", "to_key": "q", "type": "blocks"}, {"from_id": ready, "to_key": "q"}]})
+            waiting_t = [nodes[0], dict(nodes[1], waits_on=[{"on": "q", "for": "its ruling"}])]
+            code, output, errors, fake = bd_graph({"nodes": waiting_t, "edges": []}, "--holds", ready)
             if code or not any((w[:2] == ["update", ready] and w[2:4] == ["--assignee", ""]) for w in fake.writes()) or not any(w[:3] == ["comments", "add", "fx-task"] for w in fake.writes()) \
                     or not any(a[0] == "create" for a, _ in fake.calls):
                 raise ValueError(f"a plan's links to its decision node are holds: every held item, an existing one and a plan item, gets the hold effects: {code} {errors} {fake.writes()}")
             code, output, errors, fake = bd_graph({"nodes": nodes, "edges": [{"from_key": "t", "to_key": "q", "type": "parent-child"}]})
             if code != 2 or "names what it holds up" not in errors or any(a[0] == "create" for a, _ in fake.calls):
                 raise ValueError(f"a plan decision with no blocking link is refused unless --holds none: {code} {errors} {fake.calls}")
-            code, output, errors, fake = bd_graph({"nodes": nodes, "edges": [{"from_key": "t", "to_key": "q"}]}, "--holds", "none")
+            code, output, errors, fake = bd_graph({"nodes": waiting_t, "edges": []}, "--holds", "none")
             if code != 2 or "stands alone" not in errors:
                 raise ValueError(f"--holds none beside a plan link is refused: {code} {errors}")
             code, output, errors, fake = bd_graph({"nodes": nodes, "edges": []}, "--holds", ready)
             if code or not any((w[:2] == ["update", ready] and w[2:4] == ["--assignee", ""]) for w in fake.writes()):
                 raise ValueError(f"--holds ids with a plan are held up by its decision (no refusal): {code} {errors} {fake.writes()}")
-            # A blocking edge between two new work items is bd's own write: no hold effects, no refusal (r9 regression).
+            # A wait between two new work items is bd's own write: waits_on becomes the node's dep before bd sees the plan, its for a comment on the
+            # waiter, and the sentence is printed; a dry run prints the sentence and writes nothing.
             tasks = [dict(node, type="task") for node in nodes]
-            for plan in ({"nodes": tasks, "edges": [{"from_key": "t", "to_key": "q", "type": "blocks"}]},
-                         {"nodes": [tasks[0], dict(tasks[1], deps=[{"target": "q", "type": "blocks"}])], "edges": []}):
-                code, output, errors, fake = bd_graph(plan)
-                if code or errors or not any(a[0] == "create" for a, _ in fake.calls) or any(((w[:1] == ["update"] and w[2:4] == ["--assignee", ""]) or w[:1] in (["comments"], ["batch"])) for w in fake.writes()):
-                    raise ValueError(f"a blocking link between two new work items needs no board block: {code} {errors} {fake.writes()}")
+            code, output, errors, fake = bd_graph({"nodes": [tasks[0], dict(tasks[1], waits_on=[{"on": "q", "for": "the cache API"}])], "edges": []})
+            sent = [json.loads(Path(args[2]).read_text(encoding="utf-8")) for args, _ in fake.calls if args[:2] == ["create", "--graph"]]
+            if code or errors or "fx-task waits on fx-new for the cache API" not in output or not sent or sent[0]["nodes"][1]["deps"] != [{"target": "q", "type": "blocks"}] \
+                    or "waits_on" in sent[0]["nodes"][1] or ["comments", "add", "fx-task", "Waits on fx-new for the cache API"] not in fake.writes() \
+                    or any(w[:1] == ["update"] and w[2:4] == ["--assignee", ""] for w in fake.writes()):
+                raise ValueError(f"a plan's waits_on is a dep bd gets, a comment and a sentence: {code} {errors} {output!r} {sent} {fake.writes()}")
+            code, output, errors, fake = bd_graph({"nodes": [tasks[0], dict(tasks[1], waits_on=[{"on": "q", "for": "the cache API"}])], "edges": []}, "--dry-run")
+            if code or "t waits on q for the cache API" not in output or fake.writes() or any(a[0] == "create" for a, _ in fake.calls):
+                raise ValueError(f"a dry run prints the wait sentence and writes nothing: {code} {errors} {output!r} {fake.calls}")
+            for plan in ({"nodes": [tasks[0], dict(tasks[1], deps=[{"target": "q", "type": "blocks"}])], "edges": []},
+                         {"nodes": tasks, "edges": [{"from_key": "t", "to_key": "q"}]}, {"nodes": tasks, "edges": [{"from_key": "t", "to_key": "q", "type": "waits-for"}]},
+                         {"nodes": [tasks[0], dict(tasks[1], waits_on=[{"on": "q"}, {"to": "q"}])], "edges": []}):
+                code, _, errors, fake = bd_graph(plan)
+                if code != 2 or ("is not a link word" not in errors and "waits_on is a list" not in errors) or any(a[0] == "create" for a, _ in fake.calls):
+                    raise ValueError(f"a plan's old wait words and bad waits_on are refused before anything is created: {code} {errors} {fake.calls}")
             # An existing child moved under a new parent by a plan meets the parent-move rule (r9: the board was not loaded for it).
             stacked = {**fixture[0], "id": "fx-cr", "title": "A CR", "issue_type": "change-request", "status": "open", "assignee": None, "dependencies": []}
             code, _, errors, fake = bd_graph({"nodes": [dict(nodes[1])], "edges": [{"from_id": "fx-cr", "to_key": "t", "type": "parent-child"}]},
@@ -4835,17 +4814,12 @@ def validate_board(root: Path) -> None:
             code, _, errors, fake = bd_graph(named_question, "--holds", "fx-cr", deck=Graphing([*mine_rows, stacked]))
             if code != 2 or "a decision holds its work items" not in errors or any(a[0] == "create" for a, _ in fake.calls):
                 raise ValueError(f"a plan holding a CR is refused before any write and names the fix: {code} {errors} {fake.calls}")
-            # q30: one link rule for every writer. Any blocking spelling from an existing item to a new decision is a hold (not only `blocks`).
-            for kind in ("waits-for", "conditional-blocks", "blocked-by", "depends-on"):
-                code, output, errors, fake = bd_graph({"nodes": nodes, "edges": [{"from_key": "t", "to_key": "q", "type": "blocks"}, {"from_id": ready, "to_key": "q", "type": kind}]})
-                if code or not any((w[:2] == ["update", ready] and w[2:4] == ["--assignee", ""]) for w in fake.writes()) or not any(w[:3] == ["comments", "add", ready] for w in fake.writes()):
-                    raise ValueError(f"a {kind} edge from an existing item to a new decision is a hold, with block's effects: {code} {errors} {fake.writes()}")
-            # A plan edge between two existing items is refused (board link and board block write those); ruling links are written by ruling verbs only.
-            for plan, word in (({"nodes": nodes, "edges": [{"from_key": "t", "to_key": "q", "type": "blocks"}, {"from_id": ready, "to_id": question, "type": "blocks"}]}, "needs a new item"),
+            # A plan edge between two existing items is refused (board link and board wait write those); ruling links are written by ruling verbs only.
+            for plan, word in (({"nodes": nodes, "edges": [{"from_id": ready, "to_id": question, "type": "relates-to"}]}, "needs a new item"),
                                ({"nodes": [dict(nodes[1], deps=[{"target": ready, "type": "supersedes"}])], "edges": []}, "belong to rulings"),
                                ({"nodes": [dict(nodes[1], deps=[{"target": ready, "type": "tracks"}])], "edges": []}, "belong to rulings"),
-                               ({"nodes": nodes, "edges": [{"from_key": "t", "to_key": "q", "type": "blocks"}, {"from_key": "t", "to_id": ready, "type": "supersedes"}]}, "belong to rulings"),
-                               ({"nodes": nodes, "edges": [{"from_key": "t", "to_key": "q", "type": "blocks"}, {"from_id": "fx-nowhere", "to_key": "q"}]}, "unknown or closed")):
+                               ({"nodes": nodes, "edges": [{"from_key": "t", "to_id": ready, "type": "supersedes"}]}, "belong to rulings"),
+                               ({"nodes": [dict(nodes[1], waits_on=[{"on": "fx-nowhere", "for": "x"}])], "edges": []}, "unknown")):
                 code, _, errors, fake = bd_graph(plan)
                 if code != 2 or word not in errors or any(a[0] == "create" for a, _ in fake.calls):
                     raise ValueError(f"a plan link that breaks a link rule is refused before anything is created ({word}): {code} {errors} {fake.calls}")
@@ -4957,11 +4931,11 @@ def validate_board(root: Path) -> None:
             if invoke(["ruling", "supersede", old, "--with", new, "--partial", "Rule 2"], Fake(closed_new), "lead0001")[0] \
                     or invoke(["ruling", "supersede", old, "--with", new], Fake(closed_new), "lead0001")[0] != 1:
                 raise ValueError("board ruling supersede must take a closed new record for --partial only")
-            # A wait named only in a comment (board block's reason) is named.
+            # A wait named only in a comment (board wait's reason) is named.
             wire, work = ids["Wire caller"], ids["Ready task"]
             waiting = {"Wire caller": {"dependencies": [{"issue_id": wire, "depends_on_id": work, "type": "blocks"}]}}
             if f"  {wire}  unnamed-blocker" not in invoke(["check"], Fake(variant(**waiting)))[1] or f"  {wire}  unnamed-blocker" in invoke(
-                    ["check"], Fake(variant(**{"Wire caller": {**waiting["Wire caller"], "comments": [{"text": f"Blocked by {work}: r"}]}})))[1]:
+                    ["check"], Fake(variant(**{"Wire caller": {**waiting["Wire caller"], "comments": [{"text": f"Waits on {work} for r"}]}})))[1]:
                 raise ValueError("board check must read a wait's reason from the item's comments")
 
             # Views: --limit everywhere (--all is --limit 0), a READ_BUDGET cut names a --limit that fits.
@@ -5047,16 +5021,16 @@ def validate_board(root: Path) -> None:
             help_output = io.StringIO()
             with contextlib.redirect_stdout(help_output):
                 board.main(["help"])
-            for name in ("show", "cr", "ruling", "block", "related", "handover"):
+            for name in ("show", "cr", "ruling", "wait", "related", "handover"):
                 if f"usage: agents board {name}" not in help_output.getvalue() or board.EXAMPLES[name] not in help_output.getvalue():
                     raise ValueError(f"board help lacks {name} or its example")
             with contextlib.redirect_stdout(io.StringIO()) as sub_help:
                 try:
-                    board.main(["block", "--help"])
+                    board.main(["wait", "--help"])
                 except SystemExit:
                     pass
-            if not sub_help.getvalue().rstrip().endswith(f"example: {board.EXAMPLES['block']}"):
-                raise ValueError(f"board block --help must end with its example:\n{sub_help.getvalue()}")
+            if not sub_help.getvalue().rstrip().endswith(f"example: {board.EXAMPLES['wait']}"):
+                raise ValueError(f"board wait --help must end with its example:\n{sub_help.getvalue()}")
 
             # r15-q80/q90: the old flat names are unknown verbs; board names the group command, asking bd nothing. A verb bd knows
             # points to `board bd`; one bd rejects keeps argparse's error. Nothing is forwarded or run either way.
@@ -5081,7 +5055,7 @@ def validate_board(root: Path) -> None:
                 if result != (2, message, [["ready", "--help"]]):
                     raise ValueError(f"board {argv} refusal: {result}")
             # a bd write word names its board command (BOARD_FOR), or the raw form where no board command does it; a read word runs board bd
-            for argv, message in ((["dep", "add", "a", "b"], "board: no verb 'dep'; use agents board block / unblock / link / unlink\n"),
+            for argv, message in ((["dep", "add", "a", "b"], "board: no verb 'dep'; use agents board wait / link / unlink\n"),
                                   (["priority", "a", "1"], "board: no verb 'priority'; use agents board update --priority\n"),
                                   (["sync"], "board: no verb 'sync'; run: agents board bd --raw --yes sync\n")):
                 result = refusal(argv)
@@ -5135,11 +5109,11 @@ def validate_board(root: Path) -> None:
                     or writes[3][:3] != ["comments", "add", ids["Released ruling"]]:
                 raise ValueError(f"board unclaim: {writes}")
 
-            # Own work in progress (a worker's included) hands back blocked (board block) or with its next action (--resume),
+            # Own work in progress (a worker's included) hands back blocked (board wait) or with its next action (--resume),
             # never plainly; --resume is for that hand-back only. board claim shows the latest next action.
             fake = Fake(fixture)
             code, _, errors = invoke(["unclaim", ids["Held task"]], fake, "aaaa1111")
-            if code != 1 or fake.writes() or f"agents board block {ids['Held task']} --on" not in errors:
+            if code != 1 or fake.writes() or f"agents board wait {ids['Held task']} --on" not in errors:
                 raise ValueError(f"board unclaim of the session's own work in progress must ask for block or --resume: {fake.writes()}\n{errors}")
             fake = Fake(fixture)
             invoke(["unclaim", ids["Held task"], "--resume", "rerun the probe"], fake, "aaaa1111")
@@ -5418,8 +5392,8 @@ def validate_board(root: Path) -> None:
             graph = Path("outside-wait.json").resolve()
             graph.write_text(json.dumps({"nodes": [{"key": "cr", "title": "Change", "description": "Work", "type": "change-request"},
                                                    {"key": "child", "title": "Task", "description": "Work", "parent_key": "cr",
-                                                    "deps": [{"target": "fx-source-task"}]}]}))
-            for argv in (["block", "fx-dest-task", "--on", "fx-source-task", "--reason", "dependency"],
+                                                    "waits_on": [{"on": "fx-source-task", "for": "dependency"}]}]}))
+            for argv in (["wait", "fx-dest-task", "--on", "fx-source-task", "--for", "dependency"],
                          ["create", "A task", "--parent", "fx-dest", "--description-file", "-", "--deps", "fx-source-task"],
                          ["create", "--graph", str(graph), "--dry-run"],
                          ["move", "fx-move", "--to", "fx-dest"],
@@ -5433,7 +5407,7 @@ def validate_board(root: Path) -> None:
                     raise ValueError(f"outside task wait was not refused before mutation: {argv} {code} {errors} {fake.writes()}")
             for waiting, blocker in (("fx-dest", "fx-source-task"), ("fx-move", "fx-source-task")):
                 fake = Fake(others)
-                code, _, errors = invoke(["block", waiting, "--on", blocker, "--reason", "dependency"], fake, "lead0001")
+                code, _, errors = invoke(["wait", waiting, "--on", blocker, "--for", "dependency"], fake, "lead0001")
                 if code or not fake.writes():
                     raise ValueError(f"valid dependency was refused: {waiting} {blocker} {errors}")
 
@@ -5441,7 +5415,7 @@ def validate_board(root: Path) -> None:
             legacy = [row if row["id"] != legacy_item["id"] else legacy_item for row in others]
             _, output, _ = invoke(["check", "--json"], Fake(legacy), "lead0001")
             findings = [entry for entry in json.loads(output)["deviations"] if entry["class"] == "outside-wait"]
-            if len(findings) != 1 or findings[0]["id"] != "fx-dest-task" or "agents board unblock fx-dest-task --on fx-source-task" not in findings[0]["detail"]:
+            if len(findings) != 1 or findings[0]["id"] != "fx-dest-task" or "agents board unlink fx-dest-task fx-source-task" not in findings[0]["detail"]:
                 raise ValueError(f"board check must locate the old link and its migration commands: {findings}")
             if readiness(*legacy, complete=True)["fx-dest"] != (None, (["fx-source"], [])):
                 raise ValueError("the old outside wait must still hold the change request before migration")
@@ -6343,8 +6317,8 @@ def validate_board(root: Path) -> None:
                 code, _, errors, writes = verb(["link", "t-a", "t-b", "--type", "relates-to"], world)
                 if code or writes != [["batch", "-m", "board link t-a t-b", "--json"]]:
                     raise ValueError(f"board link: {code} {errors!r} {writes}")
-                for argv, word in ((["link", "t-a", "t-b", "--type", "blocks"], "board block t-a --on t-b"), (["link", "t-a", "t-b", "--type", "nonsense"], "is not one of"),
-                                   (["link", "t-r", "t-b", "--type", "discovered-from"], "linked already")):
+                for argv, word in ((["link", "t-a", "t-b", "--type", "blocks"], "agents board wait <item> --on <target>"), (["link", "t-a", "t-b", "--type", "nonsense"], "is not one of"),
+                                   (["link", "t-r", "t-b", "--type", "discovered-from"], "--found-in")):
                     code, _, errors, writes = verb(argv, world)
                     if code != 2 or word not in errors or writes:
                         raise ValueError(f"board {argv} must be refused ({word}): {code} {errors!r} {writes}")
@@ -6358,27 +6332,20 @@ def validate_board(root: Path) -> None:
                 code, _, errors, writes = verb(["unlink", "t-r", "t-b"], world)
                 if code or writes != [["dep", "remove", "t-r", "t-b"]]:
                     raise ValueError(f"board unlink: {code} {errors!r} {writes}")
-                for argv, word in ((["unlink", "t-l", "t-a"], "board unblock t-l --on t-a"), (["unlink", "t-a", "t-b"], "not linked")):
-                    code, _, errors, writes = verb(argv, world)
-                    if code != 2 or word not in errors or writes:
-                        raise ValueError(f"board {argv} must be refused ({word}): {code} {errors!r} {writes}")
-                code, output, errors, writes = verb(["unblock", "t-l", "--on", "t-a"], world)
-                if code or writes != [["dep", "remove", "t-l", "t-a"]] or "unblocked t-l from t-a" not in output:
-                    raise ValueError(f"board unblock must remove the wait block made: {code} {output!r} {errors!r} {writes}")
-                for kind in ("conditional-blocks", "waits-for"):  # every blocking kind is one the verb removes, and unlink names it
-                    kinds = [plain("t-a"), plain("t-k", dependencies=[{"issue_id": "t-k", "depends_on_id": "t-a", "type": kind}])]
-                    code, output, errors, writes = verb(["unblock", "t-k", "--on", "t-a"], kinds)
-                    if code or writes != [["dep", "remove", "t-k", "t-a"]]:
-                        raise ValueError(f"board unblock must remove a {kind} wait: {code} {output!r} {errors!r} {writes}")
-                    code, _, errors, writes = verb(["unlink", "t-k", "t-a"], kinds)
-                    if code != 2 or "agents board unblock t-k --on t-a" not in errors or writes:
-                        raise ValueError(f"board unlink must refuse a {kind} wait, naming unblock: {code} {errors!r} {writes}")
-                    code, _, errors, writes = verb(["link", "t-k", "t-a", "--type", kind], kinds)
-                    if code != 2 or "agents board block" not in errors or writes:
-                        raise ValueError(f"board link must refuse {kind}, naming block: {code} {errors!r} {writes}")
-                code, _, errors, writes = verb(["unblock", "t-b", "--on", "t-a"], world)
-                if code != 2 or "not waiting on t-a" not in errors or writes:
-                    raise ValueError(f"board unblock of an item that does not wait: {code} {errors!r} {writes}")
+                code, _, errors, writes = verb(["unlink", "t-a", "t-b"], world)
+                if code != 2 or "not linked" not in errors or writes:
+                    raise ValueError(f"board unlink of a pair that is not linked: {code} {errors!r} {writes}")
+                code, output, errors, writes = verb(["unlink", "t-l", "t-a"], world)  # unlink removes a wait, saying so as the sentence's end
+                if code or writes != [["dep", "remove", "t-l", "t-a"]] or "t-l no longer waits on t-a" not in output:
+                    raise ValueError(f"board unlink must remove a wait: {code} {output!r} {errors!r} {writes}")
+                for word in ("conditional-blocks", "waits-for", "blocked-by", "depends-on", "related"):  # an old word is refused at the write, naming the new form
+                    code, _, errors, writes = verb(["link", "t-k", "t-a", "--type", word], [plain("t-a"), plain("t-k")])
+                    if code != 2 or "is not a link word" not in errors or writes:
+                        raise ValueError(f"board link must refuse {word}: {code} {errors!r} {writes}")
+                for word, form in (("block", "agents board wait"), ("unblock", "agents board unlink")):  # the old verbs name the new form
+                    code, _, errors, writes = verb([word, "t-k", "--on", "t-a"], world)
+                    if code != 2 or form not in errors or writes:
+                        raise ValueError(f"board {word} must name the new form: {code} {errors!r} {writes}")
                 code, output, errors, writes = verb(["reopen", "t-g"], world)
                 if code or writes != [["update", "t-g", "--status", "open", "--assignee", "", "--if-assignee", "", "--if-status", "closed", "--json"]]:
                     raise ValueError(f"board reopen: {code} {errors!r} {writes}")
@@ -7840,19 +7807,18 @@ else:
         files = {name: Path(repo, name) for name in ("desc.md", "design.md", "accept.md", "long.md", "plan.json", "dec.json", "bad.json", "look.json")}
         for name, text in (("desc.md", "What and where.\n"), ("design.md", "The design.\n"), ("accept.md", "Done when it works.\n"), ("long.md", "x" * 2001)):
             files[name].write_text(text, encoding="utf-8")
-        # the flags describe one node of a graph plan; --deps blocks: makes the other item wait on the new one (bd create's direction)
+        # the flags describe one node of a graph plan; --deps waits-on: (or a bare id) makes the new item wait on that one
         result, calls = run_fake("create", "Login fails", "-t", "decision", "-p", "1", "--label", "a,b", "-l", "c", "--description-file", str(files["desc.md"]),
-                                 "--design-file", str(files["design.md"]), "--acceptance-file", str(files["accept.md"]), "--deps", "discovered-from:fx-x",
-                                 "--deps", "blocks:fx-y,blocks:fx-a", "--parent", "fx-p")
+                                 "--design-file", str(files["design.md"]), "--acceptance-file", str(files["accept.md"]), "--deps", "relates-to:fx-x",
+                                 "--deps", "waits-on:fx-y,waits-on:fx-a", "--holds", "none", "--parent", "fx-p")
         made = writes_of(calls, "create")
         plan = made[0]["plan"] if made else {}
         node = (plan.get("nodes") or [{}])[0]
         want = {"key": "item", "title": "Login fails", "type": "decision", "priority": 1, "description": "What and where.\n",
                 "design": "The design.\n", "acceptance_criteria": "Done when it works.\n", "labels": ["a", "b", "c", "topic:t"], "parent_id": "fx-p",
-                "deps": [{"target": "fx-x", "type": "discovered-from"}]}
+                "deps": [{"target": "fx-x", "type": "relates-to"}, {"target": "fx-y", "type": "blocks"}, {"target": "fx-a", "type": "blocks"}]}
         if result.returncode != 0 or len(made) != 1 or made[0]["args"][:2] != ["create", "--graph"] or "--json" not in made[0]["args"] or node != want \
-                or plan.get("edges") != [{"from_id": "fx-y", "to_key": "item", "type": "blocks"}, {"from_id": "fx-a", "to_key": "item", "type": "blocks"}] \
-                or result.stdout != "fx-item-new\n":
+                or plan.get("edges") or result.stdout != "fx-item-new\nfx-item-new waits on fx-y\nfx-item-new waits on fx-a\n":
             raise ValueError(f"board create must build one graph node from the flags and print its id: {result.returncode} {result.stdout!r} {result.stderr!r} {plan}")
         # item settings are typed: stored as the board's metadata, refused on an item they do not fit
         for args, metadata in ((("T", "--no-commit"), {"no_commit": True}), (("T", "-t", "change-request", "--look", "after", "--view", "result"),
@@ -7872,10 +7838,14 @@ else:
         result, calls = run_fake("create", "--graph", str(files["bad.json"]))
         if result.returncode != 2 or "needs a description" not in result.stderr or writes_of(calls, "create"):
             raise ValueError(f"a plan node with a blank description must be refused: {result.returncode} {result.stderr!r} {calls}")
-        # a bare dependency or blocked-by: makes the new item wait on the other; parent-child is --parent
-        result, calls = run_fake("create", "T", "--deps", "fx-x", "--deps", "blocked-by:fx-y")
+        # a bare dependency or waits-on: makes the new item wait on the other; parent-child is --parent
+        result, calls = run_fake("create", "T", "--deps", "fx-x", "--deps", "waits-on:fx-y")
         if (writes_of(calls, "create")[0]["plan"]["nodes"][0].get("deps") != [{"target": "fx-x", "type": "blocks"}, {"target": "fx-y", "type": "blocks"}]):
-            raise ValueError(f"a bare --deps id and blocked-by: make the new item wait: {result.stderr!r} {calls}")
+            raise ValueError(f"a bare --deps id and waits-on: make the new item wait: {result.stderr!r} {calls}")
+        result, calls = run_fake("create", "T", "--found-in", "fx-p")  # found-in is a field on the found item, no link
+        node = (writes_of(calls, "create")[0]["plan"]["nodes"] or [{}])[0] if writes_of(calls, "create") else {}
+        if result.returncode != 0 or node.get("metadata") != {"found_in": "fx-p"} or node.get("deps"):
+            raise ValueError(f"board create --found-in sets the found_in field and no link: {result.returncode} {result.stderr!r} {calls}")
         result, calls = run_fake("create", "T", "--deps", "parent-child:fx-p")
         if result.returncode != 2 or "--parent" not in result.stderr or writes_of(calls, "create"):
             raise ValueError(f"--deps parent-child: must name --parent: {result.returncode} {result.stderr!r}")
@@ -7991,7 +7961,7 @@ else:
         # bd refuses a write read-only; board adds the board command that does it (where one exists) and the raw rule, after bd's own error.
         for args, verb in ((("create", "x"), "board create"), (("update", "x", "--title", "t"), "board update"), (("update", "x", "--notes", "n"), "board field"),
                            (("close", "x"), "board close"), (("comments", "add", "x", "y"), "board comment"), (("reopen", "x"), "board reopen"),
-                           (("defer", "x"), "board defer"), (("dep", "add", "a", "b"), "board block"), (("gate", "create"), "board gate"),
+                           (("defer", "x"), "board defer"), (("dep", "add", "a", "b"), "board wait"), (("gate", "create"), "board gate"),
                            (("label", "add", "x", "y"), "board update --label"),
                            (("priority", "x", "1"), "board update --priority"), (("tag", "x", "y"), "board update --label"), (("unclaim", "x"), "board unclaim"),
                            (("assign", "x", "ben"), "board claim"), (("todo", "done", "x"), "board close")):
@@ -9635,7 +9605,7 @@ def validate_protocol(root: Path, part: str) -> None:
                 raise ValueError("question holds must come from item show JSON, not the position dashboard")
             refused("step", stdin={**ROUND_INFO, "questions": [question("Released question?", board="fx-question", holds=[]),
                                                                     question("Deferred question?", board="fx-deferred")]},
-                    needle="agents board block` / `agents board unblock", cwd=repo, **hold_case)
+                    needle="agents board wait <item> --on <question>", cwd=repo, **hold_case)
             proto("step", stdin={**ROUND_INFO, "questions": [question("Released question?", board="fx-question"),
                                                                 question("Deferred question?", board="fx-deferred")]}, cwd=repo, **hold_case)
             converge(cwd=repo, **hold_case)
@@ -9662,7 +9632,7 @@ def validate_protocol(root: Path, part: str) -> None:
             if [c["args"][-2:] for c in writes if c["args"][:2] == ["create", "--graph"]] != [["--holds", "fx-design"]]:
                 raise ValueError(f"the decision record must hold its design work item: {[c['args'] for c in writes]}")
             accept = (root / "skills" / "role" / "protocols" / "accept.md").read_text(encoding="utf-8")
-            if 'agents board return <cr> "<records>"' not in accept or "agents board block <item> --on <record>" in accept \
+            if 'agents board return <cr> "<records>"' not in accept or "agents board wait <item> --on <record>" in accept \
                     or "create or reopen" in accept or "Decision records hold work items" in accept:
                 raise ValueError("Accept must rely on round holds and return a design CR directly")
             # A stored pre-sequence pass migrates at the console's read entry points and keeps one stamp until reported.
@@ -10326,7 +10296,7 @@ def validate_protocol(root: Path, part: str) -> None:
                     or any(engine_head(c) in (["claim", "fx-m1"], ["ruling", "record", "fx-m1"]) for c in second) \
                     or ["ruling", "record", "fx-m2"] not in [engine_head(c) for c in second] or ["ruling", "record", "fx-m3"] not in [engine_head(c) for c in second] \
                     or f"Round {round_id} closed." not in out or shown(cwd=repo)["round"] is not None \
-                    or [c["args"] for c in second if c["args"][:1] == ["block"]] != [["block", "fx-held", "--on", "fx-m2", "--reason", "fx-m2 holds it up until answered or its ruling is planned."]]:
+                    or [c["args"] for c in second if c["args"][:1] == ["wait"]] != [["wait", "fx-held", "--on", "fx-m2", "--for", "fx-m2 holds it up until answered or its ruling is planned."]]:
                 raise ValueError(f"protocol Record rerun must reuse the tagged record (re-applying its holds) and skip the recorded one: {tags}\n{[c['args'] for c in first + second]}\n{out}")
             configure()
 
@@ -13214,15 +13184,15 @@ def validate_protocol(root: Path, part: str) -> None:
             out = proto("step", stdin=named, **rules).stdout
             made = calls()
             recorded = Path(str(log) + ".records").read_text(encoding="utf-8")
-            links = [c["args"] for c in made if c["args"][0] in ("link", "block")]
-            if [engine_verb(c) for c in made if c["args"][0] not in ("bd", "show", "create", "link", "block")] != ["claim", "record", "claim", "record", "health"] \
-                    or links != [["link", "fx-new1", "fx-rel", "--type", "relates-to"], ["block", "fx-w", "--on", "fx-new1"],
-                                 ["block", "fx-new1", "--on", "fx-y", "--reason", "fx-new1 waits on fx-y as the items it settles did."]] \
+            links = [c["args"] for c in made if c["args"][0] in ("link", "wait")]
+            if [engine_verb(c) for c in made if c["args"][0] not in ("bd", "show", "create", "link", "wait")] != ["claim", "record", "claim", "record", "health"] \
+                    or links != [["link", "fx-new1", "fx-rel", "--type", "relates-to"], ["wait", "fx-w", "--on", "fx-new1"],
+                                 ["wait", "fx-new1", "--on", "fx-y", "--for", "fx-new1 waits on fx-y as the items it settles did."]] \
                     or ["show", "fx-a", "fx-b", "fx-new1", "--json", "--field", "dependencies"] not in [c["args"] for c in made] \
                     or any(c["args"][0] == "unclaim" for c in made) \
                     or next(c["args"] for c in made if c["args"][:2] == ["create", "--graph"])[-2:] != ["--holds", "fx-w,fx-y"] \
                     or "fx-a (the old store)" not in recorded or "Round " not in out:
-                raise ValueError(f"protocol Record of a rule question: inherited blocks through board link and block, settled items stay held:\n{made}\n{out}")
+                raise ValueError(f"protocol Record of a rule question: inherited waits through board link and wait, settled items stay held:\n{made}\n{out}")
             # The release closes the settled items by the rule record, pre-filled into the answers check.
             patch_config(items={**board_items, "fx-new1": {"status": "decided", "issue_type": "decision", "title": "Rule record"}})
             calls()
@@ -13983,7 +13953,7 @@ def validate_protocol(root: Path, part: str) -> None:
             parked_calls = [c["args"] for c in calls()]
             comments = {args[1]: Path(args[3]).read_text(encoding="utf-8") for args in parked_calls if args[:1] == ["comment"]}
             # A plain link between them, not a block: a block would outlast the answer (r31-q145).
-            if ["link", "fx-b", "fx-a", "--type", "relates-to"] not in parked_calls or any(args[:1] == ["block"] for args in parked_calls) \
+            if ["link", "fx-b", "fx-a", "--type", "relates-to"] not in parked_calls or any(args[:1] == ["wait"] for args in parked_calls) \
                     or "Waits on: " not in comments.get("fx-b", ""):
                 raise ValueError(f"the wait between parked questions shows as a link and in the text: {parked_calls}\n{comments}")
             if "- Dropped: no store - reads need it" not in comments.get("fx-a", ""):

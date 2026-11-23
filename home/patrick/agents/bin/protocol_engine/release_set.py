@@ -22,7 +22,7 @@ HIT_CLASSES = {
     'revises': 'earlier ruling it revises or contradicts, closed included (supersede it)',
     'answers': 'open question it duplicates or answers (merge, or the engine closes it)',
     'premise': 'open question its own premise rests on (the record leaves the set)',
-    'assumes': 'open item assuming the old state (agents board block <item> --on <record> --reason "<revised clause>")',
+    'assumes': 'open item assuming the old state (agents board wait <item> --on <record> --for "<revised clause>")',
     'deferred': 'deferred item assuming the old state, or one it unblocks (relate it; comment the revised clause)',
     'held': 'item another session holds on the same concepts (comment or hand off)',
     'doc': "doc stating the old rule (a design-target doc: owner write now; a README or skill: owner write, or a task when it changes with the work)",

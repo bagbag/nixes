@@ -6,7 +6,7 @@
     convert-design-checkpoints.py verify                       read-only: what is left to convert
 
 Run it in the project's checkout after installing the new runtime. The mapping is the owner-approved file that
-`inventory --mapping` drafts; `apply` writes only what it lists: `return`, `block`, `unblock`, `link`, and raw bd
+`inventory --mapping` drafts; `apply` writes only what it lists: `return`, `wait`, `unlink`, `link`, and raw bd
 writes for what no board verb does any more (clearing the checkpoint marker, reopening a returned design item).
 Waits the old runtime counted as met (on a closed design inside an unlanded change request) become `relates-to`
 links, which keeps their meaning. Text placement, documentation CRs, ratification verdicts and the choices on
@@ -352,7 +352,7 @@ def add_wait(edge: dict, cr_id: str, main: Path, write: bool, log: list[str]) ->
                               f"{'' if (waiter, via) in waits else ', the old wait is gone'}); stopped before writing")
     log.append(f'{waiter}: wait on {cr_id}')
     if write:
-        board('block', waiter, '--on', cr_id, '--reason', f'waits for the design change request {cr_id} to land (checkpoint conversion)')
+        board('wait', waiter, '--on', cr_id, '--for', f'waits for the design change request {cr_id} to land (checkpoint conversion)')
         if (waiter, cr_id) not in {(a, b) for a, b in read_waits()}:
             raise ConversionError(f'{waiter}: the wait on {cr_id} is not recorded after block')
 
@@ -371,7 +371,7 @@ def to_relates(edge: dict, write: bool, log: list[str]) -> None:
     log.append(f'{waiter}: wait on {on} becomes relates-to (met under the old runtime)')
     if write:
         if kind in BLOCKING:
-            board('unblock', waiter, '--on', on)
+            board('unlink', waiter, on)
         board('link', waiter, on, '--type', 'relates-to')
 
 

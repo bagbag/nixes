@@ -1484,14 +1484,14 @@ elif args[:4] == ['bd', '--raw', '--yes', 'update']:
         item['status'] = flags[1]
     else:
         fail('unexpected raw update ' + repr(flags))
-elif args[0] == 'unblock':
-    state['deps'] = [d for d in state['deps'] if not (d['issue_id'] == args[1] and d['depends_on_id'] == args[3] and d['type'] == 'blocks')]
+elif args[0] == 'unlink':
+    state['deps'] = [d for d in state['deps'] if not (d['issue_id'] == args[1] and d['depends_on_id'] == args[2] and d['type'] == 'blocks')]
 elif args[0] == 'link':
     state['deps'].append({{'issue_id': args[1], 'depends_on_id': args[2], 'type': args[4]}})
-elif args[0] == 'block':
+elif args[0] == 'wait':
     if state.get('fail_block'):
         state['fail_block'] -= 1
-        fail('block refused')
+        fail('wait refused')
     state['deps'].append({{'issue_id': args[1], 'depends_on_id': args[3], 'type': 'blocks'}})
 else:
     fail('unexpected ' + repr(args))
@@ -1547,7 +1547,7 @@ class Convert:
 
     def writes(self) -> int:
         self.load()
-        return sum(c[0] in ('return', 'block', 'unblock', 'link') or c[:2] == ['bd', '--raw'] for c in self.state['calls'])
+        return sum(c[0] in ('return', 'wait', 'unlink', 'link') or c[:2] == ['bd', '--raw'] for c in self.state['calls'])
 
 
 def checkpoint_board(e: Env) -> Convert:

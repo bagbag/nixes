@@ -89,7 +89,7 @@ if grep -Eq "$bare" <<<"$stripped" || { [[ -n "$bodies" ]] && grep -Eq "$bare" <
   fi
   verbs="$position[[:space:]]*([^[:space:];&|()'\"]*/)?bd[[:space:]]+(create|new|q|close|done|comments?[[:space:]]+add|comment|update|dep[[:space:]]+(add|remove|rm|relate)|link|reopen|defer|undefer|gate[[:space:]]+(create|resolve)|label[[:space:]]+(add|remove|rm))$word"
   if grep -Eq "$verbs" <<<"$stripped" || { [[ -n "$bodies" ]] && grep -Eq "$verbs" <<<"$bodies"; }; then
-    deny 'run bd as `agents board bd <same args>`; every write has an `agents board` verb (create, field, update, comment, close, reopen, claim, block, unblock, link, unlink, defer, gate); `agents board bd` runs bd read-only and names the verb when bd refuses a write.'
+    deny 'run bd as `agents board bd <same args>`; every write has an `agents board` verb (create, field, update, comment, close, reopen, claim, wait, link, unlink, defer, gate); `agents board bd` runs bd read-only and names the verb when bd refuses a write.'
   fi
   deny 'run bd as `agents board bd <same args>`.'
 fi

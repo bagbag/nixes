@@ -64,7 +64,7 @@ KINDS = (*PULLS, 'question', 'accept', 'milestone', 'refresh')  # refresh: revie
 WORK_TYPE = 'task'  # an item and a task are one bd type; a `kind:` label (KIND_LABELS) says what sort, and no rule reads it
 KIND_LABEL, KIND_LABELS = 'kind:', ('bug', 'feature', 'design', 'cleanup')
 # A released ruling waits only for planning (r21-q139): a live decision (an open question, or an unreleased revision
-# record) or a human gate. Any other wait is work or a container: refused by `board block`,
+# record) or a human gate. Any other wait is work or a container: refused by `board wait`,
 # ignored when claiming (q140).
 LIVE_DECISIONS = ('open', 'decided')
 
@@ -2232,7 +2232,7 @@ def deviations(board: Board, root: str | None) -> list[tuple[str, str, str]]:
         for blocker in board.open_blockers(item_id):
             if refusal := outside_wait_refusal(item_id, kind, board.cr_of(item_id), blocker, board.cr_of(blocker),
                                                board.by_id.get(blocker, {}).get('issue_type')):
-                found.append((item_id, 'outside-wait', f'{refusal}; then agents board unblock {item_id} --on {blocker}'))
+                found.append((item_id, 'outside-wait', f'{refusal}; then agents board unlink {item_id} {blocker}'))
         if is_work_hold(issue) and board.cr_of(item_id) is None and issue['status'] != 'deferred' and not is_no_commit(issue) \
                 and not board.waits_on_decision(item_id):
             found.append((item_id, 'no-cr', f'work item outside any change request: agents board move {item_id} --to <change request>, '
@@ -2251,7 +2251,7 @@ def deviations(board: Board, root: str | None) -> list[tuple[str, str, str]]:
 
 
 def dep_fix(item_id: str, blocker: str) -> str:
-    return f'agents board unblock {item_id} --on {blocker}'
+    return f'agents board unlink {item_id} {blocker}'
 
 
 def unnamed_waits(board: Board, root: str | None) -> list[tuple[str, str]]:
@@ -3523,7 +3523,7 @@ def unclaim(board: Board, args) -> int:
             continue
         own_work = in_hand(issue, actor) and (board.is_cr(issue['id']) or is_work_hold(issue))
         if own_work and not args.resume:
-            print(f"{issue['id']}: your work in progress: if it waits on something, agents board block {issue['id']} --on <id> --reason \"<why it waits>\" "
+            print(f"{issue['id']}: your work in progress: if it waits on something, agents board wait {issue['id']} --on <id> --for \"<the input it waits for>\" "
                   f"hands it back blocked; otherwise agents board unclaim {issue['id']} --resume \"<next action>\"", file=sys.stderr)
             failed = True
             continue
@@ -4066,9 +4066,10 @@ def needs_refresh(board: Board, cr: dict) -> bool:
     return cr_info(board, cr)['state'] != 'current'
 
 
+FOUND_IN = 'found_in'  # metadata of the found item: the item it was found in (a field, so bd's one link per pair stays free)
 OPENED = 'opened_tip'  # metadata of an item open for the user's review: the tip it was opened at (accept.md User review)
 BOARD_METADATA = {  # every metadata key the board writes, the one list (a test compares it with the writes); board check flags any other
-    NO_COMMIT, *CR_SETTINGS, HOLD, DEEP_REVIEW, FORCED_BY, FORCED_REASON, SENT_AT, REVISES_RULE, OPENED, DEFERRED_BY, REVISIT, 'outcome',
+    NO_COMMIT, FOUND_IN, *CR_SETTINGS, HOLD, DEEP_REVIEW, FORCED_BY, FORCED_REASON, SENT_AT, REVISES_RULE, OPENED, DEFERRED_BY, REVISIT, 'outcome',
     'base', 'base_sha', 'setup_sha', 'since', 'landing', 'replan', 'rebase_from', 'rebase_onto', 'review_tip', 'review_base_tip',
     'reviewing_tip', 'review_edits', AUTHOR, RESUME_NOTE, 'user_seen_tip', 'user_seen_base_tip', 'no_agent_review_reason',
     'check_at', 'check_base_count', 'check_base_tip', 'check_command', 'check_kind', 'check_new', 'check_output', 'check_reason',
@@ -5738,7 +5739,7 @@ def close_command(args) -> int:
 
 
 GLOBAL_VALUES = ('-C', '--directory', '--db', '--database', '--actor', '--dolt-auto-commit', '--mem-profile')
-PASS_LINKS = ('tracks', 'relates-to', 'discovered-from', 'parent-child', 'until', 'caused-by', 'validates', 'supersedes')  # the link types that hold nothing up
+PASS_LINKS = ('tracks', 'relates-to', 'parent-child', 'until', 'caused-by', 'validates', 'supersedes')  # the link types that hold nothing up
 BOARD_LABEL_PREFIXES = (QUEUE_PREFIX, FOR_PREFIX)  # labels the board routes on: they change through send, route and create --for
 LABEL_PREFIXES = ('topic:', 'export:', 'provides:', KIND_LABEL, *BOARD_LABEL_PREFIXES)  # every label's form (board-core.md Statuses and labels)
 LEGACY_LINKS = {'related': 'relates-to'}  # an earlier spelling the board still reads on closed history; board check moves a live one
@@ -5750,8 +5751,9 @@ BOARD_FOR = {
     'create': 'agents board create', 'new': 'agents board create', 'q': 'agents board create', 'todo': 'agents board create (add), agents board close (done)', 'close': 'agents board close',
     'done': 'agents board close', 'comment': 'agents board comment', 'comments': 'agents board comment', 'note': 'agents board field (notes), agents board comment', 'claim': 'agents board claim',
     'unclaim': 'agents board unclaim', 'assign': 'agents board claim, agents board send, agents board route', 'priority': 'agents board update --priority', 'tag': 'agents board update --label',
-    'label': 'agents board update --label / --unlabel', 'link': 'agents board link / agents board block', 'reopen': 'agents board reopen', 'defer': 'agents board defer',
-    'undefer': 'agents board undefer', 'gate': 'agents board gate create / resolve', 'dep': 'agents board block / unblock / link / unlink',
+    'label': 'agents board update --label / --unlabel', 'link': 'agents board link / agents board wait', 'reopen': 'agents board reopen', 'defer': 'agents board defer',
+    'undefer': 'agents board undefer', 'gate': 'agents board gate create / resolve', 'dep': 'agents board wait / link / unlink',
+    'block': 'agents board wait <item> --on <target> --for "<input>"', 'unblock': 'agents board unlink <item> <target>',
     'update': 'agents board update (title, priority, labels, parent), agents board field (long fields), agents board claim',
     'sync': None, 'import': None, 'rename': None, 'remember': None, 'forget': None, 'supersede': None, 'duplicate': None, 'delete': None,
     'ship': None, 'batch': None,
@@ -5914,11 +5916,11 @@ DECISION_HOLD_REASON = '{new} holds it up until answered or its ruling is planne
 
 
 def record_holds(board: Board, new_id: str, holds: list[str], reason: str | None = DECISION_HOLD_REASON) -> list[str]:
-    """The held items wait on the new question, like `board block <item> --on <new>`; the ids that could not be blocked."""
+    """The held items wait on the new question, like `board wait <item> --on <new>`; the ids that could not wait."""
     if not holds:
         return []
     with contextlib.redirect_stdout(sys.stderr):  # stdout stays what the create printed: the protocol engine reads its id or JSON
-        _, failed = block_items(board, holds, new_id, reason.format(new=new_id) if reason else None, derived_actor() or '')
+        _, failed = wait_items(board, holds, new_id, reason.format(new=new_id) if reason else None, derived_actor() or '')
     return failed
 
 
@@ -5927,40 +5929,65 @@ def record_holds(board: Board, new_id: str, holds: list[str], reason: str | None
 # ruling record --replaces and the partial/carried links of ruling supersede. Not through it: block (its own wait and reason rules), update
 # --parent (parent_move_refusal, which link_rules calls too), bd's own supersede and gate writes. bd writes a plan's links itself, so plan_links
 # reads them into the same form first.
-BLOCKS_TYPES = ('blocks', 'blocked-by', 'depends-on')  # bd's names for the blocking dependency, its default
-BLOCKING_KINDS = (*BLOCKS_TYPES, 'conditional-blocks', 'waits-for')  # the link types that hold the item they start from up, bd's spellings included
+WAIT_LINK = 'blocks'  # bd's one blocking dependency type: how a wait is stored (written on the waiter), never a word the board takes in
+OLD_LINK_WORDS = {  # input words the board refuses -> the form that replaces them
+    'blocks': 'agents board wait <item> --on <target> --for "<input>" (a plan node: waits_on [{on, for}])',
+    'blocked-by': 'agents board wait <item> --on <target> --for "<input>" (a plan node: waits_on [{on, for}])',
+    'depends-on': 'agents board wait <item> --on <target> --for "<input>" (a plan node: waits_on [{on, for}])',
+    'waits-for': 'agents board wait <item> --on <target> --for "<input>" (a plan node: waits_on [{on, for}])',
+    'conditional-blocks': 'agents board wait <item> --on <target> --for "<input>" (a plan node: waits_on [{on, for}])',
+    'related': 'the link type relates-to',
+    'discovered-from': 'the found-in field: agents board create --found-in <id> (a plan node: found_in)',
+}
 PAIR_VERBS = ('link', 'record')  # writers that add to a pair as it is (record: a released record's); block refuses or replaces the pair's link itself, supersede clears it (record --replaces writes a decided record's through the ruling verb)
 RULING_LINKS = ('supersedes', REVISES)  # the edges rulings carry: board ruling supersede, revise, release and record --replaces own them, no other verb writes them
 Waits = dict[str, tuple[list[str], list[str]]]  # new item key -> (existing items, keys of new items) that wait on it
 
 
 def blocking(kind: str) -> bool:
-    """Whether a link type holds its item up (bd: blocks is the default): the one test for every link."""
-    return (kind or 'blocks') in BLOCKING_KINDS
+    """Whether a stored link type is a wait (bd: blocks is the default): the one test for every link."""
+    return (kind or WAIT_LINK) == WAIT_LINK
+
+
+def refuse_old_link(kind: str | None, where: str = 'a link') -> None:
+    """Refuses an input word of the earlier relations, naming the form that replaces it."""
+    if kind in OLD_LINK_WORDS:
+        raise BoardError(f'{where}: {kind} is not a link word; use {OLD_LINK_WORDS[kind]}')
+
+
+def wait_sentence(waiter: str, target: str, why: str | None) -> str:
+    """The one way every write and dry run says a wait."""
+    return f'{waiter} waits on {target}' + (f' for {why}' if why else '')
 
 
 def plan_links(plan: dict) -> tuple[list[tuple[str, str, str]], dict[str, str]]:
     """A validated plan's links as (waiting or starting end, other end, kind) and the new items {key: type}: its edges (`from` waits on `to`) and
-    node deps (the node waits on its target, a plan key or an existing id). bd's spellings of the blocking link become `blocks` in the plan itself,
-    so what bd writes is what link_rules judged. An edge with both ends existing is refused: a plan creates links for its new items only."""
+    node deps (the node waits on its target, a plan key or an existing id; `plan_waits` has made a node's waits_on into those). An edge with both ends existing is refused: a plan creates links for its new items only."""
     new = {node['key']: node.get('type') or 'task' for node in plan['nodes']}
     links = []
     for edge in plan.get('edges') or []:
-        kind = edge.get('type') or 'blocks'
-        if kind in BLOCKS_TYPES:
-            edge['type'] = kind = 'blocks'
+        kind = edge.get('type') or WAIT_LINK
         ends = [edge.get('from_key') or edge.get('from_id'), edge.get('to_key') or edge.get('to_id')]
         if edge.get('from_id') in new or edge.get('to_id') in new:
             raise BoardError(f"{edge.get('from_id') if edge.get('from_id') in new else edge.get('to_id')} is a plan key and an existing id: name it from_key/to_key")
         if not any(end in new for end in ends):
-            raise BoardError(f'{ends[0]} -> {ends[1]} ({kind}): a plan edge needs a new item at one end; link existing items with agents board link or agents board block')
+            raise BoardError(f'{ends[0]} -> {ends[1]} ({kind}): a plan edge needs a new item at one end; link existing items with agents board link or agents board wait')
         links.append((ends[0], ends[1], kind))
     for node in plan['nodes']:
         for dep in node.get('deps') or []:
-            if (dep.get('type') or 'blocks') in BLOCKS_TYPES:
-                dep['type'] = 'blocks'
-            links.append((node['key'], dep['target'], dep.get('type') or 'blocks'))
+            links.append((node['key'], dep['target'], dep.get('type') or WAIT_LINK))
     return links, new
+
+
+def plan_waits(plan: dict) -> list[tuple[str, str, str]]:
+    """Takes each node's `waits_on` [{on, for}] out of a validated plan into the node deps bd writes (bd drops a key it does not know), and returns the
+    waits as (waiter key, target, for) for the sentences and the comment that keeps the for."""
+    found = []
+    for node in plan['nodes']:
+        for wait in node.pop('waits_on', None) or []:
+            node.setdefault('deps', []).append({'target': wait['on'], 'type': WAIT_LINK})
+            found.append((node['key'], wait['on'], wait.get('for', '')))
+    return found
 
 
 def plan_parents(plan: dict, links: list[tuple[str, str, str]]) -> dict[str, list[str]]:
@@ -6001,9 +6028,9 @@ def link_rules(board: Board | None, links: list[tuple[str, str, str]], verb: str
                holds: list[str] = (), parents: dict[str, list[str]] | None = None) -> tuple[list[str], Waits]:
     """The rules every link meets. `links` are (waiting or starting end, other end, kind); `new` marks a plan's new items {key: type} (None: every
     end exists: a link written after the fact). `verb` is who writes it: 'create', 'link', 'ruling' or 'record'.
-    - A ruling link (supersedes, tracks) is written by the ruling verbs only; `link` writes no blocking link (that is board block).
-    - An existing item made to wait on a new one gets board block's effects once it exists: allowed where block needs no reason (a decision or
-      gate as the blocker, a milestone as the waiting item), else refused, naming the board block that does it. `holds` also wait on every new
+    - A ruling link (supersedes, tracks) is written by the ruling verbs only; `link` writes no wait (that is board wait).
+    - An existing item made to wait on a new one gets board wait's effects once it exists: allowed where wait needs no for (a decision or
+      gate as the target, a milestone as the waiting item), else refused, naming the board wait that does it. `holds` also wait on every new
       decision. Returns (`dep add` lines, links already there skipped; Waits: the existing and new items waiting on each new item, for
       apply_waits)."""
     new = new or {}
@@ -6029,7 +6056,7 @@ def link_rules(board: Board | None, links: list[tuple[str, str, str]], verb: str
         if kind in RULING_LINKS and verb not in ('ruling', 'record'):
             raise BoardError(f'{kind} links belong to rulings: agents board ruling supersede <old> --with <new>, agents board ruling revise <old> ...')
         if blocking(kind) and verb == 'link':
-            raise BoardError(f'a blocking link is agents board block {waiting} --on {other} [--reason "<why it waits>"]')
+            raise BoardError(f'a wait is agents board wait {waiting} --on {other} --for "<the input it uses>"')
         if not blocking(kind):
             if kind == 'parent-child' and waiting not in new and board and other not in board.parents.get(waiting, []):
                 target = other if other in board.by_id else None
@@ -6050,7 +6077,7 @@ def link_rules(board: Board | None, links: list[tuple[str, str, str]], verb: str
                 waits[other][0].append(waiting)
             else:
                 raise BoardError(f'{waiting} would wait on the new {new[other]} {other}, and a wait on a work item needs a reason: create the item without the '
-                                 f'link, then agents board block {waiting} --on <new id> --reason "<why it waits>"')
+                                 f'link, then agents board wait {waiting} --on <new id> --for "<the input it uses>"')
         if new:
             continue  # bd writes a plan's links with the items
         if verb in PAIR_VERBS and board and (clash := [edge for _, _, edge in board.between(waiting, other) if edge != kind and edge != 'parent-child']):
@@ -6068,14 +6095,14 @@ def require_holds_declared(waits: Waits, new: dict[str, str], value: str | None)
         if kind != 'decision':
             continue
         if value is None and not (ids or keys):
-            raise BoardError(f'the decision {key} names what it holds up: --holds <id>[,<id>] or a blocking link to it (--deps blocks:<id>, a plan edge to it '
-                             f'from the item that waits), or --holds none ({HOLDS_USAGE})')
+            raise BoardError(f'the decision {key} names what it holds up: --holds <id>[,<id>], or a node of the plan that waits on it (waits_on), '
+                             f'or --holds none ({HOLDS_USAGE})')
         if value is not None and not parse_holds(value) and (ids or keys):
             raise BoardError(f'--holds none stands alone, not beside the links that make {(ids + keys)[0]} wait on decision {key}')
 
 
 def apply_waits(made: dict[str | None, str], waits: Waits, types: dict[str, str]) -> int:
-    """board block's effects for the links that made existing and new items wait on the items just created ({plan key: new id}), on a board read
+    """board wait's effects for the links that made existing and new items wait on the items just created ({plan key: new id}), on a board read
     after the create: a decision says why in its own words, a gate or a milestone's member needs none. 1 when a wait could not be written or an
     id is missing."""
     todo = {key: (ids, keys) for key, (ids, keys) in waits.items() if ids or keys}
@@ -6083,7 +6110,7 @@ def apply_waits(made: dict[str | None, str], waits: Waits, types: dict[str, str]
         return 0
     if not all(made.get(key) for key in todo) or not made:
         every = sorted({one for ids, _ in todo.values() for one in ids})
-        print(f'board: created, but no id was printed: block the waiting items yourself (agents board block {" ".join(every)} --on <new>)', file=sys.stderr)
+        print(f'board: created, but no id was printed: write the waits yourself (agents board wait {" ".join(every)} --on <new> --for "<input>")', file=sys.stderr)
         return 1
     after = Board.load('all')
     problems = []
@@ -6092,7 +6119,7 @@ def apply_waits(made: dict[str | None, str], waits: Waits, types: dict[str, str]
         failed = record_holds(after, new_id, [*ids, *(made[k] for k in keys if k in made)],
                               DECISION_HOLD_REASON if types[key] == 'decision' else None)
         if failed:
-            problems.append(f"{new_id} created, but {', '.join(failed)} are not blocked on it: agents board block {' '.join(failed)} --on {new_id}")
+            problems.append(f"{new_id} created, but {', '.join(failed)} do not wait on it: agents board wait {' '.join(failed)} --on {new_id}")
     for problem in problems:
         print(f'board: {problem}', file=sys.stderr)
     return 1 if problems else 0
@@ -6102,7 +6129,7 @@ PLAN_NODE_KEYS = {'key', 'title', 'type', 'description', 'design', 'acceptance_c
                   'parent', 'parent_id', 'parent_key', 'deps', 'spec_id', 'external_ref', 'estimate'}  # the node fields bd's graph reads; it drops others silently
 PLAN_EDGE_KEYS = {'from_key', 'from_id', 'to_key', 'to_id', 'type'}
 ITEM_SETTING_KEYS = (NO_COMMIT, *CR_SETTINGS)  # typed node fields a plan gives; the board stores them as metadata
-GIVEN_NODE_KEYS = PLAN_NODE_KEYS - {'metadata', 'assignee'} | set(ITEM_SETTING_KEYS)  # a plan's own nodes: metadata and the holder stay the board's
+GIVEN_NODE_KEYS = PLAN_NODE_KEYS - {'metadata', 'assignee'} | set(ITEM_SETTING_KEYS) | {'waits_on', FOUND_IN}  # a plan's own nodes: metadata and the holder stay the board's
 
 
 def validate_plan(plan: object, name: str = 'the plan', fields: set[str] = PLAN_NODE_KEYS) -> dict:
@@ -6129,6 +6156,12 @@ def validate_plan(plan: object, name: str = 'the plan', fields: set[str] = PLAN_
         deps = node.get('deps', [])
         if not isinstance(deps, list) or not all(isinstance(dep, dict) and dep.get('target') for dep in deps):
             raise BoardError(f"{name}: node {node['key']}: deps is a list of objects with a target (and a type)")
+        for dep in deps:
+            refuse_old_link(dep.get('type') or WAIT_LINK, f"{name}: node {node['key']}")
+        waits_on = node.get('waits_on', [])
+        if not isinstance(waits_on, list) or not all(isinstance(wait, dict) and set(wait) in ({'on', 'for'}, {'on'}) and all(isinstance(wait[k], str) and wait[k].strip() for k in wait)
+                                                      for wait in waits_on):
+            raise BoardError(f"{name}: node {node['key']}: waits_on is a list of {{\"on\": <key or id>, \"for\": \"<the input it uses>\"}}")
         keys.append(node['key'])
     if len(set(keys)) != len(keys):
         raise BoardError(f'{name}: node keys repeat: {", ".join(sorted({key for key in keys if keys.count(key) > 1}))}')
@@ -6138,6 +6171,7 @@ def validate_plan(plan: object, name: str = 'the plan', fields: set[str] = PLAN_
     for edge in edges:
         if set(edge) - PLAN_EDGE_KEYS or not (edge.get('from_key') or edge.get('from_id')) or not (edge.get('to_key') or edge.get('to_id')):
             raise BoardError(f"{name}: an edge has {', '.join(sorted(PLAN_EDGE_KEYS))} only, from one side and to the other: {edge}")
+        refuse_old_link(edge.get('type') or WAIT_LINK, f'{name}: an edge')
     return plan
 
 
@@ -6219,7 +6253,7 @@ def create_ruling_revision(board: Board, old: str, title: str, description: str,
         return new
     failed = record_holds(Board.load('all'), new, holds) if holds else []
     if failed:
-        raise BoardError(f"{new} created, but {', '.join(failed)} are not blocked on it: agents board block {' '.join(failed)} --on {new}")
+        raise BoardError(f"{new} created, but {', '.join(failed)} do not wait on it: agents board wait {' '.join(failed)} --on {new}")
     return new
 
 
@@ -6288,7 +6322,7 @@ def record(board: Board, args) -> int:
     if confirmation:
         print(f'confirmation question: {confirmation}')
     if failed:
-        print(f"{', '.join(failed)}: replaced, but items waiting on it are not blocked on {args.id}: agents board block <item> --on {args.id}", file=sys.stderr)
+        print(f"{', '.join(failed)}: replaced, but items waiting on it do not wait on {args.id}: agents board wait <item> --on {args.id}", file=sys.stderr)
     return 1 if failed else 0
 
 
@@ -6403,12 +6437,9 @@ def check_replaces(board: Board, args) -> None:
                       'titles': {item_id: rows[item_id].get('title') or '' for item_id in hits}}))
 
 
-WHOLE_WAIT = '(the whole item waits)'
-
-
-def block_comment(blocker: str, reason: str, whole: bool = True) -> str:
-    """The wait's comment: it names the blocker for board check, and says the whole item waits unless a part was split off."""
-    return f'Blocked by {blocker}: {reason}' + (f' {WHOLE_WAIT}' if whole else '')
+def wait_comment(target: str, why: str) -> str:
+    """The wait's comment: it keeps the for, and names the target for board check."""
+    return f'Waits on {target} for {why}'
 
 
 def reason_optional(issue: dict, record: dict) -> bool:
@@ -6422,7 +6453,7 @@ def outside_wait_refusal(waiting: str, waiting_type: str | None, cr: str | None,
         command_cr = '<new change request id>' if new and cr in new else cr
         command_blocker = '<new blocker id>' if new and blocker in new else blocker
         return (f'{waiting} is in {cr}: an open outside wait belongs on its change request. '
-                f'Use agents board block {command_cr} --on {command_blocker} --reason "<why it waits>", or split the waiting work into its own change request')
+                f'Use agents board wait {command_cr} --on {command_blocker} --for "<the input it waits for>", or split the waiting work into its own change request')
     return None
 
 
@@ -6435,9 +6466,9 @@ def cr_hold_refusal(waiting: str, waiting_type: str | None, blocker_type: str | 
 
 
 
-def block_one(board: Board, item_id: str, blocker: str, reason: str | None, actor: str) -> tuple[str, bool]:
-    """Blocks one whole item; its reason is commented on it (none when the blocker or the item makes the reason optional and none
-    is given). (result line, False). The holder's own block hands the item back (r21-q144): the hold is freed; a change request
+def wait_one(board: Board, item_id: str, blocker: str, reason: str | None, actor: str) -> tuple[str, bool]:
+    """Makes one whole item wait on the target; its for is commented on it (none when the target or the item makes the for optional and none
+    is given). (the sentence, False). The holder's own wait hands the item back (r21-q144): the hold is freed; a change request
     keeps its worktree."""
     issue = board.by_id[item_id]
     record = board.by_id.get(blocker, {})
@@ -6447,8 +6478,8 @@ def block_one(board: Board, item_id: str, blocker: str, reason: str | None, acto
                                                                   blocker, board.cr_of(blocker), record.get('issue_type'))):
         raise BoardError(refusal)
     if not reason and not reason_optional(issue, record):
-        raise BoardError(f'{item_id}: a work item waits with a reason: agents board block {item_id} --on {blocker} --reason "<why it waits>" '
-                         '(optional only when the blocker is a decision or a gate, or the waiting item a milestone)')
+        raise BoardError(f'{item_id}: a work item waits for an input: agents board wait {item_id} --on {blocker} --for "<the input it uses>" '
+                         '(optional only when the target is a decision or a gate, or the waiting item a milestone)')
     if issue.get('issue_type') == 'decision' and issue['status'] == 'released' and not planning_wait(record):
         raise BoardError(f'{item_id}: a released ruling waits for planning only (a live decision or a human gate), '
                          f"not on {blocker} ({record.get('issue_type')} {record.get('status')}); plan the work the ruling changes and block that work on {blocker}")
@@ -6465,42 +6496,43 @@ def block_one(board: Board, item_id: str, blocker: str, reason: str | None, acto
     holder = issue.get('assignee')
     own = in_hand(issue, actor) and board.is_open(blocker)
     if operations:
-        bd_checked('batch', '-m', f'board block {item_id} --on {blocker}', '--json', stdin='\n'.join(operations) + '\n')
+        bd_checked('batch', '-m', f'board wait {item_id} --on {blocker}', '--json', stdin='\n'.join(operations) + '\n')
     # The comment names the wait for board check (unnamed waits read comments too); an append to a field would
     # rewrite it and lose a concurrent edit.
-    if reason and block_comment(blocker, reason) not in [c.get('text') for c in issue.get('comments') or []]:  # a repeat adds no second line
-        comment(item_id, block_comment(blocker, reason))
-    result = f'blocked {item_id} on {blocker}'
+    if reason and wait_comment(blocker, reason) not in [c.get('text') for c in issue.get('comments') or []]:  # a repeat adds no second line
+        comment(item_id, wait_comment(blocker, reason))
+    result = wait_sentence(item_id, blocker, reason)
     if own:
         move(issue, 'unclaim', actor=actor)
         result += '; handed back to the queue'
     return result, False
 
 
-def block_items(board: Board, ids: list[str], blocker: str, reason: str | None, actor: str) -> tuple[list[str], list[str]]:
-    """Blocks each item, one result line each; (returned from review, failed)."""
+def wait_items(board: Board, ids: list[str], blocker: str, reason: str | None, actor: str) -> tuple[list[str], list[str]]:
+    """Makes each item wait, one sentence each; (returned from review, failed)."""
     returned, failed = [], []
     for item_id in ids:
         try:
             if item_id == blocker:
-                raise BoardError(f'{item_id}: cannot block an item on itself')
+                raise BoardError(f'{item_id}: cannot wait on itself')
             require_open(board, [item_id])
-            result, back = block_one(board, item_id, blocker, reason, actor)
+            result, back = wait_one(board, item_id, blocker, reason, actor)
             print(result)
             returned += [item_id] if back else []
         except BoardError as error:
             failed.append(item_id)
-            print(f'{item_id}: not blocked: {error}', file=sys.stderr)
+            print(f'{item_id}: does not wait: {error}', file=sys.stderr)
     return returned, failed
 
 
-def block(board: Board, args) -> int:
+def wait_command(board: Board, args) -> int:
+    """`board wait <item>... --on <target> [--for "<input>"]`: the one waiting relation, written on the waiter; prints "X waits on Y for …"."""
     actor = caller()
-    if args.blocker not in board.by_id:
-        raise BoardError(f'unknown blocker {args.blocker}')
-    if args.reason:
-        refuse_long_comment(block_comment(args.blocker, args.reason))
-    _, failed = block_items(board, args.ids, args.blocker, args.reason, actor)
+    if args.target not in board.by_id:
+        raise BoardError(f'unknown target {args.target}')
+    if args.for_:
+        refuse_long_comment(wait_comment(args.target, args.for_))
+    _, failed = wait_items(board, args.ids, args.target, args.for_, actor)
     return 1 if failed else 0
 
 
@@ -6582,7 +6614,8 @@ def setting_changes(board: Board, args) -> list[str]:
 
 
 def link_command(board: Board, args) -> int:
-    """`board link <a> <b> --type T`: a link that holds nothing up (PASS_LINKS); a blocking one is `board block`."""
+    """`board link <a> <b> --type T`: a link that holds nothing up (PASS_LINKS); a wait is `board wait`."""
+    refuse_old_link(args.type)
     known_items(board, [args.a, args.b])
     ops, _ = link_rules(board, [(args.a, args.b, args.type)], 'link')
     if args.type not in PASS_LINKS:
@@ -6596,7 +6629,7 @@ def link_command(board: Board, args) -> int:
 
 
 def unlink_command(board: Board, args) -> int:
-    """`board unlink <a> <b>`: removes a link that holds nothing up; a blocking one is `board unblock`."""
+    """`board unlink <a> <b>`: removes the link between a pair, a wait included (its for comment stays as history)."""
     known_items(board, [args.a, args.b])
     edges = board.between(args.a, args.b)
     if not edges:
@@ -6604,29 +6637,13 @@ def unlink_command(board: Board, args) -> int:
     for source, target, kind in edges:
         if kind in RULING_LINKS:
             raise BoardError(f'{source} -> {target} is a {kind} link of rulings: agents board ruling supersede|revise own it')
-        if blocking(kind):
-            raise BoardError(f'{source} waits on {target} ({kind}): agents board unblock {source} --on {target}')
     if any(kind == 'parent-child' for _, _, kind in edges) and (refusal := parent_move_refusal(board, [edges[0][0]], None)):
         raise BoardError(refusal)
     for source, target, _ in edges:
         bd_checked('dep', 'remove', source, target)
-    print(f"{args.a} and {args.b}: unlinked ({', '.join(kind for _, _, kind in edges)})")
+    for source, target, kind in edges:
+        print(f'{source} no longer waits on {target}' if blocking(kind) else f'{source} -> {target}: unlinked ({kind})')
     return 0
-
-
-def unblock(board: Board, args) -> int:
-    """`board unblock <item>... --on <blocker>`: the inverse of `board block`: removes the wait. The reason comment stays (history); a hold
-    that block handed back stays handed back."""
-    known_items(board, [*args.ids, args.blocker])
-    failed = []
-    for item_id in args.ids:
-        if not any(source == item_id and blocking(kind) for source, _, kind in board.between(item_id, args.blocker)):
-            print(f'{item_id}: not unblocked: not waiting on {args.blocker} (agents board show {item_id})', file=sys.stderr)
-            failed.append(item_id)
-            continue
-        bd_checked('dep', 'remove', item_id, args.blocker)
-        print(f'unblocked {item_id} from {args.blocker}')
-    return 2 if failed else 0
 
 
 def reopen_command(board: Board, args) -> int:
@@ -6735,11 +6752,7 @@ def gate_resolve(args) -> int:
 
 def revise(board: Board, args) -> int:
     caller()
-    given = args.deps
-    if any(dep.partition(':')[0] != 'blocks' or not dep.partition(':')[2] for dep in given):
-        raise BoardError('--deps takes blocks:<id> links here (the items this revision holds up)')
-    stub = {'nodes': [{'key': 'item', 'title': 'revision', 'type': 'decision'}],
-            'edges': [{'from_id': dep.partition(':')[2], 'to_key': 'item', 'type': 'blocks'} for dep in given]}
+    stub = {'nodes': [{'key': 'item', 'title': 'revision', 'type': 'decision'}]}
     value = ','.join(args.holds) if args.holds else None
     links, types = plan_links(stub)
     _, waits = link_rules(board, links, 'ruling', types, parse_holds(value) if value is not None else ())
@@ -6945,7 +6958,7 @@ def supersede_pair(board: Board, old: str, new: str, rule: str | None, actor: st
     items = sorted(i for i in board.related.get(old, set()) | set(board.dependents.get(old, []))
                    if i != new and board.is_open(i)
                    and all(kind in ('relates-to', 'related') for _, _, kind in board.between(i, new)))
-    returned, failed = block_items(board, items, new, f'supersedes {old}; replan against it', actor)
+    returned, failed = wait_items(board, items, new, f'supersedes {old}; replan against it', actor)
     move(board.by_id[old], 'supersede', via='supersede', reason=new)
     print(f"superseded {old} by {new}; blocked {', '.join(i for i in items if i not in failed) or 'none'}"
           + (f"; revision of {', '.join(board.revises(old))} now pending on {new}" if carried else ''))
@@ -7507,20 +7520,25 @@ def flag_node(args) -> tuple[dict, list[dict]]:
     if args.no_commit:
         node[NO_COMMIT] = True
     node.update({name: getattr(args, name) for name in CR_SETTINGS if getattr(args, name)})
-    edges, deps = [], []
+    edges, deps, waits_on = [], [], []
     for dep in args.deps:
         kind, sep, target = dep.partition(':')
-        kind, target = (kind, target) if sep else ('blocked-by', dep)
+        kind, target = (kind, target) if sep else ('waits-on', dep)
         if not target:
             raise BoardError(f'--deps takes type:ID, got {dep}')
         if kind == 'parent-child':
             raise BoardError('a parent is --parent <id>')
-        if kind == 'blocks':  # as bd create: the other item waits on this one
-            edges.append({'from_id': target, 'to_key': node['key'], 'type': 'blocks'})
+        if kind == 'waits-on':
+            waits_on.append({'on': target})
         else:
+            refuse_old_link(kind, '--deps')
             deps.append({'target': target, 'type': kind})
     if deps:
         node['deps'] = deps
+    if waits_on:
+        node['waits_on'] = waits_on
+    if args.found_in:
+        node[FOUND_IN] = args.found_in
     return node, edges
 
 
@@ -7529,7 +7547,11 @@ def load_plan(path: str) -> dict:
         plan = json.loads(Path(path).read_text(encoding='utf-8'))
     except (OSError, UnicodeDecodeError, ValueError) as error:
         raise BoardError(f'cannot read the plan {path}: {error}') from None
-    return validate_plan(plan, path, GIVEN_NODE_KEYS)
+    plan = validate_plan(plan, path, GIVEN_NODE_KEYS)
+    for node in plan['nodes']:
+        if missing := [wait['on'] for wait in node.get('waits_on', []) if 'for' not in wait]:
+            raise BoardError(f"{path}: node {node['key']} waits on {', '.join(missing)} without saying for what: waits_on is [{{\"on\", \"for\"}}]")
+    return plan
 
 
 def require_person_on_shared_board(target: str, verb: str) -> None:
@@ -7561,7 +7583,7 @@ def create_command(args) -> int:
     the size limit of a work item's long fields) and goes to `bd create --graph`. Prints the ids created."""
     flags_used = any(value not in (None, [], False) for value in (args.type, args.title, args.positional_title, args.parent, args.label,
                                                                     args.priority, args.description_file, args.design_file,
-                                                                    args.acceptance_file, args.deps, args.no_commit, args.look, args.view))
+                                                                    args.acceptance_file, args.deps, args.found_in, args.no_commit, args.look, args.view))
     if args.for_ and args.parent:
         raise BoardError('agents board create --for files a top-level item: drop --parent (a child takes its parent\'s queue)')
     if args.graph and flags_used:
@@ -7586,17 +7608,25 @@ def create_command(args) -> int:
         if refusal:
             raise BoardError(refusal)
     for node in nodes:
+        if found := node.pop(FOUND_IN, None):
+            if not bd_show([found], comments=False):
+                raise BoardError(f'{node["key"]}: found in {found}, which is unknown')
+            node['metadata'] = {FOUND_IN: found}
         settings = {name: node.pop(name) for name in ITEM_SETTING_KEYS if name in node}
         if refusal := setting_refusal(node['key'], node.get('type') or 'task', settings):
             raise BoardError(refusal)
         if settings:
-            node['metadata'] = settings
+            node['metadata'] = {**node.get('metadata', {}), **settings}
     given = args.holds
     holds_value = ','.join(given) if args.holds else None
     decides = any(node.get('type') == 'decision' for node in nodes)
     if holds_value is not None and not decides:
         raise BoardError('--holds goes with --type decision: only a question or ruling holds items up')
+    plan_given = plan_waits(plan)
     links, types = plan_links(plan)
+    for waiter, target, _ in plan_given:
+        if target not in types and not target.startswith('external:') and not bd_show([target], comments=False):
+            raise BoardError(f'{waiter} waits on {target}, which is unknown')
     named = parse_holds(holds_value) if holds_value is not None else []
     parents = plan_parents(plan, links)
     existing = named or any(waiting not in types or (blocking(kind) and waiting in parents) for waiting, _, kind in links)
@@ -7611,10 +7641,17 @@ def create_command(args) -> int:
     plan_with_queue(plan)
     if args.dry_run:
         print('valid')
+        for waiter, target, why in plan_given:
+            print(wait_sentence(waiter, target, why or None))
         return 0
     made = create_plan(plan)
     for key, item_id in made.items():
         print(item_id if not args.graph else f'{key} {item_id}')
+    for waiter, target, why in plan_given:  # the for is kept on the waiter, as board wait keeps it
+        waiter_id, target_id = made.get(waiter, waiter), made.get(target, target)
+        print(wait_sentence(waiter_id, target_id, why or None))
+        if why:
+            comment(waiter_id, wait_comment(target_id, why))
     return apply_waits(made, waits, types)
 
 
@@ -7649,14 +7686,13 @@ EXAMPLES = {
     'update': 'agents board update <id> <id> --title "New title" --priority 1 --label topic:x --unlabel topic:y',
     'link': 'agents board link <a> <b> --type relates-to',
     'unlink': 'agents board unlink <a> <b>',
-    'unblock': 'agents board unblock <item> <item> --on <blocker>',
     'reopen': 'agents board reopen <id> <id>',
     'defer': 'agents board defer <id> --reason "someday: nobody needs it yet"',
     'undefer': 'agents board undefer <id>',
     'gate create': 'agents board gate create --blocks <id> --reason "waits for <project>:<capability>"',
     'gate resolve': 'agents board gate resolve <gate> --reason "capability shipped"',
     'gate': 'agents board gate create --blocks <id> --reason "waits for the upstream"',
-    'block': 'agents board block <item> <item> --on <blocker> --reason "waits for the cache ruling"  (--reason optional: decision or gate blocker, milestone item)',
+    'wait': 'agents board wait <item> <item> --on <target> --for "the cache ruling"  (--for optional: decision or gate target, milestone item)',
     'cr land': 'agents board cr land <cr> --tip <sha> --base <sha>',
     'cr refresh': 'agents board cr refresh <cr>',
     'cr request-review': 'agents board cr request-review <cr> ["reason"]',
@@ -7769,7 +7805,7 @@ def pointer_for(word: str, rest: list[str], groups: dict) -> str | None:
 
 
 GIT_READERS = {'console', 'queue', 'health', 'position', 'check', 'mine'}  # change no git state: they read it through one GitView
-CR_AWARE = {'claim', 'handover', 'return', 'unclaim', 'take', 'cr land', 'cr reject', 'cr refresh', 'cr request-review', 'cr edits', 'review open', 'queue', 'health', 'position', 'console', 'check', 'mine', 'block'}
+CR_AWARE = {'claim', 'handover', 'return', 'unclaim', 'take', 'cr land', 'cr reject', 'cr refresh', 'cr request-review', 'cr edits', 'review open', 'queue', 'health', 'position', 'console', 'check', 'mine', 'wait'}
 
 
 def set_view(board: Board, chosen: str | None) -> None:
@@ -7779,7 +7815,7 @@ def set_view(board: Board, chosen: str | None) -> None:
 
 # The verbs whose refusal exits 2 (the rest exit 1): the verbs that write an item from the flags and arguments they are given.
 REFUSAL_EXIT_2 = (create_command, comment_command, close_command, field_discard, field_export, field_apply, update_command, move_command, link_command, unlink_command,
-                  unblock, reopen_command, defer_command, undefer_command, gate_create, gate_resolve)
+                  reopen_command, defer_command, undefer_command, gate_create, gate_resolve)
 
 
 def run_command(argv: list[str]) -> int:
@@ -7932,16 +7968,13 @@ def run_command(argv: list[str]) -> int:
     commits.add_argument('--commits', dest='no_commit', action='store_const', const=False, help='the work commits here: it goes in a change request')
     for name, values in CR_SETTINGS.items():
         sub.add_argument(f'--{name}', choices=(*values, ''), help=f'a change request\'s {name} ("" drops it, back to the project default)')
-    sub = add('link', 'link two items with a type that holds nothing up (a blocking link is agents board block)', link_command)
+    sub = add('link', 'link two items with a type that holds nothing up (a wait is agents board wait)', link_command)
     sub.add_argument('a', type=board_id)
     sub.add_argument('b', type=board_id)
     sub.add_argument('--type', required=True, metavar='TYPE', help=f"one of {', '.join(PASS_LINKS)}")
-    sub = add('unlink', 'remove a link that holds nothing up (a blocking one is agents board unblock)', unlink_command)
+    sub = add('unlink', 'remove the link between two items, a wait included', unlink_command)
     sub.add_argument('a', type=board_id)
     sub.add_argument('b', type=board_id)
-    sub = add('unblock', 'remove the wait of items on a blocker (the inverse of block)', unblock)
-    sub.add_argument('ids', nargs='+', metavar='item', type=board_id)
-    sub.add_argument('--on', dest='blocker', required=True, type=board_id)
     sub = add('reopen', 'reopen closed items (not change requests)', reopen_command)
     sub.add_argument('ids', nargs='+', type=board_id)
     sub = add('defer', 'set items aside, blocked by nothing: someday, with an optional --until day it shows as due (a condition on an item or event is a wait)', defer_command)
@@ -7958,10 +7991,11 @@ def run_command(argv: list[str]) -> int:
     sub = add('resolve', 'resolve a gate: the items it held up proceed', gate_resolve, group='gate')
     sub.add_argument('gate', type=board_id)
     sub.add_argument('--reason', metavar='TEXT')
-    sub = add('block', 'make items wait on a blocker, with the reason commented on each item', block)
+    sub = add('wait', 'make items wait on a target for an input (the one waiting relation, written on the waiter)', wait_command)
     sub.add_argument('ids', nargs='+', metavar='item', type=board_id)
-    sub.add_argument('--on', dest='blocker', required=True, type=board_id)
-    sub.add_argument('--reason', type=nonempty, help='why it waits; required for a work item, optional on a decision or gate blocker or a milestone')
+    sub.add_argument('--on', dest='target', required=True, type=board_id)
+    sub.add_argument('--for', dest='for_', type=nonempty, metavar='INPUT',
+                     help='the input it uses, kept as a comment; required for a work item, optional on a decision or gate target or a milestone')
     sub = add('land', "Accept the tip/base pair shown at Accept", land, group='cr')
     sub.add_argument('id', type=board_id)
     sub.add_argument('--tip', metavar='SHA', help='the tip shown at Accept; required for a change request')
@@ -7994,8 +8028,7 @@ def run_command(argv: list[str]) -> int:
     sub.add_argument('--parent', type=board_id, help="default: the old record's parent")
     sub.add_argument('-l', '--label', action=Values, default=[], help="default: the old record's topic: labels; repeatable, commas separate")
     sub.add_argument('--external-ref', metavar='REF', help='tag the new question with an external reference')
-    sub.add_argument('--holds', action=Values, default=[], metavar='ID[,ID...]|none', help='the items this revision holds up (they wait on it); none: it holds nothing up; repeatable; needed unless --deps names a blocks: link')
-    sub.add_argument('--deps', action=Values, default=[], metavar='blocks:ID[,blocks:ID...]', help='a blocking link: this revision holds the item up (like --holds; repeatable)')
+    sub.add_argument('--holds', action=Values, default=[], metavar='ID[,ID...]|none', help='the items this revision holds up (they wait on it); none: it holds nothing up; repeatable; required')
     sub.add_argument('--dry-run', action='store_true', help='validate the revision and its holds without writing')
     sub = add('release', 'release decided rulings in one bd batch; supersedes the records they revise, then closes '
               'the questions they answer', release, group='ruling')
@@ -8032,7 +8065,7 @@ def run_command(argv: list[str]) -> int:
         sub.add_argument('--agreed', metavar='TEXT', type=nonempty, help="a hold held elsewhere on a shared board: what its person said when they agreed")
         if name == 'unclaim':
             sub.add_argument('--resume', metavar='TEXT', type=nonempty,
-                             help='hand back your own work in progress unfinished, with its next action (work that waits on something: agents board block)')
+                             help='hand back your own work in progress unfinished, with its next action (work that waits on something: agents board wait)')
         if name == 'take':
             sub.add_argument('--force', metavar='REASON', type=nonempty,
                              help="take a work item past your worker cap, flagged with this reason in position and check")
@@ -8055,8 +8088,9 @@ def run_command(argv: list[str]) -> int:
     sub.add_argument('--design-file', metavar='FILE')
     sub.add_argument('--acceptance-file', metavar='FILE')
     sub.add_argument('--deps', action=Values, default=[], metavar='TYPE:ID[,TYPE:ID...]',
-                     help='links; blocks:ID makes ID wait on the new item, blocked-by:ID (or a bare ID) makes it wait on ID, other types '
-                          '(discovered-from, relates-to …) as bd; repeatable')
+                     help='links; waits-on:ID (or a bare ID) makes the new item wait on ID, other types '
+                          '(relates-to …) as bd; repeatable. The reverse (ID waits on the new item): agents board wait ID --on <new id> --for "<input>"')
+    sub.add_argument('--found-in', type=board_id, metavar='ID', help='the item this one was found in (a field on the new item)')
     sub.add_argument('--holds', action=Values, default=[], metavar='ID[,ID...]|none',
                      help='a question or ruling names the items it holds up (they wait on it), or none; repeatable')
     sub.add_argument('--no-commit', action='store_true', help='a task that by design commits nothing to this repository: it needs no change request')
@@ -8130,8 +8164,8 @@ def run_command(argv: list[str]) -> int:
     JSON_VIEWS = {health: health_json, position: position_json, related: related_json, check: check_json}
     try:
         # Status views read non-closed items. These read closed items too (check: closed decisions named in text;
-        # block, revise, release, supersede: a closed blocker or old record) or comments (related, check).
-        scope = 'ids' if args.run in (show, route, send, field_export, field_apply) else 'all' if args.run in (related, check, check_replaces, block, revise, record, release, supersede, update_command, link_command, unlink_command, unblock, reopen_command) \
+        # wait, revise, release, supersede: a closed blocker or old record) or comments (related, check).
+        scope = 'ids' if args.run in (show, route, send, field_export, field_apply) else 'all' if args.run in (related, check, check_replaces, wait_command, revise, record, release, supersede, update_command, link_command, unlink_command, reopen_command) \
             else 'status'
         if args.run in (route, send):
             mover(None, args, args.command)  # refuse before reading
@@ -8156,7 +8190,7 @@ def run_command(argv: list[str]) -> int:
             code = budgeted(args.run, board, args, argv)
         else:
             code = args.run(board, args) or 0
-        if args.run in (claim, handover, return_item, block, mine, queue):
+        if args.run in (claim, handover, return_item, wait_command, mine, queue):
             capacity(board, args)
         return code
     except BoardError as error:

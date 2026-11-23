@@ -178,10 +178,10 @@ def board_item(ctx: Context, q: dict, path: Path, body: str | None = None, plain
     tag = record_tag(ctx, q)
     if found := tagged_item(ctx, tag):
         q['board'] = found
-        # A rerun after a create whose block edges did not all land: board block is idempotent, an item closed meanwhile needs none.
+        # A rerun after a create whose wait edges did not all land: board wait is idempotent, an item closed meanwhile needs none.
         held = [item for item, status in statuses(ctx, list(q.get('holds') or [])).items() if status != 'closed'] if q.get('holds') else []
         if held:
-            ctx.board.checked('block', *held, '--on', found, '--reason', f'{found} holds it up until answered or its ruling is planned.')
+            ctx.board.checked('wait', *held, '--on', found, '--for', f'{found} holds it up until answered or its ruling is planned.')
         return found
     # The released record it revises, else the first record it replaces: the new question is linked to it (parent and topic
     # labels come from it); `ruling record --replaces` links the other records it replaces.
@@ -232,10 +232,10 @@ def link_record(ctx: Context, q: dict) -> None:
             relate = [hit for hit in relate if frozenset((item, hit)) not in have]
         for hit in relate:
             ctx.board.checked('link', item, hit, '--type', 'relates-to')
-        for op in blocks:  # `dep add <waiting> <blocker> blocks`: the hold board block makes
+        for op in blocks:  # `dep add <waiting> <blocker> blocks`: the wait board wait makes
             _, _, waiting, blocker, _ = op.split()
-            reason = [] if blocker == item else ['--reason', f'{item} waits on {blocker} as the items it settles did.']
-            ctx.board.checked('block', waiting, '--on', blocker, *reason)
+            reason = [] if blocker == item else ['--for', f'{item} waits on {blocker} as the items it settles did.']
+            ctx.board.checked('wait', waiting, '--on', blocker, *reason)
     q['linked'] = True
 
 

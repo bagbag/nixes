@@ -301,7 +301,7 @@ def question_set_errors(ctx: Context, changed: list[dict]) -> list[str]:
 
 
 def draft_only_holds(where: str) -> str:
-    return f"{where}: `holds` is draft-only; change this question's links with `agents board block` / `agents board unblock <item> --on <question>`"
+    return f"{where}: `holds` is draft-only; change this question's links with `agents board wait <item> --on <question>` / `agents board unlink <item> <question>`"
 
 
 MARK_FIELDS = ('recommendation', 'strength', 'leanBecause', 'strongBecause', 'options')

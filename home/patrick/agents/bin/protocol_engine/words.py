@@ -291,7 +291,7 @@ def stage_instructions(round_id: str, selected: list[str], has_board: bool, prop
         f'one answer settles the same way (a rule question); an open decision outside the selection named there or in `board` joins the round. {MERGE_TEST}',
         '- `holds` lists the board ids of the work items this draft question holds up (board-core.md "Questions and rulings"; absent or empty: none); '
         'Record passes it once when creating the board question. For an existing board question, change its links with '
-        '`agents board block` / `agents board unblock <item> --on <question>`.',
+        '`agents board wait <item> --on <question>` / `agents board unlink <item> <question>`.',
         f'- `waitsOn` names the questions a decision rests on; it holds a dependent back until its premise is answered; {WAITS_FOR}',
         '- Cut under question-format.md: the first part keeps the item in `board`, the others are drafts (`for`: the item or point id); '
         'a detail `waitsOn` the direction it rests on.',

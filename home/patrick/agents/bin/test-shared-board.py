@@ -129,7 +129,7 @@ def bd(side: str, *args: str, **kwargs):
         reason = args[args.index('--reason') + 1]
         return run(side, 'close', args[1], '--reason', reason, *(['--force'] if '--force' in args else []), **kwargs)
     if args[:2] == ('dep', 'add') and '--type' not in args:
-        return run(side, 'block', args[2], '--on', args[3], '--reason', 'test setup', **kwargs)
+        return run(side, 'wait', args[2], '--on', args[3], '--for', 'test setup', **kwargs)
     if args[:2] == ('dep', 'add'):
         return run(side, 'link', args[2], args[3], '--type', args[args.index('--type') + 1], **kwargs)
     if any(arg.startswith(('queue:', 'for:')) for arg in args) and kwargs.get('role', 'lead') not in ('agent', 'none'):
@@ -1219,7 +1219,7 @@ def t_cr() -> None:
     ruling = create('a', 'change the design', '-t', 'decision', kind='decision')
     record = ROOT / 'planner-return-record.md'
     record.write_text('## Question\nq\n## Alternatives Considered\na\n## Decision\nd\n## Rationale\nr\n## Rule owner\no\n')
-    rc, out, err, _ = run('a', 'block', affected_design, '--on', ruling)
+    rc, out, err, _ = run('a', 'wait', affected_design, '--on', ruling)
     check(rc == 0 and items('a')[design]['status'] == 'in_review', 'cr: a question hold alone keeps the review phase', err + out)
     rc, out, err, _ = run('a', 'claim', ruling)
     check(rc == 0, 'cr: the lead takes the question to record the ruling', err + out)
@@ -1543,11 +1543,11 @@ def t_cr() -> None:
     design = create('a', 'independent design', '--parent', design_cr, kind='design')
     dependent = create('a', 'waits for design text')
     dependent_item = task(dependent, 'consumer item')
-    rc, _, err, _ = run('a', 'block', dependent_item, '--on', design, '--reason', 'read accepted design')
+    rc, _, err, _ = run('a', 'wait', dependent_item, '--on', design, '--for', 'read accepted design')
     check(rc == 1 and f'board block {dependent} --on {design}' in err and not any(
           edge['depends_on_id'] == design for edge in items('a')[dependent_item].get('dependencies') or []),
           'cr: an open outside wait belongs on the change request', err)
-    rc, _, err, _ = run('a', 'block', dependent, '--on', design, '--reason', 'read accepted design')
+    rc, _, err, _ = run('a', 'wait', dependent, '--on', design, '--for', 'read accepted design')
     check(rc == 0, 'cr: declare a design wait on its dependent request', err)
     rc, _, err, _ = run('a', 'claim', dependent, role='agent')
     check(rc == 1 and not wt(dependent).exists(), 'cr: an open design still holds its dependent request', err)
@@ -1575,7 +1575,7 @@ def t_cr() -> None:
 
     first = create('a', 'first standalone item', kind='task')
     second = create('a', 'second standalone item', kind='task')
-    rc, _, err, _ = run('a', 'block', second, '--on', first, '--reason', 'do the first item before the second')
+    rc, _, err, _ = run('a', 'wait', second, '--on', first, '--for', 'do the first item before the second')
     check(rc == 0, 'cr: standalone items can already have a blocking edge', err)
     plan = ROOT / 'group-linked-items.json'
     plan.write_text(json.dumps({
