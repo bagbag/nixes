@@ -315,6 +315,7 @@ class Move(NamedTuple):
 
 _ANY_CR = ('open', 'in_review', 'passed')
 FREE_HOLD = ('holder', 'user', 'deciding+gone')  # freeing a hold: its own session, the user, or a deciding session once the holder is gone
+ITEM_WRITE = FREE_HOLD  # an item has no hold of its own: its change request's holder decides who writes it (item_write_refusal)
 DECIDING_CLOSE = ('deciding+holder', 'deciding+gone', 'user')
 MOVES = (
     Move('claim', CR_GROUP, ('open',), '=', '-', 'you', ('agent',)),
@@ -338,8 +339,8 @@ MOVES = (
     Move('unclaim', WORK_GROUP, ('open',), '=', '*', '-', FREE_HOLD),
     Move('close', WORK_GROUP, ('open',), 'closed', '*', '-', FREE_HOLD, ('reason',), ('done', 'dropped')),
     Move('reopen', WORK_GROUP, ('closed',), 'open', '*', '-', ('anyone',)),
-    Move('close', ITEM_GROUP, ('open',), 'closed', '*', '-', ('anyone',), ('reason',), ('done', 'dropped')),  # an item has no hold of its own
-    Move('reopen', ITEM_GROUP, ('closed',), 'open', '*', '-', ('anyone',)),
+    Move('close', ITEM_GROUP, ('open',), 'closed', '*', '-', ITEM_WRITE, ('reason',), ('done', 'dropped')),
+    Move('reopen', ITEM_GROUP, ('closed',), 'open', '*', '-', ITEM_WRITE),
     Move('defer', WORK_GROUP, ('open',), 'deferred', '*', '-', FREE_HOLD),
     Move('undefer', WORK_GROUP, ('deferred',), 'open', '-', '-', ('deferrer',)),
     Move('defer', 'decision', ('open',), 'deferred', '*', '-', FREE_HOLD),
@@ -430,6 +431,18 @@ def authority_refusal(issue: dict, row: 'Move', command: str, actor: str | None,
     return f"{issue['id']}: {command} is for {allowed}" + (f"; it is held by {holder}" if holder else '')
 
 
+def item_write_refusal(board: 'Board | None', issue: dict, command: str, actor: str | None) -> str | None:
+    """Why the caller may not write this item: the Authority check of `move`, read on the change request that holds it (ITEM_WRITE). A change
+    request nobody holds leaves the item to anyone, as `holder` does for any unheld record."""
+    if board is None or group_of(board, issue) != ITEM_GROUP:
+        return None
+    cr_id = board.cr_of(issue['id'])
+    if not cr_id or cr_id not in board.by_id:
+        return None
+    refusal = authority_refusal(board.by_id[cr_id], Move(command, ITEM_GROUP, ('open',), '=', '*', '=', ITEM_WRITE), command, actor, board)
+    return None if refusal is None else (f"{issue['id']}: " + refusal.removeprefix(f'{cr_id}: ')).replace('; it is held by', f'; its change request {cr_id} is held by')
+
+
 GUARDS = {
     'reason': lambda issue, board, reason: None if reason and reason.strip() else 'a reason is required',
     'items-closed': lambda issue, board, reason: board and open_item_refusal(board, issue),
@@ -463,7 +476,8 @@ def move(issue: dict, command: str, *, to: str | None = None, actor: str | None 
         fields = {**(fields or {}), 'outcome': outcome or row.outcomes[0]}
     current = issue.get('assignee') or ''
     refuse_held(issue, row, command, actor)
-    refusal = authority_refusal(issue, row, command, actor or derived_actor(), board, agreed)
+    refusal = item_write_refusal(board, issue, command, actor or derived_actor()) if group == ITEM_GROUP \
+        else authority_refusal(issue, row, command, actor or derived_actor(), board, agreed)
     for name in row.guards if not refusal else ():
         if why := GUARDS[name](issue, board, reason):
             refusal = why if why.startswith(f"{issue['id']}:") else f"{issue['id']}: {command} refused: {why}"
@@ -5837,8 +5851,9 @@ def close_command(args) -> int:
     found = {issue['id']: issue for issue in bd_show(ids, comments=False)}
     if missing := [item_id for item_id in ids if item_id not in found]:
         raise BoardError(f"unknown {', '.join(missing)}")
+    board = Board.load()  # an item closes by its change request's holder (item_write_refusal)
     for item_id in ids:
-        move(found[item_id], 'close', reason=reason, force=args.force, outcome=args.outcome)
+        move(found[item_id], 'close', reason=reason, force=args.force, outcome=args.outcome, board=board)
         print(f'{item_id}: closed')
     return 0
 
@@ -6641,6 +6656,9 @@ def wait_command(board: Board, args) -> int:
         raise BoardError(f'unknown target {args.target}')
     if args.for_:
         refuse_long_comment(wait_comment(args.target, args.for_))
+    for item_id in args.ids:  # only the verb: a ruling that holds items (revise --holds, supersede) is the question's effect, not a session editing the item
+        if refusal := item_write_refusal(board, board.by_id.get(item_id, {}), 'wait', actor):
+            raise BoardError(refusal)
     _, failed = wait_items(board, args.ids, args.target, args.for_, actor)
     return 1 if failed else 0
 
@@ -6655,6 +6673,9 @@ def move_command(board: Board, args) -> int:
     """`board move <id>... --to <parent>`: re-parents items where the board's invariants allow it (parent_move_refusal), the planner's call
     on a partial commit; an item then belongs to its new change request."""
     known_items(board, [*args.ids, args.to])
+    for item_id in args.ids:
+        if refusal := item_write_refusal(board, board.by_id[item_id], 'move', derived_actor()):
+            raise BoardError(refusal)
     if refusal := parent_move_refusal(board, args.ids, args.to):
         raise BoardError(refusal)
     bd_checked('update', *args.ids, '--parent', args.to, '--json')
@@ -6669,6 +6690,9 @@ def update_command(board: Board, args) -> int:
     leaves to bd, with the board's value rules: labels the board routes on (queue:, for:) change through send, route and create --for; a parent
     a parent moves through `move`; a step for a person is a human gate (gate create)."""
     known_items(board, args.ids)
+    for item_id in args.ids:
+        if refusal := item_write_refusal(board, board.by_id[item_id], 'update', derived_actor()):
+            raise BoardError(refusal)
     changes = []
     if args.title is not None:
         changes += ['--title', args.title]

@@ -1636,6 +1636,21 @@ def t_scenarios() -> None:
     rc, _, err, _ = run('a', 'claim', stalled_q)
     check(rc == 0 and row(stalled_q).get('assignee'), 'scenario 4: the question is ready once the probe closed', err)
 
+    # An item follows its change request's hold: only the holder's session, the user or (once the holder is gone) a deciding session write it.
+    held = create('a', 'items follow the hold')
+    mine, other_cr = task(held, 'an item of the held request'), create('a', 'another request')
+    check(run('a', 'claim', held, role='agent')[0] == 0, 'item writes: the agent holds the request')
+    for what, args in (('close', ('close', mine, '--reason', 'closed by a session that does not hold its request')),
+                       ('update', ('update', mine, '--title', 'renamed by a stranger')),
+                       ('wait', ('wait', mine, '--on', other_cr, '--for', 'a stranger waits it')), ('move', ('move', mine, '--to', other_cr))):
+        rc, _, err, _ = run('a', *args, role='solo')
+        check(rc != 0 and held in err and row(mine)['status'] == 'open' and row(mine)['title'] == 'an item of the held request',
+              f'item writes: a session that does not hold the request cannot {what} its item', err)
+    check(run('a', 'update', mine, '--title', 'renamed by the holder', role='agent')[0] == 0 and row(mine)['title'] == 'renamed by the holder',
+          'item writes: the holder writes it')
+    check(run('a', 'update', mine, '--title', 'renamed by the user', role=None)[0] == 0 and row(mine)['title'] == 'renamed by the user',
+          'item writes: the user writes it')
+
     # 7 and 8. Someday and "remind me on a day" are deferred, not started by themselves; a question put off is deferred too; the user's
     # deferral is undone only by the user (through a deciding session).
     someday = create('a', 'scenario 7: someday dark mode', '--no-commit', kind='task')
