@@ -161,7 +161,7 @@ def board_targets(ctx: Context, closes: list[str], olds: list[str]) -> list[str]
         row = found.get(question) or {}
         if row.get('status') == 'closed':
             continue  # closed already: the release skips it
-        if row.get('issue_type') != 'decision' or row.get('status') not in ('open', 'in_progress'):
+        if row.get('issue_type') != 'decision' or row.get('status') != 'open':
             problems.append(f"closes.{question}: {row.get('status')} {row.get('issue_type')}, not an open question")
         elif row.get('assignee') and session_of(row['assignee']) != me:
             problems.append(f"closes.{question}: held by {row['assignee']}; hand it off first (comment, or ask its "

@@ -40,6 +40,9 @@ parser.add_argument('--soak', type=float, default=0, help='seconds of parallel w
 parser.add_argument('--serial', action='store_true', help='run the groups one after another instead of as parallel --only runs')
 parser.add_argument('--idle', action='store_true', help='internal (the cleanup test): start up, then wait for a signal')
 options = parser.parse_args()
+if shutil.which('bd') is None:  # the gate's contract (board-checks.sh): a suite that cannot start exits 127, "cannot run", not a failed check
+    print('test-shared-board: bd is not installed; the suite needs real bd, Dolt and git clones', file=sys.stderr)
+    sys.exit(127)
 BOARD = str(Path(options.board).resolve())
 REGISTRY = str(Path(BOARD).parent / 'session')
 ROOT = Path(tempfile.mkdtemp(prefix='shared-board.', dir='/tmp'))
@@ -587,8 +590,8 @@ def t_queues() -> None:
 
 
 def t_moves() -> None:
-    item = create('a', 'to move', kind='task')  # work items: a change request keeps its parent, which would hide the queue rule
-    parent_b = create('b', 'ben parent', kind='task')
+    item = create('a', 'to move')  # an item moves between change requests: the queue rule is about the parent it takes
+    parent_b = create('b', 'ben parent')
     settle('a', 'b')
     child = create('a', 'to reparent', '--parent', item, kind='task')
     for role in ('agent', 'none'):
@@ -1728,6 +1731,23 @@ def t_scenarios() -> None:
     check(run('a', 'gate', 'resolve', gate, '--reason', 'the key is rotated')[0] == 0 and run('a', 'claim', ten, role='agent')[0] == 0,
           'scenario 10: resolving the gate frees the CR')
 
+    # 9. A milestone waits on nothing: its change requests are part of it, and it is accepted once their work is done.
+    milestone = create('a', 'scenario 9: the milestone', kind='milestone')
+    member = create('a', 'scenario 9: a member')
+    member_item = task(member, 'the member\'s work')
+    check(run('a', 'move', member, '--to', milestone)[0] == 0, 'scenario 9: a change request joins a milestone')
+    rc, _, err, _ = run('a', 'wait', milestone, '--on', member, '--for', 'its members')
+    check(rc != 0 and 'waits on nothing' in err, 'scenario 9: a milestone does not wait', err)
+    rc, _, err, _ = run('a', 'claim', milestone)
+    check(rc != 0 and not row(milestone).get('assignee') and member_item in err, 'scenario 9: the milestone is not ready while its work is open, naming it', err)
+    check(run('a', 'close', member_item, '--reason', 'scenario 9: the work is moot', '--outcome', 'dropped')[0] == 0
+          and run('a', 'cr', 'reject', member, 'scenario 9: the member is dropped')[0] == 0, 'scenario 9: the member is done')
+    check(run('a', 'claim', milestone)[0] == 0 and run('a', 'close', milestone, '--reason', 'the user accepted the milestone')[0] == 0
+          and row(milestone)['status'] == 'closed' and (row(milestone).get('metadata') or {}).get('outcome') == 'accepted',
+          'scenario 9: ready once its work is done, and accepted')
+    rc, _, err, _ = bd('a', 'create', 'a timer gate', '-t', 'gate', '--description', 'x', '--silent')
+    check(rc != 0 and 'agents board gate create' in err, 'a gate is made by the human gate verb only', err)
+
     # 13. Two sessions claim at once: the compare-and-set lets exactly one win.
     race = create('a', 'scenario 13: two claims at once')
     task(race, 'the item')
@@ -1740,6 +1760,7 @@ def t_scenarios() -> None:
     holder = row(race).get('assignee')
     check(sorted(results.values()) == [0, 1] and holder and holder.startswith(session('a', next(role for role, code in results.items() if code == 0))[-8:]),
           'scenario 13: exactly one claim wins, and holds', (results, holder))
+    check(wt(race).is_dir() and git('branch', '--list', f'cr/{race}', cwd=side).strip(), 'scenario 13: the winner\'s worktree and branch survive the loser\'s claim')
 
 
 def t_move() -> None:

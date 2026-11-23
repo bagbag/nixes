@@ -1324,12 +1324,12 @@ class Board:
         return scoped if self.view is None else [issue for issue in scoped if self.queue(issue['id']) == self.view]
 
     def milestone_work(self, milestone_id: str) -> set[str]:
-        """Open items the milestone waits on (board-coordination.md#milestones): its open blockers, the open
-        descendants of every reached change request, and transitively the open blockers of every reached item."""
+        """Open work of the milestone (board-coordination.md#milestones): the open records that are part of it (parent-child; a milestone waits
+        on nothing), the open descendants of every reached change request, and transitively the open blockers of every reached item."""
         if milestone_id not in self._milestone_work:
             work: set[str] = set()
             visited: set[tuple[str, bool]] = set()  # an item reached as a blocker may be reached again as a descendant
-            pending = [(blocker, False) for blocker in self.blockers.get(milestone_id, [])]
+            pending = [(member, False) for member in self.children.get(milestone_id, [])]
             while pending:
                 visit = pending.pop()
                 item_id, descendant = visit
@@ -1342,6 +1342,10 @@ class Board:
                     pending += [(child, True) for child in self.children.get(item_id, [])]
             self._milestone_work[milestone_id] = work
         return self._milestone_work[milestone_id]
+
+    def milestone_ready(self, milestone_id: str) -> bool:
+        """A milestone is accepted once none of its work is open."""
+        return not self.milestone_work(milestone_id)
 
     def milestones(self) -> list[dict]:
         return [issue for issue in self.issues if issue.get('issue_type') == 'milestone' and issue['status'] != 'closed']
@@ -1435,10 +1439,7 @@ class Board:
     def cr_kind(self, issue: dict) -> str | None:
         m = meta(issue)
         if issue['status'] == 'open':
-            open_items = self.cr_items(issue['id'])
-            if not open_items or m.get('replan'):
-                return 'plan'
-            return 'implement'
+            return 'plan' if m.get('replan') else 'implement'  # no open item left is the handover step, not planning
         if issue['status'] == PASSED:
             return None if after_base(self, issue) else 'accept'  # a passed child of an unlanded parent (look after) waits for it to land
         return 'review' if issue['status'] == 'in_review' else None
@@ -1478,7 +1479,7 @@ class Board:
 
     def item_waits(self, item: dict, cr_id: str | None = None) -> list[str]:
         """What an open item of a CR still waits on: a sibling that is open, another CR that has not landed (unless its CR stacks on it), a
-        question without a ruling in force, a gate or task not closed."""
+        question that is not closed (planned, dropped or superseded), a gate or task not closed."""
         cr_id = cr_id or self.cr_of(item['id'])
         blockers = self.blockers.get(item['id'], [])
         siblings = [b for b in blockers if self.is_open(b) and self.cr_of(b) == cr_id]
@@ -1566,6 +1567,8 @@ class Board:
             return None
         if issue.get('issue_type') == CR_TYPE:
             return cr_claimable(self, issue, kind)
+        if kind == 'milestone' and not self.milestone_ready(issue['id']):
+            return None  # accepted once its work is done
         return None if self.planning_blockers(issue) else kind
 
     def downstream(self, item_id: str, through_milestones: bool = True) -> int:
@@ -1922,7 +1925,7 @@ def milestone_states(board: Board, root: str | None) -> list[dict]:
         states.append({'id': milestone['id'], 'title': milestone.get('title', ''), 'openWork': len(work),
                        'ready': sum(1 for i in work if board.claimable(i)), 'held': sum(1 for i in work if held_by_a_session(i)),
                        'blocked': sum(1 for i in work if board.open_blockers(i['id'])),
-                       'milestoneReady': not board.open_blockers(milestone['id'])})
+                       'milestoneReady': board.milestone_ready(milestone['id'])})
     return states
 
 
@@ -2193,7 +2196,7 @@ def position_data(board: Board, args) -> dict:
                      for entry in sessions],
         'held': holds,
         'questions': [(waiting, issue) for waiting, issue in questions if waiting[1]],
-        'milestones': sorted((i for i in items if board.kind(i) == 'milestone' and not board.open_blockers(i['id'])),
+        'milestones': sorted((i for i in items if board.kind(i) == 'milestone' and board.milestone_ready(i['id'])),
                              key=by_priority),
     }
 
@@ -2393,7 +2396,7 @@ def unnamed_waits(board: Board, root: str | None) -> list[tuple[str, str]]:
     flagged = []
     for issue in board.scoped(root):
         if issue['status'] == 'closed' or issue.get('issue_type') == 'milestone':
-            continue  # a milestone's blockers are its members (board-coordination.md#milestones)
+            continue  # old data: a milestone's waits were its members; /board-migrate makes them parts
         text = board.text(issue)
         # A gate carries its own reason (bd gate create --reason) and a decision its question (a reasonless block on one is allowed); a closed blocker holds nothing up.
         flagged += [(issue['id'], f'waits on {b} without naming it') for b in board.blockers.get(issue['id'], [])
@@ -3433,10 +3436,10 @@ def claim(board: Board, args) -> int:
                 print(f'{item_id}: held by {holder}; once its session is gone, a deciding session takes it with agents board take {item_id}; otherwise only the user frees it with agents board unclaim',
                       file=sys.stderr)
                 continue
-            if board.kind(issue) == 'milestone' and board.open_blockers(item_id):
+            if board.kind(issue) == 'milestone' and not board.milestone_ready(item_id):
                 # Accepting a milestone needs its work done (board-coordination.md#milestones).
                 failed.append(item_id)
-                print(f"{item_id}: milestone not ready, waits on {', '.join(board.open_blockers(item_id))}", file=sys.stderr)
+                print(f"{item_id}: milestone not ready, its work is open: {', '.join(sorted(board.milestone_work(item_id)))}", file=sys.stderr)
                 continue
             if not board.is_cr(item_id) and (waits := board.waits_of(issue)):
                 failed.append(item_id)  # readiness: unheld and every wait met (board model, Readiness)
@@ -4635,13 +4638,10 @@ def cr_json(board: Board, cr: dict, children: dict[str, list[str]], refresh_id: 
             'raisedBy': {'id': raised_by, 'isItem': by_item} if raised_by else None}
 
 
-ANSWER_WAIT = ('open', 'decided')  # a question the user answers, in a round, or a ruling not yet released
-
-
 def waits_on_answers(board: Board, cr: dict) -> bool:
     """The request or one of its open items waits on a question still owed an answer or its release (r5-q26), the user's step. A wait on a question is met only when it closes, so an in-force ruling still holds the waiter until planning closes it: that is the planner's step, not counted here."""
     unit = work_unit(board, cr)
-    return any(board.by_id.get(b, {}).get('issue_type') == 'decision' and board.by_id[b]['status'] in ANSWER_WAIT
+    return any(board.by_id.get(b, {}).get('issue_type') == 'decision' and board.by_id[b]['status'] in LIVE_DECISIONS
                for member in unit for b in board.blockers.get(member, []) if b not in unit)
 
 
@@ -5245,14 +5245,15 @@ def return_item(board: Board, args) -> None:
         clear = [key for key in ('since', 'reviewing_tip', 'no_agent_review_reason', *([OPENED] if review else []))
                  if key in meta(cr)]  # the covered review pair stays (change-requests.md Review coverage)
         # Before the move: a stop leaves open items on a CR still in review, never a returned CR without them; the retry of a stopped
-        # Return finds them again by title instead of filing them twice.
-        filed = {item['title']: item['id'] for item in board.cr_items(args.id)}
+        # Return finds the items it made (the whole finding in the description) instead of filing them twice: an item that only
+        # shares a title is another finding.
+        filed = {item.get('description'): item['id'] for item in board.cr_items(args.id)}
         made = []
         for text in findings:
-            title = finding_title(text)
-            if title not in filed:
-                filed[title] = create_item(board, title, 'task', parent=args.id, description=f'Finding on {args.id} (returned by {actor}): {text}')
-            made.append(filed[title])
+            description = f'Finding on {args.id} (returned by {actor}): {text}'
+            if description not in filed:
+                filed[description] = create_item(board, finding_title(text), 'task', parent=args.id, description=description)
+            made.append(filed[description])
         move(cr, 'return --ruling' if args.ruling else 'return', board=board, fields=dict.fromkeys(clear))
     except BoardError as error:
         if args.ruling:
@@ -5438,8 +5439,16 @@ def refresh(board: Board, args) -> int:
         show_rebase_evidence(wt, cr, from_base, result['baseTip'], result['tip'])
     if not merging_user_edit and route_uncovered(board, cr, cr_info(board, cr)):
         print(f'{args.id}: the series changed since its last review; sent to agent review')
-    elif not result['code'] and (landed := land_look_after(board, cr, main)):
-        print(f'{args.id}: look after, its check is current and its review covers it: ' + '; '.join(landed))
+    elif not result['code']:
+        try:
+            landed = land_look_after(board, cr, main)
+        except LandedError as error:
+            print(f'{args.id}: refreshed and landed, but: {error}')
+        except BoardError as error:  # the refresh stands; the Accept queue holds the CR until the landing can run
+            print(f'{args.id}: refreshed, not landed: {error}; it stays in the Accept queue')
+        else:
+            if landed:
+                print(f'{args.id}: look after, its check is current and its review covers it: ' + '; '.join(landed))
     return 0
 
 
@@ -5773,6 +5782,8 @@ def record_merged(board: Board, args, main: Path) -> int:
 
 def type_refusal(types: list[str]) -> str | None:
     """A creation with a type outside ITEM_TYPES (r9-q42): `board create` and the nodes of `create --graph`."""
+    if 'gate' in types:
+        return 'a gate is a step only a person takes: agents board gate create --blocks <id> --reason "<why>" makes the human gate that holds an item up'
     bad = sorted({kind for kind in types if kind not in ITEM_TYPES})
     return (f"type {', '.join(bad)} is not a board type ({', '.join(ITEM_TYPES)}; board-core.md Kinds); "
             'a bug, feature, design or cleanup is a task labelled kind:<kind>, a question is --type decision') if bad else None
@@ -6010,7 +6021,9 @@ def parent_move_refusal(board: Board, ids: list[str], target: str | None, *,
         if issue is None:
             continue
         if issue.get('issue_type') == CR_TYPE:
-            return f'{item_id} is a change request: it keeps its parent (a stacked request waits on its base: agents board cr refresh)'
+            if target is not None and board.by_id.get(target, {}).get('issue_type') == 'milestone':
+                continue  # a change request is part of a milestone
+            return f'{item_id} is a change request: it keeps its parent (a stacked request waits on its base: agents board cr refresh) and moves only into a milestone'
         for parent in board.parents.get(item_id, []):
             if parent != target and board.by_id.get(parent, {}).get('issue_type') == CR_TYPE and (issue['status'] != 'open' or issue.get('assignee')):
                 return (f"{item_id} is {issue['status']}{' and held' if issue.get('assignee') else ''} in change request {parent}: its hold, worktree and "
@@ -6060,8 +6073,7 @@ def record_holds(board: Board, new_id: str, holds: list[str], reason: str | None
     if not holds:
         return []
     with contextlib.redirect_stdout(sys.stderr):  # stdout stays what the create printed: the protocol engine reads its id or JSON
-        _, failed = wait_items(board, holds, new_id, reason.format(new=new_id) if reason else None, derived_actor() or '')
-    return failed
+        return wait_items(board, holds, new_id, reason.format(new=new_id) if reason else None, derived_actor() or '')
 
 
 # Links. One owner for which link makes an item wait, which kinds belong to which verb, what an existing item that is made to wait gets and the
@@ -6186,7 +6198,7 @@ def link_rules(board: Board | None, links: list[tuple[str, str, str]], verb: str
     end exists: a link written after the fact). `verb` is who writes it: 'create', 'link', 'ruling' or 'record'.
     - A ruling link (supersedes, tracks) is written by the ruling verbs only; `link` writes no wait (that is board wait).
     - An existing item made to wait on a new one gets board wait's effects once it exists: allowed where wait needs no for (a decision or
-      gate as the target, a milestone as the waiting item), else refused, naming the board wait that does it. `holds` also wait on every new
+      gate as the target), else refused, naming the board wait that does it. `holds` also wait on every new
       decision. Returns (`dep add` lines, links already there skipped; Waits: the existing and new items waiting on each new item, for
       apply_waits)."""
     new = new or {}
@@ -6214,7 +6226,7 @@ def link_rules(board: Board | None, links: list[tuple[str, str, str]], verb: str
         if blocking(kind) and verb == 'link':
             raise BoardError(f'a wait is agents board wait {waiting} --on {other} --for "<the input it uses>"')
         if blocking(kind) and board and other in board.by_id and (
-                refusal := wait_target_refusal(board.by_id.get(waiting) if waiting not in new else None, other, board.by_id[other])):
+                refusal := wait_target_refusal(board.by_id.get(waiting) if waiting not in new else None, other, board.by_id[other], board)):
             raise BoardError(refusal)
         if not blocking(kind):
             if kind == 'parent-child' and waiting not in new and board and other not in board.parents.get(waiting, []):
@@ -6469,8 +6481,7 @@ def record(board: Board, args) -> int:
         if old in taking:
             take(board, argparse.Namespace(ids=[old], force=None, agreed=None))
         board = Board.load('all')  # the links just written and the earlier olds' supersedes are in the snapshot
-        _, lost = supersede_pair(board, old, args.id, None, actor, carry=True, closing=frozenset(closing))
-        failed += lost
+        failed += supersede_pair(board, old, args.id, None, actor, carry=True, closing=frozenset(closing))
     if args.unratified:  # unclaim last, so any earlier stop leaves the record held and rerunnable
         move(issue, 'unclaim', board=board)
     print(f"recorded {args.id} ({status.replace('_', ' ')}): {issue.get('title', '')}")
@@ -6598,27 +6609,30 @@ def wait_comment(target: str, why: str) -> str:
 
 
 def reason_optional(issue: dict, record: dict) -> bool:
-    """A wait needs no reason line when the blocker says why (a decision or a gate) or the waiting item is a milestone (its members)."""
-    return record.get('issue_type') in ('decision', 'gate') or issue.get('issue_type') == 'milestone'
+    """A wait needs no reason line when the blocker says why (a decision or a gate)."""
+    return record.get('issue_type') in ('decision', 'gate')
 
 
-def wait_target_refusal(waiter: dict | None, target: str, record: dict) -> str | None:
+def wait_target_refusal(waiter: dict | None, target: str, record: dict, board: 'Board | None' = None) -> str | None:
     """The rules about what a wait may name, one owner for every writer (wait, create and plan links, ruling revise and supersede, the protocol
     engine's links): nothing waits on a deferred record (set aside, it would never end), and an in-force ruling waits only for its planning, a
     live decision or a human gate. `waiter` is None for a new item."""
     who = waiter['id'] if waiter else 'a new item'
-    if record.get('status') == 'deferred':
-        return (f'{who} cannot wait on {target}: it is deferred, set aside by nothing that would bring it back; undefer it first '
-                f'(agents board undefer {target}), or wait on the record that would')
+    if waiter and waiter.get('issue_type') == 'milestone':
+        return f'{who} is a milestone: it waits on nothing, a change request is part of it (agents board move <change request> --to {who})'
+    unit = (board.cr_of(target) or target) if board and target in board.by_id else target  # an item of a deferred change request is set aside with it
+    if record.get('status') == 'deferred' or (board and board.by_id.get(unit, {}).get('status') == 'deferred'):
+        return (f'{who} cannot wait on {target}: {"it" if unit == target else unit} is deferred, set aside by nothing that would bring it back; undefer it first '
+                f'(agents board undefer {unit}), or wait on the record that would')
     if waiter and waiter.get('issue_type') == 'decision' and waiter['status'] == 'in_force' and not planning_wait(record):
         return (f'{who}: an in-force ruling waits for planning only (a live decision or a human gate), '
                 f"not on {target} ({record.get('issue_type')} {record.get('status')}); plan the work the ruling changes and wait that work on {target}")
     return None
 
 
-def wait_one(board: Board, item_id: str, blocker: str, reason: str | None, actor: str) -> tuple[str, bool]:
+def wait_one(board: Board, item_id: str, blocker: str, reason: str | None, actor: str) -> str:
     """Makes one whole item wait on the target; its for is commented on it (none when the target or the item makes the for optional and none
-    is given). (the sentence, False). The holder's own wait hands the item back (r21-q144): the hold is freed; a change request
+    is given). Returns the sentence. The holder's own wait hands the item back (r21-q144): the hold is freed; a change request
     keeps its worktree."""
     issue = board.by_id[item_id]
     record = board.by_id.get(blocker, {})
@@ -6626,8 +6640,8 @@ def wait_one(board: Board, item_id: str, blocker: str, reason: str | None, actor
         raise BoardError(refusal)
     if not reason and not reason_optional(issue, record):
         raise BoardError(f'{item_id}: a work item waits for an input: agents board wait {item_id} --on {blocker} --for "<the input it uses>" '
-                         '(optional only when the target is a decision or a gate, or the waiting item a milestone)')
-    if refusal := wait_target_refusal(issue, blocker, record):
+                         '(optional only when the target is a decision or a gate)')
+    if refusal := wait_target_refusal(issue, blocker, record, board):
         raise BoardError(refusal)
     if chain := wait_cycle(board, [(item_id, blocker)]):
         raise BoardError(f"{item_id} cannot wait on {blocker}: it would form a cycle, nothing would ever start: {' waits on '.join(chain)}")
@@ -6651,24 +6665,22 @@ def wait_one(board: Board, item_id: str, blocker: str, reason: str | None, actor
     if own:
         move(issue, 'unclaim', board=board, actor=actor)
         result += '; handed back to the queue'
-    return result, False
+    return result
 
 
-def wait_items(board: Board, ids: list[str], blocker: str, reason: str | None, actor: str) -> tuple[list[str], list[str]]:
-    """Makes each item wait, one sentence each; (returned from review, failed)."""
-    returned, failed = [], []
+def wait_items(board: Board, ids: list[str], blocker: str, reason: str | None, actor: str) -> list[str]:
+    """Makes each item wait, one sentence each; the ids that could not wait."""
+    failed = []
     for item_id in ids:
         try:
             if item_id == blocker:
                 raise BoardError(f'{item_id}: cannot wait on itself')
             require_open(board, [item_id])
-            result, back = wait_one(board, item_id, blocker, reason, actor)
-            print(result)
-            returned += [item_id] if back else []
+            print(wait_one(board, item_id, blocker, reason, actor))
         except BoardError as error:
             failed.append(item_id)
             print(f'{item_id}: does not wait: {error}', file=sys.stderr)
-    return returned, failed
+    return failed
 
 
 def wait_command(board: Board, args) -> int:
@@ -6678,8 +6690,7 @@ def wait_command(board: Board, args) -> int:
         raise BoardError(f'unknown target {args.target}')
     if args.for_:
         refuse_long_comment(wait_comment(args.target, args.for_))
-    _, failed = wait_items(board, args.ids, args.target, args.for_, actor)
-    return 1 if failed else 0
+    return 1 if wait_items(board, args.ids, args.target, args.for_, actor) else 0
 
 
 def known_items(board: Board, ids: list[str]) -> None:
@@ -6692,11 +6703,15 @@ def move_command(board: Board, args) -> int:
     """`board move <id>... --to <parent>`: re-parents items where the board's invariants allow it (parent_move_refusal), the planner's call
     on a partial commit; an item then belongs to its new change request."""
     known_items(board, [*args.ids, args.to])
+    if refusal := parent_move_refusal(board, args.ids, args.to):
+        raise BoardError(refusal)
     for item_id in args.ids:
         if refusal := item_write_refusal(board, board.by_id[item_id], 'move', derived_actor()):
             raise BoardError(refusal)
-    if refusal := parent_move_refusal(board, args.ids, args.to):
-        raise BoardError(refusal)
+    for item_id in args.ids:  # an item is part of an open change request, a change request part of an open milestone
+        part_of = 'milestone' if board.is_cr(item_id) else CR_TYPE
+        if board.by_id[args.to].get('issue_type') != part_of or not board.is_open(args.to):
+            raise BoardError(f"{args.to} is not an open {part_of.replace('-', ' ')}: {item_id} is part of one; work that commits nothing is a task, not an item")
     bd_checked('update', *args.ids, '--parent', args.to, '--json')
     for item_id in args.ids:
         print(f'{item_id}: moved to {args.to}')
@@ -6804,6 +6819,10 @@ def reopen_command(board: Board, args) -> int:
     crs = [item_id for item_id in args.ids if board.by_id[item_id].get('issue_type') == CR_TYPE]
     if crs:
         raise BoardError(f"{', '.join(crs)} is a change request: closed means landed or rejected; a change that still has to land is a new change request (agents board create)")
+    gone = [(item_id, cr) for item_id in args.ids if (cr := board.cr_of(item_id)) and cr != item_id and board.by_id.get(cr, {}).get('status') == 'closed']
+    if gone:
+        raise BoardError(f"{gone[0][0]} is an item of {gone[0][1]}, which is closed (landed or dropped): an open item under it would be reached by no queue; "
+                         'file the work again in an open change request (agents board create --parent <change request>). move re-parents only open items')
     superseded = [item_id for item_id in args.ids if superseding(board, item_id)]
     if superseded:
         raise BoardError(f"{', '.join(superseded)} is a superseded ruling: record a revision to put it back in force (agents board ruling revise {superseded[0]})")
@@ -6818,9 +6837,12 @@ def deferred_waiters(board: Board, item_id: str, deferring: set[str] = frozenset
     the live items waiting on it (a milestone's member detaches instead). A deferred question is a parked decision its held items
     still need (decide.md Pre-pass), unless work in progress, in review or at Accept waits on it through open items: that work."""
     def live(w: str) -> bool:
-        return w not in deferring and board.is_open(w) and board.by_id[w]['status'] != 'deferred'
+        unit = board.cr_of(w) or w  # an item is set aside with its change request
+        return w not in deferring and unit not in deferring and board.is_open(w) and board.by_id[w]['status'] != 'deferred' and board.by_id[unit]['status'] != 'deferred'
     if board.by_id.get(item_id, {}).get('issue_type') != 'decision':
-        return [w for w in board.dependents.get(item_id, []) if live(w) and board.by_id[w].get('issue_type') != 'milestone']
+        members = [item_id, *(item['id'] for item in board.cr_items(item_id))] if board.is_cr(item_id) else [item_id]  # the waits on its items hang too
+        return list(dict.fromkeys(w for member in members for w in board.dependents.get(member, [])
+                                  if live(w) and board.cr_of(w) != item_id and board.by_id[w].get('issue_type') != 'milestone'))
     in_work, seen, todo = [], set(), list(board.dependents.get(item_id, []))
     while todo:
         w = todo.pop()
@@ -6886,8 +6908,8 @@ def gate_create(args) -> int:
 
 def gate_resolve(args) -> int:
     found = bd_show([args.gate], comments=False)
-    if not found or found[0].get('issue_type') != 'gate':
-        raise BoardError(f'{args.gate}: not a gate')
+    if not found or not is_human_gate(found[0]):
+        raise BoardError(f'{args.gate}: not a human gate (a gate is a step only a person takes: agents board gate create)')
     move(found[0], 'close', reason=(args.reason or 'gate resolved').ljust(20, '.'), force=True)  # a gate closes forced: its wait is what it ends
     print(f'{args.gate}: resolved')
     return 0
@@ -6985,18 +7007,14 @@ def release(board: Board, args) -> int:
             move(dict(issue), 'ruling release', board=board)
     for old in taking:
         take(board, argparse.Namespace(ids=[old], force=None, agreed=None))
-    returned, failed = [], []
+    failed = []
     for issue in rulings:
         if issue['id'] in drafts:
             continue  # superseded below by the ruling that revises it
         print(f"{'released' if issue in pending else 'already released'} {issue['id']}: {issue.get('title', '')}")
         metadata = issue.get('metadata') if isinstance(issue.get('metadata'), dict) else {}
         for old in board.revises(issue['id']):
-            back, lost = supersede_chain(board, old, issue['id'], metadata.get(REVISES_RULE), actor, {issue['id']})
-            returned += back
-            failed += lost
-    if returned:
-        print(f"returned from review: {', '.join(returned)}")
+            failed += supersede_chain(board, old, issue['id'], metadata.get(REVISES_RULE), actor, {issue['id']})
     left = close_answered(board, closes, set(args.ids))
     return 1 if failed or left else 0
 
@@ -7034,26 +7052,24 @@ def rule_of(issue: dict) -> str | None:
     return metadata.get(REVISES_RULE)
 
 
-def supersede_chain(board: Board, old: str, new: str, rule: str | None, actor: str, seen: set[str]) -> tuple[list[str], list[str]]:
+def supersede_chain(board: Board, old: str, new: str, rule: str | None, actor: str, seen: set[str]) -> list[str]:
     """supersede_pair, then follows the chain: a record replaced whole that itself revises another leaves that one to
     `new` too, with the replaced record's own rule, through unreleased records to the first in-force one.
-    (returned from review, failed records)."""
+    Returns the records that could not be superseded."""
     if old in seen:
-        return [], []
+        return []
     seen.add(old)
     try:
-        returned, failed = supersede_pair(board, old, new, rule, actor)
+        failed = supersede_pair(board, old, new, rule, actor)
     except BoardError as error:
         print(f"{old}: not superseded by {new}: {error}; finish with agents board ruling supersede {old} --with {new}"
               + (f' --partial {shlex.quote(rule)}' if rule is not None else ''), file=sys.stderr)
-        return [], [old]
+        return [old]
     if rule is not None:
-        return returned, failed
+        return failed
     for earlier in board.revises(old):
-        more_returned, more_failed = supersede_chain(board, earlier, new, rule_of(board.by_id[old]), actor, seen)
-        returned += more_returned
-        failed += more_failed
-    return returned, failed
+        failed += supersede_chain(board, earlier, new, rule_of(board.by_id[old]), actor, seen)
+    return failed
 
 
 def carry_revisions(board: Board, old: str, new: str, closing: frozenset[str] = frozenset()) -> list[str]:
@@ -7080,8 +7096,8 @@ def carry_revisions(board: Board, old: str, new: str, closing: frozenset[str] = 
 
 
 def supersede_pair(board: Board, old: str, new: str, rule: str | None, actor: str, carry: bool = False,
-                   closing: frozenset[str] = frozenset()) -> tuple[list[str], list[str]]:
-    """Supersedes old by new, wholly or (rule not None) one rule; (returned from review, failed items). `carry`: a
+                   closing: frozenset[str] = frozenset()) -> list[str]:
+    """Supersedes old by new, wholly or (rule not None) one rule; the items that could not wait on the new record. `carry`: a
     whole replacement takes over the revisions the old record still has pending (`closing`: see carry_revisions)."""
     # bd allows one edge per pair: drop an existing link between the two records (a revise link included) first.
     partial = [(old, new, 'supersedes')] if rule is not None else []
@@ -7096,16 +7112,16 @@ def supersede_pair(board: Board, old: str, new: str, rule: str | None, actor: st
         if rule:
             comment(old, f'board ruling supersede: rule "{rule}" superseded by {new}.')
         print(f"{old}: one rule{f' ({rule})' if rule else ''} superseded by {new}")
-        return [], []
+        return []
     # The new record restates the whole rule: the old record's open items wait for its planning.
     items = sorted(i for i in board.related.get(old, set()) | set(board.dependents.get(old, []))
                    if i != new and board.is_open(i)
                    and all(kind in ('relates-to', 'related') for _, _, kind in board.between(i, new)))
-    returned, failed = wait_items(board, items, new, f'supersedes {old}; replan against it', actor)
+    failed = wait_items(board, items, new, f'supersedes {old}; replan against it', actor)
     move(board.by_id[old], 'supersede', board=board, via='supersede', reason=new)
     print(f"superseded {old} by {new}; blocked {', '.join(i for i in items if i not in failed) or 'none'}"
           + (f"; revision of {', '.join(board.revises(old))} now pending on {new}" if carried else ''))
-    return returned, failed
+    return failed
 
 
 def supersede(board: Board, args) -> int:
@@ -7116,10 +7132,7 @@ def supersede(board: Board, args) -> int:
         require_open(board, [args.new])  # a full replacement blocks items on the new record until it is planned
     elif args.new not in board.by_id:
         raise BoardError(f'unknown {args.new}')  # a closed record still supersedes one rule: the edge is the record
-    returned, failed = supersede_pair(board, args.old, args.new, args.partial, actor, carry=True)
-    if returned:
-        print(f"returned from review: {', '.join(returned)}")
-    return 1 if failed else 0
+    return 1 if supersede_pair(board, args.old, args.new, args.partial, actor, carry=True) else 0
 
 
 def superseding(board: Board, item_id: str) -> list[str]:
@@ -7742,10 +7755,6 @@ def create_command(args) -> int:
     given = [label for node in nodes for label in node.get('labels') or []]
     if refusal := kind_refusal(given) or label_shape_refusal(given):
         raise BoardError(refusal)
-    if any(node.get('status') in ('closed', 'done') for node in nodes):
-        raise BoardError('an item is not created closed: agents board close <id> --reason "<why>" closes it')
-    if any(node.get('status') == 'deferred' for node in nodes):
-        raise BoardError('an item is not created deferred: agents board defer <id> --reason "<revisit condition>" defers it')
     for node in nodes:  # the limit a plain create had: a work item's long fields, not a decision's record
         refusal = size_refusal({'id': node['key'], 'issue_type': node.get('type') or 'task'},
                                {field: str(node[field]) for field in ('description', 'design', 'acceptance_criteria', 'notes') if node.get(field)}, update=False)
@@ -7804,7 +7813,7 @@ EXAMPLES = {
     'share': 'agents board share git@github.com:me/project.git',
     'join': 'agents board join',
     'relocate': 'agents board relocate git@github.com:me/project-board.git',
-    'move': 'agents board move <item> <item> --to <change request>',
+    'move': 'agents board move <item> <item> --to <change request>  |  agents board move <change request> --to <milestone>',
     'route': 'agents board route ben <id> <id>',
     'send': 'agents board send ben <id>',
     'create': 'agents board create "Login fails on Safari" -t bug --description-file report.md [--for ben] [--parent <id>] [--label a,b] [--dry-run]  |  agents board create --graph plan.json [--dry-run]',
@@ -8261,7 +8270,7 @@ def run_command(argv: list[str]) -> int:
     sub.add_argument('url', nargs='?')
     sub = add('relocate', 'move this shared board to a fresh repository: a moved note on the old one, flatten, push', move_board)
     sub.add_argument('url')
-    sub = add('move', 'move items into another change request (re-parent)', move_command)
+    sub = add('move', 'move items into another change request, or a change request into a milestone (re-parent)', move_command)
     sub.add_argument('ids', nargs='+', type=board_id)
     sub.add_argument('--to', required=True, type=board_id, metavar='ID', help='the new parent')
     sub = add('help', 'every command with an example; with a verb (agents board help cr land): that verb\'s help and example', None)

@@ -2725,7 +2725,7 @@ def validate_board(root: Path) -> None:
                           "updated_at": "2026-10-22T15:29:00Z"}]
                 if board.unnamed_waits(bare_deck(waits), None) != flagged:
                     raise ValueError(f"unnamed_waits on a {blocker_kind} blocker: {board.unnamed_waits(bare_deck(waits), None)}")
-            # A milestone's blockers are its members: unnamed in its text, they are no deviation.
+            # Old data: a milestone's blockers were its members, unnamed in its text: no deviation (board-migrate makes them parts).
             members_edges = [{**issue, "dependencies": [*issue["dependencies"], *(
                 {"issue_id": issue["id"], "depends_on_id": cid[title], "type": "blocks"} for title in ("Squashed text", "Labelled status"))]}
                 if issue["title"] == "Old milestone" else issue for issue in checked]
@@ -3246,15 +3246,15 @@ def validate_board(root: Path) -> None:
                         "created_at": "2026-10-22T15:29:00Z", "updated_at": "2026-10-22T15:29:00Z",
                         "dependencies": deps, **extra}
 
-            beta = synthetic("ms-1", "Beta", "milestone", 1, blocks=("ms-ready", "ms-member", "ms-epic"), parent=goal)
+            beta = synthetic("ms-1", "Beta", "milestone", 1, parent=goal)  # its members are parts of it (parent-child): a milestone waits on nothing
             members = [
-                synthetic("ms-ready", "Ready member", "change-request", parent=goal),
+                synthetic("ms-ready", "Ready member", "change-request", parent="ms-1"),
                 synthetic("ms-ready.i", "Ready member's item", parent="ms-ready"),
-                synthetic("ms-member", "Blocked member", priority=3, blocks=("ms-blocker", "ms-closed"), parent=goal),
+                synthetic("ms-member", "Blocked member", priority=3, blocks=("ms-blocker", "ms-closed"), parent="ms-1"),
                 synthetic("ms-blocker", "Member's blocker", priority=3, parent=goal),
                 synthetic("ms-closed", "Closed blocker", priority=3, status="closed", blocks=("ms-closed-blocker",)),
                 synthetic("ms-closed-blocker", "Behind a closed blocker", priority=3),
-                synthetic("ms-epic", "Member outcome", "change-request", 3, parent=goal, assignee="other999"),
+                synthetic("ms-epic", "Member outcome", "change-request", 3, parent="ms-1", assignee="other999"),
                 synthetic("ms-sub", "Task with a subtask", parent="ms-epic"),
                 synthetic("ms-child", "Epic child", priority=3, blocks=("ms-child-blocker",), parent="ms-sub"),
                 synthetic("ms-done-child", "Closed epic child", priority=3, status="closed", parent="ms-epic"),
@@ -3266,13 +3266,17 @@ def validate_board(root: Path) -> None:
             work = bare_deck(milestone_board).milestone_work("ms-1")
             if work != {"ms-ready", "ms-ready.i", "ms-member", "ms-blocker", "ms-epic", "ms-sub", "ms-child", "ms-child-blocker"}:
                 raise ValueError(f"milestone work misses the closure or takes closed items and what they wait on: {sorted(work)}")
-            # A descendant reached first as a blocker still brings its own descendants, whatever the edge order.
+            # A descendant reached first as a blocker still brings its own descendants, whatever the order of the members.
             for order in (("ord-e", "ord-m"), ("ord-m", "ord-e")):
-                shape = [synthetic("ord-w", "W", "milestone", blocks=order), synthetic("ord-e", "E", "change-request"),
-                         synthetic("ord-m", "M", blocks=("ord-t",)), synthetic("ord-t", "T", parent="ord-e"),
+                parts = {"ord-e": synthetic("ord-e", "E", "change-request", parent="ord-w"), "ord-m": synthetic("ord-m", "M", blocks=("ord-t",), parent="ord-w")}
+                shape = [synthetic("ord-w", "W", "milestone"), *(parts[one] for one in order), synthetic("ord-t", "T", parent="ord-e"),
                          synthetic("ord-s", "S", parent="ord-t")]
                 if bare_deck(shape).milestone_work("ord-w") != {"ord-e", "ord-m", "ord-t", "ord-s"}:
-                    raise ValueError(f"milestone work depends on edge order {order}: {sorted(bare_deck(shape).milestone_work(shape[0]['id']))}")
+                    raise ValueError(f"milestone work depends on the order of the members {order}: {sorted(bare_deck(shape).milestone_work(shape[0]['id']))}")
+            # A milestone's waits (old data) are no part of it: only its members count.
+            shape = [synthetic("old-w", "W", "milestone", blocks=("old-x",)), synthetic("old-x", "X")]
+            if bare_deck(shape).milestone_work("old-w"):
+                raise ValueError("a milestone's wait is no membership: board-migrate converts it")
             # r24-q109: holds stops at a milestone (which counts as one), and also gives everything downstream.
             shape = [synthetic("h-q", "Q", "decision"), synthetic("h-w", "W", blocks=("h-q",)), synthetic("h-x", "X", blocks=("h-w",)),
                      synthetic("h-m", "M", "milestone", blocks=("h-q",)), synthetic("h-r", "R", blocks=("h-m",)), synthetic("h-s", "S", blocks=("h-m",))]
@@ -4319,7 +4323,7 @@ def validate_board(root: Path) -> None:
                 if any(w[0] == "comments" for w in fake.writes()) != posted:
                     raise ValueError(f"board wait with reason {reason!r} must {'post' if posted else 'not post'} its comment: {fake.writes()}")
 
-            # board wait --reason: a work item waits with a reason; a decision or gate blocker, or a milestone item, needs none (and no comment is posted).
+            # board wait --reason: a work item waits with a reason; a decision or gate blocker needs none (and no comment is posted).
             fake = Fake(fixture)
             code, output, errors = invoke(["wait", ready, "--on", ids["Spike perf"]], fake, "lead0001")
             if code != 1 or "waits for an input" not in errors or fake.writes():
@@ -4330,9 +4334,9 @@ def validate_board(root: Path) -> None:
                 raise ValueError(f"board wait on a decision needs no reason and posts no comment: {code} {errors!r} {fake.calls}")
             milestone = variant(**{"Ready task": {"issue_type": "milestone"}})
             fake = Fake(milestone)
-            code, output, errors = invoke(["wait", ready, "--on", ids["Spike perf"]], fake, "lead0001")
-            if code or any(w[0] == "comments" for w in fake.writes()) or not any(args[0] == "batch" for args, _ in fake.calls):
-                raise ValueError(f"board wait of a milestone item needs no reason: {code} {errors!r} {fake.calls}")
+            code, output, errors = invoke(["wait", ready, "--on", ids["Spike perf"], "--for", "its members"], fake, "lead0001")
+            if code != 1 or "is a milestone: it waits on nothing" not in errors or fake.writes():
+                raise ValueError(f"a milestone waits on nothing, its change requests are part of it: {code} {errors!r} {fake.calls}")
 
             # r21 steps: a released ruling waits for planning only (q139, q140), step counts split ready and waiting
             # (q141, q146), the claim order (q145), a holder's own block hands back (q144), --part splits (q150-q154).
@@ -4498,7 +4502,7 @@ def validate_board(root: Path) -> None:
 
             # r23-q180, r22-q176: planning of any released ruling comes after P0 and before milestone work, review and the rest.
             in_milestone = order_of(
-                unit("m", "milestone", "open", 1, dependencies=[waits_on("m", "ms-work")]), unit("ms-work", "task", "open", 3),
+                unit("m", "milestone", "open", 1), unit("ms-work", "task", "open", 3, dependencies=[{"issue_id": "ms-work", "depends_on_id": "m", "type": "parent-child"}]),
                 unit("out-plan", "decision", "in_force", 4), unit("out-review", "change-request", "in_review", 0 + 3, **waiting_review),
                 unit("out-impl", "task", "open", 1), unit("p0", "task", "open", 0))
             if in_milestone != ["p0", "out-plan", "ms-work", "out-review", "out-impl"]:
@@ -4507,8 +4511,9 @@ def validate_board(root: Path) -> None:
             # the item's own lower urgency confer nothing; the claim line names why.
             chain = [*unit("low", "task", "open", 3), *unit("mid", "task", "open", 2, dependencies=[waits_on("mid", "low")]),
                      entry("top", "decision", "open", 0, dependencies=[waits_on("top", "mid")]),
-                     *unit("shut", "task", "closed", 0, dependencies=[waits_on("shut", "calm")]), *unit("calm", "task", "open", 3),
-                     entry("ms", "milestone", "open", 0, dependencies=[waits_on("ms", "calm")]), *unit("plain", "task", "open", 1)]
+                     *unit("shut", "task", "closed", 0, dependencies=[waits_on("shut", "calm")]),
+                     *unit("calm", "task", "open", 3, dependencies=[{"issue_id": "calm", "depends_on_id": "ms", "type": "parent-child"}]),
+                     entry("ms", "milestone", "open", 0), *unit("plain", "task", "open", 1)]
             deck = bare_deck(chain, complete=False)
             if [board.effective_priority(deck, deck.by_id[name]) for name in ("low", "mid", "calm", "plain")] \
                     != [(0, "top", False), (0, "top", False), (3, None, False), (1, None, False)]:
@@ -4937,7 +4942,7 @@ def validate_board(root: Path) -> None:
             follow = invoke(["queue", "--limit", "0", "--offset", page.group(2)], Fake(many))[1]
             rest = [r for r in follow.splitlines() if r.startswith("  ")]
             if len(follow) > board.READ_BUDGET or "more rows" in follow or int(page.group(2)) != len(shown) \
-                    or len(rest) != int(page.group(1)) or not follow.startswith("plan: ") or rest[0] in shown:
+                    or len(rest) != int(page.group(1)) or not follow.startswith("implement: ") or rest[0] in shown:
                 raise ValueError(f"board queue --offset must print the next rows under their section heading:\n{follow[:400]}")
             if "... 194 more" not in invoke(["health", "--items", "ready", "--limit", "10"], Fake(many))[1]:
                 raise ValueError("board health --items must respect --limit")
@@ -5268,8 +5273,10 @@ def validate_board(root: Path) -> None:
             if code or len(created) != 2 or "Finding on fx-ovo.c1 (returned by lead0001): name y is misleading" not in " ".join(created[1]) \
                     or not any(w[:4] == ["update", "fx-ovo.c1", "--status", "open"] for w in fake.writes()):
                 raise ValueError(f"board return must make one open item of the CR per finding and reopen it: {code} {errors} {fake.writes()}")
-            # A retry of a Return that stopped after filing its findings reuses the open item with the same title: nothing is filed twice.
-            earlier = {"id": "fx-ovo.c1.f", "title": "test x fails", "issue_type": "task", "status": "open", "priority": 2, "description": "d",
+            # A retry of a Return that stopped after filing its findings reuses the item it made (the whole finding): nothing is filed twice. An item
+            # that only shares the title is another finding.
+            earlier = {"id": "fx-ovo.c1.f", "title": "test x fails", "issue_type": "task", "status": "open", "priority": 2,
+                       "description": "Finding on fx-ovo.c1 (returned by lead0001): test x fails",
                        "created_at": "2026-10-22T15:29:00Z", "updated_at": "2026-10-22T15:29:00Z",
                        "dependencies": [{"issue_id": "fx-ovo.c1.f", "depends_on_id": "fx-ovo.c1", "type": "parent-child"}]}
             fake = Fake([*variant(**{"CR ready": {"status": "in_review", "assignee": "lead0001", "metadata": {}}}), earlier])
@@ -5277,7 +5284,12 @@ def validate_board(root: Path) -> None:
             created = [w for w in fake.writes() if w[0] == "create"]
             if code or len(created) != 1 or "name y is misleading" not in " ".join(created[0]) or "fx-ovo.c1.f" not in output \
                     or not any(w[:4] == ["update", "fx-ovo.c1", "--status", "open"] for w in fake.writes()):
-                raise ValueError(f"board return must reuse an open finding item with the same title: {code} {errors} {fake.writes()}")
+                raise ValueError(f"board return must reuse an open finding item with the same text: {code} {errors} {fake.writes()}")
+            namesake = {**earlier, "description": "Finding on fx-ovo.c1 (returned by lead0001): test x fails, but for another reason"}
+            fake = Fake([*variant(**{"CR ready": {"status": "in_review", "assignee": "lead0001", "metadata": {}}}), namesake])
+            code, output, errors = invoke(["return", "fx-ovo.c1", "test x fails"], fake, "lead0001")
+            if code or len([w for w in fake.writes() if w[0] == "create"]) != 1 or "fx-ovo.c1.f" in output:
+                raise ValueError(f"board return must file a finding whose title another open item shares: {code} {errors} {fake.writes()}")
             fake = Fake(variant(**{"CR ready": {"status": "in_review", "assignee": "aaaa1111", "metadata": {}}}))
             if invoke(["return", "fx-ovo.c1", "x"], fake, "lead0001")[0] != 1 or fake.writes():
                 raise ValueError("board return accepted a review the caller does not hold")
@@ -5399,7 +5411,11 @@ def validate_board(root: Path) -> None:
             for label, issues, want in (
                     ("every open item waits on a question", [cr_issue("w"), cr_item("w.i", "w", blocks=("q",)), question], None),
                     ("one item ready, another waits on a question", [cr_issue("w"), cr_item("w.i", "w", blocks=("q",)), cr_item("w.j", "w"), question], "implement"),
-                    ("no open item", [cr_issue("w"), cr_item("w.i", "w", status="closed")], "plan"),
+                    ("no open item: the handover step", [cr_issue("w"), cr_item("w.i", "w", status="closed")], "implement"),
+                    ("a replan the planner owes", [cr_issue("w", replan="the ruling changed it"), cr_item("w.i", "w")], "plan"),
+                    ("an item waits on a decided question", [cr_issue("w"), cr_item("w.i", "w", blocks=("q",)), {**question, "status": "decided"}], None),
+                    ("an item waits on a ruling in force", [cr_issue("w"), cr_item("w.i", "w", blocks=("q",)), {**question, "status": "in_force"}], None),
+                    ("an item waits on a closed question", [cr_issue("w"), cr_item("w.i", "w", blocks=("q",)), {**question, "status": "closed"}], "implement"),
                     ("an item waits on an open CR's item", [cr_issue("b"), cr_item("b.i", "b"), cr_issue("w"), cr_item("w.i", "w", blocks=("b.i",))], None),
                     ("an item waits on a passed CR's item (stacks)", [cr_issue("b", "passed"), cr_item("b.i", "b"), cr_issue("w"), cr_item("w.i", "w", blocks=("b.i",))], "implement"),
                     ("the CR waits on a question itself", [cr_issue("w", blocks=("q",)), cr_item("w.i", "w"), question], None),
@@ -5752,6 +5768,22 @@ def validate_board(root: Path) -> None:
                 code, output, errors = invoke(["cr", "refresh", "ly2"], fake, "lead0001")
                 if code or at_main() != y_tip or not any(w[:2] == ["close", "ly2"] for w in fake.writes()):
                     raise ValueError(f"refreshing a stale look-after CR must land it (the Refresh rule): {code} {errors}\n{output}")
+                # A landing that cannot run after a refresh that worked leaves the refresh standing: exit 0, and the reason, not a failed refresh.
+                x_issues, x_tip, x_wt = make_cr("lx4", "lx4.txt", "x\n")
+                y_issues, y_tip, y_wt = make_cr("ly4", "ly4.txt", "y\n", base="lx4")
+                y_issues[0].update(status="passed")
+                y_issues[0]["metadata"].update(look="after", check_base_tip="f" * 40, review_tip=y_tip, review_base_tip=x_tip)
+                invoke(["cr", "land", "lx4", "--tip", x_tip[:8], "--base", at_main()], Fake([*x_issues, *y_issues]), "lead0001")
+                x_issues[0].update(status="closed")
+                for raised, said in ((board.BoardError("the main worktree has edits"), "refreshed, not landed: the main worktree has edits; it stays in the Accept queue"),
+                                     (board.LandedError("finishing the landing failed"), "refreshed and landed, but: finishing the landing failed")):
+                    def cannot_land(*args, **kwargs):
+                        raise raised
+                    fake = Fake([*x_issues, *y_issues])
+                    with patch.object(board, "land_core", cannot_land):
+                        code, output, errors = invoke(["cr", "refresh", "ly4"], fake, "lead0001")
+                    if code or said not in output or any(w[:2] == ["close", "ly4"] for w in fake.writes()):
+                        raise ValueError(f"a refresh whose landing cannot run must still exit 0 and say why: {code} {errors}\n{output}")
 
                 # A look-after CR that passed review while its parent waits for the user is marked after it and is no pull.
                 p_issues, p_tip, _ = make_cr("ab", "ab.txt", "x\n")
@@ -6324,7 +6356,7 @@ def validate_board(root: Path) -> None:
                 plain = lambda item_id, status="open", **more: {"id": item_id, "title": f"T {item_id}", "issue_type": "task", "status": status, "priority": 2, "description": "d",
                                                               "created_at": "2026-10-22T15:29:00Z", "updated_at": "2026-10-22T15:29:00Z", **more}
                 cr_one, kid_open, kid_held = cr_issue("t-cr"), cr_item("t-cr.o", "t-cr"), {**cr_item("t-cr.h", "t-cr", status="open"), "assignee": "w1"}
-                world = [plain("t-a"), plain("t-b"), plain("t-g", "closed"), {**plain("t-gate"), "issue_type": "gate"}, cr_one, kid_open, kid_held,
+                world = [plain("t-a"), plain("t-b"), plain("t-g", "closed"), {**plain("t-gate"), "issue_type": "gate", "await_type": "human"}, cr_one, kid_open, kid_held,
                          plain("t-l", dependencies=[{"issue_id": "t-l", "depends_on_id": "t-a", "type": "blocks"}]),
                          plain("t-r", dependencies=[{"issue_id": "t-r", "depends_on_id": "t-b", "type": "relates-to"}])]
                 code, output, errors, writes = verb(["update", "t-a", "t-b", "--title", "New", "-p", "P1", "--label", "topic:x", "--unlabel", "topic:y"], world)
@@ -6337,9 +6369,18 @@ def validate_board(root: Path) -> None:
                     code, _, errors, writes = verb(argv, world)
                     if code != 2 or word not in errors or writes:
                         raise ValueError(f"board {argv} must be refused ({word}) before any write: {code} {errors!r} {writes}")
-                code, _, errors, writes = verb(["move", "t-cr.o", "--to", "t-a"], world)
-                if code or writes != [["update", "t-cr.o", "--parent", "t-a", "--json"]]:
-                    raise ValueError(f"board move: an open item re-parents: {code} {errors!r} {writes}")
+                with_targets = [*world, cr_issue("t-cr2"), cr_issue("t-crx", "closed")]
+                for target in ("t-a", "t-gate", "t-crx"):  # a task, a gate, a landed change request: no part of which an item can be
+                    code, _, errors, writes = verb(["move", "t-cr.o", "--to", target], with_targets)
+                    if code != 2 or ("is not an open change request" not in errors and f"unknown {target}" not in errors) or writes:
+                        raise ValueError(f"board move --to {target} must be refused: {code} {errors!r} {writes}")
+                code, _, errors, writes = verb(["move", "t-cr.o", "--to", "t-cr2"], with_targets)
+                if code or writes != [["update", "t-cr.o", "--parent", "t-cr2", "--json"]]:
+                    raise ValueError(f"board move: an open item re-parents to an open change request: {code} {errors!r} {writes}")
+                landed_item = [cr_issue("t-crx", "closed"), cr_item("t-crx.i", "t-crx", "closed")]
+                code, _, errors, writes = verb(["reopen", "t-crx.i"], landed_item)
+                if code != 2 or "t-crx, which is closed" not in errors or writes:
+                    raise ValueError(f"board reopen of an item of a landed change request must be refused: {code} {errors!r} {writes}")
                 for argv, outcome in ((["close", "t-a", "--reason", "finished with the cache change"], "done"),
                                       (["close", "t-a", "--reason", "moot after the ruling", "--outcome", "dropped"], "dropped")):
                     code, _, errors, writes = verb(argv, world)
@@ -6405,6 +6446,31 @@ def validate_board(root: Path) -> None:
                     code, _, errors, writes = verb(argv, world)
                     if code or writes != want:
                         raise ValueError(f"board {argv}: {code} {errors!r} {writes}")
+                # Gates are human only: no create of a gate type, no resolve of a gate that is not a human one.
+                with tempfile.NamedTemporaryFile("w", suffix=".md") as described:
+                    described.write("a step only a person takes")
+                    described.flush()
+                    code, _, errors, writes = verb(["create", "a gate", "-t", "gate", "--description-file", described.name], world)
+                if code != 2 or "agents board gate create" not in errors or writes:
+                    raise ValueError(f"board create -t gate must point to the human gate verb: {code} {errors!r} {writes}")
+                code, _, errors, writes = verb(["gate", "resolve", "t-timer"], [{**plain("t-timer"), "issue_type": "gate", "await_type": "timer"}])
+                if code != 2 or "not a human gate" not in errors or writes:
+                    raise ValueError(f"board gate resolve must refuse a gate that is not human: {code} {errors!r} {writes}")
+                # Nothing waits on a deferred record, and a deferred change request holds its items' waiters too: the target resolves to its change request.
+                other_cr = [cr_issue("t-c1"), cr_item("t-c1.i", "t-c1"), cr_issue("t-c2"), cr_item("t-c2.i", "t-c2", blocks=("t-c1.i",))]
+                code, _, errors, writes = verb(["defer", "t-c1", "--reason", "set aside with its item waited on"], other_cr)
+                if code != 2 or "t-c2.i would hang on it deferred" not in errors or writes:
+                    raise ValueError(f"deferring a change request must see the waits on its items: {code} {errors!r} {writes}")
+                code, _, errors, writes = verb(["defer", "t-c1", "t-c2", "--reason", "both set aside together"], other_cr)
+                if code or len(writes) != 4:
+                    raise ValueError(f"deferring a change request with the one that waits on it is no hang: {code} {errors!r} {writes}")
+                deferred_cr = [{**other_cr[0], "status": "deferred"}, *other_cr[1:3], cr_item("t-c2.j", "t-c2")]
+                code, _, errors, writes = verb(["wait", "t-c2.j", "--on", "t-c1.i", "--for", "its output"], deferred_cr, "lead0001")
+                if code != 1 or "t-c1 is deferred" not in errors or writes:
+                    raise ValueError(f"a wait on an item of a deferred change request must be refused: {code} {errors!r} {writes}")
+                hung = [{**other_cr[0], "status": "deferred"}, other_cr[1], other_cr[2], other_cr[3]]
+                if "t-c1  deferred-blocker" not in invoke(["check"], Fake(hung))[1]:
+                    raise ValueError("board check must list a wait on an item of a deferred change request")
                 # A deferral records its side and an optional revisit day; only that side undefers, and a due day only surfaces it.
                 parked = [plain("t-d1", "deferred", metadata={"deferred_by": "user", "revisit": "2000-01-01"}),
                           plain("t-d2", "deferred", metadata={"deferred_by": "aaaa1111", "revisit": "2000-01-01"}),
@@ -8815,23 +8881,23 @@ def validate_console_unblocks(root: Path) -> None:
         return {"id": id, "issue_type": kind, "status": status, "title": title or id, "dependencies": deps}
 
     deck = board.Board([
-        item("cr", "change-request", "passed"), item("cr.d", "task", parent="cr"),
+        item("cr", "change-request", "passed", parent="m-a"), item("cr.d", "task", parent="cr"),
         item("t1", "task", waits=["cr"]), item("t2", "task", waits=["t1"]), item("q", "decision", waits=["cr.d"]),
         item("t5", "task", waits=["cr", "t1"]),                      # reached twice: counted once
         item("done", "task", "closed", waits=["cr"]),                 # closed: not waiting
         item("gate", "gate", waits=["cr"]), item("after-gate", "task", waits=["gate"]),
-        item("ms", "milestone", waits=["cr"]), item("after-ms", "task", waits=["ms"]),
+        item("ms", "milestone"), item("after-ms", "task", waits=["ms"]),
         item("next-cr", "change-request", waits=["t2"]),              # a request waiting through work counts
-        item("lone", "change-request"),
-        item("m-b", "milestone", title="Second", waits=["cr.d2"]), item("m-a", "milestone", title="First", waits=["cr"]),
-        item("gone", "milestone", "closed", title="Closed", waits=["lone"]),
-        item("cr2", "change-request"), item("cr2.d", "task", parent="cr2"),
-        item("cr.d2", "task", parent="cr3"), item("cr3", "change-request"), item("stack", "change-request", parent="cr3"),
-        item("m-c", "milestone", title="Third", waits=["cr2.d"]),
-        item("wt", "change-request"), item("t-wt", "task", waits=["wt"]),  # a member waits on the request: Board.in_milestone owns that
-        item("m-e", "milestone", title="Fifth", waits=["t-wt"]),
+        item("lone", "change-request", parent="gone"),
+        item("m-b", "milestone", title="Second"), item("m-a", "milestone", title="First"),
+        item("gone", "milestone", "closed", title="Closed"),
+        item("cr2", "change-request", parent="m-c"), item("cr2.d", "task", parent="cr2"),
+        item("cr.d2", "task", parent="cr3"), item("cr3", "change-request", parent="m-b"), item("stack", "change-request", parent="cr3"),
+        item("m-c", "milestone", title="Third"),
+        item("wt", "change-request"), item("t-wt", "task", waits=["wt"], parent="m-e"),  # a member waits on the request: Board.milestone_work owns that
+        item("m-e", "milestone", title="Fifth"),
         item("cr4", "change-request"), item("cr4.d", "task", "closed", parent="cr4"),  # a closed item child brings no membership
-        item("m-f", "milestone", title="Sixth", waits=["cr4.d"]),
+        item("m-f", "milestone", title="Sixth"),
     ])
     for cr_id, wanted in (("cr", (5, 2, 0)), ("lone", (0, 0, 0)), ("cr2", (0, 0, 0))):
         got = deck.unlocks.impact.get(cr_id, board.UnlockImpact())[1:]
@@ -8875,7 +8941,7 @@ def validate_console_unblocks(root: Path) -> None:
         {**item("ordinary", "task", waits=["a", "b"]), "priority": 2},
         {**item("broad", "task", waits=["c"]), "priority": 2},
         {**item("urgent", "task", waits=["d"]), "priority": 1},
-        {**item("member", "task", waits=["e"]), "priority": 3}, item("milestone", "milestone", waits=["member"]),
+        {**item("member", "task", waits=["e"], parent="milestone"), "priority": 3}, item("milestone", "milestone"),
     ])
     seeds = seeds_by_rank.unlocks.question_seeds([i for i in seeds_by_rank.issues if i["issue_type"] == "decision"])
     if [tuple(q["id"] for q in row["questions"]) for row in seeds] != [("e",), ("d",), ("c",), ("a", "b")]:
@@ -9124,11 +9190,11 @@ def validate_cr_rank(root: Path) -> None:
                 "created_at": "2026-10-01T00:00:00Z", "metadata": metadata}
 
     deck = board.Board([
-        item("cr", "change-request", priority=3), item("cr.i", "task", priority=1, parent="cr"),         # its item is urgent
+        item("cr", "change-request", priority=3, parent="ms"), item("cr.i", "task", priority=1, parent="cr"),         # its item is urgent; it is part of the milestone
         item("w", "task", priority=0, waits=["cr"]),                                                      # P0 work waits on the request
         item("calm", "change-request", priority=3), item("calm.i", "task", priority=3, parent="calm"),
         item("stack", "change-request", priority=0, parent="cr"),                                        # a request under another
-        item("ms", "milestone", waits=["cr.i"]), item("under", "change-request", parent="cr", priority=3),
+        item("ms", "milestone"), item("under", "change-request", parent="cr", priority=3),
         item("lone", "change-request", priority=3),
     ])
     unit = board.work_unit(deck, deck.by_id["cr"])
@@ -9154,10 +9220,10 @@ def validate_cr_rank(root: Path) -> None:
         raise ValueError("priority does not pass up or down between a request and the request it sits under")
     if board.milestones_of(deck, deck.by_id["cr"]) != ["ms"] or board.milestones_of(deck, deck.by_id["under"]) != ["ms"] \
             or board.milestones_of(deck, deck.by_id["lone"]) or board.milestones_of(deck, deck.by_id["calm"]):
-        raise ValueError("a request is milestone work through its items and through a request it sits under, not otherwise")
+        raise ValueError("a request is milestone work through its membership and through a request it sits under, not otherwise")
     # claim_order's milestone tier covers a request that is milestone work only through an open item or an ancestor request.
     tiers = board.Board([
-        item("t", "change-request", "passed", 3), item("t.i", "task", priority=3, parent="t"), item("tms", "milestone", waits=["t.i"]),
+        item("t", "change-request", "passed", 3, parent="tms"), item("t.i", "task", priority=3, parent="t"), item("tms", "milestone"),
         item("t.sub", "change-request", "passed", 3, parent="t"), item("plain", "change-request", "passed", 2),
     ])
     claimed = [i["id"] for i in sorted((i for i in tiers.issues if i["issue_type"] == "change-request"), key=lambda i: board.claim_order(tiers, i))]
@@ -9167,8 +9233,8 @@ def validate_cr_rank(root: Path) -> None:
     queue = board.Board([
         item("a", "change-request", "passed", 2, since="2026-10-02T00:00:00Z"),
         item("b", "change-request", "passed", 1, since="2026-10-03T00:00:00Z"),
-        item("c", "change-request", "passed", 3, since="2026-10-01T00:00:00Z"), item("c.i", "task", priority=3, parent="c"),
-        item("m", "milestone", waits=["c.i"]),
+        item("c", "change-request", "passed", 3, since="2026-10-01T00:00:00Z", parent="m"), item("c.i", "task", priority=3, parent="c"),
+        item("m", "milestone"),
         item("d", "change-request", "passed", 0, since="2026-10-04T00:00:00Z", base="e"),
         item("e", "change-request", "passed", 3, since="2026-10-05T00:00:00Z"),
         item("f", "change-request", "passed", 2, since="2026-10-01T12:00:00Z"),
@@ -9178,8 +9244,8 @@ def validate_cr_rank(root: Path) -> None:
         raise ValueError(f"accept queue: P0 (a base before the request on it), then milestone work, a base before the request on it, then priority, then waiting since: {order}")
     # P0 is the claim order's first tier: a P0 request outside any milestone lists ahead of a P2 request that is milestone work.
     urgent = board.Board([
-        item("p2m", "change-request", "passed", 2, since="2026-10-01T00:00:00Z"), item("p2m.i", "task", priority=2, parent="p2m"),
-        item("um", "milestone", waits=["p2m.i"]), item("p0", "change-request", "passed", 0, since="2026-10-02T00:00:00Z"),
+        item("p2m", "change-request", "passed", 2, since="2026-10-01T00:00:00Z", parent="um"), item("p2m.i", "task", priority=2, parent="p2m"),
+        item("um", "milestone"), item("p0", "change-request", "passed", 0, since="2026-10-02T00:00:00Z"),
     ])
     if [i["id"] for i in board.accept_queue(urgent)] != ["p0", "p2m"]:
         raise ValueError(f"accept queue: a P0 request lists before milestone work: {[i['id'] for i in board.accept_queue(urgent)]}")

@@ -172,7 +172,7 @@ def board_item(ctx: Context, q: dict, path: Path, body: str | None = None, plain
     item = q['board']
     if item and plain and taken_over(q):  # a deferral never moves a decided, released or closed record: only an open item is taken over
         status = (ctx.board.json('show', item, '--json', '--field', 'status').get(item) or {}).get('status')
-        item = item if status in ('open', 'in_progress') else None
+        item = item if status == 'open' else None
     if item:
         return item
     tag = record_tag(ctx, q)

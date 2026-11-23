@@ -323,7 +323,7 @@ const short = (sha: string): string => sha.slice(0, 7)
 export function crStageText(cr: ConsoleCr): string {
   if (isCrAccepting(cr)) return 'to accept'
   if (cr.status === 'in_review' || cr.status === 'passed') return 'in review'
-  return cr.holder === null ? 'returned' : 'in work'
+  return 'in work'
 }
 
 export type CrKind = 'code' | 'result' | 'in work'
