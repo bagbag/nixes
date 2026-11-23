@@ -7003,8 +7003,8 @@ def release(board: Board, args) -> int:
         if unlinted:
             raise BoardError('release refused, record text fails bd lint (write the record first):\n  ' + '\n  '.join(unlinted))
         # An in-force ruling keeps blocking the items it changes; planning closes it and unblocks them.
-        for issue in pending:  # one compare-and-set each; a stop leaves the rest decided, and a rerun releases them. A copy: the snapshot keeps the status the waits below were judged on
-            move(dict(issue), 'ruling release', board=board)
+        for issue in pending:  # one compare-and-set each; a stop leaves the rest decided, and a rerun releases them. The snapshot takes the new status: the waits below read it
+            move(issue, 'ruling release', board=board)
     for old in taking:
         take(board, argparse.Namespace(ids=[old], force=None, agreed=None))
     failed = []
@@ -7115,7 +7115,7 @@ def supersede_pair(board: Board, old: str, new: str, rule: str | None, actor: st
         return []
     # The new record restates the whole rule: the old record's open items wait for its planning.
     items = sorted(i for i in board.related.get(old, set()) | set(board.dependents.get(old, []))
-                   if i != new and board.is_open(i)
+                   if i != new and board.is_open(i) and not (board.by_id[i].get('issue_type') == 'decision' and board.by_id[i]['status'] == 'in_force')  # an in-force ruling waits only for its planning
                    and all(kind in ('relates-to', 'related') for _, _, kind in board.between(i, new)))
     failed = wait_items(board, items, new, f'supersedes {old}; replan against it', actor)
     move(board.by_id[old], 'supersede', board=board, via='supersede', reason=new)

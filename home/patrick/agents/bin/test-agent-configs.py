@@ -3939,6 +3939,16 @@ def validate_board(root: Path) -> None:
             if code or fake.writes() != expected:
                 raise ValueError(f"board ruling release must write one status compare-and-set per ruling: {fake.calls}")
 
+            # A ruling whose release supersedes an in-force record does not make a related in-force ruling wait on the newly in-force one.
+            old_store, in_force_peer = ids["Old store ruling"], ids["Released ruling"]
+            revising = variant(**{"Store choice": {"dependencies": [{"issue_id": store, "depends_on_id": old_store, "type": "tracks"}]},
+                                  "Released ruling": {"dependencies": [{"issue_id": in_force_peer, "depends_on_id": old_store, "type": "relates-to"}]}})
+            fake = Fake(revising)
+            code, output, errors = invoke(["ruling", "release", store], fake, "lead0001")
+            if code or ["supersede", old_store, "--with", store] not in fake.writes() \
+                    or any(in_force_peer in line and "blocks" in line for _, stdin in fake.calls for line in (stdin or "").splitlines()) \
+                    or "does not wait" in errors or f"{in_force_peer} waits on" in output:
+                raise ValueError(f"a release's supersede must not make an in-force ruling wait on the new one: {code} {errors!r} {fake.calls}\n{output}")
             # --closes: answered questions close after the release in dependency order, forced only past rulings of
             # this release and questions closed before them here (the gjfh4 case); another open blocker leaves one open.
             cache, spike, loose, ready = ids["Open cache question"], ids["Spike perf"], ids["Loose item"], ids["Ready task"]
