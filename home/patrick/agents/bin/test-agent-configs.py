@@ -3424,7 +3424,7 @@ def validate_board(root: Path) -> None:
             invoke(["claim"], fake, "agnt0001")
             if claimed_ids(fake) != ["fx-ovo.c1"]:
                 raise ValueError(f"a bare claim of a change request was held back by the worker cap: {fake.writes()}")
-            # The flag shows while the forcing actor holds the item, in position, check and the holder's claim output.
+            # The flag shows while the forcing actor holds the item, in position and the holder's claim output.
             flagged = in_held_cr("solo0001", **{"Ready task": {"assignee": "solo0001", "status": "open",
                                                                "metadata": {"forced_hold_by": "solo0001", "forced_hold": "gate down"}},
                                                 "Spike perf": {"assignee": "lead0001", "status": "open",
@@ -3432,9 +3432,6 @@ def validate_board(root: Path) -> None:
             _, shown, _ = invoke(["position"], Fake(flagged))
             if "FORCED: gate down" not in row(shown, ready) or "FORCED" in row(shown, ids["Spike perf"]):
                 raise ValueError(f"board position did not flag exactly the forced hold:\n{shown}")
-            _, shown, _ = invoke(["check"], Fake(flagged))
-            if f"{ready}  forced-hold  solo0001: gate down" not in shown or ids["Spike perf"] + "  forced-hold" in shown:
-                raise ValueError(f"board check did not list the forced hold:\n{shown}")
             _, shown, _ = invoke(["claim"], Fake(flagged), "solo0001")
             if "FORCED: gate down" not in row(shown, ready):
                 raise ValueError(f"board claim did not show the forced hold in the holder's list:\n{shown}")
@@ -3499,8 +3496,8 @@ def validate_board(root: Path) -> None:
             if "STALE" in shown:
                 raise ValueError(f"a comment within the hour did not renew the hold:\n{shown}")
             _, shown, _ = invoke(["check"], Fake(fixture), now=later)
-            if f"{ids['Held task']}  stale-hold  aaaa1111/build-12345678: no update for" not in shown:
-                raise ValueError(f"board check did not list the stale hold:\n{shown}")
+            if "stale-hold" in shown or "forced-hold" in shown:
+                raise ValueError(f"board check reports shapes from outside the verbs, not a hold aging or a recorded override:\n{shown}")
             _, shown, _ = invoke(["claim"], Fake(fixture), "aaaa1111/build-87654321", now=later)
             if "STALE" not in row(shown, ids["Held task"]):
                 raise ValueError(f"board claim did not show the stale hold in the holder's list:\n{shown}")
@@ -4914,7 +4911,7 @@ def validate_board(root: Path) -> None:
             # release Board check's `revises` class judges revisions).
             prose = [record("fx-a", "in_force"), record("fx-b", "decided", notes="This revises fx-a for the cache.")]
             code, text, _ = invoke(["check", "--json"], Fake(prose))
-            if code or set(json.loads(text)) != {"deviations", "unnamedBlockers", "staleHolds", "forcedHolds"}:
+            if code or set(json.loads(text)) != {"deviations", "unnamedBlockers"}:
                 raise ValueError(f"board check --json: {text}")
 
             # board check: a standalone review waiting on a blocker deviates no more (reviews do not wait); revision prose flags nothing.

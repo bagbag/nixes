@@ -2366,14 +2366,6 @@ def unnamed_waits(board: Board, root: str | None) -> list[tuple[str, str]]:
     return flagged
 
 
-def hold_flags(board: Board, root: str | None) -> tuple[list[tuple[str, str]], list[tuple[str, str]]]:
-    """(stale holds, forced holds) as (id, detail) among the held work items in scope."""
-    held = [issue for issue in board.scoped(root) if holder(issue) and is_work_hold(issue)]
-    stale = [(issue['id'], f"{issue['assignee']}: no update for {age(since)}") for issue in held if (since := stale_since(board, issue))]
-    forced = [(issue['id'], f"{issue['assignee']}: {reason}") for issue in held if (reason := forced_reason(issue)) is not None]
-    return stale, forced
-
-
 def mechanical_fixes(board: Board, root: str | None) -> list[tuple[str, str, list[str], str | None]]:
     """The deviations whose fix needs no judgment, as (id, what, bd args, batch input): a metadata key the board retired is dropped or
     moved to its new name, a link in an earlier spelling moves to the current one. Keys the board never wrote stay for the reader."""
@@ -2408,13 +2400,10 @@ def apply_fixes(board: Board, args) -> Board:
 
 
 def check_json(board: Board, args) -> dict:
-    """Every finding of `board check`, unbudgeted: deviations by class, then the flags."""
+    """Every finding of `board check`, unbudgeted: deviations by class, then the unnamed waits."""
     board = apply_fixes(board, args)
-    stale, forced = hold_flags(board, args.root)
     return {'deviations': [{'id': item_id, 'class': kind, 'detail': detail} for item_id, kind, detail in deviations(board, args.root)],
-            'unnamedBlockers': [{'id': item_id, 'detail': detail} for item_id, detail in unnamed_waits(board, args.root)],
-            'staleHolds': [{'id': item_id, 'detail': detail} for item_id, detail in stale],
-            'forcedHolds': [{'id': item_id, 'detail': detail} for item_id, detail in forced]}
+            'unnamedBlockers': [{'id': item_id, 'detail': detail} for item_id, detail in unnamed_waits(board, args.root)]}
 
 
 def check(board: Board, args) -> int:
@@ -2429,11 +2418,6 @@ def check(board: Board, args) -> int:
             section(f'{name} ({doc_ref(anchor)})', rows, limit)
     section('flag, not a deviation: unnamed waits on open items (board-core.md#dependencies)',
             [f'  {item_id}  unnamed-blocker  {detail}' for item_id, detail in unnamed_waits(board, args.root)], limit)
-    stale, forced = hold_flags(board, args.root)
-    section(f'flag, not a deviation: stale holds, no update for {STALE_HOURS} h (board-core.md#hand-over-and-acceptance)',
-            [f'  {item_id}  stale-hold  {detail}' for item_id, detail in stale], limit)
-    section('flag, not a deviation: holds past the worker cap (agents board claim --force)',
-            [f'  {item_id}  forced-hold  {detail}' for item_id, detail in forced], limit)
     return 1 if found else 0
 
 
