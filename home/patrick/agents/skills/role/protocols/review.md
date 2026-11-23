@@ -9,9 +9,9 @@ Read
 
 ## Entry
 
-One of: an `in_review` change request (CR), or refresh work ([Refresh](#refresh)), or a standalone review
-(findings only, outside any CR), is ready for your session's `review` pull; a
-dispatch brief names an id and this protocol.
+One of: an `in_review` change request (CR), or refresh work ([Refresh](#refresh)),
+is ready for your session's `review` pull; a
+dispatch brief names an id (a CR, or a challenge task, [Challenge](#challenge)) and this protocol.
 
 ## Steps
 
@@ -20,12 +20,11 @@ findings or stops. A challenge follows [Challenge](#challenge) in place of
 steps 3-7.
 
 1. **Claim.** `agents board claim` for your pull or `agents board claim <id>` for a named
-   CR or item. It prints the author doer, `author unknown (<holder>)` or
-   `standalone`: you are independent unless you are that doer; a fresh-context worker of
+   CR or task. It prints `author <actor>` or `author unknown`: you are independent unless you are that doer; a fresh-context worker of
    the same session suffices. Review a CR in its worktree as the author left
    it.
    Output: `claimed <id>; author <actor>; independent`, or
-   `claimed <id>; standalone review`.
+   `claimed <id>` for a challenge task.
 2. **Read.** The CR's acceptance and items, its brief, the released rulings
    it links and their owners, and the author's evidence comments. Read the
    range-diff `agents board claim` prints (the full diff on a first review) and any
@@ -56,17 +55,16 @@ steps 3-7.
    `agents board handover <cr> "<verdict>"`; otherwise
    return it with verdict,
    confirmed defects, open questions, executed checks and next action:
-   `agents board return <cr> "<findings>"`.
-   Raise a choice that needs a decision as a question holding the affected
-   work items under [Questions and rulings](../../shared/board-core.md#questions-and-rulings).
+   `agents board return <cr> "<findings>"` (each finding becomes an open item
+   of the CR).
+   Raise a choice that needs a decision as a question the affected items wait
+   on under [Questions and rulings](../../shared/board-core.md#questions-and-rulings).
    For a code-review question, include the follow-up item the Return adds to
    the CR among the question's holds. A frame change against a released
    ruling the CR applies correctly: pass the CR, then open the decision with
    `agents board ruling revise <ruling> --title <title> --body-file <packet> --holds
-   none` and `agents board link <question> <cr> --type discovered-from`. A
-   standalone review closes with `agents board close <id> --reason "<verdict>"`,
-   recording each finding as a new item discovered from it
-   (`--deps discovered-from:<id>`).
+   none` and `agents board link <question> <cr> --type relates-to`. A
+   non-blocking idea is filed as its own work (`--found-in <cr>`), not as an item of the CR.
    Escalate instead of passing when a
    [hidden-and-costly](../../shared/acceptance.md#review-policy) path stays
    unsettled: comment your findings and evidence, then
@@ -74,8 +72,7 @@ steps 3-7.
    `agents board unclaim <id>`. A `deep-review` ending an escalated item removes the
    mark (`--unset-metadata deep_review`).
    Output: `passed <cr> to <status>`, `returned <cr>`, `question <id>`,
-   `escalated <id>` or `closed <id>`, plus the new item ids for a standalone
-   review.
+   `escalated <id>`, plus the new ids for a filed idea.
 
 ## Stop
 
@@ -87,22 +84,23 @@ steps 3-7.
 
 ## Exit
 
-The CR is passed, returned to the queue or blocked by a question (or the
-standalone review closed), and the output lines above are posted.
+The CR is passed, returned to the queue or waiting on a question (or the
+challenge task closed), and the output lines above are posted.
 
 ## Challenge
 
-A standalone review of decided records or a contract draft, before release.
+A task that reviews decided records or a contract draft, before release; the
+records wait on it.
 
 1. **Assess.** Invoke `step-back` on the records and the owners and items
    they rest on, then `challenge-rulings` on the records' rulings; check contradictions with each other
    and with released rulings, integrity and security holes, and gaps a
    realistic consumer hits.
    Output: verdict; each finding with its evidence.
-2. **Close.** Create each finding as a question discovered from the
-   challenge (`--deps discovered-from:<id>`) and block the record it concerns
-   on it (`agents board block <record> --on <question> --reason "<finding>"`), then
-   close the challenge with the verdict.
+2. **Close.** Create each finding as a question found in the
+   challenge (`--found-in <id>`) and make the record it concerns wait on it
+   (`agents board wait <record> --on <question> --for "<finding>"`), then
+   close the challenge with the verdict (`agents board close <id> --reason "<verdict>"`).
    Output: `closed <id>`, plus the question ids.
 
 ## Refresh

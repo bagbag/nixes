@@ -200,12 +200,12 @@ export type ConsoleBoard = {
   /** The directory has no board (no .beads): the pane says so beside the title and shows nothing else of the board. A bd failure on a board is `error`. */
   isMissing: boolean
   counts: ConsoleBoardCounts | null
-  /** The ready items assigned to the user (`forUser`'s ready part). */
+  /** The ready human gates and due deferrals for the user (`forUser`'s ready part). */
   forYou: ConsoleItem[]
   items: ConsoleItem[]
   sessions: ConsoleSession[]
   held: ConsoleHeld[]
-  /** Requests waiting for you (passed (look before)) and in work (`in_progress`, `in_review`), the accept queue first. */
+  /** Requests waiting for you (passed (look before)) and in work (`open` and held, `in_review`), the accept queue first. */
   crs: ConsoleCr[]
   /** Queued requests (`open`) whose work unit waits on a question not yet released: counted apart, never listed. */
   waitingOnYou: number

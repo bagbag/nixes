@@ -11,16 +11,16 @@ disable-model-invocation: true
 ## Roles
 
 A session registers a role, which sets its authority (the **decide set**:
-questions, ratification, acceptance with the user, milestones), and its pulls,
+questions, ratifying choices, acceptance with the user, milestones), and its pulls,
 which set its work, preset by the role. A session executes only what its role
 and pulls include.
 
 | Role | Authority | Preset pulls | Protocols |
 |---|---|---|---|
 | lead | The decide set: decides with the user, releases rulings, writes rule owners, accepts change requests (CRs) and user-judged outcomes with the user. Several leads may run; the user coordinates them. | plan | decide |
-| solo | As lead. | all four | decide |
-| autopilot | Solo while the user is away, with unattended authority. | all four | decide, unattended |
-| agent | None. | none: any of the four, as chosen | per claimed CR or item (below) |
+| solo | As lead. | all three | decide |
+| autopilot | Solo while the user is away, with unattended authority. | all three | decide, unattended |
+| agent | None. | none: any of the three, as chosen | per claimed CR or item (below) |
 
 A **deciding session** is one registered as `lead`, `solo` or `autopilot`;
 `unattended.md` limits autopilot's authority.
@@ -33,8 +33,8 @@ Protocol files:
 - review: `$HOME/.agents/skills/role/protocols/review.md`
 - unattended: `$HOME/.agents/skills/role/protocols/unattended.md`
 
-Pulls: **plan**, **design**, **implement**, **review**; `agents board claim` takes
-each pull's item kinds, and board-core [Routing](../shared/board-core.md#routing)
+Pulls: **plan**, **implement**, **review**; `agents board claim` takes
+each pull's work, and board-core [Routing](../shared/board-core.md#routing)
 (`$HOME/.agents/skills/shared/board-core.md`) keeps the rules a claim does not
 enforce.
 
@@ -43,9 +43,8 @@ An agent session runs each claimed CR or item under the protocol for its kind:
 | Claimed | Protocol |
 |---|---|
 | `in_force` decision | plan, its Released rulings section |
-| `open` CR | work (design or implement pull) |
+| `open` CR | work (implement pull) |
 | `in_review` CR; refresh work | review |
-| standalone `in_review` task, bug, spike | review |
 | `open` no-commit task | plan, its Dispatch |
 
 ## Entry
@@ -80,8 +79,8 @@ Give each step's output as one line.
 4. **Load.** Read the role's protocol files fully (autopilot's included, though
    registered solo), and the shared files each one's opening read list names
    (the others load where a step names them).
-   Also read those of the session's pulls: plan → plan, design and implement →
-   work, review → review.
+   Also read those of the session's pulls: plan → plan, implement → work,
+   review → review.
    Output: `loaded <protocols>`.
 5. **Holds.** Where the repository has `.beads/`, run `agents board mine`.
    Output: held ids, or `none held`.

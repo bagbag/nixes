@@ -31,12 +31,11 @@ milestones, recorded rulings and deferrals. The board model is
   another milestone.
 - Membership orders work and never cuts it. `agents board claim` order: P0 items,
   then planning of in-force rulings, then milestone work, then reviewing
-  (CR reviews and refresh work), ratifying and accepting, then the rest. Within
-  each, priority, then kind (plan, review, ratify, accept, design, question,
-  implement). An item counts
+  (CR reviews and refresh work) and accepting, then the rest. Within
+  each, priority, then kind (plan, review, refresh, accept, question,
+  implement). A record counts
   at the highest priority of the open work waiting on it; a CR counts with its
-  open items, and is milestone work when it, one of its open items or a CR it
-  sits under is.
+  open items, and is milestone work when it or one of its parts is.
 - Place each new item: a member when the goal owner's criterion covers it.
   Move work in or out by adding or removing its edge.
 - When the milestone turns ready, a deciding session walks the user through
@@ -45,7 +44,7 @@ milestones, recorded rulings and deferrals. The board model is
 
 ### Change-request queue
 
-- **Accept queue:** CRs in `needs_acceptance`: parents before the CRs stacked
+- **Accept queue:** `passed` CRs of `look` `before`: parents before the CRs stacked
   on them, then the `agents board claim` order without kind
   ([Milestones](#milestones)), then age (stacks:
   [Change requests](../shared/change-requests.md#change-requests)).
@@ -93,5 +92,5 @@ milestones, recorded rulings and deferrals. The board model is
 
 | Item | Lifecycle |
 |---|---|
-| Deferral | `agents board defer <id> --reason "<revisit condition>"`, plus `--until <date>` for a date condition; `agents board undefer` other conditions on named new evidence. Deferred items are the project backlog: deferred work holds up no live item, and a deferred question no work in progress, in review or at Accept (write a wait under [Dependencies](board-core.md#dependencies); `agents board defer` and `agents board check` enforce it). |
+| Deferral | `agents board defer <id> --reason "<why>"`: someday, off the queue, blocked by nothing; `--until <day>` only shows it as due then. For CRs, tasks and questions (an item: move it into its own CR first). A condition on a record or event is a wait ([Dependencies](board-core.md#dependencies)); `defer` refuses one, and nothing waits on a deferred record. Only the deferrer undefers (`agents board undefer`): a planning session its own, the user's through a deciding session. Deferred records are the backlog. |
 | Environment fact | `agents board bd --raw --yes remember --key <key>` (no board command) for temporary repository-wide facts needed by every current session, a user's broad stop (area, paths, kind of action) included with its words and date; state a removal condition; remove with `agents board bd --raw --yes forget`. |

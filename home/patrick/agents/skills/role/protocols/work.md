@@ -9,7 +9,7 @@ step 1.
 
 ## Entry
 
-One of: an `open` change request (CR) is ready for your session's `design` or
+One of: an `open` change request (CR) is ready for your session's
 `implement` pull; a dispatch brief names a CR and this protocol; a brief names
 items of a CR your session holds (then [Item worker](#item-worker)).
 
@@ -18,7 +18,7 @@ items of a CR your session holds (then [Item worker](#item-worker)).
 Give each step's output as one line when it passes; add detail only for
 findings or stops.
 
-1. **Claim.** `agents board claim` for your pulls or `agents board claim <cr>` for a named
+1. **Claim.** `agents board claim` for your pull or `agents board claim <cr>` for a named
    CR ([Change requests](../../shared/change-requests.md#change-requests)).
    Work only inside its worktree from here.
    Output: `claimed <cr> (<kind>) at <path>, base <base>`, plus the holds you
@@ -28,12 +28,12 @@ findings or stops.
    ruling's owner section; linked rulings bind, planned (closed) ones
    included. Raise a better evidence-backed alternative to a ruling as a
    question. When a ruling or landed change has
-   removed an item's outcome, close it as moot, naming that ruling or change.
+   removed an item's outcome, close it `dropped` (`--outcome dropped`), naming that ruling or change.
    Output: ruling ids and owner anchors read, or `<id> moot: <reason>`.
 3. **Do.** Run the open items in dependency order yourself or through item
    workers; you judge how they share the worktree.
-   - Design items: architecture where open, the package graph, and
-     one-way-door decisions as questions blocking their dependents, merged
+   - Design items (`kind:design`): architecture where open, the package graph, and
+     one-way-door decisions as questions their dependents wait on, merged
      only under
      [Question format](../../shared/question-format.md#question-format); no
      implementation. Invoke the step-back skill once on the
@@ -48,7 +48,7 @@ findings or stops.
      [Decision authority](../../shared/decision-protocol.md#decision-authority)
      lets you decide and list the two-way defaults in the hand-over
      (marking standing rules); raise every other choice as a question
-     blocking the affected part, and continue unaffected parts.
+     the affected part waits on, and continue unaffected parts.
    - After each pass: run the item's gates, then commit and close its items
      under [Change requests](../../shared/change-requests.md#change-requests)
      Items.
@@ -69,17 +69,17 @@ findings or stops.
    its acceptor reproduces. Resolve a rebase conflict, or fix failed checks,
    and rerun it. With partial work, hand the CR back under
    [Actors and holds](../../shared/board-core.md#actors-and-holds).
-   Output: `handed over <cr> to <status>`, `blocked <cr> on <id>` or
+   Output: `handed over <cr> to <status>`, `waiting <cr> on <id>` or
    `kept <cr> open: <next action>`.
 6. **Remainders.** Record every gap and follow-up as a new item (in this CR
-   when it belongs to the change, else a new CR) or question discovered from
-   it.
+   when it belongs to the change, else a new CR) or question, with `--found-in`
+   naming this CR.
    Output: new ids, or `none`.
 
 ## Item worker
 
-A worker briefed with items of a CR its session holds: `agents board claim <item>`,
-read the item and its rulings, work by absolute path in the CR's worktree,
+A worker briefed with items of a CR its session holds (an item has no holder:
+the CR's hold covers it): read the item and its rulings, work by absolute path in the CR's worktree,
 run the gates, then commit and close under
 [Change requests](../../shared/change-requests.md#change-requests) Items;
 report to the session. It does not hand over, rebase or land.
@@ -95,21 +95,21 @@ report to the session. It does not hand over, rebase or land.
 ## Stop
 
 - The brief contradicts the board, a spec or a current ruling: raise a
-  question blocking the affected part; continue the rest.
+  question the affected part waits on; continue the rest.
 - A blocker whose clean fix lies outside the CR: raise the root fix as a
-  question blocking that part.
-- A design gap or contradiction: raise a question that blocks its dependents.
+  question that part waits on.
+- A design gap or contradiction: raise a question its dependents wait on.
 - A refusal by the user or an approval reviewer: record it and its revisit
   condition on the CR.
 - Unavailable evidence: state the unestablished claim and its acceptance
   consequence on the CR.
 - The retry limit: follow it, recording in the CR's `notes`.
 
-Questions hold the affected work items. When another blocker holds one item, block it and continue the rest; when it holds the whole CR, block the CR.
+Questions hold the affected items (`agents board wait <item> --on <question>`). Continue the rest; before handover, unclaim the CR or ask the planner to move the waiting item.
 A failed setup: fix it or raise the blocker as a question, then claim the CR
 again to rerun setup.
 
 ## Exit
 
-The CR is handed over, kept open with its next action, or blocked,
+The CR is handed over, kept open with its next action, or waiting,
 and no longer held by you; remainders are recorded.

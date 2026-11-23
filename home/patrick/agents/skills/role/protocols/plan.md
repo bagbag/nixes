@@ -41,7 +41,7 @@ findings or stops.
 ## Stop
 
 - A ruling conflicts with source or another ruling: raise a question
-  discovered from it, block only the affected work, plan the rest. Return
+  found in it, hold only the affected work, plan the rest. Return
   evidence undermining a consequential ruling to its owner as a proposed
   revision; pause dependent work.
 - Scope or authority would expand, or an irreversible or outward-facing action
@@ -54,8 +54,8 @@ findings or stops.
 
 ## Exit
 
-No released ruling waits unplanned except on what its planning needs
-([board-core.md](../../shared/board-core.md) released row); `agents board check`
+No in-force ruling waits unplanned except on what its planning needs
+([board-core.md](../../shared/board-core.md#questions-and-rulings) in-force row); `agents board check`
 reports no deviation on the items this pass touched; ready work is
 dispatched or claimable; the checkpoint file is current; the report is given.
 
@@ -70,18 +70,18 @@ item set (`agents board create --graph`) to a `plan` worker ([Cut work](#cut-wor
    are evidence and hints are planning input; a supersession is an authorized
    revision. Act on each `fix:` line the claim prints, or state why it does
    not apply.
-2. Block each open item the ruling changes on it, except CRs and the designs
-   and spikes outside a CR in review
-   ([Questions and rulings](../../shared/board-core.md#questions-and-rulings))
-   (`agents board block <item>… --on <ruling> --reason "<what changes>"`); relate
+2. Make each open item the ruling changes wait on it
+   (`agents board wait <item>… --on <ruling> --for "<what changes>"`); relate
    items it only informs (`agents board link <ruling> <item> --type relates-to`).
    Return an unclaimed review the ruling changes with
-   `agents board return <cr> "<what changes>" --ruling <ruling>`; for a held one,
-   comment the change on the CR for its reviewer. Add the ruling id and owner anchor to each item's design,
-   then unblock the designs and spikes (`agents board unblock <item> --on <ruling>`).
-   Create missing work items; when cutting them needs a design or spike first,
-   create it, block the ruling on it and stop: the ruling returns to planning
-   when that prerequisite closes.
+   `agents board return <cr> "<what changes>" --ruling <ruling>` (its
+   consequences become the CR's items); for a held one,
+   comment the change on the CR for its reviewer. Add the ruling id and owner
+   anchor to each item's design, then drop the wait of each item whose text now
+   carries the ruling (`agents board unlink <item> <ruling>`).
+   Create missing work items; when cutting needs a design or spike first,
+   file it as the first work and make the items that need it wait on it (the
+   ruling itself waits only for a live question or a human gate).
    Add changelog and upgrade duties to affected
    items' acceptance.
 3. For a revision, update every consumer of the changed decision: related
@@ -94,7 +94,7 @@ item set (`agents board create --graph`) to a `plan` worker ([Cut work](#cut-wor
 
 ## Frame
 
-Orient from goal owners, the goal epic and current design before asking.
+Orient from goal owners, the topic and current design before asking.
 Establish the outcome's contribution to its milestone:
 
 | Field | Content |
@@ -105,18 +105,19 @@ Establish the outcome's contribution to its milestone:
 | Product path | Product boundary and the next run: the smallest executable walking skeleton (what runs, where, what the user sees). |
 | Open premises | Decisions, unknowns, empirical assumptions. |
 
-- Create or resume the outcome epic (readable title stating the outcome, label
-  `topic:<topic-slug>`) under
-  [Topics](../../shared/board-coordination.md#topics) and
-  `$HOME/.agents/skills/shared/project-memory.md`.
+- Open or resume the outcome's topic (label `topic:<topic-slug>`, carried by
+  its CRs) under [Topics](../../shared/board-coordination.md#topics) and
+  `$HOME/.agents/skills/shared/project-memory.md`; the user's acceptance of an
+  outcome is a milestone.
 - A slice is architecture-opening when it opens boundaries, public contracts,
   data flow, mechanisms or the clean end state.
 - Commission an `architect` before cutting work for an architecture-opening
   slice, or when cutting would invent architecture. Use ratified design or a
   strong pattern when it settles the work. Cut work only after load-bearing architecture is ratified
   or authorized by the role. Architect results grant no authority.
-- Create a `design` item that blocks a slice's items when the slice is
-  architecture-opening or its reversal would be costly. Continue other slices
+- File a `kind:design` item first in a slice's CR, the slice's other items
+  waiting on it, when the slice is architecture-opening or its reversal would
+  be costly. Continue other slices
   on settled items.
 - Use `explore-options` for a broader choice set or when options share a
   consequential untested assumption. Use `second-opinion` for decision
@@ -129,18 +130,16 @@ Establish the outcome's contribution to its milestone:
   group them into [change requests](../../shared/change-requests.md#change-requests)
   (CRs): one CR per topic of a request, split only where the user would
   plausibly accept one part and reject another; five small cleanups are one
-  CR. Every item gets `--parent <cr>`; a CR sits under its topic epic. Split,
+  CR. Every item gets `--parent <cr>`; a CR carries its topic label. Split,
   merge or reorder items for a cleaner end state.
-- Designed work is a design-only CR of `design` items that commit the design
-  to its topic doc under `docs/`, then an implementation CR cut after the
-  design CR lands, its brief citing the doc section. Set the design CR's `look`
-  to `before` when the design opens a
+- Designed work: its design items (`kind:design`) commit the design to its
+  topic doc under `docs/` in the same CR as the implementation. A separate
+  design CR is the exception and names its reason; its `look` is `before` when the design opens a
   [one-way door](../../shared/decision-protocol.md#decision-authority) on the
-  next run's path, else leave the project default. Dependents that need the
-  design wait on the design CR
+  next run's path, and dependents wait on it
   ([Waiting and stacks](../../shared/change-requests.md#change-requests)).
-- Group items that sit in no CR into CRs per topic when they become due
-  (items waiting on a decision, design or spike stay ungrouped until it closes).
+- An item that waits differently from its CR moves to its own CR
+  (`agents board move <item> --to <cr>`); an item never sits outside a CR.
 - Set a CR's `look` or `view` only to override the defaults, naming the reason
   on the CR in a line that mentions the setting. Order CRs by dependencies:
   independent CRs run in parallel, overlapping work gets a dependency edge
@@ -179,7 +178,7 @@ Establish the outcome's contribution to its milestone:
   Before dispatch, have a `review` worker assess each planning pass a `plan`
   worker wrote or that rewrites existing items: coverage, grounding,
   dependencies, integration, verification, silent failures. Put its verdict
-  in one comment on the planned epic or released ruling (without a board, in
+  in one comment on the planned CR or in-force ruling (without a board, in
   the plan file). Check other planning (added items or acceptance lines,
   regroupings) yourself.
 
@@ -189,8 +188,8 @@ Establish the outcome's contribution to its milestone:
   rank by per-item [Priority](../../shared/board-core.md#priority).
 - Distinguish source authoring, execution, review and final acceptance. A
   proposal grants no approval.
-- Track every remainder as an item, a `blocks` edge or a deferral with its
-  revisit condition; re-check remainders after planning rulings.
+- Track every remainder as an item, a wait or a deferral (someday, with an
+  optional revisit day); re-check remainders after planning rulings.
 - Commission a plan or inventory only for a named executable result and the
   missing fact it establishes.
 
@@ -202,8 +201,9 @@ Establish the outcome's contribution to its milestone:
   When a worker ends, finish the bookkeeping the next dispatch depends on (its
   hand-over, the board state a new worker relies on), integrate its result
   under [Integrate](#integrate), then refill before other bookkeeping.
-- Brief a worker on each no-commit task you claim, or hand a step only the
-  user can do to them: `agents board update <id> --assignee user`.
+- Brief a worker on each no-commit task you claim. A step only the user can
+  take is a human gate (`agents board gate create --blocks <item> --reason
+  "<why>"`), shown in the user's view.
 - Give each worker one CR. Brief: the CR id, the protocol path for its kind
   (`$HOME/.agents/skills/role/SKILL.md`, claimed-item table) and only the
   deltas under [Brief](#brief).
@@ -239,7 +239,7 @@ Establish the outcome's contribution to its milestone:
   that would anchor an independent assessor, pass only the granted paths and
   fields, preparing a filtered view when needed; never the mixed source with
   instructions to filter it.
-- Give the goal epic id; put a substantial brief into the item.
+- Give the topic label and milestone; put a substantial brief into the item.
 - Relay project-specific rules, excluding generic role discipline. Add
   anti-regression STOPs for reversed decisions still encoded in old sources.
 - References grant reading, not writing; the item ids grant board writes on
@@ -264,11 +264,11 @@ Before large fan-out, at milestones, after containment and when evidence or
 cumulative changes affect the frame, scope or boundaries: assess the combined
 end state for missing general mechanisms, asymmetric cases, duplicate owners,
 silent failures, dead weight and doc drift; name the next executable outcome
-and blockers. When the next run is set or changes, defer each open item of the
-outcome it does not need (revisit: after that run), undefer the deferred ones
-it needs, and list both in the report. Close each finished epic `agents board position`
-lists under board-coordination [Topics](../../shared/board-coordination.md#topics);
-list in the report the ones left open for the user's acceptance. Bring
+and blockers. When the next run is set or changes, defer each open CR or task
+of the outcome it does not need (a someday: `agents board defer`), undefer the
+deferred ones it needs, and list both in the report. List the ready milestones
+`agents board position` shows, for the user's acceptance
+([Milestones](../../shared/board-coordination.md#milestones)). Bring
 material changes to the decider before dependent dispatch. End rethinking
 when remaining unknowns are empirical or further
 yield is cosmetic.

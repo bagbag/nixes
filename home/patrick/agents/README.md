@@ -115,15 +115,15 @@ Workflow owners:
   (rounds, release, acceptance of designs and user-judged outcomes),
   [plan](skills/role/protocols/plan.md) (released rulings into work, framing,
   cutting, briefing, dispatch, integration),
-  [work](skills/role/protocols/work.md) (one design or implementation item),
+  [work](skills/role/protocols/work.md) (one change request's items),
   [review](skills/role/protocols/review.md) (independent review, review policy,
   evidence and gates) and
   [unattended](skills/role/protocols/unattended.md) (autopilot authority and
-  parking); [accept](skills/role/protocols/accept.md) (user acceptance, user
-  review and ratification), read only at decide's Accept. Sessions read them by path; compaction recovery names them again.
+  parking); [accept](skills/role/protocols/accept.md) (user acceptance and user
+  review), read only at decide's Accept. Sessions read them by path; compaction recovery names them again.
 - [Board core](skills/shared/board-core.md) and
   [board coordination](skills/shared/board-coordination.md): board model, holds,
-  routing, record shapes, epics, milestones and rulings; [board-migrate](skills/board-migrate/SKILL.md)
+  routing, record shapes, waits, milestones and rulings; [board-migrate](skills/board-migrate/SKILL.md)
   moves a project from any starting state onto it, deriving the work from the gap to the target.
 - Challenge skills: [step-back](skills/step-back/SKILL.md),
   [challenge-rulings](skills/challenge-rulings/SKILL.md) and
@@ -145,8 +145,9 @@ Workflow owners:
 
 Component references (behavior, verbs and rulings of each tool):
 
-- [Board and sessions](docs/board.md): `bin/board` (`agents board setup` owns a board's
-  settings), shared boards, change-request review, `bin/session`.
+- [Board model](docs/board/model.md): `bin/board` and `bin/session`: the state tables
+  (kept equal to the code's by a test), authority, waits, readiness, shared boards,
+  change-request review.
 - [Scratch](docs/scratch.md): `bin/scratch`, working files outside the repositories.
 - [Protocol engine](docs/protocol-engine.md): `bin/protocol`, rounds, releases,
   `bin/round-report`.

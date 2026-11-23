@@ -26,8 +26,8 @@
   acceptance requirements in their approved sequence.
 - Record ratified goal and sequencing changes in their owner before dependent
   work, including sequencing changes with unchanged product goals. Track an
-  approved checkpoint as its outcome epic's acceptance, as a task when it
-  spans outcomes, or as a milestone item when it is a release checkpoint
+  approved checkpoint as its CR's acceptance, as a task when it
+  spans outcomes, or as a milestone when it is a release checkpoint
   (board-coordination [Milestones](../shared/board-coordination.md#milestones)). When a
   milestone closes, retire its criterion in the goal owner and state the next
   milestone's before re-placing the remaining work.
@@ -43,7 +43,7 @@
 - Label defects, investigations and unapproved proposals distinctly. Retain
   investigations and proposals only with a concrete revisit reason.
 - Recording an item or reaching its revisit condition authorizes nothing.
-- Reconcile at scope setting, changed revisit conditions and epic close. Close
+- Reconcile at scope setting, changed revisit conditions and milestone close. Close
   resolved items with disposition and evidence.
 
 ## Document structure
@@ -61,7 +61,7 @@
 
 ## Arc state
 
-- `agents board position` computes the position; epics hold no status
+- `agents board position` computes the position; a topic holds no status
   (board-coordination [Topics](../shared/board-coordination.md#topics)).
 - Each session keeps one plain-prose checkpoint, `checkpoint.md` in its own
   scratch folder (`agents scratch dir`), replaced in place. It holds only what
@@ -71,9 +71,9 @@
   board. Drop each line once its work is
   recorded elsewhere; finished work and history stay out. Distinguish executed
   evidence from author reports and intent. It holds no operating rules.
-- Arcs may run in parallel. Each arc has its own outcome epic; its plans,
+- Arcs may run in parallel. Each arc has its own topic and milestone or CR; its plans,
   drafts, reviews and evidence go in a scratch folder
-  (`agents scratch dir --for <epic id>`).
+  (`agents scratch dir --for <id>`).
 - Use lowercase kebab-case slugs.
 
 ## Synchronization
@@ -107,7 +107,7 @@ context; keep contracts complete without them.
 
 ## Closure
 
-- Close finished epics under board-coordination [Topics](../shared/board-coordination.md#topics).
+- Close a finished milestone through its Accept (board-coordination [Milestones](../shared/board-coordination.md#milestones)).
 - At phase boundaries or architecture resets, review affected owners and links;
   inventory the topic for cross-document changes or uncertain ownership.
 - Classify each document as canonical, narrow reference, `history/` or redundant.

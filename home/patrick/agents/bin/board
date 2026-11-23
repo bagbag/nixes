@@ -282,8 +282,7 @@ def bd_checked(*args: str, stdin: str | None = None) -> str:
 
 
 # The board model: one table of states per type, one of transitions, and `move`, the one function that writes a status.
-# docs/board/model.md prints both tables (`agents board model`) and the doc/code test keeps them equal; the prose there
-# gives the meaning and the reasons.
+# docs/board/model.md embeds both tables (`model_tables`) and a test keeps them equal; the prose there gives the meaning and the reasons.
 CR_GROUP, WORK_GROUP, ITEM_GROUP = 'change request', 'task', 'item'
 GROUP_OF = {CR_TYPE: CR_GROUP, WORK_TYPE: WORK_GROUP,
             'decision': 'decision', 'milestone': 'milestone', 'gate': 'gate'}  # a work-type record inside a change request is an item (group_of)
@@ -373,11 +372,14 @@ MOVES = (
 
 
 def model_tables() -> str:
-    """The two tables docs/board/model.md embeds, as markdown (`agents board model`)."""
-    states = ['| Type | Statuses |', '|---|---|', *(f"| {group} | {', '.join(statuses)} |" for group, statuses in STATES.items())]
-    moves = ['| Command | Type | From | To | Held before | Held after | Who | Guards |', '|---|---|---|---|---|---|---|---|',
-             *(f"| {m.command} | {m.group} | {', '.join(m.frm)} | {m.to} | {m.held} | {m.holds} | {' / '.join(m.who)} | {', '.join(m.guards) or '-'} |" for m in MOVES)]
-    return '\n'.join([*states, '', *moves])
+    """The tables docs/board/model.md embeds, as markdown: statuses and outcomes by type, the transitions, and what each `who` word means."""
+    outcomes = {group: list(dict.fromkeys(o for m in MOVES if m.group == group for o in m.outcomes)) for group in STATES}
+    states = ['| Type | Statuses | Outcomes when closed |', '|---|---|---|',
+              *(f"| {group} | {', '.join(statuses)} | {', '.join(outcomes[group]) or '-'} |" for group, statuses in STATES.items())]
+    moves = ['| Command | Type | From | To | Held before | Held after | Who | Guards | Outcomes |', '|---|---|---|---|---|---|---|---|---|',
+             *(f"| {m.command} | {m.group} | {', '.join(m.frm)} | {m.to} | {m.held} | {m.holds} | {' / '.join(m.who)} | {', '.join(m.guards) or '-'} | {', '.join(m.outcomes) or '-'} |" for m in MOVES)]
+    words = ['| Who word | Means |', '|---|---|', *(f'| {word} | {meaning} |' for word, meaning in WHO_WORDS.items())]
+    return '\n\n'.join(['\n'.join(states), '\n'.join(moves), '\n'.join(words)])
 
 
 def group_of(board: 'Board | None', issue: dict) -> str | None:
@@ -3692,8 +3694,8 @@ def git_text(root: Path, *args: str, env: dict[str, str] | None = None, input: s
 
 
 # Change requests (r24, r25). The CR is the only unit claimed for work; its items are children claimed by the workers of the
-# session holding it. Its place in the flow is its status (open, in_progress, in_review, needs_acceptance); the flow is in
-# skills/shared/change-requests.md.
+# session holding it. Its place in the flow is its status (open, in_review, passed, closed) and its holder; the flow is in
+# skills/shared/change-requests.md and the model in docs/board/model.md.
 SETTINGS = {name: f'custom.board.{name}' for name in ('target', 'setup', 'checks', 'look', 'view')}  # bd's namespace for custom keys
 LOOKS, VIEWS = ('before', 'after'), ('code', 'result')
 # The model marker: written by `board setup` on a board it creates and, last, by board-migrate on an older one. Every write verb refuses a board

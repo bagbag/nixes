@@ -2,9 +2,9 @@
 
 Entry: [decide.md](decide.md#accept) Accept. Read `$HOME/.agents/skills/shared/change-requests.md` for Git authorization and the CR model.
 
-1. **Claim** a CR, ratification or milestone: `agents board claim <id>`.
+1. **Claim** a CR or milestone: `agents board claim <id>`.
    Output: `claimed <cr> (look <look>, view <view>); author
-   <actor>`, `claimed <id> (milestone)`, or `epic <id>`.
+   <actor>` or `claimed <id> (milestone)`.
 2. **Evidence.** Read `$HOME/.agents/skills/shared/acceptance.md`; check the
    named evidence under its
    [Evidence and gates](../../shared/acceptance.md#evidence-and-gates). For a
@@ -18,8 +18,7 @@ Entry: [decide.md](decide.md#accept) Accept. Read `$HOME/.agents/skills/shared/c
    commits. For `result`, show the outcome. A design CR: walk the doc diff, and for a ruling
    it opens, a [Round](decide.md#round) (`start round --discussion --subject <cr>`);
    its pre-pass report is the walkthrough (verdict and findings first, then the
-   design). A ratification: the
-   landed result, in its user review or at the result. If the refresh changed
+   design). If the refresh changed
    the CR meanwhile, show the range-diff before continuing. Open with the
    defaults its hand-over lists; the user keeps or changes each. After each
    answer, re-check the walkthrough's open verdicts under
@@ -50,50 +49,31 @@ Entry: [decide.md](decide.md#accept) Accept. Read `$HOME/.agents/skills/shared/c
      then run `agents board return <cr> "<findings>"`.
    - **Rejected:** `agents board cr reject <cr> "<reason>"`; delete branch `cr/<id>` and its worktree only on the user's
      confirmation (they hold the only copy).
-   - **Ratification:** `agents board ratify <id> yes|edits|no` with the user's
-     verdict. `edits`: read the edits first, as
-     for an Accept, and pick the gate the same way; the follow-up CR it starts
-     waits for the user's Accept and lands with `agents board cr land` like any CR.
-     `no`: ask what the user wants (fix or revert); `agents board ratify` files it as
-     the follow-up CR.
-   - **Epic, milestone:** close on the user's acceptance
-     (`agents board close <id> --reason "<verdict>"`). Otherwise for an epic, create
-     the findings as items under it; for a milestone, as members, and unclaim
-     it (`agents board unclaim <id>`).
+   - **Milestone:** close on the user's acceptance
+     (`agents board close <id> --reason "<verdict>"`). Otherwise add the
+     findings as members (new CRs moved into it) and unclaim it
+     (`agents board unclaim <id>`).
    When the item received a ruling, check that the rule sits in its owner and
    every conflict became a question.
    Output: `landed <cr>`, `returned <cr>`,
    `rejected <cr>`, `closed <id>` or `findings <ids>`.
 
-**Stop:** the user rejects the CR or result: return it, reject it, file the
-findings under the epic, or add them to the milestone. A required gate cannot
+**Stop:** the user rejects the CR or result: return it (each finding becomes an
+item of it), reject it, or add the findings to the milestone. A required gate cannot
 run: return it naming the unestablished claim. If the base moves after
 the look, show the new Accept row to the user. For a failed check or conflict,
 report the refusal and follow Rebase.
 
-**Exit:** the item is closed, landed or returned, or the milestone has new
+**Exit:** the CR is landed, returned or rejected, or the milestone is closed or has new
 members.
-
-## Ratification
-
-The landing ratification task
-([Change requests](../../shared/change-requests.md#change-requests)) takes the
-user's verdict through `agents board ratify`: `yes` closes it (a default reason names the CR) and
-removes its review worktree and `ratify/<id>` branch, refused while they
-hold the user's edits; `edits` makes them the follow-up CR's (branch renamed
-to `cr/<follow-up>`), commits uncommitted edits as the user's, rebased
-onto the target and checked at once, waiting for the Accept (a rebase
-conflict: change-requests.md Rebase, user's edits); `no` closes it with the reason and files the
-follow-up the user wants (fix or revert).
 
 ## User review
 
-The user reviews an item in its own worktree on its own branch.
-`agents board review open <item>` opens it at the recorded tip. A ratification
-opens branch `ratify/<id>` at the landed tip. The user's edits are their
+The user reviews a CR in its own worktree on its own branch.
+`agents board review open <cr>` opens it at the recorded tip. The user's edits are their
 commits after the opened tip plus uncommitted changes. Before Accept or
 Return, use `agents board cr edits` to commit the uncommitted changes as the user's
-and record all of their edits. `agents board show <item>` names whether it is open for review
+and record all of their edits. `agents board show <cr>` names whether it is open for review
 and whether the user edited it.
 
 ## Commands

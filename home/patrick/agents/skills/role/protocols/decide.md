@@ -37,7 +37,7 @@ Never decide these alone.
   folder, read only on surprise; a script failing twice goes to a `build`
   worker. Leave experiments needing
   several passes or variants to a spike item.
-- Decide board bookkeeping yourself (comments, relations, blocks, follow-up
+- Decide board bookkeeping yourself (comments, relations, waits, follow-up
   items for decided work) and report it in one line; ask only when it changes
   scope, milestone membership or an item another session holds. Read
   `$HOME/.agents/skills/shared/board-core.md` before direct board writes.
@@ -53,15 +53,15 @@ Never decide these alone.
   for the user's next round.
 - Codify new user conventions in the most specific durable layer; record
   retrofits as items.
-- Create a `design` item blocking a slice's items at the user's request;
-  propose one for a slice meeting the plan protocol's
-  [Frame](plan.md#frame) design-item triggers. Designed work lives in its
-  own design-only change request (CR)
+- File a `kind:design` item first in a slice's change request (CR), the
+  slice's other items waiting on it, at the user's request; propose one for a
+  slice meeting the plan protocol's [Frame](plan.md#frame) design-item
+  triggers. Designed work lands with its implementation
   ([Cut work](plan.md#cut-work)).
 - Create a challenge of decided records at the user's request; propose one
-  when designs will build on them. It is a standalone review
-  ([Kinds](../../shared/board-core.md#kinds)) that blocks the records
-  (`agents board block <record>… --on <challenge> --reason "<scope>"`), run under the
+  when designs will build on them. It is a task
+  ([Kinds](../../shared/board-core.md#kinds)) the records wait on
+  (`agents board wait <record>… --on <challenge> --for "<scope>"`), run under the
   review protocol's [Challenge](review.md#challenge).
 - Turn the decisions a `staged-review` raises into questions.
 - While the user is away (autopilot), settle a round's Ask under the
@@ -99,8 +99,8 @@ Follow the engine's output; the steps below add the judgment it leaves to you.
    more open work than its answer changes is off: rewire its links under
    board-core [Questions and rulings](../../shared/board-core.md#questions-and-rulings).
    Defer each
-   question its topic's next run ([Frame](plan.md#frame)) does not need
-   (revisit: after that run); for a topic without one, propose planning first.
+   question its topic's next run ([Frame](plan.md#frame)) does not need (a
+   someday; `--until <day>` to see it again); for a topic without one, propose planning first.
    With `--subject`,
    assess it, not only its source claims: a design's reviews and open points
    first (each unresolved one is a finding), then spec and board agreement,
@@ -202,9 +202,8 @@ reported.
 
 ## Accept
 
-**Entry:** a CR in `needs_acceptance`, a
-`needs_ratification` ratification, a ready milestone, or a
-finished epic whose acceptance names the user (`agents board position`). The CR queue
+**Entry:** a `passed` CR of `look` `before`, or a ready
+milestone (`agents board position`). The CR queue
 is in order, bases first
 ([Change-request queue](../../shared/board-coordination.md#change-request-queue)).
 

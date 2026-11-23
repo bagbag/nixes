@@ -31,8 +31,8 @@ setup, run `/role autopilot` again.
     question for the user with a recommendation (`agents board unclaim <id>` when you
     hold it outside a round). Parked questions form the user's next round;
     their dependents wait. Continue independent tracks.
-- Finished CRs and epics whose acceptance names the user wait for the user's
-  Accept.
+- Finished `look` `before` CRs and ready milestones wait for the user's
+  Accept; autopilot never accepts or ratifies choices.
 - Treat public contracts, durable design and substantial downstream work as
   costly to reverse. Before non-trivial action, resolve facts and obtain
   independent assessment; review findings authorize no expansion. Assess scope
@@ -41,7 +41,7 @@ setup, run `/role autopilot` again.
   space within budget; route architecture to an architect.
 - Entering the autopilot role adds no Git authority: CR work runs under the
   [Change requests](../../shared/change-requests.md#change-requests) Git
-  authorization. Review a `look` `after` CR only where step 1 ratified its
+  authorization. Review a `look` `after` CR only where step 1 agreed its
   landing. Other branches, worktrees, merges and history rewrites stay with
   the user.
 - Keep these actions parked while continuing another track: push or publish;
@@ -54,7 +54,7 @@ setup, run `/role autopilot` again.
 Give each step's output as one line when it passes; add detail only for
 findings or stops.
 
-1. **Ratify and prepare** as solo, while the user is present:
+1. **Agree and prepare** as solo, while the user is present:
    - Ask under
      [Asking the user](../../shared/asking.md#asking-the-user); orient from
      project sources and run `define-goal` for every new arc: outcome, value
@@ -62,9 +62,9 @@ findings or stops.
    - Agree the budget (time, window or milestone), pre-authorizations,
      forbidden actions, acceptance evidence, return point and report.
    - Record whether `look` `after` landings may run while the user is away.
-   - Ratify architecture and plan choices where possible. Begin only after
-     scope, authority and done criteria are ratified.
-   - Frame the outcome epic under the plan protocol's
+   - Settle architecture and plan choices with the user where possible. Begin only after
+     scope, authority and done criteria are agreed.
+   - Frame the outcome's topic under the plan protocol's
      [Frame](plan.md#frame). Link goal and contract owners and record the
      whole-repository baseline gate, or the strongest available gate, in the
      checkpoint file.
@@ -100,10 +100,10 @@ findings or stops.
    Output: recovered position and remaining authority.
 4. **Return** at the done criteria or budget boundary, when the user says they
    are back, or when the user asks for a round: report verified
-   outcomes with actual gate numbers; ratification tasks and parked decisions
+   outcomes with actual gate numbers; unratified rulings (their Confirm-or-revise questions) and parked decisions
    with recommendations
-   (`agents board health --root <epic> --items ratification,questions`);
-   failure and park diagnoses; and the CRs and epics waiting for the user's
+   (`agents board health --items questions,accept`);
+   failure and park diagnoses; and the CRs and milestones waiting for the user's
    Accept.
    Keep incompleteness explicit.
    Then run `agents session activate solo`. Stay on

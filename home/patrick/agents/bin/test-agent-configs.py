@@ -9195,6 +9195,20 @@ def validate_cr_rank(root: Path) -> None:
         raise ValueError(f"console_crs lists none of the queued requests and counts them apart: {(listed, wait_count, queued)}")
 
 
+def validate_board_model(root: Path) -> None:
+    """docs/board/model.md embeds the code's tables (`model_tables`): statuses, outcomes, transitions and authority words."""
+    loader = importlib.machinery.SourceFileLoader("board_model", str(root / "bin" / "board"))
+    board = importlib.util.module_from_spec(importlib.util.spec_from_loader(loader.name, loader))
+    loader.exec_module(board)
+    text = (root / "docs" / "board" / "model.md").read_text(encoding="utf-8")
+    start, end = "<!-- model-tables -->\n", "\n<!-- /model-tables -->"
+    if start not in text or end not in text:
+        raise ValueError("docs/board/model.md lost its model-tables markers")
+    embedded = text.split(start, 1)[1].split(end, 1)[0]
+    if embedded != board.model_tables():
+        raise ValueError("docs/board/model.md's tables differ from bin/board's model_tables(): regenerate the block between the markers")
+
+
 def validate_console_contract(root: Path) -> None:
     """CONSOLE_CONTRACT holds console_contract_states; regenerate it with WRITE_CONSOLE_CONTRACT=1 after a deliberate
     engine change, then update the console's parser and tests."""
@@ -14265,7 +14279,7 @@ with patch('os.path.expanduser', lambda path: os.path.join(fixture_root, path[2:
 READ_LIMIT = 35_000  # characters; Codex cuts a call's output above ~40,000 from the middle
 # Role SKILL.md's role table and the claimed-item table; unattended's Entry adds review.
 SESSION_PROTOCOLS = {"lead": ("decide",), "solo": ("decide", "plan"), "autopilot": ("decide", "plan", "unattended", "review"),
-                     "agent design/implement": ("work",), "agent review": ("review",)}
+                     "agent implement": ("work",), "agent review": ("review",)}
 
 
 def validate_read_sizes(root: Path, expander, generator) -> None:
@@ -14368,6 +14382,7 @@ def run_group(name: str, root: Path) -> None:
         validate_cr_rank(root)
     elif name == "contract":
         validate_console_contract(root)
+        validate_board_model(root)
     elif name == "prepass":
         validate_prepass(root)
         validate_default_records(root)
