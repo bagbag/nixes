@@ -4288,7 +4288,7 @@ def validate_board(root: Path) -> None:
                     code, _, errors = invoke(["ruling", "record", question, str(draft), "--replaces", "fx-g,fx-m", *away], fake, "lead0001")
                     if code or [w for w in fake.writes() if w[:3] == ["update", "fx-g", "--assignee"]][:1] != [["update", "fx-g", "--assignee", "lead0001", "--if-assignee", "gone0001", "--if-status", "decided", "--json"]] \
                             or [w[1] for w in fake.writes() if w[0] == "supersede"] != ["fx-g", "fx-m"] \
-                            or any(w[:2] == ["update", "fx-m"] and "--status" in w for w in fake.writes()) \
+                            or any(w[:2] == ["update", "fx-m"] and "--status" not in w for w in fake.writes()) \
                             or [w[0] for w in fake.writes()].index("supersede") < [w[:2] for w in fake.writes()].index(["update", "fx-g"]):
                         raise ValueError(f"board ruling record --replaces must take a gone session's hold before it closes the record: {code} {errors!r} {fake.writes()}")
                 # A link of another kind on a closing record's pair is replaced (the supersede drops it anyway), on a released one it is a clash.
@@ -4902,7 +4902,7 @@ def validate_board(root: Path) -> None:
             code, output, _ = invoke(["ruling", "supersede", "fx-b", "--with", "fx-d"], fake, "lead0001")
             if code or fake.writes() != [["update", "fx-d", "--set-metadata", "board.revises_rule=Rule 2", "--json"],
                                          ["batch", "-m", "board ruling supersede fx-b --with fx-d", "--json"],
-                                         ["update", "fx-b", "--assignee", "", "--if-assignee", "", "--if-status", "decided", "--set-metadata", "outcome=superseded", "--json"],
+                                         ["update", "fx-b", "--status", "closed", "--assignee", "", "--if-assignee", "", "--if-status", "decided", "--set-metadata", "outcome=superseded", "--json"],
                                          ["supersede", "fx-b", "--with", "fx-d"]] \
                     or [stdin for args, stdin in fake.calls if args[0] == "batch"] != ["dep remove fx-d fx-b\ndep remove fx-b fx-a\ndep add fx-d fx-a tracks\n"] \
                     or "revision of fx-a now pending on fx-d" not in output:
@@ -5124,7 +5124,7 @@ def validate_board(root: Path) -> None:
             if refused.returncode == 0 or fake.writes() or "aaaa1111/build-12345678" not in refused.stderr:
                 raise ValueError(f"move(check=False) must return a refusal as a failed result and write nothing: {refused} {fake.writes()}")
             # A lost compare-and-set on a close is a failed result under check=False too, never an exception; a close bd refuses leaves no outcome
-            # on the record, which stays open.
+            # or reason on the record, which stays open.
             held_row = lambda: dict(next(i for i in fixture if i["id"] == ids["Held task"]))
             as_holder = patch.dict(os.environ, {"BEADS_ACTOR": "aaaa1111", "CODEX_SESSION_ID": "", "CLAUDE_CODE_SESSION_ID": ""})
             fake = Fake(fixture, refuse={ids["Held task"]})
@@ -5135,7 +5135,7 @@ def validate_board(root: Path) -> None:
 
             class CloseRefused(Fake):
                 def __call__(self, command, **kwargs):
-                    if command[:2] == ["bd", "close"]:
+                    if command[:2] == ["bd", "update"] and "closed" in command:
                         self.calls.append((command[1:], None))
                         return subprocess.CompletedProcess(command, 1, "", "validation: open children")
                     return super().__call__(command, **kwargs)
@@ -5143,8 +5143,8 @@ def validate_board(root: Path) -> None:
             fake = CloseRefused(fixture)
             with as_holder, patch.object(board.subprocess, "run", fake):
                 refused_close = board.move(held_row(), "close", reason=reason, check=False)
-            if refused_close.returncode == 0 or fake.writes()[-1] != ["update", ids["Held task"], "--unset-metadata", "outcome", "--if-status", "open", "--json"]:
-                raise ValueError(f"a close bd refuses must leave the record open without an outcome: {refused_close} {fake.writes()}")
+            if refused_close.returncode == 0 or any(w[0] == "close" for w in fake.writes()) or len(fake.writes()) != 1:
+                raise ValueError(f"a close bd refuses in its one write must write nothing more: {refused_close} {fake.writes()}")
             fake = Fake(fixture)
             invoke(["take", ids["Held task"], "--agreed", "anna: go ahead"], fake, "lead0001")
             if fake.writes()[0] != ["update", ids["Held task"], "--assignee", "lead0001", "--if-assignee", "aaaa1111/build-12345678", "--if-status", "open", "--json"] \
@@ -5164,7 +5164,7 @@ def validate_board(root: Path) -> None:
             # never plainly; --resume is for that hand-back only. board claim shows the latest next action.
             fake = Fake(fixture)
             code, _, errors = invoke(["unclaim", ids["Held task"]], fake, "aaaa1111")
-            if code != 1 or fake.writes() or f"agents board wait {ids['Held task']} --on" not in errors:
+            if code != 1 or fake.writes() or "agents board wait <item> --on" not in errors:
                 raise ValueError(f"board unclaim of the session's own work in progress must ask for block or --resume: {fake.writes()}\n{errors}")
             fake = Fake(fixture)
             invoke(["unclaim", ids["Held task"], "--resume", "rerun the probe"], fake, "aaaa1111")
@@ -6396,12 +6396,12 @@ def validate_board(root: Path) -> None:
                 for argv, outcome in ((["close", "t-a", "--reason", "finished with the cache change"], "done"),
                                       (["close", "t-a", "--reason", "moot after the ruling", "--outcome", "dropped"], "dropped")):
                     code, _, errors, writes = verb(argv, world)
-                    if code or writes[0] != ["update", "t-a", "--assignee", "", "--if-assignee", "", "--if-status", "open", "--set-metadata", f"outcome={outcome}", "--json"] \
+                    if code or writes[0] != ["update", "t-a", "--status", "closed", "--assignee", "", "--if-assignee", "", "--if-status", "open", "--set-metadata", f"outcome={outcome}", "--json"] \
                             or writes[1][:2] != ["close", "t-a"]:
                         raise ValueError(f"board close records its outcome ({outcome}) with the holder compare-and-set: {code} {errors!r} {writes}")
                 for status, outcome in (("open", "dropped"), ("decided", "dropped"), ("in_force", "planned")):  # a closed decision records how it ended
                     code, _, errors, writes = verb(["close", "t-d", "--reason", "closed with its planning"], [{**plain("t-d"), "issue_type": "decision", "status": status}])
-                    if code or writes[0] != ["update", "t-d", "--assignee", "", "--if-assignee", "", "--if-status", status, "--set-metadata", f"outcome={outcome}", "--json"] \
+                    if code or writes[0] != ["update", "t-d", "--status", "closed", "--assignee", "", "--if-assignee", "", "--if-status", status, "--set-metadata", f"outcome={outcome}", "--json"] \
                             or writes[1][:2] != ["close", "t-d"]:
                         raise ValueError(f"board close of a {status} decision records outcome {outcome}: {code} {errors!r} {writes}")
                 code, _, errors, writes = verb(["link", "t-a", "t-b", "--type", "relates-to"], world)

@@ -218,12 +218,14 @@ def confirm_ruling(b: Board, issue: dict) -> None:
     item_id = issue['id']
     found = re.search(r'^##\s+Reversal\s*\n(.*?)(?=^##\s|\Z)', str(issue.get('description') or ''), re.MULTILINE | re.DOTALL | re.IGNORECASE)
     reversal = found.group(1).strip() if found else 'Reversal: not recorded.'
-    question = next((i['id'] for i in b.live() if i.get('external_ref') == f'confirm:{item_id}'), None)
+    found_question = next((i for i in b.live() if i.get('external_ref') == f'confirm:{item_id}'), None)
+    question = found_question['id'] if found_question else None
     if question is None:
         question = write('create', f'Confirm or revise: {issue.get("title", "")}?', '-t', 'decision', '-d', f'## Question\nConfirm ruling {item_id} or revise it?\n\n{reversal}\n',
                          '--priority', str(issue.get('priority', 2)), '--external-ref', f'confirm:{item_id}', '--silent', *([] if b.parents.get(item_id) else shared_queue()),
                          *(['--parent', b.parents[item_id][0]] if b.parents.get(item_id) else []),
                          *(f'--labels={label}' for label in issue.get('labels') or [] if label.startswith('topic:'))).strip().splitlines()[-1]
+    if not found_question or (item_id, 'relates-to') not in edges(found_question):  # a stop between the create and the link leaves the question unlinked
         write('batch', '-m', f'board-migrate {item_id}', '--json', stdin=f'dep add {question} {item_id} relates-to\n')
     write('update', item_id, '--status', 'in_force', '--json')
 
@@ -244,12 +246,19 @@ def authors(b: Board, left: list[str]) -> list[Step]:
 def handed_over_by(issue: dict) -> str | None:
     """What the old code read: the newest hand-over comment by an actor, else bd's status history, else the holder of record."""
     shown = board('show', issue['id'], '--json')
-    notes = (json.loads(shown.stdout or '{}').get(issue['id']) or {}).get('comments') or [] if shown.returncode == 0 else []
+    try:
+        notes = (json.loads(shown.stdout or '{}').get(issue['id']) or {}).get('comments') or [] if shown.returncode == 0 else []
+    except ValueError:
+        notes = []
     for note in sorted(notes, key=lambda c: c.get('created_at') or '', reverse=True):
         if str(note.get('text') or '').startswith(HANDOVER) and ACTOR.fullmatch(note.get('author') or ''):
             return note['author']
     history = board('bd', 'history', issue['id'], '--events', '--json')
-    for event in json.loads(history.stdout or '[]') if history.returncode == 0 else []:
+    try:
+        events = json.loads(history.stdout or '[]') if history.returncode == 0 else []
+    except ValueError:
+        events = []
+    for event in events:
         try:
             status = json.loads(event.get('new_value') or '{}').get('status')
         except (ValueError, AttributeError):
@@ -293,8 +302,14 @@ def dates(b: Board, left: list[str]) -> list[Step]:
     for issue in b.live():
         until = issue.get('defer_until')
         if until and not b.is_item(issue):
-            day = datetime.fromisoformat(until.replace('Z', '+00:00')).astimezone().date().isoformat()
-
+            try:
+                moment = datetime.fromisoformat(until.replace('Z', '+00:00')).astimezone()
+            except ValueError:
+                left.append(f'{issue["id"]}: defer_until {until!r} is not a date; set its revisit date by hand')
+                continue
+            if issue['status'] != 'deferred' and not (moment > datetime.now().astimezone() and issue['status'] == 'open' and not issue.get('assignee')):
+                continue  # bd keeps defer_until on a record put back to work: a live record is not parked by a stale date
+            day = moment.date().isoformat()
             steps.append((f'{issue["id"]}: defer_until {until} becomes revisit {day}',  # bd's own date wakes a record, so it leaves bd; clearing it reopens, so the status goes with it
                           update(issue['id'], '--set-metadata', f'revisit={day}', '--defer', '', '--status', 'deferred')))
     return steps
@@ -434,7 +449,7 @@ def regate(old: dict, title: str) -> None:
     human = [g for g in now.issues.values() if g.get('issue_type') == 'gate' and g.get('await_type') == 'human' and g['status'] != 'closed']
     gate = next((g['id'] for g in human if (item_id, 'supersedes') in edges(g)), None)  # an earlier run got as far as the links
     if gate is None:
-        gate = next((g['id'] for g in human if (g['id'], 'blocks') in edges(now.issues[item_id])), None)  # ...or only as far as the gate
+        gate = next((g['id'] for g in human if g.get('title') == title and (g['id'], 'blocks') in edges(now.issues[item_id])), None)  # ...or only as far as the gate: one with the title this run gave it, not any human gate the old record waited on
         if gate is None:  # the gate is made holding up the old record, whose waiters then move to it
             made = write('gate', 'create', '--type=human', '--blocks', item_id, '--reason', (str(old.get('description') or '') or title)[:500], '--title', title)
             found = re.search(r'Created gate (\S+)', made)
@@ -472,9 +487,12 @@ def rulings(b: Board, left: list[str]) -> list[Step]:
                 continue
 
             def drop(r=ruling['id'], t=target, title=other.get('title', '')) -> None:
-                write('comments', 'add', r, f'board-migrate: removed the wait on {t} ({title}): an in-force ruling does not wait on work; re-add it as a gate if it still matters')
+                write('comments', 'add', r, f'board-migrate: removed the wait on {t} ({title}): an in-force ruling does not wait on work; plan the work the ruling changes and wait that work on {r} if it still matters')
                 write('batch', '-m', f'board-migrate {r}', '--json', stdin=f'dep remove {r} {t}\n')
             steps.append((f'{ruling["id"]}: an in-force ruling no longer waits on {target}', drop))
+    if steps:
+        ids = ', '.join(dict.fromkeys(what.split(':')[0] for what, _ in steps))
+        left.append(f'{len(steps)} wait(s) of in-force rulings on work removed, each named in a comment on the ruling (rulings: {ids}); where the work still matters, plan it and wait it on the ruling')
     return steps
 
 
@@ -567,6 +585,8 @@ def rehearse() -> int:
         current = json.loads(on_copy('bd', 'config', 'get', '--json', 'status.custom') or '{}').get('value') or ''
         # the copy takes the old statuses too, then setup puts the current list back
         on_copy('bd', '--raw', '--yes', 'config', 'set', 'status.custom', f'{current},released:active,needs_ratification:wip,needs_acceptance:wip')
+        types = json.loads(on_copy('bd', 'config', 'get', '--json', 'types.custom') or '{}').get('value') or ''
+        on_copy('bd', '--raw', '--yes', 'config', 'set', 'types.custom', f'{types},design')  # the export may hold design-typed records, which setup's list no longer registers
         for name, value in carried.items():
             if value:
                 on_copy('bd', '--raw', '--yes', 'config', 'set', f'custom.board.{name}', value)

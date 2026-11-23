@@ -59,8 +59,9 @@ steps 3-7.
    of the CR).
    Raise a choice that needs a decision as a question the affected items wait
    on under [Questions and rulings](../../shared/board-core.md#questions-and-rulings).
-   For a code-review question, include the follow-up item the Return adds to
-   the CR among the question's holds. A frame change against a released
+   For a code-review question, say in the findings that the follow-up item the
+   Return adds waits on it: the Return releases the CR, and only a deciding
+   session or the user writes waits on the items of an unheld CR. A frame change against a released
    ruling the CR applies correctly: pass the CR, then open the decision with
    `agents board ruling revise <ruling> --title <title> --body-file <packet> --holds
    none` and `agents board link <question> <cr> --type relates-to`. A

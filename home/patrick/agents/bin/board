@@ -131,7 +131,7 @@ MOVED = 'custom.board.moved'  # travels with the database: the board moved to th
 # with a shared board's sync. min_hash_length is a real key bd warns about as unrecognized: top-level ids of 5+ characters.
 STATUS_CUSTOM = 'decided:wip,in_force:active,in_review:wip,passed:wip'  # the statuses beyond bd's open, closed and deferred
 TRAVELLING_CONFIG = (('status.custom', STATUS_CUSTOM),
-                     ('types.custom', 'design,change-request'), ('min_hash_length', '5'))
+                     ('types.custom', 'change-request'), ('min_hash_length', '5'))
 # In .beads/config.yaml: they do not travel, so each clone sets them. no-git-ops stays true as `init --stealth` sets it: bd 1.3
 # keys its stealth handling on it (with false, `bd doctor --fix` writes a project .gitignore).
 LOCAL_CONFIG = (('create.require-description', 'true'), ('validation.on-close', 'error'),
@@ -196,6 +196,12 @@ def derived_actor() -> str | None:
         result = subprocess.run(['bash', str(REGISTRY), 'actor'], capture_output=True, text=True)
         _actors[key] = result.stdout.strip() if result.returncode == 0 else None
     return _actors[key]
+
+
+def bd_actor() -> str:
+    """The actor bd records for this caller: BEADS_ACTOR (the session's actor), else git's user.name, else $USER, as bd resolves it."""
+    named = derived_actor() or subprocess.run(['git', 'config', 'user.name'], capture_output=True, text=True).stdout.strip()
+    return named or os.environ.get('USER', '')
 
 
 def bd_env() -> dict[str, str]:
@@ -297,7 +303,8 @@ WHO_WORDS = {'anyone': 'anyone', 'agent': 'an agent session', 'user': 'the user'
              'holder': "the holder's session (or anyone while it is unheld)", 'gone': "once the holder's session is gone, or the user agrees (--agreed)",
              'non-author': 'a session that did not hand it over', 'planner': 'a session pulling plan',
              'deferrer': "the deferrer's side (a user's deferral, or one without a deferrer: the user or a deciding session)",
-             'holding': 'the session holding it', 'unheld': 'while it is unheld'}
+             'holding': 'the session holding it', 'unheld': 'while it is unheld',
+             'mover': 'a lead or solo session (not autopilot: the unattended protocol never accepts, rejects or returns)'}
 
 
 class Move(NamedTuple):
@@ -331,11 +338,12 @@ MOVES = (
     Move('handover', CR_GROUP, ('open',), 'in_review', 'you', '-', ('agent',), ('items-closed', 'not-open-for-review')),
     Move('handover --no-agent-review', CR_GROUP, ('open',), 'passed', 'you', '-', ('agent',), ('items-closed', 'look-before', 'not-open-for-review')),
     Move('handover (reviewer passes)', CR_GROUP, ('in_review',), 'passed', 'you', '-', ('agent',), ('items-closed',)),
-    Move('send to review', CR_GROUP, ('passed',), 'in_review', '*', '-', ('holder', 'deciding', 'user')),
-    Move('return', CR_GROUP, ('in_review', 'passed'), 'open', '*', '-', ('agent+holder', 'deciding', 'user')),
+    Move('send to review', CR_GROUP, ('passed',), 'in_review', '*', '-', ('holding', 'mover', 'user')),
+    Move('return', CR_GROUP, ('in_review',), 'open', '*', '-', ('agent+holder', 'mover', 'user')),
+    Move('return', CR_GROUP, ('passed',), 'open', '*', '-', ('mover', 'user')),  # a change request waiting for its Accept is the Accept's to return
     Move('return --ruling', CR_GROUP, ('in_review',), 'open', 'you', '-', ('planner',)),
     Move('landing', CR_GROUP, _ANY_CR, 'closed', '*', '-', ('anyone',), (), ('landed',)),  # the target already holds the tip: the command checked before the fast-forward
-    Move('cr reject', CR_GROUP, (*_ANY_CR, 'deferred'), 'closed', '*', '-', ('deciding', 'user'), ('reason', 'items-closed'), ('dropped',)),
+    Move('cr reject', CR_GROUP, (*_ANY_CR, 'deferred'), 'closed', '*', '-', ('mover', 'user'), ('reason', 'items-closed'), ('dropped',)),
     Move('base rejected', CR_GROUP, _ANY_CR, 'open', '*', '-', ('anyone',)),
     Move('defer', CR_GROUP, ('open',), 'deferred', '*', '-', DEFER),
     Move('undefer', CR_GROUP, ('deferred',), 'open', '-', '-', ('deferrer',)),
@@ -423,6 +431,8 @@ def authority_part(part: str, issue: dict, actor: str | None, board: 'Board', ag
     entry = board.registry().get(session)
     if part == 'deciding':
         return actor == session and bool(entry) and entry.get('role') in DECIDING_ROLES
+    if part == 'mover':
+        return actor == session and bool(entry) and entry.get('role') in MOVERS
     if part == 'planner':
         return bool(entry) and 'plan' in session_kinds(entry)
     if part == 'deferrer':
@@ -443,6 +453,12 @@ def authority_refusal(issue: dict, row: 'Move', command: str, actor: str | None,
     return f"{issue['id']}: {command} is for {allowed}" + (f"; it is held by {holder}" if holder else '')
 
 
+def table_refusal(board: Board, issue: dict, command: str) -> str | None:
+    """The Authority check of `move` for the caller, read before a command writes anything else (the table's Who column is the one owner)."""
+    row = next((m for m in MOVES if m.command == command and m.group == group_of(board, issue) and issue['status'] in m.frm), None)
+    return authority_refusal(issue, row, command, derived_actor(), board) if row else None  # no row: `move` refuses it
+
+
 def item_write_refusal(board: 'Board | None', issue: dict, command: str, actor: str | None) -> str | None:
     """Why the caller may not write this item: the Authority check of `move`, read on the change request that holds it (ITEM_WRITE, ITEM_WAIT
     for a wait). A change request nobody holds is claimed first, unless the user or a deciding session writes."""
@@ -460,6 +476,9 @@ def item_write_refusal(board: 'Board | None', issue: dict, command: str, actor: 
     return message if cr.get('assignee') else f'{message}; nobody holds its change request {cr_id}: claim it first (agents board claim {cr_id})'
 
 
+CLOSE_REASON_MIN = 20  # bd refuses a shorter close reason
+
+
 GUARDS = {
     'reason': lambda issue, board, reason: None if reason and reason.strip() else 'a reason is required',
     'items-closed': lambda issue, board, reason: board and open_item_refusal(board, issue),
@@ -474,8 +493,8 @@ def move(issue: dict, command: str, *, to: str | None = None, actor: str | None 
          board: 'Board | None' = None, outcome: str | None = None, agreed: bool = False) -> subprocess.CompletedProcess:
     """The one status write. Finds the table row for the command, the item's type and its status (`to` picks among rows that
     differ only in where they go), refuses what the row forbids, then writes status and holder in one bd compare-and-set on
-    the status and holder just read. A close takes the item by the same compare-and-set (a no-op holder write), then `bd close` records the reason, so bd's close validation still runs. `via='supersede'` closes
-    through bd supersede, whose `reason` names the new record. `fields` are metadata keys written with it (None removes one), as
+    the status and holder just read. A close is one compare-and-set write of status, outcome and holder (the closer takes a record another actor holds; bd validates the close in it), then `bd close` only records the reason. `via='supersede'` records
+    it through bd supersede, whose `reason` names the new record. `fields` are metadata keys written with it (None removes one), as
     `put_meta` writes them. A closing row records its `outcome` (default: the row's first) in the same write. `board` tells an item
     (inside a change request) from a task. The issue is updated in place."""
     group = group_of(board, issue)
@@ -520,17 +539,29 @@ def move(issue: dict, command: str, *, to: str | None = None, actor: str | None 
         fields = {**(fields or {}), 'outcome': None}  # an open record carries no outcome
     meta_args = [arg for key, value in (fields or {}).items()
                  for arg in (('--unset-metadata', key) if value is None else ('--set-metadata', f'{key}={value}'))]
-    if target == 'closed':
+    if target == 'closed' and force:
+        # bd cannot combine --force with a compare-and-set: a forced close (landing, reject, a gate's resolve, a question answered past its blockers) writes a
+        # no-op holder guard with the outcome, then `bd close --force`. Its status write is the one exemption from the compare-and-set: two such closers can both pass the guard.
         guard = bd('update', issue['id'], '--assignee', current, '--if-assignee', current, '--if-status', issue['status'], *meta_args, '--json')
         if guard.returncode != 0:
             return refused(f"{issue['id']}: {command} refused, it changed meanwhile: {bd_message(guard)}" if guard.returncode == 13
                            else f"{issue['id']}: {command} failed: {bd_message(guard)}")
-        if via == 'supersede':
-            result = bd('supersede', issue['id'], '--with', reason or '')
-        else:
-            result = bd('close', issue['id'], '--reason', reason or '', *(['--force'] if force else []))
-        if result.returncode != 0 and 'outcome' in (fields or {}):  # bd refused the close (validation, open children): the record stays open and carries no outcome
+        result = bd('supersede', issue['id'], '--with', reason or '') if via == 'supersede' else bd('close', issue['id'], '--reason', reason or '', '--force')
+        if result.returncode != 0 and 'outcome' in (fields or {}):  # bd refused the close: the record stays open and carries no outcome
             bd('update', issue['id'], '--unset-metadata', 'outcome', '--if-status', issue['status'], '--json')
+        holder_after = current
+    elif target == 'closed':
+        if via != 'supersede' and len(reason or '') < CLOSE_REASON_MIN:
+            return refused(f"{issue['id']}: {command} refused: bd wants a close reason of {CLOSE_REASON_MIN} or more characters describing what was done ({len(reason or '')} given)")
+        # One compare-and-set writes the status, the outcome and the holder (the closer takes a record another actor holds, which bd's close of it requires),
+        # and bd validates the close in it (open children, blockers). `bd close` or `bd supersede` then only records the reason.
+        holder_closing = current if not current or current == bd_actor() else bd_actor()
+        written = bd('update', issue['id'], '--status', 'closed', '--assignee', holder_closing, '--if-assignee', current, '--if-status', issue['status'], *meta_args, '--json')
+        if written.returncode != 0:
+            return refused(f"{issue['id']}: {command} refused, it changed meanwhile: {bd_message(written)}" if written.returncode == 13
+                           else f"{issue['id']}: {command} failed: {bd_message(written)}")
+        holder_after = holder_closing
+        result = bd('supersede', issue['id'], '--with', reason or '') if via == 'supersede' else bd('close', issue['id'], '--reason', reason or '')
     else:
         args = ['update', issue['id'], *(['--status', target] if row.to != '=' else []),
                 *(['--assignee', holder_after] if holder_after != current or row.holds == '-' else []),
@@ -3649,8 +3680,8 @@ def unclaim(board: Board, args) -> int:
             continue
         own_work = in_hand(issue, actor) and (board.is_cr(issue['id']) or is_work_hold(issue))
         if own_work and not args.resume:
-            print(f"{issue['id']}: your work in progress: if it waits on something, agents board wait {issue['id']} --on <id> --for \"<the input it waits for>\" "
-                  f"hands it back blocked; otherwise agents board unclaim {issue['id']} --resume \"<next action>\"", file=sys.stderr)
+            print(f"{issue['id']}: your work in progress: if it waits on something, record that first (agents board wait <item> --on <id> --for \"<the input it waits for>\"), "
+                  f"then hand it back: agents board unclaim {issue['id']} --resume \"<next action>\"", file=sys.stderr)
             failed = True
             continue
         if args.resume and not own_work:
@@ -5195,8 +5226,8 @@ def request_review(board: Board, args) -> int:
     info = cr_info(board, cr)
     if not info['tip'] or not info['baseTip']:
         raise BoardError(f'{args.id}: its branch or base is gone; cannot request review')
-    if not may_move(board) and not holds_cr(cr, actor):
-        raise BoardError('only a lead or solo session, a person, or the current CR holder requests agent review')
+    if why := table_refusal(board, cr, 'send to review'):
+        raise BoardError(why)
     shown = range_delta(main, cr, info['baseTip'], info['tip'])
     send_to_review(board, cr)
     detail = ''
@@ -5242,8 +5273,8 @@ def return_item(board: Board, args) -> None:
     elif cr['status'] not in ('in_review', PASSED):
         raise BoardError(f"{args.id}: {cr['status']}; only a change request in review or waiting for its Accept is returned (unclaim frees work in hand)")
     elif cr['status'] == PASSED:
-        if not may_move(board):
-            raise BoardError(f'{args.id}: waiting for your Accept; the lead returns it with the findings you gave')
+        if why := table_refusal(board, cr, 'return'):
+            raise BoardError(f'{why}; the lead returns it with the findings you gave')
         if cr.get('assignee') and not holds_cr(cr, actor):
             raise BoardError(f"{args.id}: held by {cr['assignee']} (a refresh); return it once that is released", next=[{'action': 'wait'}])
     elif not holds_cr(cr, actor):
@@ -5370,8 +5401,8 @@ def prepare_land(board: Board, cr: dict, main: Path, tip: str, base: str) -> tup
 def reject(board: Board, args) -> int:
     actor = derived_actor() or 'user'
     cr = cr_arg(board, args.id, 'reject')
-    if not may_move(board):
-        raise BoardError('only a lead or solo session, or a person, rejects a change request')
+    if why := table_refusal(board, cr, 'cr reject'):
+        raise BoardError(why)
     refuse_long_comment(f'board cr reject: {args.reason}')
     if open_items := board.cr_items(args.id):
         ids = ' '.join(item['id'] for item in open_items)
@@ -7665,7 +7696,7 @@ def read_text_arg(path: str) -> str:
 
 
 def flag_node(args) -> tuple[dict, list[dict]]:
-    """The one plan node `board create`'s flags describe, and the plan edges its `--deps blocks:` links make. bd's graph node fields
+    """The one plan node `board create`'s flags describe, and the plan edges its `--holds` make. bd's graph node fields
     were verified against a board: acceptance_criteria, labels, metadata, priority, parent_id (an existing parent: bd copies
     none of its labels, so they are copied here as `create --parent` did), deps ({target, type}: this item depends on target)."""
     title = args.title or args.positional_title
@@ -7866,7 +7897,7 @@ EXAMPLES = {
     'cr edits': 'agents board cr edits <cr> --tip <sha> [--commit -m "fix typo" (--no-gate "docs only" | --gate "<cmd>" | --checks)] | agents board cr edits <cr> --merged <commit>',
     'review open': 'agents board review open <cr>',
     'review': 'agents board review open <cr>',
-    'ruling revise': 'agents board ruling revise <old> --title "May X replace Y?" --body-file packet.md --partial "Rule 2" --holds <id>,<id> [--dry-run]  (or --deps blocks:<id>)',
+    'ruling revise': 'agents board ruling revise <old> --title "May X replace Y?" --body-file packet.md --partial "Rule 2" --holds <id>,<id> [--dry-run]',
     'ruling release': 'agents board ruling release <id> <id> --closes <question>=<id> --closes <question>=<id>,<id>',
     'ruling supersede': 'agents board ruling supersede <old> --with <new> --partial "Rule 2"',
     'cr': 'agents board cr land <cr> --tip <sha> --base <sha>',
@@ -8182,7 +8213,7 @@ def run_command(argv: list[str]) -> int:
     sub = add('open', "open the item for the user's review in its own worktree, on its own branch (upstream: the board's remote, push disabled), and print the folder "
               "to open; refused while the worktree is in work, mid a rebase or has uncommitted changes; an open item is held from refresh and agent steps until Accept or Return", review_open, group='review')
     sub.add_argument('id', type=board_id)
-    sub = add('reject', 'close a change request unlanded: its items reopen, change requests stacked on it go back to planning', reject, group='cr')
+    sub = add('reject', 'close a change request unlanded (no item may be open: close or move them first); change requests stacked on it go back to planning', reject, group='cr')
     sub.add_argument('id', type=board_id)
     sub.add_argument('reason', type=nonempty)
     sub = add('revise', 'open a revision question linked to the record it revises; prints its id', revise, group='ruling')
@@ -8321,7 +8352,7 @@ def run_command(argv: list[str]) -> int:
         return 0
     args.root = getattr(args, 'root', None)
     refused = 2 if args.run in REFUSAL_EXIT_2 else 1  # a refusal exits 2 for the write-by-flags verbs, as board bd does
-    if writes(argv) and args.run not in (setup, check):
+    if (writes(argv) or argv[:1] in (['share'], ['relocate'])) and args.run not in (setup, check):  # share and relocate write config and notes though they open no sync window; setup, check and join (a fetched board brings its marker) are the exemptions
         try:
             require_model()
         except BoardError as error:

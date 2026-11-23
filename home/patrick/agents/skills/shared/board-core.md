@@ -89,8 +89,8 @@ claim by id checks no pull; follow these rules yourself:
 - Items are never claimed: claim their CR. A task outside a CR needs no CR and
   is claimed only when marked no-commit.
 - Pull `plan` also claims in-force rulings, the board restructuring tasks it
-  creates itself, ready no-commit tasks, and an `open` CR with no open items
-  or marked for replanning (a child of a rejected CR).
+  creates itself, ready no-commit tasks, and an `open` CR marked for replanning (a child of a
+  rejected CR). An open CR without open items is `implement` work: its holder hands it over.
 - A deciding session (lead, solo; autopilot takes questions only) claims by id
   its round's open decisions, `passed` CRs of `look` `before` waiting for the
   user's Accept, `passed` `look` `after` children marked `after <base>` and
@@ -165,8 +165,7 @@ On a shared board (`.beads/board-shared.json` exists):
   [Decision packet](#decision-packet).
 - Name the affected items (a whole CR only when all of it waits), when creating a question or
   ruling; create missing items first. Pass the affected ids with
-  `--holds <ids>` (shorthand for blocking links; also
-  `--deps blocks:<id>` on `agents board create --type decision` and `agents board ruling
+  `--holds <ids>` (shorthand for blocking links, on `agents board create --type decision` and `agents board ruling
   revise`; a plan's links from its decision node; in a round, the question's
   `holds`, which Record passes) or `--holds none`. Make a question wait on each
   open question its options assume (`agents board wait <id> --on <other>`; `--for` is optional there).
@@ -198,8 +197,9 @@ labels only classify (`topic:<topic-slug>`, `kind:<kind>`, `export:<capability>`
 `provides:<capability>`, `for:<person>`, `queue:<person>`). A status is never a
 label. The statuses, outcomes and transitions by type are the tables in
 `docs/board/model.md`; `deferred` is [Deferral](../shared/board-coordination.md#deferrals-and-environment-facts).
-Closing records its outcome (`close --outcome`; the default is the type's
-first).
+Closing records its outcome: the type's first by default; `close --outcome`
+takes only `done` or `dropped`, the others come from their verbs (land,
+supersede, ruling record, gate resolve).
 
 ### Dependencies
 
@@ -229,7 +229,7 @@ acceptance, never in a wait; when only part of B uses A, split B
    with complete evidence for the CR's acceptance and every item closed
    (handover refuses open items and never closes them). An item that starts
    waiting: `agents board wait <item> --on <blocker> --for "<input>"`, then
-   unclaim the CR or ask the planner to move the item into its own CR.
+   unclaim the CR (`--resume "<next action>"`) or ask the planner to move the item into its own CR.
 3. Hand over: `agents board handover <cr> "<evidence>"` ([Change requests](../shared/change-requests.md#change-requests)).
 4. The reviewer passes with `agents board handover <cr> "<verdict>"` or returns it
    with `agents board return <cr> "<findings>"` (each finding becomes an open

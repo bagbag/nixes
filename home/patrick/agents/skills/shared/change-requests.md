@@ -125,7 +125,7 @@ Who holds it is the holder field, not a status; the model's tables:
 | `agents board cr request-review <cr> ["<reason>"]` | From Accept, send the change since its last review to agent review. |
 | `agents board cr refresh <cr> [<gate>]` | Rebases and reruns setup and the gate. An uncovered agent-reviewed result goes to agent review. |
 | `agents board cr land <cr> --tip <sha> --base <sha>` | Pass the tip and base shown at Accept. Land rebases and checks first when the check is not a pass for that pair. Land only a covered series with a passing check. If the base has moved since the look, land refuses and shows the incoming commits. A `look` `after` CR on a `passed` parent waits marked `after <base>`; landing the parent lands each such child whose check and coverage still match, else leaves it as refresh work. Advances `custom.board.target`. Removes worktree and branch; stacked children get `base` = target. |
-| `agents board cr reject <cr> "<reason>"` | Closes unlanded (`dropped`); items reopen, children return to planning. Branch `cr/<id>` and worktree stay until the user confirms deletion (the only copy). |
+| `agents board cr reject <cr> "<reason>"` | Closes unlanded (`dropped`) once no item is open (close them dropped, or move them); change requests stacked on it return to planning. Branch `cr/<id>` and worktree stay until the user confirms deletion (the only copy). |
 | `agents board unclaim <cr>`, `agents board take <cr>` | Release, take over. Your own work in progress needs `--resume "<next action>"`, which the next `agents board claim` prints. `take` clears the taker's seen tip. |
 
 Close a CR only through `agents board cr land` or `agents board cr reject`.

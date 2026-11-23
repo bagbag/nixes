@@ -254,7 +254,7 @@ def setup() -> None:
     rc, out, err, _ = bd('a', 'init', '--server', '--stealth', '--prefix', 'sb', '--skip-hooks', '--skip-agents', role=None)
     if rc:
         raise RuntimeError(f'init: {err}{out}')
-    for key, value in (('status.custom', 'decided:wip,in_force:active,in_review:wip,passed:wip'), ('types.custom', 'design,change-request')):
+    for key, value in (('status.custom', 'decided:wip,in_force:active,in_review:wip,passed:wip'), ('types.custom', 'change-request')):
         bd('a', 'config', 'set', key, value, role=None)
     for key, value in (('custom.board.target', git('symbolic-ref', '--short', 'HEAD', cwd=ROOT / 'a').strip()), ('custom.board.setup', 'true'), ('custom.board.checks', 'true'), ('custom.board.look', 'before'), ('custom.board.view', 'code'), ('custom.board.model', '1')):
         bd('a', 'config', 'set', key, value, role=None)
@@ -1322,7 +1322,7 @@ def t_cr() -> None:
     check(rc == 1 and 'move base for direct review' in out and 'base moved since the pair you saw' in err,
           'cr: a direct user route refuses a moved seen pair and shows incoming commits', err + out)
     rc, _, err, _ = run('a', 'cr', 'request-review', h, 'incoming change affects this CR', role='autopilot')
-    check(rc == 1 and 'only a lead or solo' in err,
+    check(rc == 1 and 'send to review is for' in err,
           'cr: an unheld non-deciding session cannot request review', err)
     rc, out, err, _ = run('a', 'claim', h, role='agent')
     check(rc == 0, 'cr: a current CR holder can take the request', err + out)
@@ -1748,6 +1748,20 @@ def t_scenarios() -> None:
     rc, _, err, _ = bd('a', 'create', 'a timer gate', '-t', 'gate', '--description', 'x', '--silent')
     check(rc != 0 and 'agents board gate create' in err, 'a gate is made by the human gate verb only', err)
 
+    # 9b. A close takes the record by holder compare-and-set, so bd's own actor check passes without --force: the user closes a task a session holds,
+    # and a session closes its worker's task.
+    held_task = create('a', 'scenario 9b: closed by the user', '--no-commit', kind='task')
+    check(run('a', 'claim', held_task, role='agent')[0] == 0 and row(held_task).get('assignee'), 'scenario 9b: a session holds the task')
+    rc, _, err, _ = run('a', 'close', held_task, '--reason', 'scenario 9b: the user closes a held task', role=None)
+    check(rc == 0 and row(held_task)['status'] == 'closed' and (row(held_task).get('metadata') or {}).get('outcome') == 'done', 'scenario 9b: the user closes a task a session holds', err)
+    worker_task = create('a', 'scenario 9b: closed by the session of its worker', '--no-commit', kind='task')
+    worker_actor = f"{session('a', 'agent')[-8:]}/worker01"
+    claimed = subprocess.run([sys.executable, '-B', BOARD, 'claim', worker_task], cwd=ROOT / 'a', capture_output=True, text=True, input='',
+                             env={**base_env('a'), 'BEADS_ACTOR': worker_actor, 'CLAUDE_CODE_SESSION_ID': session('a', 'agent')})
+    check(claimed.returncode == 0 and row(worker_task).get('assignee') == worker_actor, "scenario 9b: a worker holds the task under its session's actor", claimed.stderr)
+    rc, _, err, _ = run('a', 'close', worker_task, '--reason', 'scenario 9b: the session closes its worker task', role='agent')
+    check(rc == 0 and row(worker_task)['status'] == 'closed', "scenario 9b: a session closes its worker's task", err)
+
     # 13. Two sessions claim at once: the compare-and-set lets exactly one win.
     race = create('a', 'scenario 13: two claims at once')
     task(race, 'the item')
@@ -1823,7 +1837,7 @@ def t_move() -> None:
 
 SETTINGS = {'create.require-description': 'true', 'validation.on-close': 'error', 'lint.sections.decision': 'Question,Decision,Rule owner',
             'events-journal': 'true', 'events-journal-retain-days': '30', 'no-git-ops': 'true',
-            'status.custom': 'decided:wip,in_force:active,in_review:wip,passed:wip', 'types.custom': 'design,change-request', 'min_hash_length': '5', 'custom.board.model': '1'}
+            'status.custom': 'decided:wip,in_force:active,in_review:wip,passed:wip', 'types.custom': 'change-request', 'min_hash_length': '5', 'custom.board.model': '1'}
 
 
 def setting(side: str, key: str) -> str:
@@ -1850,9 +1864,9 @@ def t_setup() -> None:
     bd('setupproj', 'config', 'unset', 'types.custom', role=None)
     bd('setupproj', 'dolt', 'commit', '-m', 'drift', role=None)
     rc, out, err, _ = run('setupproj', 'setup', role=None)
-    check(rc == 0 and 'validation.on-close: warn -> error' in out and 'types.custom: (unset) -> design' in out,
+    check(rc == 0 and 'validation.on-close: warn -> error' in out and 'types.custom: (unset) -> change-request' in out,
           'setup on an existing board: sets the missing setting, resets the differing one, printing old and new', err + out)
-    check(setting('setupproj', 'validation.on-close') == 'error' and setting('setupproj', 'types.custom') == 'design,change-request', 'setup: the values are applied')
+    check(setting('setupproj', 'validation.on-close') == 'error' and setting('setupproj', 'types.custom') == 'change-request', 'setup: the values are applied')
     check('already has a board' in out, 'setup: an existing board is never re-created', out)
     rc, out, err, _ = run('setupproj', 'setup', role=None)
     check(rc == 0 and ' -> ' not in out and 'up to date' in out, 'setup again: nothing to do', err + out)
@@ -1910,6 +1924,7 @@ def t_migrate() -> None:
     rc, out, err, _ = run(side, 'setup', '--embedded', '--prefix', 'mg', '--target', 'main', '--setup', 'true', '--checks', 'true', '--look', 'before', '--view', 'code', role=None)
     check(rc == 0, 'migrate: the board is set up', err + out)
     raw(side, 'config', 'set', 'status.custom', 'decided:wip,released:active,in_review:wip,needs_ratification:wip,needs_acceptance:wip,in_force:active,passed:wip')
+    raw(side, 'config', 'set', 'types.custom', 'design,change-request')  # the earlier model registered the design type; `setup` below puts the current list back
     raw(side, 'config', 'unset', 'custom.board.model')
     ids: dict[str, str] = {}
 
@@ -1978,6 +1993,14 @@ def t_migrate() -> None:
     make('closed_gate', 'an old gate', kind='gate')
     rc, out, err, _ = raw(side, 'gate', 'create', '--type=timer', '--blocks', ids['target'], '--timeout', '2h', '--title', 'Timer gate')
     make('dated', 'dated deferral', *no_commit, '--defer', '2027-03-04')
+    make('dated_live', 'worked item with a stale date', *no_commit, '--defer', '2020-01-01')
+    update('dated_live', '--status', 'open')
+    make('unratified2', 'second unratified ruling', kind='decision')
+    update('unratified2', '--status', 'needs_ratification', '--description', '## Question\nWhich?\n## Decision\nThis.\n## Reversal\nUndo it.\n')
+    make('confirm_q', 'Confirm or revise: second unratified ruling?', '--external-ref', f"confirm:{ids['unratified2']}", kind='decision')
+    make('user_item2', 'user check the logs', *no_commit)
+    update('user_item2', '--assignee', 'user')
+    raw(side, 'gate', 'create', '--type=human', '--blocks', ids['user_item2'], '--title', 'Existing human gate')
     make('conditional', 'conditional deferral', *no_commit)
     update('conditional', '--notes', f"revisit after {ids['target']} lands")
     raw(side, 'defer', ids['conditional'])
@@ -2014,14 +2037,16 @@ def t_migrate() -> None:
 
     script = HERE.parent / 'skills' / 'board-migrate' / 'scripts' / 'convert-stored-forms.py'
 
+    scratch = ROOT / 'rehearsals'  # the rehearsal's TMPDIR: its folder and its server's command line sit under this run's own root, so another session's never match
+    scratch.mkdir()
+
     def leftovers() -> list[str]:
-        """What a rehearsal leaves: its folder, or a process running in it (its dolt server)."""
-        folders = [str(p) for p in Path(tempfile.gettempdir()).glob('board-rehearsal-*')]
-        running = subprocess.run(['pgrep', '-f', 'board-rehearsal-'], capture_output=True, text=True).stdout.split()
-        return folders + running
+        """What a rehearsal of this run leaves: its folder, or a process running in it (its dolt server)."""
+        running = subprocess.run(['pgrep', '-f', str(scratch)], capture_output=True, text=True).stdout.split()
+        return [str(p) for p in scratch.glob('board-rehearsal-*')] + running
 
     def migrate(*flags: str):
-        result = subprocess.run([sys.executable, '-B', str(script), *flags], cwd=ROOT / side, capture_output=True, text=True, env=base_env(side), input='')
+        result = subprocess.run([sys.executable, '-B', str(script), *flags], cwd=ROOT / side, capture_output=True, text=True, env={**base_env(side), 'TMPDIR': str(scratch)}, input='')
         return result.returncode, result.stdout, result.stderr
 
     rc, out, err, _ = run(side, 'update', ids['bug'], '--title', 'a bug item, retitled', role=None)
@@ -2034,8 +2059,8 @@ def t_migrate() -> None:
     rc, out, err = migrate('--rehearse')
     check(rc == 0 and 'rehearsal on a copy' in out and out.index('--- summary') < out.index('--- conversion (exit 0)') and 'conversion(s) applied' in out and 'mark: would be written' in out and items(side) == before and not leftovers(),
           'migrate: --rehearse converts a copy in a temporary board and writes nothing here', (leftovers(), items(side) == before, err + out[-300:]))
-    child = subprocess.Popen([sys.executable, '-B', str(script), '--rehearse'], cwd=ROOT / side, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env=base_env(side))
-    wait_until(lambda: any(Path(tempfile.gettempdir()).glob('board-rehearsal-*')), 60)
+    child = subprocess.Popen([sys.executable, '-B', str(script), '--rehearse'], cwd=ROOT / side, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env={**base_env(side), 'TMPDIR': str(scratch)})
+    wait_until(lambda: any(scratch.glob('board-rehearsal-*')), 60)
     child.send_signal(signal.SIGTERM)
     child.wait(120)
     check(not leftovers(), 'migrate: a rehearsal killed midway leaves no folder and no server', leftovers())
@@ -2059,7 +2084,7 @@ def t_migrate() -> None:
                 'subprocess.Popen = Popen\n'
                 'sys.argv = [script, "--rehearse"]\n'
                 'runpy.run_path(script, run_name="__main__")\n')
-        child = subprocess.run([sys.executable, '-B', '-c', hook], cwd=ROOT / side, capture_output=True, text=True, env=base_env(side), timeout=300)
+        child = subprocess.run([sys.executable, '-B', '-c', hook], cwd=ROOT / side, capture_output=True, text=True, env={**base_env(side), 'TMPDIR': str(scratch)}, timeout=300)
         seen = leftovers()
         deadline = time.time() + 20  # an orphaned setup would still start its server in this time
         while not seen and time.time() < deadline:
@@ -2127,9 +2152,17 @@ def t_migrate() -> None:
           'migrate: defer_until becomes the revisit field and leaves bd', (meta_of('dated'), row('dated').get('defer_until')))
     check(row('conditional')['status'] == 'open' and (ids['target'], 'blocks') in deps('conditional'), 'migrate: a deferral on a condition becomes a wait', (row('conditional')['status'], deps('conditional')))
     gates = [i for i in now.values() if i['issue_type'] == 'gate' and i['status'] == 'open' and i.get('await_type') == 'human']
-    check(len(gates) == 2 and all(any(kind == 'supersedes' for _, kind in {(d['depends_on_id'], d['type']) for d in g.get('dependencies') or []}) for g in gates)
+    gates = [g for g in gates if any(kind == 'supersedes' for _, kind in {(d['depends_on_id'], d['type']) for d in g.get('dependencies') or []})]
+    check(len(gates) == 3
           and any((g['id'], 'blocks') in deps('waiter') for g in gates) and row('user_gate')['status'] == 'closed' and row('user_item')['status'] == 'closed',
           'migrate: a gate and a user item become human gates that supersede them, the waiter moved to the new gate', (gates, deps('waiter')))
+    check(row('dated_live')['status'] == 'open' and 'revisit' not in meta_of('dated_live'), 'migrate: a live record with a stale defer_until is not parked by it', (row('dated_live')['status'], meta_of('dated_live')))
+    confirm2 = [i for i in now.values() if i.get('external_ref') == f"confirm:{ids['unratified2']}"]
+    check(len(confirm2) == 1 and confirm2[0]['id'] == ids['confirm_q'] and (ids['unratified2'], 'relates-to') in {(d['depends_on_id'], d['type']) for d in confirm2[0].get('dependencies') or []},
+          'migrate: a confirm question made but not linked by an earlier stop is linked, not made again', confirm2)
+    check(row('user_item2')['status'] == 'closed' and any(i.get('title') == 'check the logs' and i['status'] == 'open' for i in now.values())
+          and any(i.get('title') == 'Existing human gate' and i['status'] == 'open' for i in now.values()),
+          'migrate: a user item that waits on an existing human gate gets a gate of its own, the existing one stays', [(i.get('title'), i['status']) for i in now.values() if i['issue_type'] == 'gate'])
     questions = [i for i in now.values() if i['issue_type'] == 'decision' and i['status'] == 'open' and i.get('external_ref') == f"migrated:{ids['ratify']}"]
     check(len(questions) == 1 and row('ratify')['status'] == 'closed', 'migrate: an open landing ratification becomes an open question', questions)
     check('topic:big-topic-epic' in row('child')['labels'] and row('epic')['status'] == 'closed', 'migrate: an epic gives its children a topic label and closes', row('child'))

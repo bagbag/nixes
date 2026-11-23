@@ -14,7 +14,7 @@
    (`agents board wait <item> --on <gate>`).
    Output: the gate id.
 3. Upstream runs `agents board bd --raw --yes ship <capability>` at closure. The waiting
-   session resolves the gate (`agents board gate resolve <gate>`) once
+   session resolves the gate (`agents board gate resolve <gate>`; a deciding session or the user, so a planning session asks one) once
    `agents board bd -C <upstream path> list --label provides:<capability> --status closed`
    shows the capability.
    Output: gate resolved, or still waiting.

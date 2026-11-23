@@ -11,7 +11,7 @@ Absorbs the risk-tiered workflow (release r2). Parts not yet built are marked **
 - Bookkeeping vs content: what code (a rule, verb, queue, script) reads, or a next step must act on exactly, is a field or record. Prose is for a reader's judgment. Nothing reads a fact out of prose to decide state or routing; nothing actionable lives only in prose.
 - Code is declarative: one table per type and one transition function (`move`) writing status and holder through bd compare-and-set. Writers, queue, check and help read the tables. No state-machine library: `bin/board` and the setup bundle stay stdlib-only.
 - Guards are enforced at the write, not restated: a rule the board can check at one command lives in that command (refusal, next step, help). `check` reports only shapes that came from outside the verbs (direct bd edits, a clone's sync).
-- Every write verb refuses a board without the model marker `custom.board.model=1` and names `/board-migrate`. Reads, `setup`, `check` and raw bd stay open so migration can inspect and convert. `setup` writes the marker on a board it creates; an existing board gets it last from board-migrate (`convert-stored-forms.py --mark`), never from a setup rerun.
+- Every write verb refuses a board without the model marker `custom.board.model=1` and names `/board-migrate`. Reads, `setup`, `check` and raw bd stay open so migration can inspect and convert. `setup` writes the marker on a board it creates; an existing board gets it last from board-migrate (`convert-stored-forms.py --mark`), never from a setup rerun. `join` is exempt too: it fetches a board whose marker travels with the database. `share` and `relocate` refuse like any write.
 
 ## Types
 
@@ -35,7 +35,7 @@ The first table below gives each type's statuses and the outcomes its closing ro
 - **Task:** `open` → `closed` (done or dropped), holdable.
 - **Decision:** `open` (a question; it can wait and be waited on) → `decided` (answered or ruled and recorded, not yet binding: a wait on it stays unmet until release) → `in_force` (a ruling) → `closed`. Outcomes: `dropped` (never ruled), `planned` (carried into work: planning closes the ruling, citing the CRs or tasks it made), `superseded` (a later ruling replaces it, or another ruling answered the question). `rejected` (an agent's choice the user rejected) arrives with `ratify` (**planned**, nixes-cop95); no row writes it yet.
 - **Gate:** `open` → `closed` (resolved). **Milestone:** `open` → `closed` (accepted), by a deciding session with the user.
-- **Reopen** needs the authority of close: the item rows, milestone, gate and decision rows say so. A task's reopen row reads "anyone" (see the table).
+- **Reopen** needs the authority of close: the item rows, milestone, gate and decision rows say so. A task's reopen row reads `holder / user / deciding+gone`, close's own (see the table).
 
 A **choice record** (**planned**, nixes-cop95) is an agent's two-way choice: the option taken, the one not taken, why, how to reverse it and the CR it shaped. It is in force at once with `ratified` unset; `ratify <ids…> yes|no` sets it, or closes it as rejected and files the recorded reversal as a CR. Today `agents board ruling record --unratified` writes such a record with a `## Reversal` and a `Confirm or revise` question linked by `relates-to`.
 
@@ -47,13 +47,13 @@ The protocol engine owns a round (questions asked, quotes, staged text); the boa
 
 - **Stacking:** a CR may stack on a `passed` CR that waits for the user's Accept (its base is that CR's branch; `stackable` in `bin/board`: not one in agent review, and a look-after parent lands at once); a CR on an unlanded, unstackable base is not ready. "Its base allows it" means the base has landed, or is stackable and this CR stacks on it. When the base lands the stacked CR's base becomes the target.
 - **Refresh:** when the base moves a CR's stored check is stale; a `passed` look-after CR with a stale check does not land with its base but becomes refresh work (rebase, check again) for its holder or the queue.
-- **Handover:** the board runs the configured check and stores it; the range, the check and the item outcomes are the evidence; an optional prose note carries judgment evidence. Handover refuses while any item is open, naming them and `close <ids>`; it never closes items itself. A waiting item: unclaim (the CR is ready again when the wait is met) or the planner moves it into its own CR.
+- **Handover:** the board runs the configured check and stores it; the range, the check and the item outcomes are the evidence; an optional prose note carries judgment evidence. Handover refuses while any item is open, naming them and `close <ids>`; it never closes items itself. A waiting item: unclaim with `--resume` (the CR is ready again when the wait is met) or the planner moves it into its own CR.
 - A CR whose branch has no commits of its own lands on its passed review in either look, with no Accept (a stacked one with its base).
 - Design text lands with its implementation in the same CR; direction choices (scope, one-way doors) are questions asked before the work. A separate design CR is the exception and names its reason ([ordinary-design-requests.md](ordinary-design-requests.md)).
 
 ## Tables
 
-Printed by `model_tables()`; the test compares this block with it exactly. `Held before` is the holder the write expects (`-` none, `you` the caller's session, `*` any), `Held after` the holder it leaves (`=` unchanged); `+` joins parts that must all hold, `/` separates alternatives. Which pull a bare claim serves, the worker cap, the check pair and the review stay with their commands.
+Printed by `model_tables()`; the test compares this block with it exactly. `Held before` is the holder the write expects (`-` none, `you` the caller's session, `*` any), `Held after` the holder it leaves (`=` unchanged; `-` on a close row too: the closed record keeps its closer as assignee, history that no rule reads as a hold); `+` joins parts that must all hold, `/` separates alternatives. Which pull a bare claim serves, the worker cap, the check pair and the review stay with their commands.
 
 <!-- model-tables -->
 | Type | Statuses | Outcomes when closed |
@@ -75,11 +75,12 @@ Printed by `model_tables()`; the test compares this block with it exactly. `Held
 | handover | change request | open | in_review | you | - | agent | items-closed, not-open-for-review | - |
 | handover --no-agent-review | change request | open | passed | you | - | agent | items-closed, look-before, not-open-for-review | - |
 | handover (reviewer passes) | change request | in_review | passed | you | - | agent | items-closed | - |
-| send to review | change request | passed | in_review | * | - | holder / deciding / user | - | - |
-| return | change request | in_review, passed | open | * | - | agent+holder / deciding / user | - | - |
+| send to review | change request | passed | in_review | * | - | holding / mover / user | - | - |
+| return | change request | in_review | open | * | - | agent+holder / mover / user | - | - |
+| return | change request | passed | open | * | - | mover / user | - | - |
 | return --ruling | change request | in_review | open | you | - | planner | - | - |
 | landing | change request | open, in_review, passed | closed | * | - | anyone | - | landed |
-| cr reject | change request | open, in_review, passed, deferred | closed | * | - | deciding / user | reason, items-closed | dropped |
+| cr reject | change request | open, in_review, passed, deferred | closed | * | - | mover / user | reason, items-closed | dropped |
 | base rejected | change request | open, in_review, passed | open | * | - | anyone | - | - |
 | defer | change request | open | deferred | * | - | planner+holder / deciding / user | - | - |
 | undefer | change request | deferred | open | - | - | deferrer | - | - |
@@ -126,6 +127,7 @@ Printed by `model_tables()`; the test compares this block with it exactly. `Held
 | deferrer | the deferrer's side (a user's deferral, or one without a deferrer: the user or a deciding session) |
 | holding | the session holding it |
 | unheld | while it is unheld |
+| mover | a lead or solo session (not autopilot: the unattended protocol never accepts, rejects or returns) |
 <!-- /model-tables -->
 
 Guards: `reason` (a non-blank reason), `items-closed` (no open item), `look-before` (only a look-before CR passes without agent review), `not-open-for-review` (end the user's review first), `not-superseded` (a superseded ruling is put back by a revision record).
@@ -136,19 +138,19 @@ The table's `Who` column is the authority; this is its shape. Item writes (close
 
 - A session claims, hands over and unclaims its work. Its workers hold under its actor. Deciding sessions are `lead`, `solo` and `autopilot` (`DECIDING_ROLES`).
 - Review claim, pass and Return need a session that did not author the CR; every claim path refuses self-review.
-- Accept (landing a `passed` look-before CR), the user's Return, ratifying, releasing rulings, accepting a milestone and resolving a gate: a deciding session with the user, or the user.
+- Accept (landing a `passed` look-before CR), the user's Return, sending a passed CR back to review and rejecting a CR (the `mover` word: a lead or solo session, or the user; landing itself is `anyone` in the table, its command is the gate), ratifying, releasing rulings, accepting a milestone and resolving a gate: a deciding session with the user, or the user.
 - Taking or freeing another session's hold: the user, or a deciding session once the holder is gone (`--agreed` records the user's word).
-- Planner Return on a ruling, move, split, defer and undefer of its own deferrals: a session pulling plan. Undeferring a user's deferral needs the user, through a deciding session.
+- Planner Return on a ruling, and defer and undefer of its own deferrals: a session pulling plan. (`move` needs the holder of the CR, the user or a deciding session.) Undeferring a user's deferral needs the user, through a deciding session.
 - The writes to an item of a CR nobody holds come only from the user or a deciding session; any other session claims the CR first.
 - Exceptions the table does not carry: autopilot never accepts or ratifies (acceptance needs the user; the unattended protocol owns it) and runs the agent rows unattended; `setup` and `check --fix` write on a board without the marker.
 
 ## Holding
 
 - The holder field, written by compare-and-set (`update --assignee <actor> --if-assignee ''`, in `move`). Status never says who works. The holder is always a session's actor; a user step is a human gate.
-- Holdable: CRs, tasks and decisions (a round holds its questions). Items are not holdable: holding the CR holds its items.
+- Holdable: CRs, tasks, decisions and milestones (a round holds its questions). Items are not holdable: holding the CR holds its items.
 - CR metadata `hold` says how it is held: `work` (the holder works it in its worktree) or `plan` (a planner holds it without a worktree). `claim` writes it and every release clears it; an implement claim of a plan-held CR turns it into work, with a worktree and setup as a fresh claim.
 - A session registers a role and pulls (`plan`, `implement`, `review`; no design pull: review runs as its own pull, so sessions on different models split implement and review). Its workers hold under its actor. Liveness decides whether a hold is gone: stale holds are flagged, freeing follows Authority.
-- Closing takes the record by holder compare-and-set (a no-op holder write), then `bd close` with its reason, so bd's close validation keeps running. A refused close leaves the record open and without an outcome.
+- A close is one compare-and-set write of status `closed`, the outcome and the holder (a closer takes a record another actor holds, which `bd close` requires; no `--force` for that), checked against the status and holder just read; bd validates the close in that write (open children, blockers). `bd close` then only records the reason (which bd wants at 20 or more characters, so `board` refuses a shorter one before writing). A refused close writes nothing. The exception is a forced close (landing, `cr reject`, `gate resolve`, a question answered past its blockers): bd cannot combine `--force` with a compare-and-set, so it writes the no-op holder guard with the outcome, then `bd close --force`, and two such closers can both pass the guard in that window; bd keeps the later reason. The closed record keeps the closer as its assignee, which is history, not a hold.
 - The worker cap (3, or `agents session activate --workers <n>`, lowered by Codex's thread limits) counts the open tasks one actor holds; `claim --force "<reason>"` goes past it and the hold shows `FORCED: <reason>` (metadata `forced_hold_by`, `forced_hold`). A bare claim at the cap passes such an item and names the command. A held task with no update for an hour is `STALE`. An unregistered session has no cap; one whose registration exists but is unreadable is refused until it registers again.
 
 ## Waits
@@ -174,7 +176,7 @@ One relation, written on the waiter, with a short "for" (content): "X waits on Y
 
 - `deferred` = set aside, blocked by nothing, off the queue: someday or maybe, no condition. Only an explicit `undefer` reopens it.
 - Applies to CRs, tasks and questions. To set one item aside, move it into its own CR first.
-- A condition on another record or event is a wait; `defer` with a condition is refused, naming `wait`.
+- A condition on another record or event is a wait, not a deferral: `defer` takes no condition. `defer` refuses an item that live items wait on (they would hang), naming the fix.
 - A deferral records who deferred (`deferred_by`: `user`, or the planning session's actor) and an optional `revisit` day (a board field; not bd's `defer_until`, so bd never wakes it). Due is derived at read (revisit <= today): a due user deferral shows in the user's view, a due planner deferral as plan work. It stays deferred until undeferred: parked work never starts unasked. Only the deferrer's side undefers. `defer --until` sets the day.
 
 ## Relations and fields
@@ -241,7 +243,7 @@ Only board's own mark, `.beads/board-shared.json`, makes a board shared, so a bo
 
 ### Queue, watch and ruling verbs
 
-`agents board watch` blocks until a bare `claim` would have a candidate (polls every 60 s, exits 3 at the timeout and 1 when the session's registration is gone) and claims nothing; run it in the shell tool's background mode. `create --type decision` (also a plan holding a decision) and `ruling revise` hold items up by waits, however made: `--holds <id>[,<id>…]`, `--deps blocks:<id>`, a plan's edges; a decision with none needs `--holds none`. `ruling release <ids> --closes <question>=<record>` releases the decided rulings, then closes the answered questions in dependency order; any other open blocker leaves the question open (exit 1). `ruling record --replaces` supersedes the old ruling when the new one comes into force. `position` and `holders` print `holds a/b` (`a` stops at a milestone, `b` counts everything downstream). The unlock rank in the CR queue uses the complete dependency graph even in a scoped queue.
+`agents board watch` blocks until a bare `claim` would have a candidate (polls every 60 s, exits 3 at the timeout and 1 when the session's registration is gone) and claims nothing; run it in the shell tool's background mode. `create --type decision` (also a plan holding a decision) and `ruling revise` hold items up by waits, however made: `--holds <id>[,<id>…]` or a plan's edges (`--deps` refuses the word `blocks`); a decision with none needs `--holds none`. `ruling release <ids> --closes <question>=<record>` releases the decided rulings, then closes the answered questions in dependency order; any other open blocker leaves the question open (exit 1). `ruling record --replaces` supersedes the old ruling when the new one comes into force. `position` and `holders` print `holds a/b` (`a` stops at a milestone, `b` counts everything downstream). The unlock rank in the CR queue uses the complete dependency graph even in a scoped queue.
 
 ### Review and landing
 

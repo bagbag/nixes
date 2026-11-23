@@ -105,7 +105,7 @@ report to the session. It does not hand over, rebase or land.
   consequence on the CR.
 - The retry limit: follow it, recording in the CR's `notes`.
 
-Questions hold the affected items (`agents board wait <item> --on <question>`). Continue the rest; before handover, unclaim the CR or ask the planner to move the waiting item.
+Questions hold the affected items (`agents board wait <item> --on <question>`). Continue the rest; before handover, unclaim the CR (`--resume "<next action>"`) or ask the planner to move the waiting item.
 A failed setup: fix it or raise the blocker as a question, then claim the CR
 again to rerun setup.
 

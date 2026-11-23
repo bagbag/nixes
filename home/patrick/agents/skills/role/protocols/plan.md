@@ -88,8 +88,9 @@ item set (`agents board create --graph`) to a `plan` worker ([Cut work](#cut-wor
    items, briefs, dependencies and active workers whose premise changed. Refresh questions written against
    the superseded state. Repoint duplicate dependents to the keeper before
    `agents board bd --raw --yes duplicate <duplicate> --of <keeper>`.
-4. Undefer items the ruling resolves; clear superseded authority and resolve
-   the gates it covers.
+4. Undefer items the ruling resolves (a planning session undefers its own
+   deferrals; a user's deferral and the gates it covers wait for a deciding
+   session or the user); clear superseded authority.
 5. Close: `agents board close <id> --reason "planned in <ids>"`.
 
 ## Frame
@@ -266,7 +267,7 @@ end state for missing general mechanisms, asymmetric cases, duplicate owners,
 silent failures, dead weight and doc drift; name the next executable outcome
 and blockers. When the next run is set or changes, defer each open CR or task
 of the outcome it does not need (a someday: `agents board defer`), undefer the
-deferred ones it needs, and list both in the report. List the ready milestones
+deferred ones it needs (a user's deferral needs a deciding session or the user), and list both in the report. List the ready milestones
 `agents board position` shows, for the user's acceptance
 ([Milestones](../../shared/board-coordination.md#milestones)). Bring
 material changes to the decider before dependent dispatch. End rethinking
