@@ -3004,11 +3004,11 @@ def validate_board(root: Path) -> None:
                 raise ValueError(f"board wait did not refuse an unregistered session ({code}): {refusal}")
             # Its own hand-over is no candidate for wait either, and another session's is.
             only_handed = {issue["title"]: {"status": "closed"} for issue in fixture if issue["title"] != "CR design"}
-            own = {"status": "in_review", "comments": [{"author": worker, "text": "board handover: done", "created_at": "2026-10-22T15:00:00Z"}]}
+            own = {"status": "in_review", "metadata": {"author": worker}}
             code, found, _ = invoke(["wait", "--timeout", "0"], Fake(variant(**only_handed, **{"CR design": own})), worker)
             if code != 3:
                 raise ValueError(f"board wait offered the caller's own hand-over ({code}): {found}")
-            code, found, _ = invoke(["wait", "--timeout", "0"], Fake(variant(**only_handed, **{"CR design": {"status": "in_review"}})), worker)
+            code, found, _ = invoke(["wait", "--timeout", "0"], Fake(variant(**only_handed, **{"CR design": {"status": "in_review", "metadata": {"author": "zzzz9999"}}})), worker)
             if code != 0 or f"claimable: {ids['CR design']} " not in found:
                 raise ValueError(f"board wait did not offer another session's hand-over ({code}): {found}")
             fake = Fake(variant(**no_plan))  # copies: the poll below edits its issues
@@ -5144,17 +5144,19 @@ def validate_board(root: Path) -> None:
             fake = Fake(fixture)
             invoke(["unclaim", ids["Held task"], "--resume", "rerun the probe"], fake, "aaaa1111")
             writes = fake.writes()
-            if writes[0][:2] != ["update", ids["Held task"]] or writes[2] != ["comments", "add", ids["Held task"], board.RESUME + "rerun the probe"]:
+            if writes[0][:2] != ["update", ids["Held task"]] or "--set-metadata" not in writes[0] or "resume=rerun the probe" not in writes[0] \
+                    or writes[2] != ["comments", "add", ids["Held task"], board.RESUME + "rerun the probe"]:
                 raise ValueError(f"board unclaim --resume: {writes}")
+            # The next claim prints the note from the field and clears it.
+            noted = variant(**{"Held task": {"assignee": None, "metadata": {"no_commit": True, "resume": "rerun the probe"}}})
+            fake = Fake(noted)
+            code, output, errors = invoke(["claim", ids["Held task"]], fake, "aaaa1111")
+            if code or "resume: rerun the probe" not in output or not any("--unset-metadata" in w and "resume" in w for w in fake.writes()):
+                raise ValueError(f"board claim must print the resume note and clear it: {code} {output} {errors} {fake.writes()}")
             fake = Fake(fixture)
             code, _, errors = invoke(["unclaim", ids["Held task"], "--resume", "x"], fake, "lead0001")
             if code != 1 or fake.writes():
                 raise ValueError(f"--resume must refuse another session's hold: {fake.writes()}\n{errors}")
-            resumed = types.SimpleNamespace(hydrate=lambda ids: None, by_id={"fx-r": {"comments": [{"text": board.RESUME + "old"}, {"text": "note"},
-                                                                                             {"text": board.RESUME + "rerun the probe"}]},
-                                                                       "fx-h": {"comments": [{"text": board.RESUME + "old"}, {"text": "board handover: done"}]}})
-            if board.last_resume(resumed, "fx-r") != "rerun the probe" or board.last_resume(resumed, "fx-h") is not None:
-                raise ValueError("board claim must show the latest next action, and none after a later hand-over")
 
             # handover (change request): the holding session only; refuses open items, uncommitted changes and failing checks; then a
             # compare-and-set to in_review at its stage, the stage metadata and the evidence comment.
@@ -5284,7 +5286,7 @@ def validate_board(root: Path) -> None:
                          "dependencies": [{"issue_id": "fx-ovo.c1.d", "depends_on_id": "fx-ovo.c1", "type": "parent-child"}]}
                 if affected:
                     child["dependencies"].append({"issue_id": child["id"], "depends_on_id": ruling_id, "type": "blocks"})
-                rows = variant(**{"CR ready": {"status": status, "assignee": holder, "metadata": {}},
+                rows = variant(**{"CR ready": {"status": status, "assignee": holder, "metadata": {"author": "zzzz9999"}},
                                   "Released ruling": {"status": "released" if released else "decided", "assignee": ruling_holder}})
                 return [*rows, child]
 
@@ -6506,16 +6508,28 @@ def validate_board(root: Path) -> None:
                 if code != 1 or "no tip is recorded as seen" not in errors or "review_tip=" in flat.replace("reviewing_tip=", "") or "reviewing_tip=" not in flat:
                     raise ValueError(f"(a): a pass with no recorded tip must be refused once, the tip stored as seen: {code} {errors}\n{fake.writes()}")
                 issues[0].update(status="in_review", assignee=None)
+                issues[0]["metadata"]["author"] = "cccc3333"
                 fake = Fake(issues)
                 invoke(["take", "a1"], fake, "lead0001")
                 if not any("--unset-metadata" in w and "reviewing_tip" in w for w in fake.writes()):
                     raise ValueError(f"(a): a taken-over review must start without a seen tip: {fake.writes()}")
                 # Independence: the session that handed a CR over cannot take its review; another session can.
-                issues[0]["comments"] = [{"author": "cccc3333", "text": "board handover: done", "created_at": "2026-10-22T15:00:00Z"}]
                 fake = Fake(issues)
                 code, _, errors = invoke(["take", "a1"], fake, "cccc3333")
                 if code != 1 or "your own hand-over" not in errors or fake.writes():
                     raise ValueError(f"take of the author's own review must be refused: {code} {errors} {fake.writes()}")
+                # Every claim path refuses the author's own review: bare, by id and take; a hand-over with no recorded author fails closed.
+                for argv in (["claim"], ["claim", "a1"]):
+                    fake = Fake(issues)
+                    code, output, errors = invoke(argv, fake, "cccc3333")
+                    if any(w[:2] == ["update", "a1"] for w in fake.writes()) or (argv[1:] and "your own hand-over" not in errors):
+                        raise ValueError(f"{argv} must not give the author its own review: {code} {output} {errors} {fake.writes()}")
+                unrecorded = [{**issues[0], "metadata": {k: v for k, v in issues[0]["metadata"].items() if k != "author"}}]
+                for argv in (["claim", "a1"], ["take", "a1"]):
+                    fake = Fake(unrecorded)
+                    code, _, errors = invoke(argv, fake, "solo0001")
+                    if code != 1 or fake.writes() or "no author is recorded" not in errors:
+                        raise ValueError(f"{argv} must fail closed on a review whose author is not recorded: {code} {errors} {fake.writes()}")
                 fake = Fake(issues)
                 if invoke(["take", "a1"], fake, "solo0001")[0] != 0 or not fake.writes():
                     raise ValueError("another session must be able to take the review")
@@ -7743,12 +7757,12 @@ def validate_board(root: Path) -> None:
             raise ValueError("a refused workers call changed the session's worker cap")
         # Writes: the line follows them, without the items the command named or claimed (the snapshot predates them).
         held = [{**issue, "status": "in_review", "assignee": "cdx00001", "metadata": {}} if issue["id"] == "fx-ovo.c1"
-                else {**issue, "status": "in_review", "assignee": None, "metadata": {}} if issue["id"] == "fx-ovo.c2" else issue
+                else {**issue, "status": "in_review", "assignee": None, "metadata": {"author": "zzzz9999"}} if issue["id"] == "fx-ovo.c2" else issue
                 for issue in fixture]
         if capacity_of(["return", "fx-ovo.c1", "done"], "cdx00001", held) != \
                 "capacity: 0 of 4 workers active in the last 15 min; ready for your pulls: implement 1, review 1 → refill (plan Dispatch)":
             raise ValueError(f"board return capacity line: {invoke(['return', 'fx-ovo.c1', 'done'], Fake(held), 'cdx00001', now=real_now)}")
-        fake = Fake([{**issue, "status": "in_review", "assignee": None, "metadata": {}} if issue["id"] == "fx-ovo.c2" else issue for issue in fixture])
+        fake = Fake([{**issue, "status": "in_review", "assignee": None, "metadata": {"author": "zzzz9999"}} if issue["id"] == "fx-ovo.c2" else issue for issue in fixture])
         _, out, _ = invoke(["claim"], fake, "cdx00001", now=real_now)
         taken = next(args[1] for args in fake.writes() if args[0] == "update")
         if taken != "fx-ovo.c2" or out.rstrip("\n").splitlines()[-1] != "capacity: 0 of 4 workers active in the last 15 min; " \
@@ -7890,8 +7904,17 @@ else:
         files["dec.json"].write_text(json.dumps({"nodes": [{"key": "d", "title": "D", "description": "d", "type": "decision"}]}), encoding="utf-8")
         files["meta.json"] = Path(repo, "meta.json")
         files["meta.json"].write_text(json.dumps({"nodes": [{"key": "m", "title": "M", "description": "d", "metadata": {"no_commit": "1"}}]}), encoding="utf-8")
+        # create cannot set a status or a holder: a node field the board does not give is refused, and an item is not created closed or deferred.
+        for name, field, value in (("status.json", "status", "in_progress"), ("closed.json", "status", "closed"), ("holder.json", "assignee", "lead0001")):
+            files[name] = Path(repo, name)
+            files[name].write_text(json.dumps({"nodes": [{"key": "a", "title": "A", "description": "d", field: value}]}), encoding="utf-8")
+        a_closed = Path(repo, "deferred.json")
+        a_closed.write_text(json.dumps({"nodes": [{"key": "a", "title": "A", "description": "d", "status": "deferred"}]}), encoding="utf-8")
+        files["deferred.json"] = a_closed
         for path, needle in ((files["bad.json"], "is not a board type"), (files["look.json"], "project default"), (files["dec.json"], "names what it holds up"),
-                             (files["meta.json"], "unknown field metadata")):
+                             (files["meta.json"], "unknown field metadata"), (files["status.json"], "unknown field status"),
+                             (files["closed.json"], "unknown field status"), (files["deferred.json"], "unknown field status"),
+                             (files["holder.json"], "unknown field assignee")):
             result, calls = run_fake("create", "--graph", str(path))
             if result.returncode == 0 or needle not in result.stderr or writes_of(calls, "create"):
                 raise ValueError(f"board create --graph {path.name} must be refused ({needle}): {result.returncode} {result.stderr!r}")

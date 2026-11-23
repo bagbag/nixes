@@ -2912,31 +2912,25 @@ REVISIT = 'revisit'  # metadata of a deferred record: a day (YYYY-MM-DD) from wh
 HOLD = 'hold'  # change-request metadata: 'work' while the holder works it in its worktree, 'plan' while a planner holds it (claim writes it, every release clears it)
 
 
-def authorship(board: Board, issue: dict) -> tuple[str | None, str | None]:
-    """(author, legacy holder): who handed the item over, from its handover comment,
-    else bd's status history; a hand-over by a pre-actor holder (goal-agent) is legacy."""
-    legacy = None
-    board.hydrate(i['id'] for i in board.issues if i['status'] == 'in_review')  # a status read carries no comments
-    for note in sorted(issue.get('comments') or [], key=lambda c: c.get('created_at') or '', reverse=True):
-        if (note.get('text') or '').startswith(HANDOVER):
-            if ACTOR.fullmatch(note.get('author') or ''):
-                return note['author'], None
-            legacy = legacy or note.get('author')
-    for event in json.loads(bd_checked('history', issue['id'], '--events', '--json') or '[]'):
-        try:
-            status = json.loads(event.get('new_value') or '{}').get('status')
-        except (ValueError, AttributeError):
-            continue
-        if event.get('event_type') == 'status_changed' and status == 'in_review':
-            if ACTOR.fullmatch(event.get('actor') or ''):
-                return event['actor'], None
-            legacy = legacy or event.get('actor')
-    return None, legacy
+AUTHOR = 'author'  # metadata: the actor that handed the change request over, written by the hand-over (no rule reads a comment)
+RESUME_NOTE = 'resume'  # metadata: the next action of work handed back unfinished; the next claim prints and clears it
 
 
-def author_label(board: Board, issue: dict) -> str:
-    actor, legacy = authorship(board, issue)
-    return f'author {actor}' if actor else f'author unknown ({legacy})' if legacy else 'standalone'
+def self_review_refusal(issue: dict, actor: str) -> str | None:
+    """Why this session may not review the change request in review: it handed it over, or no hand-over recorded who did (fails closed)."""
+    if issue['status'] != 'in_review':
+        return None
+    author = meta(issue).get(AUTHOR)
+    if not author:
+        return f"{issue['id']}: no author is recorded for its hand-over, so its independence cannot be shown: /board-migrate records it"
+    if session_actor(author) == session_actor(actor):
+        return f"{issue['id']}: your own hand-over needs another reviewer"
+    return None
+
+
+def author_label(issue: dict) -> str:
+    author = meta(issue).get(AUTHOR)
+    return f'author {author}' if author else 'author unknown'
 
 
 NO_COMMIT = 'no_commit'  # a work item that by design commits nothing to this repository (a run, an external step): it needs no CR. Stored as
@@ -3261,8 +3255,7 @@ def claim_candidates(board: Board, scoped: list[dict], kinds: tuple[str, ...], a
     """What a bare claim tries, in claim order: claimable in the session's kinds, minus its own hand-overs (lazily, the
     authorship lookup reads history) and open work past the worker cap, which a named claim refuses too (noted in `passed`)."""
     for issue in sorted((i for i in scoped if board.claimable(i) in kinds), key=lambda i: claim_order(board, i)):
-        if issue['status'] == 'in_review' and board.claimable(issue) == 'review' and (author := authorship(board, issue)[0]) \
-                and session_actor(author) == session_actor(actor):
+        if board.claimable(issue) == 'review' and self_review_refusal(issue, actor):
             continue  # your own hand-over needs another reviewer
         if is_work_hold(issue) and issue['status'] == 'open' and (over := cap_refusal(board, entry, actor, [])):
             if passed is not None:
@@ -3395,14 +3388,15 @@ def claim(board: Board, args) -> int:
     args.claimed = [issue['id'] for issue in claimed]
     for issue in claimed:
         kind = issue.get('claim_kind') or board.kind(issue) or issue.get('issue_type')
-        by = f'; {author_label(board, issue)}' if issue['status'] == 'in_review' and kind == 'review' else ''
+        by = f'; {author_label(issue)}' if issue['status'] == 'in_review' and kind == 'review' else ''
         inherited = effective_priority(board, issue)
         counts_as = f"; P{issue.get('priority', 9)}, counts as P{inherited[0]}: {'its item' if inherited[2] else 'blocks'} {inherited[1]}" if inherited[1] else ''
         print(f"claimed {issue['id']} ({kind}{by}{counts_as}): {issue.get('title', '')}")
         if kind == 'refresh':
             print(f"  refresh work: agents board cr refresh {issue['id']}, then agents board unclaim {issue['id']}")
-        if resume := last_resume(board, issue['id']):
+        if resume := meta(issue).get(RESUME_NOTE):
             print(f'  resume: {resume}')
+            put_meta(issue, **{RESUME_NOTE: None})  # printed once
         for blocker in board.foreign_waits(issue):  # a released ruling waits for planning only (r21-q139): the plan session removes it
             print(f"  fix: {issue['id']} waits on {blocker}, which is work and not planning; check what the ruling changes there, "
                   f"then {dep_fix(issue['id'], blocker)}")
@@ -3489,9 +3483,8 @@ def take(board: Board, args) -> int:
         refusal = item_hold_refusal(board, issue) or foreign_claim(board, issue['id']) or elsewhere_refusal(board, issue, 'take', args.agreed)
         if refusal:
             raise BoardError(refusal)
-        if board.is_cr(issue['id']) and issue['status'] == 'in_review' and (author := authorship(board, issue)[0]) \
-                and session_actor(author) == session_actor(actor):
-            raise BoardError(f"{issue['id']}: your own hand-over needs another reviewer")
+        if board.is_cr(issue['id']) and (refusal := self_review_refusal(issue, actor)):
+            raise BoardError(refusal)
         previous = issue.get('assignee') or 'nobody'
         if previous == actor:
             print(f"{issue['id']}: already held by {actor}")
@@ -3512,7 +3505,7 @@ def take(board: Board, args) -> int:
     return 1 if failed else 0
 
 
-RESUME = 'board unclaim: resume: '  # the next action of work handed back unfinished; board claim prints the latest
+RESUME = 'board unclaim: resume: '  # the comment that records a hand-back in the history
 
 
 def unclaim(board: Board, args) -> int:
@@ -3539,7 +3532,7 @@ def unclaim(board: Board, args) -> int:
             failed = True
             continue
         reason = f"board unclaim: {actor} released {holder}'s hold" + (f' (agreed: {args.agreed})' if args.agreed else '') + '.'
-        move(issue, 'unclaim', actor=actor)  # the status stays for the next claimer; a change request keeps its worktree and branch
+        move(issue, 'unclaim', actor=actor, fields={RESUME_NOTE: args.resume} if args.resume else None)  # the status stays for the next claimer; a change request keeps its worktree and branch
         comment(issue['id'], reason)
         if board.is_cr(issue['id']) and issue['status'] == 'open':
             try:
@@ -3548,22 +3541,10 @@ def unclaim(board: Board, args) -> int:
                     print(f"{issue['id']}: uncommitted work stays in {wt} for whoever claims it next", file=sys.stderr)
             except BoardError:
                 pass
-        if args.resume:  # after the release: a failed one leaves no next action behind
+        if args.resume:
             comment(issue['id'], RESUME + args.resume)
         print(f"unclaimed {issue['id']} from {holder} ({issue['status']})")
     return 1 if failed else 0
-
-
-def last_resume(board: Board, item_id: str) -> str | None:
-    """The next action the latest unfinished hand-back left, unless a hand-over, return or block came after it."""
-    board.hydrate([item_id])
-    for entry in reversed(board.by_id[item_id].get('comments') or []):
-        text = entry.get('text') or ''
-        if text.startswith(RESUME):
-            return text[len(RESUME):]
-        if text.startswith(('board handover', 'board return', 'board block', 'Blocked by ')):
-            return None
-    return None
 
 
 def held(board: Board, item_id: str, actor: str, status: str | None = None) -> dict:
@@ -4089,7 +4070,7 @@ OPENED = 'opened_tip'  # metadata of an item open for the user's review: the tip
 BOARD_METADATA = {  # every metadata key the board writes, the one list (a test compares it with the writes); board check flags any other
     NO_COMMIT, *CR_SETTINGS, HOLD, DEEP_REVIEW, FORCED_BY, FORCED_REASON, SENT_AT, REVISES_RULE, OPENED, DEFERRED_BY, REVISIT, 'outcome',
     'base', 'base_sha', 'setup_sha', 'since', 'landing', 'replan', 'rebase_from', 'rebase_onto', 'review_tip', 'review_base_tip',
-    'reviewing_tip', 'review_edits', 'user_seen_tip', 'user_seen_base_tip', 'no_agent_review_reason',
+    'reviewing_tip', 'review_edits', AUTHOR, RESUME_NOTE, 'user_seen_tip', 'user_seen_base_tip', 'no_agent_review_reason',
     'check_at', 'check_base_count', 'check_base_tip', 'check_command', 'check_kind', 'check_new', 'check_output', 'check_reason',
     'check_result', 'check_tip', 'check_tip_count'}
 BOARD_REMOTE = 'board'  # the remote the board makes so VS Code shows the request as Outgoing Changes; its push address is disabled
@@ -4760,6 +4741,8 @@ def claim_cr(board: Board, cr: dict, actor: str, kind: str) -> tuple[bool, str]:
     cid = cr['id']
     if kind == 'plan':
         return claim_one(cr, actor, {HOLD: 'plan', **({'replan': None} if meta(cr).get('replan') else {})})
+    if kind == 'review' and (refusal := self_review_refusal(cr, actor)):
+        return False, refusal
     main = main_root()
     if kind != 'accept':  # only a deciding session's accept claim takes an item open for the user's review
         refuse_open(cid, cr, f'a {kind} claim')
@@ -5012,12 +4995,12 @@ def handover(board: Board, args) -> None:
         raise BoardError(f"{args.id}: {said}; nothing was recorded. Review the change, then pass again:\n{shown.rstrip() or '(nothing to show)'}")
     if author:
         if no_agent_reason is not None:
-            pass_to_user(cr, 'handover --no-agent-review', no_agent_review_reason=no_agent_reason, reviewing_tip=None, hold=None)
+            pass_to_user(cr, 'handover --no-agent-review', no_agent_review_reason=no_agent_reason, reviewing_tip=None, hold=None, author=actor)
             comment(args.id, HANDOVER + args.evidence)
             comment(args.id, f'no agent review: {no_agent_reason}')
             print(f'handed over {args.id} to your Accept without agent review: {no_agent_reason}')
             return
-        move(cr, 'handover', fields={'no_agent_review_reason': None, 'reviewing_tip': None, HOLD: None})
+        move(cr, 'handover', fields={'no_agent_review_reason': None, 'reviewing_tip': None, HOLD: None, AUTHOR: actor})
         comment(args.id, HANDOVER + args.evidence)
         print(f'handed over {args.id} for review ({check_said(args)} on {result["tip"][:12]})')
         return
