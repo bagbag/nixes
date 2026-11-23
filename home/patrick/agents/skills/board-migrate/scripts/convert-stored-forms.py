@@ -96,7 +96,7 @@ class Board:
         return False
 
     def reaches(self, start: str, goal: str) -> bool:
-        """Whether `start` waits, through live waits, on `goal`: a wait of `goal` on `start` would close a cycle."""
+        """Whether `start` depends on `goal` through waits or parenthood: a wait of `goal` on `start` would close a cycle bd refuses."""
         seen, todo = set(), [start]
         while todo:
             node = todo.pop()
@@ -105,7 +105,7 @@ class Board:
             if node in seen or node not in self.issues:
                 continue
             seen.add(node)
-            todo += [target for target, kind in edges(self.issues[node]) if kind == 'blocks' and self.issues.get(target, {}).get('status') != 'closed']
+            todo += [target for target, kind in edges(self.issues[node]) if kind in ('blocks', 'parent-child')]  # bd's cycle check follows both, whatever the status
         return False
 
     def live(self) -> list[dict]:
@@ -457,7 +457,28 @@ def regate(old: dict, title: str) -> None:
     write('close', item_id, '--force', '--reason', f'board-migrate: replaced by the human gate {gate}')
 
 
-PHASES = (kinds, statuses, epics, deferrals, files, holds, authors, dates, outcomes, links, ratifications, human_gates)  # kinds first: an item is a task in a change request
+def rulings(b: Board, left: list[str]) -> list[Step]:
+    """An in-force ruling waits only for its planning, a question not yet in force or a human gate: its waits on work go, each named in a comment."""
+    steps = []
+    for ruling in b.live():
+        if ruling.get('issue_type') != 'decision' or ruling['status'] != 'in_force':
+            continue
+        for target, kind in edges(ruling):
+            other = b.issues.get(target)
+            if kind != 'blocks' or other is None or other['status'] == 'closed':
+                continue
+            planning = (other.get('issue_type') == 'gate' and other.get('await_type') == 'human') or (other.get('issue_type') == 'decision' and other['status'] in ('open', 'decided'))
+            if planning:
+                continue
+
+            def drop(r=ruling['id'], t=target, title=other.get('title', '')) -> None:
+                write('comments', 'add', r, f'board-migrate: removed the wait on {t} ({title}): an in-force ruling does not wait on work; re-add it as a gate if it still matters')
+                write('batch', '-m', f'board-migrate {r}', '--json', stdin=f'dep remove {r} {t}\n')
+            steps.append((f'{ruling["id"]}: an in-force ruling no longer waits on {target}', drop))
+    return steps
+
+
+PHASES = (kinds, statuses, epics, deferrals, files, holds, authors, dates, outcomes, links, ratifications, human_gates, rulings)  # kinds first: an item is a task in a change request
 
 
 def check_status_custom() -> None:
@@ -487,7 +508,7 @@ def run(apply: bool) -> tuple[int, list[str]]:
                 try:
                     step()
                 except Stop as error:
-                    FAILED[what] = str(error).splitlines()[0][:300]
+                    FAILED[what] = 'bd refused it: the wait would form a cycle' if 'cycle' in str(error) else str(error).splitlines()[0][:300]
                     print(f'  not converted: {FAILED[what]}')
                     continue
             found += 1
@@ -502,7 +523,8 @@ def rehearse() -> int:
     exported = read('bd', 'export')
     setting = lambda key: json.loads(read('bd', 'config', 'get', '--json', key) or '{}').get('value') or ''
     prefix, carried = setting('issue_prefix'), {name: setting(f'custom.board.{name}') for name in ('target', 'setup', 'checks', 'look', 'view')}
-    env = {key: value for key, value in os.environ.items() if key not in ('BEADS_DIR', 'BEADS_DB')}  # the copy must never be this board
+    env = {key: value for key, value in os.environ.items()  # the copy must never be this board, and it is worked as a person's (check --fix is planning's)
+           if key not in ('BEADS_DIR', 'BEADS_DB', 'BEADS_ACTOR', 'CODEX_SESSION_ID', 'CODEX_THREAD_ID', 'CLAUDE_CODE_SESSION_ID')}
     here = Path(__file__).resolve()
     checkpoints = here.with_name('convert-design-checkpoints.py')
     rows = [json.loads(line) for line in exported.splitlines() if line.strip()]
@@ -547,6 +569,7 @@ def rehearse() -> int:
                 mapping.write_text(json.dumps(approved), encoding='utf-8')
                 detail['checkpoint conversion'] = run(sys.executable, '-B', str(checkpoints), 'apply', str(mapping), '--apply', '--copy')
                 detail['checkpoint verify'] = run(sys.executable, '-B', str(checkpoints), 'verify')
+            detail['check --fix'] = run(str(BOARD), 'check', '--fix', '--limit', '0')
             detail['check'] = run(str(BOARD), 'check', '--limit', '0')
             detail['mark'] = run(sys.executable, '-B', str(here), '--mark')
             found = json.loads(run(str(BOARD), 'check', '--json').stdout or '{}').get('deviations') or []

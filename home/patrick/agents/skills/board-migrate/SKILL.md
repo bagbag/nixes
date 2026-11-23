@@ -108,8 +108,8 @@ one.
 3. **Preview.** To see the whole outcome first, run `python3 -u
    <scripts>/convert-stored-forms.py --rehearse` (a large board takes many
    minutes): it imports this board's export into a temporary board and takes
-   the copy through setup, the conversion, the checkpoint conversion, `check`
-   and a mark. It prints a summary first (conversions per kind, deviations
+   the copy through steps 2 to 6 below as a person works them (setup, the
+   conversion, the checkpoint conversion, `check --fix`, `check`, the mark). It prints a summary first (conversions per kind, deviations
    per class, what blocks the mark, the `for the user:` lines), then each
    step's log. This board is only read. The copy has the branches this
    checkout has for live change requests, and a worktree for each that has one. Then
@@ -141,6 +141,8 @@ one.
    - closed decisions get `superseded` (a supersedes link), `planned` (the
      close reason starts "planned in") or `dropped`; closed gates `resolved`,
      closed milestones `accepted`; an open record carries no outcome;
+   - an in-force ruling's waits on work are removed, each named in a comment
+     on the ruling (it waits only for its planning);
    - an open epic's children get its topic label and the epic closes;
    - an open design or landing ratification becomes an open question for the
      user, the old record closed as dropped;
