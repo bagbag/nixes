@@ -4,6 +4,7 @@
     convert-stored-forms.py            dry run: every change, and every form left for the user
     convert-stored-forms.py --apply    write the changes; it ends by planning again and exits 0 only when nothing is left to convert
     convert-stored-forms.py --mark     with nothing left to convert and `agents board check` clean: write the model marker
+    convert-stored-forms.py --rehearse run the whole conversion on a copy of this board's export in a temporary board; this board is only read
 
 Every write is a raw bd write, because the board's own write verbs refuse a board without the marker. A rerun finds
 what is left, so an interruption needs no cleanup.
@@ -12,9 +13,12 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
+import shutil
 import subprocess
 import sys
+import tempfile
 from datetime import datetime
 from pathlib import Path
 from typing import Callable
@@ -138,11 +142,26 @@ def statuses(b: Board, left: list[str]) -> list[Step]:
         elif status == 'released' and kind == 'decision':
             steps.append((f'{item_id}: released becomes in_force', update(item_id, '--status', 'in_force')))
         elif status == 'needs_ratification' and kind == 'decision':
-            steps.append((f'{item_id}: needs_ratification becomes decided', update(item_id, '--status', 'decided')))
-            left.append(f'{item_id}: a ruling that awaited ratification is now decided, recorded and not binding; release it with the user (agents board ruling release {item_id}) or revise it')
+            steps.append((f'{item_id}: needs_ratification becomes in_force, with a question to confirm or revise it', lambda issue=issue: confirm_ruling(b, issue)))
+            left.append(f'{item_id}: a ruling taken without your judgment stays in force; answer its "Confirm or revise" question')
         elif status == 'deferred' and b.is_item(issue):
             left.append(f'{item_id}: a deferred item of {b.cr_of(item_id)}; an item has no deferral: move it into its own change request (agents board move), then defer that, or drop it')
     return steps
+
+
+def confirm_ruling(b: Board, issue: dict) -> None:
+    """What `ruling record --unratified` writes: the ruling in force and an ordinary question that relates to it. The question goes first, so a rerun finds it."""
+    item_id = issue['id']
+    found = re.search(r'^##\s+Reversal\s*\n(.*?)(?=^##\s|\Z)', str(issue.get('description') or ''), re.MULTILINE | re.DOTALL | re.IGNORECASE)
+    reversal = found.group(1).strip() if found else 'Reversal: not recorded.'
+    question = next((i['id'] for i in b.live() if i.get('external_ref') == f'confirm:{item_id}'), None)
+    if question is None:
+        question = write('create', f'Confirm or revise: {issue.get("title", "")}?', '-t', 'decision', '-d', f'## Question\nConfirm ruling {item_id} or revise it?\n\n{reversal}\n',
+                         '--priority', str(issue.get('priority', 2)), '--external-ref', f'confirm:{item_id}', '--silent', *([] if b.parents.get(item_id) else shared_queue()),
+                         *(['--parent', b.parents[item_id][0]] if b.parents.get(item_id) else []),
+                         *(f'--labels={label}' for label in issue.get('labels') or [] if label.startswith('topic:'))).strip().splitlines()[-1]
+        write('batch', '-m', f'board-migrate {item_id}', '--json', stdin=f'dep add {question} {item_id} relates-to\n')
+    write('update', item_id, '--status', 'in_force', '--json')
 
 
 def authors(b: Board, left: list[str]) -> list[Step]:
@@ -391,6 +410,45 @@ def run(apply: bool) -> tuple[int, list[str]]:
     return found, list(dict.fromkeys(left))
 
 
+def rehearse() -> int:
+    """The export of this board, imported into a temporary board of its own, converted and checked there. Nothing of this board is written;
+    the copy has no branches or worktrees, so its cr-branch and cr-worktree findings and its checkpoint holds are the copy's, not the board's."""
+    exported = read('bd', 'export')
+    setting = lambda key: json.loads(read('bd', 'config', 'get', '--json', key) or '{}').get('value') or ''
+    prefix, carried = setting('issue_prefix'), {name: setting(f'custom.board.{name}') for name in ('target', 'setup', 'checks', 'look', 'view')}
+    env = {key: value for key, value in os.environ.items() if key not in ('BEADS_DIR', 'BEADS_DB')}  # the copy must never be this board
+    here = Path(__file__).resolve()
+    with tempfile.TemporaryDirectory(prefix='board-rehearsal-') as folder:
+        def run(*args: str, stdin: str | None = None) -> subprocess.CompletedProcess:
+            return subprocess.run(args, cwd=folder, input=stdin, capture_output=True, text=True, env=env)
+
+        def on_copy(*args: str, stdin: str | None = None) -> str:
+            result = run(str(BOARD), *args, stdin=stdin)
+            if result.returncode:
+                raise Stop(f"on the copy: board {' '.join(args)} failed: {(result.stderr or result.stdout).strip()}")
+            return result.stdout
+
+        for command in (['git', 'init', '-q', '-b', 'main'], ['git', '-c', 'user.name=rehearsal', '-c', 'user.email=rehearsal@example.invalid', 'commit', '-q', '--allow-empty', '-m', 'copy']):
+            run(*command)
+        on_copy('setup', '--embedded', *(['--prefix', prefix] if prefix else []))
+        current = json.loads(on_copy('bd', 'config', 'get', '--json', 'status.custom') or '{}').get('value') or ''
+        # the copy takes the old statuses too, then setup puts the current list back
+        on_copy('bd', '--raw', '--yes', 'config', 'set', 'status.custom', f'{current},released:active,needs_ratification:wip,needs_acceptance:wip')
+        for name, value in carried.items():
+            if value:
+                on_copy('bd', '--raw', '--yes', 'config', 'set', f'custom.board.{name}', value)
+        Path(folder, 'export.jsonl').write_text(exported, encoding='utf-8')
+        on_copy('bd', '--raw', '--yes', 'import', str(Path(folder, 'export.jsonl')))
+        on_copy('setup')
+        on_copy('bd', '--raw', '--yes', 'config', 'unset', MODEL_KEY)
+        print(f'rehearsal on a copy of {len(exported.splitlines())} export rows; this board is not written')
+        for title, command in (('conversion', [sys.executable, '-B', str(here), '--apply']), ('check', [str(BOARD), 'check', '--limit', '0']),
+                               ('checkpoints', [sys.executable, '-B', str(here.with_name('convert-design-checkpoints.py')), 'inventory'])):
+            result = run(*command)
+            print(f'--- {title} (exit {result.returncode})\n{(result.stdout + result.stderr).strip()}')
+    return 0
+
+
 def mark() -> int:
     found, left = run(False)
     if found:
@@ -415,11 +473,14 @@ def main() -> int:
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument('--apply', action='store_true', help='write the conversions')
     mode.add_argument('--mark', action='store_true', help='write the model marker once nothing is left and check is clean')
+    mode.add_argument('--rehearse', action='store_true', help='convert a copy of this board in a temporary board and report; writes nothing here')
     args = parser.parse_args()
     try:
         check_status_custom()
         if args.mark:
             return mark()
+        if args.rehearse:
+            return rehearse()
         found, left = run(args.apply)
         if args.apply:
             again, left = run(False)

@@ -81,7 +81,7 @@ Parts: [Model](#model), **Tracker** (Target through Exit), [Upgrade](#upgrade),
   "Ratify or revise the flagged rules of <id>?" naming the finding. Ask the user only migration-scope choices.
 - **One owner.** Write each rule into its owner under project-memory
   [Durable owners](../shared/project-memory.md#durable-owners); the board
-  keeps the decision record. Epic text holds no rules, status or history.
+  keeps the decision record. A milestone's text holds no rules, status or history.
 - **Plain text.** Write board text in plain sentences; rewrite shorthand or
   squashed text of live entries when migrating them. Leave decision records
   past decision time as written; Live or history and text rewrites skip them.
@@ -105,12 +105,19 @@ one.
 2. **Setup.** `agents board setup` brings the settings and the status list to
    the current model (decided, in_force, in_review, passed).
    Output: the settings it changed.
-3. **Preview.** `python3 <scripts>/convert-stored-forms.py` is a dry run: one
+3. **Preview.** To see the whole outcome first, run `python3
+   <scripts>/convert-stored-forms.py --rehearse`: it imports this board's
+   export into a temporary board, converts and checks that copy, and prints
+   the conversion log, the check and the checkpoint inventory; this board is
+   only read. The copy has no branches or worktrees, so its `cr-branch`
+   and `cr-worktree` findings and checkpoint holds belong to the copy. Then
+   `python3 <scripts>/convert-stored-forms.py` is a dry run on this board: one
    `would:` line per conversion, then the `for the user:` lines. Conversions:
    - statuses: `in_progress` open (a held change request keeps its holder, its
      hold is work), `needs_acceptance` passed with look before (a project that
      looks after would otherwise land it unasked), standalone `in_review` open,
-     `released` in_force, a ruling at `needs_ratification` decided;
+     `released` in_force, a ruling at `needs_ratification` in_force with a
+     question to confirm or revise it;
    - holds on items cleared (one held by the user is listed); legacy holders
      cleared;
    - types bug, design, feature, chore (kind `cleanup`) and spike become
@@ -135,10 +142,11 @@ one.
      waiters move to it; on a shared board it is `for:` the board's person.
    Output: the conversion count; the listed forms.
 4. **Convert.** `convert-stored-forms.py --apply`, then rerun it until it
-   reports `0 conversion(s)`. An interruption needs no cleanup.
+   reports `0 conversion(s)`. An interruption needs no cleanup. On a board with
+   live design checkpoints run [Checkpoints](#checkpoints) now.
    Output: the apply log.
 5. **Settle.** Bring each `for the user:` line to the user as one question: a
-   ruling now decided (release it or revise it), a deferral condition that
+   ruling taken without your judgment (its question), a deferral condition that
    became a wait (right wait?), a change request in review without an author
    (another session reviews it), a deferred item of a change request, a timer
    or CI gate, a milestone waiting on something that is no change request, a
@@ -160,10 +168,10 @@ one.
      board mapping from it.
    - Inventory what it can't see: backlog and review files, Markdown boards,
      lead notes, checkpoint files; project instructions and docs that name
-     trackers as owners (file roles, backlog pointers); epic texts holding
+     trackers as owners (file roles, backlog pointers); milestone texts holding
      rules, status or history; rules without an owner (including rules in
      force that live only in closed records); acceptance repeated across
-     items (one task others wait on, or the epic acceptance); entries without
+     items (one task others wait on, or the milestone acceptance); entries without
      a deliberate priority (rank under [Priority](../shared/board-core.md#priority)); user stops
      stated in comments or deferral reasons (convert those in force under
      [Dependencies](../shared/board-core.md#dependencies) or
@@ -210,7 +218,7 @@ one.
    `history/` with a one-line banner naming their new owner; replace migrated
    backlog sections with the board view that lists them; update project
    instructions and docs that named the retired trackers.
-   Output: moved files, final counts, epic ids.
+   Output: moved files, final counts, milestone ids.
 
 ## Stop
 
@@ -269,18 +277,17 @@ step goes in a change set and runs on the user's confirmation.
 
 ## Checkpoints
 
-Per board, after the owner installs the runtime without design checkpoints
-and restarts its sessions (design: `docs/board/ordinary-design-requests.md`,
+Per board with live design checkpoints, inside [Model](#model) after its
+Convert step and before its Mark step: a live checkpoint is a deviation that
+holds the marker back (design: `docs/board/ordinary-design-requests.md`,
 Existing records and rollout). The script runs from the project checkout:
 `python3 "$HOME/.agents/skills/board-migrate/scripts/convert-design-checkpoints.py"`.
-It writes only through `agents board return`, `block`, `unblock`, `link` and
-raw bd writes for the checkpoint marker and returned design items; everything
-else it lists as a manual step.
+It writes only through raw bd (a change request back to open, the wait on it,
+`relates-to`, the cleared marker); everything else it lists as a manual step.
 
 1. **Inventory.** `convert-design-checkpoints.py inventory --mapping <file>`
    (read-only; the file goes in `agents scratch dir --shared board-migrate`):
-   one row per live checkpoint, passed design, design ratification and met
-   design wait.
+   one row per live checkpoint, passed design and met design wait.
    Output: the rows; the draft mapping path.
 2. **Approve.** Show the owner the rows, the manual steps and each `hold`; the
    owner approves the mapping, an `agents board bd export` backup and any live
@@ -290,8 +297,7 @@ else it lists as a manual step.
    edits rows.
    Output: the owner's approval, quoted.
 3. **Resolve holds.** Per reason, in a lead or solo session: end a review or
-   hold through its workflow, record the user's edits, resolve each design
-   ratification with `agents board ratify`, then rerun step 1 and re-approve
+   hold through its workflow, record the user's edits, then rerun step 1 and re-approve
    the changed rows. Block work behind missing bodies on a question to the
    owner.
    Output: each hold resolved, or its question.
@@ -305,7 +311,7 @@ else it lists as a manual step.
    implementation items into a dependent CR, add waits for held waiters.
    Output: each step done, or the owner it waits on.
 6. **Verify.** `convert-design-checkpoints.py verify` exits 0 only with no
-   live checkpoint metadata, design ratification or met design wait left;
+   live checkpoint metadata or met design wait left;
    then the owner resumes writers. Keep the backup until the owner's
    transition smoke passes.
    Output: the verify result.
@@ -344,7 +350,7 @@ log in `agents scratch dir`.
 - Import skips a dependency whose target is missing and still succeeds:
   resolve every `Skipped dependency` it reports.
 - Import file uses the `agents board bd export` schema (`agents board bd import --help`); an
-  omitted `priority` means P0; labels are not inherited from epics; set
+  omitted `priority` means P0; labels are not inherited from parents; set
   `external_ref` to the old id and `source_system` to the source file; add
   `parent-child` dependencies explicitly.
 - Temporary environment facts import as memory rows

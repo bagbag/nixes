@@ -1950,7 +1950,7 @@ def t_migrate() -> None:
     make('released', 'released ruling', kind='decision')
     update('released', '--status', 'released')
     make('unratified', 'unratified ruling', kind='decision')
-    update('unratified', '--status', 'needs_ratification')
+    update('unratified', '--status', 'needs_ratification', '--description', '## Question\nWhich?\n## Decision\nThis.\n## Reversal\nUndo this by hand.\n')
     make('old_ruling', 'superseded ruling', kind='decision')
     make('new_ruling', 'newer ruling', kind='decision')
     link('old_ruling', 'new_ruling', 'supersedes')
@@ -1974,9 +1974,17 @@ def t_migrate() -> None:
     update('cr2', '--status', 'in_review', '--assignee', 'abcd1234')
     update('cr3', '--status', 'in_review')
     update('cr4', '--status', 'needs_acceptance')
+    for name, title, status in (('ck1', 'checkpoint CR, open', None), ('ck2', 'checkpoint CR, awaiting acceptance', 'needs_acceptance')):
+        make(name, title, kind='change-request')
+        update(name, '--set-metadata', 'checkpoint=design', *(['--status', status, '--set-metadata', 'review_tip=abc123'] if status else []))
+        make(f'{name}_design', f'{title}: design', '--parent', ids[name], kind='design')
+        if status:
+            update(f'{name}_design', '--status', 'in_review')
+    make('ck_waiter', 'waits on a design item', *no_commit)
+    link('ck_waiter', 'ck1_design', 'blocks')
     update('cr5', '--status', 'needs_acceptance', '--set-metadata', 'look=after')
     update('cr6', '--status', 'in_progress', '--assignee', 'abcd1234')
-    for name in ('cr2', 'cr3', 'cr4', 'cr5', 'cr6'):
+    for name in ('cr2', 'cr3', 'cr4', 'cr5', 'cr6', 'ck1', 'ck2'):
         git('worktree', 'add', '-q', f'.worktrees/{ids[name]}', '-b', f'cr/{ids[name]}', cwd=ROOT / side)
     for name, reason in (('ms_closed', 'closed in the earlier model'), ('closed_gate', 'closed in the earlier model'), ('old_ruling', 'superseded by the newer ruling'),
                          ('planned', 'planned in nixes-abc and done'), ('dropped', 'no longer wanted at all')):
@@ -1998,6 +2006,9 @@ def t_migrate() -> None:
     before = items(side)
     rc, out, err = migrate()
     check(rc == 0 and out.count('would: ') >= 20 and items(side) == before, 'migrate: the dry run lists the conversions and writes nothing', err + out)
+    rc, out, err = migrate('--rehearse')
+    check(rc == 0 and 'rehearsal on a copy' in out and '--- conversion (exit 0)' in out and 'conversion(s) applied' in out and items(side) == before and not list(Path('/tmp').glob('board-rehearsal-*')),
+          'migrate: --rehearse converts a copy in a temporary board and writes nothing here', err + out)
     rc, out, err = migrate('--mark')
     check(rc == 1 and setting(side, 'custom.board.model') == '', 'migrate: the marker waits for the conversions', err + out)
     rc, out, err = migrate('--apply')
@@ -2030,7 +2041,10 @@ def t_migrate() -> None:
           'migrate: a change request that awaited acceptance waits for it as passed, whatever look it carried', (meta_of('cr4'), meta_of('cr5')))
     check(row('cr6')['status'] == 'open' and row('cr6')['assignee'] == 'abcd1234' and meta_of('cr6').get('hold') == 'work',
           'migrate: an in-progress change request stays held, its hold is work', (row('cr6')['status'], row('cr6').get('assignee'), meta_of('cr6')))
-    check(row('released')['status'] == 'in_force' and row('unratified')['status'] == 'decided', 'migrate: released is in_force, needs_ratification is decided', (row('released')['status'], row('unratified')['status']))
+    check(row('released')['status'] == 'in_force' and row('unratified')['status'] == 'in_force', 'migrate: released and an unratified ruling are in_force', (row('released')['status'], row('unratified')['status']))
+    confirm = [i for i in now.values() if i.get('external_ref') == f"confirm:{ids['unratified']}"]
+    check(len(confirm) == 1 and confirm[0]['status'] == 'open' and (ids['unratified'], 'relates-to') in {(d['depends_on_id'], d['type']) for d in confirm[0].get('dependencies') or []}
+          and 'Undo this by hand' in confirm[0]['description'], 'migrate: an unratified ruling stays in force with a question to confirm or revise it', confirm)
     check([meta_of(name).get('outcome') for name in ('old_ruling', 'planned', 'dropped', 'closed_gate', 'ms_closed')] == ['superseded', 'planned', 'dropped', 'resolved', 'accepted'],
           'migrate: closed decisions, gates and milestones get their outcome', [meta_of(name).get('outcome') for name in ('old_ruling', 'planned', 'dropped', 'closed_gate', 'ms_closed')])
     check(meta_of('dated').get('revisit') == '2027-03-04' and row('dated')['status'] == 'deferred' and not row('dated').get('defer_until'),
@@ -2045,7 +2059,32 @@ def t_migrate() -> None:
     check('topic:big-topic-epic' in row('child')['labels'] and row('epic')['status'] == 'closed', 'migrate: an epic gives its children a topic label and closes', row('child'))
     check(meta_of('cr2').get('author') == 'abcd1234' and 'author' not in meta_of('cr3'), 'migrate: the author is the holder of record, and none is invented', (meta_of('cr2'), meta_of('cr3')))
     rc, out, err, _ = run(side, 'check', '--limit', '0')
-    check(rc == 0 and 'convention deviations: 0' in out, 'migrate: check is clean after the conversion', err + out)
+    check(rc == 1 and 'cr-checkpoint' in out and 'convention deviations: 2' in out, 'migrate: check names the live checkpoints, which only the checkpoint conversion settles', err + out)
+    subprocess.run(['bash', REGISTRY, 'activate', 'lead'], cwd=ROOT / side, env={**base_env(side), 'CLAUDE_CODE_SESSION_ID': session(side, 'lead')}, capture_output=True, check=True)
+    checkpoints = HERE.parent / 'skills' / 'board-migrate' / 'scripts' / 'convert-design-checkpoints.py'
+    mapping = ROOT / 'checkpoint-mapping.json'
+
+    def convert_checkpoints(*args: str):
+        result = subprocess.run([sys.executable, '-B', str(checkpoints), *args], cwd=ROOT / side, capture_output=True, text=True, input='',
+                                env={**base_env(side), 'CLAUDE_CODE_SESSION_ID': session(side, 'lead')})
+        return result.returncode, result.stdout, result.stderr
+
+    rc, out, err = convert_checkpoints('inventory', '--mapping', str(mapping))
+    check(rc == 0 and 'authoring-clear' in mapping.read_text() and 'authoring-return' in mapping.read_text(), 'migrate: the checkpoint inventory sees both live checkpoints', err + out)
+    approved = json.loads(mapping.read_text())
+    approved['approved_by'] = 'the test'
+    mapping.write_text(json.dumps(approved))
+    rc, out, err = convert_checkpoints('apply', str(mapping), '--apply')
+    check(rc == 0, 'migrate: the checkpoint conversion applies', err + out)
+    rc, out, err = convert_checkpoints('apply', str(mapping), '--apply')
+    check(rc == 0 and 'converted already' in out, 'migrate: the checkpoint conversion reruns cleanly', err + out)
+    rc, out, err = convert_checkpoints('verify')
+    check(rc == 0, 'migrate: no checkpoint is left', err + out)
+    now = items(side)
+    check(row('ck2')['status'] == 'open' and 'checkpoint' not in meta_of('ck1') and 'checkpoint' not in meta_of('ck2')
+          and (ids['ck1'], 'blocks') in deps('ck_waiter'), 'migrate: a checkpoint change request is an ordinary open one, its waiter waits on it', (row('ck2')['status'], deps('ck_waiter')))
+    rc, out, err, _ = run(side, 'check', '--limit', '0')
+    check(rc == 0 and 'convention deviations: 0' in out, 'migrate: check is clean after the conversions', err + out)
     rc, out, err = migrate('--mark')
     check(rc == 0 and setting(side, 'custom.board.model') == '1', 'migrate: --mark writes the marker last', err + out)
     rc, out, err, _ = run(side, 'update', ids['bug'], '--title', 'a bug item, retitled', role=None)

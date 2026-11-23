@@ -1,47 +1,36 @@
 ## Board coordination (beads)
 
-Deciding and planning sessions: epics, change requests in the queue,
+Deciding and planning sessions: topics, change requests in the queue,
 milestones, recorded rulings and deferrals. The board model is
 [Board core](../shared/board-core.md)
 (`$HOME/.agents/skills/shared/board-core.md`).
 
-### Epics
+### Topics
 
-- Root a project's board at a goal epic with finite outcome epics below it.
-  Nest deeper only for independently closable sub-outcomes. Place a
-  [change request](../shared/change-requests.md#change-requests) under the outcome
-  (topic epic) it contributes to and its work items under the CR; loose CRs
-  sit under the goal epic. An epic is a topic, never claimed; a CR without a
-  parent epic is fine.
-  Topics are labels (`topic:<topic-slug>`). `agents board create --graph` copies
-  no labels from the parent: give each node its `topic:` label.
-- Title: the outcome. Description: two to four sentences on what will be true,
-  why, scope and the owner link. Acceptance: checkable done criteria.
-  Epics carry no rules, holds, status, item lists or history; history goes to
-  comments, rules to their owners.
-- An outcome's own verification is its epic acceptance; name the user there
-  when the outcome needs the user's judgment.
-- The planning session closes an epic as soon as its criteria hold and no
-  child is open (`agents board bd epic close-eligible --dry-run`), detaching deferred
-  children first (`agents board update <id> --parent ""`). A
-  [deciding session](../role/SKILL.md#roles) walks the user through an epic
-  whose acceptance names the user and closes it on acceptance; it or the user
-  closes the goal epic once the user confirms the goal is reached.
+- A topic is a label (`topic:<topic-slug>`); there is no epic type. A
+  [change request](../shared/change-requests.md#change-requests) carries its
+  topic label and its work items sit under it; loose change requests carry
+  none. `agents board create --graph` copies no labels from the parent: give
+  each node its `topic:` label.
+- A topic carries no rules, holds, status, item lists or history; history goes
+  to comments, rules to their owners. An outcome that needs the user's
+  judgment is a milestone whose acceptance names the user.
 
 ### Milestones
 
-- Track each release checkpoint as one `milestone` item (`1.0-beta`) under
-  the goal epic. Its acceptance names the checkpoint's evidence and the user;
-  the goal owner states which work belongs to it.
-- Add members with `agents board block <milestone> --on <member>`, without a reason
-  line (a milestone needs none). Everything a member waits on belongs to the milestone too. Block the
-  milestone by the last release step as well.
-- When release checks must run on the finished scope, members block a
-  `<release> scope` milestone instead, and it blocks the first checks.
-- A member epic or CR brings all its descendants (epic, CR, item); file work
-  that ships later under another outcome.
+- Track each release checkpoint as one `milestone` item (`1.0-beta`). Its
+  acceptance names the checkpoint's evidence and the user; the goal owner
+  states which work belongs to it.
+- Add members with `agents board move <change request> --to <milestone>`: a
+  change request is part of a milestone, which waits on nothing. Everything a
+  member waits on belongs to the milestone too. Make the last release step a
+  member as well.
+- When release checks must run on the finished scope, members go into a
+  `<release> scope` milestone, and the first checks wait on it.
+- A member change request brings its items; file work that ships later under
+  another milestone.
 - Membership orders work and never cuts it. `agents board claim` order: P0 items,
-  then planning of released rulings, then milestone work, then reviewing
+  then planning of in-force rulings, then milestone work, then reviewing
   (CR reviews and refresh work), ratifying and accepting, then the rest. Within
   each, priority, then kind (plan, review, ratify, accept, design, question,
   implement). An item counts

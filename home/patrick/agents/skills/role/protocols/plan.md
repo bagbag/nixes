@@ -107,7 +107,7 @@ Establish the outcome's contribution to its milestone:
 
 - Create or resume the outcome epic (readable title stating the outcome, label
   `topic:<topic-slug>`) under
-  [Epics](../../shared/board-coordination.md#epics) and
+  [Topics](../../shared/board-coordination.md#topics) and
   `$HOME/.agents/skills/shared/project-memory.md`.
 - A slice is architecture-opening when it opens boundaries, public contracts,
   data flow, mechanisms or the clean end state.
@@ -267,7 +267,7 @@ silent failures, dead weight and doc drift; name the next executable outcome
 and blockers. When the next run is set or changes, defer each open item of the
 outcome it does not need (revisit: after that run), undefer the deferred ones
 it needs, and list both in the report. Close each finished epic `agents board position`
-lists under board-coordination [Epics](../../shared/board-coordination.md#epics);
+lists under board-coordination [Topics](../../shared/board-coordination.md#topics);
 list in the report the ones left open for the user's acceptance. Bring
 material changes to the decider before dependent dispatch. End rethinking
 when remaining unknowns are empirical or further

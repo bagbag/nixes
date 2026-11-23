@@ -62,7 +62,7 @@
 ## Arc state
 
 - `agents board position` computes the position; epics hold no status
-  (board-coordination [Epics](../shared/board-coordination.md#epics)).
+  (board-coordination [Topics](../shared/board-coordination.md#topics)).
 - Each session keeps one plain-prose checkpoint, `checkpoint.md` in its own
   scratch folder (`agents scratch dir`), replaced in place. It holds only what
   recovers this session's next action: verified position, next authorized
@@ -107,7 +107,7 @@ context; keep contracts complete without them.
 
 ## Closure
 
-- Close finished epics under board-coordination [Epics](../shared/board-coordination.md#epics).
+- Close finished epics under board-coordination [Topics](../shared/board-coordination.md#topics).
 - At phase boundaries or architecture resets, review affected owners and links;
   inventory the topic for cross-document changes or uncertain ownership.
 - Classify each document as canonical, narrow reference, `history/` or redundant.
