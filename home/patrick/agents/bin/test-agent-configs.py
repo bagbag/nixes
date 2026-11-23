@@ -4389,8 +4389,14 @@ def validate_board(root: Path) -> None:
                                      ("w-released", False), ("w-deferred", False)):
                 fake = Fake([*fixture, *waits])
                 code, _, errors = invoke(["wait", ruling, "--on", blocker, "--for", "r"], fake, "lead0001")
-                if (code == 0) != allowed or (not allowed and (fake.writes() or "planning only" not in errors)):
+                if (code == 0) != allowed or (not allowed and (fake.writes() or ("deferred" if blocker == "w-deferred" else "planning only") not in errors)):
                     raise ValueError(f"board wait of a released ruling on {blocker}: {code} {errors} {fake.writes()}")
+            # Nothing waits on a deferred record, by any writer: the wait verb, a plan's waits_on, and an item filed with --deps.
+            parked = variant(**{"Spike perf": {"status": "deferred"}})
+            fake = Fake(parked)
+            code, _, errors = invoke(["wait", ready, "--on", ids["Spike perf"], "--for", "r"], fake, "lead0001")
+            if code == 0 or fake.writes() or "deferred" not in errors:
+                raise ValueError(f"board wait on a deferred record must be refused: {code} {errors} {fake.writes()}")
             for blocker, ignored in (("w-user", False), ("w-gate", True), ("w-decided", False), ("w-released", True), ("w-deferred", True)):
                 rows = [*fixture, *waits]
                 rows = [{**row, "dependencies": [*(row.get("dependencies") or []), *([{"issue_id": ruling, "depends_on_id": blocker, "type": "blocks"}]
@@ -4780,6 +4786,10 @@ def validate_board(root: Path) -> None:
             # A wait between two new work items is bd's own write: waits_on becomes the node's dep before bd sees the plan, its for a comment on the
             # waiter, and the sentence is printed; a dry run prints the sentence and writes nothing.
             tasks = [dict(node, type="task") for node in nodes]
+            for plan_wait in ({"nodes": [dict(tasks[1], waits_on=[{"on": ids["Spike perf"], "for": "x"}])], "edges": []},):
+                code, _, errors, fake = bd_graph(plan_wait, deck=Graphing(list(variant(**{"Spike perf": {"status": "deferred"}}))))
+                if code != 2 or "deferred" not in errors or any(a[0] == "create" for a, _ in fake.calls):
+                    raise ValueError(f"a plan waiting on a deferred record is refused before anything is created: {code} {errors} {fake.calls}")
             code, output, errors, fake = bd_graph({"nodes": [tasks[0], dict(tasks[1], waits_on=[{"on": "q", "for": "the cache API"}])], "edges": []})
             sent = [json.loads(Path(args[2]).read_text(encoding="utf-8")) for args, _ in fake.calls if args[:2] == ["create", "--graph"]]
             if code or errors or "fx-task waits on fx-new for the cache API" not in output or not sent or sent[0]["nodes"][1]["deps"] != [{"target": "q", "type": "blocks"}] \

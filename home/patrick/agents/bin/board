@@ -3278,8 +3278,8 @@ def claim_kinds(board: Board, entry: dict | None, actor: str) -> tuple[str, ...]
 
 def claim_candidates(board: Board, scoped: list[dict], kinds: tuple[str, ...], actor: str, entry: dict,
                      passed: list[str] | None = None) -> Iterator[dict]:
-    """What a bare claim tries, in claim order: claimable in the session's kinds, minus its own hand-overs (lazily, the
-    authorship lookup reads history) and open work past the worker cap, which a named claim refuses too (noted in `passed`)."""
+    """What a bare claim tries, in claim order: claimable in the session's kinds, minus its own hand-overs (the author is
+    metadata on the item, `self_review_refusal`) and open work past the worker cap, which a named claim refuses too (noted in `passed`)."""
     for issue in sorted((i for i in scoped if board.claimable(i) in kinds), key=lambda i: claim_order(board, i)):
         if board.claimable(issue) == 'review' and self_review_refusal(issue, actor):
             continue  # your own hand-over needs another reviewer
@@ -6092,6 +6092,9 @@ def link_rules(board: Board | None, links: list[tuple[str, str, str]], verb: str
             raise BoardError(f'{kind} links belong to rulings: agents board ruling supersede <old> --with <new>, agents board ruling revise <old> ...')
         if blocking(kind) and verb == 'link':
             raise BoardError(f'a wait is agents board wait {waiting} --on {other} --for "<the input it uses>"')
+        if blocking(kind) and board and other in board.by_id and (
+                refusal := wait_target_refusal(board.by_id.get(waiting) if waiting not in new else None, other, board.by_id[other])):
+            raise BoardError(refusal)
         if not blocking(kind):
             if kind == 'parent-child' and waiting not in new and board and other not in board.parents.get(waiting, []):
                 target = other if other in board.by_id else None
@@ -6477,6 +6480,20 @@ def reason_optional(issue: dict, record: dict) -> bool:
     return record.get('issue_type') in ('decision', 'gate') or issue.get('issue_type') == 'milestone'
 
 
+def wait_target_refusal(waiter: dict | None, target: str, record: dict) -> str | None:
+    """The rules about what a wait may name, one owner for every writer (wait, create and plan links, ruling revise and supersede, the protocol
+    engine's links): nothing waits on a deferred record (set aside, it would never end), and a released ruling waits only for its planning, a
+    live decision or a human gate. `waiter` is None for a new item."""
+    who = waiter['id'] if waiter else 'a new item'
+    if record.get('status') == 'deferred':
+        return (f'{who} cannot wait on {target}: it is deferred, set aside by nothing that would bring it back; undefer it first '
+                f'(agents board undefer {target}), or wait on the record that would')
+    if waiter and waiter.get('issue_type') == 'decision' and waiter['status'] == 'released' and not planning_wait(record):
+        return (f'{who}: a released ruling waits for planning only (a live decision or a human gate), '
+                f"not on {target} ({record.get('issue_type')} {record.get('status')}); plan the work the ruling changes and wait that work on {target}")
+    return None
+
+
 def wait_one(board: Board, item_id: str, blocker: str, reason: str | None, actor: str) -> tuple[str, bool]:
     """Makes one whole item wait on the target; its for is commented on it (none when the target or the item makes the for optional and none
     is given). (the sentence, False). The holder's own wait hands the item back (r21-q144): the hold is freed; a change request
@@ -6486,9 +6503,8 @@ def wait_one(board: Board, item_id: str, blocker: str, reason: str | None, actor
     if not reason and not reason_optional(issue, record):
         raise BoardError(f'{item_id}: a work item waits for an input: agents board wait {item_id} --on {blocker} --for "<the input it uses>" '
                          '(optional only when the target is a decision or a gate, or the waiting item a milestone)')
-    if issue.get('issue_type') == 'decision' and issue['status'] == 'released' and not planning_wait(record):
-        raise BoardError(f'{item_id}: a released ruling waits for planning only (a live decision or a human gate), '
-                         f"not on {blocker} ({record.get('issue_type')} {record.get('status')}); plan the work the ruling changes and block that work on {blocker}")
+    if refusal := wait_target_refusal(issue, blocker, record):
+        raise BoardError(refusal)
     if chain := wait_cycle(board, [(item_id, blocker)]):
         raise BoardError(f"{item_id} cannot wait on {blocker}: it would form a cycle, nothing would ever start: {' waits on '.join(chain)}")
     edges = board.between(item_id, blocker)
@@ -7629,7 +7645,7 @@ def create_command(args) -> int:
             raise BoardError(f'{waiter} waits on {target}, which is unknown')
     named = parse_holds(holds_value) if holds_value is not None else []
     parents = plan_parents(plan, links)
-    existing = named or any(waiting not in types or (blocking(kind) and waiting in parents) for waiting, _, kind in links)
+    existing = named or any(waiting not in types or (blocking(kind) and (waiting in parents or other not in types)) for waiting, other, kind in links)
     deck = Board.load('all') if existing else None
     _, waits = link_rules(deck, links, 'create', types, named, parents)  # before anything is created
     if decides:
