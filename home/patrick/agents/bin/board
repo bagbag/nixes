@@ -290,6 +290,15 @@ STATES = {CR_GROUP: ('open', 'in_review', 'passed', 'deferred', 'closed'), WORK_
           'decision': ('open', 'decided', 'in_force', 'deferred', 'closed'), 'milestone': ('open', 'closed'), 'gate': ('open', 'closed')}
 
 
+# `who` and `guards` are what `move` enforces, in the vocabulary of WHO_WORDS and GUARDS: who is a list of alternatives, one of
+# which must hold; an alternative is parts joined by '+', all of which must hold. What a command checks before it reaches `move`
+# (its pull, the worker cap, the check pair, the review) stays with the command and is not in the table.
+WHO_WORDS = {'anyone': 'anyone', 'agent': 'an agent session', 'user': 'the user', 'deciding': 'a deciding session (lead or solo)',
+             'holder': "the holder's session (or anyone while it is unheld)", 'gone': "once the holder's session is gone, or the user agrees (--agreed)",
+             'non-author': 'a session that did not hand it over', 'planner': 'a session pulling plan',
+             'deferrer': "the deferrer's side (a user's deferral: the user or a deciding session)"}
+
+
 class Move(NamedTuple):
     """One row of the transition table. `held`: the holder the write expects ('-' none, 'you' the caller's session, '*' any);
     `holds`: the holder after ('-' none, 'you' the caller, '=' unchanged)."""
@@ -299,60 +308,60 @@ class Move(NamedTuple):
     to: str  # '=' keeps the status
     held: str
     holds: str
-    who: str
-    guards: str
+    who: tuple[str, ...]
+    guards: tuple[str, ...] = ()
     outcomes: tuple[str, ...] = ()  # a closing row: the outcomes it records (the first is the default), in metadata `outcome`
 
 
 _ANY_CR = ('open', 'in_review', 'passed')
+FREE_HOLD = ('holder', 'user', 'deciding+gone')  # freeing a hold: its own session, the user, or a deciding session once the holder is gone
+DECIDING_CLOSE = ('deciding+holder', 'deciding+gone', 'user')
 MOVES = (
-    Move('claim', CR_GROUP, ('open',), '=', '-', 'you', 'a session pulling its kind', 'ready, git-state, open-for-review'),
-    Move('claim', CR_GROUP, ('in_review',), '=', '-', 'you', 'a session pulling review', 'ready, git-state, open-for-review'),
-    Move('claim', CR_GROUP, ('passed',), '=', '-', 'you', 'a deciding session, or a refresher', 'ready, git-state'),
-    Move('take', CR_GROUP, _ANY_CR, '=', '*', 'you', 'anyone who could claim it, once its holder is gone', 'own-handover'),
-    Move('unclaim', CR_GROUP, _ANY_CR, '=', '*', '-', 'the holder, or a deciding session once it is gone', 'resume-note'),
-    Move('handover', CR_GROUP, ('open',), 'in_review', 'you', '-', 'the holder', 'items-closed, checks-pass, not-open-for-review'),
-    Move('handover --no-agent-review', CR_GROUP, ('open',), 'passed', 'you', '-', 'the holder', 'items-closed, look-before, checks-pass, not-open-for-review'),
-    Move('handover (reviewer passes)', CR_GROUP, ('in_review',), 'passed', 'you', '-', 'the reviewer', 'items-closed, tip-seen, checks-pass'),
-    Move('send to review', CR_GROUP, ('passed',), 'in_review', '*', '-', '`cr request-review` (a deciding session or the holder); `cr land`, `cr refresh` and `cr edits` on a series no review covers',
-         'edits-recorded'),
-    Move('return', CR_GROUP, ('in_review', 'passed'), 'open', '*', '-', 'the reviewer, or a deciding session', 'edits-recorded'),
-    Move('return --ruling', CR_GROUP, ('in_review',), 'open', 'you', '-', 'a planner holding the ruling', 'ruling-holds-item'),
-    Move('landing', CR_GROUP, _ANY_CR, 'closed', '*', '-', "`cr land` (the user's Accept), a reviewer's pass in look after, or the next change-request command after a landing that stopped",
-         'tip-on-target, items-closed; for the Accept: tip-and-base-seen, not-stacked, check-passes', ('landed',)),
-    Move('cr reject', CR_GROUP, (*_ANY_CR, 'deferred'), 'closed', '*', '-', 'a deciding session', 'reason, items-closed', ('dropped',)),
-    Move('base rejected', CR_GROUP, _ANY_CR, 'open', '*', '-', '`cr reject` of the change request it stacks on', ''),
-    Move('defer', CR_GROUP, ('open',), 'deferred', '*', '-', 'anyone', 'no-condition'),
-    Move('undefer', CR_GROUP, ('deferred',), 'open', '-', '-', 'anyone', ''),
-    Move('claim', WORK_GROUP, ('open',), '=', '-', 'you', 'a worker of the session holding its change request', 'in-held-change-request, worker-cap'),
-    Move('take', WORK_GROUP, ('open',), '=', '*', 'you', 'anyone who could claim it, once its holder is gone', 'worker-cap'),
-    Move('unclaim', WORK_GROUP, ('open',), '=', '*', '-', 'the holder, or a deciding session once it is gone', 'resume-note'),
-    Move('close', WORK_GROUP, ('open',), 'closed', '*', '-', 'anyone', 'reason', ('done', 'dropped')),
-    Move('reopen', WORK_GROUP, ('closed',), 'open', '*', '-', 'anyone', ''),
-    Move('close', ITEM_GROUP, ('open',), 'closed', '*', '-', 'anyone', 'reason', ('done', 'dropped')),
-    Move('reopen', ITEM_GROUP, ('closed',), 'open', '*', '-', 'anyone', ''),
-    Move('defer', WORK_GROUP, ('open',), 'deferred', '*', '-', 'anyone', 'no-condition, nothing-waits-on-it'),
-    Move('undefer', WORK_GROUP, ('deferred',), 'open', '-', '-', 'anyone', ''),
-    Move('defer', 'decision', ('open',), 'deferred', '*', '-', 'anyone', 'nothing-live-waits-on-it'),
-    Move('undefer', 'decision', ('deferred',), 'open', '*', '-', 'anyone', ''),
-    Move('claim', 'decision', ('open', 'decided'), '=', '-', 'you', 'a deciding session', 'ready'),
-    Move('claim', 'decision', ('in_force',), '=', '-', 'you', 'a session pulling plan', 'ready'),
-    Move('take', 'decision', ('open', 'decided', 'in_force'), '=', '*', 'you', 'anyone who could claim it, once its holder is gone', ''),
-    Move('unclaim', 'decision', ('open', 'decided', 'in_force'), '=', '*', '-', 'the holder, or a deciding session once it is gone', ''),
-    Move('ruling record', 'decision', ('open', 'decided'), 'decided', 'you', '=', 'the holder', 'sections'),
-    Move('ruling record --unratified', 'decision', ('open', 'decided', 'in_force'), 'in_force', 'you', '=', 'the holder', 'sections, reversal'),
-    Move('ruling release', 'decision', ('decided',), 'in_force', '*', '-', 'a deciding session', 'nothing-unsettled-holds-it, lint'),
-    Move('supersede', 'decision', ('open', 'decided', 'in_force', 'closed'), 'closed', '*', '-', 'a deciding session', 'replacement-recorded', ('superseded',)),
-    Move('close', 'decision', ('open', 'decided'), 'closed', '*', '-', 'a deciding session', 'reason', ('dropped',)),
-    Move('close', 'decision', ('in_force',), 'closed', '*', '-', 'a deciding session', 'reason', ('planned',)),
-    Move('claim', 'milestone', ('open',), '=', '-', 'you', 'a deciding session with the user', 'nothing-waits-on-it'),
-    Move('take', 'milestone', ('open',), '=', '*', 'you', 'anyone who could claim it, once its holder is gone', ''),
-    Move('unclaim', 'milestone', ('open',), '=', '*', '-', 'the holder, or a deciding session once it is gone', ''),
-    Move('close', 'milestone', ('open',), 'closed', '*', '-', 'a deciding session with the user', 'reason'),
-    Move('reopen', 'milestone', ('closed',), 'open', '*', '-', 'anyone', ''),
-    Move('reopen', 'decision', ('closed',), 'open', '*', '-', 'anyone', 'not-superseded'),
-    Move('close', 'gate', ('open',), 'closed', '*', '-', 'anyone', 'reason'),
-    Move('reopen', 'gate', ('closed',), 'open', '*', '-', 'anyone', ''),
+    Move('claim', CR_GROUP, ('open',), '=', '-', 'you', ('agent',)),
+    Move('claim', CR_GROUP, ('in_review',), '=', '-', 'you', ('agent+non-author',)),
+    Move('claim', CR_GROUP, ('passed',), '=', '-', 'you', ('agent',)),
+    Move('take', CR_GROUP, _ANY_CR, '=', '*', 'you', ('agent+holder+non-author', 'agent+deciding+gone+non-author')),
+    Move('unclaim', CR_GROUP, _ANY_CR, '=', '*', '-', FREE_HOLD),
+    Move('handover', CR_GROUP, ('open',), 'in_review', 'you', '-', ('agent',), ('items-closed', 'not-open-for-review')),
+    Move('handover --no-agent-review', CR_GROUP, ('open',), 'passed', 'you', '-', ('agent',), ('items-closed', 'look-before', 'not-open-for-review')),
+    Move('handover (reviewer passes)', CR_GROUP, ('in_review',), 'passed', 'you', '-', ('agent',), ('items-closed',)),
+    Move('send to review', CR_GROUP, ('passed',), 'in_review', '*', '-', ('holder', 'deciding', 'user')),
+    Move('return', CR_GROUP, ('in_review', 'passed'), 'open', '*', '-', ('agent+holder', 'deciding', 'user')),
+    Move('return --ruling', CR_GROUP, ('in_review',), 'open', 'you', '-', ('planner',)),
+    Move('landing', CR_GROUP, _ANY_CR, 'closed', '*', '-', ('anyone',), (), ('landed',)),  # the target already holds the tip: the command checked before the fast-forward
+    Move('cr reject', CR_GROUP, (*_ANY_CR, 'deferred'), 'closed', '*', '-', ('deciding', 'user'), ('reason', 'items-closed'), ('dropped',)),
+    Move('base rejected', CR_GROUP, _ANY_CR, 'open', '*', '-', ('anyone',)),
+    Move('defer', CR_GROUP, ('open',), 'deferred', '*', '-', FREE_HOLD),
+    Move('undefer', CR_GROUP, ('deferred',), 'open', '-', '-', ('deferrer',)),
+    Move('claim', WORK_GROUP, ('open',), '=', '-', 'you', ('agent',)),
+    Move('take', WORK_GROUP, ('open',), '=', '*', 'you', ('agent+holder', 'agent+deciding+gone')),
+    Move('unclaim', WORK_GROUP, ('open',), '=', '*', '-', FREE_HOLD),
+    Move('close', WORK_GROUP, ('open',), 'closed', '*', '-', FREE_HOLD, ('reason',), ('done', 'dropped')),
+    Move('reopen', WORK_GROUP, ('closed',), 'open', '*', '-', ('anyone',)),
+    Move('close', ITEM_GROUP, ('open',), 'closed', '*', '-', ('anyone',), ('reason',), ('done', 'dropped')),  # an item has no hold of its own
+    Move('reopen', ITEM_GROUP, ('closed',), 'open', '*', '-', ('anyone',)),
+    Move('defer', WORK_GROUP, ('open',), 'deferred', '*', '-', FREE_HOLD),
+    Move('undefer', WORK_GROUP, ('deferred',), 'open', '-', '-', ('deferrer',)),
+    Move('defer', 'decision', ('open',), 'deferred', '*', '-', FREE_HOLD),
+    Move('undefer', 'decision', ('deferred',), 'open', '*', '-', ('deferrer',)),
+    Move('claim', 'decision', ('open', 'decided'), '=', '-', 'you', ('agent',)),  # which sessions a bare claim gives a question is the pull (ROLE_KINDS)
+    Move('claim', 'decision', ('in_force',), '=', '-', 'you', ('planner',)),
+    Move('take', 'decision', ('open', 'decided', 'in_force'), '=', '*', 'you', ('agent+holder', 'agent+deciding+gone')),
+    Move('unclaim', 'decision', ('open', 'decided', 'in_force'), '=', '*', '-', FREE_HOLD),
+    Move('ruling record', 'decision', ('open', 'decided'), 'decided', 'you', '=', ('holder',)),
+    Move('ruling record --unratified', 'decision', ('open', 'decided', 'in_force'), 'in_force', 'you', '=', ('holder',)),
+    Move('ruling release', 'decision', ('decided',), 'in_force', '*', '-', ('deciding', 'user')),
+    Move('supersede', 'decision', ('open', 'decided', 'in_force', 'closed'), 'closed', '*', '-', ('deciding', 'user'), (), ('superseded',)),
+    Move('close', 'decision', ('open', 'decided'), 'closed', '*', '-', DECIDING_CLOSE, ('reason',), ('dropped',)),
+    Move('close', 'decision', ('in_force',), 'closed', '*', '-', DECIDING_CLOSE, ('reason',), ('planned',)),
+    Move('claim', 'milestone', ('open',), '=', '-', 'you', ('deciding',)),
+    Move('take', 'milestone', ('open',), '=', '*', 'you', ('deciding+holder', 'deciding+gone')),
+    Move('unclaim', 'milestone', ('open',), '=', '*', '-', FREE_HOLD),
+    Move('close', 'milestone', ('open',), 'closed', '*', '-', DECIDING_CLOSE, ('reason',)),
+    Move('reopen', 'milestone', ('closed',), 'open', '*', '-', ('anyone',)),
+    Move('reopen', 'decision', ('closed',), 'open', '*', '-', ('anyone',), ('not-superseded',)),
+    Move('close', 'gate', ('open',), 'closed', '*', '-', ('deciding', 'user'), ('reason',)),
+    Move('reopen', 'gate', ('closed',), 'open', '*', '-', ('anyone',)),
 )
 
 
@@ -360,7 +369,7 @@ def model_tables() -> str:
     """The two tables docs/board/model.md embeds, as markdown (`agents board model`)."""
     states = ['| Type | Statuses |', '|---|---|', *(f"| {group} | {', '.join(statuses)} |" for group, statuses in STATES.items())]
     moves = ['| Command | Type | From | To | Held before | Held after | Who | Guards |', '|---|---|---|---|---|---|---|---|',
-             *(f"| {m.command} | {m.group} | {', '.join(m.frm)} | {m.to} | {m.held} | {m.holds} | {m.who} | {m.guards or '-'} |" for m in MOVES)]
+             *(f"| {m.command} | {m.group} | {', '.join(m.frm)} | {m.to} | {m.held} | {m.holds} | {' / '.join(m.who)} | {', '.join(m.guards) or '-'} |" for m in MOVES)]
     return '\n'.join([*states, '', *moves])
 
 
@@ -379,9 +388,60 @@ def refuse_held(issue: dict, row: Move, command: str, actor: str | None) -> None
         raise BoardError(f"{issue['id']}: {command} needs your session to hold it; held by {current or 'nobody'}")
 
 
+def authority_part(part: str, issue: dict, actor: str | None, board: 'Board', agreed: bool = False) -> bool:
+    """One part of a row's `who`, for the caller (`actor`: None is a person's terminal). A worker holds and acts under its session but is
+    no deciding session; the registry is read only when a part needs it."""
+    current = issue.get('assignee') or ''
+    if part == 'anyone':
+        return True
+    if part == 'user':
+        return actor is None
+    if actor is None:
+        return part == 'deferrer'  # a person undefers anything; the remaining parts name sessions
+    session = session_actor(actor)
+    if part == 'agent':
+        return True
+    if part == 'holder':
+        return not current or session_actor(current) == session
+    if part == 'non-author':
+        return self_review_refusal(issue, actor) is None
+    if part == 'gone':
+        return bool(current) and (agreed or holder_gone(board, board.registry(), current))
+    entry = board.registry().get(session)
+    if part == 'deciding':
+        return actor == session and bool(entry) and entry.get('role') in MOVERS
+    if part == 'planner':
+        return bool(entry) and 'plan' in session_kinds(entry)
+    if part == 'deferrer':
+        by = meta(issue).get(DEFERRED_BY)
+        return (by != 'user' and (not by or by == session)) or authority_part('deciding', issue, actor, board)
+    raise BoardError(f'internal: unknown who part {part}')
+
+
+def authority_refusal(issue: dict, row: 'Move', command: str, actor: str | None, board: 'Board | None', agreed: bool = False) -> str | None:
+    """Why the caller may not make this move (the row's `who`), naming who may and, for a hold, whose it is."""
+    if row.who == ('anyone',):
+        return None
+    deck = board if board is not None else Board([])
+    if any(all(authority_part(part, issue, actor, deck, agreed) for part in alternative.split('+')) for alternative in row.who):
+        return None
+    allowed = ' or '.join(' '.join(WHO_WORDS[part] for part in alternative.split('+')) for alternative in row.who)
+    holder = issue.get('assignee')
+    return f"{issue['id']}: {command} is for {allowed}" + (f"; it is held by {holder}" if holder else '')
+
+
+GUARDS = {
+    'reason': lambda issue, board, reason: None if reason and reason.strip() else 'a reason is required',
+    'items-closed': lambda issue, board, reason: board and open_item_refusal(board, issue),
+    'look-before': lambda issue, board, reason: None if board is None or cr_look(board, issue) == 'before' else 'only a look before change request passes without an agent review',
+    'not-open-for-review': lambda issue, board, reason: f'it is open for your review (tip {opened_tip(issue)[:12]}): end the review first' if opened_tip(issue) else None,
+    'not-superseded': lambda issue, board, reason: f'it is superseded by {", ".join(found)}: record a revision to put it back in force' if board and (found := superseding(board, issue['id'])) else None,
+}
+
+
 def move(issue: dict, command: str, *, to: str | None = None, actor: str | None = None, fields: dict | None = None,
          reason: str | None = None, force: bool = False, via: str | None = None, check: bool = True,
-         board: 'Board | None' = None, outcome: str | None = None) -> subprocess.CompletedProcess:
+         board: 'Board | None' = None, outcome: str | None = None, agreed: bool = False) -> subprocess.CompletedProcess:
     """The one status write. Finds the table row for the command, the item's type and its status (`to` picks among rows that
     differ only in where they go), refuses what the row forbids, then writes status and holder in one bd compare-and-set on
     the status and holder just read. A close takes the item by the same compare-and-set (a no-op holder write), then `bd close` records the reason, so bd's close validation still runs. `via='supersede'` closes
@@ -403,6 +463,15 @@ def move(issue: dict, command: str, *, to: str | None = None, actor: str | None 
         fields = {**(fields or {}), 'outcome': outcome or row.outcomes[0]}
     current = issue.get('assignee') or ''
     refuse_held(issue, row, command, actor)
+    refusal = authority_refusal(issue, row, command, actor or derived_actor(), board, agreed)
+    for name in row.guards if not refusal else ():
+        if why := GUARDS[name](issue, board, reason):
+            refusal = why if why.startswith(f"{issue['id']}:") else f"{issue['id']}: {command} refused: {why}"
+            break
+    if refusal:
+        if not check:
+            return subprocess.CompletedProcess(['move', command, issue['id']], 1, '', refusal)  # a caller that reads the result sees it as a failed write
+        raise BoardError(refusal)
     target = issue['status'] if row.to == '=' else row.to
     holder_after = '' if row.holds == '-' else (actor or caller()) if row.holds == 'you' else current
     if group == CR_GROUP and row.holds == '-' and HOLD in meta(issue) and target != 'closed':
@@ -444,6 +513,8 @@ def move_line(issue: dict, command: str, *, to: str | None = None) -> str:  # de
     if len(rows) != 1:
         raise BoardError(f"{issue['id']}: {command} does not apply to a {group} that is {issue['status']}")
     refuse_held(issue, rows[0], command, None)
+    if refusal := authority_refusal(issue, rows[0], command, derived_actor(), None):
+        raise BoardError(refusal)
     return f"update {issue['id']} status={rows[0].to}" + (' assignee=""' if rows[0].holds == '-' else '')
 
 
@@ -2149,10 +2220,10 @@ def position(board: Board, args) -> None:
     if any(stale_since(board, issue) for issue, *_ in data['held']):
         print(STALE_OTHERS_LEGEND)
     if gone:
-        print(f"  GONE = the holding session ended or its registration was pruned. Take {', '.join(gone)} when your role could claim it: agents board take <id> (agents board unclaim <id>: the user or a deciding session)")
+        print(f"  GONE = the holding session ended or its registration was pruned. A deciding session takes {', '.join(gone)}: agents board take <id> (agents board unclaim <id> frees it: the user or a deciding session)")
     if idle:
         print(f'  idle = no activity for {IDLE_HOURS} h. '
-              'If that session is gone, take the item when your role could claim it: agents board take <id>; otherwise the user or a deciding session frees it: agents board unclaim <id>')
+              'If that session is gone, a deciding session takes the item: agents board take <id>; otherwise only the user frees it: agents board unclaim <id>')
 
     section('open questions holding work',
             [line(issue, f'holds {waiting[0]}/{waiting[1]}', issue.get('assignee') or 'unassigned') for waiting, issue in data['questions']],
@@ -3058,7 +3129,7 @@ def hold_marks(board: Board, issue: dict) -> list[str]:
 
 
 STALE_OTHERS_LEGEND = (f'  STALE = no update to the item for {STALE_HOURS} h: ask its holder what it waits on; the holder moves it on or renews it by '
-                       'updating its notes. Only the holder, the user or a deciding session frees it (agents board take | agents board unclaim)')
+                       'updating its notes. Only the holder or the user frees it, a deciding session once its session is gone (agents board take | agents board unclaim)')
 STALE_LEGEND = (f'  STALE = no update to the item for {STALE_HOURS} h: find out what it waits on, then move it on, agents board unclaim it, '
                 'or renew it by updating its notes with what it waits on')
 
@@ -3182,11 +3253,11 @@ def capacity(board: Board, args) -> None:
               f"ready for your pulls: {', '.join(f'{kind} {count}' for kind, count in ready)} → refill (plan Dispatch)")
 
 
-def claim_one(issue: dict, actor: str, fields: dict | None = None) -> tuple[bool, str]:
+def claim_one(board: Board, issue: dict, actor: str, fields: dict | None = None) -> tuple[bool, str]:
     """Atomically claim one item: the holder is written only if it is still empty (and, for a change request, the status is the
     one just read: a planner can finish Return after a reviewer reads the unassigned CR)."""
     try:
-        result = move(issue, 'claim', actor=actor, fields=fields, check=False)
+        result = move(issue, 'claim', actor=actor, fields=fields, check=False, board=board)
     except BoardError as error:
         return False, str(error)
     return result.returncode == 0, (result.stderr or result.stdout).strip()
@@ -3324,7 +3395,7 @@ def claim(board: Board, args) -> int:
                     failed.append(item_id)
                     print(f'{item_id}: not taken over: {over}; hand over or unclaim one, or agents board claim {item_id} --force "<reason>"', file=sys.stderr)
                     continue
-                move(issue, 'take', actor=actor)
+                move(issue, 'take', board=board, actor=actor)
                 comment(item_id, f'board claim: {actor} took this item over from {holder} in the same session.')
                 claimed.append(issue)
                 forced[item_id] = args.force if over else None
@@ -3340,7 +3411,7 @@ def claim(board: Board, args) -> int:
                 continue
             if holder:
                 failed.append(item_id)
-                print(f'{item_id}: held by {holder}; once its session is gone, agents board take {item_id} takes it if your role could claim it; the user or a deciding session otherwise frees it with agents board unclaim',
+                print(f'{item_id}: held by {holder}; once its session is gone, a deciding session takes it with agents board take {item_id}; otherwise only the user frees it with agents board unclaim',
                       file=sys.stderr)
                 continue
             if board.kind(issue) == 'milestone' and board.open_blockers(item_id):
@@ -3352,7 +3423,7 @@ def claim(board: Board, args) -> int:
                 kind = board.claimable(issue)
                 if kind is None and issue['status'] == PASSED and after_base(board, issue) and may_move(board):
                     # a passed look-after child waiting for its parent: a deciding session takes it so it can return it
-                    ok, message = claim_one(issue, actor)
+                    ok, message = claim_one(board, issue, actor)
                     if ok:
                         put_meta(issue, reviewing_tip=None)
                         claimed.append(issue)
@@ -3383,7 +3454,7 @@ def claim(board: Board, args) -> int:
                 failed.append(item_id)
                 print(f'{item_id}: not claimed: {over}; hand over or unclaim one, or agents board claim {item_id} --force "<reason>"', file=sys.stderr)
                 continue
-            ok, message = claim_one(issue, actor)
+            ok, message = claim_one(board, issue, actor)
             if ok:
                 claimed.append(issue)
                 forced[item_id] = args.force if over else None
@@ -3402,7 +3473,7 @@ def claim(board: Board, args) -> int:
                     issue['claim_kind'] = kind
                     break
                 continue
-            ok, _ = claim_one(issue, actor)
+            ok, _ = claim_one(board, issue, actor)
             if ok:
                 claimed.append(issue)
                 break
@@ -3522,7 +3593,7 @@ def take(board: Board, args) -> int:
             failed = True
             print(f"{issue['id']}: not taken: {over}; hand over or unclaim one, or agents board take {issue['id']} --force \"<reason>\"", file=sys.stderr)
             continue
-        move(issue, 'take', actor=actor)
+        move(issue, 'take', board=board, actor=actor, agreed=bool(args.agreed))
         comment(issue['id'], f'board take: {actor} took this item over from {previous}' + (f' (agreed: {args.agreed})' if args.agreed else '') + '.')
         if board.is_cr(issue['id']) and issue['status'] == 'in_review':  # the new holder has seen nothing yet
             put_meta(issue, reviewing_tip=None)
@@ -3559,7 +3630,7 @@ def unclaim(board: Board, args) -> int:
             failed = True
             continue
         reason = f"board unclaim: {actor} released {holder}'s hold" + (f' (agreed: {args.agreed})' if args.agreed else '') + '.'
-        move(issue, 'unclaim', actor=actor, fields={RESUME_NOTE: args.resume} if args.resume else None)  # the status stays for the next claimer; a change request keeps its worktree and branch
+        move(issue, 'unclaim', board=board, actor=actor, agreed=bool(args.agreed), fields={RESUME_NOTE: args.resume} if args.resume else None)  # the status stays for the next claimer; a change request keeps its worktree and branch
         comment(issue['id'], reason)
         if board.is_cr(issue['id']) and issue['status'] == 'open':
             try:
@@ -4774,14 +4845,14 @@ def claim_cr(board: Board, cr: dict, actor: str, kind: str) -> tuple[bool, str]:
     it unclaimed), then setup (a failure keeps the claim, A5). Planning: the hold. Review, accept, refresh: the hold, status kept."""
     cid = cr['id']
     if kind == 'plan':
-        return claim_one(cr, actor, {HOLD: 'plan', **({'replan': None} if meta(cr).get('replan') else {})})
+        return claim_one(board, cr, actor, {HOLD: 'plan', **({'replan': None} if meta(cr).get('replan') else {})})
     if kind == 'review' and (refusal := self_review_refusal(cr, actor)):
         return False, refusal
     main = main_root()
     if kind != 'accept':  # only a deciding session's accept claim takes an item open for the user's review
         refuse_open(cid, cr, f'a {kind} claim')
     created, made_tip = open_worktree(board, cr, main)
-    ok, message = (True, '') if holds_cr(cr, actor) else claim_one(cr, actor, {HOLD: 'work'} if kind == 'implement' else None)  # a planner's hold carries on
+    ok, message = (True, '') if holds_cr(cr, actor) else claim_one(board, cr, actor, {HOLD: 'work'} if kind == 'implement' else None)  # a planner's hold carries on
     if ok and kind == 'implement' and meta(cr).get(HOLD) != 'work':
         put_meta(cr, **{HOLD: 'work'})
     if not ok:
@@ -4831,7 +4902,7 @@ def finish_landing(board: Board, cr: dict, tip: str, name: str, main: Path) -> l
     cid, notes = cr['id'], []
     look = cr_look(board, cr)
     if cr['status'] != 'closed':
-        move(cr, 'landing', reason=f'landed {tip[:12]} on {name} from {cr_branch(cid)}', force=True)
+        move(cr, 'landing', board=board, reason=f'landed {tip[:12]} on {name} from {cr_branch(cid)}', force=True)
     board.__dict__.pop('unlocks', None)
     for other in live_crs(board):
         if meta(other).get('base') == cid:
@@ -4974,10 +5045,10 @@ def holds_cr(issue: dict, actor: str) -> bool:
     return bool(holder) and session_actor(holder) == session_actor(actor)
 
 
-def pass_to_user(cr: dict, command: str, **fields) -> None:
+def pass_to_user(board: Board, cr: dict, command: str, **fields) -> None:
     """Moves a change request to passed, unassigned, remembering since when: it waits for the user's Accept (look before) or for
     its landing."""
-    move(cr, command, to='passed', fields={'since': stamp(), **fields})
+    move(cr, command, to='passed', fields={'since': stamp(), **fields}, board=board)
 
 
 def handover(board: Board, args) -> None:
@@ -5029,12 +5100,12 @@ def handover(board: Board, args) -> None:
         raise BoardError(f"{args.id}: {said}; nothing was recorded. Review the change, then pass again:\n{shown.rstrip() or '(nothing to show)'}")
     if author:
         if no_agent_reason is not None:
-            pass_to_user(cr, 'handover --no-agent-review', no_agent_review_reason=no_agent_reason, reviewing_tip=None, hold=None, author=actor)
+            pass_to_user(board, cr, 'handover --no-agent-review', no_agent_review_reason=no_agent_reason, reviewing_tip=None, hold=None, author=actor)
             comment(args.id, HANDOVER + args.evidence)
             comment(args.id, f'no agent review: {no_agent_reason}')
             print(f'handed over {args.id} to your Accept without agent review: {no_agent_reason}')
             return
-        move(cr, 'handover', fields={'no_agent_review_reason': None, 'reviewing_tip': None, HOLD: None, AUTHOR: actor})
+        move(cr, 'handover', board=board, fields={'no_agent_review_reason': None, 'reviewing_tip': None, HOLD: None, AUTHOR: actor})
         comment(args.id, HANDOVER + args.evidence)
         print(f'handed over {args.id} for review ({check_said(args)} on {result["tip"][:12]})')
         return
@@ -5049,23 +5120,23 @@ def handover(board: Board, args) -> None:
             print(f'passed and landed {args.id}, but: {error}')
             return
         except BoardError as error:  # the pass stands; the Accept queue holds it until the landing can run
-            pass_to_user(cr, 'handover (reviewer passes)')
+            pass_to_user(board, cr, 'handover (reviewer passes)')
             print(f'passed {args.id}, not landed: {error}\n  it waits in the Accept queue')
             return
         print('\n'.join(notes))
         print(f'passed and landed {args.id}')
         return
     if (look == 'after' or empty) and board.is_cr(base):  # lands with its parent when the check and this review still match (q219)
-        pass_to_user(cr, 'handover (reviewer passes)')
+        pass_to_user(board, cr, 'handover (reviewer passes)')
         print(f'passed {args.id}: marked after {base}; it lands with {base} when its check and review still match')
         return
-    pass_to_user(cr, 'handover (reviewer passes)')
+    pass_to_user(board, cr, 'handover (reviewer passes)')
     print(f'passed {args.id}: waiting for your Accept')
 
 
 def send_to_review(board: Board, cr: dict) -> None:
     keys = ('since', 'reviewing_tip', 'no_agent_review_reason', OPENED)
-    move(cr, 'send to review', fields={key: None for key in keys if key in meta(cr)})
+    move(cr, 'send to review', board=board, fields={key: None for key in keys if key in meta(cr)})
     board._cr.pop(cr['id'], None)
 
 
@@ -5117,7 +5188,7 @@ def reserve_planner_return(board: Board, cr: dict, ruling_id: str, actor: str) -
         raise BoardError(refusal)
     if not any(ruling_id in board.blockers.get(item['id'], ()) for item in board.cr_items(cr['id'])):
         raise BoardError(f'{ruling_id}: it does not hold any open item of {cr["id"]}; block the affected items first')
-    move(cr, 'claim', actor=actor)
+    move(cr, 'claim', board=board, actor=actor)
 
 
 def finding_title(text: str) -> str:
@@ -5159,10 +5230,10 @@ def return_item(board: Board, args) -> None:
             if title not in filed:
                 filed[title] = create_item(board, title, 'task', parent=args.id, description=f'Finding on {args.id} (returned by {actor}): {text}')
             made.append(filed[title])
-        move(cr, 'return --ruling' if args.ruling else 'return', fields=dict.fromkeys(clear))
+        move(cr, 'return --ruling' if args.ruling else 'return', board=board, fields=dict.fromkeys(clear))
     except BoardError as error:
         if args.ruling:
-            released = move(cr, 'unclaim', check=False) if cr['status'] == 'in_review' else None
+            released = move(cr, 'unclaim', board=board, check=False) if cr['status'] == 'in_review' else None
             if released is not None and released.returncode not in (0, 13):
                 raise BoardError(f'{error}; releasing the temporary return hold failed: {bd_message(released)}') from error
         raise
@@ -5272,13 +5343,13 @@ def reject(board: Board, args) -> int:
         raise BoardError(f'{args.id}: items still open: {ids}; no open item stays under a closed change request: '
                          f'agents board close {ids} --outcome dropped --reason "<why>", or agents board move {ids} --to <change request>')
     comment(args.id, f'board cr reject: {actor}: {args.reason}')
-    move(cr, 'cr reject', reason=f"rejected: {args.reason}"[:300].ljust(20, '.'), force=True)
+    move(cr, 'cr reject', board=board, reason=f"rejected: {args.reason}"[:300].ljust(20, '.'), force=True)
     target = board_setting(board, 'target')
     back = []
     for other in live_crs(board):
         if meta(other).get('base') == args.id:
             put_meta(other, base=target, replan=args.reason[:200], since=None)
-            move(other, 'base rejected')
+            move(other, 'base rejected', board=board)
             comment(other['id'], f"board cr reject: {args.id}, which this stacked on, was rejected ({args.reason}); back to planning with the base reset to the target.")
             back.append(other['id'])
     print(f"rejected {args.id}" + (f"; back to planning: {', '.join(back)}" if back else '')
@@ -6362,7 +6433,7 @@ def record(board: Board, args) -> int:
         failed += lost
     if args.unratified:  # unclaim last, so any earlier stop leaves the record held and rerunnable
         issue['status'] = status
-        move(issue, 'unclaim')
+        move(issue, 'unclaim', board=board)
     print(f"recorded {args.id} ({status.replace('_', ' ')}): {issue.get('title', '')}")
     if confirmation:
         print(f'confirmation question: {confirmation}')
@@ -6528,7 +6599,7 @@ def wait_one(board: Board, item_id: str, blocker: str, reason: str | None, actor
     operations = [f'dep remove {a} {b}' for a, b, kind in edges if kind in ('relates-to', 'related')]
     operations += [] if waits else [f'dep add {item_id} {blocker} blocks']
     holder = issue.get('assignee')
-    own = in_hand(issue, actor) and board.is_open(blocker)
+    own = in_hand(issue, actor) and board.is_open(blocker) and group_of(board, issue) != ITEM_GROUP  # an item has no hold to hand back
     if operations:
         bd_checked('batch', '-m', f'board wait {item_id} --on {blocker}', '--json', stdin='\n'.join(operations) + '\n')
     # The comment names the wait for board check (unnamed waits read comments too); an append to a field would
@@ -6537,7 +6608,7 @@ def wait_one(board: Board, item_id: str, blocker: str, reason: str | None, actor
         comment(item_id, wait_comment(blocker, reason))
     result = wait_sentence(item_id, blocker, reason)
     if own:
-        move(issue, 'unclaim', actor=actor)
+        move(issue, 'unclaim', board=board, actor=actor)
         result += '; handed back to the queue'
     return result, False
 
@@ -6690,7 +6761,7 @@ def reopen_command(board: Board, args) -> int:
     if superseded:
         raise BoardError(f"{', '.join(superseded)} is a superseded ruling: record a revision to put it back in force (agents board ruling revise {superseded[0]})")
     for item_id in args.ids:
-        move(board.by_id[item_id], 'reopen')
+        move(board.by_id[item_id], 'reopen', board=board)
         print(f'{item_id}: reopened')
     return 0
 
@@ -6899,7 +6970,7 @@ def close_answered(board: Board, closes: list[tuple[str, list[str]]], released: 
             if any(b not in released and b not in closed for b in board.unsettled_blockers(question)):
                 continue
             pending.remove((question, records))
-            result = move(board.by_id[question], 'close', reason=f"Answered by released {', '.join(records)}", force=bool(blockers), check=False)
+            result = move(board.by_id[question], 'close', board=board, reason=f"Answered by released {', '.join(records)}", force=bool(blockers), check=False)
             if result.returncode != 0:
                 print(f'{question}: not closed: {(result.stderr or result.stdout).strip()}', file=sys.stderr)
                 continue
@@ -6987,7 +7058,7 @@ def supersede_pair(board: Board, old: str, new: str, rule: str | None, actor: st
                    if i != new and board.is_open(i)
                    and all(kind in ('relates-to', 'related') for _, _, kind in board.between(i, new)))
     returned, failed = wait_items(board, items, new, f'supersedes {old}; replan against it', actor)
-    move(board.by_id[old], 'supersede', via='supersede', reason=new)
+    move(board.by_id[old], 'supersede', board=board, via='supersede', reason=new)
     print(f"superseded {old} by {new}; blocked {', '.join(i for i in items if i not in failed) or 'none'}"
           + (f"; revision of {', '.join(board.revises(old))} now pending on {new}" if carried else ''))
     return returned, failed
@@ -8090,7 +8161,7 @@ def run_command(argv: list[str]) -> int:
                             ('unclaim', unclaim, "free a hold, yours or another's (with a comment)")):
         sub = add(name, text, run)
         sub.add_argument('ids', nargs='+', type=board_id)
-        sub.add_argument('--agreed', metavar='TEXT', type=nonempty, help="a hold held elsewhere on a shared board: what its person said when they agreed")
+        sub.add_argument('--agreed', metavar='TEXT', type=nonempty, help="the user agrees the holder is gone (a hold held elsewhere on a shared board always needs it): what they said; a deciding session may then free a live-looking hold")
         if name == 'unclaim':
             sub.add_argument('--resume', metavar='TEXT', type=nonempty,
                              help='hand back your own work in progress unfinished, with its next action (work that waits on something: agents board wait)')

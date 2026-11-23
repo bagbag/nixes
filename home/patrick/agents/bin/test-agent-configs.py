@@ -2627,7 +2627,7 @@ def validate_board(root: Path) -> None:
                     raise ValueError(f"board position lacks {expected!r}:\n{recent}")
             if "IDLE" in recent or "board take <id>" in recent:
                 raise ValueError("board position flagged fresh holds as idle")
-            if later.count("IDLE") != 3 or "If that session is gone, take the item when your role could claim it: agents board take <id>" not in later:
+            if later.count("IDLE") != 3 or "If that session is gone, a deciding session takes the item: agents board take <id>" not in later:
                 raise ValueError(f"board position missed idle holds:\n{later}")
 
             # Session scope (r26-q115/q116/q120): a session lists when it holds items here, or when its project is this
@@ -3491,7 +3491,7 @@ def validate_board(root: Path) -> None:
                     or "STALE" in row(shown, ids["Open cache question"]):
                 raise ValueError(f"board position did not flag the stale work hold only:\n{shown}")
             # The position legend speaks to the holder of another session's hold: only the holder, the user or a deciding session frees it.
-            if "agents board unclaim it" in shown or "Only the holder, the user or a deciding session frees it" not in shown:
+            if "agents board unclaim it" in shown or "Only the holder or the user frees it, a deciding session once its session is gone" not in shown:
                 raise ValueError(f"board position's STALE legend must not tell the reader to unclaim another session's hold:\n{shown}")
             commented = variant(**{"Held task": {"comments": [{"author": "aaaa1111", "text": "waits on CI",
                                                               "created_at": "2026-10-22T16:30:00Z"}]}})
@@ -4604,7 +4604,7 @@ def validate_board(root: Path) -> None:
             fake = Fake(topical)
             if invoke(["ruling", "revise", ids["Released ruling"], "--title", "t", "--body-file", "p.md", "--holds", "none"], fake, "lead0001")[0] or fake.graphs[-1].get("edges"):
                 raise ValueError("--holds none blocks nothing")
-            # The block edges use a board read after the create: the creator's own claimed item is handed back like board wait does (r21-q144),
+            # The block edges use a board read after the create: an item has no hold to hand back (a task's own hold is, like board wait does, r21-q144),
             # and a released ruling may wait on the new open question.
             class Creating(Fake):
                 def __call__(self, command, **kwargs):
@@ -4616,9 +4616,9 @@ def validate_board(root: Path) -> None:
             mine_rows = variant(**{"Ready task": {"status": "open", "assignee": "lead0001"}})
             fake = Creating(list(mine_rows))
             code, _, errors = invoke(["ruling", "revise", ids["Released ruling"], "--title", "t", "--body-file", "p.md", "--holds", f"{ready},{ids['Released ruling']}"], fake, "lead0001")
-            if code or not any((w[:2] == ["update", ready] and w[2:4] == ["--assignee", ""]) for w in fake.writes()) or errors.count("not blocked") \
+            if code or any((w[:2] == ["update", ready] and w[2:4] == ["--assignee", ""]) for w in fake.writes()) or errors.count("not blocked") \
                     or not any("dep add " + ids["Released ruling"] + " fx-new blocks" in (stdin or "") for _, stdin in fake.calls):
-                raise ValueError(f"holds on the reloaded board: the creator's claimed item is handed back and a released ruling may wait on the new question: {code} {errors} {fake.writes()}")
+                raise ValueError(f"holds on the reloaded board: an item has no hold to hand back and a released ruling may wait on the new question: {code} {errors} {fake.writes()}")
             # board create --type decision --holds <ids>: the create, then the edges (in-process, past invoke's one-read-per-command accounting).
             description_file = Path(tempfile.mkdtemp()) / "d.md"
             description_file.write_text("d", encoding="utf-8")
@@ -4719,8 +4719,8 @@ def validate_board(root: Path) -> None:
             if code or [w for w in fake.writes() if w[0] != "create"] != [["update", "cp-plain", "--status", "open", "--assignee", "", "--if-assignee", "", "--if-status", "passed", "--json"], ["comments", "add", "cp-plain", "board return: findings as items: fx-new"]]:
                 raise ValueError(f"Return of a design-only CR is the ordinary Return, no design item touched: {code} {errors} {fake.writes()}")
             code, _, errors, fake = bd_create("--holds", ready, deck=Creating(list(mine_rows)))
-            if code or not any((w[:2] == ["update", ready] and w[2:4] == ["--assignee", ""]) for w in fake.writes()):
-                raise ValueError(f"board bd create --holds blocks on the board read after the create: the creator's claimed item is handed back: {code} {errors} {fake.writes()}")
+            if code or any((w[:2] == ["update", ready] and w[2:4] == ["--assignee", ""]) for w in fake.writes()) or not any(w[0] == "comments" and w[1] == "add" and w[2] == ready for w in fake.writes()):
+                raise ValueError(f"board bd create --holds blocks on the board read after the create: the item waits and has no hold to hand back: {code} {errors} {fake.writes()}")
             code, _, errors, fake = bd_create("--holds", "fx-nowhere")
             if code != 2 or any(a[0] == "create" for a, _ in fake.calls):
                 raise ValueError(f"board bd create --holds with an unknown item must create nothing: {code} {errors} {fake.calls}")
@@ -4771,7 +4771,7 @@ def validate_board(root: Path) -> None:
             nodes = [{"key": "q", "title": "q", "type": "decision", "description": "d"}, {"key": "t", "title": "t", "type": "task", "description": "d"}]
             waiting_t = [nodes[0], dict(nodes[1], waits_on=[{"on": "q", "for": "its ruling"}])]
             code, output, errors, fake = bd_graph({"nodes": waiting_t, "edges": []}, "--holds", ready)
-            if code or not any((w[:2] == ["update", ready] and w[2:4] == ["--assignee", ""]) for w in fake.writes()) or not any(w[:3] == ["comments", "add", "fx-task"] for w in fake.writes()) \
+            if code or any((w[:2] == ["update", ready] and w[2:4] == ["--assignee", ""]) for w in fake.writes()) or not any(w[:3] == ["comments", "add", ready] for w in fake.writes()) or not any(w[:3] == ["comments", "add", "fx-task"] for w in fake.writes()) \
                     or not any(a[0] == "create" for a, _ in fake.calls):
                 raise ValueError(f"a plan's links to its decision node are holds: every held item, an existing one and a plan item, gets the hold effects: {code} {errors} {fake.writes()}")
             code, output, errors, fake = bd_graph({"nodes": nodes, "edges": [{"from_key": "t", "to_key": "q", "type": "parent-child"}]})
@@ -4781,7 +4781,7 @@ def validate_board(root: Path) -> None:
             if code != 2 or "stands alone" not in errors:
                 raise ValueError(f"--holds none beside a plan link is refused: {code} {errors}")
             code, output, errors, fake = bd_graph({"nodes": nodes, "edges": []}, "--holds", ready)
-            if code or not any((w[:2] == ["update", ready] and w[2:4] == ["--assignee", ""]) for w in fake.writes()):
+            if code or any((w[:2] == ["update", ready] and w[2:4] == ["--assignee", ""]) for w in fake.writes()) or not any(w[:3] == ["comments", "add", ready] for w in fake.writes()):
                 raise ValueError(f"--holds ids with a plan are held up by its decision (no refusal): {code} {errors} {fake.writes()}")
             # A wait between two new work items is bd's own write: waits_on becomes the node's dep before bd sees the plan, its for a comment on the
             # waiter, and the sentence is printed; a dry run prints the sentence and writes nothing.
@@ -5091,14 +5091,44 @@ def validate_board(root: Path) -> None:
                 if code != 1 or fake.writes() or "an item has no holder of its own" not in errors:
                     raise ValueError(f"board {verb} of an item must refuse, its change request holds it: {code} {errors!r} {fake.writes()}")
 
+            # Freeing another session's hold follows Authority: the user, or a deciding session once the holder is gone (or the user agrees).
+            for verb in ("take", "unclaim"):
+                for who in ("lead0001", "cccc3333"):
+                    fake = Fake(fixture)
+                    code, _, errors = invoke([verb, ids["Held task"]], fake, who)
+                    if code != 1 or fake.writes() or "aaaa1111/build-12345678" not in errors:
+                        raise ValueError(f"board {verb} of a live session's hold by {who} must be refused and write nothing: {code} {errors!r} {fake.writes()}")
+            # Closing a held record is freeing its hold: the holder's session, the user, or a deciding session once the holder is gone.
+            reason = "twenty characters of a reason"
+            for who in ("lead0001", "cccc3333"):
+                fake = Fake(fixture)
+                code, _, errors = invoke(["close", ids["Held task"], "--reason", reason], fake, who)
+                if code == 0 or fake.writes():
+                    raise ValueError(f"board close of a live session's held task by {who} must be refused and write nothing: {code} {errors!r} {fake.writes()}")
             fake = Fake(fixture)
-            invoke(["take", ids["Held task"]], fake, "lead0001")
+            if invoke(["close", ids["Held task"], "--reason", reason], fake, "aaaa1111")[0] != 0 or not fake.writes():
+                raise ValueError("the holder's own session closes its task")
+            with patch.object(board, "holder_gone", lambda *args: True):
+                for who, allowed in (("lead0001", True), ("cccc3333", False)):
+                    for argv in (["take", ids["Held task"]], ["unclaim", ids["Held task"]], ["close", ids["Held task"], "--reason", reason]):
+                        fake = Fake(fixture)
+                        code = invoke(argv, fake, who)[0]
+                        if (code == 0 and bool(fake.writes())) != allowed:
+                            raise ValueError(f"board {argv[0]} of a gone session's hold by {who} (deciding: {allowed}): {code} {fake.writes()}")
+            # A caller that passes check=False reads a refusal as a failed write, never as an exception.
+            fake = Fake(fixture)
+            with patch.dict(os.environ, {"BEADS_ACTOR": "cccc3333", "CODEX_SESSION_ID": "", "CLAUDE_CODE_SESSION_ID": ""}), patch.object(board.subprocess, "run", fake):
+                refused = board.move(dict(next(i for i in fixture if i["id"] == ids["Held task"])), "close", reason=reason, check=False)
+            if refused.returncode == 0 or fake.writes() or "aaaa1111/build-12345678" not in refused.stderr:
+                raise ValueError(f"move(check=False) must return a refusal as a failed result and write nothing: {refused} {fake.writes()}")
+            fake = Fake(fixture)
+            invoke(["take", ids["Held task"], "--agreed", "anna: go ahead"], fake, "lead0001")
             if fake.writes()[0] != ["update", ids["Held task"], "--assignee", "lead0001", "--if-assignee", "aaaa1111/build-12345678", "--if-status", "open", "--json"] \
                     or fake.writes()[1][:3] != ["comments", "add", ids["Held task"]]:
                 raise ValueError(f"board take: {fake.writes()}")
 
             fake = Fake(variant(**{"Released ruling": {"assignee": "cccc3333"}}))
-            invoke(["unclaim", ids["Held task"], ids["Released ruling"]], fake, "lead0001")
+            invoke(["unclaim", ids["Held task"], ids["Released ruling"], "--agreed", "anna: go ahead"], fake, "lead0001")
             writes = fake.writes()
             if writes[0] != ["update", ids["Held task"], "--assignee", "", "--if-assignee", "aaaa1111/build-12345678", "--if-status", "open", "--json"] \
                     or writes[1][:3] != ["comments", "add", ids["Held task"]] \
@@ -6137,7 +6167,7 @@ def validate_board(root: Path) -> None:
                 issues[0]["metadata"].update(stage=None)
                 git("worktree", "remove", "--force", str(wt))
                 issues.append(cr_item("f3.open", "f3"))
-                with patch.object(board, "claim_one", lambda issue, actor, fields=None: (False, "lost the race")):
+                with patch.object(board, "claim_one", lambda deck, issue, actor, fields=None: (False, "lost the race")):
                     invoke(["claim", "f3"], Fake(issues), "aaaa1111")
                 if not git("branch", "--list", "cr/f3") or git("log", "-1", "--format=%s", "cr/f3") != "f3: pass":
                     raise ValueError("F3: a failed claim deleted a branch that held unlanded work")
@@ -6587,7 +6617,7 @@ def validate_board(root: Path) -> None:
                 git("branch", "-D", "cr/cas")
                 issues.append(cr_item("cas.open", "cas"))
 
-                def lose_after_work(issue, actor, fields=None):
+                def lose_after_work(deck, issue, actor, fields=None):
                     made = Path(repo_root, ".worktrees", "cas")
                     commit(made, "cas-work.txt", "work\n", "cas: work made while the claim was in flight")
                     return False, "lost the race"
@@ -7530,7 +7560,7 @@ def validate_board(root: Path) -> None:
         if own_start and (", active 10 min ago" not in row(fresh, "fx-running") or ", active 1 min ago" not in row(fresh, "fx-active") or "active" in row(fresh, "fx-idle")
                           or ", active 5 min ago" not in row(fresh, "fx-ended")):
             raise ValueError(f"board position activity ages:\n{fresh}")
-        if own_start and ("Take fx-gone, fx-stale when your role could claim it: agents board take <id>" not in fresh
+        if own_start and ("A deciding session takes fx-gone, fx-stale: agents board take <id>" not in fresh
                           or not row(fresh, "live0001").endswith("  process alive")
                           or not row(fresh, "gone0001").endswith("  GONE")
                           or "  workers 1/3  " not in row(fresh, "work0001")
