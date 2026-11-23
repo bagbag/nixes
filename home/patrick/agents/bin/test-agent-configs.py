@@ -5707,6 +5707,12 @@ def validate_board(root: Path) -> None:
                 code, output, errors = invoke(["cr", "land", "lx2", "--tip", x_tip[:8], "--base", at_main()], fake, "lead0001")
                 if code or at_main() != x_tip or any(w[:2] == ["close", "ly2"] for w in fake.writes()) or "left as refresh work" not in output:
                     raise ValueError(f"a look-after CR with a stale check must be left as refresh work: {code} {errors}\n{output}")
+                # ...and its refresh finishes the landing: look after needs no Accept once the check is current and the review covers it.
+                x_issues[0].update(status="closed")  # the landing above, which the fake only records
+                fake = Fake([*x_issues, *y_issues])
+                code, output, errors = invoke(["cr", "refresh", "ly2"], fake, "lead0001")
+                if code or at_main() != y_tip or not any(w[:2] == ["close", "ly2"] for w in fake.writes()):
+                    raise ValueError(f"refreshing a stale look-after CR must land it (the Refresh rule): {code} {errors}\n{output}")
 
                 # A look-after CR that passed review while its parent waits for the user is marked after it and is no pull.
                 p_issues, p_tip, _ = make_cr("ab", "ab.txt", "x\n")

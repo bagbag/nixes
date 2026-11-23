@@ -4948,8 +4948,8 @@ def land_core(board: Board, cr: dict, main: Path, tip: str, base_tip: str) -> li
     board._cr.clear()
     for other in after:
         try:
-            if cr_info(board, other)['state'] == 'current' and review_current(other, cr_info(board, other)):
-                child_info = cr_info(board, other)
+            child_info = cr_info(board, other)
+            if child_info['state'] == 'current' and review_current(other, child_info):
                 notes.append(f"{other['id']} (after {cid}): " + '; '.join(land_core(board, other, main, child_info['tip'], child_info['baseTip'])))
             else:
                 notes.append(f"{other['id']} (after {cid}): left as refresh work (its check or review no longer matches)")
@@ -5344,7 +5344,18 @@ def refresh(board: Board, args) -> int:
         show_rebase_evidence(wt, cr, from_base, result['baseTip'], result['tip'])
     if not merging_user_edit and route_uncovered(board, cr, cr_info(board, cr)):
         print(f'{args.id}: the series changed since its last review; sent to agent review')
+    elif not result['code'] and (landed := land_look_after(board, cr, main)):
+        print(f'{args.id}: look after, its check is current and its review covers it: ' + '; '.join(landed))
     return 0
+
+
+def land_look_after(board: Board, cr: dict, main: Path) -> list[str] | None:
+    """The landing a refresh finishes: a passed `look` `after` CR that waits for no base, whose check is current and review covers its
+    tip, lands without the user (the model's Refresh rule). None when it is not that CR."""
+    info = cr_info(board, cr)
+    if cr['status'] != PASSED or cr_look(board, cr) != 'after' or after_base(board, cr) or info['state'] != 'current' or not review_current(cr, info):
+        return None
+    return land_core(board, cr, main, info['tip'], info['baseTip'])
 
 
 def review_edits_tree(main: Path, wt: Path, tip: str) -> str:
