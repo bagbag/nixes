@@ -9090,6 +9090,16 @@ def validate_cr_rank(root: Path) -> None:
     only_item = board.Board([item("c", "change-request", priority=3), item("c.i", "task", priority=1, parent="c")])
     if board.effective_priority(only_item, only_item.by_id["c"]) != (1, "c.i", True):
         raise ValueError("an item of the unit that sets the priority is named, flagged as the unit's own")
+    # `unblocks N` counts item waits: a question frees a request whose only item waits on it, and frees nothing for a request that has
+    # another item ready (that request is ready already: readiness is any item, cr_stuck).
+    unlocking = board.Board([
+        item("q", "decision"), item("only", "change-request"), item("only.i", "task", parent="only", waits=["q"]),
+        item("both", "change-request"), item("both.a", "task", parent="both", waits=["q"]), item("both.b", "task", parent="both"),
+    ])
+    impact = unlocking.unlocks.impact
+    if impact.get("q", board.UnlockImpact()).solo != 1 or "only" in unlocking.unlocks.ready or "both" not in unlocking.unlocks.ready:
+        raise ValueError(f"a question's unblocks counts the request whose only item waits on it, not one with another item ready: "
+                         f"{impact.get('q')} ready {sorted(unlocking.unlocks.ready)}")
     if board.effective_priority(deck, deck.by_id["under"])[0] != 3:
         raise ValueError("priority does not pass up or down between a request and the request it sits under")
     if board.milestones_of(deck, deck.by_id["cr"]) != ["ms"] or board.milestones_of(deck, deck.by_id["under"]) != ["ms"] \

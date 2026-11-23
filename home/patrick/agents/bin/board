@@ -1653,12 +1653,13 @@ def work_rank(board: Board, issue: dict) -> tuple[bool, int]:
 class WorkWait(NamedTuple):
     hard: frozenset[str]
     bases: frozenset[str]
+    items: tuple[frozenset[str], ...] = ()  # a change request: what each open item waits on; the request is ready when one has nothing left to wait for
 
     def ready(self, delivered: set[str]) -> bool:
-        return self.hard <= delivered and len(self.bases - delivered) <= 1
+        return self.hard <= delivered and len(self.bases - delivered) <= 1 and (not self.items or any(waits <= delivered for waits in self.items))
 
     def relevant(self) -> frozenset[str]:
-        return self.hard | self.bases if len(self.bases) > 1 else self.hard
+        return (self.hard | self.bases if len(self.bases) > 1 else self.hard).union(*self.items)
 
 
 class UnlockImpact(NamedTuple):
@@ -1701,7 +1702,8 @@ class WorkUnlocks:
             hard, bases = board.cr_wait_parts(issue, projected=True)
             if issue['status'] == PASSED and (parent := live_parent(board, issue)):
                 hard.append(parent)
-            return WorkWait(frozenset(hard), frozenset(bases))
+            items = tuple(frozenset(board.item_waits(item, item_id)) for item in board.cr_items(item_id) if item.get('issue_type') != CR_TYPE)
+            return WorkWait(frozenset(hard), frozenset(bases), items)
         hard = set()
         ignored = set(board.foreign_waits(issue))
         blockers = board.blockers.get(item_id, [])
@@ -1751,7 +1753,7 @@ class WorkUnlocks:
         producers = {token: unit for unit, tokens in self.delivers.items() for token in tokens}
         impossible = set()
         for unit, position in positions.items():
-            hard, bases = self.waits[unit]
+            hard, bases = self.waits[unit].hard, self.waits[unit].bases
             if len(bases) < 2:
                 continue
             later = {base for base in bases - hard if positions.get(base, -1) >= position}
@@ -1817,7 +1819,7 @@ class WorkUnlocks:
                 available[qid] = frozenset({qid}).union(*(available[q] for q in required))
 
         observed: dict[frozenset[str], list[str]] = {}
-        for item_id, (hard, bases) in self.waits.items():
+        for item_id, (hard, bases, _) in self.waits.items():
             if hard and len(bases) <= 1 and hard <= available.keys():
                 required = frozenset().union(*(available[q] for q in hard))
                 observed.setdefault(required, []).append(item_id)
