@@ -137,7 +137,7 @@ reason (a decision or gate as the new item, a milestone as the waiting one), els
 the ruling verbs; a plan edge needs a new item at one end; a node without a description is refused; `--parent` copies the parent's labels
 except its queue (bd copies none for a graph node). `--limit 0` is every row of a view;
 `related --docs`, `--holds`, `--deps`, `--label`, `--field`, `--section` and `health --items` repeat and take commas (`--closes` repeats, one `QUESTION=RECORD[,RECORD]` each, its comma separates records); options do not abbreviate; `--limit` and `--offset` are 0 or more. A refusal of `create`, `comment`, `close` and `field` exits 2, as `agents board bd` does. `agents board close --force` is bd's: it closes a blocked item or an epic with open children. `create` refuses `--status closed` (close it with a reason) and takes `-p P0..P4`; a plan with a key bd would drop silently, labels that are not a list of strings, or an edge that is not an object is refused. `agents board help <verb>` prints that verb's help and example.
-`agents board wait [--timeout <s>]` blocks until a bare `agents board claim` would have a candidate for the session (its pulls, minus its own
+`agents board watch [--timeout <s>]` blocks until a bare `agents board claim` would have a candidate for the session (its pulls, minus its own
 hand-overs; one helper serves both), prints `claimable: <id> (<kind>) <title>` and exits 0 without claiming. It polls every 60 s,
 exits 3 at the timeout and 1 when the session's registration is gone. Run it with the shell tool's background mode, not a
 30-minute monitor; a candidate that `claim` then refuses (a git or worktree failure) is `claim`'s message to act on.

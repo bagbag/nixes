@@ -3216,10 +3216,10 @@ def waiting_skips(board: Board, scoped: list[dict], kinds: tuple[str, ...]) -> l
             if not issue.get('assignee') and board.kind(issue) in kinds and board.waits_of(issue)]
 
 
-WAIT_SECONDS = 60  # poll gap of `board wait`: a read of the board takes about a second
+WATCH_SECONDS = 60  # poll gap of `board watch`: a read of the board takes about a second
 
 
-def wait_command(board: Board, args) -> int:
+def watch_command(board: Board, args) -> int:
     """Blocks until a bare `board claim` would have a candidate (claim_candidates), prints it and exits 0; claims nothing.
     Exit 3 once --timeout passes, 1 when the session's registration is gone. Each poll reads the board anew."""
     actor, end = caller(), None if args.timeout is None else time.monotonic() + args.timeout
@@ -3233,7 +3233,7 @@ def wait_command(board: Board, args) -> int:
         if end is not None and time.monotonic() >= end:
             print('nothing claimable yet')
             return 3
-        time.sleep(WAIT_SECONDS if args.interval is None else args.interval)
+        time.sleep(WATCH_SECONDS if args.interval is None else args.interval)
         if shared is not None:
             with contextlib.suppress(OSError, ValueError, BoardError, subprocess.SubprocessError):
                 shared.before()  # the pull a command start makes
@@ -3242,7 +3242,7 @@ def wait_command(board: Board, args) -> int:
 
 
 def claim_kinds(board: Board, entry: dict | None, actor: str) -> tuple[str, ...]:
-    """The kinds a bare claim takes from: the calling session's pulls (the refusals a bare claim and `board wait` share)."""
+    """The kinds a bare claim takes from: the calling session's pulls (the refusals a bare claim and `board watch` share)."""
     if entry is None:
         raise BoardError(f'no registered role for session {session_actor(actor)}; run /role first')
     if shared is not None and person() is None:
@@ -7633,7 +7633,7 @@ EXAMPLES = {
     'check': 'agents board check --limit 0',
     'related': 'agents board related --like draft.md tenancy --docs docs,README.md',
     'queue': 'agents board queue --root <milestone or change request>',
-    'wait': 'agents board wait --timeout 600',
+    'watch': 'agents board watch --timeout 600',
     'mine': 'agents board mine',
     'console': 'agents board console',
     'show': 'agents board show <id> --section Decision',
@@ -7684,7 +7684,7 @@ NO_PULL = {'help', '-h', '--help', 'share', 'join', 'relocate'}
 BD_NO_DATABASE = {'where', 'version', 'help'}
 BD_NO_PULL = {'dolt', 'sync', 'init', 'conflicts', 'sql', 'rename', 'flatten', 'vc', 'version', 'where', 'help', 'bootstrap'}
 # Commands that write nothing: a wrong entry costs a late sync, a missing one a cheap check.
-READS = {'health', 'position', 'holders', 'check', 'related', 'queue', 'wait', 'mine', 'console', 'show', 'help', '-h', '--help', 'share', 'join',
+READS = {'health', 'position', 'holders', 'check', 'related', 'queue', 'watch', 'mine', 'console', 'show', 'help', '-h', '--help', 'share', 'join',
          'relocate'}
 BD_READS = {'list', 'ready', 'show', 'view', 'query', 'search', 'where', 'version', 'help', 'export', 'stats', 'blocked', 'lint',
             'history', 'count', 'events'}
@@ -7868,10 +7868,10 @@ def run_command(argv: list[str]) -> int:
                      help='canonical docs (files or directories of .md); repeatable, commas separate paths')
     sub.add_argument('--json', action='store_true', help='{terms, like, items, docs}; --limit per list')
     add('queue', 'claimable work by pull', queue, [scope, listing, queues])
-    sub = add('wait', 'block until `agents board claim` would find work for this session; run it in the background, it claims nothing',
-              wait_command, [scope, queues])
+    sub = add('watch', 'block until `agents board claim` would find work for this session; run it in the background, it claims nothing',
+              watch_command, [scope, queues])
     sub.add_argument('--timeout', type=float, metavar='SECONDS', help='give up with exit 3 after this long (default: never)')
-    sub.add_argument('--interval', type=float, metavar='SECONDS', help=f'gap between reads (default {WAIT_SECONDS})')
+    sub.add_argument('--interval', type=float, metavar='SECONDS', help=f'gap between reads (default {WATCH_SECONDS})')
     add('mine', 'items held by this session and its workers', mine, [scope, listing])
     sub = add('console', 'JSON for the console pane from one snapshot: {counts, items (mine), sessions, held (position)}',
               console, [scope])

@@ -658,11 +658,11 @@ def t_pull() -> None:
     [t.start() for t in threads]
     [t.join() for t in threads]
     check(results == [0, 0, 0, 0], 'parallel commands with a pull due all finish', results)
-    # board wait pulls again on each poll, not only at its start.
+    # board watch pulls again on each poll, not only at its start.
     time.sleep(options.seconds + 0.5)
     gap = options.seconds + 0.5
     pulled, started = ROOT / 'b/.beads/board-sync/pulled', time.time()
-    rc, out, err, _ = run('b', 'wait', '--queue', 'all', '--root', item, '--interval', str(gap), '--timeout', str(gap + 1))
+    rc, out, err, _ = run('b', 'watch', '--queue', 'all', '--root', item, '--interval', str(gap), '--timeout', str(gap + 1))
     check(rc == 3 and pulled.stat().st_mtime >= started + gap - 0.3, 'wait: a poll pulls when one is due', (rc, out, err, pulled.stat().st_mtime - started))
     # A dead remote: the command gives up on time.
     time.sleep(options.seconds + 0.5)

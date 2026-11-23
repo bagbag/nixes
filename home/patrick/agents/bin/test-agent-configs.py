@@ -2533,7 +2533,7 @@ def validate_board(root: Path) -> None:
                 expected = ["export", "show"] if "fx-nowhere" in argv else ["export", "export"]  # unknown targets are checked before creation; otherwise read after to block the new question
         elif argv[:2] == ["ruling", "record"]:
             expected = fake.reads() if fake.reads() and set(fake.reads()) == {"export"} else ["export"]  # the export again before each supersede (the links just written)
-        elif argv[0] in ("claim", "take", "wait") and (
+        elif argv[0] in ("claim", "take", "watch") and (
                 fake.reads()[:1] == ["list"] and set(fake.reads()[1:]) <= {"show", "list"}
                 or fake.reads()[:2] == ["export", "list"] and set(fake.reads()[2:]) <= {"show", "list"}):
             # claim reads hand-over comments of in_review items, the comments of the session's other holds (staleness), and the
@@ -2987,30 +2987,30 @@ def validate_board(root: Path) -> None:
                 raise ValueError(f"board claim did not take the released ruling before the equal-priority spike: {fake.writes()}")
 
             no_plan = {"Old store ruling": {"status": "closed"}, "Released ruling": {"status": "closed"}}  # nothing for a lead to plan
-            # board wait: the same candidates a bare claim tries, read-only; exit 3 at --timeout, 1 for an unregistered session.
+            # board watch: the same candidates a bare claim tries, read-only; exit 3 at --timeout, 1 for an unregistered session.
             fake = Fake(fixture)
             invoke(["claim"], fake, worker)
             first = fake.writes()[0][1]
             fake = Fake(fixture)
-            code, found, _ = invoke(["wait", "--timeout", "0"], fake, worker)
+            code, found, _ = invoke(["watch", "--timeout", "0"], fake, worker)
             if code != 0 or not found.startswith(f"claimable: {first} ") or fake.writes():
-                raise ValueError(f"board wait did not name what a bare claim takes, or wrote ({code}): {found} {fake.writes()}")
+                raise ValueError(f"board watch did not name what a bare claim takes, or wrote ({code}): {found} {fake.writes()}")
             fake = Fake(variant(**no_plan))
-            code, found, _ = invoke(["wait", "--timeout", "0"], fake, "lead0001")
+            code, found, _ = invoke(["watch", "--timeout", "0"], fake, "lead0001")
             if code != 3 or found.strip() != "nothing claimable yet" or fake.writes():
-                raise ValueError(f"board wait did not time out where a bare claim finds nothing ({code}): {found}")
-            code, _, refusal = invoke(["wait", "--timeout", "0"], Fake(fixture), "nobody99")
+                raise ValueError(f"board watch did not time out where a bare claim finds nothing ({code}): {found}")
+            code, _, refusal = invoke(["watch", "--timeout", "0"], Fake(fixture), "nobody99")
             if code != 1 or "no registered role" not in refusal:
-                raise ValueError(f"board wait did not refuse an unregistered session ({code}): {refusal}")
+                raise ValueError(f"board watch did not refuse an unregistered session ({code}): {refusal}")
             # Its own hand-over is no candidate for wait either, and another session's is.
             only_handed = {issue["title"]: {"status": "closed"} for issue in fixture if issue["title"] != "CR design"}
             own = {"status": "in_review", "metadata": {"author": worker}}
-            code, found, _ = invoke(["wait", "--timeout", "0"], Fake(variant(**only_handed, **{"CR design": own})), worker)
+            code, found, _ = invoke(["watch", "--timeout", "0"], Fake(variant(**only_handed, **{"CR design": own})), worker)
             if code != 3:
                 raise ValueError(f"board wait offered the caller's own hand-over ({code}): {found}")
-            code, found, _ = invoke(["wait", "--timeout", "0"], Fake(variant(**only_handed, **{"CR design": {"status": "in_review", "metadata": {"author": "zzzz9999"}}})), worker)
+            code, found, _ = invoke(["watch", "--timeout", "0"], Fake(variant(**only_handed, **{"CR design": {"status": "in_review", "metadata": {"author": "zzzz9999"}}})), worker)
             if code != 0 or f"claimable: {ids['CR design']} " not in found:
-                raise ValueError(f"board wait did not offer another session's hand-over ({code}): {found}")
+                raise ValueError(f"board watch did not offer another session's hand-over ({code}): {found}")
             fake = Fake(variant(**no_plan))  # copies: the poll below edits its issues
 
             def appears(_seconds):  # the next read finds the open question
@@ -3019,9 +3019,9 @@ def validate_board(root: Path) -> None:
                         issue["status"], issue["assignee"] = "open", ""
 
             with patch.object(board.time, "sleep", appears):
-                code, found, _ = invoke(["wait", "--interval", "1"], fake, "lead0001")
+                code, found, _ = invoke(["watch", "--interval", "1"], fake, "lead0001")
             if code != 0 or not found.startswith(f"claimable: {ids['Store choice']} "):
-                raise ValueError(f"board wait did not return once work appeared ({code}): {found}")
+                raise ValueError(f"board watch did not return once work appeared ({code}): {found}")
             # A bare claim with nothing claimable names the held items it passed over, with holder and state (r5-q24).
             code, report, held_errors = invoke(["claim"], Fake(variant(**no_plan, **{"Store choice": {"status": "open", "assignee": "cccc3333"}})), "lead0001")
             if code != 1 or f"held: {ids['Store choice']} open, held by cccc3333 (live)" not in report:

@@ -96,7 +96,7 @@ Give each step's output as one line.
    skipping its Claim step, and claim again. Take readiness from the queue:
    claim what it lists rather than judging it yourself. When `agents board claim` finds nothing and no
    worker runs, report the session's results and stop; when the user asked you to keep watching, run
-   `agents board wait` in the background instead (exit 0 names a candidate: claim again; a claim that fails twice on the same
+   `agents board watch` in the background instead (exit 0 names a candidate: claim again; a claim that fails twice on the same
    id is a blocker to report, not to wait out).
    Output per CR or item: `<id> → <protocol>: <exit result>`.
 
