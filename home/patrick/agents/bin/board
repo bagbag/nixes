@@ -119,7 +119,7 @@ WRITE_RETRY_ERROR = 'foreign key conflicts'
 STORE_WARN_BYTES = 1 << 30
 STORE_CHECK_SECONDS = 3600
 QUEUE_PREFIX = 'queue:'
-MOVERS = ('lead', 'solo')  # roles that may change an item's queue and take an Accept
+ATTENDED_ROLES = ('lead', 'solo')  # the `attended` who-word: roles that change an item's queue, take an Accept and reject; not autopilot
 DECIDING_ROLES = ('lead', 'solo', 'autopilot')  # a deciding session (role/SKILL.md); what autopilot may not do (accept, ratify) is the unattended protocol's, not the table's
 FOR_PREFIX = 'for:'  # an item filed for a person: unclaimable, held for its creator's check, then in that person's inbox
 # The mark that makes a board shared, in .beads: local, so an unshared board's check costs no bd call, and written only after
@@ -457,7 +457,7 @@ def authority_part(part: str, issue: dict, actor: str | None, board: 'Board', ag
     if part == 'deciding':
         return actor == session and bool(entry) and entry.get('role') in DECIDING_ROLES
     if part == 'attended':
-        return actor == session and bool(entry) and entry.get('role') in MOVERS
+        return actor == session and bool(entry) and entry.get('role') in ATTENDED_ROLES
     if part == 'planner':
         return bool(entry) and 'plan' in session_kinds(entry)
     if part == 'deferrer':
@@ -567,8 +567,8 @@ def move(issue: dict, command: str, *, to: str | None = None, actor: str | None 
     if target == 'closed' and force:
         # bd cannot combine --force with a compare-and-set, so the guard takes the record: holder := the closer, expecting the holder just read. A second
         # closer expects a holder that is gone, and its guard fails. A closer who already holds it changes nothing by taking, so it releases first and retakes.
-        closer = bd_actor()
-        if current == closer:
+        closer, original = bd_actor(), current
+        if current == closer:  # between this release and the retake another session could claim it: the retake then fails as changed meanwhile, and the holder is put back below
             released = bd('update', issue['id'], '--assignee', '', '--if-assignee', closer, '--if-status', issue['status'], '--json')
             if released.returncode != 0:
                 return refused(f"{issue['id']}: {command} refused, it changed meanwhile: {bd_message(released)}" if released.returncode == 13
@@ -576,11 +576,14 @@ def move(issue: dict, command: str, *, to: str | None = None, actor: str | None 
             current = ''
         guard = bd('update', issue['id'], '--assignee', closer, '--if-assignee', current, '--if-status', issue['status'], *meta_args, '--json')
         if guard.returncode != 0:
+            if original == closer:
+                bd('update', issue['id'], '--assignee', original, '--if-assignee', '', '--if-status', issue['status'], '--json')  # the release stands only if the retake won
             return refused(f"{issue['id']}: {command} refused, it changed meanwhile: {bd_message(guard)}" if guard.returncode == 13
                            else f"{issue['id']}: {command} failed: {bd_message(guard)}")
         result = bd('supersede', issue['id'], '--with', reason or '') if via == 'supersede' else bd('close', issue['id'], '--reason', reason or '', '--force')
-        if result.returncode != 0 and 'outcome' in (fields or {}):  # bd refused the close: the record stays open and carries no outcome
-            bd('update', issue['id'], '--unset-metadata', 'outcome', '--if-status', issue['status'], '--json')
+        if result.returncode != 0:  # bd refused the close: the record stays open, so the guard's writes are undone: the holder and the metadata it set are put back
+            undo = [arg for key in (fields or {}) for arg in (('--set-metadata', f'{key}={meta(issue)[key]}') if key in meta(issue) else ('--unset-metadata', key))]
+            bd('update', issue['id'], '--assignee', original, '--if-assignee', closer, '--if-status', issue['status'], *undo, '--json')
         holder_after = closer
     elif target == 'closed':
         if via != 'supersede' and len(reason or '') < CLOSE_REASON_MIN:
@@ -1011,9 +1014,9 @@ def session_role(board: 'Board | None' = None) -> str | None:
     return entry.get('role') if entry else None
 
 
-def may_move(board: 'Board | None' = None) -> bool:
+def may_attend(board: 'Board | None' = None) -> bool:
     """A person's terminal has no actor and isn't limited; a session with no registered role and a worker count as agents."""
-    return not derived_actor() or session_role(board) in MOVERS
+    return not derived_actor() or session_role(board) in ATTENDED_ROLES
 
 
 def may_decide(board: 'Board | None' = None) -> bool:
@@ -3463,7 +3466,7 @@ def claim(board: Board, args) -> int:
                 continue
             if board.is_cr(item_id):
                 kind = board.claimable(issue)
-                if kind is None and issue['status'] == PASSED and after_base(board, issue) and may_move(board):
+                if kind is None and issue['status'] == PASSED and after_base(board, issue) and may_attend(board):
                     # a passed look-after child waiting for its parent: a deciding session takes it so it can return it
                     ok, message = claim_one(board, issue, actor)
                     if ok:
@@ -3777,8 +3780,12 @@ def settings_problems(board: Board) -> list[str]:
     return problems
 
 
+# The commands that write a board without the model marker (require_model), each with why. Every other write refuses a board without it.
+MODEL_EXEMPT = {'setup': 'it creates the board, or brings an existing one to the current settings, so the marker cannot be its precondition',
+                'join': 'it fetches a board whose marker travels with the database: a joiner reads an old board, and its writes name /board-migrate'}
+
 def require_model() -> None:
-    """Refuses a write on a board that has not been brought to the current model (MODEL_KEY)."""
+    """Refuses a write on a board that has not been brought to the current model (MODEL_KEY); MODEL_EXEMPT's commands are the writes that need no marker."""
     if beads_dir() is not None and current_setting(MODEL_KEY) != MODEL:
         raise BoardError(f'this board is not on the current model ({MODEL_KEY} is not {MODEL}): run /board-migrate. Reads still work; board bd --raw is migrate\'s way in')
 
@@ -5294,7 +5301,7 @@ def return_item(board: Board, args) -> None:
 def land(board: Board, args) -> int:
     caller_actor = derived_actor() or 'user'
     cr = cr_arg(board, args.id, 'land')
-    if not may_move(board):
+    if not may_attend(board):
         raise BoardError('only a lead or solo session, or a person, lands a change request (the Accept)')
     m = meta(cr)
     if cr['status'] != PASSED:
@@ -5514,7 +5521,7 @@ def holder_decides(board: Board, holder: str) -> bool:
         entry = board.registry().get(session_actor(holder))
     except BoardError:
         return False
-    return bool(entry and entry.get('role') in MOVERS)
+    return bool(entry and entry.get('role') in ATTENDED_ROLES)
 
 
 def board_remote(main: Path, make: bool = False) -> bool:
@@ -5568,7 +5575,7 @@ def review_open(board: Board, args) -> int:
     """`board review open <item>`: the user reviews the item in its own worktree, on its own branch (accept.md User review).
     Records the tip it opens at, points the branch at the board's remote and prints the folder to open. Opening an item that is already
     open changes nothing it holds: its opened tip, edits and commits stay the user's."""
-    if not may_move(board):
+    if not may_attend(board):
         raise BoardError('only a lead or solo session, or a person, opens the review')
     item = require_open(board, [args.id])[0]
     if not board.is_cr(item['id']):
@@ -5724,7 +5731,7 @@ def cr_edits(board: Board, args) -> int:
         names = git_text(main, 'diff', '--name-status', opened, tree).splitlines()
         print(f'edits in {wt} against {opened[:12]} ({len(review["commits"])} commits, {len(names)} files):' + ''.join(f'\n  {row}' for row in names) + f'\n\n{shown}', end='')
         return 0
-    if not may_move(board):
+    if not may_attend(board):
         raise BoardError('only a lead or solo session, or a person, commits the review edits')
     if issue.get('assignee') and not holds_cr(issue, derived_actor() or ''):
         raise BoardError(f"{args.id}: held by {issue['assignee']}: commit the edits once that session releases it")
@@ -5781,7 +5788,7 @@ def record_merged(board: Board, args, main: Path) -> int:
     edit commit, which a rebase and a conflict merge keep."""
     if args.tip or args.commit or args.gate or args.no_gate or args.checks or args.message:
         raise BoardError('--merged goes alone: agents board cr edits <cr> --merged <commit>')
-    if not may_move(board):
+    if not may_attend(board):
         raise BoardError('only a lead or solo session, or a person, records the user\'s confirmed merge')
     cr = cr_arg(board, args.id, 'cr edits')
     if cr['status'] != PASSED:
@@ -6053,7 +6060,7 @@ def parent_move_refusal(board: Board, ids: list[str], target: str | None, *,
             if parent != target and board.by_id.get(parent, {}).get('issue_type') == CR_TYPE and (issue['status'] != 'open' or issue.get('assignee')):
                 return (f"{item_id} is {issue['status']}{' and held' if issue.get('assignee') else ''} in change request {parent}: its hold, worktree and "
                         'pass commit belong to it; finish or hand it back before moving it out')
-    if shared is not None and derived_actor() and not may_move():
+    if shared is not None and derived_actor() and not may_attend():
         for item_id in ids:
             if item_id in board.by_id and not queue_labels(board.routing(item_id)[0]) and board.queues(item_id) != (board.queues(target) if target else []):
                 return ("only lead and solo sessions move an item's parent, which moves it to the parent's queue; file a find for another person with "
@@ -6065,7 +6072,7 @@ def plan_queue_refusal(plan: dict) -> str | None:
     """A plan that puts an item in someone else's queue is a move: only lead and solo sessions make it."""
     mine = QUEUE_PREFIX + (person() or '')
     named = queue_labels([label for node in plan['nodes'] for label in node.get('labels') or []])
-    if any(label != mine for label in named) and not may_move():
+    if any(label != mine for label in named) and not may_attend():
         return ("only lead and solo sessions change an item into someone else's queue; file a find for another person with agents board create --for "
                 '<person>, and ask your lead to route the rest (agents board route)')
     return None
@@ -6448,11 +6455,16 @@ def create_ruling_revision(board: Board, old: str, title: str, description: str,
     return new
 
 
+def confirmation_text(issue: dict, reversal: str) -> tuple[str, str]:
+    """The title and description of the Confirm-or-revise question of an in-force ruling taken without the user's judgment; board-migrate reads it too."""
+    return (f"Confirm or revise: {issue.get('title', '')}?",
+            f"## Question\nConfirm ruling {issue['id']} or revise it?\n\n{reversal.strip()}\n")
+
+
 def unratified_confirmation(board: Board, issue: dict, reversal: str) -> str:
     """The ordinary question for an in-force ruling taken without the user's judgment."""
     item_id = issue['id']
-    title = f"Confirm or revise: {issue.get('title', '')}?"
-    description = f"## Question\nConfirm ruling {item_id} or revise it?\n\n{reversal.strip()}\n"
+    title, description = confirmation_text(issue, reversal)
     related = board.related.get(item_id, set())
     questions = [board.by_id[other] for other in related
                  if other in board.by_id and board.by_id[other].get('issue_type') == 'decision'
@@ -6777,7 +6789,7 @@ def setting_changes(board: Board, args) -> list[str]:
     cr_given = {name: getattr(args, name) for name in CR_SETTINGS if getattr(args, name) is not None}
     if args.no_commit is None and not cr_given:
         return []
-    if not may_move(board):
+    if not may_attend(board):
         raise BoardError('only a lead or solo session or a person changes item settings (planning)')
     for item_id in args.ids:
         issue = board.by_id[item_id]
@@ -7572,7 +7584,7 @@ def move_board(args) -> int:
     new board moved too."""
     if shared is None:
         raise BoardError('agents board relocate moves a shared board; this one is not shared')
-    if not may_move():
+    if not may_attend():
         raise BoardError("only lead and solo sessions, or a person's terminal, move a board")
     if shared.moved():
         raise BoardError(moved_refusal(shared.moved()))
@@ -7616,12 +7628,12 @@ def move_board(args) -> int:
 PERSON_NAME = re.compile(r'[A-Za-z0-9][A-Za-z0-9._-]*')
 
 
-def mover(board: Board | None, args, command: str) -> list[dict]:
-    """The checks route and send share: a shared board, a mover, a person, known ids (`board` holds the named items; None
+def attended_issues(board: Board | None, args, command: str) -> list[dict]:
+    """The checks route and send share: a shared board, an attended session, a person, known ids (`board` holds the named items; None
     checks the rest before the read)."""
     if shared is None:
         raise BoardError(f'board {command}: this board is not shared, so no queues')
-    if not may_move():
+    if not may_attend():
         raise BoardError(f"only lead and solo sessions, or a person's terminal, {command} items; ask your lead")
     if not PERSON_NAME.fullmatch(args.person):
         raise BoardError(f'{args.person!r} does not fit a label')
@@ -7637,7 +7649,7 @@ def mover(board: Board | None, args, command: str) -> list[dict]:
 def route(board: Board, args) -> int:
     """Into a person's queue, replacing the queue label; an item filed for someone also leaves the inbox: its `for:` goes."""
     target = QUEUE_PREFIX + args.person
-    for issue in mover(board, args, 'route'):
+    for issue in attended_issues(board, args, 'route'):
         labels = issue.get('labels') or []
         filed = [label for label in labels if label.startswith(FOR_PREFIX)]
         flags = [flag for label in queue_labels(labels) + filed if label != target for flag in ('--remove-label', label)]
@@ -7652,7 +7664,7 @@ def send(board: Board, args) -> int:
     """Into a person's inbox: `for:<person>` and no queue label, so the item is unrouted until their lead
     routes it. Only a top-level item: one with a parent would still take the parent's queue."""
     target = FOR_PREFIX + args.person
-    issues = mover(board, args, 'send')
+    issues = attended_issues(board, args, 'send')
     for issue in issues:
         inherited = sorted({queue for parent in board.parents.get(issue['id'], []) for queue in board.queues(parent)})
         if inherited:
@@ -7902,9 +7914,6 @@ BD_NO_PULL = {'dolt', 'sync', 'init', 'conflicts', 'sql', 'rename', 'flatten', '
 READS = {'health', 'position', 'holders', 'check', 'related', 'queue', 'watch', 'mine', 'console', 'show', 'help', '-h', '--help'}
 # Writes that sync themselves, so no sync window opens after them; they need the model marker like any write.
 SYNCS_ITSELF = {'share', 'relocate'}
-# The commands that write a board without the model marker (require_model), each with why. Every other write refuses a board without it.
-MODEL_EXEMPT = {'setup': 'it creates the board, or brings an existing one to the current settings, so the marker cannot be its precondition',
-                'join': 'it fetches a board whose marker travels with the database: a joiner reads an old board, and its writes name /board-migrate'}
 BD_READS = {'list', 'ready', 'show', 'view', 'query', 'search', 'where', 'version', 'help', 'export', 'stats', 'blocked', 'lint',
             'history', 'count', 'events'}
 
@@ -7918,7 +7927,8 @@ def bd_word(argv: list[str]) -> str:
 
 
 def writes(argv: list[str]) -> bool:
-    """Whether a command may write: the window opens after it, and a moved board refuses it. `field export` and `discard` touch only scratch."""
+    """Whether a command writes and opens the sync window after it (and a moved board refuses it): not a read, and not SYNCS_ITSELF, whose commands write but sync
+    themselves. `field export` and `discard` touch only scratch."""
     if '--dry-run' in argv and (argv[:1] == ['create'] or argv[:2] == ['ruling', 'revise']):
         return False
     if argv[:2] in (['field', 'export'], ['field', 'discard'], ['ruling', 'check-replaces']):
@@ -7953,7 +7963,7 @@ def main(argv: list[str] | None = None) -> int:
     bare = bool({'-h', '--help'} & set(argv)) or argv in (['cr'], ['ruling'], ['review'])  # a bare group only lists its verbs
     if not bare and not dry_run and word not in (BD_NO_PULL if argv[:1] == ['bd'] else NO_PULL):
         quietly(shared.before)
-    if not bare and shared.moved() and (writes(argv) or argv[:1] in (['share'], ['relocate'])):
+    if not bare and shared.moved() and (writes(argv) or argv[0] in SYNCS_ITSELF):
         print(f'board: {moved_refusal(shared.moved())}', file=sys.stderr)
         return 1
     try:
@@ -8357,7 +8367,7 @@ def run_command(argv: list[str]) -> int:
         scope = 'ids' if args.run in (show, route, send, field_export, field_apply) else 'all' if args.run in (related, check, check_replaces, wait_command, revise, record, release, supersede, update_command, link_command, unlink_command, reopen_command) \
             else 'status'
         if args.run in (route, send):
-            mover(None, args, args.command)  # refuse before reading
+            attended_issues(None, args, args.command)  # refuse before reading
         if args.run is console and not has_board():
             print(json.dumps(no_board_json(), indent=2, ensure_ascii=False))
             return 0

@@ -1746,6 +1746,12 @@ def t_scenarios() -> None:
     check(race_gate and sorted(code == 0 for code, _ in outcomes.values()) == [False, True] and row(race_gate)['status'] == 'closed',
           'scenario 10b: exactly one of two forced closers wins', outcomes)
     check(any('changed meanwhile' in err or 'does not apply' in err for code, err in outcomes.values() if code), 'scenario 10b: the other is refused', outcomes)
+    # Whichever reads second, the guard is what bd's compare-and-set gives: taking an unheld record twice, the second take exits 13 and writes nothing
+    # (the board turns that exit into "changed meanwhile": test-agent-configs); a loser that read after the winner closed is refused by the table.
+    guarded = create('a', 'scenario 10b: the guard itself', '--no-commit', kind='task')
+    first = raw('a', 'update', guarded, '--assignee', 'closer-one', '--if-assignee', '', '--if-status', 'open', '--json')
+    second = raw('a', 'update', guarded, '--assignee', 'closer-two', '--if-assignee', '', '--if-status', 'open', '--json')
+    check(first[0] == 0 and second[0] == 13 and row(guarded).get('assignee') == 'closer-one', 'scenario 10b: a second take of an unheld record is refused by the guard, exit 13', (first[0], second[0], second[2]))
 
     # 9. A milestone waits on nothing: its change requests are part of it, and it is accepted once their work is done.
     milestone = create('a', 'scenario 9: the milestone', kind='milestone')
@@ -1968,6 +1974,13 @@ def t_migrate() -> None:
     update('dsg_review', '--status', 'in_review', '--assignee', 'abcd1234')
     make('def_item', 'deferred item of a live change request', '--parent', ids['cr1'])
     raw(side, 'defer', ids['def_item'])
+    make('def_resumed', 'deferred item whose change request an earlier run made', '--parent', ids['cr1'])
+    raw(side, 'defer', ids['def_resumed'])
+    for name, flags in (('resumed_cr', ['--deps', f"relates-to:{ids['cr1']}"]), ('stray_cr', [])):  # the interrupted run's request, linked; a user's own empty one of the same title
+        rc, out, err, _ = raw(side, 'create', 'deferred item whose change request an earlier run made', '-t', 'change-request', '-d', 'x', '--silent', '--status', 'deferred', *flags)
+        if rc:
+            raise RuntimeError(f'create {name}: {err}{out}')
+        ids[name] = out.strip().splitlines()[-1]
     make('cr7', 'a deferred change request', kind='change-request')
     make('def_under', 'item of the deferred change request', '--parent', ids['cr7'])
     raw(side, 'defer', ids['def_under'])
@@ -1986,6 +1999,8 @@ def t_migrate() -> None:
     for name, kind in (('waits', 'waits-for'), ('cond', 'conditional-blocks'), ('found', 'discovered-from'), ('related', 'related')):
         make(name, f'item with {kind}', '--parent', ids['cr1'])
         link(name, 'target', kind)
+    make('replanned', 'change request returned for replanning', kind='change-request')
+    update('replanned', '--set-metadata', 'replan=the ruling changed it')
     make('milestone', 'a milestone', kind='milestone')
     link('milestone', 'cr4', 'blocks')
     make('ms_closed', 'a closed milestone', kind='milestone')
@@ -2013,7 +2028,9 @@ def t_migrate() -> None:
     update('dated_live', '--status', 'open')
     make('unratified2', 'second unratified ruling', kind='decision')
     update('unratified2', '--status', 'needs_ratification', '--description', '## Question\nWhich?\n## Decision\nThis.\n## Reversal\nUndo it.\n')
-    make('confirm_q', 'Confirm or revise: second unratified ruling?', '--external-ref', f"confirm:{ids['unratified2']}", kind='decision')
+    rc, out, err, _ = raw(side, 'create', 'Confirm or revise: second unratified ruling?', '-t', 'decision', '--silent', '--deps', f"relates-to:{ids['unratified2']}",
+                          '-d', f"## Question\nConfirm ruling {ids['unratified2']} or revise it?\n\nUndo it.\n")  # an earlier run's question: made, linked, the ruling not yet in force
+    ids['confirm_q'] = out.strip().splitlines()[-1]
     make('user_item2', 'user check the logs', *no_commit)
     update('user_item2', '--assignee', 'user')
     raw(side, 'gate', 'create', '--type=human', '--blocks', ids['user_item2'], '--title', 'Existing human gate')
@@ -2117,7 +2134,7 @@ def t_migrate() -> None:
     first_apply = out
     check(rc == 0 and 'conversion(s) applied' in out and 'no recorded author' in out and 'timer gate' in out and f"{ids['ratify']}: an open landing ratification" in out, 'migrate: --apply converts and lists what is left for the user', err + out)
     rc, out, err = migrate('--apply')
-    check(rc == 0 and out.startswith('0 conversion(s) applied'), 'migrate: a rerun finds nothing to convert', err + out)
+    check(rc == 0 and out.startswith('0 conversion(s) applied') and f"rulings: {ids['ruling_wait']}" in out, 'migrate: a rerun finds nothing to convert and lists the rulings to plan again', err + out)
 
     now = items(side)
 
@@ -2140,6 +2157,9 @@ def t_migrate() -> None:
           and (ids['cr1'], 'relates-to') in {(d['depends_on_id'], d['type']) for d in now[own].get('dependencies') or []} and 'found_in' not in meta_of('def_item')
           and [i['id'] for i in now.values() if (own, 'parent-child') in {(d['depends_on_id'], d['type']) for d in i.get('dependencies') or []}] == [ids['def_item']],
           'migrate: a deferred item of a live change request leaves it as the only item of a deferred change request of its own, related to the old one', (own, row('def_item')['status'], meta_of('def_item'), deps('def_item')))
+    check((ids['resumed_cr'], 'parent-child') in deps('def_resumed') and row('def_resumed')['status'] == 'open' and row('resumed_cr')['status'] == 'deferred'
+          and not any((ids['stray_cr'], 'parent-child') in {(d['depends_on_id'], d['type']) for d in i.get('dependencies') or []} for i in now.values()) and row('stray_cr')['status'] == 'deferred',
+          'migrate: a rerun after an interruption reuses the childless deferred change request related to the old one, and leaves an unrelated one alone', (deps('def_resumed'), row('stray_cr')['status']))
     check(row('def_under')['status'] == 'open' and (ids['cr7'], 'parent-child') in deps('def_under') and row('cr7')['status'] == 'deferred',
           'migrate: an item of a deferred change request is open, the deferral of its change request holds it', (row('def_under')['status'], deps('def_under')))
     check(row('cond_loose')['status'] == 'open' and (ids['target'], 'blocks') in deps('cond_loose') and any(kind == 'parent-child' for _, kind in deps('cond_loose')),
@@ -2148,6 +2168,7 @@ def t_migrate() -> None:
     check(len(filed) == 1 and filed[0]['issue_type'] == 'change-request' and not filed[0].get('external_ref') and (filed[0].get('metadata') or {}).get('plan_first') and 'topic:loose' in filed[0].get('labels', [])
           and not any(kind == 'parent-child' for _, kind in deps('spike')) and row('loose_def')['status'] == 'deferred' and not any(kind == 'parent-child' for _, kind in deps('loose_def')),
           'migrate: a work item outside any change request becomes the only item of one, marked plan_first and carrying no marker of the migration; a no-commit task and a deferred one stay tasks', (filed, deps('loose')))
+    check(meta_of('replanned').get('plan_first') == 'the ruling changed it' and 'replan' not in meta_of('replanned'), 'migrate: the earlier replan mark becomes plan_first with its reason', meta_of('replanned'))
     check('outcome' not in meta_of('reopened'), 'migrate: an open record carries no outcome', meta_of('reopened'))
     check((ids['target'], 'blocks') in deps('waits') and (ids['target'], 'blocks') in deps('cond') and not {'waits-for', 'conditional-blocks'} & {kind for _, kind in deps('waits') | deps('cond')},
           'migrate: waits-for and conditional-blocks become waits', (deps('waits'), deps('cond')))
@@ -2163,7 +2184,10 @@ def t_migrate() -> None:
           and f"rulings: {ids['ruling_wait']}" in first_apply,
           'migrate: an in-force ruling keeps its wait on work as a relates-to link and is listed for planning, its wait on a question stays', (deps('ruling_wait'), first_apply[-600:]))
     check(row('released')['status'] == 'in_force' and row('unratified')['status'] == 'in_force', 'migrate: released and an unratified ruling are in_force', (row('released')['status'], row('unratified')['status']))
-    confirm = [i for i in now.values() if i.get('external_ref') == f"confirm:{ids['unratified']}"]
+    def confirmations(name: str) -> list[dict]:
+        return [i for i in now.values() if i['issue_type'] == 'decision' and f"Confirm ruling {ids[name]} or revise it" in str(i.get('description')) and (ids[name], 'relates-to') in {(d['depends_on_id'], d['type']) for d in i.get('dependencies') or []}]
+
+    confirm = confirmations('unratified')
     check(len(confirm) == 1 and confirm[0]['status'] == 'open' and (ids['unratified'], 'relates-to') in {(d['depends_on_id'], d['type']) for d in confirm[0].get('dependencies') or []}
           and 'Undo this by hand' in confirm[0]['description'], 'migrate: an unratified ruling stays in force with a question to confirm or revise it', confirm)
     check([meta_of(name).get('outcome') for name in ('old_ruling', 'planned', 'dropped', 'closed_gate', 'ms_closed')] == ['superseded', 'planned', 'dropped', 'resolved', 'accepted'],
@@ -2177,9 +2201,9 @@ def t_migrate() -> None:
           and any((g['id'], 'blocks') in deps('waiter') for g in gates) and row('user_gate')['status'] == 'closed' and row('user_item')['status'] == 'closed',
           'migrate: a gate and a user item become human gates that supersede them, the waiter moved to the new gate', (gates, deps('waiter')))
     check(row('dated_live')['status'] == 'open' and 'revisit' not in meta_of('dated_live'), 'migrate: a live record with a stale defer_until is not parked by it', (row('dated_live')['status'], meta_of('dated_live')))
-    confirm2 = [i for i in now.values() if i.get('external_ref') == f"confirm:{ids['unratified2']}"]
-    check(len(confirm2) == 1 and confirm2[0]['id'] == ids['confirm_q'] and (ids['unratified2'], 'relates-to') in {(d['depends_on_id'], d['type']) for d in confirm2[0].get('dependencies') or []},
-          'migrate: a confirm question made but not linked by an earlier stop is linked, not made again', confirm2)
+    confirm2 = confirmations('unratified2')
+    check(len(confirm2) == 1 and confirm2[0]['id'] == ids['confirm_q'] and not any(i.get('external_ref') for i in confirm + confirm2),
+          'migrate: a confirm question an earlier stop made is found by its link and text, not made again, and no question carries a marker', confirm2)
     check(row('user_item2')['status'] == 'closed' and any(i.get('title') == 'check the logs' and i['status'] == 'open' for i in now.values())
           and any(i.get('title') == 'Existing human gate' and i['status'] == 'open' for i in now.values()),
           'migrate: a user item that waits on an existing human gate gets a gate of its own, the existing one stays', [(i.get('title'), i['status']) for i in now.values() if i['issue_type'] == 'gate'])

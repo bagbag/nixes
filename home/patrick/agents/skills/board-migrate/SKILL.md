@@ -128,7 +128,8 @@ one.
      waiting on a question) becomes the only item of a change request of its
      own, marked `plan_first` with its reason, listed for planning;
    - retired metadata (`no_code` becomes `no_commit` on work items,
-     `triaged_tip` and `triaged_base_tip` are dropped);
+     `triaged_tip` and `triaged_base_tip` are dropped, `replan` becomes
+     `plan_first` with the same reason);
    - types bug, design, feature, chore (kind `cleanup`) and spike become
      `task`, with a `kind:` label except for spike;
    - an in-review change request gets its `author` from the hand-over comment,
@@ -309,8 +310,8 @@ step goes in a change set and runs on the user's confirmation.
 
 Per board with live design checkpoints, inside [Model](#model) after its
 Convert step and before its Mark step: a live checkpoint is a deviation that
-holds the marker back (design: `docs/board/ordinary-design-requests.md`,
-Existing records and rollout). The script runs from the project checkout:
+holds the marker back (a design checkpoint becomes an ordinary design change request,
+`agents board help` lists the rows it passes through). The script runs from the project checkout:
 `python3 "$HOME/.agents/skills/board-migrate/scripts/convert-design-checkpoints.py"`.
 It writes only through raw bd (a change request back to open, the wait on it,
 `relates-to`, the cleared marker); everything else it lists as a manual step.

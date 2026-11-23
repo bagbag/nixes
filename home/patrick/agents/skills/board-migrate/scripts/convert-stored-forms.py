@@ -15,6 +15,8 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import importlib.machinery
+import importlib.util
 import io
 import json
 import os
@@ -138,6 +140,17 @@ class Lines:
         write('batch', '-m', f'board-migrate {self.item_id}', '--json', stdin='\n'.join(self.lines) + '\n')
 
 
+class Seq:
+    """A step of several writes: its calls run first, record by record, then its Update and Lines parts go out grouped with those of the other steps."""
+    def __init__(self, *parts: Callable[[], None]) -> None:
+        self.parts = parts
+
+
+def reason(error: Exception | str) -> str:
+    text = str(error)
+    return 'bd refused it: the wait would form a cycle' if 'cycle' in text else text.splitlines()[0][:300]
+
+
 def update(item_id: str, *flags: str) -> Update:
     return Update(item_id, *flags)
 
@@ -169,13 +182,13 @@ def apply_grouped(todo: list[tuple[str, Update | Lines]]) -> dict[str, str]:
                 try:
                     action()
                 except Stop as error:
-                    failed[what] = str(error).splitlines()[0][:300]
+                    failed[what] = reason(error)
     return failed
 
 
 # Each phase reads a fresh snapshot and returns its steps: a line saying what, and the writes. Left: forms only the user can settle.
 
-PLAN_FIRST = 'plan_first'  # a change request's mark that it needs planning before work (model.md, change request fields)
+PLAN_FIRST = 'plan_first'  # a change request's mark that it needs planning before work
 FILED_REASON = 'the earlier board kept this work outside any change request: plan what it commits before work starts'
 
 
@@ -186,9 +199,9 @@ def orphans(b: Board, status: str) -> list[dict]:
     return [i for i in b.live() if i.get('issue_type') == 'change-request' and i['id'] not in parents and i['status'] == status]
 
 
-def take_orphan(free: list[dict], title: str) -> dict | None:
-    """The first of `free` with this title, taken out of the list."""
-    found = next((i for i in free if i.get('title') == title), None)
+def take_orphan(free: list[dict], title: str, related: str | None = None) -> dict | None:
+    """The first of `free` with this title (and, when given, a relates-to link to `related`), taken out of the list."""
+    found = next((i for i in free if i.get('title') == title and (related is None or (related, 'relates-to') in edges(i))), None)
     if found:
         free.remove(found)
     return found
@@ -278,7 +291,7 @@ def statuses(b: Board, left: list[str]) -> list[Step]:
         elif status == 'released' and kind == 'decision':
             steps.append((f'{item_id}: released becomes in_force', update(item_id, '--status', 'in_force')))
         elif status == 'needs_ratification' and kind == 'decision':
-            steps.append((f'{item_id}: needs_ratification becomes in_force, with a question to confirm or revise it', lambda issue=issue: confirm_ruling(b, issue)))
+            steps.append((f'{item_id}: needs_ratification becomes in_force, with a question to confirm or revise it', Seq(lambda issue=issue: confirm_ruling(b, issue), update(item_id, '--status', 'in_force'))))
             left.append(f'{item_id}: a ruling taken without your judgment stays in force; answer its "Confirm or revise" question')
         elif status == 'deferred' and b.is_item(issue):
             cr = b.cr_of(item_id)  # an item has no deferral of its own
@@ -286,7 +299,7 @@ def statuses(b: Board, left: list[str]) -> list[Step]:
                 steps.append((f'{item_id}: open again, the deferral of {cr} holds it',
                               update(item_id, '--status', 'open', '--defer', '', '--unset-metadata', 'revisit', '--unset-metadata', 'deferred_by')))
             else:
-                orphan = take_orphan(lost, issue.get('title', item_id))
+                orphan = take_orphan(lost, issue.get('title', item_id), cr)
                 steps.append((f'{item_id}: leaves {cr} as the only item of a deferred change request of its own, related to {cr}',
                               lambda issue=issue, cr=cr, orphan=orphan: leave_deferred(issue, cr, orphan)))
                 left.append(f'{item_id}: a deferred item of {cr} is now the only item of a deferred change request of its own, related to {cr}; undefer it when it is due')
@@ -302,34 +315,35 @@ def revisit_day(until: str) -> str | None:
 
 def leave_deferred(issue: dict, cr: str, orphan: dict | None) -> None:
     """An item has no deferral of its own: it leaves its live change request as the only item of a deferred one, related to the old. The new request
-    is made and linked first and the item moves last, so an interruption leaves a childless request the rerun reuses."""
+    is made deferred and linked in one write and the item moves last, so an interruption leaves a childless deferred request related to the old one,
+    which the rerun reuses."""
     item_id = issue['id']
     _, routed = carried_labels(issue)
     revisit = meta(issue).get('revisit') or (revisit_day(issue['defer_until']) if issue.get('defer_until') else None)
-    new = orphan['id'] if orphan else make_change_request(issue)
-    write('update', new, '--status', 'deferred', *(['--set-metadata', f'revisit={revisit}'] if revisit else []),
-          *(['--set-metadata', f'deferred_by={meta(issue)["deferred_by"]}'] if meta(issue).get('deferred_by') else []), '--json')
-    if not orphan or (cr, 'relates-to') not in edges(orphan):
-        write('batch', '-m', f'board-migrate {item_id}', '--json', stdin=f'dep add {new} {cr} relates-to\n')
+    kept = {**({'revisit': revisit} if revisit else {}), **({'deferred_by': meta(issue)['deferred_by']} if meta(issue).get('deferred_by') else {})}
+    new = orphan['id'] if orphan else make_change_request(issue, '--status', 'deferred', '--deps', f'relates-to:{cr}', *(['--metadata', json.dumps(kept)] if kept else []))
     write('update', item_id, '--parent', new, '--status', 'open', '--defer', '', '--unset-metadata', 'revisit', '--unset-metadata', 'deferred_by',
           *(flag for label in routed for flag in ('--remove-label', label)), '--json')
 
 
+def board_module():
+    """bin/board as a module, for what it owns: the Confirm-or-revise question's text."""
+    loader = importlib.machinery.SourceFileLoader('board_model', str(BOARD))
+    module = importlib.util.module_from_spec(importlib.util.spec_from_loader(loader.name, loader))
+    loader.exec_module(module)
+    return module
+
+
 def confirm_ruling(b: Board, issue: dict) -> None:
-    """What `ruling record --unratified` writes: the ruling in force and an ordinary question that relates to it. The question goes first, so a rerun finds it."""
+    """What `ruling record --unratified` writes: the ruling in force and an ordinary question that relates to it, found as the board finds it (a
+    related question with the same text). The question is made with its link in one write and goes first, so a rerun finds it."""
     item_id = issue['id']
     found = re.search(r'^##\s+Reversal\s*\n(.*?)(?=^##\s|\Z)', str(issue.get('description') or ''), re.MULTILINE | re.DOTALL | re.IGNORECASE)
-    reversal = found.group(1).strip() if found else 'Reversal: not recorded.'
-    found_question = next((i for i in b.live() if i.get('external_ref') == f'confirm:{item_id}'), None)
-    question = found_question['id'] if found_question else None
-    if question is None:
-        question = write('create', f'Confirm or revise: {issue.get("title", "")}?', '-t', 'decision', '-d', f'## Question\nConfirm ruling {item_id} or revise it?\n\n{reversal}\n',
-                         '--priority', str(issue.get('priority', 2)), '--external-ref', f'confirm:{item_id}', '--silent', *([] if b.parents.get(item_id) else shared_queue()),
-                         *(['--parent', b.parents[item_id][0]] if b.parents.get(item_id) else []),
-                         *(f'--labels={label}' for label in issue.get('labels') or [] if label.startswith('topic:'))).strip().splitlines()[-1]
-    if not found_question or (item_id, 'relates-to') not in edges(found_question):  # a stop between the create and the link leaves the question unlinked
-        write('batch', '-m', f'board-migrate {item_id}', '--json', stdin=f'dep add {question} {item_id} relates-to\n')
-    write('update', item_id, '--status', 'in_force', '--json')
+    title, description = board_module().confirmation_text(issue, found.group(1).strip() if found else 'Reversal: not recorded.')
+    if not any(i.get('issue_type') == 'decision' and i.get('description') == description and (item_id, 'relates-to') in edges(i) for i in b.issues.values()):
+        write('create', title, '-t', 'decision', '-d', description, '--priority', str(issue.get('priority', 2)), '--silent', '--deps', f'relates-to:{item_id}',
+              *([] if b.parents.get(item_id) else shared_queue()), *(['--parent', b.parents[item_id][0]] if b.parents.get(item_id) else []),
+              *(f'--labels={label}' for label in issue.get('labels') or [] if label.startswith('topic:')))
 
 
 def authors(b: Board, left: list[str]) -> list[Step]:
@@ -384,15 +398,11 @@ def links(b: Board, left: list[str]) -> list[Step]:
                 else:
                     left.append(f'{item_id}: a milestone waits on {target} ({part.get("issue_type")}), which cannot be part of it: put the work in a change request and move that in, or drop the wait')
             elif kind in OLD_WAITS:
-                def wait(i=item_id, t=target, k=kind) -> None:
-                    write('batch', '-m', f'board-migrate {i}', '--json', stdin=f'dep remove {i} {t}\ndep add {i} {t} blocks\n')
-                    write('comments', 'add', i, f'Waits on {t} for an earlier {k} link; the reason is not recorded')
-                steps.append((f'{item_id}: the {kind} link to {target} becomes a wait', wait))
+                note = lambda i=item_id, t=target, k=kind: write('comments', 'add', i, f'Waits on {t} for an earlier {k} link; the reason is not recorded')  # a comment is one record's text: never grouped
+                steps.append((f'{item_id}: the {kind} link to {target} becomes a wait', Seq(note, Lines(item_id, f'dep remove {item_id} {target}', f'dep add {item_id} {target} blocks'))))
             elif kind == 'discovered-from':
-                def found(i=item_id, t=target) -> None:
-                    write('update', i, '--set-metadata', f'found_in={t}', '--json')
-                    write('dep', 'remove', i, t)
-                steps.append((f'{item_id}: discovered-from {target} becomes the found_in field', found))
+                steps.append((f'{item_id}: discovered-from {target} becomes the found_in field',
+                              Seq(update(item_id, '--set-metadata', f'found_in={target}'), Lines(item_id, f'dep remove {item_id} {target}'))))
             elif kind == 'related':
                 steps.append((f'{item_id}: related {target} becomes relates-to', Lines(item_id, f'dep remove {item_id} {target}', f'dep add {item_id} {target} relates-to')))
     return steps
@@ -436,14 +446,10 @@ def deferrals(b: Board, left: list[str]) -> list[Step]:
             left.append(f'{item_id}: deferred on a condition no open record carries ("{reason[:100]}"); it stays set aside, or wait it on what it needs')
             continue
 
-        def wait(i=item_id, targets=named, why=reason) -> None:
-            present = {t for t, _ in edges(b.issues[i])}
-            for target in targets:  # the record reopens last: an interruption leaves it deferred, found again
-                if target not in present:
-                    write('comments', 'add', i, f'Waits on {target} for {why[:300]}')
-                    write('batch', '-m', f'board-migrate {i}', '--json', stdin=f'dep add {i} {target} blocks\n')
-            write('update', i, '--status', 'open', '--json')
-        steps.append((f'{item_id}: the deferral condition becomes a wait on {", ".join(named)} (open again)', wait))
+        present = {t for t, _ in edges(issue)}
+        notes = [lambda i=item_id, t=target, why=reason: write('comments', 'add', i, f'Waits on {t} for {why[:300]}') for target in named if target not in present]  # a comment is never grouped
+        steps.append((f'{item_id}: the deferral condition becomes a wait on {", ".join(named)} (open again)',  # the edges and the reopening are one batch: the record reopens with its waits
+                      Seq(*notes, Lines(item_id, *(f'dep add {item_id} {target} blocks' for target in named if target not in present), f'update {item_id} status=open'))))
         left.append(f'{item_id}: its deferral condition became a wait on {", ".join(named)}; check the wait says what you meant')
     return steps
 
@@ -555,13 +561,16 @@ def regate(now: Board, old: dict, title: str) -> None:
 
 def rulings(b: Board, left: list[str]) -> list[Step]:
     """An in-force ruling waits only for its planning, a question not yet in force or a human gate. The old board also let it wait on a design or spike:
-    each such wait becomes a relates-to link (the planner makes the work wait on that design, plan.md), and the ruling is listed for planning."""
+    each such wait becomes a relates-to link (the planner makes the work wait on that design, plan.md). The rulings to plan are derived from the board, so a
+    rerun after an interruption lists them again: every in-force ruling that relates to open work."""
     steps, planned = [], []
     for ruling in b.live():
         if ruling.get('issue_type') != 'decision' or ruling['status'] != 'in_force':
             continue
         for target, kind in edges(ruling):
             other = b.issues.get(target)
+            if kind == 'relates-to' and other is not None and other['status'] != 'closed' and other.get('issue_type') == 'task':
+                planned.append(ruling['id'])
             if kind != 'blocks' or other is None or other['status'] == 'closed':
                 continue
             planning = (other.get('issue_type') == 'gate' and other.get('await_type') == 'human') or (other.get('issue_type') == 'decision' and other['status'] in ('open', 'decided'))
@@ -569,8 +578,9 @@ def rulings(b: Board, left: list[str]) -> list[Step]:
                 continue
             steps.append((f'{ruling["id"]}: its wait on {target} becomes relates-to', Lines(ruling['id'], f'dep remove {ruling["id"]} {target}', f'dep add {ruling["id"]} {target} relates-to')))
             planned.append(ruling['id'])
+    planned = list(dict.fromkeys(planned))
     if planned:
-        left.append(f'{len(steps)} wait(s) of in-force rulings on work became relates-to links; plan each ruling and make its work wait on the related design (rulings: {", ".join(dict.fromkeys(planned))})')
+        left.append(f'{len(planned)} in-force ruling(s) relate to open work (a wait on a design or spike became relates-to); plan each ruling and make its work wait on the related design (rulings: {", ".join(planned)})')
     return steps
 
 
@@ -578,14 +588,20 @@ RETIRED_METADATA = {'no_code': 'no_commit', 'triaged_tip': None, 'triaged_base_t
 
 
 def retired_metadata(b: Board, left: list[str]) -> list[Step]:
-    """Metadata keys an earlier board wrote: dropped, or moved to the key that replaced them (no_code is no_commit on work items only)."""
+    """Metadata keys an earlier board wrote: dropped, or moved to the key that replaced them (no_code is no_commit on work items only; replan, a
+    reason, is plan_first with the same reason)."""
     steps = []
     for issue in b.live():
         retired = sorted(set(meta(issue)) & set(RETIRED_METADATA))
-        if retired:
-            moved = sorted({RETIRED_METADATA[key] for key in retired if RETIRED_METADATA[key] and issue.get('issue_type') == 'task'})
-            steps.append((f"{issue['id']}: retired metadata {', '.join(retired)} dropped{''.join(f'; {new} set' for new in moved)}",
-                          update(issue['id'], *(flag for new in moved for flag in ('--set-metadata', f'{new}=true')), *(flag for key in retired for flag in ('--unset-metadata', key)))))
+        moved = sorted({RETIRED_METADATA[key] for key in retired if RETIRED_METADATA[key] and issue.get('issue_type') == 'task'})
+        replan = meta(issue).get('replan')
+        if not retired and replan is None:
+            continue
+        steps.append((f"{issue['id']}: retired metadata {', '.join([*retired, *(['replan'] if replan is not None else [])])} dropped{''.join(f'; {new} set' for new in moved)}"
+                      + ('; plan_first set from replan' if replan is not None else ''),
+                      update(issue['id'], *(flag for new in moved for flag in ('--set-metadata', f'{new}=true')),
+                             *(['--set-metadata', f'{PLAN_FIRST}={replan or "returned for replanning"}', '--unset-metadata', 'replan'] if replan is not None else []),
+                             *(flag for key in retired for flag in ('--unset-metadata', key)))))
     return steps
 
 
@@ -615,15 +631,18 @@ def run(apply: bool) -> tuple[int, list[str]]:
         for what, _ in todo:
             print(('' if apply else 'would: ') + what)
         if apply:
-            failed = apply_grouped([(what, step) for what, step in todo if isinstance(step, (Update, Lines))])
+            grouped: list[tuple[str, Update | Lines]] = []
             for what, step in todo:
-                if what in failed:
-                    FAILED[what] = failed[what]
-                elif not isinstance(step, (Update, Lines)):
-                    try:
-                        step()
-                    except Stop as error:
-                        FAILED[what] = 'bd refused it: the wait would form a cycle' if 'cycle' in str(error) else str(error).splitlines()[0][:300]
+                parts = step.parts if isinstance(step, Seq) else (step,)
+                try:
+                    for part in parts:
+                        if not isinstance(part, (Update, Lines)):
+                            part()
+                except Stop as error:
+                    FAILED[what] = reason(error)
+                    continue
+                grouped += [(what, part) for part in parts if isinstance(part, (Update, Lines))]
+            FAILED.update(apply_grouped(grouped))
             for what, _ in todo:
                 if what in FAILED:
                     print(f'  not converted: {what}: {FAILED[what]}')

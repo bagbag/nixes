@@ -2230,7 +2230,7 @@ def validate_shared_board(root: Path) -> None:
     # Moves: who may, and what counts.
     snapshot = board.Board(issues, complete=False)
     with patch.object(board, "shared", SimpleNamespace()), patch.object(board, "person", lambda: "anna"), \
-            patch.object(board.Board, "load", classmethod(lambda cls, scope="status", ids=None: snapshot)), patch.object(board, "may_move", lambda: False), \
+            patch.object(board.Board, "load", classmethod(lambda cls, scope="status", ids=None: snapshot)), patch.object(board, "may_attend", lambda: False), \
             patch.object(board, "derived_actor", lambda: "agnt0001"):  # an agent session's move, whoever runs the test
         expect("only lead and solo" in (board.parent_move_refusal(snapshot, ["kid"], "other") or ""), "a parent move is refused", "kid")
         expect(board.parent_move_refusal(snapshot, ["own"], "top") is None, "an item with a queue of its own may re-parent", "own")
@@ -2238,7 +2238,7 @@ def validate_shared_board(root: Path) -> None:
         expect("someone else's queue" in (board.plan_queue_refusal({"nodes": [{"key": "a", "title": "A", "labels": ["queue:ben"]}]}) or ""), "a plan into another queue is a move")
         expect(board.plan_queue_refusal({"nodes": [{"key": "a", "title": "A", "labels": ["queue:anna"]}, {"key": "b", "title": "B"}]}) is None, "a plan into one's own queue is not")
     with patch.object(board, "shared", SimpleNamespace()), patch.object(board, "person", lambda: "anna"), \
-            patch.object(board.Board, "load", classmethod(lambda cls, scope="status", ids=None: snapshot)), patch.object(board, "may_move", lambda: True):
+            patch.object(board.Board, "load", classmethod(lambda cls, scope="status", ids=None: snapshot)), patch.object(board, "may_attend", lambda: True):
         expect(board.parent_move_refusal(snapshot, ["kid"], "other") is None, "a lead moves")
         expect(board.plan_queue_refusal({"nodes": [{"key": "a", "title": "A", "labels": ["queue:ben"]}]}) is None, "a lead files into another queue")
     expect(board.bd_env().get("BD_NO_REMOTE_ADOPT") == "1", "board stops bd adopting git origin on every call")
@@ -2251,7 +2251,14 @@ def validate_shared_board(root: Path) -> None:
     with patch.object(board, "registrations", lambda: (entries, set())):
         for actor, allowed in (("lead0001", True), ("solo0001", True), ("agnt0001", False), ("gone0001", False), ("lead0001/wrkr", False), (None, True)):
             with patch.object(board, "derived_actor", lambda: actor):
-                expect(board.may_move() == allowed, "may_move", actor)
+                expect(board.may_attend() == allowed, "may_attend", actor)
+    # Authority by reversibility (8xsxj): a deciding session, autopilot included, sends to review and returns; only an attended one (lead, solo) or the user rejects.
+    entries = [*entries, {"actor": "auto0001", "role": "autopilot"}]
+    passed = {"id": "t-cr", "issue_type": "change-request", "status": "passed", "assignee": None, "metadata": {}}
+    with patch.object(board, "registrations", lambda: (entries, set())), patch.object(board, "derived_actor", lambda: "auto0001"):
+        for command, allowed in (("send to review", True), ("return", True), ("cr reject", False)):
+            row = next(m for m in board.MOVES if m.command == command and m.group == board.CR_GROUP and "passed" in m.frm)
+            expect((board.authority_refusal(passed, row, command, "auto0001", board.Board([])) is None) == allowed, "autopilot on a change-request move", command)
 
     # The retry: this one error on a shared board, counted on stderr; never a stopped merge, never unshared.
     def attempts(message, is_shared, code=1):
@@ -2435,6 +2442,8 @@ def validate_board(root: Path) -> None:
                 return subprocess.CompletedProcess(command, 0, json.dumps(self.history.get(command[2], [])), "")
             if command[1] == "lint":
                 return subprocess.CompletedProcess(command, 0, json.dumps(self.lint), "")
+            if command[1] == "close" and getattr(self, "fail_close", False):
+                return subprocess.CompletedProcess(command, 1, "", "bd refused the close")
             if command[1] == "update" and command[2] in self.refuse:
                 return subprocess.CompletedProcess(command, 13, "", f"assignee mismatch: {command[2]}")
             return subprocess.CompletedProcess(command, 0, "[]", "")
@@ -3149,7 +3158,7 @@ def validate_board(root: Path) -> None:
                 code, _, errors = invoke(argv, fake)
                 if code == 0 or fake.writes() or needle not in errors:
                     raise ValueError(f"board {argv} must be refused ({needle}) before any write: {code} {errors} {fake.writes()}")
-            with patch.object(board, "may_move", lambda board=None: False):
+            with patch.object(board, "may_attend", lambda board=None: False):
                 fake = Fake(fixture)
                 code, _, errors = invoke(["update", loose, "--no-commit"], fake, "agnt0001")
             if code == 0 or fake.writes() or "planning" not in errors:
@@ -3696,11 +3705,11 @@ def validate_board(root: Path) -> None:
             solo_text = solo_file.read_text(encoding="utf-8")
             with patch.dict(os.environ, {"BEADS_ACTOR": "solo0001", "CODEX_SESSION_ID": "", "CLAUDE_CODE_SESSION_ID": ""}), \
                     patch.object(board.subprocess, "run", Fake(fixture)):
-                if board.may_move() is not True:
+                if board.may_attend() is not True:
                     raise ValueError("a registered solo session must be allowed to move items")
                 solo_file.write_text("{bad", encoding="utf-8")
                 try:
-                    if board.may_move() is not False:
+                    if board.may_attend() is not False:
                         raise ValueError("a session whose registration is unreadable must not be allowed to move items")
                     _, text, errors = invoke(["position", "--json"], Fake(fixture), "lead0001")
                     position_corrupt = json.loads(text)
@@ -6439,6 +6448,26 @@ def validate_board(root: Path) -> None:
                     code, _, errors, writes = verb(argv, world)
                     if code or writes != want:
                         raise ValueError(f"board {argv}: {code} {errors!r} {writes}")
+                # A forced close takes the record in its guard (mc1nr): a closer who holds it releases first and retakes; a second closer is refused as
+                # changed meanwhile; a close bd then refuses puts the holder and the outcome back.
+                gate = {**plain("t-gate"), "issue_type": "gate", "await_type": "human"}
+                code, _, errors, writes = verb(["gate", "resolve", "t-gate", "--reason", "shipped"], [{**gate, "assignee": terminal}])
+                if code or writes[:2] != [["update", "t-gate", "--assignee", "", "--if-assignee", terminal, "--if-status", "open", "--json"],
+                                          ["update", "t-gate", "--assignee", terminal, "--if-assignee", "", "--if-status", "open", "--set-metadata", "outcome=resolved", "--json"]]:
+                    raise ValueError(f"a closer who holds the record releases it, then retakes it: {code} {errors} {writes}")
+                code, _, errors, writes = verb(["gate", "resolve", "t-gate", "--reason", "shipped"], [{**gate, "assignee": "other0001"}])
+                if code or writes[0] != ["update", "t-gate", "--assignee", terminal, "--if-assignee", "other0001", "--if-status", "open", "--set-metadata", "outcome=resolved", "--json"]:
+                    raise ValueError(f"a forced close takes the record from another holder in its guard: {code} {errors} {writes}")
+                fake = Fake([gate])
+                fake.refuse = {"t-gate"}
+                code, _, errors = invoke(["gate", "resolve", "t-gate", "--reason", "shipped"], fake)
+                if not code or "changed meanwhile" not in errors or any(w[0] == "close" for w in fake.writes()):
+                    raise ValueError(f"a second closer's guard must fail as changed meanwhile, with no close: {code} {errors} {fake.writes()}")
+                fake = Fake([{**gate, "assignee": "other0001"}])
+                fake.fail_close = True
+                code, _, errors = invoke(["gate", "resolve", "t-gate", "--reason", "shipped"], fake)
+                if not code or fake.writes()[-1] != ["update", "t-gate", "--assignee", "other0001", "--if-assignee", terminal, "--if-status", "open", "--unset-metadata", "outcome", "--json"]:
+                    raise ValueError(f"a close bd refuses must put the previous holder and the outcome back: {code} {errors} {fake.writes()}")
                 # Gates are human only: no create of a gate type, no resolve of a gate that is not a human one.
                 with tempfile.NamedTemporaryFile("w", suffix=".md") as described:
                     described.write("a step only a person takes")
@@ -9188,6 +9217,29 @@ def validate_board_model(root: Path) -> None:
     embedded = text.split(start, 1)[1].split(end, 1)[0]
     if embedded != board.model_tables():
         raise ValueError("docs/board/model.md's tables differ from bin/board's model_tables(): regenerate the block between the markers")
+    # board-migrate's grouped writes (itb3h): identical updates go out as one multi-id call, every batch line in one batch; a refused call is retried one record at a time.
+    loader = importlib.machinery.SourceFileLoader("convert_stored_forms", str(root / "skills" / "board-migrate" / "scripts" / "convert-stored-forms.py"))
+    converter = importlib.util.module_from_spec(importlib.util.spec_from_loader(loader.name, loader))
+    loader.exec_module(converter)
+    sent = []
+
+    def recorded(*args, stdin=None):
+        sent.append((args, stdin))
+        if args[:2] == ("update", "bad") or (args[0] == "update" and "bad" in args and len(args) > 4):
+            raise converter.Stop("bd update failed: Error: would form a cycle")
+        return ""
+
+    with patch.object(converter, "write", recorded):
+        failed = converter.apply_grouped([("a", converter.Update("x1", "--set-metadata", "outcome=dropped")), ("b", converter.Update("x2", "--set-metadata", "outcome=dropped")),
+                                          ("c", converter.Update("x3", "--set-metadata", "outcome=done")), ("d", converter.Lines("x4", "dep add x4 x5 blocks")),
+                                          ("e", converter.Lines("x6", "dep remove x6 x7"))])
+        if failed or [call for call in sent if call[0][0] == "update"] != [(("update", "x1", "x2", "--set-metadata", "outcome=dropped", "--json"), None), (("update", "x3", "--set-metadata", "outcome=done", "--json"), None)] \
+                or [call for call in sent if call[0][0] == "batch"] != [(("batch", "-m", "board-migrate", "--json"), "dep add x4 x5 blocks\ndep remove x6 x7\n")]:
+            raise ValueError(f"board-migrate must group identical updates and every batch line: {failed} {sent}")
+        sent.clear()
+        failed = converter.apply_grouped([("good", converter.Update("ok1", "--set-metadata", "k=v")), ("worse", converter.Update("bad", "--set-metadata", "k=v"))])
+        if list(failed) != ["worse"] or "cycle" not in failed["worse"] or [call[0][1:3] for call in sent if call[0][0] == "update"] != [("ok1", "bad"), ("ok1", "--set-metadata"), ("bad", "--set-metadata")]:
+            raise ValueError(f"a grouped call that fails must be retried per record, naming the record bd refuses: {failed} {sent}")
     # The CLI's own help prints the same tables: a verb its rows, `help` the statuses and outcomes by type.
     for argv, needles in ((["close", "--help"], ("close: gate open -> closed", "outcomes: resolved")), (["cr", "reject", "--help"], ("cr reject: change request", "who: a lead or solo session")),
                           (["help"], (board.states_table(),))):

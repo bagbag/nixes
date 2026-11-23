@@ -78,7 +78,7 @@ shared board, the user an unshared one (`bd dolt push`/`pull`).
 
 Titles carry no prefixes; use only these types (a check others wait on is a
 task, [Work items](#work-items)). Topics are labels and a review belongs to its
-CR; a challenge is a task ([Challenge](../role/protocols/review.md#challenge)).
+CR; a challenge is a question, its review the no-commit task it waits on ([Challenge](../role/protocols/review.md#challenge)).
 
 ### Routing
 
