@@ -1,10 +1,10 @@
 ---
 name: board-migrate
 description: >-
-  Bring a project onto the current model: trackers and TODO/REVIEW files onto
-  the board, an older board to change requests, live design checkpoints to
-  ordinary design change requests, in-repo `.scratch` folders out of the
-  repository.
+  Bring a project onto the current model: an older board's stored forms and its
+  model marker, trackers and TODO/REVIEW files onto the board, an older board to
+  change requests, live design checkpoints to ordinary design change requests,
+  in-repo `.scratch` folders out of the repository.
 argument-hint: "[project or arc] [focus, e.g. scratch]"
 disable-model-invocation: true
 ---
@@ -17,22 +17,25 @@ only findings and stops.
 
 ## Start
 
-Parts: **Tracker** (Target through Exit), [Upgrade](#upgrade),
+Parts: [Model](#model), **Tracker** (Target through Exit), [Upgrade](#upgrade),
 [Checkpoints](#checkpoints) and [Scratch](#scratch).
 
 1. **Scan.** Read-only, a few commands:
    - trackers: `TODO.md`, `REVIEW.md`, Markdown boards, `docs/` backlogs;
-   - board: `.beads/`, `agents board check --limit 0` classes with counts, `board
-     holders`, stored settings (`agents board bd config list`), live change
-     requests with `checkpoint` metadata or an open design ratification;
+   - board: `.beads/`, the model marker (`agents board bd config get
+     custom.board.model`: `1`, else Model is open), `agents board check --limit 0`
+     classes with counts, `board holders`, stored settings (`agents board bd
+     config list`), live change requests with `checkpoint` metadata or an open
+     design ratification;
    - scratch: in-repo `.scratch` folders (count, size);
    - dirty main-tree paths.
    Output: one line per part: open work found, done, or not applicable.
 2. **Ask.** One dialog: a question per part with open work, with its scan
    line and a recommendation (the argument's focus recommended), plus each
    finding that changes a part's scope (an unclassifiable file, a running
-   hold). Run only the picked parts, in the order Tracker, Upgrade, Checkpoints,
-   Scratch.
+   hold). Run only the picked parts, in the order Model, Tracker, Upgrade,
+   Checkpoints, Scratch; a board without the marker refuses every board write
+   verb, so Model comes first and its pick is not optional.
    Output: the picks, quoted.
 
 ## Target
@@ -55,14 +58,16 @@ Parts: **Tracker** (Target through Exit), [Upgrade](#upgrade),
   and status go to comments.
 - **History is immutable.** Leave closed board items as written: text,
   prefixes, holders and epics. Change live items only (every status except
-  closed); fix wrong edges touching a live item, on either end. Write a rule
+  closed); fix wrong edges touching a live item, on either end. The one write
+  on a closed record is the `outcome` field of a closed decision, gate or
+  milestone (Model). Write a rule
   still in force that lives only in a closed record into its owner and link the
   record; never edit it. Add missing
   `supersedes` edges on closed rulings when a release check meets them, not
   as a sweep.
 - **Triage before migrating.** Close a live item whose outcome is moot
   (superseded, done elsewhere, no longer wanted) with that reason instead of
-  migrating it. Candidates: a superseded linked ruling, a released ruling
+  migrating it. Candidates: a superseded linked ruling, an in-force ruling
   whose linked work is all closed, duplicates.
 - **Open findings are questions.** A finding needing a decision (possible
   supersession, conflicting rulings) becomes a question blocking the affected
@@ -71,8 +76,8 @@ Parts: **Tracker** (Target through Exit), [Upgrade](#upgrade),
   plus what history holds.
 - **Rules have a user source.** Trace every standing rule and constraint to a
   user source (goal, instructions, decision record). Route findings to the
-  deciding session uninvestigated: a released record whose rules lack a user
-  source or exceed it stays released, with a non-blocking question
+  deciding session uninvestigated: an in-force record whose rules lack a user
+  source or exceed it stays in force, with a non-blocking question
   "Ratify or revise the flagged rules of <id>?" naming the finding. Ask the user only migration-scope choices.
 - **One owner.** Write each rule into its owner under project-memory
   [Durable owners](../shared/project-memory.md#durable-owners); the board
@@ -81,6 +86,70 @@ Parts: **Tracker** (Target through Exit), [Upgrade](#upgrade),
   squashed text of live entries when migrating them. Leave decision records
   past decision time as written; Live or history and text rewrites skip them.
   State missing provenance, dates and reasons as "not recorded".
+
+## Model
+
+Per board, first whenever the marker (`custom.board.model`) is not `1`: every
+board write verb refuses such a board, naming this skill; reads, `agents board
+setup`, `agents board check` and `agents board bd --raw` still work. Scripts:
+`$HOME/.agents/skills/board-migrate/scripts/`, run from the project checkout.
+`convert-stored-forms.py` writes only through raw bd and ends with the marker,
+which `agents board setup` writes on a board it creates and never on an existing
+one.
+
+1. **Inspect.** The user pauses every session that writes the board. Run
+   `agents board check --limit 0` and `agents board holders`; save one
+   `agents board bd export` as `board-baseline.jsonl` in `agents scratch dir
+   --shared board-migrate`.
+   Output: deviation classes with counts, holds, the baseline path.
+2. **Setup.** `agents board setup` brings the settings and the status list to
+   the current model (decided, in_force, in_review, passed).
+   Output: the settings it changed.
+3. **Preview.** `python3 <scripts>/convert-stored-forms.py` is a dry run: one
+   `would:` line per conversion, then the `for the user:` lines. Conversions:
+   - statuses: `in_progress` open (a held change request keeps its holder, its
+     hold is work), `needs_acceptance` passed with look before (a project that
+     looks after would otherwise land it unasked), standalone `in_review` open,
+     `released` in_force, a ruling at `needs_ratification` decided;
+   - holds on items cleared (one held by the user is listed); legacy holders
+     cleared;
+   - types bug, design, feature, chore (kind `cleanup`) and spike become
+     `task`, with a `kind:` label except for spike;
+   - an in-review change request gets its `author` from the hand-over comment,
+     else bd's status history, else its holder;
+   - links: `waits-for` and `conditional-blocks` become waits, with a comment
+     naming the earlier link (reason not recorded), `discovered-from` the
+     `found_in` field, `related` `relates-to`, a milestone's wait on a change
+     request that change request's membership;
+   - `defer_until` becomes the `revisit` day and leaves bd; a deferral whose
+     reason names a condition (after, until, when, once, waits on, blocked by)
+     and an open record becomes a wait on it, the record open;
+   - closed decisions get `superseded` (a supersedes link), `planned` (the
+     close reason starts "planned in") or `dropped`; closed gates `resolved`,
+     closed milestones `accepted`; an open record carries no outcome;
+   - an open epic's children get its topic label and the epic closes;
+   - an open design or landing ratification becomes an open question for the
+     user, the old record closed as dropped;
+   - an open gate that is not a human gate, and an item assigned to the user,
+     become a human gate of the same title that supersedes the old record;
+     waiters move to it; on a shared board it is `for:` the board's person.
+   Output: the conversion count; the listed forms.
+4. **Convert.** `convert-stored-forms.py --apply`, then rerun it until it
+   reports `0 conversion(s)`. An interruption needs no cleanup.
+   Output: the apply log.
+5. **Settle.** Bring each `for the user:` line to the user as one question: a
+   ruling now decided (release it or revise it), a deferral condition that
+   became a wait (right wait?), a change request in review without an author
+   (another session reviews it), a deferred item of a change request, a timer
+   or CI gate, a milestone waiting on something that is no change request, a
+   ratification question. Then `agents board check --fix --limit 0`
+   (retired metadata) and `agents board check --limit 0`, which must report no
+   deviation.
+   Output: each form's decision; the check result.
+6. **Mark.** `convert-stored-forms.py --mark` writes the marker only with
+   nothing left to convert and `agents board check` clean. Tell the user sessions
+   may resume.
+   Output: `custom.board.model = 1`.
 
 ## Tracker
 
@@ -195,9 +264,6 @@ step goes in a change set and runs on the user's confirmation.
    on the CR's branch for ordinary review. `agents board check --fix --limit 0` clean but for user-accepted
    deviations; one `agents board claim` of a CR works end to end. Defer each open
    backlog work item; a plan pass groups the rest into CRs as they become due.
-   For live legacy decisions at `needs_ratification`, run
-   `python3 "$HOME/.agents/skills/board-migrate/scripts/convert-unratified-rulings.py"`,
-   follow its output, then rerun the check.
    Tell the user pulls may start.
    Output: check result.
 

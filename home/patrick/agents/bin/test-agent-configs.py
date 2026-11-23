@@ -8547,98 +8547,6 @@ def console_contract_states(root: Path) -> dict:
     return states
 
 
-def validate_legacy_ruling_conversion(root: Path) -> None:
-    """The board-migrate conversion preflights and operates only on its disposable command fixture."""
-    script = root / "skills" / "board-migrate" / "scripts" / "convert-unratified-rulings.py"
-    board_stub = '''#!/usr/bin/env python3
-import json, os, sys
-from pathlib import Path
-state_file = Path(os.environ["TEST_BOARD_STATE"])
-state = json.loads(state_file.read_text())
-args = sys.argv[1:]
-state["calls"].append(args)
-def save(): state_file.write_text(json.dumps(state))
-if args[:2] == ["bd", "list"]:
-    print(json.dumps([item for item in state["items"] if item["status"] == "needs_ratification"]))
-elif args[0] == "show":
-    item = next(item for item in state["items"] if item["id"] == args[1])
-    print(json.dumps({item["id"]: item}))
-elif args[0] == "claim":
-    item = next(item for item in state["items"] if item["id"] == args[1])
-    item["assignee"] = "lead0001"
-    save()
-    print(f"claimed {item['id']}")
-elif args[:2] == ["ruling", "record"]:
-    item_id, record_file = args[2], Path(args[3])
-    item = next(item for item in state["items"] if item["id"] == item_id)
-    item["description"] = record_file.read_text()
-    item["status"], item["assignee"] = "in_force", None
-    question_id = "q-" + item_id
-    state["questions"].append({"id": question_id, "related": item_id})
-    save()
-    print(f"recorded {item_id} (released): {item['title']}\\nconfirmation question: {question_id}")
-else:
-    raise SystemExit(f"unexpected board command: {args}")
-'''
-    session_stub = '''#!/usr/bin/env python3
-import json, os, sys
-if sys.argv[1:] == ["actor"]:
-    print("lead0001")
-elif sys.argv[1:] == ["list"]:
-    print(json.dumps({"actor": "lead0001", "role": os.environ.get("TEST_ROLE", "lead")}))
-else:
-    raise SystemExit(f"unexpected session command: {sys.argv[1:]}")
-'''
-    valid = ("## Question\nQ\n## Alternatives Considered\n- A\n## Decision\nA\n## Rationale\nUser (2026-11-18): A\n"
-             "## Rule owner\ndocs/rule.md\n## Reversal\nUndo A\n")
-
-    def run(home: Path, state_path: Path, role: str = "lead"):
-        return subprocess.run([sys.executable, str(script)], capture_output=True, text=True,
-                              env={**os.environ, "HOME": str(home), "TEST_BOARD_STATE": str(state_path), "TEST_ROLE": role})
-
-    with tempfile.TemporaryDirectory() as directory:
-        home = Path(directory)
-        bins = home / ".agents" / "bin"
-        bins.mkdir(parents=True)
-        (bins / "board").write_text(board_stub, encoding="utf-8")
-        (bins / "session").write_text(session_stub, encoding="utf-8")
-        board_path, session_path = bins / "board", bins / "session"
-        board_path.chmod(0o755)
-        session_path.chmod(0o755)
-        state_path = home / "board.json"
-        initial = {"items": [{"id": "legacy-a", "title": "Rule A", "status": "needs_ratification", "description": valid},
-                             {"id": "legacy-b", "title": "Rule B", "status": "needs_ratification", "description": valid}],
-                   "questions": [], "calls": []}
-        state_path.write_text(json.dumps(initial), encoding="utf-8")
-        completed = run(home, state_path)
-        state = json.loads(state_path.read_text(encoding="utf-8"))
-        if completed.returncode or "q-legacy-a, q-legacy-b" not in completed.stdout \
-                or [item["status"] for item in state["items"]] != ["in_force", "in_force"] \
-                or [question["related"] for question in state["questions"]] != ["legacy-a", "legacy-b"]:
-            raise ValueError(f"the lead conversion must release every record and report its related question ids: {completed.stdout} {completed.stderr} {state}")
-        claims = sum(args[0] == "claim" for args in state["calls"])
-        completed = run(home, state_path)
-        state = json.loads(state_path.read_text(encoding="utf-8"))
-        if completed.returncode or claims != 2 or sum(args[0] == "claim" for args in state["calls"]) != claims:
-            raise ValueError("a rerun with no legacy rulings must not claim another item")
-
-        state_path.write_text(json.dumps({"items": [{"id": "valid", "title": "Valid", "status": "needs_ratification", "description": valid},
-                                           {"id": "missing", "title": "Missing Reversal", "status": "needs_ratification",
-                                            "description": valid.replace("## Reversal\nUndo A\n", "")}],
-                                          "questions": [], "calls": []}), encoding="utf-8")
-        completed = run(home, state_path)
-        state = json.loads(state_path.read_text(encoding="utf-8"))
-        if completed.returncode == 0 or "preflight stopped before claiming anything" not in completed.stderr \
-                or "## Reversal" not in completed.stderr or any(args[0] in ("claim", "ruling") for args in state["calls"]):
-            raise ValueError(f"a missing reversal must stop the whole migration before claims or records: {completed.stdout} {completed.stderr} {state}")
-
-        completed = run(home, state_path, role="agent")
-        state = json.loads(state_path.read_text(encoding="utf-8"))
-        if completed.returncode == 0 or "registered lead or solo session" not in completed.stderr \
-                or state["calls"]:
-            raise ValueError(f"only a deciding session may run the conversion: {completed.stdout} {completed.stderr} {state}")
-
-
 def validate_default_records(root: Path) -> None:
     """`start --no-board` keeps the records under ${XDG_DATA_HOME:-~/.local/share}/agents/decisions/<repo folder name of bin/scratch>,
     the same from a worktree; no option names another folder. Sessions get distinct round ids there, and a record file is never overwritten."""
@@ -14451,7 +14359,6 @@ def run_group(name: str, root: Path) -> None:
         validate_hooks(root)
     elif name == "board":
         validate_board(root)  # patches os.environ and stdout in-process: nothing else shares this process
-        validate_legacy_ruling_conversion(root)
         validate_shared_board(root)
         validate_console_unblocks(root)
         validate_console_no_board(root)

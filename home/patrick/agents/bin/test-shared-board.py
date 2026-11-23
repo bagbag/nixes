@@ -1901,6 +1901,157 @@ def t_setup() -> None:
     check(rc == 0 and 'up to date' in out and ' -> ' not in out, 'setup on a shared board: share applied the same lists, the shared ones included', err + out)
 
 
+def t_migrate() -> None:
+    """board-migrate's conversion on a board holding every old form: refused writes and open reads before, a dry run that writes nothing,
+    the conversions, a rerun that finds nothing, `check` clean, and the marker last."""
+    side = 'migproj'
+    git('init', '-q', '-b', 'main', side)
+    git('commit', '-q', '--allow-empty', '-m', 'init', cwd=ROOT / side)
+    rc, out, err, _ = run(side, 'setup', '--embedded', '--prefix', 'mg', '--target', 'main', '--setup', 'true', '--checks', 'true', '--look', 'before', '--view', 'code', role=None)
+    check(rc == 0, 'migrate: the board is set up', err + out)
+    raw(side, 'config', 'set', 'status.custom', 'decided:wip,released:active,in_review:wip,needs_ratification:wip,needs_acceptance:wip,in_force:active,passed:wip')
+    raw(side, 'config', 'unset', 'custom.board.model')
+    ids: dict[str, str] = {}
+
+    def make(name: str, title: str, *flags: str, kind: str = 'task') -> None:
+        rc, out, err, _ = raw(side, 'create', title, '-t', kind, '-d', f'{title} text', '--silent', *flags)
+        if rc:
+            raise RuntimeError(f'create {title}: {err}{out}')
+        ids[name] = out.strip().splitlines()[-1]
+
+    def update(name: str, *flags: str) -> None:
+        rc, out, err, _ = raw(side, 'update', ids[name], *flags)
+        if rc:
+            raise RuntimeError(f'update {name}: {err}{out}')
+
+    def link(name: str, target: str, kind: str) -> None:
+        result = subprocess.run([sys.executable, '-B', BOARD, 'bd', '--raw', '--yes', 'batch', '-m', 'fixture', '--json'], cwd=ROOT / side, capture_output=True, text=True,
+                                env=base_env(side), input=f'dep add {ids[name]} {ids[target]} {kind}\n')
+        if result.returncode:
+            raise RuntimeError(f'link {name}: {result.stderr}{result.stdout}')
+
+    no_commit = ['--metadata', '{"no_commit":true}']
+    for name, title in (('cr1', 'CR one'), ('cr2', 'CR in review, claimed'), ('cr3', 'CR in review, unknown hand-over'), ('cr4', 'CR awaiting acceptance'), ('cr5', 'CR awaiting acceptance with its own look'), ('cr6', 'CR in progress')):
+        make(name, title, kind='change-request')
+    make('held', 'held item', '--parent', ids['cr1'])
+    update('held', '--assignee', 'abcd1234', '--set-metadata', 'hold=work', '--status', 'in_progress')
+    make('bug', 'a bug item', '--parent', ids['cr1'], kind='bug')
+    make('design', 'a design item', '--parent', ids['cr1'], kind='design')
+    make('spike', 'a spike', *no_commit, kind='spike')
+    make('reopened', 'reopened item', '--parent', ids['cr1'])
+    update('reopened', '--set-metadata', 'outcome=done')
+    make('target', 'link target', *no_commit)
+    for name, kind in (('waits', 'waits-for'), ('cond', 'conditional-blocks'), ('found', 'discovered-from'), ('related', 'related')):
+        make(name, f'item with {kind}', '--parent', ids['cr1'])
+        link(name, 'target', kind)
+    make('milestone', 'a milestone', kind='milestone')
+    link('milestone', 'cr4', 'blocks')
+    make('ms_closed', 'a closed milestone', kind='milestone')
+    make('released', 'released ruling', kind='decision')
+    update('released', '--status', 'released')
+    make('unratified', 'unratified ruling', kind='decision')
+    update('unratified', '--status', 'needs_ratification')
+    make('old_ruling', 'superseded ruling', kind='decision')
+    make('new_ruling', 'newer ruling', kind='decision')
+    link('old_ruling', 'new_ruling', 'supersedes')
+    make('planned', 'planned ruling', kind='decision')
+    make('dropped', 'dropped ruling', kind='decision')
+    make('user_gate', 'user rotate the key', kind='gate')
+    make('waiter', 'item waiting on the gate', '--parent', ids['cr1'])
+    link('waiter', 'user_gate', 'blocks')
+    make('closed_gate', 'an old gate', kind='gate')
+    rc, out, err, _ = raw(side, 'gate', 'create', '--type=timer', '--blocks', ids['target'], '--timeout', '2h', '--title', 'Timer gate')
+    make('dated', 'dated deferral', *no_commit, '--defer', '2027-03-04')
+    make('conditional', 'conditional deferral', *no_commit)
+    update('conditional', '--notes', f"revisit after {ids['target']} lands")
+    raw(side, 'defer', ids['conditional'])
+    make('user_item', 'user step item', *no_commit)
+    update('user_item', '--assignee', 'user')
+    make('ratify', 'Ratify the landing', '--parent', ids['cr1'])
+    update('ratify', '--status', 'needs_ratification', '--set-metadata', 'ratification=landing')
+    make('epic', 'Big topic epic', kind='epic')
+    make('child', 'epic child', '--parent', ids['epic'], *no_commit)
+    update('cr2', '--status', 'in_review', '--assignee', 'abcd1234')
+    update('cr3', '--status', 'in_review')
+    update('cr4', '--status', 'needs_acceptance')
+    update('cr5', '--status', 'needs_acceptance', '--set-metadata', 'look=after')
+    update('cr6', '--status', 'in_progress', '--assignee', 'abcd1234')
+    for name in ('cr2', 'cr3', 'cr4', 'cr5', 'cr6'):
+        git('worktree', 'add', '-q', f'.worktrees/{ids[name]}', '-b', f'cr/{ids[name]}', cwd=ROOT / side)
+    for name, reason in (('ms_closed', 'closed in the earlier model'), ('closed_gate', 'closed in the earlier model'), ('old_ruling', 'superseded by the newer ruling'),
+                         ('planned', 'planned in nixes-abc and done'), ('dropped', 'no longer wanted at all')):
+        raw(side, 'close', ids[name], '--reason', reason)
+    run(side, 'setup', role=None)  # status.custom to the current list; the records keep their old statuses
+    raw(side, 'config', 'unset', 'custom.board.model')
+    raw(side, 'dolt', 'commit', '-m', 'old forms')
+
+    script = HERE.parent / 'skills' / 'board-migrate' / 'scripts' / 'convert-stored-forms.py'
+
+    def migrate(*flags: str):
+        result = subprocess.run([sys.executable, '-B', str(script), *flags], cwd=ROOT / side, capture_output=True, text=True, env=base_env(side), input='')
+        return result.returncode, result.stdout, result.stderr
+
+    rc, out, err, _ = run(side, 'update', ids['bug'], '--title', 'a bug item, retitled', role=None)
+    check(rc != 0 and '/board-migrate' in err, 'migrate: a write verb on the old board is refused, naming /board-migrate', err + out)
+    rc, out, err, _ = run(side, 'show', ids['bug'])
+    check(rc == 0 and 'a bug item' in out and 'retitled' not in out, 'migrate: reads work on the old board', err + out)
+    before = items(side)
+    rc, out, err = migrate()
+    check(rc == 0 and out.count('would: ') >= 20 and items(side) == before, 'migrate: the dry run lists the conversions and writes nothing', err + out)
+    rc, out, err = migrate('--mark')
+    check(rc == 1 and setting(side, 'custom.board.model') == '', 'migrate: the marker waits for the conversions', err + out)
+    rc, out, err = migrate('--apply')
+    check(rc == 0 and 'conversion(s) applied' in out and 'no recorded author' in out and 'timer gate' in out, 'migrate: --apply converts and lists what is left for the user', err + out)
+    rc, out, err = migrate('--apply')
+    check(rc == 0 and out.startswith('0 conversion(s) applied'), 'migrate: a rerun finds nothing to convert', err + out)
+
+    now = items(side)
+
+    def row(name: str) -> dict:
+        return now[ids[name]]
+
+    def deps(name: str) -> set[tuple[str, str]]:
+        return {(d['depends_on_id'], d['type']) for d in row(name).get('dependencies') or [] if d['issue_id'] == ids[name]}
+
+    def meta_of(name: str) -> dict:
+        return row(name).get('metadata') or {}
+
+    check(not row('held').get('assignee') and 'hold' not in meta_of('held') and row('held')['status'] == 'open', 'migrate: the hold on an item is cleared and in_progress is open', row('held'))
+    check(row('bug')['issue_type'] == 'task' and 'kind:bug' in row('bug')['labels'] and 'kind:design' in row('design')['labels'] and row('spike')['issue_type'] == 'task',
+          'migrate: bug, design and spike types become tasks, with kind labels where there is one', (row('bug'), row('design'), row('spike')))
+    check('outcome' not in meta_of('reopened'), 'migrate: an open record carries no outcome', meta_of('reopened'))
+    check((ids['target'], 'blocks') in deps('waits') and (ids['target'], 'blocks') in deps('cond') and not {'waits-for', 'conditional-blocks'} & {kind for _, kind in deps('waits') | deps('cond')},
+          'migrate: waits-for and conditional-blocks become waits', (deps('waits'), deps('cond')))
+    check(meta_of('found').get('found_in') == ids['target'] and not any(kind == 'discovered-from' for _, kind in deps('found')), 'migrate: discovered-from becomes found_in', (meta_of('found'), deps('found')))
+    check((ids['target'], 'relates-to') in deps('related'), 'migrate: related becomes relates-to', deps('related'))
+    check((ids['milestone'], 'parent-child') in deps('cr4') and not deps('milestone') and row('cr4')['status'] == 'passed',
+          'migrate: a milestone waiting on a change request holds it as a part; needs_acceptance is passed', (deps('cr4'), deps('milestone')))
+    check(row('cr5')['status'] == 'passed' and meta_of('cr5').get('look') == 'before' and 'look' not in meta_of('cr4'),
+          'migrate: a change request that awaited acceptance waits for it as passed, whatever look it carried', (meta_of('cr4'), meta_of('cr5')))
+    check(row('cr6')['status'] == 'open' and row('cr6')['assignee'] == 'abcd1234' and meta_of('cr6').get('hold') == 'work',
+          'migrate: an in-progress change request stays held, its hold is work', (row('cr6')['status'], row('cr6').get('assignee'), meta_of('cr6')))
+    check(row('released')['status'] == 'in_force' and row('unratified')['status'] == 'decided', 'migrate: released is in_force, needs_ratification is decided', (row('released')['status'], row('unratified')['status']))
+    check([meta_of(name).get('outcome') for name in ('old_ruling', 'planned', 'dropped', 'closed_gate', 'ms_closed')] == ['superseded', 'planned', 'dropped', 'resolved', 'accepted'],
+          'migrate: closed decisions, gates and milestones get their outcome', [meta_of(name).get('outcome') for name in ('old_ruling', 'planned', 'dropped', 'closed_gate', 'ms_closed')])
+    check(meta_of('dated').get('revisit') == '2027-03-04' and row('dated')['status'] == 'deferred' and not row('dated').get('defer_until'),
+          'migrate: defer_until becomes the revisit field and leaves bd', (meta_of('dated'), row('dated').get('defer_until')))
+    check(row('conditional')['status'] == 'open' and (ids['target'], 'blocks') in deps('conditional'), 'migrate: a deferral on a condition becomes a wait', (row('conditional')['status'], deps('conditional')))
+    gates = [i for i in now.values() if i['issue_type'] == 'gate' and i['status'] == 'open' and i.get('await_type') == 'human']
+    check(len(gates) == 2 and all(any(kind == 'supersedes' for _, kind in {(d['depends_on_id'], d['type']) for d in g.get('dependencies') or []}) for g in gates)
+          and any((g['id'], 'blocks') in deps('waiter') for g in gates) and row('user_gate')['status'] == 'closed' and row('user_item')['status'] == 'closed',
+          'migrate: a gate and a user item become human gates that supersede them, the waiter moved to the new gate', (gates, deps('waiter')))
+    questions = [i for i in now.values() if i['issue_type'] == 'decision' and i['status'] == 'open' and i.get('external_ref') == f"migrated:{ids['ratify']}"]
+    check(len(questions) == 1 and row('ratify')['status'] == 'closed', 'migrate: an open landing ratification becomes an open question', questions)
+    check('topic:big-topic-epic' in row('child')['labels'] and row('epic')['status'] == 'closed', 'migrate: an epic gives its children a topic label and closes', row('child'))
+    check(meta_of('cr2').get('author') == 'abcd1234' and 'author' not in meta_of('cr3'), 'migrate: the author is the holder of record, and none is invented', (meta_of('cr2'), meta_of('cr3')))
+    rc, out, err, _ = run(side, 'check', '--limit', '0')
+    check(rc == 0 and 'convention deviations: 0' in out, 'migrate: check is clean after the conversion', err + out)
+    rc, out, err = migrate('--mark')
+    check(rc == 0 and setting(side, 'custom.board.model') == '1', 'migrate: --mark writes the marker last', err + out)
+    rc, out, err, _ = run(side, 'update', ids['bug'], '--title', 'a bug item, retitled', role=None)
+    check(rc == 0, 'migrate: a write verb works once the marker is set', err + out)
+
+
 def cleanup() -> None:
     for pid in waits():
         with contextlib.suppress(ProcessLookupError):  # a wait that ended since it was listed
@@ -2025,7 +2176,7 @@ def t_cleanup() -> None:
             shutil.rmtree(folder, ignore_errors=True)
 
 
-ORDER = ('unshared', 'share_join', 'setup', 'child_ids', 'queues', 'moves', 'inbox', 'cr', 'scenarios', 'window', 'pull', 'manual_and_dead_wait', 'soak', 'stopped', 'held_elsewhere', 'store', 'move', 'cleanup')
+ORDER = ('unshared', 'share_join', 'setup', 'child_ids', 'queues', 'moves', 'inbox', 'cr', 'scenarios', 'window', 'pull', 'manual_and_dead_wait', 'soak', 'stopped', 'held_elsewhere', 'store', 'move', 'migrate', 'cleanup')
 only = {name for name in options.only.split(',') if name}
 stop_dead_servers()
 for signum in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):

@@ -8,7 +8,7 @@ Reference for `bin/board` and `bin/session`; the README links here.
 --server --stealth` (`--embedded` opts out: embedded mode takes one writer at a time) or brings an
 existing one to these values, printing each old and new value; `--server` converts an embedded board
 in place (`to_server`: bd backup and restore, the old folder kept). It reports `.git/info/exclude`
-lines matching tracked files; share and join apply the same lists. `no-git-ops` stays `true`, as stealth init sets it: bd 1.3's stealth handling keys on it
+lines matching tracked files; share and join apply the same lists. A board created by setup also gets the model marker `custom.board.model`; an existing one gets it last from board-migrate (`convert-stored-forms.py --mark`), never from a setup rerun, and until then every board write verb refuses, naming /board-migrate (`require_model`; reads, setup, check and raw bd stay open). `no-git-ops` stays `true`, as stealth init sets it: bd 1.3's stealth handling keys on it
 (with `false`, `bd doctor --fix` writes a project `.gitignore`).
 
 Shared boards ([beads-setup](../skills/shared/beads-setup.md#shared-boards); queues: [board-core Routing](../skills/shared/board-core.md#routing)): only board's own mark, `.beads/board-shared.json`,
