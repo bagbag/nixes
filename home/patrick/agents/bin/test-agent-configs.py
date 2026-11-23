@@ -3184,17 +3184,12 @@ def validate_board(root: Path) -> None:
                              "Ready task": {"dependencies": [{"issue_id": ready, "depends_on_id": question, "type": "blocks"}]}}):
                 if f"{loose}  no-cr" in invoke(["check"], Fake(variant(**waiting)))[1]:
                     raise ValueError(f"board check must not flag a work item waiting on an open decision: {waiting}")
-            # A decision holds work items, never a CR, which waits on its items' blockers (board-core.md Questions and rulings).
+            # A request may wait on a question (a wait on the whole request): written, said as a sentence, and nothing for check to flag.
             cr = ids["CR ready"]
-            for decision in (question, ids["Released ruling"]):
-                held = variant(**{"CR ready": {"dependencies": [{"issue_id": cr, "depends_on_id": "fx-ovo", "type": "parent-child"},
-                                                                {"issue_id": cr, "depends_on_id": decision, "type": "blocks"}]}})
-                report = invoke(["check"], Fake(held))[1]
-                if f"  {cr}  decision-blocks-cr" not in report or f"agents board unlink {cr} {decision}" not in report:
-                    raise ValueError(f"board check must flag a decision blocking a CR:\n{report}")
             fake = Fake(fixture)
-            if invoke(["wait", cr, "--on", question], fake, "lead0001")[0] == 0 or fake.writes():
-                raise ValueError("board wait must refuse a decision blocking a CR")
+            code, output, errors = invoke(["wait", cr, "--on", question], fake, "lead0001")
+            if code or f"{cr} waits on {question}" not in output or not fake.writes():
+                raise ValueError(f"board wait must let a change request wait on a question: {code} {output!r} {errors!r}")
             # A deferred item is backlog and holds no live item up (board-coordination.md Deferrals): defer refuses, check flags.
             ready, loose = ids["Ready task"], ids["Loose item"]
             waits = {"Loose item": {"dependencies": [{"issue_id": loose, "depends_on_id": ready, "type": "blocks"}]}, "Ready task": {"dependencies": []}}  # a task outside a CR
@@ -4380,8 +4375,8 @@ def validate_board(root: Path) -> None:
                 raise ValueError(f"board wait must refuse a wait cycle naming the chain: {code} {errors} {fake.writes()}")
             fake = Fake(fixture)
             code, _, errors = invoke(["wait", ids["Wire caller"], "--on", ids["Ready task"], "--for", "r"], fake, "lead0001")
-            if not code or fake.writes() or "change request" not in errors:
-                raise ValueError(f"board wait accepted a new outside wait on a task: {code} {errors} {fake.writes()}")
+            if code or not fake.writes():  # an item waits on another request's item: it is ready when that request lands or stacks
+                raise ValueError(f"board wait refused an item's wait on another request's item: {code} {errors} {fake.writes()}")
             # Only a live decision, a human gate is a planning wait (q139).
             def stub(item_id, kind, status, title, **more):
                 return {"id": item_id, "title": title, "issue_type": kind, "status": status, "priority": 2,
@@ -4578,10 +4573,6 @@ def validate_board(root: Path) -> None:
             node = fake.graphs[-1]["nodes"][0] if fake.graphs else {}
             if node.get("priority") != 1 or node.get("parent_id") != goal or node.get("labels") != ["topic:a", "topic:b"] or "metadata" in node:
                 raise ValueError(f"board ruling revise ignored -p/--parent/-l or set metadata without --partial: {fake.graphs}")
-            fake = Fake(fixture)
-            if invoke(["ruling", "revise", ids["Released ruling"], "--title", "t", "--body-file", "p.md", "--holds", ids["CR ready"]], fake, "lead0001")[0] == 0 \
-                    or fake.writes():
-                raise ValueError("a decision must not hold a CR")
             fake = Fake(topical)
             fake.settings["issue_prefix"] = "fx"
             board._prefix.clear()
@@ -4810,10 +4801,6 @@ def validate_board(root: Path) -> None:
                                              deck=Graphing([*mine_rows, stacked]))
             if code != 2 or "keeps its parent" not in errors or any(a[0] == "create" for a, _ in fake.calls):
                 raise ValueError(f"a plan that moves an existing child under a new parent meets the parent-move rule: {code} {errors} {fake.calls}")
-            named_question = {"nodes": [{"key": "question-key", "title": "Which cache?", "type": "decision", "description": "d"}]}
-            code, _, errors, fake = bd_graph(named_question, "--holds", "fx-cr", deck=Graphing([*mine_rows, stacked]))
-            if code != 2 or "a decision holds its work items" not in errors or any(a[0] == "create" for a, _ in fake.calls):
-                raise ValueError(f"a plan holding a CR is refused before any write and names the fix: {code} {errors} {fake.calls}")
             # A plan edge between two existing items is refused (board link and board wait write those); ruling links are written by ruling verbs only.
             for plan, word in (({"nodes": nodes, "edges": [{"from_id": ready, "to_id": question, "type": "relates-to"}]}, "needs a new item"),
                                ({"nodes": [dict(nodes[1], deps=[{"target": ready, "type": "supersedes"}])], "edges": []}, "belong to rulings"),
@@ -5357,9 +5344,33 @@ def validate_board(root: Path) -> None:
             inside = readiness(cr_issue("w"), cr_item("w.i", "w"), cr_item("w.j", "w", blocks=("w.i",)))["w"]
             if inside != ("implement", ([], [])):
                 raise ValueError(f"edges between the items of one CR must not hold the CR: {inside}")
-            plain = readiness(cr_issue("w"), cr_item("w.i", "w", blocks=("q",)), {**entry("q", "decision", "open", 2)})["w"]
-            if plain[0] is not None or plain[1][0] != ["q"]:
-                raise ValueError(f"an open decision before an item must hold its CR: {plain}")
+            # Readiness (nixes-gpno3): a CR is claimable when one of its open items is ready, or none is open (handover); item waits hold
+            # the items, not the CR; an item waiting on another CR's item is ready when that CR lands or its CR stacks on it.
+            question = {**entry("q", "decision", "open", 2)}
+            for label, issues, want in (
+                    ("every open item waits on a question", [cr_issue("w"), cr_item("w.i", "w", blocks=("q",)), question], None),
+                    ("one item ready, another waits on a question", [cr_issue("w"), cr_item("w.i", "w", blocks=("q",)), cr_item("w.j", "w"), question], "implement"),
+                    ("no open item", [cr_issue("w"), cr_item("w.i", "w", status="closed")], "plan"),
+                    ("an item waits on an open CR's item", [cr_issue("b"), cr_item("b.i", "b"), cr_issue("w"), cr_item("w.i", "w", blocks=("b.i",))], None),
+                    ("an item waits on a passed CR's item (stacks)", [cr_issue("b", "passed"), cr_item("b.i", "b"), cr_issue("w"), cr_item("w.i", "w", blocks=("b.i",))], "implement"),
+                    ("the CR waits on a question itself", [cr_issue("w", blocks=("q",)), cr_item("w.i", "w"), question], None),
+                    ("a probe task the question waits on (vitrass)", [cr_issue("w"), cr_item("w.i", "w", blocks=("q",)),
+                                                                     {**entry("q", "decision", "open", 2), "dependencies": [{"issue_id": "q", "depends_on_id": "probe", "type": "blocks"}]},
+                                                                     {**entry("probe", "task", "open", 2)}], None)):
+                got = readiness(*issues)["w"][0]
+                if got != want:
+                    raise ValueError(f"readiness, {label}: claimable as {got}, expected {want}")
+            # A wait that closes a cycle between two requests through different items is refused naming the chain, and check lists one that exists.
+            crossed = [cr_issue("a"), cr_item("a.i", "a"), cr_item("a.j", "a"), cr_issue("b"), cr_item("b.i", "b"), cr_item("b.j", "b", blocks=("a.i",))]
+            deck = bare_deck(crossed, False)
+            chain = board.wait_cycle(deck, [("a.j", "b.i")])
+            if not chain or chain[0] != "a" or chain[-1] != "a" or "b" not in chain:
+                raise ValueError(f"two requests waiting on each other through different items form a cycle: {chain}")
+            if board.wait_cycle(deck, [("a.j", "a.i")]) is not None:
+                raise ValueError("a wait between two items of one request, not closing a loop, is no cycle")
+            existing = bare_deck([*crossed[:5], cr_item("b.j", "b", blocks=("a.i",)), {**crossed[2], "dependencies": [*crossed[2]["dependencies"], {"issue_id": "a.j", "depends_on_id": "b.i", "type": "blocks"}]}], False)
+            if not any(kind == "wait-cycle" for _, kind, _ in board.deviations(existing, None)):
+                raise ValueError("board check must list an existing wait cycle")
             # Blockers outside the status snapshot (closed items) are read in one list of the closed items for all change requests, not
             # one show each; an id that list lacks (deleted) is asked of bd show and, absent there too, counts as closed.
             shows, lists = [], []
@@ -5385,40 +5396,6 @@ def validate_board(root: Path) -> None:
             with patch.object(board, "bd_show", show_outside), patch.object(board, "bd_closed", lambda: [closed_child]):
                 if readiness(*lifting)["lw"] != ("implement", ([], ["lb"])):
                     raise ValueError("a closed blocker that is an item of a live request must stack its CR on that request")
-            # Refuse new open outside waits on CR items before any write, regardless of where the edge is declared.
-            others = [cr_issue("fx-source"), cr_item("fx-source-task", "fx-source"), cr_issue("fx-dest"),
-                      cr_item("fx-dest-task", "fx-dest"), cr_item("fx-move", "fx-source", blocks=("fx-source-task",)),
-                      entry("fx-gate", "gate", "open", 2)]
-            graph = Path("outside-wait.json").resolve()
-            graph.write_text(json.dumps({"nodes": [{"key": "cr", "title": "Change", "description": "Work", "type": "change-request"},
-                                                   {"key": "child", "title": "Task", "description": "Work", "parent_key": "cr",
-                                                    "waits_on": [{"on": "fx-source-task", "for": "dependency"}]}]}))
-            for argv in (["wait", "fx-dest-task", "--on", "fx-source-task", "--for", "dependency"],
-                         ["create", "A task", "--parent", "fx-dest", "--description-file", "-", "--deps", "fx-source-task"],
-                         ["create", "--graph", str(graph), "--dry-run"],
-                         ["move", "fx-move", "--to", "fx-dest"],
-                         ["link", "fx-move", "fx-dest", "--type", "parent-child"],
-                         ["move", "fx-source-task", "--to", "fx-dest"],
-                         ["gate", "create", "--blocks", "fx-dest-task", "--reason", "external approval"]):
-                fake = Fake(others)
-                with patch.object(board.sys, "stdin", io.StringIO("This work needs an outside blocker.")):
-                    code, _, errors = invoke(argv, fake, "lead0001")
-                if not code or fake.writes() or "change request" not in errors:
-                    raise ValueError(f"outside task wait was not refused before mutation: {argv} {code} {errors} {fake.writes()}")
-            for waiting, blocker in (("fx-dest", "fx-source-task"), ("fx-move", "fx-source-task")):
-                fake = Fake(others)
-                code, _, errors = invoke(["wait", waiting, "--on", blocker, "--for", "dependency"], fake, "lead0001")
-                if code or not fake.writes():
-                    raise ValueError(f"valid dependency was refused: {waiting} {blocker} {errors}")
-
-            legacy_item = cr_item("fx-dest-task", "fx-dest", blocks=("fx-source-task",))
-            legacy = [row if row["id"] != legacy_item["id"] else legacy_item for row in others]
-            _, output, _ = invoke(["check", "--json"], Fake(legacy), "lead0001")
-            findings = [entry for entry in json.loads(output)["deviations"] if entry["class"] == "outside-wait"]
-            if len(findings) != 1 or findings[0]["id"] != "fx-dest-task" or "agents board unlink fx-dest-task fx-source-task" not in findings[0]["detail"]:
-                raise ValueError(f"board check must locate the old link and its migration commands: {findings}")
-            if readiness(*legacy, complete=True)["fx-dest"] != (None, (["fx-source"], [])):
-                raise ValueError("the old outside wait must still hold the change request before migration")
 
             # A failed read of the outside blockers is not remembered: the next ask reads them again, not treats them as closed.
             def failing_once():
