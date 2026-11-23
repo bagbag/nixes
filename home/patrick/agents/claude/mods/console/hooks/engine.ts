@@ -14,8 +14,6 @@ export const CONTRACT_VERSION = 1
 export const ROUND_ROLES: readonly string[] = ['lead', 'solo', 'autopilot']
 export const PASS_COMMANDS: readonly string[] = ['step-back', 'ground', 'challenge-rulings']
 
-const RATIFY_EDITS_TIMEOUT_MS = 600_000  // the follow-up's setup and checks run inside the command
-
 export class EngineError extends Error {}
 
 export async function home($: $): Promise<string> {

@@ -46,8 +46,7 @@ A round:
   round's pre-pass needs it, and at every topic round's pre-pass. After that
   a step prints the named ids, the counts
   per kind and the command that lists everything (`agents board health --items
-  <COLLECT_VIEWS>`, plus `agents board position` for ready milestones and finished
-  epics), and a bare round's pre-pass is told to list before it selects. A restart, a
+  <COLLECT_VIEWS>`, plus `agents board position` for ready milestones), and a bare round's pre-pass is told to list before it selects. A restart, a
   Related step and the pass report format name that command where a round's scope
   widens.
 - Select claims the selected items (a gone session's hold through `board
@@ -453,8 +452,8 @@ release. Work with outstanding non-question waits stays out. Milestone work
 ranks first, then effective priority and work freed per question. The engine
 skips a set if another live session holds any member. The model groups
 questions into proposed rounds by topic. `next` also prints
-the open-item list (waiting questions, `in_review` designs, ready milestones,
-finished epics, what waits on the user: whole the first time between
+the open-item list (waiting questions, change requests to accept or review, ready milestones,
+what waits on the user: whole the first time between
 compactions, counts and the listing command after), the open questions by topic
 label and priority (`orm-schema-migrations 7 p1, 7 p2`, every time, a question with two labels under both; the labels
 come from `agents board health --json`, whose item rows carry `labels`) and the stored

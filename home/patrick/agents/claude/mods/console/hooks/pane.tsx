@@ -17,7 +17,7 @@ const QUESTIONS_SHOWN = 10  // this many questions show while enough exist: ever
 const ANSWERED_SHOWN = 2
 const LOG_SHOWN = 10  // the newest log lines; the rest of the round's log folds behind +N more
 const BOARD_ROWS_SHOWN = 10
-const CR_ROWS_SHOWN = 3  // change requests, ratifications and items for you: the head of what waits on the person
+const CR_ROWS_SHOWN = 3  // change requests and items for you: the head of what waits on the person
 const ID_GAP = 2  // cells between an id column and what follows
 const MILESTONE_MIN = 8  // cells the milestone title keeps however narrow the pane
 const BUTTON_SEP = ' • '  // between a row's buttons, as in Decide and Actions
@@ -88,7 +88,7 @@ export async function drawPane($: $, e: { surface: string; props: RenderPropsOf[
   /** The id column: as wide as the widest id shown in it. */
   const idWidth = (ids: readonly string[]) => Math.max(0, ...ids.map(id => shown(id).length)) + ID_GAP
   const dimId = (id: string) => <Text color="inactive">{shown(id)}</Text>
-  const AcceptRatifyRow = (props: { id: string; rowKey: string; title: string; idLabel: any; showKey: string; kind: CrKind; branch?: string; rail?: string; idWidth: number; striped: boolean; actions: any[]; actionWidth?: number; barHover: string; onOpen: () => void; lineTwo: any; children?: any }) => {
+  const CrRow = (props: { id: string; rowKey: string; title: string; idLabel: any; showKey: string; kind: CrKind; branch?: string; rail?: string; idWidth: number; striped: boolean; actions: any[]; actionWidth?: number; barHover: string; onOpen: () => void; lineTwo: any; children?: any }) => {
     const { id, rowKey, title, idLabel, showKey, kind, branch = '', rail = '', idWidth: width, striped, actions, actionWidth, barHover, onOpen, lineTwo, children } = props
     return (
       <Box key={rowKey} flexDirection="column">
@@ -751,7 +751,7 @@ export async function drawPane($: $, e: { surface: string; props: RenderPropsOf[
               : <Box key={`cr-${cr.id}-milestone-box`} flexShrink={0} hover={{ scope: `milestone-${cr.id}` }}><Text key={`cr-${cr.id}-milestone`} dimColor>{milestone}</Text></Box>
             const rightParts = rest.map(fact)
             return (
-              <AcceptRatifyRow key={`cr-${cr.id}`} id={cr.id} rowKey={`cr-${cr.id}`} title={cr.title} idLabel={dimId(cr.id)} showKey={`cr-${cr.id}-show`} kind={crKind(cr)} branch={branch} rail={rail}
+              <CrRow key={`cr-${cr.id}`} id={cr.id} rowKey={`cr-${cr.id}`} title={cr.title} idLabel={dimId(cr.id)} showKey={`cr-${cr.id}-show`} kind={crKind(cr)} branch={branch} rail={rail}
                 idWidth={crIdWidth} striped={index % 2 === 1} actions={actions} actionWidth={buttons.width} barHover={`bar-${cr.id}`} onOpen={() => pressOpenItem($, cr.id)}
                 lineTwo={<Box key={`cr-${cr.id}-facts`} flexDirection="row" flexWrap="wrap" columnGap={1} flexGrow={1} flexShrink={1} minWidth={0}>
                   {cells}
@@ -762,7 +762,7 @@ export async function drawPane($: $, e: { surface: string; props: RenderPropsOf[
                 </Box>}>
                 {slot(cr.id)}
                 {crDetails(cr)}
-              </AcceptRatifyRow>
+              </CrRow>
             )
           })}
           {more('crs', queue.hidden, 'change requests')}

@@ -169,9 +169,8 @@ def open_items(ctx: Context, found: dict, position: dict) -> tuple[list[dict], d
     for view in OPEN_VIEWS:
         for item in view_rows(found, view):
             seen.setdefault(item['id'], row(item, view))
-    for view, key in (('readyMilestone', 'readyMilestones'), ('finishedEpic', 'finishedEpics')):
-        for item in position.get(key) or []:
-            seen.setdefault(item['id'], row(item, view))
+    for item in position.get('readyMilestones') or []:
+        seen.setdefault(item['id'], row(item, 'readyMilestone'))
     live, gone = foreign_holds(ctx, [item for view in OPEN_VIEWS for item in view_rows(found, view)], position)
     for rid, holder in gone.items():
         seen[rid]['heldBy'] = f'{holder} (gone)'

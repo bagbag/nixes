@@ -365,7 +365,7 @@ export const crNewCountText = (cr: ConsoleCr): string | null => cr.check.newFail
 /** What the row leaves out: marks that are neither a problem nor a warning (lands with <id>). */
 export const crQuietMarks = (cr: ConsoleCr, prefix: string | null = null): string[] => crMarks(cr, prefix).filter(mark => !mark.isProblem && mark.isWarning !== true).map(mark => mark.text)
 
-/** The mark of a request or ratification open for your review (from the board's `review`): `in review`, `, edited` once you changed it; null while it is not open. */
+/** The mark of a change request open for your review (from the board's `review`): `in review`, `, edited` once you changed it; null while it is not open. */
 export const crTreeText = (item: { review: ConsoleReview | null }): string | null =>
   item.review === null ? null : `in review${item.review.edited === true ? ', edited' : ''}`
 

@@ -10107,7 +10107,7 @@ def validate_protocol(root: Path, part: str) -> None:
                 "decided": [{"id": "fx-d", "status": "decided", "type": "decision", "title": "D", "priority": 2, "blockedBy": []}]}},
                       related={"Pasted": ["fx-old", "fx-rel"]},
                       position={"readyMilestones": [{"id": "fx-m", "status": "open", "type": "milestone", "title": "Beta",
-                                                     "priority": 1, "blockedBy": []}], "finishedEpics": []})
+                                                     "priority": 1, "blockedBy": []}]})
             out = proto("start", "round", stdin={"points": ["Pasted point"]}, cwd=repo, prepass=False).stdout
             scoped = json.loads(proto("scope", "--origin", "plugin", stdin={"command": "step-back", "pending": shown(cwd=repo)["pending"]["id"]}, cwd=repo).stdout)["text"]
             first_calls = calls()
@@ -13719,12 +13719,11 @@ def validate_protocol(root: Path, part: str) -> None:
                 "decided": [{**row, "id": "fx-d", "status": "decided", "title": "D"}],
                 "forUser": [{**row, "id": "fx-u", "type": "task", "title": "Needs you", "holder": "user"}]}},
                 position={"held": [{"id": "fx-live", "holder": "other001", "mark": None}, {"id": "fx-u", "holder": "user", "mark": None}],
-                          "readyMilestones": [{**row, "id": "fx-m", "type": "milestone", "title": "Beta"}],
-                          "finishedEpics": [{**row, "id": "fx-e", "type": "epic", "title": "Cache"}]},
+                          "readyMilestones": [{**row, "id": "fx-m", "type": "milestone", "title": "Beta"}]},
                 items={"fx-closed": {"status": "closed"}, "fx-rel": {"status": "in_force"}, "fx-null": {"status": None}})
             out = proto("next", **listing_session).stdout
-            for needle in ("Open items (6):", "open questions · open (2):\n- fx-a: A?\n- fx-b: B?", "decided, awaiting release · decided (1):\n- fx-d: D",
-                           "ready milestones · open (1):\n- fx-m [milestone]: Beta", "finished epics (user Accept) · open (1):\n- fx-e [epic]: Cache",
+            for needle in ("Open items (5):", "open questions · open (2):\n- fx-a: A?\n- fx-b: B?", "decided, awaiting release · decided (1):\n- fx-d: D",
+                           "ready milestones · open (1):\n- fx-m [milestone]: Beta",
                            "waiting on the user · held by the user, not offered (1):\n- fx-u [task]: Needs you",
                            "Held by live session other001, not offered: fx-live", "Seeds for the next round"):
                 if needle not in out:
@@ -13733,7 +13732,7 @@ def validate_protocol(root: Path, part: str) -> None:
                 raise ValueError("the rows no longer repeat their view and status")
             again = proto("next", **listing_session).stdout
             if "Open items (" in again or "- fx-a: A?" in again or "open questions · open" in again \
-                    or "Open items: 1 decided, 2 open questions, 1 waiting on the user, 1 ready milestones, 1 finished epics" not in again \
+                    or "Open items: 1 decided, 2 open questions, 1 waiting on the user, 1 ready milestones" not in again \
                     or f"`{engine_module.base.LIST_COMMAND}`" not in again or "agents board position" not in again or "Seeds for the next round" not in again:
                 raise ValueError(f"protocol next lists nothing the second time between compactions: counts and the command:\n{again}")
             calls()
@@ -13753,7 +13752,7 @@ def validate_protocol(root: Path, part: str) -> None:
             proto("compacted", **listing_session)
             bare = proto("start", "round", prepass=False, **listing_session).stdout
             scoped = json.loads(proto("scope", "--origin", "plugin", stdin={"command": "step-back", "pending": shown(**listing_session)["pending"]["id"]}, **listing_session).stdout)["text"]
-            if "Open items (6):" not in scoped or "List them before you select." in scoped:
+            if "Open items (5):" not in scoped or "List them before you select." in scoped:
                 raise ValueError(f"after a compaction the started pre-pass prints the whole list:\n{bare}\n{scoped}")
             proto("abandon", **listing_session)
             if "Open items (" in proto("next", **listing_session).stdout:
@@ -13762,7 +13761,7 @@ def validate_protocol(root: Path, part: str) -> None:
             proto("compacted", **listing_session)
             named = proto("start", "round", "fx-a", "fx-b", prepass=False, **listing_session).stdout
             scoped = json.loads(proto("scope", "--origin", "plugin", stdin={"command": "step-back", "pending": shown(**listing_session)["pending"]["id"]}, **listing_session).stdout)["text"]
-            if "Open items (6):" not in scoped or "Named for this round: fx-a, fx-b." not in scoped:
+            if "Open items (5):" not in scoped or "Named for this round: fx-a, fx-b." not in scoped:
                 raise ValueError(f"a named round's started pre-pass prints the whole list first:\n{named}\n{scoped}")
             proto("abandon", **listing_session)
             named = proto("start", "round", "fx-a", prepass=False, **listing_session).stdout

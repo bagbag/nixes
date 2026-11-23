@@ -198,10 +198,9 @@ def prepass_started(round_id: str, subject: str | None, args: str, rows: list[st
 
 VIEW_LABELS = {  # the views Collect offers, in listing order: heading, name in the counts
     'decided': ('decided, awaiting release', 'decided'), 'questions': ('open questions', 'open questions'),
-    'toAccept': ('to accept (designs in review)', 'to accept'),
+    'toAccept': ('to accept (change requests waiting for the user)', 'to accept'),
     'toReview': ('to review (work in review)', 'to review'),
     'forUser': ('waiting on the user', 'waiting on the user'), 'readyMilestone': ('ready milestones', 'ready milestones'),
-    'finishedEpic': ('finished epics (user Accept)', 'finished epics'),
 }
 
 
@@ -227,7 +226,7 @@ def items_counted(named_rows: list[dict] | None, counts: str, bare: bool) -> str
     return lines(
         *(['Named:', *map(item_row, named_rows)] if named_rows is not None else []),
         f'Open items: {counts or "none"} (listed earlier). List them again with `{LIST_COMMAND}`, '
-        'and `agents board position` for the ready milestones and finished epics.' + (' List them before you select.' if bare else ''))
+        'and `agents board position` for the ready milestones.' + (' List them before you select.' if bare else ''))
 
 
 GROUP_BY = 'every ready question sharing a premise, root cause, consumer concept, flow, or the module and sources the grounding reads'
