@@ -11,7 +11,7 @@ Read
 
 One of: an `in_review` change request (CR), or refresh work ([Refresh](#refresh)),
 is ready for your session's `review` pull; a
-dispatch brief names an id (a CR, or a challenge task, [Challenge](#challenge)) and this protocol.
+dispatch brief names an id (a CR, or a challenge's review task, [Challenge](#challenge)) and this protocol.
 
 ## Steps
 
@@ -24,7 +24,7 @@ steps 3-7.
    the same session suffices. Review a CR in its worktree as the author left
    it.
    Output: `claimed <id>; author <actor>; independent`, or
-   `claimed <id>` for a challenge task.
+   `claimed <id>` for a challenge's review task.
 2. **Read.** The CR's acceptance and items, its brief, the released rulings
    it links and their owners, and the author's evidence comments. Read the
    range-diff `agents board claim` prints (the full diff on a first review) and any
@@ -86,12 +86,13 @@ steps 3-7.
 ## Exit
 
 The CR is passed, returned to the queue or waiting on a question (or the
-challenge task closed), and the output lines above are posted.
+challenge's review task closed), and the output lines above are posted.
 
 ## Challenge
 
-A task that reviews decided records or a contract draft, before release; the
-records wait on it.
+A challenge is a decision question the challenged records wait on
+([Decide](decide.md)); this review is the no-commit task that question waits
+on. It reviews decided records or a contract draft, before release.
 
 1. **Assess.** Invoke `step-back` on the records and the owners and items
    they rest on, then `challenge-rulings` on the records' rulings; check contradictions with each other
@@ -101,7 +102,8 @@ records wait on it.
 2. **Close.** Create each finding as a question found in the
    challenge (`--found-in <id>`) and make the record it concerns wait on it
    (`agents board wait <record> --on <question> --for "<finding>"`), then
-   close the challenge with the verdict (`agents board close <id> --reason "<verdict>"`).
+   close the review task with the verdict (`agents board close <id> --reason "<verdict>"`);
+   the challenge question stays open for the answer that keeps or revises the rulings.
    Output: `closed <id>`, plus the question ids.
 
 ## Refresh

@@ -59,10 +59,12 @@ Never decide these alone.
   triggers. Designed work lands with its implementation
   ([Cut work](plan.md#cut-work)).
 - Create a challenge of decided records at the user's request; propose one
-  when designs will build on them. It is a task
-  ([Kinds](../../shared/board-core.md#kinds)) the records wait on
-  (`agents board wait <record>… --on <challenge> --for "<scope>"`), run under the
-  review protocol's [Challenge](review.md#challenge).
+  when designs will build on them. It is a question the challenged records
+  wait on (`agents board wait <record>… --on <challenge> --for "<scope>"`),
+  so it holds a ruling in force too; its review is a no-commit task the
+  question waits on, run under the review protocol's
+  [Challenge](review.md#challenge). Answering the question keeps or revises
+  the rulings.
 - Turn the decisions a `staged-review` raises into questions.
 - While the user is away (autopilot), settle a round's Ask under the
   [unattended protocol](unattended.md#authority); parked choices are the
