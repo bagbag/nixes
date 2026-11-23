@@ -75,12 +75,12 @@ Printed by `model_tables()`; the test compares this block with it exactly. `Held
 | handover | change request | open | in_review | you | - | agent | items-closed, not-open-for-review | - |
 | handover --no-agent-review | change request | open | passed | you | - | agent | items-closed, look-before, not-open-for-review | - |
 | handover (reviewer passes) | change request | in_review | passed | you | - | agent | items-closed | - |
-| send to review | change request | passed | in_review | * | - | holding / mover / user | - | - |
-| return | change request | in_review | open | * | - | agent+holder / mover / user | - | - |
-| return | change request | passed | open | * | - | mover / user | - | - |
+| send to review | change request | passed | in_review | * | - | holding / deciding / user | - | - |
+| return | change request | in_review | open | * | - | agent+holder / deciding / user | - | - |
+| return | change request | passed | open | * | - | deciding / user | - | - |
 | return --ruling | change request | in_review | open | you | - | planner | - | - |
 | landing | change request | open, in_review, passed | closed | * | - | anyone | - | landed |
-| cr reject | change request | open, in_review, passed, deferred | closed | * | - | mover / user | reason, items-closed | dropped |
+| cr reject | change request | open, in_review, passed, deferred | closed | * | - | attended / user | reason, items-closed | dropped |
 | base rejected | change request | open, in_review, passed | open | * | - | anyone | - | - |
 | defer | change request | open | deferred | * | - | planner+holder / deciding / user | - | - |
 | undefer | change request | deferred | open | - | - | deferrer | - | - |
@@ -127,7 +127,7 @@ Printed by `model_tables()`; the test compares this block with it exactly. `Held
 | deferrer | the deferrer's side (a user's deferral, or one without a deferrer: the user or a deciding session) |
 | holding | the session holding it |
 | unheld | while it is unheld |
-| mover | a lead or solo session (not autopilot: the unattended protocol never accepts, rejects or returns) |
+| attended | a lead or solo session (not autopilot: a rejection cannot be undone, which the unattended protocol parks for the user) |
 <!-- /model-tables -->
 
 Guards: `reason` (a non-blank reason), `items-closed` (no open item), `look-before` (only a look-before CR passes without agent review), `not-open-for-review` (end the user's review first), `not-superseded` (a superseded ruling is put back by a revision record).
@@ -138,7 +138,7 @@ The table's `Who` column is the authority; this is its shape. Item writes (close
 
 - A session claims, hands over and unclaims its work. Its workers hold under its actor. Deciding sessions are `lead`, `solo` and `autopilot` (`DECIDING_ROLES`).
 - Review claim, pass and Return need a session that did not author the CR; every claim path refuses self-review.
-- Accept (landing a `passed` look-before CR), the user's Return, sending a passed CR back to review and rejecting a CR (the `mover` word: a lead or solo session, or the user; landing itself is `anyone` in the table, its command is the gate), ratifying, releasing rulings, accepting a milestone and resolving a gate: a deciding session with the user, or the user.
+- Authority follows what a move risks, as the unattended protocol classes it. Two-way moves (sending a passed CR back to review, the Return of a `passed` CR, releasing a ruling, resolving a gate) are for any deciding session, autopilot included, or the user. Rejecting a CR is one-way (it closes, and no CR reopen exists), so it is for the `attended` word: a lead or solo session, or the user. Accept (landing a `passed` look-before CR) is the user's through a lead or solo session (landing is `anyone` in the table; its command is the gate).
 - Taking or freeing another session's hold: the user, or a deciding session once the holder is gone (`--agreed` records the user's word).
 - Planner Return on a ruling, and defer and undefer of its own deferrals: a session pulling plan. (`move` needs the holder of the CR, the user or a deciding session.) Undeferring a user's deferral needs the user, through a deciding session.
 - The writes to an item of a CR nobody holds come only from the user or a deciding session; any other session claims the CR first.
@@ -150,7 +150,7 @@ The table's `Who` column is the authority; this is its shape. Item writes (close
 - Holdable: CRs, tasks, decisions and milestones (a round holds its questions). Items are not holdable: holding the CR holds its items.
 - CR metadata `hold` says how it is held: `work` (the holder works it in its worktree) or `plan` (a planner holds it without a worktree). `claim` writes it and every release clears it; an implement claim of a plan-held CR turns it into work, with a worktree and setup as a fresh claim.
 - A session registers a role and pulls (`plan`, `implement`, `review`; no design pull: review runs as its own pull, so sessions on different models split implement and review). Its workers hold under its actor. Liveness decides whether a hold is gone: stale holds are flagged, freeing follows Authority.
-- A close is one compare-and-set write of status `closed`, the outcome and the holder (a closer takes a record another actor holds, which `bd close` requires; no `--force` for that), checked against the status and holder just read; bd validates the close in that write (open children, blockers). `bd close` then only records the reason (which bd wants at 20 or more characters, so `board` refuses a shorter one before writing). A refused close writes nothing. The exception is a forced close (landing, `cr reject`, `gate resolve`, a question answered past its blockers): bd cannot combine `--force` with a compare-and-set, so it writes the no-op holder guard with the outcome, then `bd close --force`, and two such closers can both pass the guard in that window; bd keeps the later reason. The closed record keeps the closer as its assignee, which is history, not a hold.
+- A close is one compare-and-set write of status `closed`, the outcome and the holder (a closer takes a record another actor holds, which `bd close` requires; no `--force` for that), checked against the status and holder just read; bd validates the close in that write (open children, blockers). `bd close` then only records the reason (which bd wants at 20 or more characters, so `board` refuses a shorter one before writing). A refused close writes nothing. A forced close (landing, `cr reject`, `gate resolve`, a question answered past its blockers) cannot combine `--force` with a compare-and-set in bd, so its guard takes the record instead: holder becomes the closer (`--assignee <closer> --if-assignee <current>`, with the outcome), releasing first when the closer already holds it (a take of one's own record changes nothing), then `bd close --force` records the reason. A second closer's guard expects a holder that is gone and is refused as changed meanwhile. The closed record keeps the closer as its assignee, which is history, not a hold.
 - The worker cap (3, or `agents session activate --workers <n>`, lowered by Codex's thread limits) counts the open tasks one actor holds; `claim --force "<reason>"` goes past it and the hold shows `FORCED: <reason>` (metadata `forced_hold_by`, `forced_hold`). A bare claim at the cap passes such an item and names the command. A held task with no update for an hour is `STALE`. An unregistered session has no cap; one whose registration exists but is unreadable is refused until it registers again.
 
 ## Waits

@@ -1203,9 +1203,10 @@ def t_cr() -> None:
     rc, _, err, _ = run('a', 'claim', design_accept, role='autopilot')
     check(rc != 0 and "user's Accept" in err and not items('a')[design_accept].get('assignee'),
           f'{design_accept}: autopilot has no Accept authority over a design-only CR', err)
+    rc, _, err, _ = run('a', 'cr', 'reject', finished, 'autopilot cannot undo a rejection', role='autopilot')
+    check(rc != 0 and items('a')[finished]['status'] == 'passed', f'{finished}: autopilot is refused a reject, which no one reopens', err)
     rc, _, err, _ = run('a', 'return', design_accept, 'rework the design', role='autopilot')
-    check(rc != 0 and items('a')[design_accept]['status'] == 'passed',
-          f'{design_accept}: autopilot is refused the return of a design-only CR', err)
+    check(rc == 0 and items('a')[design_accept]['status'] == 'open', f'{design_accept}: autopilot may return a passed CR, a two-way move', err)
     accept_queue = create('a', 'autopilot bare Accept queue', kind='epic')
     finished_in_queue = create('a', 'finished CR in autopilot queue', '--status', 'passed', '--parent', accept_queue)
     design_in_queue = create('a', 'design-only CR in autopilot queue', '--status', 'passed', '--parent', accept_queue)
@@ -1321,7 +1322,7 @@ def t_cr() -> None:
     rc, out, err, _ = run('a', 'cr', 'land', h, '--tip', h_tip, '--base', h_base)
     check(rc == 1 and 'move base for direct review' in out and 'base moved since the pair you saw' in err,
           'cr: a direct user route refuses a moved seen pair and shows incoming commits', err + out)
-    rc, _, err, _ = run('a', 'cr', 'request-review', h, 'incoming change affects this CR', role='autopilot')
+    rc, _, err, _ = run('a', 'cr', 'request-review', h, 'incoming change affects this CR', role='agent')
     check(rc == 1 and 'send to review is for' in err,
           'cr: an unheld non-deciding session cannot request review', err)
     rc, out, err, _ = run('a', 'claim', h, role='agent')
@@ -1730,6 +1731,21 @@ def t_scenarios() -> None:
     check(rc != 0 and row(gate)['status'] != 'closed', 'scenario 10: a worker does not resolve the user\'s step', err)
     check(run('a', 'gate', 'resolve', gate, '--reason', 'the key is rotated')[0] == 0 and run('a', 'claim', ten, role='agent')[0] == 0,
           'scenario 10: resolving the gate frees the CR')
+
+    # 10b. A forced close takes the record in its guard: two closers at once, exactly one wins, and the other is told it changed meanwhile.
+    raced = create('a', 'scenario 10b: two closers at once')
+    task(raced, 'the item')
+    run('a', 'gate', 'create', '--blocks', raced, '--reason', 'scenario 10b: a gate two sessions resolve at once')
+    race_gate = next((one['id'] for one in items('a').values() if one.get('issue_type') == 'gate' and one['status'] != 'closed'), None)
+    outcomes: dict[str, tuple[int, str]] = {}
+    closers = [threading.Thread(target=lambda role=role: outcomes.__setitem__(role, run('a', 'gate', 'resolve', race_gate, role=role)[:3:2])) for role in ('lead', 'solo')]
+    for thread in closers:
+        thread.start()
+    for thread in closers:
+        thread.join()
+    check(race_gate and sorted(code == 0 for code, _ in outcomes.values()) == [False, True] and row(race_gate)['status'] == 'closed',
+          'scenario 10b: exactly one of two forced closers wins', outcomes)
+    check(any('changed meanwhile' in err or 'does not apply' in err for code, err in outcomes.values() if code), 'scenario 10b: the other is refused', outcomes)
 
     # 9. A milestone waits on nothing: its change requests are part of it, and it is accepted once their work is done.
     milestone = create('a', 'scenario 9: the milestone', kind='milestone')

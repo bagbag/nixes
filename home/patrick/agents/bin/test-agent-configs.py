@@ -6445,6 +6445,7 @@ def validate_board(root: Path) -> None:
                 code, _, errors, writes = verb(["reopen", "t-cr", "t-g"], world)
                 if code != 2 or "change request" not in errors or writes:
                     raise ValueError(f"board reopen must refuse a change request: {code} {errors!r} {writes}")
+                terminal = subprocess.run(["git", "config", "user.name"], capture_output=True, text=True).stdout.strip() or os.environ.get("USER", "")  # a person's terminal closes as bd's own actor: the forced close takes the record
                 for argv, want in ((["defer", "t-a", "t-b", "t-l", "--reason", "revisit with the cache ruling", "--until", "2026-12-01"],
                                     [w for one in ("t-a", "t-b", "t-l") for w in (
                                         ["update", one, "--status", "deferred", "--assignee", "", "--if-assignee", "", "--if-status", "open",
@@ -6453,7 +6454,7 @@ def validate_board(root: Path) -> None:
                                    (["gate", "create", "--blocks", "t-a", "--reason", "user 2026-11-16: wait", "--title", "user gate"],
                                     [["gate", "create", "--type=human", "--blocks", "t-a", "--reason", "user 2026-11-16: wait", "--title", "user gate"]]),
                                    (["gate", "resolve", "t-gate", "--reason", "shipped"],
-                                    [["update", "t-gate", "--assignee", "", "--if-assignee", "", "--if-status", "open", "--set-metadata", "outcome=resolved", "--json"],
+                                    [["update", "t-gate", "--assignee", terminal, "--if-assignee", "", "--if-status", "open", "--set-metadata", "outcome=resolved", "--json"],
                                      ["close", "t-gate", "--reason", "shipped.............", "--force"]])):
                     code, _, errors, writes = verb(argv, world)
                     if code or writes != want:

@@ -304,7 +304,7 @@ WHO_WORDS = {'anyone': 'anyone', 'agent': 'an agent session', 'user': 'the user'
              'non-author': 'a session that did not hand it over', 'planner': 'a session pulling plan',
              'deferrer': "the deferrer's side (a user's deferral, or one without a deferrer: the user or a deciding session)",
              'holding': 'the session holding it', 'unheld': 'while it is unheld',
-             'mover': 'a lead or solo session (not autopilot: the unattended protocol never accepts, rejects or returns)'}
+             'attended': 'a lead or solo session (not autopilot: a rejection cannot be undone, which the unattended protocol parks for the user)'}
 
 
 class Move(NamedTuple):
@@ -338,12 +338,12 @@ MOVES = (
     Move('handover', CR_GROUP, ('open',), 'in_review', 'you', '-', ('agent',), ('items-closed', 'not-open-for-review')),
     Move('handover --no-agent-review', CR_GROUP, ('open',), 'passed', 'you', '-', ('agent',), ('items-closed', 'look-before', 'not-open-for-review')),
     Move('handover (reviewer passes)', CR_GROUP, ('in_review',), 'passed', 'you', '-', ('agent',), ('items-closed',)),
-    Move('send to review', CR_GROUP, ('passed',), 'in_review', '*', '-', ('holding', 'mover', 'user')),
-    Move('return', CR_GROUP, ('in_review',), 'open', '*', '-', ('agent+holder', 'mover', 'user')),
-    Move('return', CR_GROUP, ('passed',), 'open', '*', '-', ('mover', 'user')),  # a change request waiting for its Accept is the Accept's to return
+    Move('send to review', CR_GROUP, ('passed',), 'in_review', '*', '-', ('holding', 'deciding', 'user')),
+    Move('return', CR_GROUP, ('in_review',), 'open', '*', '-', ('agent+holder', 'deciding', 'user')),
+    Move('return', CR_GROUP, ('passed',), 'open', '*', '-', ('deciding', 'user')),  # a change request waiting for its Accept is the Accept's to return
     Move('return --ruling', CR_GROUP, ('in_review',), 'open', 'you', '-', ('planner',)),
     Move('landing', CR_GROUP, _ANY_CR, 'closed', '*', '-', ('anyone',), (), ('landed',)),  # the target already holds the tip: the command checked before the fast-forward
-    Move('cr reject', CR_GROUP, (*_ANY_CR, 'deferred'), 'closed', '*', '-', ('mover', 'user'), ('reason', 'items-closed'), ('dropped',)),
+    Move('cr reject', CR_GROUP, (*_ANY_CR, 'deferred'), 'closed', '*', '-', ('attended', 'user'), ('reason', 'items-closed'), ('dropped',)),
     Move('base rejected', CR_GROUP, _ANY_CR, 'open', '*', '-', ('anyone',)),
     Move('defer', CR_GROUP, ('open',), 'deferred', '*', '-', DEFER),
     Move('undefer', CR_GROUP, ('deferred',), 'open', '-', '-', ('deferrer',)),
@@ -431,7 +431,7 @@ def authority_part(part: str, issue: dict, actor: str | None, board: 'Board', ag
     entry = board.registry().get(session)
     if part == 'deciding':
         return actor == session and bool(entry) and entry.get('role') in DECIDING_ROLES
-    if part == 'mover':
+    if part == 'attended':
         return actor == session and bool(entry) and entry.get('role') in MOVERS
     if part == 'planner':
         return bool(entry) and 'plan' in session_kinds(entry)
@@ -540,16 +540,23 @@ def move(issue: dict, command: str, *, to: str | None = None, actor: str | None 
     meta_args = [arg for key, value in (fields or {}).items()
                  for arg in (('--unset-metadata', key) if value is None else ('--set-metadata', f'{key}={value}'))]
     if target == 'closed' and force:
-        # bd cannot combine --force with a compare-and-set: a forced close (landing, reject, a gate's resolve, a question answered past its blockers) writes a
-        # no-op holder guard with the outcome, then `bd close --force`. Its status write is the one exemption from the compare-and-set: two such closers can both pass the guard.
-        guard = bd('update', issue['id'], '--assignee', current, '--if-assignee', current, '--if-status', issue['status'], *meta_args, '--json')
+        # bd cannot combine --force with a compare-and-set, so the guard takes the record: holder := the closer, expecting the holder just read. A second
+        # closer expects a holder that is gone, and its guard fails. A closer who already holds it changes nothing by taking, so it releases first and retakes.
+        closer = bd_actor()
+        if current == closer:
+            released = bd('update', issue['id'], '--assignee', '', '--if-assignee', closer, '--if-status', issue['status'], '--json')
+            if released.returncode != 0:
+                return refused(f"{issue['id']}: {command} refused, it changed meanwhile: {bd_message(released)}" if released.returncode == 13
+                               else f"{issue['id']}: {command} failed: {bd_message(released)}")
+            current = ''
+        guard = bd('update', issue['id'], '--assignee', closer, '--if-assignee', current, '--if-status', issue['status'], *meta_args, '--json')
         if guard.returncode != 0:
             return refused(f"{issue['id']}: {command} refused, it changed meanwhile: {bd_message(guard)}" if guard.returncode == 13
                            else f"{issue['id']}: {command} failed: {bd_message(guard)}")
         result = bd('supersede', issue['id'], '--with', reason or '') if via == 'supersede' else bd('close', issue['id'], '--reason', reason or '', '--force')
         if result.returncode != 0 and 'outcome' in (fields or {}):  # bd refused the close: the record stays open and carries no outcome
             bd('update', issue['id'], '--unset-metadata', 'outcome', '--if-status', issue['status'], '--json')
-        holder_after = current
+        holder_after = closer
     elif target == 'closed':
         if via != 'supersede' and len(reason or '') < CLOSE_REASON_MIN:
             return refused(f"{issue['id']}: {command} refused: bd wants a close reason of {CLOSE_REASON_MIN} or more characters describing what was done ({len(reason or '')} given)")
