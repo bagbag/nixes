@@ -112,7 +112,7 @@ one.
    and a mark. It prints a summary first (conversions per kind, deviations
    per class, what blocks the mark, the `for the user:` lines), then each
    step's log. This board is only read. The copy has the branches this
-   checkout has for live change requests and no worktrees. Then
+   checkout has for live change requests, and a worktree for each that has one. Then
    `python3 <scripts>/convert-stored-forms.py` is a dry run on this board: one
    `would:` line per conversion, then the `for the user:` lines. Conversions:
    - statuses: `in_progress` open (a held change request keeps its holder, its

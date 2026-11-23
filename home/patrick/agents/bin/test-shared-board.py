@@ -1976,6 +1976,9 @@ def t_migrate() -> None:
     make('conditional', 'conditional deferral', *no_commit)
     update('conditional', '--notes', f"revisit after {ids['target']} lands")
     raw(side, 'defer', ids['conditional'])
+    make('cond_loose', 'conditional deferral of a work item')
+    update('cond_loose', '--notes', f"revisit after {ids['target']} lands")
+    raw(side, 'defer', ids['cond_loose'])
     make('user_item', 'user step item', *no_commit)
     update('user_item', '--assignee', 'user')
     make('ratify', 'Ratify the landing', '--parent', ids['cr1'])
@@ -2006,6 +2009,12 @@ def t_migrate() -> None:
 
     script = HERE.parent / 'skills' / 'board-migrate' / 'scripts' / 'convert-stored-forms.py'
 
+    def leftovers() -> list[str]:
+        """What a rehearsal leaves: its folder, or a process running in it (its dolt server)."""
+        folders = [str(p) for p in Path(tempfile.gettempdir()).glob('board-rehearsal-*')]
+        running = subprocess.run(['pgrep', '-f', 'board-rehearsal-'], capture_output=True, text=True).stdout.split()
+        return folders + running
+
     def migrate(*flags: str):
         result = subprocess.run([sys.executable, '-B', str(script), *flags], cwd=ROOT / side, capture_output=True, text=True, env=base_env(side), input='')
         return result.returncode, result.stdout, result.stderr
@@ -2018,8 +2027,13 @@ def t_migrate() -> None:
     rc, out, err = migrate()
     check(rc == 0 and out.count('would: ') >= 20 and items(side) == before, 'migrate: the dry run lists the conversions and writes nothing', err + out)
     rc, out, err = migrate('--rehearse')
-    check(rc == 0 and 'rehearsal on a copy' in out and out.index('--- summary') < out.index('--- conversion (exit 0)') and 'conversion(s) applied' in out and 'blocked' in out and items(side) == before and not list(Path('/tmp').glob('board-rehearsal-*')),
-          'migrate: --rehearse converts a copy in a temporary board and writes nothing here', err + out)
+    check(rc == 0 and 'rehearsal on a copy' in out and out.index('--- summary') < out.index('--- conversion (exit 0)') and 'conversion(s) applied' in out and 'mark: would be written' in out and items(side) == before and not leftovers(),
+          'migrate: --rehearse converts a copy in a temporary board and writes nothing here', (leftovers(), items(side) == before, err + out[-300:]))
+    child = subprocess.Popen([sys.executable, '-B', str(script), '--rehearse'], cwd=ROOT / side, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env=base_env(side))
+    wait_until(lambda: any(Path(tempfile.gettempdir()).glob('board-rehearsal-*')), 60)
+    child.send_signal(signal.SIGTERM)
+    child.wait(120)
+    check(not leftovers(), 'migrate: a rehearsal killed midway leaves no folder and no server', leftovers())
     rc, out, err = migrate('--mark')
     check(rc == 1 and setting(side, 'custom.board.model') == '', 'migrate: the marker waits for the conversions', err + out)
     rc, out, err = migrate('--apply')
@@ -2047,6 +2061,8 @@ def t_migrate() -> None:
           'migrate: a deferred item of a live change request leaves it as a deferred task found in it', (row('def_item')['status'], meta_of('def_item'), deps('def_item')))
     check(row('def_under')['status'] == 'open' and (ids['cr7'], 'parent-child') in deps('def_under') and row('cr7')['status'] == 'deferred',
           'migrate: an item of a deferred change request is open, the deferral of its change request holds it', (row('def_under')['status'], deps('def_under')))
+    check(row('cond_loose')['status'] == 'open' and (ids['target'], 'blocks') in deps('cond_loose') and any(kind == 'parent-child' for _, kind in deps('cond_loose')),
+          'migrate: a work item reopened by its deferral condition is filed in the same apply', (row('cond_loose')['status'], deps('cond_loose')))
     filed = [i for i in now.values() if i.get('external_ref') == f"migrated-cr:{ids['loose']}"]
     check(len(filed) == 1 and filed[0]['issue_type'] == 'change-request' and (filed[0]['id'], 'parent-child') in deps('loose') and 'topic:loose' in filed[0].get('labels', [])
           and not any(kind == 'parent-child' for _, kind in deps('spike')) and row('loose_def')['status'] == 'deferred' and not any(kind == 'parent-child' for _, kind in deps('loose_def')),

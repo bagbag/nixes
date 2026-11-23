@@ -12,13 +12,17 @@ what is left, so an interruption needs no cleanup.
 from __future__ import annotations
 
 import argparse
+import contextlib
+import io
 import json
 import os
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import Callable
@@ -89,6 +93,19 @@ class Board:
                 seen.add(target)
                 if self.issues[target].get('issue_type') == 'decision' or self.waits_on_decision(target, seen):
                     return True
+        return False
+
+    def reaches(self, start: str, goal: str) -> bool:
+        """Whether `start` waits, through live waits, on `goal`: a wait of `goal` on `start` would close a cycle."""
+        seen, todo = set(), [start]
+        while todo:
+            node = todo.pop()
+            if node == goal:
+                return True
+            if node in seen or node not in self.issues:
+                continue
+            seen.add(node)
+            todo += [target for target, kind in edges(self.issues[node]) if kind == 'blocks' and self.issues.get(target, {}).get('status') != 'closed']
         return False
 
     def live(self) -> list[dict]:
@@ -293,7 +310,13 @@ def deferrals(b: Board, left: list[str]) -> list[Step]:
             continue
         named = [i for i in dict.fromkeys(re.findall(r'[a-z][a-z0-9]*-[a-z0-9]{3,}(?:\.\d+)*', reason))
                  if i in b.issues and i != item_id and b.issues[i]['status'] not in ('closed', 'deferred')]
+        cyclic = [target for target in named if b.reaches(target, item_id)]
+        named = [target for target in named if target not in cyclic]
+        if cyclic:
+            left.append(f'{item_id}: its deferral condition names {", ".join(cyclic)}, which already wait on it: a wait would form a cycle, so none is written for them')
         if not named:
+            if cyclic:
+                continue
             left.append(f'{item_id}: deferred on a condition no open record carries ("{reason[:100]}"); it stays set aside, or wait it on what it needs')
             continue
 
@@ -434,7 +457,7 @@ def regate(old: dict, title: str) -> None:
     write('close', item_id, '--force', '--reason', f'board-migrate: replaced by the human gate {gate}')
 
 
-PHASES = (kinds, statuses, epics, files, holds, authors, dates, outcomes, links, deferrals, ratifications, human_gates)  # kinds first: an item is a task in a change request
+PHASES = (kinds, statuses, epics, deferrals, files, holds, authors, dates, outcomes, links, ratifications, human_gates)  # kinds first: an item is a task in a change request
 
 
 def check_status_custom() -> None:
@@ -444,6 +467,7 @@ def check_status_custom() -> None:
         raise Stop(f'status.custom lacks {", ".join(missing)}: run agents board setup first')
 
 
+FAILED: dict[str, str] = {}  # step -> why it stopped; the run goes on with the rest
 BY_KIND: dict[str, int] = {}  # conversions per phase of the last run
 
 
@@ -454,19 +478,27 @@ def run(apply: bool) -> tuple[int, list[str]]:
     for phase in PHASES:
         steps = phase(Board(), left)
         if steps:
-            BY_KIND[phase.__name__] = len(steps)
+            BY_KIND[phase.__name__] = len([what for what, _ in steps if what not in FAILED])
         for what, step in steps:
+            if what in FAILED:
+                continue  # it failed this run: reported at the end, not found again
             print(('' if apply else 'would: ') + what)
             if apply:
-                step()
-        found += len(steps)
+                try:
+                    step()
+                except Stop as error:
+                    FAILED[what] = str(error).splitlines()[0][:300]
+                    print(f'  not converted: {FAILED[what]}')
+                    continue
+            found += 1
     return found, list(dict.fromkeys(left))
 
 
 def rehearse() -> int:
     """The export of this board, imported into a temporary board of its own and taken through the whole flow there: setup, the conversion, the checkpoint
     conversion, check, and a mark that shows what blocks it. Nothing of this board is written. The copy has the branches this checkout has for live change
-    requests (at its HEAD) and no worktrees."""
+    requests (at its HEAD) and a worktree for each that has one here."""
+    signal.signal(signal.SIGTERM, lambda *_: sys.exit(143))  # a kill unwinds through the cleanup below
     exported = read('bd', 'export')
     setting = lambda key: json.loads(read('bd', 'config', 'get', '--json', key) or '{}').get('value') or ''
     prefix, carried = setting('issue_prefix'), {name: setting(f'custom.board.{name}') for name in ('target', 'setup', 'checks', 'look', 'view')}
@@ -476,6 +508,9 @@ def rehearse() -> int:
     rows = [json.loads(line) for line in exported.splitlines() if line.strip()]
     branches = [row['id'] for row in rows if row.get('issue_type') == 'change-request' and row.get('status') not in ('closed', None)
                 and subprocess.run(['git', 'rev-parse', '--verify', '-q', f'refs/heads/cr/{row["id"]}'], capture_output=True).returncode == 0]
+    common = subprocess.run(['git', 'rev-parse', '--path-format=absolute', '--git-common-dir'], capture_output=True, text=True).stdout.strip()
+    main_tree = Path(common).parent if common else Path.cwd()
+    worktrees = [cr for cr in branches if (main_tree / '.worktrees' / cr / '.git').is_file()]
     with tempfile.TemporaryDirectory(prefix='board-rehearsal-') as folder:
         def run(*args: str, stdin: str | None = None) -> subprocess.CompletedProcess:
             return subprocess.run(args, cwd=folder, input=stdin, capture_output=True, text=True, env=env)
@@ -487,33 +522,41 @@ def rehearse() -> int:
             return result.stdout
 
         for command in (['git', 'init', '-q', '-b', 'main'], ['git', '-c', 'user.name=rehearsal', '-c', 'user.email=rehearsal@example.invalid', 'commit', '-q', '--allow-empty', '-m', 'copy'],
-                        *(['git', 'branch', f'cr/{cr}'] for cr in branches)):
+                        *(['git', 'branch', f'cr/{cr}'] for cr in branches), *(['git', 'worktree', 'add', '-q', f'.worktrees/{cr}', f'cr/{cr}'] for cr in worktrees)):
             run(*command)
-        on_copy('setup', '--embedded', *(['--prefix', prefix] if prefix else []))
-        current = json.loads(on_copy('bd', 'config', 'get', '--json', 'status.custom') or '{}').get('value') or ''
-        # the copy takes the old statuses too, then setup puts the current list back
-        on_copy('bd', '--raw', '--yes', 'config', 'set', 'status.custom', f'{current},released:active,needs_ratification:wip,needs_acceptance:wip')
-        for name, value in carried.items():
-            if value:
-                on_copy('bd', '--raw', '--yes', 'config', 'set', f'custom.board.{name}', value)
-        Path(folder, 'export.jsonl').write_text(exported, encoding='utf-8')
-        on_copy('bd', '--raw', '--yes', 'import', str(Path(folder, 'export.jsonl')))
-        on_copy('setup')
-        on_copy('bd', '--raw', '--yes', 'config', 'unset', MODEL_KEY)
-        mapping = Path(folder, 'checkpoint-mapping.json')
-        detail = {}
-        detail['conversion'] = run(sys.executable, '-B', str(here), '--apply')
-        inventory = run(sys.executable, '-B', str(checkpoints), 'inventory', '--mapping', str(mapping))
-        detail['checkpoint inventory'] = inventory
-        if mapping.is_file():
-            approved = json.loads(mapping.read_text(encoding='utf-8'))
-            approved['approved_by'] = 'rehearsal'
-            mapping.write_text(json.dumps(approved), encoding='utf-8')
-            detail['checkpoint conversion'] = run(sys.executable, '-B', str(checkpoints), 'apply', str(mapping), '--apply', '--copy')
-            detail['checkpoint verify'] = run(sys.executable, '-B', str(checkpoints), 'verify')
-        detail['check'] = run(str(BOARD), 'check', '--limit', '0')
-        detail['mark'] = run(sys.executable, '-B', str(here), '--mark')
-        found = json.loads(run(str(BOARD), 'check', '--json').stdout or '{}').get('deviations') or []
+        try:
+            on_copy('setup', *(['--prefix', prefix] if prefix else []))  # a server board, like the real ones: embedded calls cost four times as much
+            current = json.loads(on_copy('bd', 'config', 'get', '--json', 'status.custom') or '{}').get('value') or ''
+            # the copy takes the old statuses too, then setup puts the current list back
+            on_copy('bd', '--raw', '--yes', 'config', 'set', 'status.custom', f'{current},released:active,needs_ratification:wip,needs_acceptance:wip')
+            for name, value in carried.items():
+                if value:
+                    on_copy('bd', '--raw', '--yes', 'config', 'set', f'custom.board.{name}', value)
+            Path(folder, 'export.jsonl').write_text(exported, encoding='utf-8')
+            on_copy('bd', '--raw', '--yes', 'import', str(Path(folder, 'export.jsonl')))
+            on_copy('setup')
+            on_copy('bd', '--raw', '--yes', 'config', 'unset', MODEL_KEY)
+            mapping = Path(folder, 'checkpoint-mapping.json')
+            detail = {}
+            detail['conversion'] = run(sys.executable, '-B', str(here), '--apply')
+            inventory = run(sys.executable, '-B', str(checkpoints), 'inventory', '--mapping', str(mapping))
+            detail['checkpoint inventory'] = inventory
+            if mapping.is_file():
+                approved = json.loads(mapping.read_text(encoding='utf-8'))
+                approved['approved_by'] = 'rehearsal'
+                mapping.write_text(json.dumps(approved), encoding='utf-8')
+                detail['checkpoint conversion'] = run(sys.executable, '-B', str(checkpoints), 'apply', str(mapping), '--apply', '--copy')
+                detail['checkpoint verify'] = run(sys.executable, '-B', str(checkpoints), 'verify')
+            detail['check'] = run(str(BOARD), 'check', '--limit', '0')
+            detail['mark'] = run(sys.executable, '-B', str(here), '--mark')
+            found = json.loads(run(str(BOARD), 'check', '--json').stdout or '{}').get('deviations') or []
+        finally:  # every way out stops the copy's server, then the folder goes
+            run(str(BOARD), 'bd', '--raw', '--yes', 'dolt', 'stop')
+            subprocess.run(['pkill', '-f', folder], capture_output=True)  # a server still starting when the stop came
+            for _ in range(40):  # until the server is gone
+                if subprocess.run(['pgrep', '-f', folder], capture_output=True).returncode != 0:
+                    break
+                time.sleep(0.25)
     classes: dict[str, int] = {}
     for row in found:
         classes[row['class']] = classes.get(row['class'], 0) + 1
@@ -536,7 +579,8 @@ def rehearse() -> int:
 
 
 def mark() -> int:
-    found, left = run(False)
+    with contextlib.redirect_stdout(io.StringIO()):  # only the count matters here
+        found, left = run(False)
     if found:
         print(f'{found} conversion(s) remain: run convert-stored-forms.py --apply first', file=sys.stderr)
         return 1
@@ -573,6 +617,10 @@ def main() -> int:
             again, left = run(False)
             if again:
                 print(f'{again} conversion(s) still found after applying; rerun, or settle them by hand', file=sys.stderr)
+                for row in left:
+                    print(f'for the user: {row}')
+                for what, why in FAILED.items():
+                    print(f'for the user: not converted, {what}: {why}')
                 return 1
         print(f'{found} conversion(s) {"applied" if args.apply else "found"}')
         if kinds:
@@ -582,7 +630,9 @@ def main() -> int:
         return 1
     for row in left:
         print(f'for the user: {row}')
-    return 0
+    for what, why in FAILED.items():
+        print(f'for the user: not converted, {what}: {why}')
+    return 1 if FAILED else 0
 
 
 if __name__ == '__main__':
