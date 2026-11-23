@@ -2073,8 +2073,9 @@ def t_migrate() -> None:
     rc, out, err = migrate()
     check(rc == 0 and out.count('would: ') >= 20 and items(side) == before, 'migrate: the dry run lists the conversions and writes nothing', err + out)
     rc, out, err = migrate('--rehearse')
-    check(rc == 0 and 'rehearsal on a copy' in out and out.index('--- summary') < out.index('--- conversion (exit 0)') and 'conversion(s) applied' in out and 'mark: would be written' in out and items(side) == before and not leftovers(),
-          'migrate: --rehearse converts a copy in a temporary board and writes nothing here', (leftovers(), items(side) == before, err + out[-300:]))
+    check(rc == 0 and 'rehearsal on a copy' in out and out.index('--- summary') < out.index('--- conversion (exit 0)') and 'conversion(s) applied' in out and 'mark: blocked' in out
+          and f"{ids['ratify']}" in out.split('--- conversion')[0] and items(side) == before and not leftovers(),
+          'migrate: --rehearse converts a copy in a temporary board, shows the open ratification that blocks its mark, and writes nothing here', (leftovers(), items(side) == before, err + out[-300:]))
     child = subprocess.Popen([sys.executable, '-B', str(script), '--rehearse'], cwd=ROOT / side, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env={**base_env(side), 'TMPDIR': str(scratch)})
     wait_until(lambda: any(scratch.glob('board-rehearsal-*')), 60)
     child.send_signal(signal.SIGTERM)
@@ -2113,7 +2114,8 @@ def t_migrate() -> None:
     rc, out, err = migrate('--mark')
     check(rc == 1 and setting(side, 'custom.board.model') == '', 'migrate: the marker waits for the conversions', err + out)
     rc, out, err = migrate('--apply')
-    check(rc == 0 and 'conversion(s) applied' in out and 'no recorded author' in out and 'timer gate' in out, 'migrate: --apply converts and lists what is left for the user', err + out)
+    first_apply = out
+    check(rc == 0 and 'conversion(s) applied' in out and 'no recorded author' in out and 'timer gate' in out and f"{ids['ratify']}: an open landing ratification" in out, 'migrate: --apply converts and lists what is left for the user', err + out)
     rc, out, err = migrate('--apply')
     check(rc == 0 and out.startswith('0 conversion(s) applied'), 'migrate: a rerun finds nothing to convert', err + out)
 
@@ -2133,16 +2135,19 @@ def t_migrate() -> None:
           'migrate: bug, design and spike types become tasks, with kind labels where there is one', (row('bug'), row('design'), row('spike')))
     check(row('dsg_review')['issue_type'] == 'task' and row('dsg_review')['status'] == 'open' and not row('dsg_review').get('assignee') and 'kind:design' in row('dsg_review')['labels'],
           'migrate: a design-typed item in review, held, converges in one apply', row('dsg_review'))
-    check(row('def_item')['status'] == 'deferred' and meta_of('def_item').get('found_in') == ids['cr1'] and not any(kind == 'parent-child' for _, kind in deps('def_item')),
-          'migrate: a deferred item of a live change request leaves it as a deferred task found in it', (row('def_item')['status'], meta_of('def_item'), deps('def_item')))
+    own = next((target for target, kind in deps('def_item') if kind == 'parent-child'), None)
+    check(own and own != ids['cr1'] and now[own]['issue_type'] == 'change-request' and now[own]['status'] == 'deferred' and row('def_item')['status'] == 'open'
+          and (ids['cr1'], 'relates-to') in {(d['depends_on_id'], d['type']) for d in now[own].get('dependencies') or []} and 'found_in' not in meta_of('def_item')
+          and [i['id'] for i in now.values() if (own, 'parent-child') in {(d['depends_on_id'], d['type']) for d in i.get('dependencies') or []}] == [ids['def_item']],
+          'migrate: a deferred item of a live change request leaves it as the only item of a deferred change request of its own, related to the old one', (own, row('def_item')['status'], meta_of('def_item'), deps('def_item')))
     check(row('def_under')['status'] == 'open' and (ids['cr7'], 'parent-child') in deps('def_under') and row('cr7')['status'] == 'deferred',
           'migrate: an item of a deferred change request is open, the deferral of its change request holds it', (row('def_under')['status'], deps('def_under')))
     check(row('cond_loose')['status'] == 'open' and (ids['target'], 'blocks') in deps('cond_loose') and any(kind == 'parent-child' for _, kind in deps('cond_loose')),
           'migrate: a work item reopened by its deferral condition is filed in the same apply', (row('cond_loose')['status'], deps('cond_loose')))
-    filed = [i for i in now.values() if i.get('external_ref') == f"migrated-cr:{ids['loose']}"]
-    check(len(filed) == 1 and filed[0]['issue_type'] == 'change-request' and (filed[0]['id'], 'parent-child') in deps('loose') and 'topic:loose' in filed[0].get('labels', [])
+    filed = [now[target] for target, kind in deps('loose') if kind == 'parent-child']
+    check(len(filed) == 1 and filed[0]['issue_type'] == 'change-request' and not filed[0].get('external_ref') and (filed[0].get('metadata') or {}).get('plan_first') and 'topic:loose' in filed[0].get('labels', [])
           and not any(kind == 'parent-child' for _, kind in deps('spike')) and row('loose_def')['status'] == 'deferred' and not any(kind == 'parent-child' for _, kind in deps('loose_def')),
-          'migrate: a work item outside any change request becomes the only item of one; a no-commit task and a deferred one stay tasks', (filed, deps('loose')))
+          'migrate: a work item outside any change request becomes the only item of one, marked plan_first and carrying no marker of the migration; a no-commit task and a deferred one stay tasks', (filed, deps('loose')))
     check('outcome' not in meta_of('reopened'), 'migrate: an open record carries no outcome', meta_of('reopened'))
     check((ids['target'], 'blocks') in deps('waits') and (ids['target'], 'blocks') in deps('cond') and not {'waits-for', 'conditional-blocks'} & {kind for _, kind in deps('waits') | deps('cond')},
           'migrate: waits-for and conditional-blocks become waits', (deps('waits'), deps('cond')))
@@ -2154,10 +2159,9 @@ def t_migrate() -> None:
           'migrate: a change request that awaited acceptance waits for it as passed, whatever look it carried', (meta_of('cr4'), meta_of('cr5')))
     check(row('cr6')['status'] == 'open' and row('cr6')['assignee'] == 'abcd1234' and meta_of('cr6').get('hold') == 'work',
           'migrate: an in-progress change request stays held, its hold is work', (row('cr6')['status'], row('cr6').get('assignee'), meta_of('cr6')))
-    shown = json.loads(run(side, 'show', ids['ruling_wait'], '--json', role=None)[1])[ids['ruling_wait']]
-    check((ids['target'], 'blocks') not in deps('ruling_wait') and (ids['plan_question'], 'blocks') in deps('ruling_wait')
-          and any(f"removed the wait on {ids['target']} (link target)" in c.get('text', '') for c in shown.get('comments') or []),
-          'migrate: an in-force ruling loses its wait on work, a comment names it, its wait on a question stays', (deps('ruling_wait'), shown.get('comments')))
+    check((ids['target'], 'blocks') not in deps('ruling_wait') and (ids['target'], 'relates-to') in deps('ruling_wait') and (ids['plan_question'], 'blocks') in deps('ruling_wait')
+          and f"rulings: {ids['ruling_wait']}" in first_apply,
+          'migrate: an in-force ruling keeps its wait on work as a relates-to link and is listed for planning, its wait on a question stays', (deps('ruling_wait'), first_apply[-600:]))
     check(row('released')['status'] == 'in_force' and row('unratified')['status'] == 'in_force', 'migrate: released and an unratified ruling are in_force', (row('released')['status'], row('unratified')['status']))
     confirm = [i for i in now.values() if i.get('external_ref') == f"confirm:{ids['unratified']}"]
     check(len(confirm) == 1 and confirm[0]['status'] == 'open' and (ids['unratified'], 'relates-to') in {(d['depends_on_id'], d['type']) for d in confirm[0].get('dependencies') or []}
@@ -2179,12 +2183,15 @@ def t_migrate() -> None:
     check(row('user_item2')['status'] == 'closed' and any(i.get('title') == 'check the logs' and i['status'] == 'open' for i in now.values())
           and any(i.get('title') == 'Existing human gate' and i['status'] == 'open' for i in now.values()),
           'migrate: a user item that waits on an existing human gate gets a gate of its own, the existing one stays', [(i.get('title'), i['status']) for i in now.values() if i['issue_type'] == 'gate'])
-    questions = [i for i in now.values() if i['issue_type'] == 'decision' and i['status'] == 'open' and i.get('external_ref') == f"migrated:{ids['ratify']}"]
-    check(len(questions) == 1 and row('ratify')['status'] == 'closed', 'migrate: an open landing ratification becomes an open question', questions)
+    check(row('ratify')['status'] == 'needs_ratification' and not [i for i in now.values() if str(i.get('external_ref') or '').startswith('migrated')],
+          'migrate: an open ratification is listed, not converted, and no interim question is written', row('ratify'))
+    rc, _, err, _ = raw(side, 'close', ids['ratify'], '--reason', 'the agent resolved the ratification with the user before the mark')  # the agent's resolution, a raw write: the board refuses its verbs until the marker
+    check(rc == 0, 'migrate: the agent resolves the listed ratification', err)
+    now = items(side)
     check('topic:big-topic-epic' in row('child')['labels'] and row('epic')['status'] == 'closed', 'migrate: an epic gives its children a topic label and closes', row('child'))
     check(meta_of('cr2').get('author') == 'abcd1234' and 'author' not in meta_of('cr3'), 'migrate: the author is the holder of record, and none is invented', (meta_of('cr2'), meta_of('cr3')))
     rc, out, err, _ = run(side, 'check', '--limit', '0')
-    check(rc == 1 and 'cr-checkpoint' in out and 'convention deviations: 3' in out, 'migrate: check names the live checkpoints, which only the checkpoint conversion settles', err + out)
+    check(rc == 1 and 'cr-checkpoint' in out and 'convention deviations: 2' in out, 'migrate: check names the live checkpoints, which only the checkpoint conversion settles', err + out)
     subprocess.run(['bash', REGISTRY, 'activate', 'lead'], cwd=ROOT / side, env={**base_env(side), 'CLAUDE_CODE_SESSION_ID': session(side, 'lead')}, capture_output=True, check=True)
     checkpoints = HERE.parent / 'skills' / 'board-migrate' / 'scripts' / 'convert-design-checkpoints.py'
     mapping = ROOT / 'checkpoint-mapping.json'
@@ -2208,9 +2215,8 @@ def t_migrate() -> None:
     now = items(side)
     check(row('ck2')['status'] == 'open' and 'checkpoint' not in meta_of('ck1') and 'checkpoint' not in meta_of('ck2')
           and (ids['ck1'], 'blocks') in deps('ck_waiter'), 'migrate: a checkpoint change request is an ordinary open one, its waiter waits on it', (row('ck2')['status'], deps('ck_waiter')))
-    rc, out, err, _ = run(side, 'check', '--fix', '--limit', '0', role=None)
     rc, out, err, _ = run(side, 'check', '--limit', '0')
-    check(rc == 0 and 'convention deviations: 0' in out, 'migrate: check is clean after the conversions and check --fix', err + out)
+    check(rc == 0 and 'convention deviations: 0' in out, 'migrate: check is clean after the conversions', err + out)
     rc, out, err = migrate('--mark')
     check(rc == 0 and setting(side, 'custom.board.model') == '1', 'migrate: --mark writes the marker last', err + out)
     rc, out, err, _ = run(side, 'update', ids['bug'], '--title', 'a bug item, retitled', role=None)

@@ -15,8 +15,8 @@ queue order and refresh work: [Board coordination](board-coordination.md).
 | `deferred` | Set aside ([Deferrals](board-coordination.md#deferrals-and-environment-facts)). |
 | closed | Outcome `landed`, or `dropped` (rejected unlanded). |
 
-Who holds it is the holder field, not a status; the model's tables:
-`docs/board/model.md`.
+Who holds it is the holder field, not a status; the model's tables print from
+`agents board help` and each verb's `--help`.
 
 - **Metadata:** `look` (`before`: lands on the user's Accept; `after`: lands
   after agent review), `view` (`code`: the user reads the diff; `result`: walked through the

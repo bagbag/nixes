@@ -10,8 +10,10 @@ authorized it:** `agents board bd --raw --yes <args>` (`--raw` alone prints this
 and runs nothing). When board output stops early, run the command it prints
 before relying on the missing part.
 
-The model's tables (statuses, outcomes, transitions, authority) are in
-`docs/board/model.md` of the agents repository; a refusal names its rule.
+The model's tables (statuses, outcomes, transitions, authority) print from the
+code: `agents board help` lists statuses and outcomes by type, and a verb's
+`--help` lists its rows (types, from and to, who, outcomes); a refusal names
+its rule.
 
 **Codex sandbox:** run every `board` command with elevated sandbox permissions.
 
@@ -86,11 +88,11 @@ claim by id checks no pull; follow these rules yourself:
 
 - CRs by pull: `open` to `implement`; `in_review` to `review`; refresh work to
   `review`, kind `refresh` ([queue](../shared/board-coordination.md#change-request-queue)).
-- Items are never claimed: claim their CR. A task outside a CR needs no CR and
-  is claimed only when marked no-commit.
+- Items are never claimed: claim their CR. Work that commits belongs to a CR;
+  a task outside a CR is no-commit and is claimed as such.
 - Pull `plan` also claims in-force rulings, the board restructuring tasks it
-  creates itself, ready no-commit tasks, and an `open` CR marked for replanning (a child of a
-  rejected CR). An open CR without open items is `implement` work: its holder hands it over.
+  creates itself, ready no-commit tasks, and an `open` CR marked `plan_first` (needs planning before work: a
+  child of a rejected CR, or migrated loose work). An open CR without open items is `implement` work: its holder hands it over.
 - A deciding session (lead, solo; autopilot takes questions only) claims by id
   its round's open decisions, `passed` CRs of `look` `before` waiting for the
   user's Accept, `passed` `look` `after` children marked `after <base>` and
@@ -195,8 +197,8 @@ Use these `##` sections:
 Statuses carry the lifecycle and the holder field carries who works it;
 labels only classify (`topic:<topic-slug>`, `kind:<kind>`, `export:<capability>`,
 `provides:<capability>`, `for:<person>`, `queue:<person>`). A status is never a
-label. The statuses, outcomes and transitions by type are the tables in
-`docs/board/model.md`; `deferred` is [Deferral](../shared/board-coordination.md#deferrals-and-environment-facts).
+label. The statuses, outcomes and transitions by type print from `agents board
+help` and each verb's `--help`; `deferred` is [Deferral](../shared/board-coordination.md#deferrals-and-environment-facts).
 Closing records its outcome: the type's first by default; `close --outcome`
 takes only `done` or `dropped`, the others come from their verbs (land,
 supersede, ruling record, gate resolve).

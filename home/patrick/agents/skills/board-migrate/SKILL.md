@@ -109,7 +109,7 @@ one.
    <scripts>/convert-stored-forms.py --rehearse` (a large board takes many
    minutes): it imports this board's export into a temporary board and takes
    the copy through steps 2 to 6 below as a person works them (setup, the
-   conversion, the checkpoint conversion, `check --fix`, `check`, the mark). It prints a summary first (conversions per kind, deviations
+   conversion, the checkpoint conversion, `check`, the mark). It prints a summary first (conversions per kind, deviations
    per class, what blocks the mark, the `for the user:` lines), then each
    step's log. This board is only read. The copy has the branches this
    checkout has for live change requests, and a worktree for each that has one. Then
@@ -122,11 +122,13 @@ one.
      question to confirm or revise it;
    - holds on items cleared (one held by the user is listed); legacy holders
      cleared; a deferred item of a deferred change request is open (the
-     deferral holds it), a deferred item of a live one leaves it as a
-     standalone deferred task with `found_in` set to the change request;
+     deferral holds it), a deferred item of a live one leaves it as the only
+     item of a deferred change request of its own, `relates-to` the old one;
    - a work item outside any change request (not no-commit, deferred or
      waiting on a question) becomes the only item of a change request of its
-     own, listed;
+     own, marked `plan_first` with its reason, listed for planning;
+   - retired metadata (`no_code` becomes `no_commit` on work items,
+     `triaged_tip` and `triaged_base_tip` are dropped);
    - types bug, design, feature, chore (kind `cleanup`) and spike become
      `task`, with a `kind:` label except for spike;
    - an in-review change request gets its `author` from the hand-over comment,
@@ -141,28 +143,46 @@ one.
    - closed decisions get `superseded` (a supersedes link), `planned` (the
      close reason starts "planned in") or `dropped`; closed gates `resolved`,
      closed milestones `accepted`; an open record carries no outcome;
-   - an in-force ruling's waits on work are removed, each named in a comment
-     on the ruling (it waits only for its planning);
+   - an in-force ruling's waits on work (designs, spikes) become `relates-to`
+     links, and the rulings are listed for planning, which makes the work wait
+     on the design;
    - an open epic's children get its topic label and the epic closes;
-   - an open design or landing ratification becomes an open question for the
-     user, the old record closed as dropped;
+   - an open design or landing ratification is listed, not converted;
    - an open gate that is not a human gate, and an item assigned to the user,
      become a human gate of the same title that supersedes the old record;
      waiters move to it; on a shared board it is `for:` the board's person.
+   The converter writes no interim form and marks no record it made: grouped
+   writes go out as one multi-id `bd update` and one `bd batch` per phase, and
+   a rerun finds a filed change request through its item's parent.
    Output: the conversion count; the listed forms.
 4. **Convert.** `convert-stored-forms.py --apply`, then rerun it until it
    reports `0 conversion(s)`. An interruption needs no cleanup. On a board with
    live design checkpoints run [Checkpoints](#checkpoints) now.
    Output: the apply log.
-5. **Settle.** Bring each `for the user:` line to the user as one question: a
-   ruling taken without your judgment (its question), a deferral condition that
-   became a wait (right wait?), a change request in review without an author
-   (another session reviews it), a deferred item of a change request, a timer
-   or CI gate, a milestone waiting on something that is no change request, a
-   ratification question. Then `agents board check --fix --limit 0`
-   (retired metadata) and `agents board check --limit 0`, which must report no
+5. **Settle.** Resolve each `for the user:` line and each deviation `agents
+   board check --limit 0` reports before the mark. The board's write verbs
+   refuse until the marker, so write through `agents board bd --raw --yes`.
+   Ask the user where the choice is theirs:
+   - a ruling taken without your judgment: answer its confirm-or-revise
+     question, or leave it for the user;
+   - an open design or landing ratification: for a landing, close it as
+     accepted or dropped with the user's word; for a design, make an ordinary
+     question (`-t decision`, sections Question and Decision) for the user, or
+     close it as dropped;
+   - a deferral whose condition names no open record, or a wait that became
+     one: wait it on what it needs, or leave it set aside;
+   - a deferred blocker (a record waiting on a deferred one): undefer the
+     blocker, or drop the wait;
+   - a wait that would close a cycle: drop one edge;
+   - a change request in review without an author: another session reviews
+     it, or the user passes it;
+   - a timer or CI gate, a milestone waiting on something that is no change
+     request: resolve or drop it;
+   - a checkpoint hold: [Checkpoints](#checkpoints) step 3.
+   The rulings the converter lists for planning stay in force, related to
+   their designs.
+   Output: each form's resolution; `agents board check --limit 0` reports no
    deviation.
-   Output: each form's decision; the check result.
 6. **Mark.** `convert-stored-forms.py --mark` writes the marker only with
    nothing left to convert and `agents board check` clean. Tell the user sessions
    may resume.
@@ -219,7 +239,7 @@ one.
    its owner.
    Output: one line per applied part; each moot close with its reason.
 5. **Reconcile.** Compare counts per source with the target and history; read
-   back mapped dependencies (`agents board bd dep list <id>`); run `agents board check --fix --limit 0`
+   back mapped dependencies (`agents board bd dep list <id>`); run `agents board check --limit 0`
    until it reports no deviation (flags are reported, not required clean);
    resolve every gap.
    Output: reconciliation table.
@@ -279,7 +299,7 @@ step goes in a change set and runs on the user's confirmation.
    Output: the settings as stored; the hook answer.
 5. **Reconcile.** Wrap each design still waiting for the user's accept in a
    CR under its topic: the design its child, its text in the topic document
-   on the CR's branch for ordinary review. `agents board check --fix --limit 0` clean but for user-accepted
+   on the CR's branch for ordinary review. `agents board check --limit 0` clean but for user-accepted
    deviations; one `agents board claim` of a CR works end to end. Defer each open
    backlog work item; a plan pass groups the rest into CRs as they become due.
    Tell the user pulls may start.

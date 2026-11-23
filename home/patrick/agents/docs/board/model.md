@@ -9,9 +9,9 @@ Absorbs the risk-tiered workflow (release r2). Parts not yet built are marked **
 - One lifecycle level: the change request (CR) owns work and review; items are structured parts without their own lifecycle.
 - One meaning per status; every lifecycle ends in `closed` with an outcome, stored as the record's `outcome` metadata.
 - Bookkeeping vs content: what code (a rule, verb, queue, script) reads, or a next step must act on exactly, is a field or record. Prose is for a reader's judgment. Nothing reads a fact out of prose to decide state or routing; nothing actionable lives only in prose.
-- Code is declarative: one table per type and one transition function (`move`) writing status and holder through bd compare-and-set. Writers, queue, check and help read the tables. No state-machine library: `bin/board` and the setup bundle stay stdlib-only.
+- Code is declarative: one table per type and one transition function (`move`) writing status and holder through bd compare-and-set. Writers, queue, check and help read the tables: `agents board help` prints the statuses and outcomes by type and each verb's `--help` prints its rows (`states_table`, `verb_rules`), which is how sessions see the model; this document is the maintainers' design. No state-machine library: `bin/board` and the setup bundle stay stdlib-only.
 - Guards are enforced at the write, not restated: a rule the board can check at one command lives in that command (refusal, next step, help). `check` reports only shapes that came from outside the verbs (direct bd edits, a clone's sync).
-- Every write verb refuses a board without the model marker `custom.board.model=1` and names `/board-migrate`. Reads, `setup`, `check` and raw bd stay open so migration can inspect and convert. `setup` writes the marker on a board it creates; an existing board gets it last from board-migrate (`convert-stored-forms.py --mark`), never from a setup rerun. `join` is exempt too: it fetches a board whose marker travels with the database. `share` and `relocate` refuse like any write.
+- Every write verb refuses a board without the model marker `custom.board.model=1` and names `/board-migrate`. Reads and raw bd stay open so migration can inspect and convert. Two writes are exempt, named in `MODEL_EXEMPT` beside `require_model` with their reasons: `setup` (it creates the board or brings its settings to the current model, so the marker cannot be its precondition) and `join` (it fetches a board whose marker travels with the database). `setup` writes the marker on a board it creates; an existing board gets it last from board-migrate (`convert-stored-forms.py --mark`), never from a setup rerun. `READS` holds reads only; `share` and `relocate` (`SYNCS_ITSELF`: they sync themselves, so no window opens after them) and every other write refuse like any write.
 
 ## Types
 
@@ -43,7 +43,7 @@ The protocol engine owns a round (questions asked, quotes, staged text); the boa
 
 ### Change request fields
 
-`look` (`before` | `after`; the project default, overridable per CR), `view` (`code` | `result`: how the console shows a landing), `base` and `base_sha`, `hold` (below), and the stored `check` and `review` evidence. A look-after default for new boards is **planned** (nixes-8b15o); this project stays `before`.
+`look` (`before` | `after`; the project default, overridable per CR), `view` (`code` | `result`: how the console shows a landing), `base` and `base_sha`, `plan_first` (a reason: the CR needs planning before anyone implements it; set by base rejection and by board-migrate for migrated loose work, cleared by the plan claim, and an open CR carrying it is `plan` work), `hold` (below), and the stored `check` and `review` evidence. A look-after default for new boards is **planned** (nixes-8b15o); this project stays `before`.
 
 - **Stacking:** a CR may stack on a `passed` CR that waits for the user's Accept (its base is that CR's branch; `stackable` in `bin/board`: not one in agent review, and a look-after parent lands at once); a CR on an unlanded, unstackable base is not ready. "Its base allows it" means the base has landed, or is stackable and this CR stacks on it. When the base lands the stacked CR's base becomes the target.
 - **Refresh:** when the base moves a CR's stored check is stale; a `passed` look-after CR with a stale check does not land with its base but becomes refresh work (rebase, check again) for its holder or the queue.
@@ -142,7 +142,7 @@ The table's `Who` column is the authority; this is its shape. Item writes (close
 - Taking or freeing another session's hold: the user, or a deciding session once the holder is gone (`--agreed` records the user's word).
 - Planner Return on a ruling, and defer and undefer of its own deferrals: a session pulling plan. (`move` needs the holder of the CR, the user or a deciding session.) Undeferring a user's deferral needs the user, through a deciding session.
 - The writes to an item of a CR nobody holds come only from the user or a deciding session; any other session claims the CR first.
-- Exceptions the table does not carry: autopilot never accepts or ratifies (acceptance needs the user; the unattended protocol owns it) and runs the agent rows unattended; `setup` and `check --fix` write on a board without the marker.
+- Exceptions the table does not carry: autopilot never accepts or ratifies (acceptance needs the user; the unattended protocol owns it) and runs the agent rows unattended; `MODEL_EXEMPT` names the writes that need no marker.
 
 ## Holding
 
@@ -169,7 +169,7 @@ One relation, written on the waiter, with a short "for" (content): "X waits on Y
 
 - CR: unheld, its base allows it, every CR-scope wait met, and either an open item is ready or no item is open (its next step is handover).
 - Task, question: unheld, waits met. A CR waits as a whole only for CR-scope waits; what an item waits on holds the item.
-- Pulls: `plan` (rulings in force, tasks, a CR returned for replanning), `implement` (a ready open CR), `review` (an `in_review` CR, refresh work). A bare `claim` takes what the session's role and pulls route; a claim by id checks no pull. Deciding sessions also take questions, `passed` CRs waiting for Accept and ready milestones. Inside a session, dispatch may pick a worker agent by an item's kind label.
+- Pulls: `plan` (rulings in force, tasks, a CR marked `plan_first`: rejected base, migrated loose work), `implement` (a ready open CR), `review` (an `in_review` CR, refresh work). A bare `claim` takes what the session's role and pulls route; a claim by id checks no pull. Deciding sessions also take questions, `passed` CRs waiting for Accept and ready milestones. Inside a session, dispatch may pick a worker agent by an item's kind label.
 - Claim order: priority P0 first, then planning of rulings in force, milestone work, review and refresh, Accept, the rest; within a tier priority, then unlock rank (board-coordination).
 
 ## Deferral
@@ -181,7 +181,7 @@ One relation, written on the waiter, with a short "for" (content): "X waits on Y
 
 ## Relations and fields
 
-part of (item in its CR, CR in a milestone), duplicate of, supersedes, context (`relates-to`, ruling context), `discovered-from`. Found-in is a field on the found record (`--found-in`), so bd's one link per pair stays free for the real relation. bd's blocking link spellings are refused, naming `wait`; `check` flags a link type the board does not write (`unknown-link`) and metadata outside `BOARD_METADATA` (`unknown-metadata`). `check --fix` applies the fixes that need no judgment (retired metadata keys, the earlier `related` link) and leaves the rest.
+part of (item in its CR, CR in a milestone), duplicate of, supersedes, context (`relates-to`, ruling context), `discovered-from`. Found-in is a field on the found record (`--found-in`), so bd's one link per pair stays free for the real relation. bd's blocking link spellings are refused, naming `wait`; `check` flags a link type the board does not write (`unknown-link`) and metadata outside `BOARD_METADATA` (`unknown-metadata`). Retired metadata keys and the earlier `related` link are board-migrate's to convert; the board keeps no repair for them (`check` has no `--fix`).
 
 ## After the fact (look after)
 

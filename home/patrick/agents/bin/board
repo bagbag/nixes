@@ -379,15 +379,40 @@ MOVES = (
 )
 
 
+def who_text(row: 'Move') -> str:
+    return ' or '.join(' and '.join(WHO_WORDS[part] for part in alternative.split('+')) for alternative in row.who)
+
+
+def states_table() -> str:
+    """Statuses and outcomes by type, from STATES and the closing rows of MOVES: `agents board help` and model.md print it."""
+    outcomes = {group: list(dict.fromkeys(o for m in MOVES if m.group == group for o in m.outcomes)) for group in STATES}
+    return '\n'.join(['| Type | Statuses | Outcomes when closed |', '|---|---|---|',
+                      *(f"| {group} | {', '.join(statuses)} | {', '.join(outcomes[group]) or '-'} |" for group, statuses in STATES.items())])
+
+
+# The MOVES commands a verb's help prints; a verb not named here prints the rows named like it (`return` also prints `return --ruling`).
+VERB_MOVES = {'cr land': (('landing',), None), 'cr request-review': (('send to review',), None), 'gate resolve': (('close',), 'gate'),
+              'ruling supersede': (('supersede',), None)}
+
+
+def verb_rules(verb: str) -> str:
+    """The rows of the transition table that a verb performs, for its --help: types, from and to, holder, who, guards and outcomes."""
+    names, group = VERB_MOVES.get(verb, ((verb,), None))
+    rows = [m for m in MOVES if any(m.command == n or m.command.startswith(f'{n} ') for n in names) and group in (None, m.group)]
+    if not rows:
+        return ''
+    lines = [f"  {m.command}: {m.group} {', '.join(m.frm)} -> {m.to if m.to != '=' else 'same status'}; holder {m.held} -> {m.holds}; who: {who_text(m)}"
+             + (f"; guards: {', '.join(m.guards)}" if m.guards else '') + (f"; outcomes: {', '.join(m.outcomes)}" if m.outcomes else '') for m in rows]
+    return "rules (the board's transition table; holder: - none, you the caller, * any, = unchanged):\n" + '\n'.join(lines) + '\n\n'
+
+
 def model_tables() -> str:
     """The tables docs/board/model.md embeds, as markdown: statuses and outcomes by type, the transitions, and what each `who` word means."""
-    outcomes = {group: list(dict.fromkeys(o for m in MOVES if m.group == group for o in m.outcomes)) for group in STATES}
-    states = ['| Type | Statuses | Outcomes when closed |', '|---|---|---|',
-              *(f"| {group} | {', '.join(statuses)} | {', '.join(outcomes[group]) or '-'} |" for group, statuses in STATES.items())]
+    states = states_table()
     moves = ['| Command | Type | From | To | Held before | Held after | Who | Guards | Outcomes |', '|---|---|---|---|---|---|---|---|---|',
              *(f"| {m.command} | {m.group} | {', '.join(m.frm)} | {m.to} | {m.held} | {m.holds} | {' / '.join(m.who)} | {', '.join(m.guards) or '-'} | {', '.join(m.outcomes) or '-'} |" for m in MOVES)]
     words = ['| Who word | Means |', '|---|---|', *(f'| {word} | {meaning} |' for word, meaning in WHO_WORDS.items())]
-    return '\n\n'.join(['\n'.join(states), '\n'.join(moves), '\n'.join(words)])
+    return '\n\n'.join([states, '\n'.join(moves), '\n'.join(words)])
 
 
 def group_of(board: 'Board | None', issue: dict) -> str | None:
@@ -448,7 +473,7 @@ def authority_refusal(issue: dict, row: 'Move', command: str, actor: str | None,
     deck = board if board is not None else Board([])
     if any(all(authority_part(part, issue, actor, deck, agreed) for part in alternative.split('+')) for alternative in row.who):
         return None
-    allowed = ' or '.join(' and '.join(WHO_WORDS[part] for part in alternative.split('+')) for alternative in row.who)
+    allowed = who_text(row)
     holder = issue.get('assignee')
     return f"{issue['id']}: {command} is for {allowed}" + (f"; it is held by {holder}" if holder else '')
 
@@ -1479,7 +1504,7 @@ class Board:
     def cr_kind(self, issue: dict) -> str | None:
         m = meta(issue)
         if issue['status'] == 'open':
-            return 'plan' if m.get('replan') else 'implement'  # no open item left is the handover step, not planning
+            return 'plan' if m.get(PLAN_FIRST) else 'implement'  # no open item left is the handover step, not planning
         if issue['status'] == PASSED:
             return None if after_base(self, issue) else 'accept'  # a passed child of an unlanded parent (look after) waits for it to land
         return 'review' if issue['status'] == 'in_review' else None
@@ -2142,9 +2167,7 @@ def health(board: Board, args) -> None:
     found = deviations(board, args.root)
     if found:
         fixed = sum(1 for _, kind, _ in found if kind in COMMAND_FIXED)  # fixed by a board command, not a migration
-        mechanical = len(mechanical_fixes(board, args.root))
-        hints = ([f'agents board check --fix: {mechanical} fixes'] if mechanical else []) + (['run /board-migrate'] if fixed < len(found) else []) \
-            + ([f'board fixes: {fixed} (agents board check)'] if fixed else [])
+        hints = (['run /board-migrate'] if fixed < len(found) else []) + ([f'board fixes: {fixed} (agents board check)'] if fixed else [])
         print(f"convention deviations: {len(found)} — {'; '.join(hints)}")
     queue_rows(board, args.root, 'health')
 
@@ -2409,8 +2432,7 @@ def deviations(board: Board, root: str | None) -> list[tuple[str, str, str]]:
         for dep in issue.get('dependencies') or []:
             link, target = dep.get('type') or 'blocks', dep.get('depends_on_id')
             if dep.get('issue_id') == item_id and link not in PASS_LINKS and not blocking(link):
-                fix = f'agents board check --fix makes it {LEGACY_LINKS[link]}' if link in LEGACY_LINKS else f'agents board unlink {item_id} {target}'
-                found.append((item_id, 'unknown-link', f'link {link} to {target}: {fix}'))
+                found.append((item_id, 'unknown-link', f'link {link} to {target}: agents board unlink {item_id} {target}'))
         for label in issue.get('labels') or []:
             if label_shape(label) == 'label-form':
                 found.append((item_id, 'label-form', f'label {label}: agents board update {item_id} --unlabel {label} --label topic:{label} (or drop it)'))
@@ -2444,48 +2466,13 @@ def unnamed_waits(board: Board, root: str | None) -> list[tuple[str, str]]:
     return flagged
 
 
-def mechanical_fixes(board: Board, root: str | None) -> list[tuple[str, str, list[str], str | None]]:
-    """The deviations whose fix needs no judgment, as (id, what, bd args, batch input): a metadata key the board retired is dropped or
-    moved to its new name, a link in an earlier spelling moves to the current one. Keys the board never wrote stay for the reader."""
-    fixes = []
-    for issue in board.scoped(root):
-        if issue['status'] == 'closed':
-            continue
-        item_id = issue['id']
-        if retired := sorted(set(meta(issue)) & set(RETIRED_METADATA)):
-            moved = sorted({new for key in retired if (new := retired_move(issue, key))})
-            flags = [*(flag for new in moved for flag in ('--set-metadata', f'{new}=true')), *(flag for key in retired for flag in ('--unset-metadata', key))]
-            fixes.append((item_id, f"retired metadata {', '.join(retired)} dropped{''.join(f'; {new} set' for new in moved)}", ['update', item_id, *flags, '--json'], None))
-        for dep in issue.get('dependencies') or []:
-            link, target = dep.get('type'), dep.get('depends_on_id')
-            if dep.get('issue_id') == item_id and link in LEGACY_LINKS:
-                fixes.append((item_id, f'link {link} to {target} is now {LEGACY_LINKS[link]}', ['batch', '-m', f'board check --fix {item_id}', '--json'],
-                               f'dep remove {item_id} {target}\ndep add {item_id} {target} {LEGACY_LINKS[link]}\n'))
-    return fixes
-
-
-def apply_fixes(board: Board, args) -> Board:
-    """`check --fix`: applies the mechanical fixes (planning's call, as a parent move), prints each, and reads the board again."""
-    if not args.fix:
-        return board
-    if not may_move(board):
-        raise BoardError('only a lead or solo session or a person applies agents board check --fix')
-    fixes = mechanical_fixes(board, args.root)
-    for item_id, what, bd_args, batch in fixes:
-        bd_checked(*bd_args, **({'stdin': batch} if batch else {}))
-        print(f'fixed {item_id}: {what}', file=sys.stderr if args.json else sys.stdout)
-    return Board.load('all') if fixes else board
-
-
 def check_json(board: Board, args) -> dict:
     """Every finding of `board check`, unbudgeted: deviations by class, then the unnamed waits."""
-    board = apply_fixes(board, args)
     return {'deviations': [{'id': item_id, 'class': kind, 'detail': detail} for item_id, kind, detail in deviations(board, args.root)],
             'unnamedBlockers': [{'id': item_id, 'detail': detail} for item_id, detail in unnamed_waits(board, args.root)]}
 
 
 def check(board: Board, args) -> int:
-    board = apply_fixes(board, args)
     limit = args.limit
     found = deviations(board, args.root)
     print(f'convention deviations: {len(found)}')
@@ -3095,22 +3082,11 @@ def author_label(issue: dict) -> str:
 
 NO_COMMIT = 'no_commit'  # a work item that by design commits nothing to this repository (a run, an external step): it needs no CR. Stored as
 # JSON true: bd parses `--set-metadata k=1` to a number and a graph node keeps a string, so a boolean is the one form both writes give
-RETIRED_METADATA = {'no_code': NO_COMMIT, 'triaged_tip': None, 'triaged_base_tip': None}  # keys the board once wrote: their new name, or none
 CR_SETTINGS = {'look': ('before', 'after'), 'view': ('code', 'result')}  # a CR's own settings (change-requests.md)
 
 
-def retired_move(issue: dict, key: str) -> str | None:
-    """The key a retired one moves to on this item: no_code becomes no_commit on work items only."""
-    new = RETIRED_METADATA[key]
-    return new if new != NO_COMMIT or issue.get('issue_type') == WORK_TYPE else None
-
-
 def metadata_fix(issue: dict, key: str) -> str:
-    """The fix board check names for a metadata key the board does not own: a retired one is check --fix's; any other may be another
-    tool's, so the reader decides."""
-    if key in RETIRED_METADATA:
-        new = retired_move(issue, key)
-        return f"retired: agents board check --fix {'makes it ' + new if new else 'drops it'}"
+    """The fix board check names for a metadata key the board does not own: it may be another tool's, so the reader decides."""
     return f"not the board's: drop it if nothing else uses it (agents board bd --raw --yes update {issue['id']} --unset-metadata {key})"
 
 
@@ -3737,7 +3713,7 @@ def git_text(root: Path, *args: str, env: dict[str, str] | None = None, input: s
 SETTINGS = {name: f'custom.board.{name}' for name in ('target', 'setup', 'checks', 'look', 'view')}  # bd's namespace for custom keys
 LOOKS, VIEWS = ('before', 'after'), ('code', 'result')
 # The model marker: written by `board setup` on a board it creates and, last, by board-migrate on an older one. Every write verb refuses a board
-# without it, naming /board-migrate; reads, setup, check (--fix is migration's own) and raw bd stay open so migrate can inspect and convert.
+# without it, naming /board-migrate; reads and raw bd stay open so migrate can inspect and convert, and MODEL_EXEMPT names the writes that need no marker.
 MODEL_KEY, MODEL = 'custom.board.model', '1'
 # Worktrees live inside the main checkout, <main>/.worktrees/<cr id>, so every runtime's workspace sandbox covers them without
 # a grant (q239 reversed 2026-11-11); the repository's local exclude file hides them from git status.
@@ -4239,11 +4215,12 @@ def needs_refresh(board: Board, cr: dict) -> bool:
     return cr_info(board, cr)['state'] != 'current'
 
 
+PLAN_FIRST = 'plan_first'  # metadata of a change request that needs planning before work: the reason (a rejected base, migrated loose work); the plan claim clears it
 FOUND_IN = 'found_in'  # metadata of the found item: the item it was found in (a field, so bd's one link per pair stays free)
 OPENED = 'opened_tip'  # metadata of an item open for the user's review: the tip it was opened at (accept.md User review)
 BOARD_METADATA = {  # every metadata key the board writes, the one list (a test compares it with the writes); board check flags any other
     NO_COMMIT, FOUND_IN, *CR_SETTINGS, HOLD, DEEP_REVIEW, FORCED_BY, FORCED_REASON, SENT_AT, REVISES_RULE, OPENED, DEFERRED_BY, REVISIT, 'outcome',
-    'base', 'base_sha', 'setup_sha', 'since', 'landing', 'replan', 'rebase_from', 'rebase_onto', 'review_tip', 'review_base_tip',
+    'base', 'base_sha', 'setup_sha', 'since', 'landing', PLAN_FIRST, 'rebase_from', 'rebase_onto', 'review_tip', 'review_base_tip',
     'reviewing_tip', 'review_edits', AUTHOR, RESUME_NOTE, 'user_seen_tip', 'user_seen_base_tip', 'no_agent_review_reason',
     'check_at', 'check_base_count', 'check_base_tip', 'check_command', 'check_kind', 'check_new', 'check_output', 'check_reason',
     'check_result', 'check_tip', 'check_tip_count'}
@@ -4917,7 +4894,7 @@ def claim_cr(board: Board, cr: dict, actor: str, kind: str) -> tuple[bool, str]:
     it unclaimed), then setup (a failure keeps the claim, A5). Planning: the hold. Review, accept, refresh: the hold, status kept."""
     cid = cr['id']
     if kind == 'plan':
-        return claim_one(board, cr, actor, {HOLD: 'plan', **({'replan': None} if meta(cr).get('replan') else {})})
+        return claim_one(board, cr, actor, {HOLD: 'plan', **({PLAN_FIRST: None} if meta(cr).get(PLAN_FIRST) else {})})
     if kind == 'review' and (refusal := self_review_refusal(cr, actor)):
         return False, refusal
     main = main_root()
@@ -5421,7 +5398,7 @@ def reject(board: Board, args) -> int:
     back = []
     for other in live_crs(board):
         if meta(other).get('base') == args.id:
-            put_meta(other, base=target, replan=args.reason[:200], since=None)
+            put_meta(other, base=target, **{PLAN_FIRST: args.reason[:200]}, since=None)
             move(other, 'base rejected', board=board)
             comment(other['id'], f"board cr reject: {args.id}, which this stacked on, was rejected ({args.reason}); back to planning with the base reset to the target.")
             back.append(other['id'])
@@ -5941,7 +5918,6 @@ GLOBAL_VALUES = ('-C', '--directory', '--db', '--database', '--actor', '--dolt-a
 PASS_LINKS = ('tracks', 'relates-to', 'parent-child', 'until', 'caused-by', 'validates', 'supersedes')  # the link types that hold nothing up
 BOARD_LABEL_PREFIXES = (QUEUE_PREFIX, FOR_PREFIX)  # labels the board routes on: they change through send, route and create --for
 LABEL_PREFIXES = ('topic:', 'export:', 'provides:', KIND_LABEL, *BOARD_LABEL_PREFIXES)  # every label's form (board-core.md Statuses and labels)
-LEGACY_LINKS = {'related': 'relates-to'}  # an earlier spelling the board still reads on closed history; board check moves a live one
 RAW_RULE = 'raw bd writes only when no board command does it, or the user authorized it: agents board bd --raw --yes <args>'
 READ_GUARD = 'items are read through agents board show <ids> [--section …] [--field …] [--comments] [--full] [--json]: one read path, whole items'
 # The one map from a bd write word to the board command that does it; None: no board command does it (raw only). The refusal warning,
@@ -6823,7 +6799,6 @@ def setting_changes(board: Board, args) -> list[str]:
     changes = []
     if args.no_commit is not None:
         changes += ['--set-metadata', f'{NO_COMMIT}=true'] if args.no_commit else ['--unset-metadata', NO_COMMIT]
-        changes += ['--unset-metadata', 'no_code']  # its retired name (RETIRED_METADATA)
     for name, value in cr_given.items():
         changes += ['--set-metadata', f'{name}={value}'] if value else ['--unset-metadata', name]
     return changes
@@ -7924,8 +7899,12 @@ NO_PULL = {'help', '-h', '--help', 'share', 'join', 'relocate'}
 BD_NO_DATABASE = {'where', 'version', 'help'}
 BD_NO_PULL = {'dolt', 'sync', 'init', 'conflicts', 'sql', 'rename', 'flatten', 'vc', 'version', 'where', 'help', 'bootstrap'}
 # Commands that write nothing: a wrong entry costs a late sync, a missing one a cheap check.
-READS = {'health', 'position', 'holders', 'check', 'related', 'queue', 'watch', 'mine', 'console', 'show', 'help', '-h', '--help', 'share', 'join',
-         'relocate'}
+READS = {'health', 'position', 'holders', 'check', 'related', 'queue', 'watch', 'mine', 'console', 'show', 'help', '-h', '--help'}
+# Writes that sync themselves, so no sync window opens after them; they need the model marker like any write.
+SYNCS_ITSELF = {'share', 'relocate'}
+# The commands that write a board without the model marker (require_model), each with why. Every other write refuses a board without it.
+MODEL_EXEMPT = {'setup': 'it creates the board, or brings an existing one to the current settings, so the marker cannot be its precondition',
+                'join': 'it fetches a board whose marker travels with the database: a joiner reads an old board, and its writes name /board-migrate'}
 BD_READS = {'list', 'ready', 'show', 'view', 'query', 'search', 'where', 'version', 'help', 'export', 'stats', 'blocked', 'lint',
             'history', 'count', 'events'}
 
@@ -7944,13 +7923,11 @@ def writes(argv: list[str]) -> bool:
         return False
     if argv[:2] in (['field', 'export'], ['field', 'discard'], ['ruling', 'check-replaces']):
         return False
-    if argv[:1] == ['check'] and '--fix' in argv:
-        return True
     if argv[:1] == ['bd']:
         if '--raw' not in argv[1:3]:
             return False  # board bd runs bd read-only
         return not (bd_word(argv) in BD_READS or argv[1:3] in (['dolt', 'stop'], ['dolt', 'start'], ['dolt', 'status']))
-    return (argv[0] if argv else '') not in READS
+    return (argv[0] if argv else '') not in READS | SYNCS_ITSELF
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -8057,7 +8034,8 @@ def run_command(argv: list[str]) -> int:
     def add(name: str, text: str, run, parents=(), group: str | None = None):
         """A top-level command, or with `group` a verb of that kind group (`board cr land`)."""
         sub = (groups[group] if group else commands).add_parser(
-            name, help=text, description=text, parents=list(parents), allow_abbrev=False, epilog=f'example: {EXAMPLES[f"{group} {name}" if group else name]}',
+            name, help=text, description=text, parents=list(parents), allow_abbrev=False,
+            epilog=(verb_rules(f'{group} {name}' if group else name) if run else '') + f'example: {EXAMPLES[f"{group} {name}" if group else name]}',
             formatter_class=argparse.RawDescriptionHelpFormatter)
         sub.set_defaults(run=run)
         return sub
@@ -8093,7 +8071,6 @@ def run_command(argv: list[str]) -> int:
     add('holders', 'items by open downstream work', holders, [scope, listing, queues])
     sub = add('check', 'deviations from the board conventions', check, [scope, listing])
     sub.add_argument('--json', action='store_true', help='deviations and flags as rows')
-    sub.add_argument('--fix', action='store_true', help='apply the fixes that need no judgment (retired metadata, earlier link spellings), then check')
     sub = add('related', 'items and doc lines mentioning terms', related, [scope, listing])
     sub.add_argument('terms', nargs='*')
 
@@ -8356,10 +8333,12 @@ def run_command(argv: list[str]) -> int:
         for key, sub in shown.items():
             example = EXAMPLES[f'{args.command} {key}' if args.command in groups else key]
             print(sub.format_usage().strip() + f'\n  {sub.description or ""}'.rstrip() + f'\n  example: {example}')
+        if args.command == 'help':
+            print('\nstatuses and outcomes by type (a verb\'s --help lists the rows it performs):\n' + states_table())
         return 0
     args.root = getattr(args, 'root', None)
     refused = 2 if args.run in REFUSAL_EXIT_2 else 1  # a refusal exits 2 for the write-by-flags verbs, as board bd does
-    if (writes(argv) or argv[:1] in (['share'], ['relocate'])) and args.run not in (setup, check):  # share and relocate write config and notes though they open no sync window; setup, check and join (a fetched board brings its marker) are the exemptions
+    if (writes(argv) or argv[0] in SYNCS_ITSELF) and argv[0] not in MODEL_EXEMPT:
         try:
             require_model()
         except BoardError as error:

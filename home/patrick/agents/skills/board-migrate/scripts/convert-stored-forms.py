@@ -7,7 +7,9 @@
     convert-stored-forms.py --rehearse run the whole conversion on a copy of this board's export in a temporary board; this board is only read
 
 Every write is a raw bd write, because the board's own write verbs refuse a board without the marker. A rerun finds
-what is left, so an interruption needs no cleanup.
+what is left, so an interruption needs no cleanup. The converter writes only what the model maps one to one: a case that
+needs a choice is listed ("for the user:") and left for the agent to settle under the skill before --mark.
+Identical writes of a phase go out as one multi-id `bd update` and one `bd batch`, and each phase reads the board once.
 """
 from __future__ import annotations
 
@@ -118,15 +120,84 @@ class Board:
         return issue.get('issue_type') == 'task' and self.cr_of(issue['id']) is not None
 
 
-def update(item_id: str, *flags: str) -> Callable[[], None]:
-    return lambda: write('update', item_id, *flags, '--json')
+class Update:
+    """One record's `bd update`; the steps of a phase with the same flags go out as one call."""
+    def __init__(self, item_id: str, *flags: str) -> None:
+        self.item_id, self.flags = item_id, flags
+
+    def __call__(self) -> None:
+        write('update', self.item_id, *self.flags, '--json')
+
+
+class Lines:
+    """One record's `bd batch` lines; the steps of a phase go out as one batch."""
+    def __init__(self, item_id: str, *lines: str) -> None:
+        self.item_id, self.lines = item_id, lines
+
+    def __call__(self) -> None:
+        write('batch', '-m', f'board-migrate {self.item_id}', '--json', stdin='\n'.join(self.lines) + '\n')
+
+
+def update(item_id: str, *flags: str) -> Update:
+    return Update(item_id, *flags)
+
+
+GROUP = 100  # ids or lines per grouped call
+
+
+def apply_grouped(todo: list[tuple[str, Update | Lines]]) -> dict[str, str]:
+    """Writes the grouped steps of a phase: records with the same update flags in one `bd update`, every batch line in one `bd batch`. A call that
+    fails is retried one record at a time, so the record that bd refuses is named and the rest are written. Returns what failed, by step."""
+    failed: dict[str, str] = {}
+    updates: dict[tuple[str, ...], list[tuple[str, Update]]] = {}
+    batches: list[tuple[str, Lines]] = []
+    for what, action in todo:
+        (updates.setdefault(action.flags, []) if isinstance(action, Update) else batches).append((what, action))
+    calls: list[tuple[list[tuple[str, Update | Lines]], Callable[[], None]]] = []
+    for flags, group in updates.items():
+        for at in range(0, len(group), GROUP):
+            part = group[at:at + GROUP]
+            calls.append((part, lambda part=part, flags=flags: write('update', *(a.item_id for _, a in part), *flags, '--json')))
+    for at in range(0, len(batches), GROUP):
+        part = batches[at:at + GROUP]
+        calls.append((part, lambda part=part: write('batch', '-m', 'board-migrate', '--json', stdin=''.join(line + '\n' for _, a in part for line in a.lines))))
+    for part, call in calls:
+        try:
+            call()
+        except Stop:
+            for what, action in part:
+                try:
+                    action()
+                except Stop as error:
+                    failed[what] = str(error).splitlines()[0][:300]
+    return failed
 
 
 # Each phase reads a fresh snapshot and returns its steps: a line saying what, and the writes. Left: forms only the user can settle.
 
+PLAN_FIRST = 'plan_first'  # a change request's mark that it needs planning before work (model.md, change request fields)
+FILED_REASON = 'the earlier board kept this work outside any change request: plan what it commits before work starts'
+
+
+def orphans(b: Board, status: str) -> list[dict]:
+    """Change requests an interrupted run made and never gave their item: live, childless, in the status a run makes them in. A rerun reuses one
+    instead of making a second."""
+    parents = {p for ps in b.parents.values() for p in ps}
+    return [i for i in b.live() if i.get('issue_type') == 'change-request' and i['id'] not in parents and i['status'] == status]
+
+
+def take_orphan(free: list[dict], title: str) -> dict | None:
+    """The first of `free` with this title, taken out of the list."""
+    found = next((i for i in free if i.get('title') == title), None)
+    if found:
+        free.remove(found)
+    return found
+
+
 def files(b: Board, left: list[str]) -> list[Step]:
-    """Work that commits something belongs to a change request: a work item outside any becomes the only item of one of its own."""
+    """Work that commits something belongs to a change request: a work item outside any becomes the only item of one of its own, marked for planning."""
     steps = []
+    free = [i for i in orphans(b, 'open') if PLAN_FIRST in meta(i)]
     for issue in b.live():
         item_id = issue['id']
         if (issue.get('issue_type') != 'task' or b.cr_of(item_id) or issue['status'] == 'deferred' or meta(issue).get('no_commit') is True
@@ -136,20 +207,29 @@ def files(b: Board, left: list[str]) -> list[Step]:
         if parents:
             left.append(f'{item_id}: a work item outside any change request under {", ".join(parents)}; move it into a change request, or mark it no-commit')
             continue
-        steps.append((f'{item_id}: becomes the only item of a change request of its own', lambda issue=issue: file_item(issue)))
-        left.append(f'{item_id}: a work item outside any change request became the only item of one of its own; plan the change request')
+        orphan = take_orphan(free, issue.get('title', item_id))
+        steps.append((f'{item_id}: becomes the only item of a change request of its own, marked for planning', lambda issue=issue, orphan=orphan: file_item(issue, orphan['id'] if orphan else None)))
+        left.append(f'{item_id}: a work item outside any change request became the only item of one of its own, marked {PLAN_FIRST}; plan the change request')
     return steps
 
 
-def file_item(issue: dict) -> None:
-    item_id = issue['id']
+def carried_labels(issue: dict) -> tuple[list[str], list[str]]:
+    """(the labels a change request made from this record carries, the routing labels the record gives up: a child takes its parent's queue)"""
     routed = [label for label in issue.get('labels') or [] if label.startswith(('queue:', 'for:'))]
-    carried = [label for label in issue.get('labels') or [] if label.startswith('topic:')] + routed
-    cr = next((i['id'] for i in Board().live() if i.get('external_ref') == f'migrated-cr:{item_id}'), None)
-    if cr is None:
-        cr = write('create', issue.get('title', item_id), '-t', 'change-request', '-d', str(issue.get('description') or issue.get('title') or item_id),
-                   '--priority', str(issue.get('priority', 2)), '--external-ref', f'migrated-cr:{item_id}', '--silent', *(f'--labels={label}' for label in carried)).strip().splitlines()[-1]
-    write('update', item_id, '--parent', cr, *(flag for label in routed for flag in ('--remove-label', label)), '--json')  # a child takes its parent's queue
+    return [label for label in issue.get('labels') or [] if label.startswith('topic:')] + routed, routed
+
+
+def make_change_request(issue: dict, *extra: str) -> str:
+    carried, _ = carried_labels(issue)
+    return write('create', issue.get('title', issue['id']), '-t', 'change-request', '-d', str(issue.get('description') or issue.get('title') or issue['id']),
+                 '--priority', str(issue.get('priority', 2)), '--silent', *extra, *(f'--labels={label}' for label in carried)).strip().splitlines()[-1]
+
+
+def file_item(issue: dict, orphan: str | None) -> None:
+    item_id = issue['id']
+    _, routed = carried_labels(issue)
+    cr = orphan or make_change_request(issue, '--metadata', json.dumps({PLAN_FIRST: FILED_REASON}))  # the item's parent is the only trace: a rerun finds it there
+    write('update', item_id, '--parent', cr, *(flag for label in routed for flag in ('--remove-label', label)), '--json')
 
 
 def holds(b: Board, left: list[str]) -> list[Step]:
@@ -182,6 +262,7 @@ def default_look() -> str:
 
 def statuses(b: Board, left: list[str]) -> list[Step]:
     steps = []
+    lost = orphans(b, 'deferred')
     for issue in b.live():
         item_id, kind, status = issue['id'], issue.get('issue_type'), issue['status']
         if status == 'in_progress':
@@ -205,12 +286,33 @@ def statuses(b: Board, left: list[str]) -> list[Step]:
                 steps.append((f'{item_id}: open again, the deferral of {cr} holds it',
                               update(item_id, '--status', 'open', '--defer', '', '--unset-metadata', 'revisit', '--unset-metadata', 'deferred_by')))
             else:
-                def leave(i=item_id, c=cr) -> None:
-                    write('update', i, '--set-metadata', f'found_in={c}', '--json')
-                    write('batch', '-m', f'board-migrate {i}', '--json', stdin=f'dep remove {i} {c}\n')
-                steps.append((f'{item_id}: leaves {cr} as a standalone deferred task, found in it', leave))
-                left.append(f'{item_id}: a deferred item of {cr} is now a standalone deferred task found in {cr}; undefer it into a change request when it is due')
+                orphan = take_orphan(lost, issue.get('title', item_id))
+                steps.append((f'{item_id}: leaves {cr} as the only item of a deferred change request of its own, related to {cr}',
+                              lambda issue=issue, cr=cr, orphan=orphan: leave_deferred(issue, cr, orphan)))
+                left.append(f'{item_id}: a deferred item of {cr} is now the only item of a deferred change request of its own, related to {cr}; undefer it when it is due')
     return steps
+
+
+def revisit_day(until: str) -> str | None:
+    try:
+        return datetime.fromisoformat(until.replace('Z', '+00:00')).astimezone().date().isoformat()
+    except ValueError:
+        return None
+
+
+def leave_deferred(issue: dict, cr: str, orphan: dict | None) -> None:
+    """An item has no deferral of its own: it leaves its live change request as the only item of a deferred one, related to the old. The new request
+    is made and linked first and the item moves last, so an interruption leaves a childless request the rerun reuses."""
+    item_id = issue['id']
+    _, routed = carried_labels(issue)
+    revisit = meta(issue).get('revisit') or (revisit_day(issue['defer_until']) if issue.get('defer_until') else None)
+    new = orphan['id'] if orphan else make_change_request(issue)
+    write('update', new, '--status', 'deferred', *(['--set-metadata', f'revisit={revisit}'] if revisit else []),
+          *(['--set-metadata', f'deferred_by={meta(issue)["deferred_by"]}'] if meta(issue).get('deferred_by') else []), '--json')
+    if not orphan or (cr, 'relates-to') not in edges(orphan):
+        write('batch', '-m', f'board-migrate {item_id}', '--json', stdin=f'dep add {new} {cr} relates-to\n')
+    write('update', item_id, '--parent', new, '--status', 'open', '--defer', '', '--unset-metadata', 'revisit', '--unset-metadata', 'deferred_by',
+          *(flag for label in routed for flag in ('--remove-label', label)), '--json')
 
 
 def confirm_ruling(b: Board, issue: dict) -> None:
@@ -278,7 +380,7 @@ def links(b: Board, left: list[str]) -> list[Step]:
                 part = b.issues.get(target, {})
                 if part.get('issue_type') == 'change-request' and not [p for p in b.parents.get(target, []) if p != item_id]:
                     steps.append((f'{item_id}: its wait on {target} becomes membership ({target} is part of the milestone)',
-                                  lambda i=item_id, t=target: write('batch', '-m', f'board-migrate {i}', '--json', stdin=f'dep remove {i} {t}\ndep add {t} {i} parent-child\n')))
+                                  Lines(item_id, f'dep remove {item_id} {target}', f'dep add {target} {item_id} parent-child')))
                 else:
                     left.append(f'{item_id}: a milestone waits on {target} ({part.get("issue_type")}), which cannot be part of it: put the work in a change request and move that in, or drop the wait')
             elif kind in OLD_WAITS:
@@ -292,8 +394,7 @@ def links(b: Board, left: list[str]) -> list[Step]:
                     write('dep', 'remove', i, t)
                 steps.append((f'{item_id}: discovered-from {target} becomes the found_in field', found))
             elif kind == 'related':
-                steps.append((f'{item_id}: related {target} becomes relates-to',
-                              lambda i=item_id, t=target: write('batch', '-m', f'board-migrate {i}', '--json', stdin=f'dep remove {i} {t}\ndep add {i} {t} relates-to\n')))
+                steps.append((f'{item_id}: related {target} becomes relates-to', Lines(item_id, f'dep remove {item_id} {target}', f'dep add {item_id} {target} relates-to')))
     return steps
 
 
@@ -336,7 +437,7 @@ def deferrals(b: Board, left: list[str]) -> list[Step]:
             continue
 
         def wait(i=item_id, targets=named, why=reason) -> None:
-            present = {t for t, _ in edges(Board().issues[i])}
+            present = {t for t, _ in edges(b.issues[i])}
             for target in targets:  # the record reopens last: an interruption leaves it deferred, found again
                 if target not in present:
                     write('comments', 'add', i, f'Waits on {target} for {why[:300]}')
@@ -395,32 +496,13 @@ def shared_queue() -> list[str]:
 
 
 def ratifications(b: Board, left: list[str]) -> list[Step]:
-    """The ratify verb does not exist yet: each open design or landing ratification becomes an open question for the user."""
-    steps = []
+    """An open design or landing ratification has no place in the model (ratify is of choices): the agent resolves each before --mark."""
     for old in b.live():
-        if old['status'] != 'needs_ratification' or old.get('issue_type') == 'decision':
-            continue
-        item_id = old['id']
-        cr = b.issues.get(b.cr_of(item_id) or '', {})
-        form = meta(old).get('ratification') or ('landing' if 'landing' in old.get('title', '').lower() else 'design')
-        made = next((i['id'] for i in b.live() if i.get('external_ref') == f'migrated:{item_id}'), None)
-
-        def convert(old=old, cr=cr, form=form, made=made) -> None:
-            question = made
-            if question is None:
-                about = f'{cr["id"]} ({cr.get("title", "")})' if cr else old.get('title', '')
-                text = (f'## Question\nJudge the {form} of {about}: {old.get("title", "")}.\n\n'
-                        f'This was an open {form} ratification of the earlier board model (record {old["id"]}); the ratify verb does not exist yet, so it is asked as a question.\n'
-                        + (f'\nThe landed range is recorded as: {meta(cr).get("landing")}.\n' if meta(cr).get('landing') else '')
-                        + f'\n## Earlier text\n{old.get("description") or "not recorded"}\n')
-                question = write('create', f'Judge the {form} of {about}', '-t', 'decision', '-d', text, '--priority', str(old.get('priority', 2)),
-                                 '--external-ref', f'migrated:{old["id"]}', '--silent', *shared_queue(),
-                                 *(f'--labels={label}' for label in old.get('labels') or [] if label.startswith('topic:'))).strip().splitlines()[-1]
-            write('update', old['id'], '--unset-metadata', 'ratification', '--set-metadata', 'outcome=dropped', '--json')
-            write('close', old['id'], '--force', '--reason', f'board-migrate: converted to the question {question} for the user')
-        steps.append((f'{item_id}: the open {form} ratification becomes a question for the user', convert))
-        left.append(f'{item_id}: an open {form} ratification of {cr.get("id", "a change request")}; answer the question made from it')
-    return steps
+        if old['status'] == 'needs_ratification' and old.get('issue_type') != 'decision':
+            cr = b.issues.get(b.cr_of(old['id']) or '', {})
+            form = meta(old).get('ratification') or ('landing' if 'landing' in old.get('title', '').lower() else 'design')
+            left.append(f'{old["id"]}: an open {form} ratification of {cr.get("id", "a change request")} ("{old.get("title", "")}"); resolve it under the skill before --mark')
+    return []
 
 
 def human_gates(b: Board, left: list[str]) -> list[Step]:
@@ -439,13 +521,12 @@ def human_gates(b: Board, left: list[str]) -> list[Step]:
             left.append(f'{item_id}: a {old["await_type"]} gate is no step a person takes; resolve or drop it')
             continue
         title = re.sub(r'^user\s+', '', old.get('title', ''), flags=re.IGNORECASE).strip() or old.get('title', '')
-        steps.append((f'{item_id}: becomes a human gate "{title}" that supersedes it', lambda old=old, title=title: regate(old, title)))
+        steps.append((f'{item_id}: becomes a human gate "{title}" that supersedes it', lambda old=old, title=title: regate(b, old, title)))
     return steps
 
 
-def regate(old: dict, title: str) -> None:
+def regate(now: Board, old: dict, title: str) -> None:
     item_id = old['id']
-    now = Board()
     human = [g for g in now.issues.values() if g.get('issue_type') == 'gate' and g.get('await_type') == 'human' and g['status'] != 'closed']
     gate = next((g['id'] for g in human if (item_id, 'supersedes') in edges(g)), None)  # an earlier run got as far as the links
     if gate is None:
@@ -473,8 +554,9 @@ def regate(old: dict, title: str) -> None:
 
 
 def rulings(b: Board, left: list[str]) -> list[Step]:
-    """An in-force ruling waits only for its planning, a question not yet in force or a human gate: its waits on work go, each named in a comment."""
-    steps = []
+    """An in-force ruling waits only for its planning, a question not yet in force or a human gate. The old board also let it wait on a design or spike:
+    each such wait becomes a relates-to link (the planner makes the work wait on that design, plan.md), and the ruling is listed for planning."""
+    steps, planned = [], []
     for ruling in b.live():
         if ruling.get('issue_type') != 'decision' or ruling['status'] != 'in_force':
             continue
@@ -485,18 +567,29 @@ def rulings(b: Board, left: list[str]) -> list[Step]:
             planning = (other.get('issue_type') == 'gate' and other.get('await_type') == 'human') or (other.get('issue_type') == 'decision' and other['status'] in ('open', 'decided'))
             if planning:
                 continue
-
-            def drop(r=ruling['id'], t=target, title=other.get('title', '')) -> None:
-                write('comments', 'add', r, f'board-migrate: removed the wait on {t} ({title}): an in-force ruling does not wait on work; plan the work the ruling changes and wait that work on {r} if it still matters')
-                write('batch', '-m', f'board-migrate {r}', '--json', stdin=f'dep remove {r} {t}\n')
-            steps.append((f'{ruling["id"]}: an in-force ruling no longer waits on {target}', drop))
-    if steps:
-        ids = ', '.join(dict.fromkeys(what.split(':')[0] for what, _ in steps))
-        left.append(f'{len(steps)} wait(s) of in-force rulings on work removed, each named in a comment on the ruling (rulings: {ids}); where the work still matters, plan it and wait it on the ruling')
+            steps.append((f'{ruling["id"]}: its wait on {target} becomes relates-to', Lines(ruling['id'], f'dep remove {ruling["id"]} {target}', f'dep add {ruling["id"]} {target} relates-to')))
+            planned.append(ruling['id'])
+    if planned:
+        left.append(f'{len(steps)} wait(s) of in-force rulings on work became relates-to links; plan each ruling and make its work wait on the related design (rulings: {", ".join(dict.fromkeys(planned))})')
     return steps
 
 
-PHASES = (kinds, statuses, epics, deferrals, files, holds, authors, dates, outcomes, links, ratifications, human_gates, rulings)  # kinds first: an item is a task in a change request
+RETIRED_METADATA = {'no_code': 'no_commit', 'triaged_tip': None, 'triaged_base_tip': None}  # keys the board once wrote: their new name, or none
+
+
+def retired_metadata(b: Board, left: list[str]) -> list[Step]:
+    """Metadata keys an earlier board wrote: dropped, or moved to the key that replaced them (no_code is no_commit on work items only)."""
+    steps = []
+    for issue in b.live():
+        retired = sorted(set(meta(issue)) & set(RETIRED_METADATA))
+        if retired:
+            moved = sorted({RETIRED_METADATA[key] for key in retired if RETIRED_METADATA[key] and issue.get('issue_type') == 'task'})
+            steps.append((f"{issue['id']}: retired metadata {', '.join(retired)} dropped{''.join(f'; {new} set' for new in moved)}",
+                          update(issue['id'], *(flag for new in moved for flag in ('--set-metadata', f'{new}=true')), *(flag for key in retired for flag in ('--unset-metadata', key)))))
+    return steps
+
+
+PHASES = (kinds, retired_metadata, statuses, epics, deferrals, files, holds, authors, dates, outcomes, links, ratifications, human_gates, rulings)  # kinds first: an item is a task in a change request
 
 
 def check_status_custom() -> None:
@@ -518,18 +611,23 @@ def run(apply: bool) -> tuple[int, list[str]]:
         steps = phase(Board(), left)
         if steps:
             BY_KIND[phase.__name__] = len([what for what, _ in steps if what not in FAILED])
-        for what, step in steps:
-            if what in FAILED:
-                continue  # it failed this run: reported at the end, not found again
+        todo = [(what, step) for what, step in steps if what not in FAILED]  # a step that failed this run is reported at the end, not found again
+        for what, _ in todo:
             print(('' if apply else 'would: ') + what)
-            if apply:
-                try:
-                    step()
-                except Stop as error:
-                    FAILED[what] = 'bd refused it: the wait would form a cycle' if 'cycle' in str(error) else str(error).splitlines()[0][:300]
-                    print(f'  not converted: {FAILED[what]}')
-                    continue
-            found += 1
+        if apply:
+            failed = apply_grouped([(what, step) for what, step in todo if isinstance(step, (Update, Lines))])
+            for what, step in todo:
+                if what in failed:
+                    FAILED[what] = failed[what]
+                elif not isinstance(step, (Update, Lines)):
+                    try:
+                        step()
+                    except Stop as error:
+                        FAILED[what] = 'bd refused it: the wait would form a cycle' if 'cycle' in str(error) else str(error).splitlines()[0][:300]
+            for what, _ in todo:
+                if what in FAILED:
+                    print(f'  not converted: {what}: {FAILED[what]}')
+        found += len([what for what, _ in todo if what not in FAILED])
     return found, list(dict.fromkeys(left))
 
 
@@ -541,7 +639,7 @@ def rehearse() -> int:
     exported = read('bd', 'export')
     setting = lambda key: json.loads(read('bd', 'config', 'get', '--json', key) or '{}').get('value') or ''
     prefix, carried = setting('issue_prefix'), {name: setting(f'custom.board.{name}') for name in ('target', 'setup', 'checks', 'look', 'view')}
-    env = {key: value for key, value in os.environ.items()  # the copy must never be this board, and it is worked as a person's (check --fix is planning's)
+    env = {key: value for key, value in os.environ.items()  # the copy must never be this board, and it is worked as a person's
            if key not in ('BEADS_DIR', 'BEADS_DB', 'BEADS_ACTOR', 'CODEX_SESSION_ID', 'CODEX_THREAD_ID', 'CLAUDE_CODE_SESSION_ID')}
     here = Path(__file__).resolve()
     checkpoints = here.with_name('convert-design-checkpoints.py')
@@ -586,7 +684,7 @@ def rehearse() -> int:
         # the copy takes the old statuses too, then setup puts the current list back
         on_copy('bd', '--raw', '--yes', 'config', 'set', 'status.custom', f'{current},released:active,needs_ratification:wip,needs_acceptance:wip')
         types = json.loads(on_copy('bd', 'config', 'get', '--json', 'types.custom') or '{}').get('value') or ''
-        on_copy('bd', '--raw', '--yes', 'config', 'set', 'types.custom', f'{types},design')  # the export may hold design-typed records, which setup's list no longer registers
+        on_copy('bd', '--raw', '--yes', 'config', 'set', 'types.custom', f'{types},design')  # the import reads design-typed records of the export; the setup below puts the current list back, so the copy keeps no old type
         for name, value in carried.items():
             if value:
                 on_copy('bd', '--raw', '--yes', 'config', 'set', f'custom.board.{name}', value)
@@ -605,7 +703,6 @@ def rehearse() -> int:
             mapping.write_text(json.dumps(approved), encoding='utf-8')
             detail['checkpoint conversion'] = run(sys.executable, '-B', str(checkpoints), 'apply', str(mapping), '--apply', '--copy')
             detail['checkpoint verify'] = run(sys.executable, '-B', str(checkpoints), 'verify')
-        detail['check --fix'] = run(str(BOARD), 'check', '--fix', '--limit', '0')
         detail['check'] = run(str(BOARD), 'check', '--limit', '0')
         detail['mark'] = run(sys.executable, '-B', str(here), '--mark')
         found = json.loads(run(str(BOARD), 'check', '--json').stdout or '{}').get('deviations') or []
@@ -682,7 +779,8 @@ def main() -> int:
         found, left = run(args.apply)
         kinds = dict(BY_KIND)
         if args.apply:
-            again, left = run(False)
+            again, rest = run(False)
+            left = list(dict.fromkeys([*left, *rest]))  # what the conversions listed, and what is still open after them
             if again:
                 print(f'{again} conversion(s) still found after applying; rerun, or settle them by hand', file=sys.stderr)
                 for row in left:

@@ -2244,7 +2244,7 @@ def validate_shared_board(root: Path) -> None:
     expect(board.bd_env().get("BD_NO_REMOTE_ADOPT") == "1", "board stops bd adopting git origin on every call")
     for argv, writes in ((["health"], False), (["show", "x"], False), (["bd", "list"], False), (["bd", "--json", "ready"], False), (["claim"], True),
                          (["bd", "--raw", "--yes", "create", "t"], True), (["route", "ben", "x"], True), (["send", "ben", "x"], True), (["create", "--for", "ben", "t"], True),
-                         (["join"], False), (["bd", "dolt", "status"], False), (["field", "export", "x"], False), (["field", "discard", "x"], False),
+                         (["join"], True), (["share"], False), (["relocate"], False), (["bd", "dolt", "status"], False), (["field", "export", "x"], False), (["field", "discard", "x"], False),
                          (["field", "apply", "x"], True)):
         expect(board.writes(argv) == writes, "which commands write", argv)
     entries = [{"actor": "lead0001", "role": "lead"}, {"actor": "solo0001", "role": "solo"}, {"actor": "agnt0001", "role": "agent"}]
@@ -2485,7 +2485,7 @@ def validate_board(root: Path) -> None:
 
         def plain_writes(self):
             """The writes without the metadata bookkeeping of a change request claim (stage, fork point, setup; the real-bd runs check it)."""
-            bookkeeping = {"since", "reviewing_tip", "landing", "rebase_onto", "review_tip", "review_base_tip", "check_new", "check_base_count", "check_tip_count", "base", "base_sha", "setup_sha", "replan", "designed", "checkpoint", "check_tip", "check_base_tip",
+            bookkeeping = {"since", "reviewing_tip", "landing", "rebase_onto", "review_tip", "review_base_tip", "check_new", "check_base_count", "check_tip_count", "base", "base_sha", "setup_sha", "plan_first", "designed", "checkpoint", "check_tip", "check_base_tip",
                            "check_result", "check_at", "check_output"}
 
             def only_metadata(args):
@@ -2528,7 +2528,7 @@ def validate_board(root: Path) -> None:
         elif argv[0] == "health":
             expected = fake.reads() if "export" in fake.reads() else ["list"]
         elif argv[0] in ("related", "check", "wait", "update", "link", "unlink", "reopen") or argv[:2] in (["ruling", "check-replaces"], ["ruling", "revise"], ["ruling", "release"], ["ruling", "supersede"]):
-            expected = ["export", "export"] if argv[:2] == ["check", "--fix"] and fake.writes() else ["export"]  # --fix reads again after its writes
+            expected = ["export"]
             if argv[:2] == ["ruling", "revise"] and (("--holds" in argv and argv[argv.index("--holds") + 1] != "none") ):
                 expected = ["export", "show"] if "fx-nowhere" in argv else ["export", "export"]  # unknown targets are checked before creation; otherwise read after to block the new question
         elif argv[:2] == ["ruling", "record"]:
@@ -2749,10 +2749,6 @@ def validate_board(root: Path) -> None:
             _, legacy_health, _ = invoke(["health"], legacy_board)
             if "convention deviations: 1 — run /board-migrate" not in legacy_health or "board fixes:" in legacy_health:
                 raise ValueError(f"board health must route the legacy status to /board-migrate: {legacy_health}")
-            # A fix check --fix applies on its own is named with its count before the migration hint.
-            _, retired_health, _ = invoke(["health"], Fake([{**legacy, "metadata": {"triaged_tip": "abc"}}]))
-            if "convention deviations: 2 — agents board check --fix: 1 fixes; run /board-migrate" not in retired_health:
-                raise ValueError(f"board health must name board check --fix with its count: {retired_health}")
             # The user view lists the human gates (await_type human); a gate's title says nothing, a legacy "user " title is a deviation.
             user_view = invoke(["health", "--items", "user"], Fake(checked))[1]
             if "waiting on the user (human gates, due deferrals): 2\n" not in user_view or gate not in user_view or cid["User action"] in user_view:
@@ -3117,44 +3113,28 @@ def validate_board(root: Path) -> None:
             row = next((r for r in invoke(["queue"], Fake(waiting))[1].splitlines() if r.startswith(f"  {cr_ready['id']} ")), "")
             if f"waits on {loose} (open)" not in row:
                 raise ValueError(f"the queue row of a waiting CR in review must name its wait: {row!r}")
-            # The earlier no_code mark counts no more: the check names its fix (agent work keeps the route, a person's item drops the mark).
-            for changes, fix in (({}, "makes it no_commit"),):
-                shown = invoke(["check"], Fake(variant(**{"Loose item": {"metadata": {"no_code": 1}, **changes}})))[1]
-                if f"{loose}  unknown-metadata" not in shown or f"metadata no_code: retired: agents board check --fix {fix}" not in shown:
-                    raise ValueError(f"board check must flag a live no_code mark with its fix {fix}: {shown}")
-            # Anything else outside the board's vocabularies is flagged with its fix: a stray metadata key, the earlier `related` link, a bare label.
+            # Anything outside the board's vocabularies is flagged with its fix: a stray metadata key (the earlier no_code too: board-migrate converts it), an earlier `related` link, a bare label.
             target = ids["Ready task"]
-            shown = invoke(["check"], Fake(variant(**{"Loose item": {"metadata": {"triaged_tip": "abc", "vendor_key": "v"}, "labels": ["orm-schema", "topic:x"],
+            shown = invoke(["check"], Fake(variant(**{"Loose item": {"metadata": {"no_code": 1, "vendor_key": "v"}, "labels": ["orm-schema", "topic:x"],
                                                                      "dependencies": [{"issue_id": loose, "depends_on_id": target, "type": "related"}]}})))[1]
-            for needle in (f"{loose}  unknown-metadata", "metadata triaged_tip: retired: agents board check --fix drops it",
-                           f"metadata vendor_key: not the board's: drop it if nothing else uses it (agents board bd --raw --yes update {loose} --unset-metadata vendor_key)", f"{loose}  unknown-link",
-                           "link related to " + target + ": agents board check --fix makes it relates-to", f"{loose}  label-form", "--unlabel orm-schema --label topic:orm-schema"):
+            for needle in (f"{loose}  unknown-metadata", f"metadata no_code: not the board's", f"metadata vendor_key: not the board's: drop it if nothing else uses it (agents board bd --raw --yes update {loose} --unset-metadata vendor_key)", f"{loose}  unknown-link",
+                           "link related to " + target + ": agents board unlink " + loose + " " + target, f"{loose}  label-form", "--unlabel orm-schema --label topic:orm-schema"):
                 if needle not in shown:
                     raise ValueError(f"board check must name {needle!r}: {shown}")
-            # check --fix applies only the fixes that need no judgment (retired metadata, the earlier link spelling), planning's call; a label and a
-            # key the board never wrote (another tool's) stay.
-            stray = variant(**{"Loose item": {"metadata": {"no_code": "1", "triaged_tip": "abc", "vendor_key": "v"}, "labels": ["orm-schema"],
-                                              "dependencies": [{"issue_id": loose, "depends_on_id": target, "type": "related"}]}})
-            fake = Fake(stray)
-            code, output, errors = invoke(["check", "--fix"], fake)
-            batches = [(args, text) for args, text in fake.calls if args[:1] == ["batch"]]
-            if ["update", loose, "--set-metadata", "no_commit=true", "--unset-metadata", "no_code", "--unset-metadata", "triaged_tip", "--json"] not in fake.writes() \
-                    or len(batches) != 1 or batches[0][1] != f"dep remove {loose} {target}\ndep add {loose} {target} relates-to\n" \
-                    or any(w[:1] == ["update"] and "--unlabel" in w for w in fake.writes()) or f"fixed {loose}" not in output:
-                raise ValueError(f"board check --fix must apply the mechanical fixes only: {code} {output} {errors} {fake.calls}")
-            with patch.object(board, "may_move", lambda board=None: False):
-                fake = Fake(stray)
-                code, _, errors = invoke(["check", "--fix"], fake, "agnt0001")
-            if code == 0 or fake.writes() or "--fix" not in errors:
-                raise ValueError(f"an agent must not apply board check --fix: {code} {errors} {fake.writes()}")
+            try:
+                invoke(["check", "--fix"], Fake(fixture))
+            except SystemExit as stop:
+                if stop.code != 2:
+                    raise
+            else:
+                raise ValueError("board check has no --fix (board-migrate converts the earlier forms)")
             if "label-form" in invoke(["check"], Fake(fixture))[1] or "unknown-metadata" in invoke(["check"], Fake(fixture))[1]:
                 raise ValueError("board check must not flag the board's own labels and metadata")
             # update sets the route and item settings: planning's write, every item checked before any write.
             cr = {**fixture[0], "id": "fx-cr", "title": "A CR", "issue_type": "change-request", "status": "open", "assignee": None, "dependencies": [], "metadata": {}}
             for argv, issues, want in (
-                    (["update", loose, "--no-commit"], variant(**{"Loose item": {"metadata": {"no_code": "1"}}}),
-                     ["update", loose, "--set-metadata", "no_commit=true", "--unset-metadata", "no_code", "--json"]),
-                    (["update", loose, "--commits"], no_commit, ["update", loose, "--unset-metadata", "no_commit", "--unset-metadata", "no_code", "--json"]),
+                    (["update", loose, "--no-commit"], fixture, ["update", loose, "--set-metadata", "no_commit=true", "--json"]),
+                    (["update", loose, "--commits"], no_commit, ["update", loose, "--unset-metadata", "no_commit", "--json"]),
                     (["update", "fx-cr", "--look", "after", "--view", ""], [*fixture, cr],
                      ["update", "fx-cr", "--set-metadata", "look=after", "--unset-metadata", "view", "--json"])):
                 fake = Fake(issues)
@@ -5422,7 +5402,7 @@ def validate_board(root: Path) -> None:
                     ("every open item waits on a question", [cr_issue("w"), cr_item("w.i", "w", blocks=("q",)), question], None),
                     ("one item ready, another waits on a question", [cr_issue("w"), cr_item("w.i", "w", blocks=("q",)), cr_item("w.j", "w"), question], "implement"),
                     ("no open item: the handover step", [cr_issue("w"), cr_item("w.i", "w", status="closed")], "implement"),
-                    ("a replan the planner owes", [cr_issue("w", replan="the ruling changed it"), cr_item("w.i", "w")], "plan"),
+                    ("a replan the planner owes", [cr_issue("w", plan_first="the ruling changed it"), cr_item("w.i", "w")], "plan"),
                     ("an item waits on a decided question", [cr_issue("w"), cr_item("w.i", "w", blocks=("q",)), {**question, "status": "decided"}], None),
                     ("an item waits on a ruling in force", [cr_issue("w"), cr_item("w.i", "w", blocks=("q",)), {**question, "status": "in_force"}], None),
                     ("an item waits on a closed question", [cr_issue("w"), cr_item("w.i", "w", blocks=("q",)), {**question, "status": "closed"}], "implement"),
@@ -5734,7 +5714,7 @@ def validate_board(root: Path) -> None:
                 written = fake.writes()
                 if code or any(w[:2] == ["update", "rej.i"] for w in written) \
                         or not any(w[:2] == ["close", "rej"] and "--force" in w for w in written) \
-                        or not any(w[:2] == ["update", "kid"] and "base=main" in w and any(a.startswith("replan=") for a in w) for w in written) \
+                        or not any(w[:2] == ["update", "kid"] and "base=main" in w and any(a.startswith("plan_first=") for a in w) for w in written) \
                         or not any(w[:2] == ["update", "kid"] and ["--assignee", ""] == w[w.index("--assignee"):w.index("--assignee") + 2] and "--if-status" in w for w in written if "--assignee" in w) or "back to planning: kid" not in output:
                     raise ValueError(f"board cr reject: {code} {errors}\n{written}\n{output}")
                 if invoke(["cr", "reject", "rej", "x"], Fake(rejected), "aaaa1111")[0] != 1:
@@ -9208,6 +9188,12 @@ def validate_board_model(root: Path) -> None:
     embedded = text.split(start, 1)[1].split(end, 1)[0]
     if embedded != board.model_tables():
         raise ValueError("docs/board/model.md's tables differ from bin/board's model_tables(): regenerate the block between the markers")
+    # The CLI's own help prints the same tables: a verb its rows, `help` the statuses and outcomes by type.
+    for argv, needles in ((["close", "--help"], ("close: gate open -> closed", "outcomes: resolved")), (["cr", "reject", "--help"], ("cr reject: change request", "who: a lead or solo session")),
+                          (["help"], (board.states_table(),))):
+        shown = subprocess.run([sys.executable, "-B", str(root / "bin" / "board"), *argv], capture_output=True, text=True).stdout
+        if any(needle not in shown for needle in needles):
+            raise ValueError(f"board {' '.join(argv)} must print its rows from the model tables: {shown[-400:]}")
 
 
 def validate_console_contract(root: Path) -> None:
