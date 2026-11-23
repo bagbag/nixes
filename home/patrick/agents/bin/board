@@ -343,7 +343,7 @@ MOVES = (
     Move('take', WORK_GROUP, ('open',), '=', '*', 'you', ('agent+holder', 'agent+deciding+gone')),
     Move('unclaim', WORK_GROUP, ('open',), '=', '*', '-', FREE_HOLD),
     Move('close', WORK_GROUP, ('open',), 'closed', '*', '-', FREE_HOLD, ('reason',), ('done', 'dropped')),
-    Move('reopen', WORK_GROUP, ('closed',), 'open', '*', '-', ('anyone',)),
+    Move('reopen', WORK_GROUP, ('closed',), 'open', '*', '-', FREE_HOLD),  # reopen takes close's authority; unheld, 'holder' admits anyone
     Move('close', ITEM_GROUP, ('open',), 'closed', '*', '-', ITEM_WRITE, ('reason',), ('done', 'dropped')),
     Move('reopen', ITEM_GROUP, ('closed',), 'open', '*', '-', ITEM_WRITE),
     Move('defer', WORK_GROUP, ('open',), 'deferred', '*', '-', DEFER),

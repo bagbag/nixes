@@ -87,7 +87,7 @@ Printed by `model_tables()`; the test compares this block with it exactly. `Held
 | take | task | open | = | * | you | agent+holder / agent+deciding+gone | - | - |
 | unclaim | task | open | = | * | - | holder / user / deciding+gone | - | - |
 | close | task | open | closed | * | - | holder / user / deciding+gone | reason | done, dropped |
-| reopen | task | closed | open | * | - | anyone | - | - |
+| reopen | task | closed | open | * | - | holder / user / deciding+gone | - | - |
 | close | item | open | closed | * | - | holding / user / deciding+unheld / deciding+gone | reason | done, dropped |
 | reopen | item | closed | open | * | - | holding / user / deciding+unheld / deciding+gone | - | - |
 | defer | task | open | deferred | * | - | planner+holder / deciding / user | - | - |
