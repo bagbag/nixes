@@ -2016,6 +2016,9 @@ def t_migrate() -> None:
     make('plan_question', 'open question the ruling waits on', kind='decision')
     link('ruling_wait', 'target', 'blocks')
     link('ruling_wait', 'plan_question', 'blocks')
+    make('ruling_cr', 'in-force ruling that waits on a change request', kind='decision')
+    update('ruling_cr', '--status', 'released')
+    link('ruling_cr', 'cr1', 'blocks')
     make('planned', 'planned ruling', kind='decision')
     make('dropped', 'dropped ruling', kind='decision')
     make('user_gate', 'user rotate the key', kind='gate')
@@ -2134,7 +2137,7 @@ def t_migrate() -> None:
     first_apply = out
     check(rc == 0 and 'conversion(s) applied' in out and 'no recorded author' in out and 'timer gate' in out and f"{ids['ratify']}: an open landing ratification" in out, 'migrate: --apply converts and lists what is left for the user', err + out)
     rc, out, err = migrate('--apply')
-    check(rc == 0 and out.startswith('0 conversion(s) applied') and f"rulings: {ids['ruling_wait']}" in out, 'migrate: a rerun finds nothing to convert and lists the rulings to plan again', err + out)
+    check(rc == 0 and out.startswith('0 conversion(s) applied') and all(ids[name] in next((l for l in out.splitlines() if 'in-force ruling(s)' in l), '') for name in ('ruling_wait', 'ruling_cr')), 'migrate: a rerun finds nothing to convert and lists the rulings to plan again, a wait on a change request included', err + out)
 
     now = items(side)
 
@@ -2181,7 +2184,7 @@ def t_migrate() -> None:
     check(row('cr6')['status'] == 'open' and row('cr6')['assignee'] == 'abcd1234' and meta_of('cr6').get('hold') == 'work',
           'migrate: an in-progress change request stays held, its hold is work', (row('cr6')['status'], row('cr6').get('assignee'), meta_of('cr6')))
     check((ids['target'], 'blocks') not in deps('ruling_wait') and (ids['target'], 'relates-to') in deps('ruling_wait') and (ids['plan_question'], 'blocks') in deps('ruling_wait')
-          and f"rulings: {ids['ruling_wait']}" in first_apply,
+          and all(ids[name] in next((l for l in first_apply.splitlines() if 'in-force ruling(s)' in l), '') for name in ('ruling_wait', 'ruling_cr')),
           'migrate: an in-force ruling keeps its wait on work as a relates-to link and is listed for planning, its wait on a question stays', (deps('ruling_wait'), first_apply[-600:]))
     check(row('released')['status'] == 'in_force' and row('unratified')['status'] == 'in_force', 'migrate: released and an unratified ruling are in_force', (row('released')['status'], row('unratified')['status']))
     def confirmations(name: str) -> list[dict]:

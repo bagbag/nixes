@@ -159,22 +159,16 @@ GROUP = 100  # ids or lines per grouped call
 
 
 def apply_grouped(todo: list[tuple[str, Update | Lines]]) -> dict[str, str]:
-    """Writes the grouped steps of a phase: records with the same update flags in one `bd update`, every batch line in one `bd batch`. A call that
-    fails is retried one record at a time, so the record that bd refuses is named and the rest are written. Returns what failed, by step."""
+    """Writes the grouped steps of a phase: records with the same update flags in one `bd update`, then every batch line in one `bd batch`. A call that
+    fails is retried one record at a time, so the record that bd refuses is named and the rest are written. A step whose update failed writes none of its
+    batch lines (a step's updates come before its batches). Returns what failed, by step."""
     failed: dict[str, str] = {}
-    updates: dict[tuple[str, ...], list[tuple[str, Update]]] = {}
-    batches: list[tuple[str, Lines]] = []
+    updates: dict[tuple[str, ...], list[tuple[str, Update | Lines]]] = {}
+    batches: list[tuple[str, Update | Lines]] = []
     for what, action in todo:
         (updates.setdefault(action.flags, []) if isinstance(action, Update) else batches).append((what, action))
-    calls: list[tuple[list[tuple[str, Update | Lines]], Callable[[], None]]] = []
-    for flags, group in updates.items():
-        for at in range(0, len(group), GROUP):
-            part = group[at:at + GROUP]
-            calls.append((part, lambda part=part, flags=flags: write('update', *(a.item_id for _, a in part), *flags, '--json')))
-    for at in range(0, len(batches), GROUP):
-        part = batches[at:at + GROUP]
-        calls.append((part, lambda part=part: write('batch', '-m', 'board-migrate', '--json', stdin=''.join(line + '\n' for _, a in part for line in a.lines))))
-    for part, call in calls:
+
+    def send(part: list[tuple[str, Update | Lines]], call: Callable[[], None]) -> None:
         try:
             call()
         except Stop:
@@ -183,6 +177,15 @@ def apply_grouped(todo: list[tuple[str, Update | Lines]]) -> dict[str, str]:
                     action()
                 except Stop as error:
                     failed[what] = reason(error)
+
+    for flags, group in updates.items():
+        for at in range(0, len(group), GROUP):
+            part = group[at:at + GROUP]
+            send(part, lambda part=part, flags=flags: write('update', *(a.item_id for _, a in part), *flags, '--json'))
+    live = [(what, action) for what, action in batches if what not in failed]
+    for at in range(0, len(live), GROUP):
+        part = live[at:at + GROUP]
+        send(part, lambda part=part: write('batch', '-m', 'board-migrate', '--json', stdin=''.join(line + '\n' for _, a in part for line in a.lines)))
     return failed
 
 
@@ -326,11 +329,18 @@ def leave_deferred(issue: dict, cr: str, orphan: dict | None) -> None:
           *(flag for label in routed for flag in ('--remove-label', label)), '--json')
 
 
+_BOARD_MODULE = None
+
+
 def board_module():
-    """bin/board as a module, for what it owns: the Confirm-or-revise question's text."""
+    """bin/board as a module, for what it owns: the Confirm-or-revise question's text. Executed once per run."""
+    global _BOARD_MODULE
+    if _BOARD_MODULE is not None:
+        return _BOARD_MODULE
     loader = importlib.machinery.SourceFileLoader('board_model', str(BOARD))
     module = importlib.util.module_from_spec(importlib.util.spec_from_loader(loader.name, loader))
     loader.exec_module(module)
+    _BOARD_MODULE = module
     return module
 
 
@@ -569,7 +579,7 @@ def rulings(b: Board, left: list[str]) -> list[Step]:
             continue
         for target, kind in edges(ruling):
             other = b.issues.get(target)
-            if kind == 'relates-to' and other is not None and other['status'] != 'closed' and other.get('issue_type') == 'task':
+            if kind == 'relates-to' and other is not None and other['status'] != 'closed' and other.get('issue_type') in ('task', 'change-request', 'milestone'):
                 planned.append(ruling['id'])
             if kind != 'blocks' or other is None or other['status'] == 'closed':
                 continue
@@ -580,7 +590,7 @@ def rulings(b: Board, left: list[str]) -> list[Step]:
             planned.append(ruling['id'])
     planned = list(dict.fromkeys(planned))
     if planned:
-        left.append(f'{len(planned)} in-force ruling(s) relate to open work (a wait on a design or spike became relates-to); plan each ruling and make its work wait on the related design (rulings: {", ".join(planned)})')
+        left.append(f'{len(planned)} in-force ruling(s) relate to open work (a wait on a design or spike became relates-to, as on the first run); plan each ruling and make its work wait on the related design (rulings: {", ".join(planned)})')
     return steps
 
 

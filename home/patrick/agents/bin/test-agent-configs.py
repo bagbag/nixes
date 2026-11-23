@@ -2444,7 +2444,9 @@ def validate_board(root: Path) -> None:
                 return subprocess.CompletedProcess(command, 0, json.dumps(self.lint), "")
             if command[1] == "close" and getattr(self, "fail_close", False):
                 return subprocess.CompletedProcess(command, 1, "", "bd refused the close")
-            if command[1] == "update" and command[2] in self.refuse:
+            if command[1] == "update":
+                self.updates = getattr(self, "updates", 0) + 1
+            if command[1] == "update" and (command[2] in self.refuse or self.updates in getattr(self, "refuse_nth", ())):
                 return subprocess.CompletedProcess(command, 13, "", f"assignee mismatch: {command[2]}")
             return subprocess.CompletedProcess(command, 0, "[]", "")
 
@@ -6463,6 +6465,12 @@ def validate_board(root: Path) -> None:
                 code, _, errors = invoke(["gate", "resolve", "t-gate", "--reason", "shipped"], fake)
                 if not code or "changed meanwhile" not in errors or any(w[0] == "close" for w in fake.writes()):
                     raise ValueError(f"a second closer's guard must fail as changed meanwhile, with no close: {code} {errors} {fake.writes()}")
+                fake = Fake([{**gate, "assignee": terminal}])
+                fake.refuse_nth = {2}  # the retake after the release: another session claimed it in between
+                code, _, errors = invoke(["gate", "resolve", "t-gate", "--reason", "shipped"], fake)
+                if not code or "changed meanwhile" not in errors or any(w[0] == "close" for w in fake.writes()) \
+                        or fake.writes()[-1] != ["update", "t-gate", "--assignee", terminal, "--if-assignee", "", "--if-status", "open", "--json"]:
+                    raise ValueError(f"a failed retake must put the holder back and close nothing: {code} {errors} {fake.writes()}")
                 fake = Fake([{**gate, "assignee": "other0001"}])
                 fake.fail_close = True
                 code, _, errors = invoke(["gate", "resolve", "t-gate", "--reason", "shipped"], fake)
@@ -9236,6 +9244,11 @@ def validate_board_model(root: Path) -> None:
         if failed or [call for call in sent if call[0][0] == "update"] != [(("update", "x1", "x2", "--set-metadata", "outcome=dropped", "--json"), None), (("update", "x3", "--set-metadata", "outcome=done", "--json"), None)] \
                 or [call for call in sent if call[0][0] == "batch"] != [(("batch", "-m", "board-migrate", "--json"), "dep add x4 x5 blocks\ndep remove x6 x7\n")]:
             raise ValueError(f"board-migrate must group identical updates and every batch line: {failed} {sent}")
+        sent.clear()
+        failed = converter.apply_grouped([("found", converter.Update("bad", "--set-metadata", "found_in=T")), ("found", converter.Lines("bad", "dep remove bad T")),
+                                          ("other", converter.Lines("x9", "dep remove x9 T"))])
+        if list(failed) != ["found"] or [call for call in sent if call[0][0] == "batch"] != [(("batch", "-m", "board-migrate", "--json"), "dep remove x9 T\n")]:
+            raise ValueError(f"a step whose update failed must write none of its batch lines: {failed} {sent}")
         sent.clear()
         failed = converter.apply_grouped([("good", converter.Update("ok1", "--set-metadata", "k=v")), ("worse", converter.Update("bad", "--set-metadata", "k=v"))])
         if list(failed) != ["worse"] or "cycle" not in failed["worse"] or [call[0][1:3] for call in sent if call[0][0] == "update"] != [("ok1", "bad"), ("ok1", "--set-metadata"), ("bad", "--set-metadata")]:
