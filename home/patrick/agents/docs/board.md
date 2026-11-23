@@ -28,8 +28,8 @@ ids on every board. `agents board console` adds `sync` (the problem line) and `q
 unrouted with the count for you, blocking yours), both shown in the pane.
 The console pane shows the repository's scratch line (`agents scratch status --line`, read on every refresh; nothing when empty or when scratch fails) as one informational line (no button; trashed folders expire by themselves, in every repository); no model context gets the line (r15-q83 revised).
 `AGENT_BOARD_SYNC_SECONDS` shortens the window for tests. `bin/test-shared-board.py` runs the
-behaviour through real clones and a local bare remote; the validator's `validate_shared_board` holds
-the fake-bd checks the build sandbox can run.
+behaviour through real clones and a local bare remote, which the build sandbox cannot: the change-request gate (`board-checks.sh`) runs it. The validator's `validate_shared_board` holds
+the fake-bd checks the sandbox can run.
 
 `bin/board` (installed privately in `~/.agents/bin`, run as `agents board`) is the
 agents' only board interface: views and hand-offs from one snapshot sized to

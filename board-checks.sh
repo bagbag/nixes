@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# The change-request check (board setup --checks): the agent suites `nix flake check` runs, plus the console mod's check.
+# The change-request check (board setup --checks): the agent suites `nix flake check` runs, plus the shared-board suite and the console mod's check.
+# The shared-board suite needs real bd, Dolt and git clones, which the nix sandbox lacks, so the gate is its one runner.
 # Contract (change-requests.md Settings): one `<file> <code>` line per failing suite on stdout, exit 1 when any failed;
 # a suite that cannot start (126, 127) is a broken check and exits 2. Each failure's tail goes to stderr.
 # The suites share no state, so they run in parallel.
@@ -11,6 +12,8 @@ trap 'rm -rf "$dir"' EXIT
 suites=(
   "home/patrick/agents/bin/test-agent-configs.py|python3 -B home/patrick/agents/bin/test-agent-configs.py"
   "home/patrick/agents/bin/test-scratch.py|python3 -B home/patrick/agents/bin/test-scratch.py"
+  # --seconds 15: a 6 s sync window is shorter than a loaded host's burst of writes.
+  "home/patrick/agents/bin/test-shared-board.py|python3 -B home/patrick/agents/bin/test-shared-board.py --seconds 15"
   "home/patrick/agents/claude/mods/console/tests/check.sh|sh home/patrick/agents/claude/mods/console/tests/check.sh"
 )
 

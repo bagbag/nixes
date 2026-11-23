@@ -125,6 +125,8 @@ def bd(side: str, *args: str, **kwargs):
         return run(side, 'create', *args[1:], **kwargs)
     if args[:1] == ('q',):
         return run(side, 'bd', *args, **kwargs)  # refused by --readonly, not run raw
+    if args[:1] == ('move',):
+        return run(side, *args, **kwargs)
     if args[:1] == ('close',):
         reason = args[args.index('--reason') + 1]
         return run(side, 'close', args[1], '--reason', reason, *(['--force'] if '--force' in args else []), **kwargs)
@@ -176,6 +178,14 @@ def items(side: str) -> dict[str, dict]:
 
 
 def create(side: str, title: str, *flags: str, role: str | None = 'lead', kind: str = 'change-request') -> str:
+    if kind in ('bug', 'design', 'spike', 'feature', 'cleanup'):  # a kind is a label on a task: no rule reads it
+        flags, kind = (*flags, '--label', f'kind:{kind}'), 'task'
+    if '--status' in flags or kind == 'epic':  # a state no verb writes (create sets no status), and the epic scope root autopilot's --root reads
+        queue = [] if '--parent' in flags else ['--labels', 'queue:' + git('config', 'agents.person', cwd=ROOT / side).strip()]  # what board create gives a top-level item
+        rc, out, err, _ = raw(side, 'create', title, '--type', kind, '--description', 'x', '--silent', *queue, *flags)
+        if rc:
+            raise RuntimeError(f'create {title}: {err}{out}')
+        return out.strip().splitlines()[-1]
     holds = ['--holds', 'none'] if '-t' in flags and flags[flags.index('-t') + 1] == 'decision' else []
     rc, out, err, _ = bd(side, 'create', title, '-t', kind, '--description', 'x', '--silent', *flags, *holds, role=role)
     if rc:
@@ -241,7 +251,7 @@ def setup() -> None:
     rc, out, err, _ = bd('a', 'init', '--server', '--stealth', '--prefix', 'sb', '--skip-hooks', '--skip-agents', role=None)
     if rc:
         raise RuntimeError(f'init: {err}{out}')
-    for key, value in (('status.custom', 'decided:wip,released:active,in_review:wip,needs_ratification:wip'), ('types.custom', 'design,change-request')):
+    for key, value in (('status.custom', 'decided:wip,in_force:active,in_review:wip,passed:wip'), ('types.custom', 'design,change-request')):
         bd('a', 'config', 'set', key, value, role=None)
     for key, value in (('custom.board.target', git('symbolic-ref', '--short', 'HEAD', cwd=ROOT / 'a').strip()), ('custom.board.setup', 'true'), ('custom.board.checks', 'true'), ('custom.board.look', 'before'), ('custom.board.view', 'code')):
         bd('a', 'config', 'set', key, value, role=None)
@@ -355,25 +365,25 @@ def t_share_join() -> None:
 def t_child_ids() -> None:
     epic = create('a', 'ids epic', '-l', 'topic:x')
     settle('a', 'b')
-    rc, out, err, _ = raw('a', 'create', 'atomic status child', '--type', 'task', '--status', 'needs_ratification',
-                          '--description', 'x', '--metadata', '{"ratification":"design"}', '--deps', f'parent-child:{epic}',
+    rc, out, err, _ = raw('a', 'create', 'atomic status child', '--type', 'task', '--status', 'passed',
+                          '--description', 'x', '--metadata', '{"hold":"plan"}', '--deps', f'parent-child:{epic}',
                           '--no-inherit-labels', '--labels', 'topic:x', '--silent')
     atomic_id = out.strip()
     atomic = items('a').get(atomic_id, {})
-    check(rc == 0 and atomic_id and '.' not in atomic_id and atomic.get('status') == 'needs_ratification'
-          and (atomic.get('metadata') or {}).get('ratification') == 'design'
+    check(rc == 0 and atomic_id and '.' not in atomic_id and atomic.get('status') == 'passed'
+          and (atomic.get('metadata') or {}).get('hold') == 'plan'
           and any(dep.get('type') == 'parent-child' and dep.get('depends_on_id') == epic for dep in atomic.get('dependencies', [])),
           'child ids: native --deps creates a plain id with parent edge, kind and status in one write', {"id": atomic_id, "row": atomic, "error": err})
     check('topic:x' in atomic.get('labels', []) and not any(label.startswith('queue:') for label in atomic.get('labels', [])),
           'child ids: atomic linked child keeps non-queue parent labels and inherits queue through ancestry', atomic.get('labels'))
     settle('a', 'b')
     synced_atomic = items('b').get(atomic_id, {})
-    check(bool(synced_atomic) and synced_atomic.get('status') == 'needs_ratification'
+    check(bool(synced_atomic) and synced_atomic.get('status') == 'passed'
           and any(dep.get('type') == 'parent-child' and dep.get('depends_on_id') == epic for dep in synced_atomic.get('dependencies', [])),
           'child ids: atomic plain-id child syncs to the other clone', synced_atomic)
-    rc, out, err, _ = bd('a', 'close', atomic_id, '--reason', 'close test-only active status row', '--json')
+    rc, out, err, _ = raw('a', 'close', atomic_id, '--reason', 'close test-only active status row', '--json')  # a passed task is no board shape: no verb closes it
     check(rc == 0 and items('a')[atomic_id].get('status') == 'closed',
-          'child ids: close the temporary active ratification after checking its status and sync', err + out)
+          'child ids: close the temporary passed row after checking its status and sync', err + out)
     settle('a', 'b')
     made = [create('a', 'a child', '--parent', epic), create('b', 'b child', f'--parent={epic}')]
     check(all('.' not in item for item in made), 'child ids: --parent on both sides makes plain ids', made)
@@ -389,16 +399,16 @@ def t_child_ids() -> None:
     rc, out, err, _ = bd('a', 'q', 'quick child', '--parent', epic)
     check(rc != 0 and 'board create' in err and not out.strip(), 'q is refused read-only, naming board create', out + err)
     tracked = create('a', 'tracked')
-    both = create('a', 'two link kinds', '--deps', f'discovered-from:{tracked}', '--parent', epic)
+    both = create('a', 'two link kinds', '--deps', f'relates-to:{tracked}', '--parent', epic)
     kinds = {(dep['type'], dep['depends_on_id']) for dep in items('a')[both].get('dependencies', [])}
-    check(kinds == {('discovered-from', tracked), ('parent-child', epic)}, "child ids: a node's dep and its parent link both land (real bd; a revision's tracks link and its parent do alike)", kinds)
+    check(kinds == {('relates-to', tracked), ('parent-child', epic)}, "child ids: a node's dep and its parent link both land (real bd; a revision's tracks link and its parent do alike)", kinds)
     rc, out, err, _ = bd('a', 'create', 'no such parent', '-t', 'task', '--description', 'x', '--parent', 'sb-nope')
     check(rc != 0, 'child ids: an unknown parent fails', out)
     # Links (real bd): a blocking edge between two new work items is bd's own write; a pair with another link kind refuses before record writes.
     plan = ROOT / 'links-plan.json'
     plan.write_text(json.dumps({'nodes': [{'key': 'one', 'title': 'first new task', 'type': 'task', 'description': 'x'},
-                                          {'key': 'two', 'title': 'second new task', 'type': 'task', 'description': 'x'}],
-                                'edges': [{'from_key': 'two', 'to_key': 'one', 'type': 'blocks'}]}))
+                                          {'key': 'two', 'title': 'second new task', 'type': 'task', 'description': 'x', 'waits_on': [{'on': 'one', 'for': 'the first task'}]}],
+                                'edges': []}))
     rc, out, err, _ = run('a', 'create', '--graph', str(plan))
     made = dict(line.split() for line in out.splitlines() if len(line.split()) == 2)
     check(rc == 0 and not err.strip() and any(dep['type'] == 'blocks' and dep['depends_on_id'] == made.get('one') for dep in items('a').get(made.get('two'), {}).get('dependencies', [])),
@@ -419,16 +429,16 @@ def t_child_ids() -> None:
 
     # Record replaces the pair's previous link. Release brings the new ruling into force and supersedes the old one.
     released = decision('released ruling')
-    check(run('a', 'ruling', 'record', released, str(draft))[0] == 0 and run('a', 'ruling', 'release', released)[0] == 0 and status_of(released) == 'released',
+    check(run('a', 'ruling', 'record', released, str(draft))[0] == 0 and run('a', 'ruling', 'release', released)[0] == 0 and status_of(released) == 'in_force',
           'links: the released ruling is set up')
     newer = decision('newer ruling')
     run('a', 'link', newer, released, '--type', 'relates-to')
     rc, out, err, _ = run('a', 'ruling', 'record', newer, str(draft), '--replaces', released)
-    check(rc == 0 and status_of(newer) == 'decided' and status_of(released) == 'released'
+    check(rc == 0 and status_of(newer) == 'decided' and status_of(released) == 'in_force'
           and linked(newer, released, 'tracks') and not linked(newer, released, 'relates-to'),
           'record --replaces: recording replaces a related link with a pending revision and keeps the old ruling in force', (rc, err, out))
     rc, out, err, _ = run('a', 'ruling', 'release', newer)
-    check(rc == 0 and status_of(newer) == 'released' and status_of(released) == 'closed' and linked(released, newer, 'supersedes'),
+    check(rc == 0 and status_of(newer) == 'in_force' and status_of(released) == 'closed' and linked(released, newer, 'supersedes'),
           'record --replaces: release supersedes the old ruling', (rc, err, out))
 
     # Decided records stay pending through Record retries. Release supersedes them without releasing them first.
@@ -444,7 +454,7 @@ def t_child_ids() -> None:
     check(rc == 0 and all(status_of(old) == 'decided' and linked(newer, old, 'tracks') for old in (first, second)),
           'record --replaces: a Record retry keeps the same pending revisions', (rc, err, out))
     rc, out, err, _ = run('a', 'ruling', 'release', first, second, newer)
-    check(rc == 0 and status_of(newer) == 'released' and all(status_of(old) == 'closed' and linked(old, newer, 'supersedes') for old in (first, second)),
+    check(rc == 0 and status_of(newer) == 'in_force' and all(status_of(old) == 'closed' and linked(old, newer, 'supersedes') for old in (first, second)),
           'record --replaces: releasing the set supersedes both drafts', (rc, err, out))
 
     # Resume a release stopped after its status write and one of its supersedes.
@@ -457,8 +467,8 @@ def t_child_ids() -> None:
     rc, _, err, _ = run('a', 'ruling', 'release', first)
     check(rc != 0 and newer in err and status_of(first) == 'decided',
           'record --replaces: a pending draft cannot be released separately from its replacement', err)
-    rc, out, err, _ = raw('a', 'update', newer, '--status', 'released', '--assignee', '')
-    check(rc == 0 and status_of(newer) == 'released', 'record --replaces: the interrupted release has written its status', (rc, err, out))
+    rc, out, err, _ = raw('a', 'update', newer, '--status', 'in_force', '--assignee', '')
+    check(rc == 0 and status_of(newer) == 'in_force', 'record --replaces: the interrupted release has written its status', (rc, err, out))
     check(run('a', 'ruling', 'supersede', first, '--with', newer)[0] == 0 and status_of(first) == 'closed', 'record --replaces: the first old is superseded by hand (a stop mid-way)')
     rc, out, err, _ = run('a', 'ruling', 'release', newer)
     check(rc == 0 and all(status_of(old) == 'closed' and linked(old, newer, 'supersedes') for old in (first, second, third)),
@@ -582,19 +592,19 @@ def t_moves() -> None:
     settle('a', 'b')
     child = create('a', 'to reparent', '--parent', item, kind='task')
     for role in ('agent', 'none'):
-        for args in (('update', item, '--label', 'queue:ben'), ('update', item, '--unlabel', 'queue:anna'), ('update', child, '--parent', parent_b),
+        for args in (('update', item, '--label', 'queue:ben'), ('update', item, '--unlabel', 'queue:anna'), ('move', child, '--to', parent_b),
                      ('create', 'for ben', '-t', 'task', '--description', 'x', '-l', 'queue:ben')):
             rc, _, err, _ = bd('a', *args, role=role)
             check(rc in (1, 2) and ('only lead and solo' in err or 'board send' in err or 'board route' in err), f'{role} session refused: {" ".join(args[:2])}', err)
     for args in (('label', 'add', item, 'queue:ben'), ('sql', f"delete from labels where issue_id='{item}'")):
         rc, _, err, _ = run('a', 'bd', *args, role='agent')
         check(rc != 0 and 'read-only' in err, f'board bd refuses a write read-only: {" ".join(args[:2])}', err)
-    env_rc = subprocess.run([sys.executable, '-B', BOARD, 'update', child, '--parent', parent_b], cwd=ROOT / 'a', capture_output=True, text=True,
+    env_rc = subprocess.run([sys.executable, '-B', BOARD, 'move', child, '--to', parent_b], cwd=ROOT / 'a', capture_output=True, text=True,
                             env={**base_env('a'), 'BEADS_ACTOR': f"{session('a', 'lead')[-8:]}/worker01", 'CLAUDE_CODE_SESSION_ID': session('a', 'lead')})
     check(env_rc.returncode == 2 and 'only lead and solo' in env_rc.stderr, "a lead's worker is refused", env_rc.stderr)
     rc, _, err, _ = bd('a', 'update', item, '--add-label', 'topic:free', role='agent')
     check(rc == 0, 'agent: other label changes pass', err)
-    rc, _, err, _ = bd('a', 'update', child, '--parent', '', role='lead')
+    rc, _, err, _ = bd('a', 'move', child, '--to', parent_b, role='lead')
     check(rc == 0, 'lead: reparent passes', err)
     rc, _, err, _ = bd('a', 'label', 'add', item, 'queue:ben', role='solo')
     check(rc == 0, 'solo: moves pass', err)
@@ -872,9 +882,9 @@ def t_inbox() -> None:
     rc, out, err, _ = run('a', 'create', '--for', 'ben', 'found for ben', '-t', 'change-request', '--description', 'x', '--silent', role='agent')
     found = out.strip().splitlines()[-1] if rc == 0 else ''
     row = items('a').get(found, {})
-    check(rc == 0 and {'for:ben', 'queue:anna'} <= set(row.get('labels', [])) and row.get('assignee') == 'user',
-          'create --for: in my queue, held for my person, labelled for the other', err + out)
-    rc, _, err, _ = run('a', 'create', '--for', 'ben', 'child find', '-t', 'bug', '--description', 'x', '--parent', found, role='agent')
+    check(rc == 0 and {'for:ben', 'queue:anna'} <= set(row.get('labels', [])) and not row.get('assignee'),
+          'create --for: in my queue, labelled for the other, held by nobody', err + out)
+    rc, _, err, _ = run('a', 'create', '--for', 'ben', 'child find', '-t', 'change-request', '--description', 'x', '--parent', found, role='agent')
     check(rc == 2 and '--parent' in err, 'create --for refuses --parent', err)
     rc, _, err, _ = run('a', 'claim', found, role='agent')
     check(rc == 1, 'a held find is not claimed', err)
@@ -885,7 +895,7 @@ def t_inbox() -> None:
     rc, out, err, _ = run('a', 'send', 'ben', found)
     row = items('a')[found]
     check(rc == 0 and 'for:ben' in row['labels'] and not any(label.startswith('queue:') for label in row['labels']) and not row.get('assignee'),
-          'send: drops the queue label and the user hold, the item sits in the inbox', (err + out, row.get('labels'), row.get('assignee')))
+          'send: drops the queue label, the item sits in the inbox', (err + out, row.get('labels'), row.get('assignee')))
     settle('a', 'b')
     _, out, _, _ = run('b', 'health')
     unrouted = out.split('unrouted:')[1] if 'unrouted:' in out else ''
@@ -916,16 +926,13 @@ def t_inbox() -> None:
     rc, out, err, _ = run('b', 'claim', found, role='agent')
     check(rc == 0, 'then it claims', err)
     run('b', 'unclaim', found, role='agent')
-    # route on a held find drops for: and the user hold; another user hold stays.
-    rc, out, _, _ = run('a', 'create', '--for', 'ben', 'second find', '-t', 'bug', '--description', 'x', '--silent', role='agent')
+    # route on a find drops for:.
+    rc, out, _, _ = run('a', 'create', '--for', 'ben', 'second find', '-t', 'change-request', '--description', 'x', '--silent', role='agent')
     second = out.strip().splitlines()[-1]
-    waiting = create('a', 'waits on anna')
-    bd('a', 'update', waiting, '--assignee', 'user')
-    rc, _, err, _ = run('a', 'route', 'ben', second, waiting)
+    rc, _, err, _ = run('a', 'route', 'ben', second)
     rows = items('a')
     check(rc == 0 and not rows[second].get('assignee') and 'for:ben' not in rows[second]['labels'] and 'queue:ben' in rows[second]['labels'],
-          "route on a find: drops for: and the user hold", (err, rows[second]))
-    check(rows[waiting].get('assignee') == 'user', 'route keeps other user holds', rows[waiting].get('assignee'))
+          "route on a find: drops for:", (err, rows[second]))
     parent = create('a', 'a parent')
     kid = create('a', 'a kid', '--parent', parent)
     rc, _, err, _ = run('a', 'send', 'ben', kid)
@@ -957,8 +964,6 @@ def t_cr() -> None:
         return bd('a', 'create', title, '-t', 'task', '--description', 'x', '--silent', '--parent', cr)[1].strip().splitlines()[-1]
 
     def worker_pass(cr: str, item: str, name: str, contents: str | None = None) -> None:
-        rc, _, err, _ = run('a', 'claim', item, role='agent')
-        check(rc == 0, f'{cr}: the holding session claims its item {item}', err)
         (wt(cr) / name).write_text(name + '\n' if contents is None else contents)
         git('add', name, cwd=wt(cr))
         git('commit', '-q', '-m', f'{item}: {name}', cwd=wt(cr))
@@ -966,7 +971,15 @@ def t_cr() -> None:
         rc, out, err, _ = bd('a', 'close', item, '--reason', f'{sha}: {name} written in the pass commit', role='agent')
         check(rc == 0, f'{cr}: the item {item} closes with its pass commit', err + out)
 
+    def close_open_items(cr: str) -> None:
+        """The worker's part after a Return: its findings are items, and a hand-over or a reject needs them closed."""
+        for item in items('a').values():
+            if item['status'] != 'closed' and any(dep.get('type') == 'parent-child' and dep.get('depends_on_id') == cr for dep in item.get('dependencies') or []):
+                rc, _, err, _ = run('a', 'close', item['id'], '--reason', 'fixture: the finding is addressed', role='agent')
+                check(rc == 0, f'{cr}: item {item["id"]} closes', err)
+
     def to_review(cr: str, role: str = 'agent') -> None:
+        close_open_items(cr)
         rc, _, err, _ = run('a', 'handover', cr, 'tests: exit 0', role=role)
         check(rc == 0 and items('a')[cr]['status'] == 'in_review', f'{cr}: handed over', err)
 
@@ -992,7 +1005,7 @@ def t_cr() -> None:
           'cr: the worktree lives in <main>/.worktrees, hidden from git status by the local exclude file', exclude.read_text())
     loose = bd('a', 'create', 'loose task', '-t', 'task', '--description', 'x', '--silent')[1].strip().splitlines()[-1]
     rc, _, err, _ = run('a', 'claim', loose, role='agent')
-    check(rc == 1 and '--parent' in err, 'cr: a work item outside any change request is refused with the fix', err)
+    check(rc == 1 and 'move' in err and not items('a')[loose].get('assignee'), 'cr: a work item outside any change request is refused with the fix', err)
     rc, _, err, _ = run('a', 'handover', a, 'too early', role='agent')
     check(rc == 1 and 'items still open' in err, 'cr: hand-over refuses open items', err)
     worker_pass(a, a1, 'a.txt')
@@ -1008,7 +1021,7 @@ def t_cr() -> None:
     check(items('a')[a]['status'] == 'in_review' and meta_of(a).get('check_result') == 'pass' and meta_of(a).get('check_tip') == git('rev-parse', 'HEAD', cwd=wt(a)).strip(),
           'cr: hand-over stores the (tip, base tip) check and the review stage', meta_of(a))
     rc, out, err = review_pass(a)
-    check(rc == 0 and items('a')[a]['status'] == 'needs_acceptance', 'cr: look before stays at accept after the agent review', err + out)
+    check(rc == 0 and items('a')[a]['status'] == 'passed', 'cr: look before stays at accept after the agent review', err + out)
     rc, _, err, _ = run('a', 'cr', 'land', a, role='agent')
     check(rc == 1 and 'only a lead or solo' in err, 'cr: an agent session cannot land', err)
     tip = git('rev-parse', 'HEAD', cwd=wt(a)).strip()
@@ -1023,7 +1036,7 @@ def t_cr() -> None:
     git('commit', '-q', '-m', 'advance target after Accept', cwd=side)
     moved_base = git('rev-parse', target, cwd=side).strip()
     rc, out, err, _ = run('a', 'cr', 'land', a, '--tip', tip, '--base', main_tip)
-    check(rc == 1 and items('a')[a]['status'] == 'needs_acceptance'
+    check(rc == 1 and items('a')[a]['status'] == 'passed'
           and git('rev-parse', target, cwd=side).strip() == moved_base
           and 'advance target after Accept' in (err + out),
           'cr: a moved base refuses the seen pair and shows incoming commits without changing coverage', err + out)
@@ -1069,7 +1082,7 @@ def t_cr() -> None:
     newest_base = git('rev-parse', target, cwd=side).strip()
     rc, out, err, _ = run('a', 'cr', 'land', a_stale, '--tip', stale_seen, '--base', moved_again)
     check(rc == 1 and 'base moved since the pair you saw' in err and 'move base after refresh' in out
-          and items('a')[a_stale]['status'] == 'needs_acceptance',
+          and items('a')[a_stale]['status'] == 'passed',
           'cr: concurrent target movement invalidates the exact refreshed pins', err + out)
     rc, piped = run_piped('a', 'cr', 'land', a_stale, '--tip', stale_seen, '--base', moved_again)
     lines = piped.strip().splitlines()
@@ -1122,93 +1135,11 @@ def t_cr() -> None:
     run('a', 'claim', b, role='agent')
     worker_pass(b, b1, 'b.txt')
     to_review(b)
-    old_design = task(b, 'Ratify design: historical design')
-    raw('a', 'update', old_design, '--set-metadata', 'history=preserve', '--json')
-    rc, out, err, _ = bd('a', 'close', old_design, '--reason', 'historical design ratification', '--json')
-    check(rc == 0, f'{b}: a historical legacy ratification closes', err + out)
-    old_design_before = {key: items('a')[old_design].get(key) for key in ('title', 'status', 'metadata')}
     before = git('rev-parse', target, cwd=side).strip()
     rc, out, err = review_pass(b)
-    ratify = [row for row in items('a').values()
-              if row['title'] == 'change request B' and row['status'] == 'needs_ratification']
     check(rc == 0 and git('rev-parse', target, cwd=side).strip() != before and items('a')[b]['status'] == 'closed'
-          and len(ratify) == 1 and '.' not in ratify[0]['id'] and ratify[0]['status'] == 'needs_ratification' and ratify[0]['issue_type'] == 'task'
-          and (ratify[0].get('metadata') or {}).get('ratification') == 'landing',
-          'cr: a look-after pass lands and creates an active plain-id ratification under the closed CR', {"ratifications": ratify, "output": err + out})
-    queue_labels = [label for label in items('a')[b].get('labels', []) if label.startswith('queue:')]
-    ratify_parent = [edge.get('depends_on_id') for edge in ratify[0].get('dependencies', [])
-                     if edge.get('type') == 'parent-child'] if ratify else []
-    check(len(queue_labels) == 1 and ratify_parent == [b]
-          and not any(label.startswith('queue:') for label in ratify[0].get('labels', [])),
-          'cr: the ratification inherits its parent CR queue through the parent link',
-          {"parent_queue": queue_labels, "ratification": ratify[0] if ratify else None})
-    check({key: items('a')[old_design].get(key) for key in old_design_before} == old_design_before,
-          'cr: landing creates a distinct kind and leaves closed legacy design history unchanged', items('a')[old_design])
-    _, console, _, _ = run('a', 'console')
-    check([r['id'] for r in json.loads(console)['ratifications']] == [ratify[0]['id']] and json.loads(console)['ratifications'][0]['cr'] == b,
-          'cr: board console lists the ratification with its CR', console[-300:])
-
-    rat_id = ratify[0]['id']
-    rc, out, err, _ = run('a', 'review', 'open', rat_id, role='solo')
-    rat_wt, rat_branch, base_branch = wt(rat_id), f'ratify/{rat_id}', f'ratify-base/{rat_id}'
-    landed_tip = git('rev-parse', f'refs/heads/{rat_branch}', cwd=side).strip()
-    landed_base = meta_of(b).get('check_base_tip')
-    outgoing = git('rev-list', '@{u}..HEAD', cwd=rat_wt).splitlines() if rat_wt.exists() else []
-    expected_outgoing = git('rev-list', f'{landed_base}..{landed_tip}', cwd=side).splitlines()
-    incoming = git('rev-list', 'HEAD..@{u}', cwd=rat_wt).splitlines() if rat_wt.exists() else ['missing']
-    check(rc == 0 and git('config', f'branch.{rat_branch}.merge', cwd=side).strip() == f'refs/heads/{base_branch}'
-          and outgoing == expected_outgoing and incoming == [],
-          'ratification review tracks a board-owned landed base: outgoing is exactly landed commits, incoming is empty',
-          {'outgoing': outgoing, 'expected': expected_outgoing, 'incoming': incoming, 'config': git('config', f'branch.{rat_branch}.merge', cwd=side).strip(), 'error': err + out})
-    opened = git('rev-parse', 'HEAD', cwd=rat_wt).strip()
-    accept_comparison = create('a', 'Accept drift comparison')
-    accept_item = task(accept_comparison, 'Change a ratified file')
-    run('a', 'claim', accept_comparison, role='agent')
-    worker_pass(accept_comparison, accept_item, 'b.txt', 'Accept changes the ratified file\n')
-    to_review(accept_comparison)
-    rc, out, err = review_pass(accept_comparison)
-    check(rc == 0, 'the comparison CR reaches Accept before the target moves', err + out)
-    (side / 'b.txt').write_text('target changed landed lines\n')
-    git('add', 'b.txt', cwd=side)
-    git('commit', '-q', '-m', 'touch landed ratification lines', cwd=side)
-    (side / 'unrelated-target.txt').write_text('unrelated change\n')
-    git('add', 'unrelated-target.txt', cwd=side)
-    git('commit', '-q', '-m', 'unrelated target change', cwd=side)
-    target_tip = git('rev-parse', target, cwd=side).strip()
-    pull = subprocess.run(['git', 'merge', '--ff-only', target_tip], cwd=rat_wt, capture_output=True, text=True)
-    _, console, _, _ = run('a', 'console')
-    view = json.loads(console)
-    row = next(r for r in view['ratifications'] if r['id'] == rat_id)
-    accept = next(r for r in view['crs'] if r['id'] == accept_comparison)
-    incoming = accept['acceptance']['incomingCommits']
-    check([(c['subject'], c['crFiles']) for c in incoming] ==
-          [('touch landed ratification lines', ['b.txt']), ('unrelated target change', [])]
-          and row['stale'] == [{'sha': incoming[0]['tip'], 'subject': incoming[0]['subject']}],
-          'Accept lists all incoming commits while ratification lists only overlaps', (incoming, row['stale']))
-    rc, out, err, _ = run('a', 'cr', 'reject', accept_comparison, 'test fixture cleanup', role='solo')
-    check(rc == 0, 'the comparison CR leaves the Accept queue', err + out)
-    check(pull.returncode == 0 and row.get('review', {}).get('edited') is None and row.get('conflict') is False,
-          'a fast-forward pull of target into the review is unreadable imported work, not the user\'s edit', row)
-    git('reset', '--hard', opened, cwd=rat_wt)
-    (rat_wt / 'review-only.txt').write_text('my non-conflicting edit\n')
-    git('add', 'review-only.txt', cwd=rat_wt)
-    git('commit', '-q', '-m', 'ratification review edit', cwd=rat_wt)
-    _, console, _, _ = run('a', 'console')
-    row = next((r for r in json.loads(console)['ratifications'] if r['id'] == rat_id), {})
-    check(row.get('review', {}).get('edited') is True and row.get('conflict') is False,
-          'ratification review edits without a clash are edited but not conflict', row)
-    (rat_wt / 'b.txt').write_text('review changed landed lines\n')
-    git('add', 'b.txt', cwd=rat_wt)
-    git('commit', '-q', '-m', 'edit landed ratification lines', cwd=rat_wt)
-    _, console, _, _ = run('a', 'console')
-    row = next((r for r in json.loads(console)['ratifications'] if r['id'] == rat_id), {})
-    check(len(row.get('stale', [])) == 1 and row['stale'][0].get('subject') == 'touch landed ratification lines' and row.get('conflict') is True,
-          'ratification reports only landed-line commits as stale and detects an edited merge clash', row)
-    git('reset', '--hard', opened, cwd=rat_wt)
-    rc, out, err, _ = run('a', 'ratify', rat_id, 'yes', role='solo')
-    check(rc == 0 and not git('show-ref', '--verify', f'refs/heads/{rat_branch}', cwd=side).strip()
-          and not git('show-ref', '--verify', f'refs/heads/{base_branch}', cwd=side).strip(),
-          'ratifying removes both the review branch and its board-owned landed-base ref', err + out)
+          and (items('a')[b].get('metadata') or {}).get('outcome') == 'landed',
+          'cr: a look-after pass lands the request, closed as landed', err + out)
 
     design = create('a', 'design CR C', '--look', 'after')
     design_item = create('a', 'C design', '--parent', design, kind='design')
@@ -1240,49 +1171,38 @@ def t_cr() -> None:
     run('a', 'claim', design, role='agent')
     worker_pass(design, affected_design, 'design-rework.txt')
     to_review(design)
-    rc, out, err, _ = raw('a', 'create', 'historical design', '--type', 'task', '--description', 'x', '--metadata', '{"ratification":"design"}',
-                          '--deps', f'parent-child:{design}', '--silent')
-    check(rc == 0, 'cr: a historical design ratification is created', err + out)
-    closed_design = out.strip()
-    rc, _, err, _ = bd('a', 'close', closed_design, '--reason', 'historical design ratification', '--json')
-    check(rc == 0, f'{design}: a historical design ratification closes', err)
-    closed_design_before = {key: items('a')[closed_design].get(key) for key in ('title', 'status', 'metadata')}
     rc, out, err = review_pass(design)
-    ratifications = [row for row in items('a').values()
-                     if row['title'] == 'design CR C' and row['status'] == 'needs_ratification']
-    check(rc == 0 and items('a')[design]['status'] == 'closed' and len(ratifications) == 1
-          and (ratifications[0].get('metadata') or {}).get('ratification') == 'landing',
-          'cr: a look-after design CR lands on the reviewer pass and files only the landing ratification', err + out)
-    check({key: items('a')[closed_design].get(key) for key in closed_design_before} == closed_design_before,
-          'cr: landing preserves the closed historical design ratification', items('a')[closed_design])
+    check(rc == 0 and items('a')[design]['status'] == 'closed' and (items('a')[design].get('metadata') or {}).get('outcome') == 'landed',
+          'cr: a look-after design CR lands on the reviewer pass like any other', err + out)
 
-    finished = create('a', 'autopilot finished CR', '--status', 'needs_acceptance')
+    finished = create('a', 'autopilot finished CR', '--status', 'passed')
     rc, _, err, _ = run('a', 'cr', 'land', finished, role='autopilot')
-    check(rc != 0 and 'only a lead or solo' in err and items('a')[finished]['status'] == 'needs_acceptance',
+    check(rc != 0 and 'only a lead or solo' in err and items('a')[finished]['status'] == 'passed',
           f'{finished}: autopilot is refused a land', err)
-    waiting_finished = create('a', 'autopilot finished CR that waits', '--status', 'needs_acceptance')
+    waiting_finished = create('a', 'autopilot finished CR that waits', '--status', 'passed')
     bd('a', 'dep', 'add', waiting_finished, create('a', 'autopilot finished CR blocker', kind='task'))
     for named in (finished, waiting_finished):  # the waiting one took the named Accept override before
         rc, _, err, _ = run('a', 'claim', named, role='autopilot')
         check(rc != 0 and "user's Accept" in err and not items('a')[named].get('assignee'),
               f'{named}: autopilot is refused a named claim of a finished CR', err)
-    design_accept = create('a', 'design-only CR at Accept', '--status', 'needs_acceptance')
+    design_accept = create('a', 'design-only CR at Accept', '--status', 'passed')
     create('a', f'{design_accept} design', '--parent', design_accept, kind='design')
     rc, _, err, _ = run('a', 'claim', design_accept, role='autopilot')
     check(rc != 0 and "user's Accept" in err and not items('a')[design_accept].get('assignee'),
           f'{design_accept}: autopilot has no Accept authority over a design-only CR', err)
     rc, _, err, _ = run('a', 'return', design_accept, 'rework the design', role='autopilot')
-    check(rc != 0 and items('a')[design_accept]['status'] == 'needs_acceptance',
+    check(rc != 0 and items('a')[design_accept]['status'] == 'passed',
           f'{design_accept}: autopilot is refused the return of a design-only CR', err)
     accept_queue = create('a', 'autopilot bare Accept queue', kind='epic')
-    finished_in_queue = create('a', 'finished CR in autopilot queue', '--status', 'needs_acceptance', '--parent', accept_queue)
-    design_in_queue = create('a', 'design-only CR in autopilot queue', '--status', 'needs_acceptance', '--parent', accept_queue)
+    finished_in_queue = create('a', 'finished CR in autopilot queue', '--status', 'passed', '--parent', accept_queue)
+    design_in_queue = create('a', 'design-only CR in autopilot queue', '--status', 'passed', '--parent', accept_queue)
     create('a', f'{design_in_queue} design', '--parent', design_in_queue, kind='design')
     rc, output, err, _ = run('a', 'claim', '--root', accept_queue, role='autopilot')
     accepted_queue_items = items('a')
     check(accepted_queue_items[design_in_queue].get('assignee') is None and accepted_queue_items[finished_in_queue].get('assignee') is None,
           'autopilot bare claim takes no CR waiting for the user, a design-only one included', err + output)
     for unused_accept in (finished, waiting_finished, design_accept, finished_in_queue, design_in_queue):
+        close_open_items(unused_accept)
         rc, out, err, _ = run('a', 'cr', 'reject', unused_accept, 'test fixture cleanup', role='solo')
         check(rc == 0 and items('a')[unused_accept]['status'] == 'closed',
               f'{unused_accept}: the negative Accept fixture leaves the queue', err + out)
@@ -1345,6 +1265,9 @@ def t_cr() -> None:
     row = items('a')[e]
     check(rc == 0 and row['status'] == 'open' and not row.get('assignee') and wt(e).is_dir() and git('branch', '--list', f'cr/{e}', cwd=side).strip()
           and meta_of(e).get('review_tip') == covered, 'cr: Return keeps the prior reviewed range and leaves the worktree and branch', err)
+    rc, _, err, _ = run('a', 'cr', 'reject', e, 'the approach fails')
+    check(rc == 1 and items('a')[e]['status'] == 'open' and 'items still open' in err, 'cr: reject refuses while items are open, naming the way out', err)
+    close_open_items(e)
     rc, out, err, _ = run('a', 'cr', 'reject', e, 'the approach fails')
     check(rc == 0 and items('a')[e]['status'] == 'closed' and git('branch', '--list', f'cr/{e}', cwd=side).strip() and wt(e).is_dir(),
           'cr: reject closes it unlanded, the branch and worktree stay until confirmed', err + out)
@@ -1357,7 +1280,7 @@ def t_cr() -> None:
     direct_tip = git('rev-parse', 'HEAD', cwd=wt(f)).strip()
     direct_base_tip = git('rev-parse', target, cwd=side).strip()
     direct_meta = meta_of(f)
-    check(rc == 0 and items('a')[f]['status'] == 'needs_acceptance' and direct_meta.get('no_agent_review_reason') == 'merged changelog bullet',
+    check(rc == 0 and items('a')[f]['status'] == 'passed' and direct_meta.get('no_agent_review_reason') == 'merged changelog bullet',
           'cr: eligible no-agent handover reaches Accept with its reason', err + out)
     (side / 'f.txt').write_text('uncommitted edit that overlaps the landing\n')
     rc, out, err, _ = run('a', 'cr', 'land', f, '--tip', direct_tip, '--base', direct_base_tip)
@@ -1399,7 +1322,7 @@ def t_cr() -> None:
     rc, out, err = review_pass(h)
     after_review_tip = git('rev-parse', 'HEAD', cwd=wt(h)).strip()
     after_review_base = git('rev-parse', target, cwd=side).strip()
-    check(rc == 0 and items('a')[h]['status'] == 'needs_acceptance',
+    check(rc == 0 and items('a')[h]['status'] == 'passed',
           'cr: review passes after a moved-base Accept requests review', err + out)
     rc, out, err, _ = run('a', 'cr', 'land', h, '--tip', after_review_tip, '--base', after_review_base, role='solo')
     check(rc == 0 and items('a')[h]['status'] == 'closed' and git('rev-parse', target, cwd=side).strip() == after_review_tip,
@@ -1413,7 +1336,7 @@ def t_cr() -> None:
     rc, out, err = review_pass(i)
     prior_agent_tip = meta_of(i).get('review_tip')
     prior_agent_base = meta_of(i).get('review_base_tip')
-    check(rc == 0 and items('a')[i]['status'] == 'needs_acceptance' and prior_agent_tip,
+    check(rc == 0 and items('a')[i]['status'] == 'passed' and prior_agent_tip,
           'cr: the prior coverage route starts with a real agent review', err + out)
     rc, out, err, _ = run('a', 'return', i, 'the remaining note is documentation only', role='solo')
     check(rc == 0 and items('a')[i]['status'] == 'open', 'cr: the direct route can follow a user Return', err + out)
@@ -1421,9 +1344,10 @@ def t_cr() -> None:
     (wt(i) / 'i-doc.txt').write_text('documentation-only follow-up\n')
     git('add', 'i-doc.txt', cwd=wt(i))
     git('commit', '-q', '-m', 'documentation-only follow-up', cwd=wt(i))
+    close_open_items(i)
     rc, out, err, _ = run('a', 'handover', i, 'documentation-only follow-up', '--no-agent-review', 'documentation only', role='agent')
     check(rc == 0 and meta_of(i).get('review_tip') == prior_agent_tip
-          and meta_of(i).get('review_base_tip') == prior_agent_base and items('a')[i]['status'] == 'needs_acceptance',
+          and meta_of(i).get('review_base_tip') == prior_agent_base and items('a')[i]['status'] == 'passed',
           'cr: direct routing preserves the historical agent review pair', err + out)
     (side / 'i-base.txt').write_text('unrelated incoming base change\n')
     git('add', 'i-base.txt', cwd=side)
@@ -1431,7 +1355,7 @@ def t_cr() -> None:
     direct_i_base = git('rev-parse', target, cwd=side).strip()
     rc, out, err, _ = run('a', 'cr', 'refresh', i, role='agent')
     direct_i_tip = git('rev-parse', 'HEAD', cwd=wt(i)).strip()
-    check(rc == 0 and items('a')[i]['status'] == 'needs_acceptance' and out.count('move base for prior direct route') == 1,
+    check(rc == 0 and items('a')[i]['status'] == 'passed' and out.count('move base for prior direct route') == 1,
           'cr: refresh rebases and checks without advancing coverage', err + out)
     refreshed_i = meta_of(i)
     check(refreshed_i.get('no_agent_review_reason') == 'documentation only'
@@ -1452,18 +1376,18 @@ def t_cr() -> None:
     _, console, _, _ = run('a', 'console')
     row_i = next(one for one in json.loads(console)['crs'] if one['id'] == i)
     delta_i = row_i['acceptance']['delta'] or ''
-    check(rc == 0 and row_i['status'] == 'needs_acceptance' and not row_i['acceptance']['fullChange']
+    check(rc == 0 and row_i['status'] == 'passed' and not row_i['acceptance']['fullChange']
           and row_i['acceptance']['seenTip'] != direct_i_tip and 'documentation-only follow-up' in delta_i
           and any(line.split()[2:3] in (['!'], ['>']) for line in delta_i.splitlines()),
           'cr: a resolved no-agent series stays at Accept with its changed delta', err + out + str(row_i['acceptance']))
     rc, out, err, _ = run('a', 'cr', 'request-review', i, 'the incoming change affects this documentation', role='solo')
     check(rc == 0 and items('a')[i]['status'] == 'in_review' and meta_of(i).get('review_tip') == prior_agent_tip,
           'cr: a lead can route relevant incoming changes while preserving old agent coverage', err + out)
-    rc, out, err, _ = run('a', 'claim', i, role='agent')
+    rc, out, err, _ = run('a', 'claim', i, role='solo')  # the author's own session never reviews it
     check(rc == 0 and 'range-diff since the last covered series' in out and 'documentation-only follow-up' in out,
           'cr: the re-review sees the uncovered author follow-up', err + out)
-    rc, out, err, _ = run('a', 'handover', i, 'reviewed the uncovered documentation change', role='agent')
-    check(rc == 0 and items('a')[i]['status'] == 'needs_acceptance'
+    rc, out, err, _ = run('a', 'handover', i, 'reviewed the uncovered documentation change', role='solo')
+    check(rc == 0 and items('a')[i]['status'] == 'passed'
           and meta_of(i).get('review_tip') == direct_i_tip,
           'cr: the agent can pass the request for review after reading the uncovered range', err + out)
 
@@ -1474,7 +1398,7 @@ def t_cr() -> None:
     to_review(j)
     rc, out, err = review_pass(j)
     j_covered_tip, j_covered_base = meta_of(j).get('review_tip'), meta_of(j).get('review_base_tip')
-    check(rc == 0 and items('a')[j]['status'] == 'needs_acceptance' and j_covered_tip and j_covered_base,
+    check(rc == 0 and items('a')[j]['status'] == 'passed' and j_covered_tip and j_covered_base,
           'cr: recorded-user-edit case starts from current agent coverage', err + out)
     git('config', 'user.name', 'Test User', cwd=side)
     git('config', 'user.email', 'test@example.test', cwd=side)
@@ -1488,7 +1412,7 @@ def t_cr() -> None:
     j_moved_base = git('rev-parse', target, cwd=side).strip()
     rc, out, err, _ = run('a', 'cr', 'edits', j, '--tip', j_seen_tip, '--commit', '-m', 'record user edit', role='solo')
     j_after_edit = meta_of(j)
-    check(rc == 0 and items('a')[j]['status'] == 'needs_acceptance'
+    check(rc == 0 and items('a')[j]['status'] == 'passed'
           and j_after_edit.get('review_tip') == j_covered_tip and j_after_edit.get('review_base_tip') == j_covered_base
           and j_after_edit.get('user_seen_base_tip') == j_covered_base
           and j_after_edit.get('base_sha') == j_moved_base,
@@ -1505,7 +1429,7 @@ def t_cr() -> None:
     worker_pass(k, k1, 'k.txt')
     k_fork = meta_of(k).get('base_sha')
     rc, out, err, _ = run('a', 'handover', k, 'documentation-only change', '--no-agent-review', 'documentation only', role='agent')
-    check(rc == 0 and items('a')[k]['status'] == 'needs_acceptance' and k_fork,
+    check(rc == 0 and items('a')[k]['status'] == 'passed' and k_fork,
           'cr: first-look moved-base case begins with a user-only coverage route', err + out)
     (side / 'k-base.txt').write_text('unrelated incoming base change before first Accept look\n')
     git('add', 'k-base.txt', cwd=side)
@@ -1544,9 +1468,10 @@ def t_cr() -> None:
     dependent = create('a', 'waits for design text')
     dependent_item = task(dependent, 'consumer item')
     rc, _, err, _ = run('a', 'wait', dependent_item, '--on', design, '--for', 'read accepted design')
-    check(rc == 1 and f'board block {dependent} --on {design}' in err and not any(
-          edge['depends_on_id'] == design for edge in items('a')[dependent_item].get('dependencies') or []),
-          'cr: an open outside wait belongs on the change request', err)
+    check(rc == 0 and any(edge['depends_on_id'] == design for edge in items('a')[dependent_item].get('dependencies') or []),
+          'cr: an item may wait on an item of another request', err)
+    rc, _, err, _ = run('a', 'unlink', dependent_item, design)
+    check(rc == 0, 'cr: the item wait is unlinked again', err)
     rc, _, err, _ = run('a', 'wait', dependent, '--on', design, '--for', 'read accepted design')
     check(rc == 0, 'cr: declare a design wait on its dependent request', err)
     rc, _, err, _ = run('a', 'claim', dependent, role='agent')
@@ -1560,11 +1485,11 @@ def t_cr() -> None:
     rc, _, err, _ = run('a', 'claim', dependent, role='agent')
     check(rc == 1 and design_cr in err and not wt(dependent).exists(), 'cr: the dependent waits while the design-only CR is in review', err)
     rc, out, err = review_pass(design_cr)
-    check(rc == 0 and items('a')[design_cr]['status'] == 'needs_acceptance' and not [r for r in items('a').values() if r['status'] == 'needs_ratification'
+    check(rc == 0 and items('a')[design_cr]['status'] == 'passed' and not [r for r in items('a').values() if r['status'] == 'needs_ratification'
                                                                                        and any(e.get('depends_on_id') == design_cr for e in r.get('dependencies') or [])],
           'cr: a look-before design-only CR waits for the user\'s Accept after the reviewer pass', err + out)
     rc, _, err, _ = run('a', 'claim', dependent, role='agent')
-    check(rc == 1 and design_cr in err and not wt(dependent).exists(), 'cr: a design-only CR at Accept is no stack base: the dependent waits', err)
+    check(rc == 0 and meta_of(dependent).get('base') == design_cr, 'cr: a design-only CR at Accept is an ordinary stack base: the dependent stacks on it', err)
     design_tip = git('rev-parse', f'refs/heads/cr/{design_cr}', cwd=side).strip()
     design_base = git('rev-parse', target, cwd=side).strip()
     rc, out, err, _ = run('a', 'cr', 'land', design_cr, '--tip', design_tip, '--base', design_base)
@@ -1667,7 +1592,7 @@ def t_move() -> None:
 
 SETTINGS = {'create.require-description': 'true', 'validation.on-close': 'error', 'lint.sections.decision': 'Question,Decision,Rule owner',
             'events-journal': 'true', 'events-journal-retain-days': '30', 'no-git-ops': 'true',
-            'status.custom': 'decided:wip,released:active,in_review:wip,needs_ratification:wip,needs_acceptance:wip', 'types.custom': 'design,change-request', 'min_hash_length': '5'}
+            'status.custom': 'decided:wip,in_force:active,in_review:wip,passed:wip', 'types.custom': 'design,change-request', 'min_hash_length': '5'}
 
 
 def setting(side: str, key: str) -> str:
