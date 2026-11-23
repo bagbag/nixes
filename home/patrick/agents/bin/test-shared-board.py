@@ -1532,6 +1532,144 @@ def t_cr() -> None:
     check(rc == 1 and not wt(awaiting).exists(), 'cr: a pending item question blocks claiming the request', err)
 
 
+def t_scenarios() -> None:
+    """The board model's Verified scenarios that board code owns, through the real verbs (docs: the model's Verified scenarios).
+    1 and 15 are t_cr's (a look-after pass lands; hand-over refuses open items); 5 is t_cr's stacking and the fake suite's landing of a
+    look-after child; 6 (ratify) and 11 (filing a find) belong to nixes-cop95 and nixes-5smx7; 9 is the fake suite's milestones;
+    12 is the fake suite's gone-holder takeover; 14 has no verb; 16 is judgment. Here: 2, 3, 4, 7, 8, 10 and 13."""
+    settle('a', 'b')
+    side = ROOT / 'a'
+    target = git('symbolic-ref', '--short', 'HEAD', cwd=side).strip()
+
+    def wt(cr: str) -> Path:
+        return side / '.worktrees' / cr
+
+    def task(cr: str, title: str) -> str:
+        return bd('a', 'create', title, '-t', 'task', '--description', 'x', '--silent', '--parent', cr)[1].strip().splitlines()[-1]
+
+    def row(item: str) -> dict:
+        return items('a')[item]
+
+    def open_items(cr: str) -> list[str]:
+        return [one['id'] for one in items('a').values() if one['status'] != 'closed'
+                and any(dep.get('type') == 'parent-child' and dep.get('depends_on_id') == cr for dep in one.get('dependencies') or [])]
+
+    def work(cr: str, item: str, name: str) -> None:
+        (wt(cr) / name).write_text(name + '\n')
+        git('add', name, cwd=wt(cr))
+        git('commit', '-q', '-m', f'{item}: {name}', cwd=wt(cr))
+        rc, _, err, _ = run('a', 'close', item, '--reason', f'{item}: {name} written in a commit', role='agent')
+        check(rc == 0, f'{cr}: {item} closes', err)
+
+    def to_passed(cr: str) -> None:
+        check(run('a', 'handover', cr, 'tests: exit 0', role='agent')[0] == 0, f'{cr}: handed over')
+        check(run('a', 'claim', cr, role='solo')[0] == 0, f'{cr}: another session reviews it')
+        rc, _, err, _ = run('a', 'handover', cr, 'reviewed: fine', role='solo')
+        check(rc == 0 and row(cr)['status'] == 'passed', f'{cr}: the review passes it to Accept', err)
+
+    # 2. Look before; the user returns it with two findings: two items, fixed and closed, re-reviewed, Accepted, landed.
+    two = create('a', 'scenario 2: look before, two findings')
+    first = task(two, 'the change')
+    check(run('a', 'claim', two, role='agent')[0] == 0, 'scenario 2: claimed')
+    work(two, first, 's2.txt')
+    to_passed(two)
+    rc, out, err, _ = run('a', 'return', two, 'first finding of the Accept', 'second finding of the Accept', role='lead')
+    check(rc == 0 and row(two)['status'] == 'open' and len(open_items(two)) == 2, 'scenario 2: a Return makes one open item per finding', err + out)
+    check(run('a', 'claim', two, role='agent')[0] == 0, 'scenario 2: the worker claims it again')
+    for finding in open_items(two):
+        work(two, finding, f's2-{finding}.txt')
+    to_passed(two)
+    tip, base = git('rev-parse', f'refs/heads/cr/{two}', cwd=side).strip(), git('rev-parse', target, cwd=side).strip()
+    rc, out, err, _ = run('a', 'cr', 'land', two, '--tip', tip, '--base', base, role='lead')
+    check(rc == 0 and row(two)['status'] == 'closed' and (row(two).get('metadata') or {}).get('outcome') == 'landed'
+          and git('rev-parse', target, cwd=side).strip() == tip, 'scenario 2: the Accept lands it, closed as landed', err + out)
+
+    # 3. Item B waits on a question while A is ready: A is done, hand-over refuses on B, the worker hands the CR back, and it is ready again
+    # once the ruling is in force.
+    draft = ROOT / 'scenario-record.md'
+    draft.write_text('## Question\nq\n## Alternatives Considered\na\n## Decision\nd\n## Rationale\nr\n## Rule owner\no\n')
+    question = create('a', 'scenario 3: which way', '-t', 'decision', kind='decision')
+    three = create('a', 'scenario 3: item waits on a question')
+    a_item, b_item = task(three, 'A, ready'), task(three, 'B, waits on the question')
+    check(run('a', 'wait', b_item, '--on', question, '--for', 'the way it goes')[0] == 0, 'scenario 3: B waits on the question')
+    check(run('a', 'claim', three, role='agent')[0] == 0, 'scenario 3: the CR is ready through A')
+    work(three, a_item, 's3.txt')
+    rc, _, err, _ = run('a', 'handover', three, 'A is done', role='agent')
+    check(rc == 1 and b_item in err and row(three)['status'] == 'open', 'scenario 3: hand-over refuses while B is open, naming it', err)
+    rc, _, err, _ = run('a', 'unclaim', three, '--resume', 'B waits for the ruling', role='agent')
+    check(rc == 0 and not row(three).get('assignee'), 'scenario 3: the worker hands the CR back', err)
+    rc, _, err, _ = run('a', 'claim', three, role='agent')
+    check(rc == 1 and not row(three).get('assignee'), 'scenario 3: with only B open the CR is not ready', err)
+    check(run('a', 'claim', question)[0] == 0 and run('a', 'ruling', 'record', question, str(draft))[0] == 0
+          and run('a', 'ruling', 'release', question)[0] == 0 and row(question)['status'] == 'in_force', 'scenario 3: the ruling is in force')
+    # (Whether a wait on a question is met in force or only once planned is the lead's to settle: the model says in force, the code planned.)
+    check(run('a', 'close', question, '--reason', 'planned: the way it goes is carried into B', role='solo')[0] == 0
+          and (row(question).get('metadata') or {}).get('outcome') == 'planned', 'scenario 3: planning closes the ruling as planned')
+    rc, _, err, _ = run('a', 'claim', three, role='agent')
+    check(rc == 0 and row(three).get('assignee'), 'scenario 3: ready again once the ruling is planned', err)
+
+    # 4. A no-commit probe is a task; the question waits on it; a CR whose only item waits on the question is not ready; the probe runs on its own.
+    probe = create('a', 'scenario 4: probe', '--no-commit', kind='task')
+    stalled_q = create('a', 'scenario 4: question', '-t', 'decision', kind='decision')
+    four = create('a', 'scenario 4: only item waits on the question')
+    four_item = task(four, 'the waiting item')
+    check(run('a', 'wait', stalled_q, '--on', probe, '--for', 'the probe result')[0] == 0
+          and run('a', 'wait', four_item, '--on', stalled_q, '--for', 'the answer')[0] == 0, 'scenario 4: question waits on the probe, the item on the question')
+    rc, _, err, _ = run('a', 'claim', four, role='agent')
+    check(rc == 1 and not row(four).get('assignee'), 'scenario 4: the CR with only the waiting item is not ready', err)
+    _, listed, _, _ = run('a', 'queue')
+    check(stalled_q not in listed and probe in listed and four not in listed, 'scenario 4: only the probe is ready', listed)
+    check(run('a', 'claim', probe, role='agent')[0] == 0 and row(probe).get('assignee'), 'scenario 4: the probe runs on its own')
+    check(run('a', 'close', probe, '--reason', 'the probe found what it was after', role='agent')[0] == 0, 'scenario 4: the probe closes')
+    _, listed, _, _ = run('a', 'queue')
+    check(stalled_q in listed and four not in listed, 'scenario 4: the question is ready once the probe closed; its CR waits for the ruling', listed)
+
+    # 7 and 8. Someday and "remind me on a day" are deferred, not started by themselves; a question put off is deferred too; the user's
+    # deferral is undone only by the user (through a deciding session).
+    someday = create('a', 'scenario 7: someday dark mode', '--no-commit', kind='task')
+    remind = create('a', 'scenario 7: remind me', '--no-commit', kind='task')
+    parked = create('a', 'scenario 8: a question put off', '-t', 'decision', kind='decision')
+    check(run('a', 'defer', someday, '--reason', 'someday: nobody needs dark mode yet')[0] == 0
+          and run('a', 'defer', remind, '--reason', 'remind me', '--until', '2020-01-06')[0] == 0
+          and run('a', 'defer', parked, '--reason', 'put off without a date')[0] == 0, 'scenario 7, 8: set aside')
+    run('a', 'queue')  # a read: nothing reopens by itself
+    check(all(row(one)['status'] == 'deferred' for one in (someday, remind, parked))
+          and (row(remind).get('metadata') or {}).get('revisit') == '2020-01-06' and not (row(someday).get('metadata') or {}).get('revisit'),
+          'scenario 7, 8: they stay deferred after a read, the date only a revisit day')
+    rc, _, err, _ = run('a', 'claim', someday, role='agent')
+    check(rc == 1 and not row(someday).get('assignee'), 'scenario 7: a deferred task is not claimable', err)
+    rc, _, err, _ = run('a', 'undefer', someday, role='agent')
+    check(rc != 0 and row(someday)['status'] == 'deferred', "scenario 7: an agent session does not undo the user's deferral", err)
+    check(run('a', 'undefer', someday, remind, parked)[0] == 0 and all(row(one)['status'] == 'open' for one in (someday, remind, parked)),
+          'scenario 7, 8: a deciding session undefers for the user')
+
+    # 10. A step only the user takes is a human gate: the CR waits on it; resolving the gate frees the CR.
+    ten = create('a', 'scenario 10: deploy waits for the key rotation')
+    task(ten, 'deploy')
+    rc, out, err, _ = run('a', 'gate', 'create', '--blocks', ten, '--reason', 'rotate the API key before deploy')
+    gate = next((one['id'] for one in items('a').values() if one.get('issue_type') == 'gate' and one['status'] != 'closed'), None)
+    check(rc == 0 and gate, 'scenario 10: the gate is filed', err + out)
+    rc, _, err, _ = run('a', 'claim', ten, role='agent')
+    check(rc == 1 and not row(ten).get('assignee'), 'scenario 10: the CR waits on the gate', err)
+    rc, _, err, _ = run('a', 'gate', 'resolve', gate, role='agent')
+    check(rc != 0 and row(gate)['status'] != 'closed', 'scenario 10: a worker does not resolve the user\'s step', err)
+    check(run('a', 'gate', 'resolve', gate, '--reason', 'the key is rotated')[0] == 0 and run('a', 'claim', ten, role='agent')[0] == 0,
+          'scenario 10: resolving the gate frees the CR')
+
+    # 13. Two sessions claim at once: the compare-and-set lets exactly one win.
+    race = create('a', 'scenario 13: two claims at once')
+    task(race, 'the item')
+    results: dict[str, int] = {}
+    threads = [threading.Thread(target=lambda role=role: results.__setitem__(role, run('a', 'claim', race, role=role)[0])) for role in ('agent', 'solo')]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    holder = row(race).get('assignee')
+    check(sorted(results.values()) == [0, 1] and holder and holder.startswith(session('a', next(role for role, code in results.items() if code == 0))[-8:]),
+          'scenario 13: exactly one claim wins, and holds', (results, holder))
+
+
 def t_move() -> None:
     """board relocate (beads-setup.md#history) to a local fresh repository, a stale clone told, its rejoin, a new joiner."""
     settle('a', 'b')
@@ -1782,7 +1920,7 @@ def t_cleanup() -> None:
             shutil.rmtree(folder, ignore_errors=True)
 
 
-ORDER = ('unshared', 'share_join', 'setup', 'child_ids', 'queues', 'moves', 'inbox', 'cr', 'window', 'pull', 'manual_and_dead_wait', 'soak', 'stopped', 'held_elsewhere', 'store', 'move', 'cleanup')
+ORDER = ('unshared', 'share_join', 'setup', 'child_ids', 'queues', 'moves', 'inbox', 'cr', 'scenarios', 'window', 'pull', 'manual_and_dead_wait', 'soak', 'stopped', 'held_elsewhere', 'store', 'move', 'cleanup')
 only = {name for name in options.only.split(',') if name}
 stop_dead_servers()
 for signum in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
