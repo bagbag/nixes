@@ -6030,6 +6030,8 @@ def validate_board(root: Path) -> None:
                         code = board.main(["setup", "--look", "after"])
                     finally:
                         os.chdir(previous)
+                        # a server-mode marker left here makes a later real bd call in this fixture start a dolt server that outlives the test
+                        (beads / "metadata.json").unlink()
                 said = out.getvalue()
                 if code or "custom.board.look: before -> after\n  2 open change request(s) keep their own look" not in said or "own-a  after (equals the new default): The look is after" not in said \
                         or "keep their own view" in said:
