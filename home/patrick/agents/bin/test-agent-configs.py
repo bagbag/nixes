@@ -8025,6 +8025,23 @@ else:
         written |= {names[name] for name in re.findall(r"'--set-metadata', f[\"']\{([A-Za-z_]+)\}=", Path(root, "bin", "board").read_text(encoding="utf-8")) if name in names}  # a loop's own key is checked where it is set
         if written - board.BOARD_METADATA:
             raise ValueError(f"bin/board writes metadata keys missing from BOARD_METADATA: {sorted(written - board.BOARD_METADATA)}")
+        # No status write outside `move` (and `move_line`, its batch form): every bd call that sets a status, closes, reopens or supersedes is in them.
+        writers = {"move", "move_line"}
+        stray = []
+        for function in (node for node in ast.walk(tree) if isinstance(node, ast.FunctionDef) and node.name not in writers):
+            for call in (node for node in ast.walk(function) if isinstance(node, ast.Call)):
+                words = [arg.value for arg in call.args if isinstance(arg, ast.Constant) and isinstance(arg.value, str)]
+                if getattr(call.func, "id", None) in ("bd", "bd_checked") and words[:1] and words[0] != "list" \
+                        and (words[0] in ("close", "reopen", "supersede", "defer", "undefer") or "--status" in words or "--defer" in words):
+                    stray.append(f"{function.name}:{call.lineno} bd {' '.join(words[:3])}")
+            for text in (node for node in ast.walk(function) if isinstance(node, ast.Constant) and isinstance(node.value, str)):
+                if re.search(r"\bupdate \S+ status=", text.value):
+                    stray.append(f"{function.name}:{text.lineno} batch status write")
+        for source in sorted((root / "bin" / "protocol_engine").glob("*.py")) + [root / "bin" / "protocol"]:
+            if re.search(r"--status|\bupdate \S+ status=", source.read_text(encoding="utf-8")):
+                stray.append(f"{source.name} writes a status itself")
+        if stray:
+            raise ValueError(f"every status write goes through move() (bin/board): {stray}")
         # bd edit blocks on an editor: refused in one line naming the way on; a user's own --readonly is just bd's flag.
         result, seen = run_board("bd", "edit", "x")
         if result.returncode != 2 or seen or "agents board field export <id>" not in result.stderr or len(result.stderr.strip().splitlines()) != 1:
