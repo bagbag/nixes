@@ -604,6 +604,15 @@ def t_moves() -> None:
     check(env_rc.returncode == 2 and 'only lead and solo' in env_rc.stderr, "a lead's worker is refused", env_rc.stderr)
     rc, _, err, _ = bd('a', 'update', item, '--add-label', 'topic:free', role='agent')
     check(rc == 0, 'agent: other label changes pass', err)
+    plan = ROOT / 'label-plan.json'
+    plan.write_text(json.dumps({'nodes': [{'key': 'n', 'title': 'loose label', 'description': 'x', 'type': 'task', 'labels': ['loose']}]}))
+    for what, args in (('create --label', ('create', 'loose label', '-t', 'task', '--description', 'x', '--label', 'loose')),
+                       ('create --graph', ('create', '--graph', str(plan))), ('update --label', ('update', item, '--label', 'human')),
+                       ('update --label', ('update', item, '--label', 'loose'))):
+        rc, _, err, _ = run('a', *args, role='agent')
+        check(rc != 0 and 'a label starts with' in err, f'a label outside the shapes check reports is refused: {what}', err)
+    rc, _, err, _ = run('a', 'update', item, '--unlabel', 'loose', role='agent')
+    check(rc == 0, 'a label of any shape can still be removed', err)
     rc, _, err, _ = bd('a', 'move', child, '--to', parent_b, role='lead')
     check(rc == 0, 'lead: reparent passes', err)
     rc, _, err, _ = bd('a', 'label', 'add', item, 'queue:ben', role='solo')

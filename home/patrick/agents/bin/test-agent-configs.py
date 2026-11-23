@@ -7833,14 +7833,14 @@ else:
         for name, text in (("desc.md", "What and where.\n"), ("design.md", "The design.\n"), ("accept.md", "Done when it works.\n"), ("long.md", "x" * 2001)):
             files[name].write_text(text, encoding="utf-8")
         # the flags describe one node of a graph plan; --deps waits-on: (or a bare id) makes the new item wait on that one
-        result, calls = run_fake("create", "Login fails", "-t", "decision", "-p", "1", "--label", "a,b", "-l", "c", "--description-file", str(files["desc.md"]),
+        result, calls = run_fake("create", "Login fails", "-t", "decision", "-p", "1", "--label", "topic:a,topic:b", "-l", "topic:c", "--description-file", str(files["desc.md"]),
                                  "--design-file", str(files["design.md"]), "--acceptance-file", str(files["accept.md"]), "--deps", "relates-to:fx-x",
                                  "--deps", "waits-on:fx-y,waits-on:fx-a", "--holds", "none", "--parent", "fx-p")
         made = writes_of(calls, "create")
         plan = made[0]["plan"] if made else {}
         node = (plan.get("nodes") or [{}])[0]
         want = {"key": "item", "title": "Login fails", "type": "decision", "priority": 1, "description": "What and where.\n",
-                "design": "The design.\n", "acceptance_criteria": "Done when it works.\n", "labels": ["a", "b", "c", "topic:t"], "parent_id": "fx-p",
+                "design": "The design.\n", "acceptance_criteria": "Done when it works.\n", "labels": ["topic:a", "topic:b", "topic:c", "topic:t"], "parent_id": "fx-p",
                 "deps": [{"target": "fx-x", "type": "relates-to"}, {"target": "fx-y", "type": "blocks"}, {"target": "fx-a", "type": "blocks"}]}
         if result.returncode != 0 or len(made) != 1 or made[0]["args"][:2] != ["create", "--graph"] or "--json" not in made[0]["args"] or node != want \
                 or plan.get("edges") or result.stdout != "fx-item-new\nfx-item-new waits on fx-y\nfx-item-new waits on fx-a\n":

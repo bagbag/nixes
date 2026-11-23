@@ -2336,7 +2336,7 @@ def deviations(board: Board, root: str | None) -> list[tuple[str, str, str]]:
                 fix = f'agents board check --fix makes it {LEGACY_LINKS[link]}' if link in LEGACY_LINKS else f'agents board unlink {item_id} {target}'
                 found.append((item_id, 'unknown-link', f'link {link} to {target}: {fix}'))
         for label in issue.get('labels') or []:
-            if label not in LIFECYCLE_LABELS and not label.startswith(LABEL_PREFIXES):
+            if label_shape(label) == 'label-form':
                 found.append((item_id, 'label-form', f'label {label}: agents board update {item_id} --unlabel {label} --label topic:{label} (or drop it)'))
     seen_cycles: set[frozenset] = set()
     for issue in board.scoped(root):
@@ -5952,6 +5952,20 @@ def label_refusal(labels: list[str]) -> str | None:
             'agents board route <person> <id> (lead), a find for another person is filed with agents board create --for <person>') if bad else None
 
 
+def label_shape(label: str) -> str | None:
+    """The one owner of a label's shape: the `check` class it falls in, None when it is well formed."""
+    if label in LIFECYCLE_LABELS:
+        return 'label-status'
+    return None if label.startswith(LABEL_PREFIXES) else 'label-form'
+
+
+def label_shape_refusal(labels: list[str]) -> str | None:
+    """Labels `check` would report, refused where they are added (create --label and plan files, update --label); removing one stays open."""
+    bad = [label for label in labels if label_shape(label)]
+    return (f"{', '.join(bad)}: a label starts with {', '.join(LABEL_PREFIXES)}, and a status is never a label ({', '.join(LIFECYCLE_LABELS)}); "
+            'a loose word is topic:<word>') if bad else None
+
+
 def parent_move_refusal(board: Board, ids: list[str], target: str | None, *,
                         planned_crs: dict[str, str] | None = None, new: dict[str, str] | None = None) -> str | None:
     """Why this reparenting is refused. A change request keeps its place; a work item of one (it is that request's membership, and its
@@ -6661,7 +6675,7 @@ def update_command(board: Board, args) -> int:
     if args.priority is not None:
         changes += ['--priority', str(args.priority)]
     labels, unlabels = args.label, args.unlabel
-    if refusal := label_refusal([*labels, *unlabels]) or kind_refusal(labels):
+    if refusal := label_refusal([*labels, *unlabels]) or kind_refusal(labels) or label_shape_refusal(labels):
         raise BoardError(refusal)
     changes += [flag for label in labels for flag in ('--add-label', label)] + [flag for label in unlabels for flag in ('--remove-label', label)]
     changes += setting_changes(board, args)
@@ -7685,7 +7699,8 @@ def create_command(args) -> int:
     nodes = plan['nodes']
     if refusal := type_refusal([str(node['type']) for node in nodes if node.get('type')]):
         raise BoardError(refusal)
-    if refusal := kind_refusal([label for node in nodes for label in node.get('labels') or []]):
+    given = [label for node in nodes for label in node.get('labels') or []]
+    if refusal := kind_refusal(given) or label_shape_refusal(given):
         raise BoardError(refusal)
     if any(node.get('status') in ('closed', 'done') for node in nodes):
         raise BoardError('an item is not created closed: agents board close <id> --reason "<why>" closes it')
