@@ -119,7 +119,8 @@ WRITE_RETRY_ERROR = 'foreign key conflicts'
 STORE_WARN_BYTES = 1 << 30
 STORE_CHECK_SECONDS = 3600
 QUEUE_PREFIX = 'queue:'
-MOVERS = ('lead', 'solo')  # roles that may change an item's queue
+MOVERS = ('lead', 'solo')  # roles that may change an item's queue and take an Accept
+DECIDING_ROLES = ('lead', 'solo', 'autopilot')  # a deciding session (role/SKILL.md); what autopilot may not do (accept, ratify) is the unattended protocol's, not the table's
 FOR_PREFIX = 'for:'  # an item filed for a person: unclaimable, held for its creator's check, then in that person's inbox
 # The mark that makes a board shared, in .beads: local, so an unshared board's check costs no bd call, and written only after
 # share's first push or join's clone, so a stray Dolt remote shares nothing.
@@ -293,10 +294,11 @@ STATES = {CR_GROUP: ('open', 'in_review', 'passed', 'deferred', 'closed'), WORK_
 # `who` and `guards` are what `move` enforces, in the vocabulary of WHO_WORDS and GUARDS: who is a list of alternatives, one of
 # which must hold; an alternative is parts joined by '+', all of which must hold. What a command checks before it reaches `move`
 # (its pull, the worker cap, the check pair, the review) stays with the command and is not in the table.
-WHO_WORDS = {'anyone': 'anyone', 'agent': 'an agent session', 'user': 'the user', 'deciding': 'a deciding session (lead or solo)',
+WHO_WORDS = {'anyone': 'anyone', 'agent': 'an agent session', 'user': 'the user', 'deciding': 'a deciding session (lead, solo or autopilot)',
              'holder': "the holder's session (or anyone while it is unheld)", 'gone': "once the holder's session is gone, or the user agrees (--agreed)",
              'non-author': 'a session that did not hand it over', 'planner': 'a session pulling plan',
-             'deferrer': "the deferrer's side (a user's deferral: the user or a deciding session)"}
+             'deferrer': "the deferrer's side (a user's deferral, or one without a deferrer: the user or a deciding session)",
+             'holding': 'the session holding it', 'unheld': 'while it is unheld'}
 
 
 class Move(NamedTuple):
@@ -315,7 +317,11 @@ class Move(NamedTuple):
 
 _ANY_CR = ('open', 'in_review', 'passed')
 FREE_HOLD = ('holder', 'user', 'deciding+gone')  # freeing a hold: its own session, the user, or a deciding session once the holder is gone
-ITEM_WRITE = FREE_HOLD  # an item has no hold of its own: its change request's holder decides who writes it (item_write_refusal)
+DEFER = ('planner+holder', 'deciding', 'user')  # setting aside: a session pulling plan (its own deferrals), a deciding session, the user
+# An item has no hold of its own: its change request's holder decides who writes it (item_write_refusal). A change request nobody holds is
+# claimed first; only the user or a deciding session write its items without that. A wait is also written by a deciding session whoever holds.
+ITEM_WRITE = ('holding', 'user', 'deciding+unheld', 'deciding+gone')
+ITEM_WAIT = (*ITEM_WRITE, 'deciding')
 DECIDING_CLOSE = ('deciding+holder', 'deciding+gone', 'user')
 MOVES = (
     Move('claim', CR_GROUP, ('open',), '=', '-', 'you', ('agent',)),
@@ -332,7 +338,7 @@ MOVES = (
     Move('landing', CR_GROUP, _ANY_CR, 'closed', '*', '-', ('anyone',), (), ('landed',)),  # the target already holds the tip: the command checked before the fast-forward
     Move('cr reject', CR_GROUP, (*_ANY_CR, 'deferred'), 'closed', '*', '-', ('deciding', 'user'), ('reason', 'items-closed'), ('dropped',)),
     Move('base rejected', CR_GROUP, _ANY_CR, 'open', '*', '-', ('anyone',)),
-    Move('defer', CR_GROUP, ('open',), 'deferred', '*', '-', FREE_HOLD),
+    Move('defer', CR_GROUP, ('open',), 'deferred', '*', '-', DEFER),
     Move('undefer', CR_GROUP, ('deferred',), 'open', '-', '-', ('deferrer',)),
     Move('claim', WORK_GROUP, ('open',), '=', '-', 'you', ('agent',)),
     Move('take', WORK_GROUP, ('open',), '=', '*', 'you', ('agent+holder', 'agent+deciding+gone')),
@@ -341,9 +347,9 @@ MOVES = (
     Move('reopen', WORK_GROUP, ('closed',), 'open', '*', '-', ('anyone',)),
     Move('close', ITEM_GROUP, ('open',), 'closed', '*', '-', ITEM_WRITE, ('reason',), ('done', 'dropped')),
     Move('reopen', ITEM_GROUP, ('closed',), 'open', '*', '-', ITEM_WRITE),
-    Move('defer', WORK_GROUP, ('open',), 'deferred', '*', '-', FREE_HOLD),
+    Move('defer', WORK_GROUP, ('open',), 'deferred', '*', '-', DEFER),
     Move('undefer', WORK_GROUP, ('deferred',), 'open', '-', '-', ('deferrer',)),
-    Move('defer', 'decision', ('open',), 'deferred', '*', '-', FREE_HOLD),
+    Move('defer', 'decision', ('open',), 'deferred', '*', '-', DEFER),
     Move('undefer', 'decision', ('deferred',), 'open', '*', '-', ('deferrer',)),
     Move('claim', 'decision', ('open', 'decided'), '=', '-', 'you', ('agent',)),  # which sessions a bare claim gives a question is the pull (ROLE_KINDS)
     Move('claim', 'decision', ('in_force',), '=', '-', 'you', ('planner',)),
@@ -353,16 +359,16 @@ MOVES = (
     Move('ruling record --unratified', 'decision', ('open', 'decided', 'in_force'), 'in_force', 'you', '=', ('holder',)),
     Move('ruling release', 'decision', ('decided',), 'in_force', '*', '-', ('deciding', 'user')),
     Move('supersede', 'decision', ('open', 'decided', 'in_force', 'closed'), 'closed', '*', '-', ('deciding', 'user'), (), ('superseded',)),
-    Move('close', 'decision', ('open', 'decided'), 'closed', '*', '-', DECIDING_CLOSE, ('reason',), ('dropped',)),
-    Move('close', 'decision', ('in_force',), 'closed', '*', '-', DECIDING_CLOSE, ('reason',), ('planned',)),
+    Move('close', 'decision', ('open', 'decided'), 'closed', '*', '-', DECIDING_CLOSE, ('reason',), ('dropped', 'superseded')),  # superseded: another ruling answered it
+    Move('close', 'decision', ('in_force',), 'closed', '*', '-', ('planner+holding', *DECIDING_CLOSE), ('reason',), ('planned',)),  # planning closes the ruling it claimed
     Move('claim', 'milestone', ('open',), '=', '-', 'you', ('deciding',)),
     Move('take', 'milestone', ('open',), '=', '*', 'you', ('deciding+holder', 'deciding+gone')),
     Move('unclaim', 'milestone', ('open',), '=', '*', '-', FREE_HOLD),
-    Move('close', 'milestone', ('open',), 'closed', '*', '-', DECIDING_CLOSE, ('reason',)),
-    Move('reopen', 'milestone', ('closed',), 'open', '*', '-', ('anyone',)),
-    Move('reopen', 'decision', ('closed',), 'open', '*', '-', ('anyone',), ('not-superseded',)),
-    Move('close', 'gate', ('open',), 'closed', '*', '-', ('deciding', 'user'), ('reason',)),
-    Move('reopen', 'gate', ('closed',), 'open', '*', '-', ('anyone',)),
+    Move('close', 'milestone', ('open',), 'closed', '*', '-', DECIDING_CLOSE, ('reason',), ('accepted',)),
+    Move('reopen', 'milestone', ('closed',), 'open', '*', '-', DECIDING_CLOSE),
+    Move('reopen', 'decision', ('closed',), 'open', '*', '-', DECIDING_CLOSE, ('not-superseded',)),
+    Move('close', 'gate', ('open',), 'closed', '*', '-', ('deciding', 'user'), ('reason',), ('resolved',)),
+    Move('reopen', 'gate', ('closed',), 'open', '*', '-', ('deciding', 'user')),
 )
 
 
@@ -404,18 +410,22 @@ def authority_part(part: str, issue: dict, actor: str | None, board: 'Board', ag
         return True
     if part == 'holder':
         return not current or session_actor(current) == session
+    if part == 'holding':
+        return bool(current) and session_actor(current) == session
+    if part == 'unheld':
+        return not current
     if part == 'non-author':
         return self_review_refusal(issue, actor) is None
     if part == 'gone':
         return bool(current) and (agreed or holder_gone(board, board.registry(), current))
     entry = board.registry().get(session)
     if part == 'deciding':
-        return actor == session and bool(entry) and entry.get('role') in MOVERS
+        return actor == session and bool(entry) and entry.get('role') in DECIDING_ROLES
     if part == 'planner':
         return bool(entry) and 'plan' in session_kinds(entry)
     if part == 'deferrer':
-        by = meta(issue).get(DEFERRED_BY)
-        return (by != 'user' and (not by or by == session)) or authority_part('deciding', issue, actor, board)
+        by = meta(issue).get(DEFERRED_BY)  # a deferral that records no deferrer (made before the record, or by raw bd) is the user's
+        return (bool(by) and by != 'user' and by == session) or authority_part('deciding', issue, actor, board)
     raise BoardError(f'internal: unknown who part {part}')
 
 
@@ -426,21 +436,26 @@ def authority_refusal(issue: dict, row: 'Move', command: str, actor: str | None,
     deck = board if board is not None else Board([])
     if any(all(authority_part(part, issue, actor, deck, agreed) for part in alternative.split('+')) for alternative in row.who):
         return None
-    allowed = ' or '.join(' '.join(WHO_WORDS[part] for part in alternative.split('+')) for alternative in row.who)
+    allowed = ' or '.join(' and '.join(WHO_WORDS[part] for part in alternative.split('+')) for alternative in row.who)
     holder = issue.get('assignee')
     return f"{issue['id']}: {command} is for {allowed}" + (f"; it is held by {holder}" if holder else '')
 
 
 def item_write_refusal(board: 'Board | None', issue: dict, command: str, actor: str | None) -> str | None:
-    """Why the caller may not write this item: the Authority check of `move`, read on the change request that holds it (ITEM_WRITE). A change
-    request nobody holds leaves the item to anyone, as `holder` does for any unheld record."""
+    """Why the caller may not write this item: the Authority check of `move`, read on the change request that holds it (ITEM_WRITE, ITEM_WAIT
+    for a wait). A change request nobody holds is claimed first, unless the user or a deciding session writes."""
     if board is None or group_of(board, issue) != ITEM_GROUP:
         return None
     cr_id = board.cr_of(issue['id'])
     if not cr_id or cr_id not in board.by_id:
         return None
-    refusal = authority_refusal(board.by_id[cr_id], Move(command, ITEM_GROUP, ('open',), '=', '*', '=', ITEM_WRITE), command, actor, board)
-    return None if refusal is None else (f"{issue['id']}: " + refusal.removeprefix(f'{cr_id}: ')).replace('; it is held by', f'; its change request {cr_id} is held by')
+    cr = board.by_id[cr_id]
+    row = Move(command, ITEM_GROUP, ('open',), '=', '*', '=', ITEM_WAIT if command == 'wait' else ITEM_WRITE)
+    refusal = authority_refusal(cr, row, command, actor, board)
+    if refusal is None:
+        return None
+    message = (f"{issue['id']}: " + refusal.removeprefix(f'{cr_id}: ')).replace('; it is held by', f'; its change request {cr_id} is held by')
+    return message if cr.get('assignee') else f'{message}; nobody holds its change request {cr_id}: claim it first (agents board claim {cr_id})'
 
 
 GUARDS = {
@@ -475,35 +490,47 @@ def move(issue: dict, command: str, *, to: str | None = None, actor: str | None 
             raise BoardError(f"{issue['id']}: {command} records {' or '.join(row.outcomes)}, not {outcome}")
         fields = {**(fields or {}), 'outcome': outcome or row.outcomes[0]}
     current = issue.get('assignee') or ''
-    refuse_held(issue, row, command, actor)
-    refusal = item_write_refusal(board, issue, command, actor or derived_actor()) if group == ITEM_GROUP \
-        else authority_refusal(issue, row, command, actor or derived_actor(), board, agreed)
+    refusal = None
+    try:
+        refuse_held(issue, row, command, actor)
+    except BoardError as error:
+        refusal = str(error)
+    if not refusal:
+        refusal = item_write_refusal(board, issue, command, actor or derived_actor()) if group == ITEM_GROUP \
+            else authority_refusal(issue, row, command, actor or derived_actor(), board, agreed)
     for name in row.guards if not refusal else ():
         if why := GUARDS[name](issue, board, reason):
             refusal = why if why.startswith(f"{issue['id']}:") else f"{issue['id']}: {command} refused: {why}"
             break
+
+    def refused(why: str) -> subprocess.CompletedProcess:
+        if check:
+            raise BoardError(why)
+        return subprocess.CompletedProcess(['move', command, issue['id']], 1, '', why)  # a caller that reads the result sees every refusal as a failed write
+
     if refusal:
-        if not check:
-            return subprocess.CompletedProcess(['move', command, issue['id']], 1, '', refusal)  # a caller that reads the result sees it as a failed write
-        raise BoardError(refusal)
+        return refused(refusal)
     target = issue['status'] if row.to == '=' else row.to
     holder_after = '' if row.holds == '-' else (actor or caller()) if row.holds == 'you' else current
     if group == CR_GROUP and row.holds == '-' and HOLD in meta(issue) and target != 'closed':
         fields = {**(fields or {}), HOLD: None}  # a released hold leaves no kind behind
+    if issue['status'] == 'closed' and target != 'closed' and 'outcome' in meta(issue):
+        fields = {**(fields or {}), 'outcome': None}  # an open record carries no outcome
     meta_args = [arg for key, value in (fields or {}).items()
                  for arg in (('--unset-metadata', key) if value is None else ('--set-metadata', f'{key}={value}'))]
     if target == 'closed':
         guard = bd('update', issue['id'], '--assignee', current, '--if-assignee', current, '--if-status', issue['status'], *meta_args, '--json')
-        if guard.returncode == 13:
-            raise BoardError(f"{issue['id']}: {command} refused, it changed meanwhile: {bd_message(guard)}")
         if guard.returncode != 0:
-            raise BoardError(f"{issue['id']}: {command} failed: {bd_message(guard)}")
+            return refused(f"{issue['id']}: {command} refused, it changed meanwhile: {bd_message(guard)}" if guard.returncode == 13
+                           else f"{issue['id']}: {command} failed: {bd_message(guard)}")
         if via == 'supersede':
             result = bd('supersede', issue['id'], '--with', reason or '')
         else:
             result = bd('close', issue['id'], '--reason', reason or '', *(['--force'] if force else []))
+        if result.returncode != 0 and 'outcome' in (fields or {}):  # bd refused the close (validation, open children): the record stays open and carries no outcome
+            bd('update', issue['id'], '--unset-metadata', 'outcome', '--if-status', issue['status'], '--json')
     else:
-        args = ['update', issue['id'], *(['--status', target] if target != issue['status'] else []),
+        args = ['update', issue['id'], *(['--status', target] if row.to != '=' else []),
                 *(['--assignee', holder_after] if holder_after != current or row.holds == '-' else []),
                 '--if-assignee', current, '--if-status', issue['status'], *meta_args, '--json']
         result = bd(*args)
@@ -517,19 +544,6 @@ def move(issue: dict, command: str, *, to: str | None = None, actor: str | None 
             for key, value in fields.items():
                 issue['metadata'].pop(key, None) if value is None else issue['metadata'].__setitem__(key, str(value))
     return result
-
-
-def move_line(issue: dict, command: str, *, to: str | None = None) -> str:  # decisions only: no item/task split
-    """The `update` line of a bd batch for a move whose status write shares a transaction with other writes (ruling record and
-    release): the same row checks as `move`, without the compare-and-set a batch cannot carry."""
-    group = GROUP_OF.get(issue.get('issue_type'))
-    rows = [m for m in MOVES if m.command == command and m.group == group and issue['status'] in m.frm and (to is None or m.to == to)]
-    if len(rows) != 1:
-        raise BoardError(f"{issue['id']}: {command} does not apply to a {group} that is {issue['status']}")
-    refuse_held(issue, rows[0], command, None)
-    if refusal := authority_refusal(issue, rows[0], command, derived_actor(), None):
-        raise BoardError(refusal)
-    return f"update {issue['id']} status={rows[0].to}" + (' assignee=""' if rows[0].holds == '-' else '')
 
 
 # Shared boards: skills/shared/beads-setup.md#shared-boards.
@@ -935,6 +949,11 @@ def session_role(board: 'Board | None' = None) -> str | None:
 def may_move(board: 'Board | None' = None) -> bool:
     """A person's terminal has no actor and isn't limited; a session with no registered role and a worker count as agents."""
     return not derived_actor() or session_role(board) in MOVERS
+
+
+def may_decide(board: 'Board | None' = None) -> bool:
+    """A person's terminal, or a deciding session (lead, solo, autopilot)."""
+    return not derived_actor() or session_role(board) in DECIDING_ROLES
 
 
 def autopilot_barred(board: Board) -> bool:
@@ -6438,7 +6457,9 @@ def record(board: Board, args) -> int:
         confirmation = unratified_confirmation(board, issue, reversal)
     bd_checked('update', args.id, '--body-file', args.file, '--json')
     # Revision links before the supersedes: `ruling release` refuses an old a live record revises, so a stop before the end leaves a visible state the rerun finishes.
-    bd_checked('batch', '-m', f'board ruling record {args.id}', '--json', stdin='\n'.join([move_line(issue, 'ruling record --unratified' if args.unratified else 'ruling record'), *operations]) + '\n')
+    move(issue, 'ruling record --unratified' if args.unratified else 'ruling record', board=board)  # the status by compare-and-set, then the links
+    if operations:
+        bd_checked('batch', '-m', f'board ruling record {args.id}', '--json', stdin='\n'.join(operations) + '\n')
     lint = json.loads(bd_checked('lint', args.id, '--json') or '{}')
     unlinted = [', '.join(result.get('missing') or []) for result in lint.get('results') or [] if result.get('missing')]
     if unlinted:
@@ -6451,7 +6472,6 @@ def record(board: Board, args) -> int:
         _, lost = supersede_pair(board, old, args.id, None, actor, carry=True, closing=frozenset(closing))
         failed += lost
     if args.unratified:  # unclaim last, so any earlier stop leaves the record held and rerunnable
-        issue['status'] = status
         move(issue, 'unclaim', board=board)
     print(f"recorded {args.id} ({status.replace('_', ' ')}): {issue.get('title', '')}")
     if confirmation:
@@ -6602,6 +6622,8 @@ def wait_one(board: Board, item_id: str, blocker: str, reason: str | None, actor
     keeps its worktree."""
     issue = board.by_id[item_id]
     record = board.by_id.get(blocker, {})
+    if refusal := item_write_refusal(board, issue, 'wait', actor or None):  # every writer of a wait, a ruling's holds and supersede included
+        raise BoardError(refusal)
     if not reason and not reason_optional(issue, record):
         raise BoardError(f'{item_id}: a work item waits for an input: agents board wait {item_id} --on {blocker} --for "<the input it uses>" '
                          '(optional only when the target is a decision or a gate, or the waiting item a milestone)')
@@ -6656,9 +6678,6 @@ def wait_command(board: Board, args) -> int:
         raise BoardError(f'unknown target {args.target}')
     if args.for_:
         refuse_long_comment(wait_comment(args.target, args.for_))
-    for item_id in args.ids:  # only the verb: a ruling that holds items (revise --holds, supersede) is the question's effect, not a session editing the item
-        if refusal := item_write_refusal(board, board.by_id.get(item_id, {}), 'wait', actor):
-            raise BoardError(refusal)
     _, failed = wait_items(board, args.ids, args.target, args.for_, actor)
     return 1 if failed else 0
 
@@ -6829,7 +6848,7 @@ def defer_command(args) -> int:
         raise BoardError(f'--until takes a day, YYYY-MM-DD: {args.until}')
     board = Board.load('status')
     known_items(board, args.ids)
-    by = 'user' if may_move(board) else session_actor(caller())  # a deciding session defers for the user
+    by = 'user' if may_decide(board) else session_actor(caller())  # a deciding session defers for the user
     for item_id in args.ids:
         waiting = deferred_waiters(board, item_id, set(args.ids))
         if waiting:
@@ -6845,9 +6864,6 @@ def undefer_command(args) -> int:
     board = Board.load('status')
     known_items(board, args.ids)
     for item_id in args.ids:
-        by = meta(board.by_id[item_id]).get(DEFERRED_BY)
-        if by == 'user' and not may_move(board):
-            raise BoardError(f"{item_id}: the user deferred it; only the user, through a deciding session, undefers it")
         move(board.by_id[item_id], 'undefer', board=board, fields={DEFERRED_BY: None, REVISIT: None})
         print(f'{item_id}: undeferred')
     return 0
@@ -6965,9 +6981,8 @@ def release(board: Board, args) -> int:
         if unlinted:
             raise BoardError('release refused, record text fails bd lint (write the record first):\n  ' + '\n  '.join(unlinted))
         # An in-force ruling keeps blocking the items it changes; planning closes it and unblocks them.
-        operations = [move_line(issue, 'ruling release') for issue in pending]
-        bd_checked('batch', '-m', f"board ruling release {' '.join(issue['id'] for issue in pending)}", '--json',
-                   stdin='\n'.join(operations) + '\n')
+        for issue in pending:  # one compare-and-set each; a stop leaves the rest decided, and a rerun releases them. A copy: the snapshot keeps the status the waits below were judged on
+            move(dict(issue), 'ruling release', board=board)
     for old in taking:
         take(board, argparse.Namespace(ids=[old], force=None, agreed=None))
     returned, failed = [], []
@@ -6998,7 +7013,8 @@ def close_answered(board: Board, closes: list[tuple[str, list[str]]], released: 
             if any(b not in released and b not in closed for b in board.unsettled_blockers(question)):
                 continue
             pending.remove((question, records))
-            result = move(board.by_id[question], 'close', board=board, reason=f"Answered by released {', '.join(records)}", force=bool(blockers), check=False)
+            result = move(board.by_id[question], 'close', board=board, reason=f"Answered by released {', '.join(records)}", force=bool(blockers), check=False,
+                          outcome='superseded')
             if result.returncode != 0:
                 print(f'{question}: not closed: {(result.stderr or result.stdout).strip()}', file=sys.stderr)
                 continue

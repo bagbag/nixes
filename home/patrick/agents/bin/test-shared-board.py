@@ -980,11 +980,12 @@ def t_cr() -> None:
         rc, out, err, _ = bd('a', 'close', item, '--reason', f'{sha}: {name} written in the pass commit', role='agent')
         check(rc == 0, f'{cr}: the item {item} closes with its pass commit', err + out)
 
-    def close_open_items(cr: str) -> None:
-        """The worker's part after a Return: its findings are items, and a hand-over or a reject needs them closed."""
+    def close_open_items(cr: str, role: str = 'agent') -> None:
+        """The worker's part after a Return: its findings are items, and a hand-over or a reject needs them closed. The worker holds the request;
+        a request nobody holds has its items closed by a deciding session."""
         for item in items('a').values():
             if item['status'] != 'closed' and any(dep.get('type') == 'parent-child' and dep.get('depends_on_id') == cr for dep in item.get('dependencies') or []):
-                rc, _, err, _ = run('a', 'close', item['id'], '--reason', 'fixture: the finding is addressed', role='agent')
+                rc, _, err, _ = run('a', 'close', item['id'], '--reason', 'fixture: the finding is addressed', role=role)
                 check(rc == 0, f'{cr}: item {item["id"]} closes', err)
 
     def to_review(cr: str, role: str = 'agent') -> None:
@@ -1211,7 +1212,7 @@ def t_cr() -> None:
     check(accepted_queue_items[design_in_queue].get('assignee') is None and accepted_queue_items[finished_in_queue].get('assignee') is None,
           'autopilot bare claim takes no CR waiting for the user, a design-only one included', err + output)
     for unused_accept in (finished, waiting_finished, design_accept, finished_in_queue, design_in_queue):
-        close_open_items(unused_accept)
+        close_open_items(unused_accept, role='solo')
         rc, out, err, _ = run('a', 'cr', 'reject', unused_accept, 'test fixture cleanup', role='solo')
         check(rc == 0 and items('a')[unused_accept]['status'] == 'closed',
               f'{unused_accept}: the negative Accept fixture leaves the queue', err + out)
@@ -1276,7 +1277,7 @@ def t_cr() -> None:
           and meta_of(e).get('review_tip') == covered, 'cr: Return keeps the prior reviewed range and leaves the worktree and branch', err)
     rc, _, err, _ = run('a', 'cr', 'reject', e, 'the approach fails')
     check(rc == 1 and items('a')[e]['status'] == 'open' and 'items still open' in err, 'cr: reject refuses while items are open, naming the way out', err)
-    close_open_items(e)
+    close_open_items(e, role='solo')  # the Return left the request unheld: a deciding session closes its items
     rc, out, err, _ = run('a', 'cr', 'reject', e, 'the approach fails')
     check(rc == 0 and items('a')[e]['status'] == 'closed' and git('branch', '--list', f'cr/{e}', cwd=side).strip() and wt(e).is_dir(),
           'cr: reject closes it unlanded, the branch and worktree stay until confirmed', err + out)
@@ -1642,14 +1643,58 @@ def t_scenarios() -> None:
     check(run('a', 'claim', held, role='agent')[0] == 0, 'item writes: the agent holds the request')
     for what, args in (('close', ('close', mine, '--reason', 'closed by a session that does not hold its request')),
                        ('update', ('update', mine, '--title', 'renamed by a stranger')),
-                       ('wait', ('wait', mine, '--on', other_cr, '--for', 'a stranger waits it')), ('move', ('move', mine, '--to', other_cr))):
+                       ('move', ('move', mine, '--to', other_cr))):
         rc, _, err, _ = run('a', *args, role='solo')
         check(rc != 0 and held in err and row(mine)['status'] == 'open' and row(mine)['title'] == 'an item of the held request',
               f'item writes: a session that does not hold the request cannot {what} its item', err)
+    # A wait is written by the user or a deciding session whoever holds the request; a session that does not hold it, or any unheld request, refuses it.
+    solo_cr, solo_item = create('a', 'held by solo'), None
+    solo_item = task(solo_cr, 'an item of the request solo holds')
+    check(run('a', 'claim', solo_cr, role='solo')[0] == 0, 'item waits: solo holds a request')
+    rc, _, err, _ = run('a', 'wait', solo_item, '--on', other_cr, '--for', 'another session waits it', role='agent')
+    check(rc != 0 and solo_cr in err and not any(dep.get('type') == 'blocks' for dep in row(solo_item).get('dependencies') or []), 'item waits: a session that does not hold the request cannot wait its item', err)
+    unheld_item = task(create('a', 'nobody holds this'), 'an item of an unheld request')
+    rc, _, err, _ = run('a', 'wait', unheld_item, '--on', other_cr, '--for', 'an agent waits it', role='agent')
+    check(rc != 0 and 'claim it first' in err, 'item waits: an unheld request is claimed first', err)
+    check(run('a', 'wait', mine, '--on', other_cr, '--for', 'a deciding session waits it', role='solo')[0] == 0
+          and run('a', 'wait', unheld_item, '--on', other_cr, '--for', 'a deciding session waits it', role='autopilot')[0] == 0,
+          'item waits: a deciding session writes a wait whoever holds the request')
     check(run('a', 'update', mine, '--title', 'renamed by the holder', role='agent')[0] == 0 and row(mine)['title'] == 'renamed by the holder',
           'item writes: the holder writes it')
     check(run('a', 'update', mine, '--title', 'renamed by the user', role=None)[0] == 0 and row(mine)['title'] == 'renamed by the user',
           'item writes: the user writes it')
+
+    # Deciding sessions are lead, solo and autopilot: the away path's supersede and close of settled questions pass for autopilot. The holder of an
+    # in-force ruling that claimed it with the plan pull closes it as planned; a session that does not hold it does not.
+    def outcome(item: str) -> str | None:
+        return (row(item).get('metadata') or {}).get('outcome')
+
+    def in_force(title: str) -> str:
+        ruling = create('a', title, '-t', 'decision', kind='decision')
+        check(run('a', 'claim', ruling)[0] == 0 and run('a', 'ruling', 'record', ruling, str(draft))[0] == 0
+              and run('a', 'ruling', 'release', ruling)[0] == 0 and row(ruling)['status'] == 'in_force', f'{title}: in force')
+        return ruling
+    planned = in_force('planner closes: the ruling')
+    rc, _, err, _ = run('a', 'close', planned, '--reason', 'planned in the change requests it made', role='agent')
+    check(rc != 0 and row(planned)['status'] == 'in_force', 'planner close: a session that does not hold the ruling cannot close it', err)
+    check(run('a', 'claim', planned, role='agent')[0] == 0, 'planner close: the plan pull claims the ruling')
+    rc, _, err, _ = run('a', 'close', planned, '--reason', 'planned in the change requests it made', role='agent')
+    check(rc == 0 and row(planned)['status'] == 'closed' and outcome(planned) == 'planned', 'planner close: its holder closes it as planned', err)
+    old, new = in_force('away: the ruling replaced'), create('a', 'away: the replacing ruling', '-t', 'decision', kind='decision')
+    away_draft = ROOT / 'away-record.md'
+    away_draft.write_text(draft.read_text() + '## Reversal\nrevert\n')
+    check(run('a', 'claim', new, role='autopilot')[0] == 0, 'away: autopilot claims the question')
+    rc, _, err, _ = run('a', 'ruling', 'record', new, str(away_draft), '--unratified', '--replaces', old, role='autopilot')
+    check(rc == 0 and row(new)['status'] == 'in_force' and row(old)['status'] == 'closed' and outcome(old) == 'superseded',
+          'away: autopilot records an unratified ruling, which supersedes the old one', err)
+    settled = create('a', 'away: a question settled in the chat', '-t', 'decision', kind='decision')
+    rc, _, err, _ = run('a', 'close', settled, '--reason', 'settled by the chat answer, recorded elsewhere', role='autopilot')
+    check(rc == 0 and row(settled)['status'] == 'closed' and outcome(settled) == 'dropped', 'away: autopilot closes a settled question', err)
+    # A question another ruling answers closes superseded.
+    answered, answering = create('a', 'answered question', '-t', 'decision', kind='decision'), create('a', 'answering ruling', '-t', 'decision', kind='decision')
+    check(run('a', 'claim', answering)[0] == 0 and run('a', 'ruling', 'record', answering, str(draft))[0] == 0, 'answered: the ruling is recorded')
+    rc, _, err, _ = run('a', 'ruling', 'release', answering, '--closes', f'{answered}={answering}')
+    check(rc == 0 and row(answered)['status'] == 'closed' and outcome(answered) == 'superseded', 'answered: the question closes as superseded', err)
 
     # 7 and 8. Someday and "remind me on a day" are deferred, not started by themselves; a question put off is deferred too; the user's
     # deferral is undone only by the user (through a deciding session).

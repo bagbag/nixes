@@ -3902,7 +3902,7 @@ def validate_board(root: Path) -> None:
                 {"issue_id": ids["Open cache question"], "depends_on_id": store, "type": "tracks"}]}})
             fake = Fake(draft_of)
             code, output, errors = invoke(["ruling", "release", store, ids["Open cache question"]], fake, "lead0001")
-            if code or [stdin for args, stdin in fake.calls if args[0] == "batch" and "status=in_force" in stdin] != [f'update {ids["Open cache question"]} status=in_force assignee=""\n'] \
+            if code or [w for w in fake.writes() if "in_force" in w] != [["update", ids["Open cache question"], "--status", "in_force", "--assignee", "", "--if-assignee", "lead0001", "--if-status", "decided", "--json"]] \
                     or ["supersede", store, "--with", ids["Open cache question"]] not in fake.writes() or f"released {store}" in output:
                 raise ValueError(f"board ruling release must supersede a replaced draft, not release it: {code} {errors!r} {fake.writes()}\n{output}")
             # Releasing that draft alone is held by its live reviser (health's blockedBy says the same, so the engine's drop step agrees).
@@ -3928,13 +3928,12 @@ def validate_board(root: Path) -> None:
                 raise ValueError(f"show must label a closed item's assignee as history: {output.splitlines()[:1]}")
             fake = Fake(variant(**{"Open cache question": {"status": "decided"}}))
             code, _, _ = invoke(["ruling", "release", store, ids["Open cache question"]], fake, "lead0001")
-            batch = [(args, stdin) for args, stdin in fake.calls if args[0] == "batch"]
             question = ids["Open cache question"]
-            # A released ruling keeps blocking the items it changes: release only sets the status.
-            expected_ops = [f'update {store} status=in_force assignee=""',
-                            f'update {question} status=in_force assignee=""']
-            if code or len(batch) != 1 or len(fake.writes()) != 1 or batch[0][1].splitlines() != expected_ops:
-                raise ValueError(f"board ruling release must write one batch of status updates: {fake.calls}")
+            # A released ruling keeps blocking the items it changes: release only sets the status, one compare-and-set on status and holder each.
+            expected = [["update", store, "--status", "in_force", "--assignee", "", "--if-assignee", "", "--if-status", "decided", "--json"],
+                        ["update", question, "--status", "in_force", "--assignee", "", "--if-assignee", "lead0001", "--if-status", "decided", "--json"]]
+            if code or fake.writes() != expected:
+                raise ValueError(f"board ruling release must write one status compare-and-set per ruling: {fake.calls}")
 
             # --closes: answered questions close after the release in dependency order, forced only past rulings of
             # this release and questions closed before them here (the gjfh4 case); another open blocker leaves one open.
@@ -3952,7 +3951,8 @@ def validate_board(root: Path) -> None:
             closes = [args for args in fake.writes() if args[0] == "close"]
             if code != 1 or closes != [["close", cache, "--reason", f"Answered by released {store}", "--force"],
                                        ["close", spike, "--reason", f"Answered by released {store}", "--force"]] \
-                    or fake.writes()[0][0] != "batch" or f"{loose}: left open, blocked by {ready}" not in errors \
+                    or fake.writes()[0][:3] != ["update", store, "--status"] or f"{loose}: left open, blocked by {ready}" not in errors \
+                    or sum("outcome=superseded" in w for w in fake.writes() if w[0] == "update") != 2 \
                     or f"closed {cache}: answered by released {store}" not in output:
                 raise ValueError(f"board ruling release --closes: {fake.writes()}\n{output}\n{errors}")
             # A released ruling outside the release does not leave the answered question open; bd still needs the force.
@@ -4105,9 +4105,9 @@ def validate_board(root: Path) -> None:
                                  "## Rationale\nr (user, 2026-10-31)\n## Rule owner\ndocs/x.md\n", encoding="utf-8")
                 fake = Fake(fixture)
                 code, output, _ = invoke(["ruling", "record", question, str(draft)], fake, "lead0001", now="2026-10-31T10:00:00+00:00")
-                if code or [w[:2] for w in fake.writes()] != [["update", question], ["batch", "-m"]] \
+                if code or [w[:2] for w in fake.writes()] != [["update", question], ["update", question]] \
                         or fake.writes()[0][2:] != ["--body-file", str(draft), "--json"] \
-                        or [stdin for args, stdin in fake.calls if args[0] == "batch"] != [f"update {question} status=decided\n"] \
+                        or fake.writes()[1] != ["update", question, "--status", "decided", "--if-assignee", "lead0001", "--if-status", "open", "--json"] \
                         or not any(args[:2] == ["lint", question] for args, _ in fake.calls) \
                         or output != f"recorded {question} (decided): Open cache question\n":
                     raise ValueError(f"board ruling record: {fake.calls}\n{output}")
@@ -4116,30 +4116,18 @@ def validate_board(root: Path) -> None:
                 recorded = variant(**{"Open cache question": {"status": "decided", "description": draft.read_text(encoding="utf-8")}})
                 fake = Fake(recorded, lint={"results": [{"id": question, "missing": ["## Extra"]}]})
                 code, _, errors = invoke(["ruling", "record", question, str(draft)], fake, "lead0001")
-                if code != 1 or "## Extra" not in errors or [w[0] for w in fake.writes()] != ["update", "batch"]:
+                if code != 1 or "## Extra" not in errors or [w[0] for w in fake.writes()] != ["update", "update"]:
                     raise ValueError(f"board ruling record revised in place wrongly: {fake.writes()} {errors}")
                 rewrite = Path(directory, "rewrite.md")
                 rewrite.write_text(draft.read_text(encoding="utf-8").replace("## Decision\nd\n", "## Decision\nnew decision\n"), encoding="utf-8")
                 fake = Fake(recorded)
                 code, output, _ = invoke(["ruling", "record", question, str(rewrite)], fake, "lead0001", now="2026-10-31T10:00:00+00:00")
-                if code or [w[0] for w in fake.writes()] != ["update", "batch"] or "Decision kept" in output:
+                if code or [w[0] for w in fake.writes()] != ["update", "update"] or "Decision kept" in output:
                     raise ValueError(f"board ruling record must not copy a replaced Decision into a comment: {fake.writes()} {output}")
                 for refused, actor in ((ids["Ready task"], "lead0001"), (question, "aaaa1111")):
                     fake = Fake(fixture)
                     if invoke(["ruling", "record", refused, str(draft)], fake, actor)[0] != 1 or fake.writes():
                         raise ValueError(f"board ruling record wrote {refused} for {actor}")
-                # The batch line follows the table's held rule like move(): a record another session holds is not written by this one.
-                holder_row = {"id": "fx-held", "issue_type": "decision", "status": "open", "assignee": "lead0001"}
-                with patch.dict(os.environ, {"BEADS_ACTOR": "aaaa1111", "CODEX_SESSION_ID": "", "CLAUDE_CODE_SESSION_ID": ""}):
-                    try:
-                        board.move_line(holder_row, "ruling record")
-                    except board.BoardError:
-                        pass
-                    else:
-                        raise ValueError("move_line wrote a ruling record the calling session does not hold")
-                with patch.dict(os.environ, {"BEADS_ACTOR": "lead0001", "CODEX_SESSION_ID": "", "CLAUDE_CODE_SESSION_ID": ""}):
-                    if board.move_line(holder_row, "ruling record") != "update fx-held status=decided":
-                        raise ValueError("move_line must write the ruling record for the session that holds it")
                 # An unratified ruling is released and creates one related, non-blocking confirmation question.
                 fake = Fake(fixture)
                 if invoke(["ruling", "record", question, str(draft), "--unratified"], fake, "lead0001")[0] != 1 \
@@ -4149,7 +4137,8 @@ def validate_board(root: Path) -> None:
                 fake = Fake(fixture)
                 code, output, errors = invoke(["ruling", "record", question, str(draft), "--unratified"], fake, "lead0001")
                 graphs = fake.graphs
-                if code or [stdin for args, stdin in fake.calls if args[0] == "batch"] != [f"update {question} status=in_force\n"] \
+                if code or any(args[0] == "batch" for args, _ in fake.calls) \
+                        or ["update", question, "--status", "in_force", "--if-assignee", "lead0001", "--if-status", "open", "--json"] not in fake.writes() \
                         or fake.writes()[-1] != ["update", question, "--assignee", "", "--if-assignee", "lead0001", "--if-status", "in_force", "--json"] or len(graphs) != 1:
                     raise ValueError(f"board ruling record --unratified releases and unclaims the record, creating its confirmation question: {fake.writes()} {errors}")
                 question_node = graphs[0]["nodes"][0]
@@ -4185,12 +4174,12 @@ def validate_board(root: Path) -> None:
                 released, older = ids["Released ruling"], ids["Old store ruling"]
                 fake = Fake(fixture)
                 code, _, errors = invoke(["ruling", "record", question, str(draft), "--replaces", f"{released},{older}"], fake, "lead0001")
-                if code or [stdin for args, stdin in fake.calls if args[0] == "batch"] != [f"update {question} status=decided\ndep add {question} {released} tracks\ndep add {question} {older} tracks\n"]:
+                if code or [stdin for args, stdin in fake.calls if args[0] == "batch"] != [f"dep add {question} {released} tracks\ndep add {question} {older} tracks\n"]:
                     raise ValueError(f"board ruling record --replaces writes a pending revision per record in the status batch: {code} {errors!r} {fake.calls}")
                 linked = variant(**{"Open cache question": {"dependencies": [{"issue_id": question, "depends_on_id": released, "type": "tracks"}]}})
                 fake = Fake(linked)
                 code, _, errors = invoke(["ruling", "record", question, str(draft), "--replaces", released], fake, "lead0001")
-                if code or [stdin for args, stdin in fake.calls if args[0] == "batch"] != [f"update {question} status=decided\n"]:
+                if code or [stdin for args, stdin in fake.calls if args[0] == "batch"]:
                     raise ValueError(f"board ruling record --replaces must leave a link already there: {code} {errors!r} {fake.calls}")
                 for bad, word in ((ids["Ready task"], "not another decision ruling"), (question, "not another decision ruling"), ("fx-nope", "--replaces fx-nope: unknown")):
                     fake = Fake(fixture)
@@ -4208,7 +4197,7 @@ def validate_board(root: Path) -> None:
                     raise ValueError(f"board ruling check-replaces must accept a complete planned ruling without Reversal: {code} {preview} {errors!r}")
                 code, _, errors = invoke(["ruling", "record", question, str(draft), "--replaces", "fx-planned"], fake, "lead0001")
                 if code or [stdin for args, stdin in fake.calls if args[0] == "batch"] != [
-                        f"update {question} status=decided\ndep add {question} fx-planned tracks\n"]:
+                        f"dep add {question} fx-planned tracks\n"]:
                     raise ValueError(f"board ruling record --replaces must accept a closed planned ruling: {code} {errors!r} {fake.calls}")
                 withdrawn = {**planned_record, "id": "fx-withdrawn", "description": "## Question\nWithdrawn\n"}
                 fake = Fake([*fixture, withdrawn])
@@ -4219,7 +4208,7 @@ def validate_board(root: Path) -> None:
                 related = variant(**{"Open cache question": {"dependencies": [{"issue_id": question, "depends_on_id": released, "type": "relates-to"}]}})
                 fake = Fake(related)
                 code, _, errors = invoke(["ruling", "record", question, str(draft), "--replaces", released], fake, "lead0001")
-                if code or [stdin for args, stdin in fake.calls if args[0] == "batch"] != [f"update {question} status=decided\ndep remove {question} {released}\ndep add {question} {released} tracks\n"]:
+                if code or [stdin for args, stdin in fake.calls if args[0] == "batch"] != [f"dep remove {question} {released}\ndep add {question} {released} tracks\n"]:
                     raise ValueError(f"board ruling record --replaces must replace another link on the pair with the revision link: {code} {errors!r} {fake.calls}")
 
                 # --replaces (r9-q33): a decided record links what it replaces, superseded at its release; an unratified record releases at once
@@ -4235,21 +4224,21 @@ def validate_board(root: Path) -> None:
                 tracks = lambda old: (question, old, "tracks")
                 fake = Fake(replacing(dec("fx-d1", "decided")))
                 code, output, errors = invoke(["ruling", "record", question, str(draft), "--replaces", "fx-d1"], fake, "lead0001")
-                if code or [w[0] for w in fake.writes()] != ["update", "batch"] \
-                        or [stdin for args, stdin in fake.calls if args[0] == "batch"] != [f"update {question} status=decided\ndep add {question} fx-d1 tracks\n"]:
+                if code or [w[0] for w in fake.writes()] != ["update", "update", "batch"] \
+                        or [stdin for args, stdin in fake.calls if args[0] == "batch"] != [f"dep add {question} fx-d1 tracks\n"]:
                     raise ValueError(f"board ruling record --replaces must only link a decided record a decided record replaces: {code} {errors!r} {fake.calls}")
                 away = ["--unratified"]
                 fake = Fake(replacing(dec("fx-d1", "decided")))
                 code, output, errors = invoke(["ruling", "record", question, str(draft), "--replaces", "fx-d1", *away], fake, "lead0001")
-                if code or [w[0] for w in fake.writes() if w[0] != "create"] != ["update", "batch", "update", "supersede", "update"] \
+                if code or [w[0] for w in fake.writes() if w[0] != "create"] != ["update", "update", "batch", "update", "supersede", "update"] \
                         or ["supersede", "fx-d1", "--with", question] not in fake.writes() \
-                        or [stdin for args, stdin in fake.calls if args[0] == "batch"] != [f"update {question} status=in_force\ndep add {question} fx-d1 tracks\n"]:
+                        or [stdin for args, stdin in fake.calls if args[0] == "batch"] != [f"dep add {question} fx-d1 tracks\n"]:
                     raise ValueError(f"an away board ruling record --replaces must link the decided record before it closes it: {code} {errors!r} {fake.calls}")
                 # A stop after the body and status write: the link is there; the rerun completes the replacement.
                 fake = Fake(replacing(dec("fx-d1", "decided", tracks("fx-d1")), **{"Open cache question": {"status": "decided", "assignee": "lead0001"}}))
                 code, _, errors = invoke(["ruling", "record", question, str(draft), "--replaces", "fx-d1", *away], fake, "lead0001")
-                if code or [w[0] for w in fake.writes() if w[0] != "create"] != ["update", "batch", "batch", "update", "supersede", "update"] \
-                        or [stdin for args, stdin in fake.calls if args[0] == "batch"] != [f"update {question} status=in_force\n", f"dep remove {question} fx-d1\n"]:
+                if code or [w[0] for w in fake.writes() if w[0] != "create"] != ["update", "update", "batch", "update", "supersede", "update"] \
+                        or [stdin for args, stdin in fake.calls if args[0] == "batch"] != [f"dep remove {question} fx-d1\n"]:
                     raise ValueError(f"board ruling record --replaces must finish a record whose status and links are written: {code} {errors!r} {fake.calls}")
                 # A stop after the first of two supersedes: the closed one (superseded by this record) is done, the other closes.
                 stopped = replacing(dec("fx-d1", "closed", ("fx-d1", question, "supersedes")), dec("fx-d2", "decided", tracks("fx-d2")))
@@ -4291,7 +4280,7 @@ def validate_board(root: Path) -> None:
                 # A link of another kind on a closing record's pair is replaced (the supersede drops it anyway), on a released one it is a clash.
                 fake = Fake(replacing(dec("fx-d1", "decided", (question, "fx-d1", "relates-to"))))
                 code, _, errors = invoke(["ruling", "record", question, str(draft), "--replaces", "fx-d1", *away], fake, "lead0001")
-                if code or [stdin for args, stdin in fake.calls if args[0] == "batch"][0] != f"update {question} status=in_force\ndep remove {question} fx-d1\ndep add {question} fx-d1 tracks\n":
+                if code or [stdin for args, stdin in fake.calls if args[0] == "batch"][0] != f"dep remove {question} fx-d1\ndep add {question} fx-d1 tracks\n":
                     raise ValueError(f"board ruling record --replaces must replace another link on a closing record's pair: {code} {errors!r} {fake.calls}")
 
             # board wait: relates-to gives way, the reason is a comment (no field rewrite); a review is not returned (an item has none).
@@ -4851,14 +4840,15 @@ def validate_board(root: Path) -> None:
             fake = Fake(revising)
             code, output, _ = invoke(["ruling", "release", new], fake, "lead0001")
             batches = [stdin for args, stdin in fake.calls if args[0] == "batch"]
-            if code or batches[:2] != [f'update {new} status=in_force assignee=""\n', f"dep remove {new} {old}\n"] \
+            if code or batches[:1] != [f"dep remove {new} {old}\n"] \
+                    or ["update", new, "--status", "in_force", "--assignee", "", "--if-assignee", "", "--if-status", "decided", "--json"] not in fake.writes() \
                     or ["supersede", old, "--with", new] not in fake.writes() \
                     or f"superseded {old} by {new}" not in output or "returned from review" in output:
                 raise ValueError(f"board ruling release must supersede revised records: {fake.calls}\n{output}")
             partial = [{**issue, "metadata": {"board.revises_rule": "Rule 2"}} if issue["id"] == new else issue for issue in revising]
             fake = Fake(partial)
             code, output, _ = invoke(["ruling", "release", new], fake, "lead0001")
-            if code or [stdin for args, stdin in fake.calls if args[0] == "batch"][1] != f"dep remove {new} {old}\ndep add {old} {new} supersedes\n" \
+            if code or [stdin for args, stdin in fake.calls if args[0] == "batch"][0] != f"dep remove {new} {old}\ndep add {old} {new} supersedes\n" \
                     or any(args[0] == "supersede" for args in fake.writes()) or "one rule (Rule 2)" not in output:
                 raise ValueError(f"board ruling release of a partial revision: {fake.calls}\n{output}")
 
@@ -5118,6 +5108,28 @@ def validate_board(root: Path) -> None:
                 refused = board.move(dict(next(i for i in fixture if i["id"] == ids["Held task"])), "close", reason=reason, check=False)
             if refused.returncode == 0 or fake.writes() or "aaaa1111/build-12345678" not in refused.stderr:
                 raise ValueError(f"move(check=False) must return a refusal as a failed result and write nothing: {refused} {fake.writes()}")
+            # A lost compare-and-set on a close is a failed result under check=False too, never an exception; a close bd refuses leaves no outcome
+            # on the record, which stays open.
+            held_row = lambda: dict(next(i for i in fixture if i["id"] == ids["Held task"]))
+            as_holder = patch.dict(os.environ, {"BEADS_ACTOR": "aaaa1111", "CODEX_SESSION_ID": "", "CLAUDE_CODE_SESSION_ID": ""})
+            fake = Fake(fixture, refuse={ids["Held task"]})
+            with as_holder, patch.object(board.subprocess, "run", fake):
+                lost = board.move(held_row(), "close", reason=reason, check=False)
+            if lost.returncode == 0 or any(w[0] == "close" for w in fake.writes()):
+                raise ValueError(f"move(check=False) must return a lost compare-and-set as a failed result: {lost} {fake.writes()}")
+
+            class CloseRefused(Fake):
+                def __call__(self, command, **kwargs):
+                    if command[:2] == ["bd", "close"]:
+                        self.calls.append((command[1:], None))
+                        return subprocess.CompletedProcess(command, 1, "", "validation: open children")
+                    return super().__call__(command, **kwargs)
+
+            fake = CloseRefused(fixture)
+            with as_holder, patch.object(board.subprocess, "run", fake):
+                refused_close = board.move(held_row(), "close", reason=reason, check=False)
+            if refused_close.returncode == 0 or fake.writes()[-1] != ["update", ids["Held task"], "--unset-metadata", "outcome", "--if-status", "open", "--json"]:
+                raise ValueError(f"a close bd refuses must leave the record open without an outcome: {refused_close} {fake.writes()}")
             fake = Fake(fixture)
             invoke(["take", ids["Held task"], "--agreed", "anna: go ahead"], fake, "lead0001")
             if fake.writes()[0] != ["update", ids["Held task"], "--assignee", "lead0001", "--if-assignee", "aaaa1111/build-12345678", "--if-status", "open", "--json"] \
@@ -5697,7 +5709,7 @@ def validate_board(root: Path) -> None:
                 if code or any(w[:2] == ["update", "rej.i"] for w in written) \
                         or not any(w[:2] == ["close", "rej"] and "--force" in w for w in written) \
                         or not any(w[:2] == ["update", "kid"] and "base=main" in w and any(a.startswith("replan=") for a in w) for w in written) \
-                        or not any(w[:4] == ["update", "kid", "--assignee", ""] and "--if-status" in w for w in written) or "back to planning: kid" not in output:
+                        or not any(w[:2] == ["update", "kid"] and ["--assignee", ""] == w[w.index("--assignee"):w.index("--assignee") + 2] and "--if-status" in w for w in written if "--assignee" in w) or "back to planning: kid" not in output:
                     raise ValueError(f"board cr reject: {code} {errors}\n{written}\n{output}")
                 if invoke(["cr", "reject", "rej", "x"], Fake(rejected), "aaaa1111")[0] != 1:
                     raise ValueError("an agent session rejected a change request")
@@ -6374,6 +6386,9 @@ def validate_board(root: Path) -> None:
                 code, output, errors, writes = verb(["reopen", "t-g"], world)
                 if code or writes != [["update", "t-g", "--status", "open", "--assignee", "", "--if-assignee", "", "--if-status", "closed", "--json"]]:
                     raise ValueError(f"board reopen: {code} {errors!r} {writes}")
+                code, _, errors, writes = verb(["reopen", "t-g"], [plain("t-g", "closed", metadata={"outcome": "done"})])
+                if code or "--unset-metadata" not in writes[0] or "outcome" not in writes[0]:
+                    raise ValueError(f"board reopen must clear the outcome of the record: {code} {errors!r} {writes}")
                 code, _, errors, writes = verb(["reopen", "t-cr", "t-g"], world)
                 if code != 2 or "change request" not in errors or writes:
                     raise ValueError(f"board reopen must refuse a change request: {code} {errors!r} {writes}")
@@ -6385,7 +6400,7 @@ def validate_board(root: Path) -> None:
                                    (["gate", "create", "--blocks", "t-a", "--reason", "user 2026-11-16: wait", "--title", "user gate"],
                                     [["gate", "create", "--type=human", "--blocks", "t-a", "--reason", "user 2026-11-16: wait", "--title", "user gate"]]),
                                    (["gate", "resolve", "t-gate", "--reason", "shipped"],
-                                    [["update", "t-gate", "--assignee", "", "--if-assignee", "", "--if-status", "open", "--json"],
+                                    [["update", "t-gate", "--assignee", "", "--if-assignee", "", "--if-status", "open", "--set-metadata", "outcome=resolved", "--json"],
                                      ["close", "t-gate", "--reason", "shipped.............", "--force"]])):
                     code, _, errors, writes = verb(argv, world)
                     if code or writes != want:
@@ -6395,11 +6410,46 @@ def validate_board(root: Path) -> None:
                           plain("t-d2", "deferred", metadata={"deferred_by": "aaaa1111", "revisit": "2000-01-01"}),
                           plain("t-d3", "deferred", metadata={"deferred_by": "user", "revisit": "2999-01-01"})]
                 code, _, errors, writes = verb(["undefer", "t-d1"], parked, "aaaa1111")
-                if code != 2 or "the user deferred it" not in errors or writes:
+                if code != 2 or "undefer is for the deferrer's side" not in errors or writes:
                     raise ValueError(f"an agent session undeferred the user's deferral: {code} {errors!r} {writes}")
                 code, _, errors, writes = verb(["undefer", "t-d2"], parked, "aaaa1111")
                 if code or not writes or writes[0][:4] != ["update", "t-d2", "--status", "open"] or "deferred_by" not in " ".join(writes[0]):
                     raise ValueError(f"the deferring session must undefer its own deferral and clear its fields: {code} {errors!r} {writes}")
+                # Deferral authority: a session pulling plan defers for itself, a deciding session or the user for the user; a worker without the pull
+                # defers nothing. A deferral that records no deferrer is the user's: only the user or a deciding session undefers it (autopilot included).
+                for who, allowed, recorded in (("aaaa1111", False, None), ("plan0001", True, "plan0001"), ("lead0001", True, "user"), ("auto0001", True, "user"), ("", True, "user")):
+                    code, _, errors, writes = verb(["defer", "t-b", "--reason", "set aside for later work"], world, who)
+                    if bool(code == 0 and writes) != allowed or (allowed and f"deferred_by={recorded}" not in " ".join(writes[0])) or (not allowed and (code != 2 or "defer is for" not in errors)):
+                        raise ValueError(f"board defer by {who or 'the user'} (allowed {allowed}, deferrer {recorded}): {code} {errors!r} {writes}")
+                nameless = [plain("t-d4", "deferred", metadata={})]
+                for who, allowed in (("aaaa1111", False), ("plan0001", False), ("lead0001", True), ("auto0001", True), ("", True)):
+                    code, _, errors, writes = verb(["undefer", "t-d4"], nameless, who)
+                    if bool(code == 0 and writes) != allowed:
+                        raise ValueError(f"board undefer of a deferral without a deferrer by {who or 'the user'} (allowed {allowed}): {code} {errors!r} {writes}")
+                # A reopen needs the authority of the close: an agent session does not undo the user's gate, milestone or decision.
+                closed_ones = [{**plain("t-xg", "closed"), "issue_type": "gate"}, {**plain("t-xm", "closed"), "issue_type": "milestone"},
+                               {**plain("t-xd", "closed"), "issue_type": "decision"}]
+                for one in ("t-xg", "t-xm", "t-xd"):
+                    for who, allowed in (("aaaa1111", False), ("lead0001", True), ("auto0001", True), ("", True)):
+                        code, _, errors, writes = verb(["reopen", one], closed_ones, who)
+                        if bool(code == 0 and writes) != allowed:
+                            raise ValueError(f"board reopen of {one} by {who or 'the user'} (allowed {allowed}): {code} {errors!r} {writes}")
+                # Gate and milestone closes record their outcome.
+                for one, outcome in (("t-xg", "resolved"), ("t-xm", "accepted")):
+                    code, _, errors, writes = verb(["close", one, "--reason", "done and accepted by the user"], [{**r, "status": "open"} for r in closed_ones], "lead0001")
+                    if code or f"outcome={outcome}" not in " ".join(writes[0]):
+                        raise ValueError(f"board close of {one} must record outcome {outcome}: {code} {errors!r} {writes}")
+                # Planning closes the ruling it claimed (the plan pull's holder); a session that does not hold it, or holds nothing, does not.
+                in_force_held = [{**plain("t-r1", "in_force", assignee="plan0001"), "issue_type": "decision"}]
+                for who, allowed in (("plan0001", True), ("aaaa1111", False), ("lead0001", False)):
+                    code, _, errors, writes = verb(["close", "t-r1", "--reason", "planned in the change requests it made"], in_force_held, who)
+                    if bool(code == 0 and writes) != allowed or (allowed and "outcome=planned" not in " ".join(writes[0])):
+                        raise ValueError(f"board close of an in-force ruling by {who} (allowed {allowed}): {code} {errors!r} {writes}")
+                # An item of a change request nobody holds is written by the user or a deciding session; any other session claims the request first.
+                for who, allowed in (("aaaa1111", False), ("plan0001", False), ("lead0001", True), ("auto0001", True), ("", True)):
+                    code, _, errors, writes = verb(["close", "t-cr.o", "--reason", "finished with the change of it"], world, who)
+                    if bool(code == 0 and writes) != allowed or (not allowed and "claim it first" not in errors):
+                        raise ValueError(f"board close of an item of an unheld change request by {who or 'the user'} (allowed {allowed}): {code} {errors!r} {writes}")
                 due = lambda one, side: board.due_deferral(next(r for r in parked if r["id"] == one), side)
                 if not (due("t-d1", "user") and not due("t-d1", "plan") and due("t-d2", "plan") and not due("t-d2", "user") and not due("t-d3", "user")):
                     raise ValueError("a due deferral belongs to the side that deferred it, and only from its revisit day")
@@ -8025,8 +8075,8 @@ else:
         written |= {names[name] for name in re.findall(r"'--set-metadata', f[\"']\{([A-Za-z_]+)\}=", Path(root, "bin", "board").read_text(encoding="utf-8")) if name in names}  # a loop's own key is checked where it is set
         if written - board.BOARD_METADATA:
             raise ValueError(f"bin/board writes metadata keys missing from BOARD_METADATA: {sorted(written - board.BOARD_METADATA)}")
-        # No status write outside `move` (and `move_line`, its batch form): every bd call that sets a status, closes, reopens or supersedes is in them.
-        writers = {"move", "move_line"}
+        # No status write outside `move`: every bd call that sets a status, closes, reopens or supersedes is in it.
+        writers = {"move"}
         stray = []
         for function in (node for node in ast.walk(tree) if isinstance(node, ast.FunctionDef) and node.name not in writers):
             for call in (node for node in ast.walk(function) if isinstance(node, ast.Call)):
