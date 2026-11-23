@@ -1585,7 +1585,7 @@ def t_scenarios() -> None:
           and git('rev-parse', target, cwd=side).strip() == tip, 'scenario 2: the Accept lands it, closed as landed', err + out)
 
     # 3. Item B waits on a question while A is ready: A is done, hand-over refuses on B, the worker hands the CR back, and it is ready again
-    # once the ruling is in force.
+    # once the ruling is planned (closed): in force still holds the waiter.
     draft = ROOT / 'scenario-record.md'
     draft.write_text('## Question\nq\n## Alternatives Considered\na\n## Decision\nd\n## Rationale\nr\n## Rule owner\no\n')
     question = create('a', 'scenario 3: which way', '-t', 'decision', kind='decision')
@@ -1602,7 +1602,8 @@ def t_scenarios() -> None:
     check(rc == 1 and not row(three).get('assignee'), 'scenario 3: with only B open the CR is not ready', err)
     check(run('a', 'claim', question)[0] == 0 and run('a', 'ruling', 'record', question, str(draft))[0] == 0
           and run('a', 'ruling', 'release', question)[0] == 0 and row(question)['status'] == 'in_force', 'scenario 3: the ruling is in force')
-    # (Whether a wait on a question is met in force or only once planned is the lead's to settle: the model says in force, the code planned.)
+    rc, _, err, _ = run('a', 'claim', three, role='agent')
+    check(rc == 1 and not row(three).get('assignee'), 'scenario 3: a ruling in force does not release the waiter', err)
     check(run('a', 'close', question, '--reason', 'planned: the way it goes is carried into B', role='solo')[0] == 0
           and (row(question).get('metadata') or {}).get('outcome') == 'planned', 'scenario 3: planning closes the ruling as planned')
     rc, _, err, _ = run('a', 'claim', three, role='agent')

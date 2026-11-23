@@ -4606,7 +4606,7 @@ ANSWER_WAIT = ('open', 'decided')  # a question the user answers, in a round, or
 
 
 def waits_on_answers(board: Board, cr: dict) -> bool:
-    """The request or one of its open items waits on a question not yet released (r5-q26); an in-force ruling waits for planning."""
+    """The request or one of its open items waits on a question still owed an answer or its release (r5-q26), the user's step. A wait on a question is met only when it closes, so an in-force ruling still holds the waiter until planning closes it: that is the planner's step, not counted here."""
     unit = work_unit(board, cr)
     return any(board.by_id.get(b, {}).get('issue_type') == 'decision' and board.by_id[b]['status'] in ANSWER_WAIT
                for member in unit for b in board.blockers.get(member, []) if b not in unit)
