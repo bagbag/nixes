@@ -42,7 +42,7 @@ An agent session runs each claimed CR or item under the protocol for its kind:
 
 | Claimed | Protocol |
 |---|---|
-| `released` decision | plan, its Released rulings section |
+| `in_force` decision | plan, its Released rulings section |
 | `open` CR | work (design or implement pull) |
 | `in_review` CR; refresh work | review |
 | standalone `in_review` task, bug, spike | review |

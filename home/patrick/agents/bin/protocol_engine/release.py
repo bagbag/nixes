@@ -240,7 +240,7 @@ def release_enter(ctx: Context) -> str | None:
     ids = [rec['id'] for rec in r['set'] if rec['state'] in ('set', 'revised', 'released')]  # a rerun keeps the released ones
     fulls = [sup['old'] for sup in r['supersedes'] if sup['partial'] is None]
     now = statuses(ctx, [*ids, *fulls, *r['closes']])
-    stray = [rid for rid in ids if now[rid] not in ('decided', 'released')]
+    stray = [rid for rid in ids if now[rid] not in ('decided', 'in_force')]
     if stray:
         ctx.messages.append(words.stray_records(stray, now))
         return None
@@ -270,7 +270,7 @@ def release_enter(ctx: Context) -> str | None:
         ctx.messages.append(words.statuses_unavailable(error))
         return None
     for rid in ids:
-        if after[rid] == 'released':
+        if after[rid] == 'in_force':
             set_record(ctx, rid)['state'] = 'released'
         elif after[rid] == 'closed' and now[rid] == 'decided' and not r['retry']:  # a replaced draft: its reviser's release superseded it (r9-q33)
             set_record(ctx, rid)['state'] = 'replaced'
@@ -279,7 +279,7 @@ def release_enter(ctx: Context) -> str | None:
             r['done'].append(f"{sup['old']}>{sup['new']}")
     r['outcome'] = {'closed': [q for q in r['closes'] if after[q] == 'closed'],
                     'open': [q for q in r['closes'] if after[q] != 'closed']}
-    finished = not r['retry'] and all(after[rid] == 'released' or set_record(ctx, rid)['state'] == 'replaced' for rid in ids) and not r['outcome']['open'] \
+    finished = not r['retry'] and all(after[rid] == 'in_force' or set_record(ctx, rid)['state'] == 'replaced' for rid in ids) and not r['outcome']['open'] \
         and all(f"{sup['old']}>{sup['new']}" in r['done'] for sup in r['supersedes'])
     if not finished:
         ctx.messages.append(words.RELEASE_UNFINISHED)

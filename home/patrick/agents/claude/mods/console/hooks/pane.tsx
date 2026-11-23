@@ -57,7 +57,7 @@ export const PANE_MIN_COLUMNS = Object.values(SESSION_COLUMNS).reduce((sum, widt
 
 const WORKER_CHOICES: readonly number[] = [1, 2, 3, 4, 5, 6]
 const QUESTION_COLOR: Record<ConsoleQuestion['status'], string> = { answered: 'success', asked: 'suggestion', ready: 'claude', draft: 'subtle', held: 'warning', parked: 'warning' }
-const ITEM_COLOR: Record<string, string> = { open: 'claude', in_progress: 'suggestion', in_review: 'warning', decided: 'success', released: 'success', blocked: 'error' }
+const ITEM_COLOR: Record<string, string> = { open: 'claude', in_progress: 'suggestion', in_review: 'warning', decided: 'success', in_force: 'success', blocked: 'error' }
 const SESSION_COLOR: Record<string, string> = { active: 'success', idle: 'warning', stopped: 'error', gone: 'inactive' }
 const RECORD_COLOR: Record<ConsoleRecord['state'], string> = { set: 'claude', revised: 'suggestion', dropped: 'warning', changed: 'error', released: 'success', replaced: 'inactive' }
 
@@ -382,7 +382,7 @@ export async function drawPane($: $, e: { surface: string; props: RenderPropsOf[
         </Box>,
       )
     }
-    if (view.items.length > 0) rows.push(itemList('board-items', 'item', 'items', view.items, BOARD_ROWS_SHOWN, item => ({ text: item.status, color: ITEM_COLOR[item.status] ?? 'inactive' }), 'items', 'this session holds'))
+    if (view.items.length > 0) rows.push(itemList('board-items', 'item', 'items', view.items, BOARD_ROWS_SHOWN, item => ({ text: item.status === 'in_force' ? 'in force' : item.status, color: ITEM_COLOR[item.status] ?? 'inactive' }), 'items', 'this session holds'))
     const viewed = e.props.view.agentId
     // Live workers only: Claude Code keeps finished ones listed for the whole session. The one in view stays.
     const workers = view.agents.filter(agent => LIVE_AGENT.includes(agent.status) || agent.id === viewed)

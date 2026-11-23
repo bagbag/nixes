@@ -155,8 +155,8 @@ On a shared board (`.beads/board-shared.json` exists):
 | `open` | Unanswered and unclaimed. Blocks its dependents. |
 | `in_progress` | Unanswered; claimed by the session running its round. Blocks its dependents. |
 | `decided` | Answered, release pending. Still blocks. |
-| `released` | Binding. Blocks the open items it changes until a `plan` session plans it and closes it; planning unblocks a design or spike once its text carries the ruling. Waits only on what its planning needs: a live decision, a `user <date>` gate, a design or a spike. Holds no decided record resting on it. |
-| closed | Planned, superseded or withdrawn. A reversal is a revision record (`agents board ruling revise <id>`, [Rulings](../shared/board-coordination.md#rulings)). |
+| `in_force` (shown "in force") | Binding. Blocks the open items it changes until a `plan` session plans it and closes it; planning unblocks a design or spike once its text carries the ruling. Waits only on what its planning needs: a live decision, a `user <date>` gate, a design or a spike. Holds no decided record resting on it. |
+| closed | Outcome `planned` (planned in work), `superseded` or `dropped` (withdrawn, never ruled); `rejected` once `ratify no` exists. A reversal is a revision record (`agents board ruling revise <id>`, [Rulings](../shared/board-coordination.md#rulings)). |
 
 - Withdraw a question the user drops with
   `agents board close <id> --reason "withdrawn: <why>"`, quoting the user.

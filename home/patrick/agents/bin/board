@@ -63,7 +63,7 @@ PULLS = ('plan', 'implement', 'review')  # an item's kind (a `kind:` label) is n
 KINDS = (*PULLS, 'question', 'accept', 'milestone', 'refresh')  # refresh: review pulls take it (session_kinds)
 WORK_TYPE = 'task'  # an item and a task are one bd type; a `kind:` label (KIND_LABELS) says what sort, and no rule reads it
 KIND_LABEL, KIND_LABELS = 'kind:', ('bug', 'feature', 'design', 'cleanup')
-# A released ruling waits only for planning (r21-q139): a live decision (an open question, or an unreleased revision
+# An in-force ruling waits only for planning (r21-q139): a live decision (an open question, or an unreleased revision
 # record) or a human gate. Any other wait is work or a container: refused by `board wait`,
 # ignored when claiming (q140).
 LIVE_DECISIONS = ('open', 'decided')
@@ -128,7 +128,7 @@ SHARED_BY = 'custom.board.shared'  # travels with the database: the sharer label
 MOVED = 'custom.board.moved'  # travels with the database: the board moved to this url (board relocate); its clones rejoin there
 # The board settings, owned here (board setup applies them; share and join add the shared ones). In the database: they travel
 # with a shared board's sync. min_hash_length is a real key bd warns about as unrecognized: top-level ids of 5+ characters.
-STATUS_CUSTOM = 'decided:wip,released:active,in_review:wip,passed:wip'  # the statuses beyond bd's open, closed and deferred
+STATUS_CUSTOM = 'decided:wip,in_force:active,in_review:wip,passed:wip'  # the statuses beyond bd's open, closed and deferred
 TRAVELLING_CONFIG = (('status.custom', STATUS_CUSTOM),
                      ('types.custom', 'design,change-request'), ('min_hash_length', '5'))
 # In .beads/config.yaml: they do not travel, so each clone sets them. no-git-ops stays true as `init --stealth` sets it: bd 1.3
@@ -287,7 +287,7 @@ CR_GROUP, WORK_GROUP, ITEM_GROUP = 'change request', 'task', 'item'
 GROUP_OF = {CR_TYPE: CR_GROUP, WORK_TYPE: WORK_GROUP,
             'decision': 'decision', 'milestone': 'milestone', 'gate': 'gate'}  # a work-type record inside a change request is an item (group_of)
 STATES = {CR_GROUP: ('open', 'in_review', 'passed', 'deferred', 'closed'), WORK_GROUP: ('open', 'deferred', 'closed'), ITEM_GROUP: ('open', 'closed'),
-          'decision': ('open', 'decided', 'released', 'deferred', 'closed'), 'milestone': ('open', 'closed'), 'gate': ('open', 'closed')}
+          'decision': ('open', 'decided', 'in_force', 'deferred', 'closed'), 'milestone': ('open', 'closed'), 'gate': ('open', 'closed')}
 
 
 class Move(NamedTuple):
@@ -336,14 +336,15 @@ MOVES = (
     Move('defer', 'decision', ('open',), 'deferred', '*', '-', 'anyone', 'nothing-live-waits-on-it'),
     Move('undefer', 'decision', ('deferred',), 'open', '*', '-', 'anyone', ''),
     Move('claim', 'decision', ('open', 'decided'), '=', '-', 'you', 'a deciding session', 'ready'),
-    Move('claim', 'decision', ('released',), '=', '-', 'you', 'a session pulling plan', 'ready'),
-    Move('take', 'decision', ('open', 'decided', 'released'), '=', '*', 'you', 'anyone who could claim it, once its holder is gone', ''),
-    Move('unclaim', 'decision', ('open', 'decided', 'released'), '=', '*', '-', 'the holder, or a deciding session once it is gone', ''),
+    Move('claim', 'decision', ('in_force',), '=', '-', 'you', 'a session pulling plan', 'ready'),
+    Move('take', 'decision', ('open', 'decided', 'in_force'), '=', '*', 'you', 'anyone who could claim it, once its holder is gone', ''),
+    Move('unclaim', 'decision', ('open', 'decided', 'in_force'), '=', '*', '-', 'the holder, or a deciding session once it is gone', ''),
     Move('ruling record', 'decision', ('open', 'decided'), 'decided', 'you', '=', 'the holder', 'sections'),
-    Move('ruling record --unratified', 'decision', ('open', 'decided', 'released'), 'released', 'you', '=', 'the holder', 'sections, reversal'),
-    Move('ruling release', 'decision', ('decided',), 'released', '*', '-', 'a deciding session', 'nothing-unsettled-holds-it, lint'),
-    Move('supersede', 'decision', ('open', 'decided', 'released', 'closed'), 'closed', '*', '-', 'a deciding session', 'replacement-recorded'),
-    Move('close', 'decision', ('open', 'decided', 'released'), 'closed', '*', '-', 'a deciding session', 'reason'),
+    Move('ruling record --unratified', 'decision', ('open', 'decided', 'in_force'), 'in_force', 'you', '=', 'the holder', 'sections, reversal'),
+    Move('ruling release', 'decision', ('decided',), 'in_force', '*', '-', 'a deciding session', 'nothing-unsettled-holds-it, lint'),
+    Move('supersede', 'decision', ('open', 'decided', 'in_force', 'closed'), 'closed', '*', '-', 'a deciding session', 'replacement-recorded', ('superseded',)),
+    Move('close', 'decision', ('open', 'decided'), 'closed', '*', '-', 'a deciding session', 'reason', ('dropped',)),
+    Move('close', 'decision', ('in_force',), 'closed', '*', '-', 'a deciding session', 'reason', ('planned',)),
     Move('claim', 'milestone', ('open',), '=', '-', 'you', 'a deciding session with the user', 'nothing-waits-on-it'),
     Move('take', 'milestone', ('open',), '=', '*', 'you', 'anyone who could claim it, once its holder is gone', ''),
     Move('unclaim', 'milestone', ('open',), '=', '*', '-', 'the holder, or a deciding session once it is gone', ''),
@@ -1288,10 +1289,10 @@ class Board:
         return False
 
     def unsettled_blockers(self, item_id: str) -> list[str]:
-        """What holds a decided record's release or an answered question's close: a released ruling is a settled
+        """What holds a decided record's release or an answered question's close: an in-force ruling is a settled
         premise, which holds only the open items it changes until planned."""
         return [blocker for blocker in self.open_blockers(item_id)
-                if self.by_id.get(blocker, {}).get('status') != 'released']
+                if self.by_id.get(blocker, {}).get('status') != 'in_force']
 
     def release_holds(self, item_id: str) -> list[str]:
         """What holds a decided record's release (`board ruling release` and health's `blockedBy`): its unsettled blockers, and
@@ -1303,7 +1304,7 @@ class Board:
         if kind == CR_TYPE:
             return self.cr_kind(issue)
         if kind == 'decision':
-            return {'released': 'plan', 'open': 'question'}.get(status)
+            return {'in_force': 'plan', 'open': 'question'}.get(status)
         # Work items are claimed through their change request (by id, by the session holding it): no pull of their own;
         # open no-commit work is the exception.
         if status == 'open' and is_no_commit(issue) and self.cr_of(issue['id']) is None:
@@ -1433,9 +1434,9 @@ class Board:
         return WorkUnlocks(self)
 
     def foreign_waits(self, issue: dict) -> list[str]:
-        """The open blockers a released ruling may not wait on (r21-q139): work and containers, not planning. Claiming
+        """The open blockers an in-force ruling may not wait on (r21-q139): work and containers, not planning. Claiming
         ignores them and the claim names the fix (q140); `board check` lists them as `ruling-blocked`."""
-        if issue.get('issue_type') != 'decision' or issue['status'] != 'released':
+        if issue.get('issue_type') != 'decision' or issue['status'] != 'in_force':
             return []
         return [blocker for blocker in self.open_blockers(issue['id'])
                 if blocker in self.by_id and not planning_wait(self.by_id[blocker])]
@@ -1634,7 +1635,7 @@ class WorkUnlocks:
         ignored = set(board.foreign_waits(issue))
         blockers = board.blockers.get(item_id, [])
         if issue['status'] == 'decided' and issue.get('issue_type') == 'decision':
-            ignored.update(b for b in blockers if board.by_id.get(b, {}).get('status') == 'released')
+            ignored.update(b for b in blockers if board.by_id.get(b, {}).get('status') == 'in_force')
             blockers = [*blockers, *(r for r in board.revised_by(item_id) if board.is_open(r))]
         for blocker in blockers:
             if blocker in ignored or blocker.startswith('external:'):
@@ -1767,7 +1768,7 @@ class WorkUnlocks:
 
 
 def claim_order(board: Board, issue: dict):
-    # Tiers (r22-q176, r23-q180): P0, then the planning of any released ruling, milestone work (board-coordination.md#milestones),
+    # Tiers (r22-q176, r23-q180): P0, then the planning of any in-force ruling, milestone work (board-coordination.md#milestones),
     # review and acceptance, the rest. Within a tier: effective priority, unlocks, kind, then created.
     milestone, priority = work_rank(board, issue)
     kind = board.claimable(issue) or board.kind(issue)  # refresh work ranks as a refresh, not as its Accept
@@ -1777,7 +1778,7 @@ def claim_order(board: Board, issue: dict):
 
 # Views
 
-HEALTH_VIEWS = ('questions', 'decided', 'released', 'review', 'accept', 'user', 'ready', 'held', 'blocked')
+HEALTH_VIEWS = ('questions', 'decided', 'in_force', 'review', 'accept', 'user', 'ready', 'held', 'blocked')
 LIFECYCLE_LABELS = ('human', 'decided', 'review', 'needs-ratification', 'waiting')  # labels never carry a status
 
 
@@ -1797,7 +1798,7 @@ def health_views(board: Board, root: str | None) -> dict[str, tuple[str, list[di
     return {
         'questions': ('open questions', [i for i in decisions if i['status'] == 'open']),
         'decided': ('decided, not released', [i for i in decisions if i['status'] == 'decided']),
-        'released': ('released rulings to plan', [i for i in decisions if i['status'] == 'released']),
+        'in_force': ('rulings in force to plan', [i for i in decisions if i['status'] == 'in_force']),
         'review': ('to review (change requests in agent review)', [i for i in items if board.kind(i) == 'review']),
         'accept': ('to accept (change requests waiting for the user)', [i for i in items if board.kind(i) == 'accept']),
         'user': ('waiting on the user (human gates, due deferrals)', [i for i in items if is_human_gate(i) or due_deferral(i, 'user')]),
@@ -1828,9 +1829,9 @@ def item_json(board: Board, issue: dict, **extra) -> dict:
 
 
 # health views under the console's count names (contract-rulings R-B5); the others keep their view name.
-JSON_COUNTS = {'released': 'toPlan', 'review': 'toReview', 'accept': 'toAccept', 'user': 'forUser'}
+JSON_COUNTS = {'in_force': 'toPlan', 'review': 'toReview', 'accept': 'toAccept', 'user': 'forUser'}
 # The views counted as steps (r21-q141, q146): ready = can be taken now, waiting = the rest of the step.
-STEP_VIEWS = ('questions', 'decided', 'released', 'review', 'accept', 'user')
+STEP_VIEWS = ('questions', 'decided', 'in_force', 'review', 'accept', 'user')
 
 
 def step_blocked(board: Board, view: str, issue: dict) -> bool:
@@ -2078,7 +2079,7 @@ def position_data(board: Board, args) -> dict:
         elsewhere = shared is not None and entry is None and bool(ACTOR.fullmatch(issue['assignee']))
         holds.append((issue, entry, updated, recorded, 'gone' if gone else 'elsewhere' if elsewhere else 'idle' if idle else None))
     questions = sorted(((board.holds(issue['id']), issue) for issue in items
-                        if issue.get('issue_type') == 'decision' and issue['status'] not in ('released', 'deferred')),
+                        if issue.get('issue_type') == 'decision' and issue['status'] not in ('in_force', 'deferred')),
                        key=lambda pair: (-pair[0][0], -pair[0][1], by_priority(pair[1])))
     return {
         'kinds': kinds, 'known': known, 'now': now,
@@ -2243,7 +2244,7 @@ def deviations(board: Board, root: str | None) -> list[tuple[str, str, str]]:
             found.append((item_id, 'label-status', f"labels {', '.join(labels)}"))
         foreign = board.foreign_waits(issue)
         if foreign:
-            found.append((item_id, 'ruling-blocked', f"released ruling waits on {', '.join(foreign)}, work and not planning: "
+            found.append((item_id, 'ruling-blocked', f"in-force ruling waits on {', '.join(foreign)}, work and not planning: "
                                                      f"{'; '.join(dep_fix(item_id, blocker) for blocker in foreign)}"))
         if issue['status'] == 'deferred':
             waiting = deferred_waiters(board, item_id)
@@ -3007,7 +3008,7 @@ def is_work_hold(issue: dict) -> bool:
 
 def in_hand(issue: dict, actor: str) -> bool:
     """Work in hand of the actor's session: an open item it holds, its own hold or one of its workers'. A claim keeps the status, so
-    a request in review or a released ruling a session holds is not in hand."""
+    a request in review or an in-force ruling a session holds is not in hand."""
     holder = issue.get('assignee')
     return bool(holder) and issue['status'] == 'open' and session_actor(holder) == session_actor(actor)
 
@@ -3423,7 +3424,7 @@ def claim(board: Board, args) -> int:
         if resume := meta(issue).get(RESUME_NOTE):
             print(f'  resume: {resume}')
             put_meta(issue, **{RESUME_NOTE: None})  # printed once
-        for blocker in board.foreign_waits(issue):  # a released ruling waits for planning only (r21-q139): the plan session removes it
+        for blocker in board.foreign_waits(issue):  # an in-force ruling waits for planning only (r21-q139): the plan session removes it
             print(f"  fix: {issue['id']} waits on {blocker}, which is work and not planning; check what the ruling changes there, "
                   f"then {dep_fix(issue['id'], blocker)}")
         if issue['id'] in forced:
@@ -4544,7 +4545,7 @@ ANSWER_WAIT = ('open', 'decided')  # a question the user answers, in a round, or
 
 
 def waits_on_answers(board: Board, cr: dict) -> bool:
-    """The request or one of its open items waits on a question not yet released (r5-q26); a released ruling waits for planning."""
+    """The request or one of its open items waits on a question not yet released (r5-q26); an in-force ruling waits for planning."""
     unit = work_unit(board, cr)
     return any(board.by_id.get(b, {}).get('issue_type') == 'decision' and board.by_id[b]['status'] in ANSWER_WAIT
                for member in unit for b in board.blockers.get(member, []) if b not in unit)
@@ -5110,8 +5111,8 @@ def reserve_planner_return(board: Board, cr: dict, ruling_id: str, actor: str) -
     if not entry or 'plan' not in session_kinds(entry):
         raise BoardError('--ruling requires a registered session pulling plan')
     ruling = board.by_id.get(ruling_id) or {}
-    if ruling.get('issue_type') != 'decision' or ruling.get('status') != 'released' or ruling.get('assignee') != actor:
-        raise BoardError(f'{ruling_id}: --ruling requires a released ruling you hold')
+    if ruling.get('issue_type') != 'decision' or ruling.get('status') != 'in_force' or ruling.get('assignee') != actor:
+        raise BoardError(f'{ruling_id}: --ruling requires an in-force ruling you hold')
     if refusal := foreign_claim(board, cr['id']):
         raise BoardError(refusal)
     if not any(ruling_id in board.blockers.get(item['id'], ()) for item in board.cr_items(cr['id'])):
@@ -5958,7 +5959,7 @@ OLD_LINK_WORDS = {  # input words the board refuses -> the form that replaces th
     'related': 'the link type relates-to',
     'discovered-from': 'the found-in field: agents board create --found-in <id> (a plan node: found_in)',
 }
-PAIR_VERBS = ('link', 'record')  # writers that add to a pair as it is (record: a released record's); block refuses or replaces the pair's link itself, supersede clears it (record --replaces writes a decided record's through the ruling verb)
+PAIR_VERBS = ('link', 'record')  # writers that add to a pair as it is (record: an in-force record's); block refuses or replaces the pair's link itself, supersede clears it (record --replaces writes a decided record's through the ruling verb)
 RULING_LINKS = ('supersedes', REVISES)  # the edges rulings carry: board ruling supersede, revise, release and record --replaces own them, no other verb writes them
 Waits = dict[str, tuple[list[str], list[str]]]  # new item key -> (existing items, keys of new items) that wait on it
 
@@ -6291,7 +6292,7 @@ def create_ruling_revision(board: Board, old: str, title: str, description: str,
 
 
 def unratified_confirmation(board: Board, issue: dict, reversal: str) -> str:
-    """The ordinary question for a released ruling taken without the user's judgment."""
+    """The ordinary question for an in-force ruling taken without the user's judgment."""
     item_id = issue['id']
     title = f"Confirm or revise: {issue.get('title', '')}?"
     description = f"## Question\nConfirm ruling {item_id} or revise it?\n\n{reversal.strip()}\n"
@@ -6316,8 +6317,8 @@ def record(board: Board, args) -> int:
     if issue.get('issue_type') != 'decision':
         raise BoardError(f'{args.id}: {issue.get("issue_type")}, not a decision')
     allowed_statuses = ('open', 'decided')
-    if issue['status'] not in allowed_statuses and not (args.unratified and issue['status'] == 'released'):
-        raise BoardError(f"{args.id}: {issue['status']}; a released record changes through agents board ruling revise")
+    if issue['status'] not in allowed_statuses and not (args.unratified and issue['status'] == 'in_force'):
+        raise BoardError(f"{args.id}: {issue['status']}; an in-force record changes through agents board ruling revise")
     try:
         text = Path(args.file).read_text(encoding='utf-8')
     except (OSError, UnicodeDecodeError) as error:
@@ -6328,7 +6329,7 @@ def record(board: Board, args) -> int:
     if missing:
         raise BoardError(f"{args.file} lacks the record section(s) {', '.join('## ' + name for name in missing)}")
     replaces = list(dict.fromkeys(args.replaces))
-    status = 'released' if args.unratified else 'decided'
+    status = 'in_force' if args.unratified else 'decided'
     closing, taking, operations = replaced_checks(board, args.id, replaces, actor, args.unratified)  # every refusal before the first write
     confirmation = None
     if args.unratified:
@@ -6340,7 +6341,7 @@ def record(board: Board, args) -> int:
     lint = json.loads(bd_checked('lint', args.id, '--json') or '{}')
     unlinted = [', '.join(result.get('missing') or []) for result in lint.get('results') or [] if result.get('missing')]
     if unlinted:
-        raise BoardError(f"{args.id}: recorded ({status}), but bd lint reports missing {'; '.join(unlinted)}")
+        raise BoardError(f"{args.id}: recorded ({status.replace('_', ' ')}), but bd lint reports missing {'; '.join(unlinted)}")
     failed = []
     for old in closing:
         if old in taking:
@@ -6351,7 +6352,7 @@ def record(board: Board, args) -> int:
     if args.unratified:  # unclaim last, so any earlier stop leaves the record held and rerunnable
         issue['status'] = status
         move(issue, 'unclaim')
-    print(f"recorded {args.id} ({status}): {issue.get('title', '')}")
+    print(f"recorded {args.id} ({status.replace('_', ' ')}): {issue.get('title', '')}")
     if confirmation:
         print(f'confirmation question: {confirmation}')
     if failed:
@@ -6399,7 +6400,7 @@ def replaced_checks(board: Board, new: str, replaces: list[str], actor: str, in_
                     closing.append(old)
                 else:
                     later.append(old)
-        elif issue['status'] not in ('decided', 'released'):
+        elif issue['status'] not in ('decided', 'in_force'):
             problems.append(f"--replaces {old}: {issue['status']}, not decided or released")
         else:
             # The supersede replaces any other link on the pair (bd keeps one edge per pair), so the revision link replaces it now.
@@ -6441,15 +6442,15 @@ def check_replaces(board: Board, args) -> None:
             missing = missing_sections(str(issue.get('description') or ''))
             if missing:
                 problems.append(f"{item_id} is a closed question, not a planned ruling (missing {', '.join(missing)})")
-        elif issue['status'] not in ('decided', 'released'):
-            problems.append(f'{item_id} is {issue["status"]} decision, not a decided or released ruling')
+        elif issue['status'] not in ('decided', 'in_force'):
+            problems.append(f'{item_id} is {issue["status"]} decision, not a decided or in-force ruling')
     if problems:
         raise BoardError('supersedes needs a recorded ruling: ' + '; '.join(problems))
 
     replaces = [item_id for item_id, issue in rows.items() if issue['status'] == 'decided']
     revises = [item_id for item_id in hits if item_id not in replaces]
     if len(revises) > 1:
-        raise BoardError(f'a question revises at most one released record ({", ".join(revises)}); split the question')
+        raise BoardError(f'a question revises at most one in-force record ({", ".join(revises)}); split the question')
 
     actor = caller()
     held = [(item_id, rows[item_id].get('assignee'), hold_refusal(board, rows[item_id], actor)) for item_id in replaces]
@@ -6482,14 +6483,14 @@ def reason_optional(issue: dict, record: dict) -> bool:
 
 def wait_target_refusal(waiter: dict | None, target: str, record: dict) -> str | None:
     """The rules about what a wait may name, one owner for every writer (wait, create and plan links, ruling revise and supersede, the protocol
-    engine's links): nothing waits on a deferred record (set aside, it would never end), and a released ruling waits only for its planning, a
+    engine's links): nothing waits on a deferred record (set aside, it would never end), and an in-force ruling waits only for its planning, a
     live decision or a human gate. `waiter` is None for a new item."""
     who = waiter['id'] if waiter else 'a new item'
     if record.get('status') == 'deferred':
         return (f'{who} cannot wait on {target}: it is deferred, set aside by nothing that would bring it back; undefer it first '
                 f'(agents board undefer {target}), or wait on the record that would')
-    if waiter and waiter.get('issue_type') == 'decision' and waiter['status'] == 'released' and not planning_wait(record):
-        return (f'{who}: a released ruling waits for planning only (a live decision or a human gate), '
+    if waiter and waiter.get('issue_type') == 'decision' and waiter['status'] == 'in_force' and not planning_wait(record):
+        return (f'{who}: an in-force ruling waits for planning only (a live decision or a human gate), '
                 f"not on {target} ({record.get('issue_type')} {record.get('status')}); plan the work the ruling changes and wait that work on {target}")
     return None
 
@@ -6801,7 +6802,7 @@ def release(board: Board, args) -> int:
     """Releases the decided rulings, supersedes the records they revise (a decided one among the ids is not released first), then
     closes the questions they answer.
     Resumable: a ruling already released and a question already closed are done; a failed revise supersede of an
-    already released ruling is retried (its revise link stays until it succeeds)."""
+    already in-force ruling is retried (its revise link stays until it succeeds)."""
     actor = caller()
     rulings = require_open(board, args.ids)
     # A decided record another ruling of this release revises is a replaced draft: it never comes into force, its reviser's
@@ -6813,7 +6814,7 @@ def release(board: Board, args) -> int:
             continue
         if issue.get('issue_type') != 'decision':
             problems.append(f"{issue['id']}: not a decision")
-        elif issue['status'] not in ('decided', 'released'):
+        elif issue['status'] not in ('decided', 'in_force'):
             problems.append(f"{issue['id']}: {issue['status']}, not decided")
         blocking = [b for b in board.release_holds(issue['id']) if b not in args.ids]
         if blocking and issue['status'] == 'decided':
@@ -6821,7 +6822,7 @@ def release(board: Board, args) -> int:
             named = ', '.join(f"{b} ({'revises it: release them together, or close the revision' if b in revisers else board.by_id.get(b, {}).get('status', 'not found')})"
                               for b in blocking)
             problems.append(f"{issue['id']}: waits on {named}")
-        if issue['status'] in ('decided', 'released'):  # every record it revises is superseded below: a live session's hold refuses first
+        if issue['status'] in ('decided', 'in_force'):  # every record it revises is superseded below: a live session's hold refuses first
             for old in board.revises(issue['id']):
                 if (refusal := hold_refusal(board, board.by_id.get(old, {}), actor)) == 'gone':
                     taking.append(old)
@@ -6853,7 +6854,7 @@ def release(board: Board, args) -> int:
                     for result in lint.get('results') or [] if result.get('missing')]
         if unlinted:
             raise BoardError('release refused, record text fails bd lint (write the record first):\n  ' + '\n  '.join(unlinted))
-        # A released ruling keeps blocking the items it changes; planning closes it and unblocks them.
+        # An in-force ruling keeps blocking the items it changes; planning closes it and unblocks them.
         operations = [move_line(issue, 'ruling release') for issue in pending]
         bd_checked('batch', '-m', f"board ruling release {' '.join(issue['id'] for issue in pending)}", '--json',
                    stdin='\n'.join(operations) + '\n')
@@ -6877,7 +6878,7 @@ def release(board: Board, args) -> int:
 
 def close_answered(board: Board, closes: list[tuple[str, list[str]]], released: set[str]) -> list[str]:
     """Closes each answered question once every unsettled blocker is a ruling of this release or a question closed
-    before it here (dependency order); forces only past those and released rulings. Returns the questions left open."""
+    before it here (dependency order); forces only past those and in-force rulings. Returns the questions left open."""
     closed: set[str] = set()
     pending = list(closes)
     while pending:
@@ -6909,7 +6910,7 @@ def rule_of(issue: dict) -> str | None:
 
 def supersede_chain(board: Board, old: str, new: str, rule: str | None, actor: str, seen: set[str]) -> tuple[list[str], list[str]]:
     """supersede_pair, then follows the chain: a record replaced whole that itself revises another leaves that one to
-    `new` too, with the replaced record's own rule, through unreleased records to the first released one.
+    `new` too, with the replaced record's own rule, through unreleased records to the first in-force one.
     (returned from review, failed records)."""
     if old in seen:
         return [], []
@@ -8058,7 +8059,7 @@ def run_command(argv: list[str]) -> int:
         return board_id(question), [board_id(record) for record in named]
 
     sub.add_argument('--closes', action='append', type=answered, default=[], metavar='QUESTION=RECORD[,RECORD]',
-                     help='close each question as answered by the named released rulings, in dependency order; '
+                     help='close each question as answered by the named in-force rulings, in dependency order; '
                           'forces only past blockers released or closed in this call')
     sub = add('supersede', "supersede a ruling; a full replacement blocks the old record's open items", supersede, group='ruling')
     sub.add_argument('old', type=board_id)
@@ -8073,7 +8074,7 @@ def run_command(argv: list[str]) -> int:
     sub = add('return', 'return a change request to the work queue; each finding becomes an open item of it', return_item)
     sub.add_argument('id', type=board_id)
     sub.add_argument('findings', nargs='+', type=nonempty, metavar='FINDING')
-    sub.add_argument('--ruling', type=board_id, help='return an unclaimed review whose items wait on this released ruling you hold')
+    sub.add_argument('--ruling', type=board_id, help='return an unclaimed review whose items wait on this in-force ruling you hold')
     for name, run, text in (('take', take, 'reassign held items to yourself (with a comment)'),
                             ('unclaim', unclaim, "free a hold, yours or another's (with a comment)")):
         sub = add(name, text, run)

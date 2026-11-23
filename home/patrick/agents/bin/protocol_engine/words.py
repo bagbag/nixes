@@ -592,7 +592,7 @@ def board_line(counts: dict | None, has_board: bool) -> str:
     return 'Board: ' + ', '.join(part(key, label) for key, label in BOARD_LINE_LABELS) + '.'
 
 
-BOARD_LINE_LABELS = (('questions', 'open questions'), ('decided', 'decided awaiting release'), ('toPlan', 'released to plan'),
+BOARD_LINE_LABELS = (('questions', 'open questions'), ('decided', 'decided awaiting release'), ('toPlan', 'in force to plan'),
                      ('toReview', 'to review'), ('toAccept', 'to accept'), ('forUser', 'waiting on the user'))
 
 
