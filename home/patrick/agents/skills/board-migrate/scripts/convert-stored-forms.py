@@ -533,9 +533,26 @@ def rehearse() -> int:
     common = subprocess.run(['git', 'rev-parse', '--path-format=absolute', '--git-common-dir'], capture_output=True, text=True).stdout.strip()
     main_tree = Path(common).parent if common else Path.cwd()
     worktrees = [cr for cr in branches if (main_tree / '.worktrees' / cr / '.git').is_file()]
-    with tempfile.TemporaryDirectory(prefix='board-rehearsal-') as folder:
+    # A SIGTERM must find everything it has to undo already recorded: it is held back while a child is spawned or the folder made, and delivered
+    # once they are recorded, so no child (and no server it would start) and no folder is left unknown to the cleanup below.
+    children: list[subprocess.Popen] = []
+    folder = ''
+    held = signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGTERM})
+    try:
+        folder = tempfile.mkdtemp(prefix='board-rehearsal-')
+        signal.pthread_sigmask(signal.SIG_SETMASK, held)  # a pending SIGTERM unwinds from here, into the cleanup
+
         def run(*args: str, stdin: str | None = None) -> subprocess.CompletedProcess:
-            return subprocess.run(args, cwd=folder, input=stdin, capture_output=True, text=True, env=env)
+            held = signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGTERM})
+            try:
+                child = subprocess.Popen(args, cwd=folder, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env,
+                                         start_new_session=True)  # its own group: the cleanup kills it with everything it spawned
+                children.append(child)
+            finally:
+                signal.pthread_sigmask(signal.SIG_SETMASK, held)
+            out, err = child.communicate(stdin)
+            children.remove(child)
+            return subprocess.CompletedProcess(args, child.returncode, out, err)
 
         def on_copy(*args: str) -> str:
             result = run(str(BOARD), *args)
@@ -546,40 +563,48 @@ def rehearse() -> int:
         for command in (['git', 'init', '-q', '-b', 'main'], ['git', '-c', 'user.name=rehearsal', '-c', 'user.email=rehearsal@example.invalid', 'commit', '-q', '--allow-empty', '-m', 'copy'],
                         *(['git', 'branch', f'cr/{cr}'] for cr in branches), *(['git', 'worktree', 'add', '-q', f'.worktrees/{cr}', f'cr/{cr}'] for cr in worktrees)):
             run(*command)
-        try:
-            on_copy('setup', *(['--prefix', prefix] if prefix else []))  # a server board, like the real ones: embedded calls cost four times as much
-            current = json.loads(on_copy('bd', 'config', 'get', '--json', 'status.custom') or '{}').get('value') or ''
-            # the copy takes the old statuses too, then setup puts the current list back
-            on_copy('bd', '--raw', '--yes', 'config', 'set', 'status.custom', f'{current},released:active,needs_ratification:wip,needs_acceptance:wip')
-            for name, value in carried.items():
-                if value:
-                    on_copy('bd', '--raw', '--yes', 'config', 'set', f'custom.board.{name}', value)
-            Path(folder, 'export.jsonl').write_text(exported, encoding='utf-8')
-            on_copy('bd', '--raw', '--yes', 'import', str(Path(folder, 'export.jsonl')))
-            on_copy('setup')
-            on_copy('bd', '--raw', '--yes', 'config', 'unset', MODEL_KEY)
-            mapping = Path(folder, 'checkpoint-mapping.json')
-            detail = {}
-            detail['conversion'] = run(sys.executable, '-B', str(here), '--apply')
-            inventory = run(sys.executable, '-B', str(checkpoints), 'inventory', '--mapping', str(mapping))
-            detail['checkpoint inventory'] = inventory
-            if mapping.is_file():
-                approved = json.loads(mapping.read_text(encoding='utf-8'))
-                approved['approved_by'] = 'rehearsal'
-                mapping.write_text(json.dumps(approved), encoding='utf-8')
-                detail['checkpoint conversion'] = run(sys.executable, '-B', str(checkpoints), 'apply', str(mapping), '--apply', '--copy')
-                detail['checkpoint verify'] = run(sys.executable, '-B', str(checkpoints), 'verify')
-            detail['check --fix'] = run(str(BOARD), 'check', '--fix', '--limit', '0')
-            detail['check'] = run(str(BOARD), 'check', '--limit', '0')
-            detail['mark'] = run(sys.executable, '-B', str(here), '--mark')
-            found = json.loads(run(str(BOARD), 'check', '--json').stdout or '{}').get('deviations') or []
-        finally:  # every way out stops the copy's server, then the folder goes
-            run(str(BOARD), 'bd', '--raw', '--yes', 'dolt', 'stop')
-            subprocess.run(['pkill', '-f', folder], capture_output=True)  # a server still starting when the stop came
-            for _ in range(40):  # until the server is gone
-                if subprocess.run(['pgrep', '-f', folder], capture_output=True).returncode != 0:
+        on_copy('setup', *(['--prefix', prefix] if prefix else []))  # a server board, like the real ones: embedded calls cost four times as much
+        current = json.loads(on_copy('bd', 'config', 'get', '--json', 'status.custom') or '{}').get('value') or ''
+        # the copy takes the old statuses too, then setup puts the current list back
+        on_copy('bd', '--raw', '--yes', 'config', 'set', 'status.custom', f'{current},released:active,needs_ratification:wip,needs_acceptance:wip')
+        for name, value in carried.items():
+            if value:
+                on_copy('bd', '--raw', '--yes', 'config', 'set', f'custom.board.{name}', value)
+        Path(folder, 'export.jsonl').write_text(exported, encoding='utf-8')
+        on_copy('bd', '--raw', '--yes', 'import', str(Path(folder, 'export.jsonl')))
+        on_copy('setup')
+        on_copy('bd', '--raw', '--yes', 'config', 'unset', MODEL_KEY)
+        mapping = Path(folder, 'checkpoint-mapping.json')
+        detail = {}
+        detail['conversion'] = run(sys.executable, '-B', str(here), '--apply')
+        inventory = run(sys.executable, '-B', str(checkpoints), 'inventory', '--mapping', str(mapping))
+        detail['checkpoint inventory'] = inventory
+        if mapping.is_file():
+            approved = json.loads(mapping.read_text(encoding='utf-8'))
+            approved['approved_by'] = 'rehearsal'
+            mapping.write_text(json.dumps(approved), encoding='utf-8')
+            detail['checkpoint conversion'] = run(sys.executable, '-B', str(checkpoints), 'apply', str(mapping), '--apply', '--copy')
+            detail['checkpoint verify'] = run(sys.executable, '-B', str(checkpoints), 'verify')
+        detail['check --fix'] = run(str(BOARD), 'check', '--fix', '--limit', '0')
+        detail['check'] = run(str(BOARD), 'check', '--limit', '0')
+        detail['mark'] = run(sys.executable, '-B', str(here), '--mark')
+        found = json.loads(run(str(BOARD), 'check', '--json').stdout or '{}').get('deviations') or []
+    finally:  # every way out: stop what is still running, stop the copy's server (its command line names the folder), then the folder goes
+        signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGTERM})
+        for child in children:
+            with contextlib.suppress(ProcessLookupError):
+                os.killpg(child.pid, signal.SIGKILL)
+            child.wait()
+        if folder:
+            quiet = 0
+            for _ in range(240):  # until the server stays gone: one still starting when the stop came shows up in the next round
+                subprocess.run([str(BOARD), 'bd', '--raw', '--yes', 'dolt', 'stop'], cwd=folder, capture_output=True, env=env)
+                subprocess.run(['pkill', '-f', folder], capture_output=True)
+                quiet = quiet + 1 if subprocess.run(['pgrep', '-f', folder], capture_output=True).returncode != 0 else 0
+                if quiet == 2:
                     break
                 time.sleep(0.25)
+            shutil.rmtree(folder, ignore_errors=True)
     classes: dict[str, int] = {}
     for row in found:
         classes[row['class']] = classes.get(row['class'], 0) + 1

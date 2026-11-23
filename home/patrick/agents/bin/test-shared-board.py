@@ -2039,6 +2039,36 @@ def t_migrate() -> None:
     child.send_signal(signal.SIGTERM)
     child.wait(120)
     check(not leftovers(), 'migrate: a rehearsal killed midway leaves no folder and no server', leftovers())
+
+    def killed_at(window: str) -> list[str]:
+        """A rehearsal that gets its SIGTERM at an exact point: right after its folder is made, or right after `board setup` is spawned (which then starts the copy's server)."""
+        hook = (f'import os, runpy, signal, subprocess, sys, tempfile\n'
+                f'window, script = {window!r}, {str(script)!r}\n'
+                'term = lambda: os.kill(os.getpid(), signal.SIGTERM)\n'
+                'made = tempfile.mkdtemp\n'
+                'def mkdtemp(*a, **k):\n'
+                '    folder = made(*a, **k)\n'
+                '    if window == "folder": term()\n'
+                '    return folder\n'
+                'tempfile.mkdtemp = mkdtemp\n'
+                'spawn = subprocess.Popen\n'
+                'class Popen(spawn):\n'
+                '    def __init__(self, args, *a, **k):\n'
+                '        super().__init__(args, *a, **k)\n'
+                '        if window == "setup" and list(args)[1:2] == ["setup"]: term()\n'
+                'subprocess.Popen = Popen\n'
+                'sys.argv = [script, "--rehearse"]\n'
+                'runpy.run_path(script, run_name="__main__")\n')
+        child = subprocess.run([sys.executable, '-B', '-c', hook], cwd=ROOT / side, capture_output=True, text=True, env=base_env(side), timeout=300)
+        seen = leftovers()
+        deadline = time.time() + 20  # an orphaned setup would still start its server in this time
+        while not seen and time.time() < deadline:
+            time.sleep(1)
+            seen = leftovers()
+        return ([f'exit {child.returncode}: {child.stderr[-300:]}'] if child.returncode != 143 else []) + seen
+
+    for window in ('folder', 'setup'):
+        check(not (seen := killed_at(window)), f'migrate: a rehearsal that gets SIGTERM right after its {window} step leaves no folder and no server', seen)
     rc, out, err = migrate('--mark')
     check(rc == 1 and setting(side, 'custom.board.model') == '', 'migrate: the marker waits for the conversions', err + out)
     rc, out, err = migrate('--apply')
