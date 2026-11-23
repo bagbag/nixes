@@ -1617,12 +1617,14 @@ def t_scenarios() -> None:
           and run('a', 'wait', four_item, '--on', stalled_q, '--for', 'the answer')[0] == 0, 'scenario 4: question waits on the probe, the item on the question')
     rc, _, err, _ = run('a', 'claim', four, role='agent')
     check(rc == 1 and not row(four).get('assignee'), 'scenario 4: the CR with only the waiting item is not ready', err)
-    _, listed, _, _ = run('a', 'queue')
-    check(stalled_q not in listed and probe in listed and four not in listed, 'scenario 4: only the probe is ready', listed)
+    rc, _, err, _ = run('a', 'claim', stalled_q)
+    check(rc == 1 and probe in err and not row(stalled_q).get('assignee'), 'scenario 4: the question is not claimable while it waits on the probe, naming it', err)
     check(run('a', 'claim', probe, role='agent')[0] == 0 and row(probe).get('assignee'), 'scenario 4: the probe runs on its own')
     check(run('a', 'close', probe, '--reason', 'the probe found what it was after', role='agent')[0] == 0, 'scenario 4: the probe closes')
-    _, listed, _, _ = run('a', 'queue')
-    check(stalled_q in listed and four not in listed, 'scenario 4: the question is ready once the probe closed; its CR waits for the ruling', listed)
+    rc, _, err, _ = run('a', 'claim', four, role='agent')
+    check(rc == 1 and not row(four).get('assignee'), 'scenario 4: its CR still waits for the ruling', err)
+    rc, _, err, _ = run('a', 'claim', stalled_q)
+    check(rc == 0 and row(stalled_q).get('assignee'), 'scenario 4: the question is ready once the probe closed', err)
 
     # 7 and 8. Someday and "remind me on a day" are deferred, not started by themselves; a question put off is deferred too; the user's
     # deferral is undone only by the user (through a deciding session).

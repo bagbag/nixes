@@ -3405,6 +3405,10 @@ def claim(board: Board, args) -> int:
                 failed.append(item_id)
                 print(f"{item_id}: milestone not ready, waits on {', '.join(board.open_blockers(item_id))}", file=sys.stderr)
                 continue
+            if not board.is_cr(item_id) and (waits := board.waits_of(issue)):
+                failed.append(item_id)  # readiness: unheld and every wait met (board model, Readiness)
+                print(f"{item_id}: not claimable: waits on {', '.join(waits)}", file=sys.stderr)
+                continue
             if board.is_cr(item_id):
                 kind = board.claimable(issue)
                 if kind is None and issue['status'] == PASSED and after_base(board, issue) and may_move(board):
