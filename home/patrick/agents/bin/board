@@ -3696,6 +3696,9 @@ def git_text(root: Path, *args: str, env: dict[str, str] | None = None, input: s
 # skills/shared/change-requests.md.
 SETTINGS = {name: f'custom.board.{name}' for name in ('target', 'setup', 'checks', 'look', 'view')}  # bd's namespace for custom keys
 LOOKS, VIEWS = ('before', 'after'), ('code', 'result')
+# The model marker: written by `board setup` on a board it creates and, last, by board-migrate on an older one. Every write verb refuses a board
+# without it, naming /board-migrate; reads, setup, check (--fix is migration's own) and raw bd stay open so migrate can inspect and convert.
+MODEL_KEY, MODEL = 'custom.board.model', '1'
 # Worktrees live inside the main checkout, <main>/.worktrees/<cr id>, so every runtime's workspace sandbox covers them without
 # a grant (q239 reversed 2026-11-11); the repository's local exclude file hides them from git status.
 WORKTREES = '.worktrees'
@@ -3756,6 +3759,12 @@ def settings_problems(board: Board) -> list[str]:
         except BoardError as error:
             problems.append(str(error))
     return problems
+
+
+def require_model() -> None:
+    """Refuses a write on a board that has not been brought to the current model (MODEL_KEY)."""
+    if beads_dir() is not None and current_setting(MODEL_KEY) != MODEL:
+        raise BoardError(f'this board is not on the current model ({MODEL_KEY} is not {MODEL}): run /board-migrate. Reads still work; board bd --raw is migrate\'s way in')
 
 
 def cr_look(board: Board, cr: dict) -> str:
@@ -7348,6 +7357,7 @@ def setup(args) -> int:
     os.chdir(toplevel.stdout.strip())
     wanted = project_pairs(args)
     beads = beads_dir()
+    created = beads is None
     if beads is None:
         prefix = args.prefix or default_prefix(Path.cwd())
         if not re.fullmatch(r'[a-z0-9][a-z0-9-]*', prefix):
@@ -7368,7 +7378,8 @@ def setup(args) -> int:
             print(f'this project already has a board ({mode} mode); applying the current settings')
     server = json.loads((beads / 'metadata.json').read_text(encoding='utf-8')).get('dolt_mode') == 'server'
     changed = []
-    for key, value in (*LOCAL_CONFIG, *TRAVELLING_CONFIG, *(SERVER_CONFIG if server else ()), *(SHARED_CONFIG if read_mark(beads) else ()), *wanted):
+    for key, value in (*LOCAL_CONFIG, *TRAVELLING_CONFIG, *(SERVER_CONFIG if server else ()), *(SHARED_CONFIG if read_mark(beads) else ()),
+                       *(((MODEL_KEY, MODEL),) if created else ()), *wanted):  # an existing board gets its marker from board-migrate, never from a rerun
         old = current_setting(key)
         if old != value:
             bd_checked('config', 'set', key, value)
@@ -8308,6 +8319,12 @@ def run_command(argv: list[str]) -> int:
         return 0
     args.root = getattr(args, 'root', None)
     refused = 2 if args.run in REFUSAL_EXIT_2 else 1  # a refusal exits 2 for the write-by-flags verbs, as board bd does
+    if writes(argv) and args.run not in (setup, check):
+        try:
+            require_model()
+        except BoardError as error:
+            report_error(error)
+            return refused
     if args.run in (setup, share, join, move_board, create_command, comment_command, close_command, field_discard, defer_command, undefer_command, gate_create, gate_resolve):
         try:
             return args.run(args)

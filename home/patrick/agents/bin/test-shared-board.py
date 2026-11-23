@@ -256,7 +256,7 @@ def setup() -> None:
         raise RuntimeError(f'init: {err}{out}')
     for key, value in (('status.custom', 'decided:wip,in_force:active,in_review:wip,passed:wip'), ('types.custom', 'design,change-request')):
         bd('a', 'config', 'set', key, value, role=None)
-    for key, value in (('custom.board.target', git('symbolic-ref', '--short', 'HEAD', cwd=ROOT / 'a').strip()), ('custom.board.setup', 'true'), ('custom.board.checks', 'true'), ('custom.board.look', 'before'), ('custom.board.view', 'code')):
+    for key, value in (('custom.board.target', git('symbolic-ref', '--short', 'HEAD', cwd=ROOT / 'a').strip()), ('custom.board.setup', 'true'), ('custom.board.checks', 'true'), ('custom.board.look', 'before'), ('custom.board.view', 'code'), ('custom.board.model', '1')):
         bd('a', 'config', 'set', key, value, role=None)
     bd('a', 'dolt', 'commit', '-m', 'config', role=None)
 
@@ -1823,7 +1823,7 @@ def t_move() -> None:
 
 SETTINGS = {'create.require-description': 'true', 'validation.on-close': 'error', 'lint.sections.decision': 'Question,Decision,Rule owner',
             'events-journal': 'true', 'events-journal-retain-days': '30', 'no-git-ops': 'true',
-            'status.custom': 'decided:wip,in_force:active,in_review:wip,passed:wip', 'types.custom': 'design,change-request', 'min_hash_length': '5'}
+            'status.custom': 'decided:wip,in_force:active,in_review:wip,passed:wip', 'types.custom': 'design,change-request', 'min_hash_length': '5', 'custom.board.model': '1'}
 
 
 def setting(side: str, key: str) -> str:
@@ -1856,6 +1856,18 @@ def t_setup() -> None:
     check('already has a board' in out, 'setup: an existing board is never re-created', out)
     rc, out, err, _ = run('setupproj', 'setup', role=None)
     check(rc == 0 and ' -> ' not in out and 'up to date' in out, 'setup again: nothing to do', err + out)
+    bd('setupproj', 'config', 'unset', 'custom.board.model', role=None)
+    bd('setupproj', 'dolt', 'commit', '-m', 'an older board', role=None)
+    rc, out, err, _ = run('setupproj', 'setup', role=None)
+    check(rc == 0 and setting('setupproj', 'custom.board.model') == '', 'setup on an existing board without the marker leaves it unset: only board-migrate writes it', err + out)
+    rc, out, err, _ = run('setupproj', 'comment', 'nothing-here', '-m', 'a write on a board without the marker', role=None)
+    check(rc != 0 and '/board-migrate' in err and 'nothing-here' not in out, 'a write verb on a board without the marker is refused, naming /board-migrate', err + out)
+    rc, out, err, _ = run('setupproj', 'check', role=None)
+    check(rc == 0, 'a read (check) works on a board without the marker', err + out)
+    rc, out, err, _ = run('setupproj', 'bd', '--raw', '--yes', 'config', 'set', 'custom.board.model', '1', role=None)
+    check(rc == 0 and setting('setupproj', 'custom.board.model') == '1', 'raw bd, board-migrate\'s way in, writes the marker on a board without it', err + out)
+    rc, out, err, _ = run('setupproj', 'comment', 'nothing-here', '-m', 'a write on a board with the marker', role=None)
+    check('/board-migrate' not in err, 'a write verb on a board with the marker is not refused for it', err + out)
     rc, out, err, _ = run('setupproj', 'setup', '--target', 'main', '--setup', 'true', '--checks', 'true', '--look', 'after', '--view', 'result', role=None)
     got = {key: setting('setupproj', f'custom.board.{key}') for key in ('target', 'setup', 'checks', 'look', 'view')}
     check(rc == 0 and got == {'target': 'main', 'setup': 'true', 'checks': 'true', 'look': 'after', 'view': 'result'}, 'setup: the project setting flags are applied', (err + out, got))

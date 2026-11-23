@@ -2381,7 +2381,7 @@ def validate_board(root: Path) -> None:
         def __init__(self, issues, lint=None, refuse=(), history=None):
             self.issues, self.lint, self.refuse, self.calls = issues, lint or {"results": []}, set(refuse), []
             self.history, self.files, self.graphs, self.graph_at = history or {}, {}, [], {}
-            self.settings = {"custom.board.target": "main", "custom.board.setup": "true", "custom.board.checks": "true", "custom.board.look": "before", "custom.board.view": "code"}
+            self.settings = {"custom.board.target": "main", "custom.board.setup": "true", "custom.board.checks": "true", "custom.board.look": "before", "custom.board.view": "code", "custom.board.model": "1"}
 
         not_bd = ("nonsense",)  # words `bd <word> --help` rejects
         project = None  # the folder `bd where` names (its .beads); None: not in a board
