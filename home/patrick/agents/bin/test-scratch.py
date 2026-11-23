@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Behaviour tests of bin/scratch and board-migrate's scripts (rewrite-scratch-paths, move-scratch-records).
+"""Behaviour tests of bin/scratch and board-migrate's scripts (rewrite-scratch-paths, move-scratch-records, convert-design-checkpoints).
 
     python3 -B bin/test-scratch.py </dev/null [--only a,b] [--scratch <path to a copy of scratch>]
 
@@ -1441,6 +1441,257 @@ def move_records_takes_record_files_out_by_shape(e: Env):
     check(os.path.exists(f'{repo}/.scratch/topic/decisions/r1-q1.md') and Path(f'{records}/topic/decisions/r1-q1.md').read_text() == RECORD,
           f'an existing record is never overwritten: {again.stdout}')
     check('skipped (exists' in again.stdout, again.stdout)
+
+CONVERT = HERE.parent / 'skills' / 'board-migrate' / 'scripts' / 'convert-design-checkpoints.py'
+CONVERT_BOARD = """#!{python}
+import json, os, sys
+path = os.environ['FAKE_STATE']
+state = json.load(open(path))
+args = sys.argv[1:]
+state['calls'].append(args)
+items = {{i['id']: i for i in state['items']}}
+def save():
+    json.dump(state, open(path, 'w'))
+def deps(item):
+    return [d for d in state['deps'] if item['id'] in (d['issue_id'], d['depends_on_id'])]
+def row(item):
+    return {{k: v for k, v in item.items() if k not in ('metadata', 'comments')}} | {{'dependencies': deps(item)}}
+def full(item):
+    return {{**item, 'dependencies': deps(item), 'comments': [{{'text': t}} for t in item.get('comments', [])]}}
+def fail(text):
+    print(text, file=sys.stderr)
+    save()
+    sys.exit(1)
+raw = args[:3] == ['bd', '--raw', '--yes']
+if args[:2] == ['bd', 'list']:
+    found = [i for i in state['items'] if '--parent' not in args or i.get('parent') == args[args.index('--parent') + 1]]
+    print(json.dumps([row(i) for i in found]))
+elif args[0] == 'show':
+    print(json.dumps({{i: full(items[i]) for i in args[2:]}}))
+elif raw and args[3] == 'update':
+    item, flags = items[args[4]], args[5:]
+    if flags[:1] == ['--unset-metadata']:
+        if state.get('fail_clear'):
+            state['fail_clear'] -= 1
+            fail('update refused')
+        item['metadata'].pop(flags[1], None)
+    elif flags[:1] == ['--status']:
+        item['status'], item['assignee'] = flags[1], None
+    else:
+        fail('unexpected raw update ' + repr(flags))
+elif raw and args[3] == 'comments':
+    items[args[5]].setdefault('comments', []).append(args[6])
+elif raw and args[3] == 'batch':
+    lines = [line.split() for line in sys.stdin.read().splitlines() if line.strip()]
+    if state.get('fail_wait') and any(line[:2] == ['dep', 'add'] and line[4] == 'blocks' for line in lines):
+        state['fail_wait'] -= 1
+        fail('batch refused')
+    for line in lines:
+        if line[:2] == ['dep', 'remove']:
+            state['deps'] = [d for d in state['deps'] if (d['issue_id'], d['depends_on_id']) != (line[2], line[3])]
+        else:
+            state['deps'].append({{'issue_id': line[2], 'depends_on_id': line[3], 'type': line[4]}})
+else:
+    fail('unexpected ' + repr(args))
+save()
+"""
+CONVERT_SESSION = """#!{python}
+import json, os, sys
+print('lead0001' if sys.argv[1:] == ['actor'] else json.dumps({{'actor': 'lead0001', 'role': os.environ.get('TEST_ROLE', 'lead')}}))
+"""
+
+
+class Convert:
+    """A stateful fake board (raw bd writes and the reads the conversion makes) beside a real git checkout with cr/<id> branches. The script runs from
+    a copy laid out as agents/skills/board-migrate/scripts, so it finds the fake agents/bin/board beside it."""
+
+    def __init__(self, e: Env):
+        self.e = e
+        self.repo = f'{e.tmp}/proj'
+        self.state_path = f'{e.tmp}/convert-state.json'
+        self.mapping = f'{e.tmp}/mapping.json'
+        bins = Path(e.tmp) / 'agents' / 'bin'
+        scripts = Path(e.tmp) / 'agents' / 'skills' / 'board-migrate' / 'scripts'
+        bins.mkdir(parents=True)
+        scripts.mkdir(parents=True)
+        for name, text in (('board', CONVERT_BOARD), ('session', CONVERT_SESSION)):
+            (bins / name).write_text(text.format(python=sys.executable))
+            (bins / name).chmod(0o755)
+        self.script = scripts / CONVERT.name
+        self.script.write_text(CONVERT.read_text())
+        os.makedirs(self.repo)
+        self.git('init', '-q', '-b', 'main')
+        self.git('-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '--allow-empty', '-m', 'base')
+        self.state = {'items': [], 'deps': [], 'calls': []}
+
+    def git(self, *args: str) -> str:
+        return subprocess.run(['git', '-C', self.repo, *args], check=True, capture_output=True, text=True, env=self.e.environ(False)).stdout.strip()
+
+    def branch(self, cr: str) -> None:
+        self.git('branch', f'cr/{cr}')
+
+    def item(self, id: str, type: str, status: str = 'open', parent: str | None = None, **fields) -> None:
+        labels = ['kind:design'] if type == 'design' else []  # a design is a task labelled kind:design
+        self.state['items'].append({'id': id, 'title': id, 'issue_type': 'task' if type == 'design' else type, 'status': status, 'parent': parent, 'metadata': {},
+                                    'labels': labels, **fields})
+
+    def wait(self, waiter: str, on: str) -> None:
+        self.state['deps'].append({'issue_id': waiter, 'depends_on_id': on, 'type': 'blocks'})
+
+    def save(self) -> None:
+        Path(self.state_path).write_text(json.dumps(self.state))
+
+    def load(self) -> dict:
+        self.state = json.loads(Path(self.state_path).read_text())
+        return {i['id']: i for i in self.state['items']}
+
+    def run(self, *args: str, role: str = 'lead') -> subprocess.CompletedProcess:
+        self.save()
+        return subprocess.run([sys.executable, '-B', str(self.script), *args], cwd=self.repo, capture_output=True, text=True, stdin=subprocess.DEVNULL,
+                              env=self.e.environ(False, FAKE_STATE=self.state_path, TEST_ROLE=role), timeout=60)
+
+    def writes(self) -> int:
+        self.load()
+        return sum(c[:3] == ['bd', '--raw', '--yes'] for c in self.state['calls'])
+
+
+def checkpoint_board(e: Env) -> Convert:
+    c = Convert(e)
+    body = 'Design text of the checkpoint.'
+    c.item('cp-user', 'change-request', 'passed', metadata={'checkpoint': 'user', 'review_tip': 'abc'}, comments=['board handover: checks green'])
+    c.item('d-user', 'design', 'open', 'cp-user', design=body)
+    c.item('d-user2', 'design', 'open', 'cp-user', design=body)
+    c.item('cp-agent', 'change-request', 'open', metadata={'checkpoint': 'agent'})
+    c.item('d-agent', 'design', 'open', 'cp-agent', design=body)
+    c.item('cp-ret', 'change-request', 'open', metadata={'checkpoint': 'user'}, comments=['board return: findings'])
+    c.item('d-ret', 'design', 'open', 'cp-ret', design=body)
+    scratch = Path(e.tmp) / 'scratch' / 'items' / 'x' / 'design.md'
+    scratch.parent.mkdir(parents=True)
+    scratch.write_text('the approved text\n')
+    c.item('cp-scratch', 'change-request', 'open', metadata={'checkpoint': 'agent'})
+    c.item('d-scratch', 'design', 'open', 'cp-scratch', design=f'Body: {scratch}')
+    c.item('cp-noprov', 'change-request', 'passed', metadata={'checkpoint': 'user'})
+    c.item('d-noprov', 'design', 'open', 'cp-noprov', design=body)
+    c.item('cp-held', 'change-request', 'open', assignee='someone', metadata={'checkpoint': 'agent'})
+    c.item('d-held', 'design', 'open', 'cp-held', design=body)
+    c.item('cp-review', 'change-request', 'in_review', metadata={'checkpoint': 'agent', 'review_tip': 'abc'})
+    c.item('d-review', 'design', 'open', 'cp-review', design=body)
+    c.item('passed', 'change-request', 'open')  # a change request with a design item and no checkpoint metadata is no checkpoint
+    c.item('d-passed', 'design', 'closed', 'passed', design=body, close_reason='passed: accepted design checkpoint')
+    c.item('impl', 'task', 'open', 'passed')
+    for waiter in ('w-design', 'w-cr', 'w-passed', 'w-held'):
+        c.item(waiter, 'task', 'open', assignee='someone' if waiter == 'w-held' else None)
+    c.wait('w-design', 'd-user')
+    c.wait('w-cr', 'cp-user')
+    c.wait('w-passed', 'd-passed')
+    c.wait('w-held', 'd-agent')
+    # A closed design inside an unlanded CR, waited on from another CR whose item the first CR waits on: a cycle on the new runtime.
+    c.item('other', 'change-request', 'open')
+    c.item('x-src', 'task', 'open', 'other')
+    c.wait('x-src', 'd-passed')
+    c.wait('impl', 'x-src')
+    for cr in ('cp-user', 'cp-agent', 'cp-ret', 'cp-scratch', 'cp-noprov', 'cp-held', 'cp-review', 'passed'):
+        c.branch(cr)
+    return c
+
+
+@test
+def convert_checkpoints_inventories_without_writing(e: Env):
+    c = checkpoint_board(e)
+    out = c.run('inventory', '--mapping', c.mapping)
+    check(out.returncode == 0, out.stderr)
+    text = out.stdout
+    check('live checkpoint with outstanding design: back to open' in text.split('cp-user')[1].split('cp-')[0], f'a user checkpoint at Accept goes back to open:\n{text}')
+    for cr, kind in (('cp-agent', 'clear the marker'), ('cp-ret', 'clear the marker'), ('cp-scratch', 'clear the marker'),
+                     ('cp-noprov', 'hold'), ('cp-held', 'hold'), ('cp-review', 'hold')):
+        section = text.split(f'\n{cr}  ')[1].split('\n  transition: ')[1].splitlines()[0]
+        check(kind in section, f'{cr} maps to {kind}: {section}')
+    check('\npassed  ' not in text and not text.startswith('passed  '), f'a change request without checkpoint metadata is no checkpoint:\n{text}')
+    check('missing provenance' in text and 'held by someone' in text and 'in review' in text, f'hold reasons are listed:\n{text}')
+    check('w-design waits on d-user (unsatisfied delivery wait' in text and 'w-cr waits on cp-user (the change request' in text
+          and 'x-src waits on d-passed, a closed design in unlanded passed: met under the old runtime' in text and 'w-held waits on d-agent' in text and 'held by someone: quiesce' in text,
+          f'edge directions and kinds are listed:\n{text}')
+    check('body held in scratch' in text and 'sha256' in text, f'manual steps are listed, not done:\n{text}')
+    check(c.writes() == 0, 'inventory writes nothing')
+    mapping = json.loads(Path(c.mapping).read_text())
+    check(sorted(r['cr'] for r in mapping['records'] if r['kind'] == 'hold') == ['cp-held', 'cp-noprov', 'cp-review'], str(mapping['records']))
+    refused = c.run('apply', c.mapping)
+    check(refused.returncode and 'approved_by' in refused.stderr, f'an unapproved mapping is refused: {refused.stderr}')
+
+
+@test
+def convert_checkpoints_applies_reruns_and_refuses_divergence(e: Env):
+    c = checkpoint_board(e)
+    c.run('inventory', '--mapping', c.mapping)
+    mapping = json.loads(Path(c.mapping).read_text())
+    mapping['approved_by'] = 'owner'
+    Path(c.mapping).write_text(json.dumps(mapping))
+    before = c.run('verify')
+    check(before.returncode == 1 and 'x-src: still waits on d-passed' in before.stdout, f'verify names a met wait left: {before.stdout}')
+    dry = c.run('apply', c.mapping)
+    check(dry.returncode == 0 and 'cp-user: back to open' in dry.stdout and c.writes() == 0, f'a dry run writes nothing: {dry.stdout}{dry.stderr}')
+    check(c.run('apply', c.mapping, '--apply', role='agent').returncode and c.writes() == 0, 'only a lead or solo session writes')
+    check(c.run('apply', c.mapping, '--apply', '--copy', role='agent').returncode == 0 and c.load()['cp-user']['status'] == 'open', 'a rehearsal copy needs no deciding session')
+    c = checkpoint_board(Env(tempfile.mkdtemp(prefix='test-scratch.', dir=e.tmp)))
+    c.run('inventory', '--mapping', c.mapping)
+    Path(c.mapping).write_text(json.dumps({**json.loads(Path(c.mapping).read_text()), 'approved_by': 'owner'}))
+
+    # A tip that moved after approval stops the whole run before any write; so does a hold taken later.
+    c.git('checkout', '-q', 'cr/cp-agent')
+    c.git('-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '--allow-empty', '-m', 'doc')
+    c.git('checkout', '-q', 'main')
+    stopped = c.run('apply', c.mapping, '--apply')
+    check(stopped.returncode and 'cp-agent diverged' in stopped.stderr and 'tip' in stopped.stderr and c.writes() == 0 and c.load()['cp-agent']['metadata'].get('checkpoint'),
+          f'a changed tip stops before the first write: {stopped.stderr}')
+    c.git('branch', '-f', 'cr/cp-agent', 'main')
+    c.load()['cp-user']['assignee'] = 'reviewer'
+    stopped = c.run('apply', c.mapping, '--apply')
+    check(stopped.returncode and 'cp-user diverged' in stopped.stderr and 'holder' in stopped.stderr and c.writes() == 0,
+          f'a changed hold stops before any write: {stopped.stderr}')
+    c.load()['cp-user']['assignee'] = None
+
+    # A stop between the return to open and the clear: the rerun resumes without returning again.
+    c.state['fail_clear'] = 1
+    stopped = c.run('apply', c.mapping, '--apply')
+    items = c.load()
+    check(stopped.returncode and items['cp-user']['status'] == 'open' and items['cp-user']['metadata'].get('checkpoint'),
+          f'the run stopped after the return, before the clear: {stopped.stderr}')
+
+    # A write failing midway leaves a partial conversion; the rerun finishes it without repeating writes.
+    c.state['fail_wait'] = 1
+    partial = c.run('apply', c.mapping, '--apply')
+    items = c.load()
+    check(partial.returncode and not items['cp-user']['metadata'].get('checkpoint') and items['cp-user']['status'] == 'open',
+          f'return and clear landed before the wait failed: {partial.stderr}')
+    returns = sum(call[3:5] == ['update', 'cp-user'] and '--status' in call for call in c.state['calls'])
+    done = c.run('apply', c.mapping, '--apply')
+    items = c.load()
+    check(done.returncode == 0, done.stderr)
+    check(sum(call[3:5] == ['update', 'cp-user'] and '--status' in call for call in c.state['calls']) == returns, 'the rerun does not return again')
+    for cr in ('cp-user', 'cp-agent', 'cp-ret', 'cp-scratch'):
+        check(not items[cr]['metadata'].get('checkpoint'), f'{cr} has no checkpoint marker')
+    for cr in ('cp-noprov', 'cp-held', 'cp-review'):
+        check(items[cr]['metadata'].get('checkpoint'), f'{cr} stays as it was (a hold)')
+    check({'issue_id': 'w-design', 'depends_on_id': 'cp-user', 'type': 'blocks'} in c.state['deps']
+          and {'issue_id': 'w-design', 'depends_on_id': 'd-user', 'type': 'blocks'} in c.state['deps'],
+          'the unsatisfied waiter also waits on the design CR and keeps its old edge')
+    for waiter in ('w-passed', 'x-src'):
+        kinds = [d['type'] for d in c.state['deps'] if (d['issue_id'], d['depends_on_id']) == (waiter, 'd-passed')]
+        check(kinds == ['relates-to'], f'{waiter}: the met wait on d-passed became relates-to: {kinds}')
+    check({'issue_id': 'impl', 'depends_on_id': 'x-src', 'type': 'blocks'} in c.state['deps'], 'an unrelated wait stays')
+    check(not any(d['issue_id'] in ('w-passed', 'w-held') and d['depends_on_id'] in ('cp-user', 'cp-agent', 'passed') and d['type'] == 'blocks' for d in c.state['deps']),
+          'satisfied and held waits get no new edge')
+    writes = c.writes()
+    again = c.run('apply', c.mapping, '--apply')
+    check(again.returncode == 0 and c.writes() == writes and 'converted already' in again.stdout, f'a second run writes nothing: {again.stdout}{again.stderr}')
+    left = c.run('verify')
+    check(left.returncode == 1 and 'cp-noprov' in left.stdout and 'cp-user' not in left.stdout, f'verify names what is left:\n{left.stdout}')
+    items = c.load()
+    for cr in ('cp-noprov', 'cp-held', 'cp-review'):
+        items[cr]['metadata'].pop('checkpoint')
+    clean = c.run('verify')
+    check(clean.returncode == 0 and 'conversion complete' in clean.stdout, f'a converted board verifies: {clean.stdout}{clean.stderr}')
+
 
 def main() -> int:
     wanted = [n for n in OPTIONS.only.split(',') if n] or list(TESTS)

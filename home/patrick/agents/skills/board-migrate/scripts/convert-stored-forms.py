@@ -81,6 +81,16 @@ class Board:
                 elif kind in ('blocks', *OLD_WAITS) and issue['status'] != 'closed':
                     self.waiters.setdefault(target, []).append(issue['id'])
 
+    def waits_on_decision(self, item_id: str, seen: set[str] | None = None) -> bool:
+        """An open decision holds it, directly or through open blockers: the board keeps it out of a change request until that closes."""
+        seen = set() if seen is None else seen
+        for target, kind in edges(self.issues[item_id]):
+            if kind == 'blocks' and target in self.issues and self.issues[target]['status'] != 'closed' and target not in seen:
+                seen.add(target)
+                if self.issues[target].get('issue_type') == 'decision' or self.waits_on_decision(target, seen):
+                    return True
+        return False
+
     def live(self) -> list[dict]:
         return [i for i in self.issues.values() if i['status'] != 'closed']
 
@@ -96,6 +106,34 @@ def update(item_id: str, *flags: str) -> Callable[[], None]:
 
 
 # Each phase reads a fresh snapshot and returns its steps: a line saying what, and the writes. Left: forms only the user can settle.
+
+def files(b: Board, left: list[str]) -> list[Step]:
+    """Work that commits something belongs to a change request: a work item outside any becomes the only item of one of its own."""
+    steps = []
+    for issue in b.live():
+        item_id = issue['id']
+        if (issue.get('issue_type') != 'task' or b.cr_of(item_id) or issue['status'] == 'deferred' or meta(issue).get('no_commit') is True
+                or issue.get('assignee') == 'user' or b.waits_on_decision(item_id)):
+            continue
+        parents = [p for p in b.parents.get(item_id, []) if b.issues.get(p, {}).get('status') != 'closed']
+        if parents:
+            left.append(f'{item_id}: a work item outside any change request under {", ".join(parents)}; move it into a change request, or mark it no-commit')
+            continue
+        steps.append((f'{item_id}: becomes the only item of a change request of its own', lambda issue=issue: file_item(issue)))
+        left.append(f'{item_id}: a work item outside any change request became the only item of one of its own; plan the change request')
+    return steps
+
+
+def file_item(issue: dict) -> None:
+    item_id = issue['id']
+    routed = [label for label in issue.get('labels') or [] if label.startswith(('queue:', 'for:'))]
+    carried = [label for label in issue.get('labels') or [] if label.startswith('topic:')] + routed
+    cr = next((i['id'] for i in Board().live() if i.get('external_ref') == f'migrated-cr:{item_id}'), None)
+    if cr is None:
+        cr = write('create', issue.get('title', item_id), '-t', 'change-request', '-d', str(issue.get('description') or issue.get('title') or item_id),
+                   '--priority', str(issue.get('priority', 2)), '--external-ref', f'migrated-cr:{item_id}', '--silent', *(f'--labels={label}' for label in carried)).strip().splitlines()[-1]
+    write('update', item_id, '--parent', cr, *(flag for label in routed for flag in ('--remove-label', label)), '--json')  # a child takes its parent's queue
+
 
 def holds(b: Board, left: list[str]) -> list[Step]:
     steps = []
@@ -145,7 +183,16 @@ def statuses(b: Board, left: list[str]) -> list[Step]:
             steps.append((f'{item_id}: needs_ratification becomes in_force, with a question to confirm or revise it', lambda issue=issue: confirm_ruling(b, issue)))
             left.append(f'{item_id}: a ruling taken without your judgment stays in force; answer its "Confirm or revise" question')
         elif status == 'deferred' and b.is_item(issue):
-            left.append(f'{item_id}: a deferred item of {b.cr_of(item_id)}; an item has no deferral: move it into its own change request (agents board move), then defer that, or drop it')
+            cr = b.cr_of(item_id)  # an item has no deferral of its own
+            if b.issues[cr]['status'] == 'deferred':
+                steps.append((f'{item_id}: open again, the deferral of {cr} holds it',
+                              update(item_id, '--status', 'open', '--defer', '', '--unset-metadata', 'revisit', '--unset-metadata', 'deferred_by')))
+            else:
+                def leave(i=item_id, c=cr) -> None:
+                    write('update', i, '--set-metadata', f'found_in={c}', '--json')
+                    write('batch', '-m', f'board-migrate {i}', '--json', stdin=f'dep remove {i} {c}\n')
+                steps.append((f'{item_id}: leaves {cr} as a standalone deferred task, found in it', leave))
+                left.append(f'{item_id}: a deferred item of {cr} is now a standalone deferred task found in {cr}; undefer it into a change request when it is due')
     return steps
 
 
@@ -228,7 +275,7 @@ def dates(b: Board, left: list[str]) -> list[Step]:
     steps = []
     for issue in b.live():
         until = issue.get('defer_until')
-        if until:
+        if until and not b.is_item(issue):
             day = datetime.fromisoformat(until.replace('Z', '+00:00')).astimezone().date().isoformat()
 
             steps.append((f'{issue["id"]}: defer_until {until} becomes revisit {day}',  # bd's own date wakes a record, so it leaves bd; clearing it reopens, so the status goes with it
@@ -387,7 +434,7 @@ def regate(old: dict, title: str) -> None:
     write('close', item_id, '--force', '--reason', f'board-migrate: replaced by the human gate {gate}')
 
 
-PHASES = (statuses, holds, kinds, authors, dates, outcomes, links, deferrals, epics, ratifications, human_gates)
+PHASES = (kinds, statuses, epics, files, holds, authors, dates, outcomes, links, deferrals, ratifications, human_gates)  # kinds first: an item is a task in a change request
 
 
 def check_status_custom() -> None:
@@ -397,11 +444,17 @@ def check_status_custom() -> None:
         raise Stop(f'status.custom lacks {", ".join(missing)}: run agents board setup first')
 
 
+BY_KIND: dict[str, int] = {}  # conversions per phase of the last run
+
+
 def run(apply: bool) -> tuple[int, list[str]]:
     """Every phase on a fresh snapshot; returns the steps found (applied when `apply`) and the forms left for the user."""
     found, left = 0, []
+    BY_KIND.clear()
     for phase in PHASES:
         steps = phase(Board(), left)
+        if steps:
+            BY_KIND[phase.__name__] = len(steps)
         for what, step in steps:
             print(('' if apply else 'would: ') + what)
             if apply:
@@ -411,24 +464,30 @@ def run(apply: bool) -> tuple[int, list[str]]:
 
 
 def rehearse() -> int:
-    """The export of this board, imported into a temporary board of its own, converted and checked there. Nothing of this board is written;
-    the copy has no branches or worktrees, so its cr-branch and cr-worktree findings and its checkpoint holds are the copy's, not the board's."""
+    """The export of this board, imported into a temporary board of its own and taken through the whole flow there: setup, the conversion, the checkpoint
+    conversion, check, and a mark that shows what blocks it. Nothing of this board is written. The copy has the branches this checkout has for live change
+    requests (at its HEAD) and no worktrees."""
     exported = read('bd', 'export')
     setting = lambda key: json.loads(read('bd', 'config', 'get', '--json', key) or '{}').get('value') or ''
     prefix, carried = setting('issue_prefix'), {name: setting(f'custom.board.{name}') for name in ('target', 'setup', 'checks', 'look', 'view')}
     env = {key: value for key, value in os.environ.items() if key not in ('BEADS_DIR', 'BEADS_DB')}  # the copy must never be this board
     here = Path(__file__).resolve()
+    checkpoints = here.with_name('convert-design-checkpoints.py')
+    rows = [json.loads(line) for line in exported.splitlines() if line.strip()]
+    branches = [row['id'] for row in rows if row.get('issue_type') == 'change-request' and row.get('status') not in ('closed', None)
+                and subprocess.run(['git', 'rev-parse', '--verify', '-q', f'refs/heads/cr/{row["id"]}'], capture_output=True).returncode == 0]
     with tempfile.TemporaryDirectory(prefix='board-rehearsal-') as folder:
         def run(*args: str, stdin: str | None = None) -> subprocess.CompletedProcess:
             return subprocess.run(args, cwd=folder, input=stdin, capture_output=True, text=True, env=env)
 
-        def on_copy(*args: str, stdin: str | None = None) -> str:
-            result = run(str(BOARD), *args, stdin=stdin)
+        def on_copy(*args: str) -> str:
+            result = run(str(BOARD), *args)
             if result.returncode:
                 raise Stop(f"on the copy: board {' '.join(args)} failed: {(result.stderr or result.stdout).strip()}")
             return result.stdout
 
-        for command in (['git', 'init', '-q', '-b', 'main'], ['git', '-c', 'user.name=rehearsal', '-c', 'user.email=rehearsal@example.invalid', 'commit', '-q', '--allow-empty', '-m', 'copy']):
+        for command in (['git', 'init', '-q', '-b', 'main'], ['git', '-c', 'user.name=rehearsal', '-c', 'user.email=rehearsal@example.invalid', 'commit', '-q', '--allow-empty', '-m', 'copy'],
+                        *(['git', 'branch', f'cr/{cr}'] for cr in branches)):
             run(*command)
         on_copy('setup', '--embedded', *(['--prefix', prefix] if prefix else []))
         current = json.loads(on_copy('bd', 'config', 'get', '--json', 'status.custom') or '{}').get('value') or ''
@@ -441,11 +500,38 @@ def rehearse() -> int:
         on_copy('bd', '--raw', '--yes', 'import', str(Path(folder, 'export.jsonl')))
         on_copy('setup')
         on_copy('bd', '--raw', '--yes', 'config', 'unset', MODEL_KEY)
-        print(f'rehearsal on a copy of {len(exported.splitlines())} export rows; this board is not written')
-        for title, command in (('conversion', [sys.executable, '-B', str(here), '--apply']), ('check', [str(BOARD), 'check', '--limit', '0']),
-                               ('checkpoints', [sys.executable, '-B', str(here.with_name('convert-design-checkpoints.py')), 'inventory'])):
-            result = run(*command)
-            print(f'--- {title} (exit {result.returncode})\n{(result.stdout + result.stderr).strip()}')
+        mapping = Path(folder, 'checkpoint-mapping.json')
+        detail = {}
+        detail['conversion'] = run(sys.executable, '-B', str(here), '--apply')
+        inventory = run(sys.executable, '-B', str(checkpoints), 'inventory', '--mapping', str(mapping))
+        detail['checkpoint inventory'] = inventory
+        if mapping.is_file():
+            approved = json.loads(mapping.read_text(encoding='utf-8'))
+            approved['approved_by'] = 'rehearsal'
+            mapping.write_text(json.dumps(approved), encoding='utf-8')
+            detail['checkpoint conversion'] = run(sys.executable, '-B', str(checkpoints), 'apply', str(mapping), '--apply', '--copy')
+            detail['checkpoint verify'] = run(sys.executable, '-B', str(checkpoints), 'verify')
+        detail['check'] = run(str(BOARD), 'check', '--limit', '0')
+        detail['mark'] = run(sys.executable, '-B', str(here), '--mark')
+        found = json.loads(run(str(BOARD), 'check', '--json').stdout or '{}').get('deviations') or []
+    classes: dict[str, int] = {}
+    for row in found:
+        classes[row['class']] = classes.get(row['class'], 0) + 1
+    converted = detail['conversion'].stdout
+    print(f'rehearsal on a copy of {len(rows)} export rows; this board is not written')
+    print('--- summary')
+    print('conversion: ' + next((line for line in converted.splitlines() if 'conversion(s)' in line), f'stopped: {detail["conversion"].stderr.strip()[:300]}'))
+    print(next((line for line in converted.splitlines() if line.startswith('by kind: ')), 'by kind: none'))
+    print('deviations after: ' + (', '.join(f'{name} {count}' for name, count in classes.items()) or 'none'))
+    marked = detail['mark']
+    print('mark: ' + ('would be written' if marked.returncode == 0 else 'blocked'))
+    for line in (marked.stderr + marked.stdout).strip().splitlines() if marked.returncode else []:
+        print(f'  blocks: {line}')
+    for line in converted.splitlines():
+        if line.startswith('for the user: '):
+            print(f'  {line}')
+    for title, result in detail.items():
+        print(f'--- {title} (exit {result.returncode})\n{(result.stdout + result.stderr).strip()}')
     return 0
 
 
@@ -476,18 +562,21 @@ def main() -> int:
     mode.add_argument('--rehearse', action='store_true', help='convert a copy of this board in a temporary board and report; writes nothing here')
     args = parser.parse_args()
     try:
+        if args.rehearse:
+            return rehearse()  # the copy gets the current statuses from setup; this board may still lack them
         check_status_custom()
         if args.mark:
             return mark()
-        if args.rehearse:
-            return rehearse()
         found, left = run(args.apply)
+        kinds = dict(BY_KIND)
         if args.apply:
             again, left = run(False)
             if again:
                 print(f'{again} conversion(s) still found after applying; rerun, or settle them by hand', file=sys.stderr)
                 return 1
         print(f'{found} conversion(s) {"applied" if args.apply else "found"}')
+        if kinds:
+            print('by kind: ' + ', '.join(f'{name} {count}' for name, count in kinds.items()))
     except Stop as error:
         print(f'convert-stored-forms stopped: {error}', file=sys.stderr)
         return 1

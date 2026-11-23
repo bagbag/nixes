@@ -1933,6 +1933,17 @@ def t_migrate() -> None:
     no_commit = ['--metadata', '{"no_commit":true}']
     for name, title in (('cr1', 'CR one'), ('cr2', 'CR in review, claimed'), ('cr3', 'CR in review, unknown hand-over'), ('cr4', 'CR awaiting acceptance'), ('cr5', 'CR awaiting acceptance with its own look'), ('cr6', 'CR in progress')):
         make(name, title, kind='change-request')
+    make('dsg_review', 'design item in review, held', '--parent', ids['cr1'], kind='design')
+    update('dsg_review', '--status', 'in_review', '--assignee', 'abcd1234')
+    make('def_item', 'deferred item of a live change request', '--parent', ids['cr1'])
+    raw(side, 'defer', ids['def_item'])
+    make('cr7', 'a deferred change request', kind='change-request')
+    make('def_under', 'item of the deferred change request', '--parent', ids['cr7'])
+    raw(side, 'defer', ids['def_under'])
+    raw(side, 'defer', ids['cr7'])
+    make('loose', 'loose work item', '--labels', 'topic:loose')
+    make('loose_def', 'loose deferred work item')
+    raw(side, 'defer', ids['loose_def'])
     make('held', 'held item', '--parent', ids['cr1'])
     update('held', '--assignee', 'abcd1234', '--set-metadata', 'hold=work', '--status', 'in_progress')
     make('bug', 'a bug item', '--parent', ids['cr1'], kind='bug')
@@ -2007,7 +2018,7 @@ def t_migrate() -> None:
     rc, out, err = migrate()
     check(rc == 0 and out.count('would: ') >= 20 and items(side) == before, 'migrate: the dry run lists the conversions and writes nothing', err + out)
     rc, out, err = migrate('--rehearse')
-    check(rc == 0 and 'rehearsal on a copy' in out and '--- conversion (exit 0)' in out and 'conversion(s) applied' in out and items(side) == before and not list(Path('/tmp').glob('board-rehearsal-*')),
+    check(rc == 0 and 'rehearsal on a copy' in out and out.index('--- summary') < out.index('--- conversion (exit 0)') and 'conversion(s) applied' in out and 'blocked' in out and items(side) == before and not list(Path('/tmp').glob('board-rehearsal-*')),
           'migrate: --rehearse converts a copy in a temporary board and writes nothing here', err + out)
     rc, out, err = migrate('--mark')
     check(rc == 1 and setting(side, 'custom.board.model') == '', 'migrate: the marker waits for the conversions', err + out)
@@ -2030,6 +2041,16 @@ def t_migrate() -> None:
     check(not row('held').get('assignee') and 'hold' not in meta_of('held') and row('held')['status'] == 'open', 'migrate: the hold on an item is cleared and in_progress is open', row('held'))
     check(row('bug')['issue_type'] == 'task' and 'kind:bug' in row('bug')['labels'] and 'kind:design' in row('design')['labels'] and row('spike')['issue_type'] == 'task',
           'migrate: bug, design and spike types become tasks, with kind labels where there is one', (row('bug'), row('design'), row('spike')))
+    check(row('dsg_review')['issue_type'] == 'task' and row('dsg_review')['status'] == 'open' and not row('dsg_review').get('assignee') and 'kind:design' in row('dsg_review')['labels'],
+          'migrate: a design-typed item in review, held, converges in one apply', row('dsg_review'))
+    check(row('def_item')['status'] == 'deferred' and meta_of('def_item').get('found_in') == ids['cr1'] and not any(kind == 'parent-child' for _, kind in deps('def_item')),
+          'migrate: a deferred item of a live change request leaves it as a deferred task found in it', (row('def_item')['status'], meta_of('def_item'), deps('def_item')))
+    check(row('def_under')['status'] == 'open' and (ids['cr7'], 'parent-child') in deps('def_under') and row('cr7')['status'] == 'deferred',
+          'migrate: an item of a deferred change request is open, the deferral of its change request holds it', (row('def_under')['status'], deps('def_under')))
+    filed = [i for i in now.values() if i.get('external_ref') == f"migrated-cr:{ids['loose']}"]
+    check(len(filed) == 1 and filed[0]['issue_type'] == 'change-request' and (filed[0]['id'], 'parent-child') in deps('loose') and 'topic:loose' in filed[0].get('labels', [])
+          and not any(kind == 'parent-child' for _, kind in deps('spike')) and row('loose_def')['status'] == 'deferred' and not any(kind == 'parent-child' for _, kind in deps('loose_def')),
+          'migrate: a work item outside any change request becomes the only item of one; a no-commit task and a deferred one stay tasks', (filed, deps('loose')))
     check('outcome' not in meta_of('reopened'), 'migrate: an open record carries no outcome', meta_of('reopened'))
     check((ids['target'], 'blocks') in deps('waits') and (ids['target'], 'blocks') in deps('cond') and not {'waits-for', 'conditional-blocks'} & {kind for _, kind in deps('waits') | deps('cond')},
           'migrate: waits-for and conditional-blocks become waits', (deps('waits'), deps('cond')))

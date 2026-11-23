@@ -105,12 +105,14 @@ one.
 2. **Setup.** `agents board setup` brings the settings and the status list to
    the current model (decided, in_force, in_review, passed).
    Output: the settings it changed.
-3. **Preview.** To see the whole outcome first, run `python3
-   <scripts>/convert-stored-forms.py --rehearse`: it imports this board's
-   export into a temporary board, converts and checks that copy, and prints
-   the conversion log, the check and the checkpoint inventory; this board is
-   only read. The copy has no branches or worktrees, so its `cr-branch`
-   and `cr-worktree` findings and checkpoint holds belong to the copy. Then
+3. **Preview.** To see the whole outcome first, run `python3 -u
+   <scripts>/convert-stored-forms.py --rehearse` (a large board takes many
+   minutes): it imports this board's export into a temporary board and takes
+   the copy through setup, the conversion, the checkpoint conversion, `check`
+   and a mark. It prints a summary first (conversions per kind, deviations
+   per class, what blocks the mark, the `for the user:` lines), then each
+   step's log. This board is only read. The copy has the branches this
+   checkout has for live change requests and no worktrees. Then
    `python3 <scripts>/convert-stored-forms.py` is a dry run on this board: one
    `would:` line per conversion, then the `for the user:` lines. Conversions:
    - statuses: `in_progress` open (a held change request keeps its holder, its
@@ -119,7 +121,12 @@ one.
      `released` in_force, a ruling at `needs_ratification` in_force with a
      question to confirm or revise it;
    - holds on items cleared (one held by the user is listed); legacy holders
-     cleared;
+     cleared; a deferred item of a deferred change request is open (the
+     deferral holds it), a deferred item of a live one leaves it as a
+     standalone deferred task with `found_in` set to the change request;
+   - a work item outside any change request (not no-commit, deferred or
+     waiting on a question) becomes the only item of a change request of its
+     own, listed;
    - types bug, design, feature, chore (kind `cleanup`) and spike become
      `task`, with a `kind:` label except for spike;
    - an in-review change request gets its `author` from the hand-over comment,
@@ -287,7 +294,8 @@ It writes only through raw bd (a change request back to open, the wait on it,
 
 1. **Inventory.** `convert-design-checkpoints.py inventory --mapping <file>`
    (read-only; the file goes in `agents scratch dir --shared board-migrate`):
-   one row per live checkpoint, passed design and met design wait.
+   one row per live checkpoint (a change request with `checkpoint`
+   metadata) and met design wait.
    Output: the rows; the draft mapping path.
 2. **Approve.** Show the owner the rows, the manual steps and each `hold`; the
    owner approves the mapping, an `agents board bd export` backup and any live
@@ -307,7 +315,7 @@ It writes only through raw bd (a change request back to open, the wait on it,
    Output: the apply log.
 5. **Manual steps.** Do each listed step through its owner: place the design
    text in the topic document on the branch (compare it with the reviewed
-   range), a documentation CR for a passed design without a doc owner, move
+   range), move
    implementation items into a dependent CR, add waits for held waiters.
    Output: each step done, or the owner it waits on.
 6. **Verify.** `convert-design-checkpoints.py verify` exits 0 only with no

@@ -27,14 +27,12 @@ BIN = Path(__file__).resolve().parents[3] / 'bin'  # agents/bin, beside agents/s
 BOARD, SESSION = BIN / 'board', BIN / 'session'
 BLOCKING = ('blocks',)
 AT_REVIEW = ('in_review', 'passed')
-VERDICT = re.compile(r'(passed|accepted) (agent )?design checkpoint')
 SCRATCH_REF = re.compile(r'[~/.][^\s`"\')\]>,;]*scratch[^\s`"\')\]>,;]*')
 DOC_REF = re.compile(r'(?<![\w/])(?:[\w.-]+/)*docs/[\w./-]+\.md')
 RETURN_NOTE = 'design checkpoint converted to an ordinary design change request: author the doc on the branch'
 TRANSITIONS = {
     'authoring-return': 'live checkpoint with outstanding design: back to open, doc on branch, ordinary review',
     'authoring-clear': 'returned or queued checkpoint: clear the marker, doc on branch, ordinary review',
-    'preserve-passed': 'passed checkpoint with implementation live: preserve verdict and branch; documentation CR if the text has no doc owner',
     'hold': 'hold: no write; the owner resolves the reasons',
 }
 
@@ -202,16 +200,7 @@ def classify(data: dict, main: Path, cr_id: str) -> dict:
         if implementation:
             row['manual'].append(f"move implementation items {', '.join(implementation)} into a distinct dependent change request (planning)")
     else:
-        passed = [key for key, item in designs.items() if item['status'] == 'closed' and VERDICT.search(str(item.get('close_reason') or ''))]
-        unproven = [key for key, item in designs.items() if key not in passed]
-        if not designs:
-            return {**row, 'kind': None}
-        if unproven:
-            row['reasons'].append(f"missing provenance: design item {', '.join(unproven)} carries no passed or accepted verdict in its close reason")
-        row['kind'] = 'hold' if row['reasons'] else 'preserve-passed'
-        row['manual'].append('if the accepted text has no durable doc owner, carry it unchanged into a documentation CR linked to this record and its verdict; land it before new dependent authoring')
-        if implementation:
-            row['notes'].append(f"implementation items live: {', '.join(implementation)}")
+        return {**row, 'kind': None}  # only a change request with checkpoint metadata is a checkpoint
     for key, body in bodies.items():
         for scratch in body['scratch']:
             row['manual'].append(f"{key}: body held in scratch {scratch['path']} (sha256 {scratch['sha256'] or 'unreadable'}): move it into the doc; the reference alone is not the approved text")
@@ -255,7 +244,7 @@ def print_inventory(found: dict) -> None:
     for edge in found['met']:
         print(f"{edge['waiter']} waits on {edge['on']}, a closed design in unlanded {edge['cr']}: met under the old runtime; apply makes it relates-to")
     if not found['records'] and not found['met']:
-        print('no live checkpoint, passed design or met design wait')
+        print('no live checkpoint or met design wait')
 
 
 def draft_mapping(found: dict) -> dict:
@@ -385,6 +374,7 @@ def main() -> int:
     app = sub.add_parser('apply')
     app.add_argument('mapping')
     app.add_argument('--apply', action='store_true', help='write; without it, print the steps a run would take after its rechecks')
+    app.add_argument('--copy', action='store_true', help='the board is a rehearsal copy: no deciding session is required')
     sub.add_parser('verify')
     args = parser.parse_args()
     try:
@@ -399,7 +389,8 @@ def main() -> int:
         elif args.verb == 'apply':
             mapping = load_mapping(args.mapping)
             if args.apply:
-                active_decider()
+                if not args.copy:
+                    active_decider()
                 apply(mapping, main_root, False)  # recheck every record before the first write
             for line in apply(mapping, main_root, args.apply):
                 print(line)
