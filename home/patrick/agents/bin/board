@@ -120,7 +120,7 @@ STORE_WARN_BYTES = 1 << 30
 STORE_CHECK_SECONDS = 3600
 QUEUE_PREFIX = 'queue:'
 ATTENDED_ROLES = ('lead', 'solo')  # the `attended` who-word: roles that change an item's queue, take an Accept and reject; not autopilot
-DECIDING_ROLES = ('lead', 'solo', 'autopilot')  # a deciding session (role/SKILL.md); what autopilot may not do (accept, ratify) is the unattended protocol's, not the table's
+DECIDING_ROLES = ('lead', 'solo', 'autopilot')  # a deciding session (role/SKILL.md)
 FOR_PREFIX = 'for:'  # an item filed for a person: unclaimable, held for its creator's check, then in that person's inbox
 # The mark that makes a board shared, in .beads: local, so an unshared board's check costs no bd call, and written only after
 # share's first push or join's clone, so a stray Dolt remote shares nothing.
@@ -304,7 +304,7 @@ WHO_WORDS = {'anyone': 'anyone', 'agent': 'an agent session', 'user': 'the user'
              'non-author': 'a session that did not hand it over', 'planner': 'a session pulling plan',
              'deferrer': "the deferrer's side (a user's deferral, or one without a deferrer: the user or a deciding session)",
              'holding': 'the session holding it', 'unheld': 'while it is unheld',
-             'attended': 'a lead or solo session (not autopilot: a rejection cannot be undone, which the unattended protocol parks for the user)'}
+             'attended': "a lead or solo session (not autopilot: it leaves these moves, the user's to make or hard to undo, to the user; unattended protocol)"}
 
 
 class Move(NamedTuple):
@@ -329,6 +329,7 @@ DEFER = ('planner+holder', 'deciding', 'user')  # setting aside: a session pulli
 ITEM_WRITE = ('holding', 'user', 'deciding+unheld', 'deciding+gone')
 ITEM_WAIT = (*ITEM_WRITE, 'deciding')
 DECIDING_CLOSE = ('deciding+holder', 'deciding+gone', 'user')
+ATTENDED_CLOSE = ('attended+holder', 'attended+gone', 'user')  # a milestone is accepted with the user: not autopilot
 MOVES = (
     Move('claim', CR_GROUP, ('open',), '=', '-', 'you', ('agent',)),
     Move('claim', CR_GROUP, ('in_review',), '=', '-', 'you', ('agent+non-author',)),
@@ -364,18 +365,18 @@ MOVES = (
     Move('unclaim', 'decision', ('open', 'decided', 'in_force'), '=', '*', '-', FREE_HOLD),
     Move('ruling record', 'decision', ('open', 'decided'), 'decided', 'you', '=', ('holder',)),
     Move('ruling record --unratified', 'decision', ('open', 'decided', 'in_force'), 'in_force', 'you', '=', ('holder',)),
-    Move('ruling release', 'decision', ('decided',), 'in_force', '*', '-', ('deciding', 'user')),
+    Move('ruling release', 'decision', ('decided',), 'in_force', '*', '-', ('attended', 'user')),
     Move('supersede', 'decision', ('open', 'decided', 'in_force', 'closed'), 'closed', '*', '-', ('deciding', 'user'), (), ('superseded',)),
     Move('close', 'decision', ('open', 'decided'), 'closed', '*', '-', DECIDING_CLOSE, ('reason',), ('dropped', 'superseded')),  # superseded: another ruling answered it
     Move('close', 'decision', ('in_force',), 'closed', '*', '-', ('planner+holding', *DECIDING_CLOSE), ('reason',), ('planned',)),  # planning closes the ruling it claimed
-    Move('claim', 'milestone', ('open',), '=', '-', 'you', ('deciding',)),
-    Move('take', 'milestone', ('open',), '=', '*', 'you', ('deciding+holder', 'deciding+gone')),
+    Move('claim', 'milestone', ('open',), '=', '-', 'you', ('attended',)),
+    Move('take', 'milestone', ('open',), '=', '*', 'you', ('attended+holder', 'attended+gone')),
     Move('unclaim', 'milestone', ('open',), '=', '*', '-', FREE_HOLD),
-    Move('close', 'milestone', ('open',), 'closed', '*', '-', DECIDING_CLOSE, ('reason',), ('accepted',)),
-    Move('reopen', 'milestone', ('closed',), 'open', '*', '-', DECIDING_CLOSE),
+    Move('close', 'milestone', ('open',), 'closed', '*', '-', ATTENDED_CLOSE, ('reason',), ('accepted',)),
+    Move('reopen', 'milestone', ('closed',), 'open', '*', '-', ATTENDED_CLOSE),
     Move('reopen', 'decision', ('closed',), 'open', '*', '-', DECIDING_CLOSE, ('not-superseded',)),
-    Move('close', 'gate', ('open',), 'closed', '*', '-', ('deciding', 'user'), ('reason',), ('resolved',)),
-    Move('reopen', 'gate', ('closed',), 'open', '*', '-', ('deciding', 'user')),
+    Move('close', 'gate', ('open',), 'closed', '*', '-', ('attended', 'user'), ('reason',), ('resolved',)),
+    Move('reopen', 'gate', ('closed',), 'open', '*', '-', ('attended', 'user')),
 )
 
 
@@ -3715,7 +3716,8 @@ def git_text(root: Path, *args: str, env: dict[str, str] | None = None, input: s
 # skills/shared/change-requests.md and the model in docs/board/model.md.
 SETTINGS = {name: f'custom.board.{name}' for name in ('target', 'setup', 'checks', 'look', 'view')}  # bd's namespace for custom keys
 LOOKS, VIEWS = ('before', 'after'), ('code', 'result')
-# The model marker: written by `board setup` on a board it creates and, last, by board-migrate on an older one. Every write verb refuses a board
+# The model marker is the model version: a change request that changes stored forms raises MODEL and adds its conversions to board-migrate's
+# convert-stored-forms.py, which reads MODEL from here. Written by `board setup` on a board it creates and, last, by board-migrate on an older one. Every write verb refuses a board
 # without it, naming /board-migrate; reads and raw bd stay open so migrate can inspect and convert, and MODEL_EXEMPT names the writes that need no marker.
 MODEL_KEY, MODEL = 'custom.board.model', '1'
 # Worktrees live inside the main checkout, <main>/.worktrees/<cr id>, so every runtime's workspace sandbox covers them without

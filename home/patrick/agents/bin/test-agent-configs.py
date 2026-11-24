@@ -2259,6 +2259,14 @@ def validate_shared_board(root: Path) -> None:
         for command, allowed in (("send to review", True), ("return", True), ("cr reject", False)):
             row = next(m for m in board.MOVES if m.command == command and m.group == board.CR_GROUP and "passed" in m.frm)
             expect((board.authority_refusal(passed, row, command, "auto0001", board.Board([])) is None) == allowed, "autopilot on a change-request move", command)
+    # Autopilot leaves a ruling's release, a gate's close and reopen and a milestone's claim, take, close and reopen to the user; lead and solo may.
+    for actor in ("auto0001", "lead0001", "solo0001"):
+        with patch.object(board, "registrations", lambda: (entries, set())), patch.object(board, "derived_actor", lambda: actor):
+            for command, group, status, kind in (("ruling release", "decision", "decided", "decision"), ("close", "gate", "open", "gate"), ("reopen", "gate", "closed", "gate"),
+                                                 ("claim", "milestone", "open", "milestone"), ("close", "milestone", "open", "milestone"), ("reopen", "milestone", "closed", "milestone")):
+                row = next(m for m in board.MOVES if m.command == command and m.group == group and status in m.frm)
+                issue = {"id": "t-x", "issue_type": kind, "status": status, "assignee": None, "metadata": {}}
+                expect((board.authority_refusal(issue, row, command, actor, board.Board([])) is None) == (actor != "auto0001"), f"{actor} on {command} of a {group}")
 
     # The retry: this one error on a shared board, counted on stderr; never a stopped merge, never unshared.
     def attempts(message, is_shared, code=1):
@@ -6526,7 +6534,7 @@ def validate_board(root: Path) -> None:
                 closed_ones = [{**plain("t-xg", "closed"), "issue_type": "gate"}, {**plain("t-xm", "closed"), "issue_type": "milestone"},
                                {**plain("t-xd", "closed"), "issue_type": "decision"}]
                 for one in ("t-xg", "t-xm", "t-xd"):
-                    for who, allowed in (("aaaa1111", False), ("lead0001", True), ("auto0001", True), ("", True)):
+                    for who, allowed in (("aaaa1111", False), ("lead0001", True), ("auto0001", one == "t-xd"), ("", True)):  # autopilot leaves a gate or milestone to the user
                         code, _, errors, writes = verb(["reopen", one], closed_ones, who)
                         if bool(code == 0 and writes) != allowed:
                             raise ValueError(f"board reopen of {one} by {who or 'the user'} (allowed {allowed}): {code} {errors!r} {writes}")
@@ -6535,6 +6543,9 @@ def validate_board(root: Path) -> None:
                     code, _, errors, writes = verb(["close", one, "--reason", "done and accepted by the user"], [{**r, "status": "open"} for r in closed_ones], "lead0001")
                     if code or f"outcome={outcome}" not in " ".join(writes[0]):
                         raise ValueError(f"board close of {one} must record outcome {outcome}: {code} {errors!r} {writes}")
+                    code, _, errors, writes = verb(["close", one, "--reason", "done and accepted by the user"], [{**r, "status": "open"} for r in closed_ones], "auto0001")
+                    if code != 2 or writes or "not autopilot" not in errors:
+                        raise ValueError(f"autopilot must leave closing {one} to the user: {code} {errors!r} {writes}")
                 # Planning closes the ruling it claimed (the plan pull's holder); a session that does not hold it, or holds nothing, does not.
                 in_force_held = [{**plain("t-r1", "in_force", assignee="plan0001"), "issue_type": "decision"}]
                 for who, allowed in (("plan0001", True), ("aaaa1111", False), ("lead0001", False)):
@@ -9253,6 +9264,17 @@ def validate_board_model(root: Path) -> None:
         failed = converter.apply_grouped([("good", converter.Update("ok1", "--set-metadata", "k=v")), ("worse", converter.Update("bad", "--set-metadata", "k=v"))])
         if list(failed) != ["worse"] or "cycle" not in failed["worse"] or [call[0][1:3] for call in sent if call[0][0] == "update"] != [("ok1", "bad"), ("ok1", "--set-metadata"), ("bad", "--set-metadata")]:
             raise ValueError(f"a grouped call that fails must be retried per record, naming the record bd refuses: {failed} {sent}")
+    # The marker is the model version bin/board owns; a converter older than the board's marker refuses and writes nothing.
+    if converter.MODEL != board.MODEL or converter.MODEL_KEY != board.MODEL_KEY:
+        raise ValueError("convert-stored-forms.py must take MODEL and MODEL_KEY from bin/board")
+    for marker, refused in (("", False), (board.MODEL, False), (str(int(board.MODEL) + 1), True)):
+        wrote, errors = [], io.StringIO()
+        with patch.object(converter, "read", lambda *args, marker=marker: json.dumps({"value": marker})), patch.object(converter, "write", lambda *args, **kw: wrote.append(args)), \
+                patch.object(converter, "check_status_custom", lambda: (_ for _ in ()).throw(converter.Stop("past the marker check"))), patch.object(sys, "argv", ["convert-stored-forms.py", "--mark"]), \
+                contextlib.redirect_stderr(errors):
+            code = converter.main()
+        if code != 1 or wrote or ("newer than this converter" in errors.getvalue()) != refused:
+            raise ValueError(f"a converter older than the board's marker {marker!r} must refuse, writing nothing: {code} {wrote} {errors.getvalue()}")
     # The CLI's own help prints the same tables: a verb its rows, `help` the statuses and outcomes by type.
     for argv, needles in ((["close", "--help"], ("close: gate open -> closed", "outcomes: resolved")), (["cr", "reject", "--help"], ("cr reject: change request", "who: a lead or solo session")),
                           (["help"], (board.states_table(),))):

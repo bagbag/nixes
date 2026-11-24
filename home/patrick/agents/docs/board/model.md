@@ -11,7 +11,7 @@ Absorbs the risk-tiered workflow (release r2). Parts not yet built are marked **
 - Bookkeeping vs content: what code (a rule, verb, queue, script) reads, or a next step must act on exactly, is a field or record. Prose is for a reader's judgment. Nothing reads a fact out of prose to decide state or routing; nothing actionable lives only in prose.
 - Code is declarative: one table per type and one transition function (`move`) writing status and holder through bd compare-and-set. Writers, queue, check and help read the tables: `agents board help` prints the statuses and outcomes by type and each verb's `--help` prints its rows (`states_table`, `verb_rules`), which is how sessions see the model; this document is the maintainers' design. No state-machine library: `bin/board` and the setup bundle stay stdlib-only.
 - Guards are enforced at the write, not restated: a rule the board can check at one command lives in that command (refusal, next step, help). `check` reports only shapes that came from outside the verbs (direct bd edits, a clone's sync).
-- Every write verb refuses a board without the model marker `custom.board.model=1` and names `/board-migrate`. Reads and raw bd stay open so migration can inspect and convert. Two writes are exempt, named in `MODEL_EXEMPT` beside `require_model` with their reasons: `setup` (it creates the board or brings its settings to the current model, so the marker cannot be its precondition) and `join` (it fetches a board whose marker travels with the database). `setup` writes the marker on a board it creates; an existing board gets it last from board-migrate (`convert-stored-forms.py --mark`), never from a setup rerun. `READS` holds reads only; `share` and `relocate` (`SYNCS_ITSELF`: they sync themselves, so no window opens after them) and every other write refuse like any write.
+- Every write verb refuses a board without the model marker `custom.board.model` (the model version, `MODEL` in `bin/board`) and names `/board-migrate`. Reads and raw bd stay open so migration can inspect and convert. Two writes are exempt, named in `MODEL_EXEMPT` beside `require_model` with their reasons: `setup` (it creates the board or brings its settings to the current model, so the marker cannot be its precondition) and `join` (it fetches a board whose marker travels with the database). `setup` writes the marker on a board it creates; an existing board gets it last from board-migrate (`convert-stored-forms.py --mark`), never from a setup rerun. A CR that changes stored forms raises `MODEL` and adds its conversions to the converter, which reads `MODEL` from `bin/board` and refuses a board whose marker is higher. `READS` holds reads only; `share` and `relocate` (`SYNCS_ITSELF`: they sync themselves, so no window opens after them) and every other write refuse like any write.
 
 ## Types
 
@@ -101,18 +101,18 @@ Printed by `model_tables()`; the test compares this block with it exactly. `Held
 | unclaim | decision | open, decided, in_force | = | * | - | holder / user / deciding+gone | - | - |
 | ruling record | decision | open, decided | decided | you | = | holder | - | - |
 | ruling record --unratified | decision | open, decided, in_force | in_force | you | = | holder | - | - |
-| ruling release | decision | decided | in_force | * | - | deciding / user | - | - |
+| ruling release | decision | decided | in_force | * | - | attended / user | - | - |
 | supersede | decision | open, decided, in_force, closed | closed | * | - | deciding / user | - | superseded |
 | close | decision | open, decided | closed | * | - | deciding+holder / deciding+gone / user | reason | dropped, superseded |
 | close | decision | in_force | closed | * | - | planner+holding / deciding+holder / deciding+gone / user | reason | planned |
-| claim | milestone | open | = | - | you | deciding | - | - |
-| take | milestone | open | = | * | you | deciding+holder / deciding+gone | - | - |
+| claim | milestone | open | = | - | you | attended | - | - |
+| take | milestone | open | = | * | you | attended+holder / attended+gone | - | - |
 | unclaim | milestone | open | = | * | - | holder / user / deciding+gone | - | - |
-| close | milestone | open | closed | * | - | deciding+holder / deciding+gone / user | reason | accepted |
-| reopen | milestone | closed | open | * | - | deciding+holder / deciding+gone / user | - | - |
+| close | milestone | open | closed | * | - | attended+holder / attended+gone / user | reason | accepted |
+| reopen | milestone | closed | open | * | - | attended+holder / attended+gone / user | - | - |
 | reopen | decision | closed | open | * | - | deciding+holder / deciding+gone / user | not-superseded | - |
-| close | gate | open | closed | * | - | deciding / user | reason | resolved |
-| reopen | gate | closed | open | * | - | deciding / user | - | - |
+| close | gate | open | closed | * | - | attended / user | reason | resolved |
+| reopen | gate | closed | open | * | - | attended / user | - | - |
 
 | Who word | Means |
 |---|---|
@@ -127,7 +127,7 @@ Printed by `model_tables()`; the test compares this block with it exactly. `Held
 | deferrer | the deferrer's side (a user's deferral, or one without a deferrer: the user or a deciding session) |
 | holding | the session holding it |
 | unheld | while it is unheld |
-| attended | a lead or solo session (not autopilot: a rejection cannot be undone, which the unattended protocol parks for the user) |
+| attended | a lead or solo session (not autopilot: it leaves these moves, the user's to make or hard to undo, to the user; unattended protocol) |
 <!-- /model-tables -->
 
 Guards: `reason` (a non-blank reason), `items-closed` (no open item), `look-before` (only a look-before CR passes without agent review), `not-open-for-review` (end the user's review first), `not-superseded` (a superseded ruling is put back by a revision record).
@@ -138,11 +138,11 @@ The table's `Who` column is the authority; this is its shape. Item writes (close
 
 - A session claims, hands over and unclaims its work. Its workers hold under its actor. Deciding sessions are `lead`, `solo` and `autopilot` (`DECIDING_ROLES`).
 - Review claim, pass and Return need a session that did not author the CR; every claim path refuses self-review.
-- Authority follows what a move risks, as the unattended protocol classes it. Two-way moves (sending a passed CR back to review, the Return of a `passed` CR, releasing a ruling, resolving a gate) are for any deciding session, autopilot included, or the user. Rejecting a CR is one-way (it closes, and no CR reopen exists), so it is for the `attended` word: a lead or solo session, or the user. Accept (landing a `passed` look-before CR) is the user's through a lead or solo session (landing is `anyone` in the table; its command is the gate).
+- Authority follows what a move risks, as the unattended protocol classes it. Two-way moves (sending a passed CR back to review, the Return of a `passed` CR) are for any deciding session, autopilot included, or the user. The `attended` word (a lead or solo session, or the user) covers the moves autopilot leaves to the user: rejecting a CR (one-way: it closes, and no CR reopen exists), releasing a ruling, closing or reopening a gate, and claiming, taking, closing or reopening a milestone. Accept (landing a `passed` look-before CR) is the user's through a lead or solo session (landing is `anyone` in the table; its command is the gate).
 - Taking or freeing another session's hold: the user, or a deciding session once the holder is gone (`--agreed` records the user's word).
 - Planner Return on a ruling, and defer and undefer of its own deferrals: a session pulling plan. (`move` needs the holder of the CR, the user or a deciding session.) Undeferring a user's deferral needs the user, through a deciding session.
 - The writes to an item of a CR nobody holds come only from the user or a deciding session; any other session claims the CR first.
-- Exceptions the table does not carry: autopilot never accepts or ratifies (acceptance needs the user; the unattended protocol owns it) and runs the agent rows unattended; `MODEL_EXEMPT` names the writes that need no marker.
+- Exceptions the table does not carry: autopilot never accepts or ratifies (acceptance needs the user; the unattended protocol owns it; `autopilot_barred` keeps it out of the queue's accept work) and runs the agent rows unattended; `MODEL_EXEMPT` names the writes that need no marker.
 
 ## Holding
 

@@ -23,7 +23,7 @@ Parts: [Model](#model), **Tracker** (Target through Exit), [Upgrade](#upgrade),
 1. **Scan.** Read-only, a few commands:
    - trackers: `TODO.md`, `REVIEW.md`, Markdown boards, `docs/` backlogs;
    - board: `.beads/`, the model marker (`agents board bd config get
-     custom.board.model`: `1`, else Model is open), `agents board check --limit 0`
+     custom.board.model`: the current model version, else Model is open), `agents board check --limit 0`
      classes with counts, `board holders`, stored settings (`agents board bd
      config list`), live change requests with `checkpoint` metadata or an open
      design ratification;
@@ -89,13 +89,16 @@ Parts: [Model](#model), **Tracker** (Target through Exit), [Upgrade](#upgrade),
 
 ## Model
 
-Per board, first whenever the marker (`custom.board.model`) is not `1`: every
+Per board, first whenever the marker (`custom.board.model`, the model version) is not the current one (`MODEL` in `bin/board`): every
 board write verb refuses such a board, naming this skill; reads, `agents board
 setup`, `agents board check` and `agents board bd --raw` still work. Scripts:
 `$HOME/.agents/skills/board-migrate/scripts/`, run from the project checkout.
 `convert-stored-forms.py` writes only through raw bd and ends with the marker,
 which `agents board setup` writes on a board it creates and never on an existing
-one.
+one. A change request that changes stored forms raises `MODEL` and adds its
+conversions to the converter, which refuses a board whose marker is higher
+than its own. Run this once after a model change set is installed, not per
+intermediate landing.
 
 1. **Inspect.** The user pauses every session that writes the board. Run
    `agents board check --limit 0` and `agents board holders`; save one
@@ -187,7 +190,7 @@ one.
 6. **Mark.** `convert-stored-forms.py --mark` writes the marker only with
    nothing left to convert and `agents board check` clean. Tell the user sessions
    may resume.
-   Output: `custom.board.model = 1`.
+   Output: `custom.board.model = <MODEL>`.
 
 ## Tracker
 

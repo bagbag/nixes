@@ -32,7 +32,6 @@ from pathlib import Path
 from typing import Callable
 
 BOARD = Path(__file__).resolve().parents[3] / 'bin' / 'board'  # agents/bin/board, beside agents/skills
-MODEL_KEY, MODEL = 'custom.board.model', '1'
 ACTOR = re.compile(r'[0-9a-f]{8}(/.+)?')
 KIND_OF_TYPE = {'bug': 'bug', 'feature': 'feature', 'design': 'design', 'chore': 'cleanup', 'spike': None}  # old bd type -> its kind label (None: a plain task)
 OLD_WAITS = ('waits-for', 'conditional-blocks')  # old spellings of a wait; bd's own `blocks` is the stored form
@@ -342,6 +341,16 @@ def board_module():
     loader.exec_module(module)
     _BOARD_MODULE = module
     return module
+
+
+MODEL_KEY, MODEL = board_module().MODEL_KEY, board_module().MODEL  # the model version: bin/board owns it
+
+
+def refuse_newer_board() -> None:
+    """The marker is the model version: a converter older than the board's marker would downgrade or misread it."""
+    value = json.loads(read('bd', 'config', 'get', '--json', MODEL_KEY) or '{}').get('value') or ''
+    if value and (not value.isdigit() or int(value) > int(MODEL)):
+        raise Stop(f'this board is on model {value}, newer than this converter\'s {MODEL} (or its marker is unreadable): update the agents checkout, nothing was written')
 
 
 def confirm_ruling(b: Board, issue: dict) -> None:
@@ -802,6 +811,7 @@ def main() -> int:
     try:
         if args.rehearse:
             return rehearse()  # the copy gets the current statuses from setup; this board may still lack them
+        refuse_newer_board()
         check_status_custom()
         if args.mark:
             return mark()
