@@ -736,6 +736,18 @@ def t_writers() -> None:
     rc, _, err, _ = run('a', 'reopen', question)
     check(rc != 0 and task_target in err and status(question) == 'closed', 'F3: reopen refuses a question that would wait on a record closed dropped', err)
 
+    # F2 (nixes-j65oa): only move writes a parent; every wait meets the hold rule, a gate's included.
+    loose = probe('F2 no-commit task')
+    rc, _, err, _ = run('a', 'link', loose, held, '--type', 'parent-child')
+    check(rc != 0 and 'agents board move' in err and not any(d.get('type') == 'parent-child' for d in items('a')[loose].get('dependencies') or []),
+          'F2: link refuses a parent, naming move', err)
+    rc, _, err, _ = run('a', 'unlink', other_item, held, role='solo')
+    check(rc != 0 and 'agents board move' in err and any(d.get('depends_on_id') == held for d in items('a')[other_item].get('dependencies') or []),
+          'F2: unlink refuses a parent edge, naming move', err)
+    rc, _, err, _ = run('a', 'gate', 'create', '--blocks', other_item, '--reason', 'a person signs it off', role='agent')
+    check(rc != 0 and held in err and not any(i.get('issue_type') == 'gate' and i['status'] == 'open' for i in items('a').values()),
+          "F2: a gate on an item of a request another session holds is refused like its wait", err)
+
     run('a', 'unclaim', held, '--resume', 'writer tests done', role='solo')
 
 
@@ -1623,13 +1635,16 @@ def t_cr() -> None:
         'edges': [{'from_id': item, 'to_key': 'request', 'type': 'parent-child'} for item in (first, second)],
     }))
     rc, out, err, _ = run('a', 'create', '--graph', str(plan))
-    request = next((line.split()[1] for line in out.splitlines() if line.startswith('request ')), None)
+    check(rc != 0 and 'agents board move' in err and not any(i.get('title') == 'group linked items' for i in items('a').values()),
+          'cr: a graph gives no existing item a parent, naming move (nixes-j65oa)', err + out)
+    request = create('a', 'group linked items')
+    rc, out, err, _ = run('a', 'move', first, second, '--to', request)
     graph_rows = items('a')
-    check(rc == 0 and request in graph_rows and all(
+    check(rc == 0 and all(
         any(dep['type'] == 'parent-child' and dep['depends_on_id'] == request for dep in graph_rows[item]['dependencies'])
-        for item in (first, second)) and any(
+        and not (graph_rows[item].get('metadata') or {}).get('no_commit') for item in (first, second)) and any(
         dep['type'] == 'blocks' and dep['depends_on_id'] == first for dep in graph_rows[second]['dependencies']),
-        'cr: one graph can group linked items while keeping their newly internal wait', err + out)
+        'cr: move groups linked items into a change request, keeping their newly internal wait', err + out)
 
     awaiting = create('a', 'request waiting on a question')
     affected = task(awaiting, 'item affected by the answer')

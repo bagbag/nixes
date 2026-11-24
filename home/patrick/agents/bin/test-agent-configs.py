@@ -2151,9 +2151,9 @@ def validate_shared_board(root: Path) -> None:
     parent = [{"id": "fx-p", "labels": ["topic:a", "queue:ben"]}]
     made_plans = []
 
-    def fake_plan(plan):
+    def fake_plan(plan, board_=None, verb="create", holds=(), dry_run=False):
         made_plans.append(json.loads(json.dumps(plan)))
-        return {"item": "fx-new"}
+        return {"item": "fx-new"}, {}
 
     with patch.object(board, "bd_show", lambda ids, *flags, **kw: parent), patch.object(board, "shared", None), patch.object(board, "create_plan", fake_plan):
         expect(board.create_item(None, "t", "task", description="d", parent="fx-p", priority=1) == "fx-new", "create_item returns the id")
@@ -4796,12 +4796,12 @@ def validate_board(root: Path) -> None:
                 code, _, errors, fake = bd_graph(plan)
                 if code != 2 or ("is not a link word" not in errors and "waits_on is a list" not in errors) or any(a[0] == "create" for a, _ in fake.calls):
                     raise ValueError(f"a plan's old wait words and bad waits_on are refused before anything is created: {code} {errors} {fake.calls}")
-            # An existing child moved under a new parent by a plan meets the parent-move rule (r9: the board was not loaded for it).
+            # A plan gives no existing record a parent: only move changes one (nixes-j65oa; r9: the board was not loaded for it).
             stacked = {**fixture[0], "id": "fx-cr", "title": "A CR", "issue_type": "change-request", "status": "open", "assignee": None, "dependencies": []}
             code, _, errors, fake = bd_graph({"nodes": [dict(nodes[1])], "edges": [{"from_id": "fx-cr", "to_key": "t", "type": "parent-child"}]},
                                              deck=Graphing([*mine_rows, stacked]))
-            if code != 2 or "keeps its parent" not in errors or any(a[0] == "create" for a, _ in fake.calls):
-                raise ValueError(f"a plan that moves an existing child under a new parent meets the parent-move rule: {code} {errors} {fake.calls}")
+            if code != 2 or "agents board move fx-cr" not in errors or any(a[0] == "create" for a, _ in fake.calls):
+                raise ValueError(f"a plan that gives an existing record a parent is refused, naming move: {code} {errors} {fake.calls}")
             # A plan edge between two existing items is refused (board link and board wait write those); ruling links are written by ruling verbs only.
             for plan, word in (({"nodes": nodes, "edges": [{"from_id": ready, "to_id": question, "type": "relates-to"}]}, "needs a new item"),
                                ({"nodes": [dict(nodes[1], deps=[{"target": ready, "type": "supersedes"}])], "edges": []}, "belong to rulings"),
@@ -6432,16 +6432,16 @@ def validate_board(root: Path) -> None:
                     raise ValueError(f"board link of a link already there is a no-op: {code} {output!r} {writes}")
                 placed = [plain("t-a"), {**cr_issue("t-cq"), "dependencies": [{"issue_id": "t-cq", "depends_on_id": "t-a", "type": "parent-child"}]}]
                 code, output, errors, writes = verb(["link", "t-cq", "t-a", "--type", "parent-child"], placed)
-                if code or writes or "already" not in output:
-                    raise ValueError(f"board link of a change request's own parent moves nothing, so it is a no-op: {code} {output!r} {errors!r} {writes}")
+                if code != 2 or writes or "agents board move t-cq" not in errors:
+                    raise ValueError(f"board link refuses a parent, even one already there, naming move (nixes-j65oa): {code} {output!r} {errors!r} {writes}")
                 code, _, errors, writes = verb(["unlink", "t-r", "t-b"], world)
-                if code or writes != [["dep", "remove", "t-r", "t-b"]]:
+                if code or writes != [["batch", "-m", "board unlink t-r t-b", "--json"]]:
                     raise ValueError(f"board unlink: {code} {errors!r} {writes}")
                 code, _, errors, writes = verb(["unlink", "t-a", "t-b"], world)
                 if code != 2 or "not linked" not in errors or writes:
                     raise ValueError(f"board unlink of a pair that is not linked: {code} {errors!r} {writes}")
                 code, output, errors, writes = verb(["unlink", "t-l", "t-a"], world)  # unlink removes a wait, saying so as the sentence's end
-                if code or writes != [["dep", "remove", "t-l", "t-a"]] or "t-l no longer waits on t-a" not in output:
+                if code or writes != [["batch", "-m", "board unlink t-l t-a", "--json"]] or "t-l no longer waits on t-a" not in output:
                     raise ValueError(f"board unlink must remove a wait: {code} {output!r} {errors!r} {writes}")
                 held_cr = [plain("t-a"), cr_issue("t-uc", assignee="aaaa1111"), cr_item("t-uc.i", "t-uc", blocks=("t-a",))]
                 for who, allowed in (("bbbb2222", False), ("aaaa1111", True), ("", True)):  # an item's wait is freed by its change request's holder, not by any session
@@ -8261,6 +8261,33 @@ else:
                 stray.append(f"{source.name} writes a status itself")
         if stray:
             raise ValueError(f"every status write goes through move() (bin/board): {stray}")
+        # One owner per write kind (nixes-sjkpn). Edges: every bd dep or batch write, parent write and `dep add/remove` line is in write_edges; the two
+        # creations that write edges with their new record (create --graph, gate create --blocks) run edge_rules themselves; move's bd supersede is a status write.
+        functions = [node for node in ast.walk(tree) if isinstance(node, ast.FunctionDef)]
+
+        def bd_calls(function):
+            for node in ast.walk(function):
+                if isinstance(node, ast.Call) and getattr(node.func, "id", None) in ("bd", "bd_checked"):
+                    yield node, [arg.value for arg in node.args if isinstance(arg, ast.Constant) and isinstance(arg.value, str)]
+
+        def runs(owner: str, rule: str) -> bool:
+            return any(getattr(node.func, "id", None) == rule for function in functions if function.name == owner for node in ast.walk(function) if isinstance(node, ast.Call))
+
+        creations = {"create_plan": ("create", "--graph"), "create_gate": ("gate", "create")}
+        stray = [f"{owner} does not run edge_rules" for owner in ("write_edges", *creations) if not runs(owner, "edge_rules")]
+        for function in functions:
+            stray += [f"{function.name}:{node.lineno} a dep line" for node in ast.walk(function) if function.name != "write_edges"
+                      and isinstance(node, ast.Constant) and isinstance(node.value, str) and re.match(r"dep (add|remove)\b", node.value)]
+            for node, words in bd_calls(function):
+                if (words[:1] in (["dep"], ["batch"]) or (words[:1] == ["update"] and "--parent" in words)) and function.name != "write_edges":
+                    stray.append(f"{function.name}:{node.lineno} bd {' '.join(words[:3])}")
+                stray += [f"{function.name}:{node.lineno} bd {' '.join(head)} outside {name}" for name, head in creations.items()
+                          if tuple(words[:2]) == head and function.name != name]
+        for source in sorted((root / "bin" / "protocol_engine").glob("*.py")) + [root / "bin" / "protocol"]:
+            if "'--raw'" in source.read_text(encoding="utf-8"):
+                stray.append(f"{source.name} writes through raw bd")
+        if stray:
+            raise ValueError(f"every edge write goes through write_edges (bin/board), creations through edge_rules: {stray}")
         # bd edit blocks on an editor: refused in one line naming the way on; a user's own --readonly is just bd's flag.
         result, seen = run_board("bd", "edit", "x")
         if result.returncode != 2 or seen or "agents board field export <id>" not in result.stderr or len(result.stderr.strip().splitlines()) != 1:

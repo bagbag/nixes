@@ -6158,11 +6158,11 @@ def record_holds(board: Board, new_id: str, holds: list[str], reason: str | None
         return wait_items(board, holds, new_id, reason.format(new=new_id) if reason else None, derived_actor() or '')
 
 
-# Links. One owner for which link makes an item wait, which kinds belong to which verb, what an existing item that is made to wait gets and the
-# one-link-per-pair refusal: link_rules. The writers that add a link go through it: create (flags, --graph, --deps), ruling revise, link,
-# ruling record --replaces and the partial/carried links of ruling supersede. Not through it: wait (its own reason rules), move
-# (parent_move_refusal, which link_rules calls too), bd's own supersede and gate writes. bd writes a plan's links itself, so plan_links
-# reads them into the same form first.
+# Edges (waits, links, parents, ruling links): one writer, write_edges, and one rule owner, edge_rules (nixes-sjkpn). edge_rules judges every edge
+# added or removed: which kinds belong to which verb, the wait target rules, cycles, the hold rule on a CR item's waits, the parent rules (only move
+# changes an existing record's parent, nixes-j65oa) and the one-link-per-pair refusal. write_edges is the only bd write of an edge; the two
+# creations that write edges with their new record (create_plan, create_gate) run edge_rules themselves. bd's own supersede (in move, a status
+# write) writes its supersedes edge. bin/test-agent-configs.py pins the writers.
 WAIT_LINK = 'blocks'  # bd's one blocking dependency type: how a wait is stored (written on the waiter), never a word the board takes in
 OLD_LINK_WORDS = {  # input words the board refuses -> the form that replaces them
     'blocks': 'agents board wait <item> --on <target> --for "<input>" (a plan node: waits_on [{on, for}])',
@@ -6175,7 +6175,8 @@ OLD_LINK_WORDS = {  # input words the board refuses -> the form that replaces th
 }
 PAIR_VERBS = ('link', 'record')  # writers that add to a pair as it is (record: an in-force record's); wait replaces the pair's relates-to link itself, supersede clears it (record --replaces writes a decided record's through the ruling verb)
 RULING_LINKS = ('supersedes', REVISES)  # the edges rulings carry: board ruling supersede, revise, release and record --replaces own them, no other verb writes them
-LINK_VERB_TYPES = tuple(kind for kind in PASS_LINKS if kind not in RULING_LINKS)  # what `board link` writes; the ruling verbs write the rest
+LINK_VERB_TYPES = tuple(kind for kind in PASS_LINKS if kind not in (*RULING_LINKS, 'parent-child'))  # what `board link` writes; rulings and move write the rest
+Edge = tuple[str, str, str]  # (waiting or child end, other end, kind)
 Waits = dict[str, tuple[list[str], list[str]]]  # new item key -> (existing items, keys of new items) that wait on it
 
 
@@ -6275,17 +6276,26 @@ def wait_cycle(board: Board | None, edges: list[tuple[str, str]], cr_of=None) ->
     return None
 
 
-def link_rules(board: Board | None, links: list[tuple[str, str, str]], verb: str, new: dict[str, str] | None = None,
-               holds: list[str] = (), parents: dict[str, list[str]] | None = None) -> tuple[list[str], Waits]:
-    """The rules every link meets. `links` are (waiting or starting end, other end, kind); `new` marks a plan's new items {key: type} (None: every
-    end exists: a link written after the fact). `verb` is who writes it: 'create', 'link', 'ruling' or 'record'.
-    - A ruling link (supersedes, tracks) is written by the ruling verbs only; `link` writes no wait (that is board wait).
+def parent_refusal(item_id: str) -> str:
+    return f'{item_id}: a parent changes only through agents board move {item_id} --to <change request> (a change request: --to <milestone>), which applies the parent rules'
+
+
+def edge_rules(board: Board | None, links: list[Edge], verb: str, new: dict[str, str] | None = None,
+               holds: list[str] = (), parents: dict[str, list[str]] | None = None, removes: list[Edge] = (),
+               actor: str | None = None) -> tuple[list[Edge], Waits]:
+    """The rules every edge meets, added (`links`) or removed (`removes`, edges as they stand). `new` marks a plan's new items {key: type} (None:
+    every end exists). `verb` is who writes it: 'create', 'link', 'unlink', 'wait', 'move', 'ruling' or 'record'; `actor` the caller (default: derived).
+    - A ruling link (supersedes, tracks) is written and removed by the ruling verbs only; `link` writes no wait (that is board wait).
+    - A parent of an existing record changes through move only, with move's rules: parent_move_refusal, the hold rule, an open change request
+      (a milestone for a change request) as the new parent; a plan or link that would give an existing record a parent, or an unlink of a parent edge, is refused.
+    - A wait meets wait_target_refusal and the cycle rule; a wait written or removed on a CR's item meets the hold rule (item_write_refusal).
     - An existing item made to wait on a new one gets board wait's effects once it exists: allowed where wait needs no for (a decision or
       gate as the target), else refused, naming the board wait that does it. `holds` also wait on every new
-      decision. Returns (`dep add` lines, links already there skipped; Waits: the existing and new items waiting on each new item, for
+      decision. Returns (the edges to write, those already there skipped; Waits: the existing and new items waiting on each new item, for
       apply_waits)."""
     new = new or {}
     parents = parents or {}
+    who = (actor if actor is not None else derived_actor()) or None
 
     def kind_of(item: str):
         return new.get(item) or (board.by_id.get(item, {}).get('issue_type') if board else None)
@@ -6297,8 +6307,15 @@ def link_rules(board: Board | None, links: list[tuple[str, str, str]], verb: str
     def cr_of(item: str):
         if kind_of(item) == CR_TYPE:
             return item
-        return planned_crs.get(item) or (board.cr_of(item) if board and item not in new else None)
+        return planned_crs.get(item) or (board.cr_of(item) if board and item not in new and item in board.by_id else None)
 
+    for source, target, kind in removes:
+        if kind in RULING_LINKS and verb not in ('ruling', 'record'):
+            raise BoardError(f'{source} -> {target} is a {kind} link of rulings: agents board ruling supersede|revise own it')
+        if kind == 'parent-child':
+            raise BoardError(parent_refusal(source))
+        if blocking(kind) and board and source in board.by_id and (refusal := item_write_refusal(board, board.by_id[source], 'unlink', who)):
+            raise BoardError(refusal)
     waits: Waits = {key: ([], []) for key in new}
     ops = []
     if chain := wait_cycle(board, [(waiting, other) for waiting, other, kind in links if blocking(kind)], cr_of):
@@ -6307,17 +6324,27 @@ def link_rules(board: Board | None, links: list[tuple[str, str, str]], verb: str
         if kind in RULING_LINKS and verb not in ('ruling', 'record'):
             raise BoardError(f'{kind} links belong to rulings: agents board ruling supersede <old> --with <new>, agents board ruling revise <old> ...')
         if not blocking(kind) and kind not in PASS_LINKS:
-            raise BoardError(f"{waiting} -> {other}: {kind} is not a link the board writes (agents board link writes relates-to and parent-child; rulings write supersedes and tracks; a wait is agents board wait)")
+            raise BoardError(f"{waiting} -> {other}: {kind} is not a link the board writes (agents board link writes {', '.join(LINK_VERB_TYPES)}; "
+                             'rulings write supersedes and tracks; a wait is agents board wait; a parent is agents board move)')
         if blocking(kind) and verb == 'link':
             raise BoardError(f'a wait is agents board wait {waiting} --on {other} --for "<the input it uses>"')
         if blocking(kind) and board and other in board.by_id and (
                 refusal := wait_target_refusal(board.by_id.get(waiting) if waiting not in new else None, other, board.by_id[other], board)):
             raise BoardError(refusal)
-        if not blocking(kind):
-            if kind == 'parent-child' and waiting not in new and board and other not in board.parents.get(waiting, []):
-                target = other if other in board.by_id else None
-                if refusal := parent_move_refusal(board, [waiting], target, planned_crs=planned_crs if new else None, new=new):
-                    raise BoardError(refusal)
+        if blocking(kind) and waiting not in new and board and waiting in board.by_id and (
+                refusal := item_write_refusal(board, board.by_id[waiting], 'wait', who)):
+            raise BoardError(refusal)
+        if kind == 'parent-child' and (verb == 'link' or (waiting not in new and verb != 'move')):
+            raise BoardError(parent_refusal(waiting))
+        if kind == 'parent-child' and verb == 'move':
+            known_items(board, [waiting, other])
+            if refusal := parent_move_refusal(board, [waiting], other) or item_write_refusal(board, board.by_id[waiting], 'move', who):
+                raise BoardError(refusal)
+            part_of = 'milestone' if board.is_cr(waiting) else CR_TYPE  # an item is part of an open change request, a change request part of an open milestone
+            if board.by_id[other].get('issue_type') != part_of or not board.is_open(other):
+                raise BoardError(f"{other} is not an open {part_of.replace('-', ' ')}: {waiting} is part of one; work that commits nothing is a task, not an item")
+        elif not blocking(kind):
+            pass
         elif other in new:
             if waiting in new:
                 if new[other] == 'decision':  # between new work items bd writes the edge itself
@@ -6331,11 +6358,32 @@ def link_rules(board: Board | None, links: list[tuple[str, str, str]], verb: str
                                  f'link, then agents board wait {waiting} --on <new id> --for "<the input it uses>"')
         if new:
             continue  # bd writes a plan's links with the items
+        if verb == 'wait' and board and (clash := [edge for a, _, edge in board.between(waiting, other) if edge != 'relates-to' and not (blocking(edge) and a == waiting)]):
+            raise BoardError(f"{waiting}: already linked to {other} by {', '.join(clash)}; bd keeps one edge per pair")  # a relates-to link gives way to the wait
         if verb in PAIR_VERBS and board and (clash := [edge for _, _, edge in board.between(waiting, other) if edge != kind and edge != 'parent-child']):
             raise BoardError(f"{waiting} and {other} are linked already ({', '.join(clash)}); bd keeps one link per pair: agents board unlink first")
-        if board is None or not any(source == waiting and target == other and edge == kind for source, target, edge in board.between(waiting, other)):
-            ops.append(f'dep add {waiting} {other} {kind}')
+        if board is None or not any(source == waiting and target == other and (edge == kind or blocking(edge) and blocking(kind))
+                                    for source, target, edge in board.between(waiting, other)):
+            ops.append((waiting, other, kind))
     return ops, {key: (list(dict.fromkeys(ids)), list(dict.fromkeys(keys))) for key, (ids, keys) in waits.items()}
+
+
+def write_edges(board: Board, verb: str, message: str, links: list[Edge] = (), removes: list[Edge] = (), actor: str | None = None) -> list[Edge]:
+    """The one bd write of edges: edge_rules on every edge, then the removals and additions in one bd batch (`message` is its commit message). A parent
+    (verb move) is bd's own parent write, which replaces the old one; it clears no_commit in the same write (a task in a change request is work that
+    commits, nixes-x62oy). Returns the edges added."""
+    adds, _ = edge_rules(board, list(links), verb, removes=list(removes), actor=actor)
+    lines = [f'dep remove {source} {target}' for source, target, _ in removes] + [f'dep add {a} {b} {kind}' for a, b, kind in adds if kind != 'parent-child']
+    if lines:
+        bd_checked('batch', '-m', message, '--json', stdin='\n'.join(lines) + '\n')
+    for target in dict.fromkeys(b for _, b, kind in adds if kind == 'parent-child'):
+        moving = [a for a, b, kind in adds if kind == 'parent-child' and b == target]
+        cleared = [a for a in moving if is_no_commit(board.by_id[a]) and not board.is_cr(a)]
+        if rest := [a for a in moving if a not in cleared]:
+            bd_checked('update', *rest, '--parent', target, '--json')
+        if cleared:
+            bd_checked('update', *cleared, '--parent', target, '--unset-metadata', NO_COMMIT, '--json')
+    return adds
 
 
 def require_holds_declared(waits: Waits, new: dict[str, str], value: str | None) -> None:
@@ -6437,8 +6485,14 @@ def plan_with_queue(plan: dict) -> None:
             node['labels'] = [*(node.get('labels') or []), QUEUE_PREFIX + person()]
 
 
-def create_plan(plan: dict) -> dict[str, str]:
-    """`bd create --graph` of a validated plan: {key: id}; atomic (bd rolls the whole plan back)."""
+def create_plan(plan: dict, board: Board | None, verb: str = 'create', holds: list[str] = (), dry_run: bool = False) -> tuple[dict[str, str], Waits]:
+    """`bd create --graph` of a validated plan, the one creation of items with their links: edge_rules on the plan's links, parents and `holds`
+    (`board` holds the existing ends; `verb` writes them) before anything is written; atomic (bd rolls the whole plan back). Returns ({key: id},
+    the waits apply_waits writes); `dry_run`: the checks only, no ids."""
+    links, types = plan_links(plan)
+    _, waits = edge_rules(board, links, verb, types, holds, plan_parents(plan, links))
+    if dry_run:
+        return {}, waits
     with tempfile.NamedTemporaryFile('w', suffix='.json', encoding='utf-8', delete=False) as handle:
         json.dump(plan, handle)
     atexit.register(os.unlink, handle.name)
@@ -6451,7 +6505,7 @@ def create_plan(plan: dict) -> dict[str, str]:
         made = {}
     if not made:
         raise BoardError(f'created, but bd printed no ids: {result.stdout.strip()[:200]}')
-    return made
+    return made, waits
 
 
 def create_item(board: Board, title: str, kind: str, parent: str | None = None, deps: list[tuple[str, str]] = (), holds: list[str] = (),
@@ -6459,7 +6513,7 @@ def create_item(board: Board, title: str, kind: str, parent: str | None = None, 
     """The board's own single-item creates (a follow-up, a revision), using `board create`'s field and link checks through one plan node.
     A parent is a plain hash id plus a link (a dotted child id stops sync when two clones create under one parent); bd copies none of the
     parent's labels, so they are copied here, the queue label excepted (the child inherits its queue). `deps` are (type, id) links the new item
-    holds; `holds` are items that wait on it (their effects are the caller's: record_holds). `verb` is who writes the links (link_rules).
+    holds; `holds` are items that wait on it (their effects are the caller's: record_holds). `verb` is who writes the links (edge_rules).
     `board` spares a read when it holds the parent."""
     node: dict = {'key': 'item', 'title': title, 'type': kind, **{key: value for key, value in fields.items() if value is not None}}
     labels = list(labels)
@@ -6474,13 +6528,12 @@ def create_item(board: Board, title: str, kind: str, parent: str | None = None, 
         node['labels'] = labels
     if deps:
         node['deps'] = [{'target': target, 'type': link} for link, target in deps]
-    plan = {'nodes': [node]}
-    links, types = plan_links(validate_plan(plan))
-    link_rules(board, links, verb, types, parents=plan_parents(plan, links))  # the held items' links were judged by the caller (link_rules with the same holds)
+    plan = validate_plan({'nodes': [node]})
     if holds:
         plan['edges'] = [{'from_id': one, 'to_key': 'item', 'type': 'blocks'} for one in holds]
     plan_with_queue(plan)
-    return '' if dry_run else create_plan(plan)['item']  # dry_run: the checks above, no write
+    made, _ = create_plan(plan, board, verb, dry_run=dry_run)
+    return made.get('item', '')  # dry_run: the checks, no write
 
 
 def missing_sections(text: str, sections=RECORD_SECTIONS) -> list[str]:
@@ -6560,8 +6613,7 @@ def record(board: Board, args) -> int:
     bd_checked('update', args.id, '--body-file', args.file, '--json')
     # Revision links before the supersedes: `ruling release` refuses an old a live record revises, so a stop before the end leaves a visible state the rerun finishes.
     move(issue, 'ruling record --unratified' if args.unratified else 'ruling record', board=board)  # the status by compare-and-set, then the links
-    if operations:
-        bd_checked('batch', '-m', f'board ruling record {args.id}', '--json', stdin='\n'.join(operations) + '\n')
+    write_edges(board, 'ruling', f'board ruling record {args.id}', *operations)
     lint = json.loads(bd_checked('lint', args.id, '--json') or '{}')
     unlinted = [', '.join(result.get('missing') or []) for result in lint.get('results') or [] if result.get('missing')]
     if unlinted:
@@ -6599,8 +6651,10 @@ def replaced_checks(board: Board, new: str, replaces: list[str], actor: str, in_
     record (`in_force`), else at `new`'s release. Closed and superseded by `new`: done; anything else is refused. A hold of a live
     other session refuses a record that closes now, a gone session's is taken first. A link of another kind on a replaced record's
     pair gives way to the revision link (the supersede would drop it anyway), so it is no clash. Returns (the records to close now, those whose hold is taken first,
-    `dep` lines for the revision links)."""
-    problems, closing, taking, operations, later = [], [], [], [], []  # later: superseded at the release, carrying their revisions then
+    the revision links and the edges they replace, for write_edges)."""
+    problems, closing, taking, later = [], [], [], []
+    links: list[Edge] = []
+    removes: list[Edge] = []  # later: superseded at the release, carrying their revisions then
     for old in replaces:
         issue = board.by_id.get(old)
         if issue is None:
@@ -6615,9 +6669,8 @@ def replaced_checks(board: Board, new: str, replaces: list[str], actor: str, in_
             elif missing_sections(str(issue.get('description') or '')):
                 problems.append(f'--replaces {old}: closed question, not a planned ruling')
             else:
-                operations += [f'dep remove {a} {b}' for a, b, kind in board.between(new, old)
-                               if kind != 'parent-child' and (a, b, kind) != (new, old, REVISES)]
-                operations += link_rules(board, [(new, old, REVISES)], 'ruling')[0]
+                removes += [(a, b, kind) for a, b, kind in board.between(new, old) if kind != 'parent-child' and (a, b, kind) != (new, old, REVISES)]
+                links.append((new, old, REVISES))
                 if in_force:
                     closing.append(old)
                 else:
@@ -6626,9 +6679,8 @@ def replaced_checks(board: Board, new: str, replaces: list[str], actor: str, in_
             problems.append(f"--replaces {old}: {issue['status']}, not decided or released")
         else:
             # The supersede replaces any other link on the pair (bd keeps one edge per pair), so the revision link replaces it now.
-            operations += [f'dep remove {a} {b}' for a, b, kind in board.between(new, old)
-                           if kind != 'parent-child' and (a, b, kind) != (new, old, REVISES)]
-            operations += link_rules(board, [(new, old, REVISES)], 'ruling')[0]  # the verb that skips the pair rule
+            removes += [(a, b, kind) for a, b, kind in board.between(new, old) if kind != 'parent-child' and (a, b, kind) != (new, old, REVISES)]
+            links.append((new, old, REVISES))  # the verb that skips the pair rule
             if not in_force:
                 later.append(old)
                 continue
@@ -6644,7 +6696,8 @@ def replaced_checks(board: Board, new: str, replaces: list[str], actor: str, in_
                         'bd keeps one revision rule per record: finish the revisions one record at a time')
     if problems:
         raise BoardError('record refused:\n  ' + '\n  '.join(problems))
-    return closing, taking, operations
+    edge_rules(board, links, 'ruling', removes=removes)  # write_edges checks again at the write
+    return closing, taking, (links, removes)
 
 
 def check_replaces(board: Board, args) -> None:
@@ -6729,27 +6782,14 @@ def wait_one(board: Board, item_id: str, blocker: str, reason: str | None, actor
     keeps its worktree."""
     issue = board.by_id[item_id]
     record = board.by_id.get(blocker, {})
-    if refusal := item_write_refusal(board, issue, 'wait', actor or None):  # every writer of a wait, a ruling's holds and supersede included
-        raise BoardError(refusal)
     if not reason and not reason_optional(issue, record):
         raise BoardError(f'{item_id}: a work item waits for an input: agents board wait {item_id} --on {blocker} --for "<the input it uses>" '
                          '(optional only when the target is a decision or a gate)')
-    if refusal := wait_target_refusal(issue, blocker, record, board):
-        raise BoardError(refusal)
-    if chain := wait_cycle(board, [(item_id, blocker)]):
-        raise BoardError(f"{item_id} cannot wait on {blocker}: it would form a cycle, nothing would ever start: {' waits on '.join(chain)}")
     edges = board.between(item_id, blocker)
-    waits = any(blocking(kind) and a == item_id for a, _, kind in edges)  # whatever blocking spelling made the wait stays as it is
-    other = [kind for a, _, kind in edges if kind != 'relates-to' and not (blocking(kind) and a == item_id)]
-    if other:
-        raise BoardError(f"{item_id}: already linked to {blocker} by {', '.join(other)}; bd keeps one edge per pair")
-    # bd allows one edge per pair: a relates-to link between the two gives way to the wait.
-    operations = [f'dep remove {a} {b}' for a, b, kind in edges if kind == 'relates-to']
-    operations += [] if waits else [f'dep add {item_id} {blocker} blocks']
-    holder = issue.get('assignee')
     own = in_hand(issue, actor) and board.is_open(blocker) and group_of(board, issue) != ITEM_GROUP  # an item has no hold to hand back
-    if operations:
-        bd_checked('batch', '-m', f'board wait {item_id} --on {blocker}', '--json', stdin='\n'.join(operations) + '\n')
+    # bd allows one edge per pair: a relates-to link between the two gives way to the wait. The target, cycle and hold rules: edge_rules.
+    write_edges(board, 'wait', f'board wait {item_id} --on {blocker}', [(item_id, blocker, WAIT_LINK)],
+                [(a, b, kind) for a, b, kind in edges if kind == 'relates-to'], actor=actor)
     # The for goes in a comment: an append to a field would rewrite it and lose a concurrent edit.
     if reason and wait_comment(blocker, reason) not in [c.get('text') for c in issue.get('comments') or []]:  # a repeat adds no second line
         comment(item_id, wait_comment(blocker, reason))
@@ -6795,20 +6835,7 @@ def move_command(board: Board, args) -> int:
     """`board move <id>... --to <parent>`: re-parents items where the board's invariants allow it (parent_move_refusal), the planner's call
     on a partial commit; an item then belongs to its new change request."""
     known_items(board, [*args.ids, args.to])
-    if refusal := parent_move_refusal(board, args.ids, args.to):
-        raise BoardError(refusal)
-    for item_id in args.ids:
-        if refusal := item_write_refusal(board, board.by_id[item_id], 'move', derived_actor()):
-            raise BoardError(refusal)
-    for item_id in args.ids:  # an item is part of an open change request, a change request part of an open milestone
-        part_of = 'milestone' if board.is_cr(item_id) else CR_TYPE
-        if board.by_id[args.to].get('issue_type') != part_of or not board.is_open(args.to):
-            raise BoardError(f"{args.to} is not an open {part_of.replace('-', ' ')}: {item_id} is part of one; work that commits nothing is a task, not an item")
-    cleared = [item_id for item_id in args.ids if is_no_commit(board.by_id[item_id]) and not board.is_cr(item_id)]  # a task in a change request is work that commits
-    if rest := [item_id for item_id in args.ids if item_id not in cleared]:
-        bd_checked('update', *rest, '--parent', args.to, '--json')
-    if cleared:
-        bd_checked('update', *cleared, '--parent', args.to, '--unset-metadata', NO_COMMIT, '--json')
+    write_edges(board, 'move', f'board move --to {args.to}', [(item_id, args.to, 'parent-child') for item_id in dict.fromkeys(args.ids)])
     for item_id in args.ids:
         print(f'{item_id}: moved to {args.to}')
     return 0
@@ -6877,11 +6904,9 @@ def link_command(board: Board, args) -> int:
     """`board link <a> <b> --type T`: a link that holds nothing up (LINK_VERB_TYPES); a wait is `board wait`."""
     refuse_old_link(args.type)
     known_items(board, [args.a, args.b])
-    ops, _ = link_rules(board, [(args.a, args.b, args.type)], 'link')
-    if (existing := board.between(args.a, args.b)) and all(kind == args.type for _, _, kind in existing):
+    if not write_edges(board, 'link', f'board link {args.a} {args.b}', [(args.a, args.b, args.type)]):
         print(f'{args.a} -> {args.b}: {args.type} already')
         return 0
-    bd_checked('batch', '-m', f'board link {args.a} {args.b}', '--json', stdin='\n'.join(ops) + '\n')
     print(f'{args.a} -> {args.b}: {args.type}')
     return 0
 
@@ -6892,17 +6917,7 @@ def unlink_command(board: Board, args) -> int:
     edges = board.between(args.a, args.b)
     if not edges:
         raise BoardError(f'{args.a} and {args.b} are not linked')
-    for source, target, kind in edges:
-        if kind in RULING_LINKS:
-            raise BoardError(f'{source} -> {target} is a {kind} link of rulings: agents board ruling supersede|revise own it')
-    if any(kind == 'parent-child' for _, _, kind in edges) and (refusal := parent_move_refusal(board, [edges[0][0]], None)):
-        raise BoardError(refusal)
-    actor = derived_actor()
-    for source, _, kind in edges:  # removing an item's wait frees what its change request's hold keeps (item_write_refusal, as `wait`)
-        if blocking(kind) and (refusal := item_write_refusal(board, board.by_id[source], 'unlink', actor or None)):
-            raise BoardError(refusal)
-    for source, target, _ in edges:
-        bd_checked('dep', 'remove', source, target)
+    write_edges(board, 'unlink', f'board unlink {args.a} {args.b}', removes=edges)  # a parent edge changes by move; an item's wait under the hold rule
     for source, target, kind in edges:
         print(f'{source} no longer waits on {target}' if blocking(kind) else f'{source} -> {target}: unlinked ({kind})')
     return 0
@@ -7005,12 +7020,20 @@ def undefer_command(args) -> int:
     return 0
 
 
+def create_gate(board: Board, blocks: str, reason: str, title: str | None) -> str:
+    """bd's gate create, which writes the gate and the wait on `blocks` together: that wait meets edge_rules first (the hold rule on a CR's item);
+    bd's output."""
+    known_items(board, [blocks])
+    edge_rules(board, [(blocks, 'gate', WAIT_LINK)], 'wait', {'gate': 'gate'})
+    return bd_checked('gate', 'create', '--type=human', '--blocks', blocks, '--reason', reason, *(['--title', title] if title else []))
+
+
 def gate_create(args) -> int:
     """`board gate create --blocks <id> --reason "<why>" [--title T] [--for <person>]`: a human gate (bd's await_type human) that holds the
     item up (bd makes the gate and its link); on a shared board `--for` labels it `for:<person>`, whose step it is."""
     if args.for_:
         require_person_on_shared_board(args.for_, 'gate create --for')
-    out = bd_checked('gate', 'create', '--type=human', '--blocks', args.blocks, '--reason', args.reason, *(['--title', args.title] if args.title else []))
+    out = create_gate(Board.load(), args.blocks, args.reason, args.title)
     print(re.sub(r'\bbd gate resolve\b', 'agents board gate resolve', out.strip()))  # bd's own "Resolve with:" line names the raw form
     if args.for_:
         created = re.search(r'Created gate (\S+)', out)
@@ -7034,7 +7057,7 @@ def revise(board: Board, args) -> int:
     stub = {'nodes': [{'key': 'item', 'title': 'revision', 'type': 'decision'}]}
     value = ','.join(args.holds) if args.holds else None
     links, types = plan_links(stub)
-    _, waits = link_rules(board, links, 'ruling', types, parse_holds(value) if value is not None else ())
+    _, waits = edge_rules(board, links, 'ruling', types, parse_holds(value) if value is not None else ())
     require_holds_declared(waits, types, value)
     holds = waits['item'][0]
     old = board.by_id.get(args.old)
@@ -7186,27 +7209,27 @@ def supersede_chain(board: Board, old: str, new: str, rule: str | None, actor: s
     return failed
 
 
-def carry_revisions(board: Board, old: str, new: str, closing: frozenset[str] = frozenset()) -> list[str]:
-    """`dep` operations that move the revisions `old` still has pending to `new` (which replaces it whole), and the
+def carry_revisions(board: Board, old: str, new: str, closing: frozenset[str] = frozenset()) -> tuple[list[Edge], list[Edge]]:
+    """The edges that move the revisions `old` still has pending to `new` (which replaces it whole), and the
     rule's metadata write first: a rerun after a partial failure repeats the same write. `closing`: the other records closing
-    with `new` (their revision links to it are no revision of its own). Returns the operations."""
+    with `new` (their revision links to it are no revision of its own). Returns (links, removes) for write_edges."""
     targets = [t for t in board.revises(old) if t != new]
     if not targets:
-        return []
+        return [], []
     own = [t for t in board.revises(new) if t != old and t not in closing]
     rule, new_rule = rule_of(board.by_id[old]), rule_of(board.by_id[new])
     if own and (set(own) != set(targets) or rule != new_rule):
         raise BoardError(f"{new} already revises {', '.join(own)} and {old} revises {', '.join(targets)}; bd keeps one "
                          'revision rule per record: finish the revisions one record at a time')
     if rule is not None and rule != new_rule:
-        bd_checked('update', new, '--set-metadata', f'{REVISES_RULE}={rule}', '--json')
-    operations = []
+        put_meta(board.by_id[new], **{REVISES_RULE: rule})
+    links, removes = [], []
     for target in targets:
-        operations.append(f'dep remove {old} {target}')
+        removes.append((old, target, REVISES))
         if target not in own:
-            operations += [f'dep remove {a} {b}' for a, b, kind in board.between(new, target) if kind != 'parent-child']
-            operations += link_rules(board, [(new, target, REVISES)], 'ruling')[0]
-    return operations
+            removes += [(a, b, kind) for a, b, kind in board.between(new, target) if kind != 'parent-child']
+            links.append((new, target, REVISES))
+    return links, removes
 
 
 def supersede_pair(board: Board, old: str, new: str, rule: str | None, actor: str, carry: bool = False,
@@ -7215,13 +7238,9 @@ def supersede_pair(board: Board, old: str, new: str, rule: str | None, actor: st
     whole replacement takes over the revisions the old record still has pending (`closing`: see carry_revisions)."""
     # bd allows one edge per pair: drop an existing link between the two records (a revise link included) first.
     partial = [(old, new, 'supersedes')] if rule is not None else []
-    operations = [f'dep remove {a} {b}' for a, b, kind in board.between(old, new) if kind != 'parent-child' and (a, b, kind) not in partial]
-    carried = carry_revisions(board, old, new, closing) if carry and rule is None else []
-    if rule is not None:
-        operations += link_rules(board, partial, 'ruling')[0]
-    operations += carried
-    if operations:
-        bd_checked('batch', '-m', f'board ruling supersede {old} --with {new}', '--json', stdin='\n'.join(operations) + '\n')
+    removes = [(a, b, kind) for a, b, kind in board.between(old, new) if kind != 'parent-child' and (a, b, kind) not in partial]
+    carried, uncarried = carry_revisions(board, old, new, closing) if carry and rule is None else ([], [])
+    write_edges(board, 'ruling', f'board ruling supersede {old} --with {new}', [*partial, *carried], [*removes, *uncarried])
     if rule is not None:
         if rule:
             comment(old, f'board ruling supersede: rule "{rule}" superseded by {new}.')
@@ -7915,7 +7934,7 @@ def create_command(args) -> int:
             raise BoardError(loose_work_refusal(node['key']))
     existing = named or any(waiting not in types or (blocking(kind) and (waiting in parents or other not in types)) for waiting, other, kind in links)
     deck = Board.load('all') if existing else None
-    _, waits = link_rules(deck, links, 'create', types, named, parents)  # before anything is created
+    _, waits = create_plan(plan, deck, 'create', named, dry_run=True)  # before anything is created
     if decides:
         require_holds_declared(waits, types, holds_value)
     if shared is not None and derived_actor() and (refusal := plan_queue_refusal(plan)):
@@ -7928,7 +7947,7 @@ def create_command(args) -> int:
         for waiter, target, why in plan_given:
             print(wait_sentence(waiter, target, why or None))
         return 0
-    made = create_plan(plan)
+    made, _ = create_plan(plan, deck, 'create', named)
     for key, item_id in made.items():
         print(item_id if not args.graph else f'{key} {item_id}')
     for waiter, target, why in plan_given:  # the for is kept on the waiter, as board wait keeps it
