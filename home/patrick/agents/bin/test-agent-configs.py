@@ -3143,12 +3143,18 @@ def validate_board(root: Path) -> None:
             for argv, issues, needle in ((["update", loose, ids["Ready task"], "--no-commit"], fixture, "outside any change request"),
                                          (["update", "fx-cr", "--view", "result"], [*fixture, {**cr, "assignee": "lead0001", "metadata": {**cr.get("metadata", {}), "hold": "work"}}], "held by"),
                                          (["update", "fx-cr", "--view", "result"], [*fixture, {**cr, "status": "in_review"}], "while it is open"),
-                                         (["update", loose, "--look", "after"], fixture, "change request settings"),
-                                         (["update", loose, "--commits"], no_commit, "outside a change request")):
+                                         (["update", loose, "--look", "after"], fixture, "change request settings")):
                 fake = Fake(issues)
                 code, _, errors = invoke(argv, fake)
                 if code == 0 or fake.writes() or needle not in errors:
                     raise ValueError(f"board {argv} must be refused ({needle}) before any write: {code} {errors} {fake.writes()}")
+            try:
+                invoke(["update", loose, "--commits"], Fake(no_commit))
+            except SystemExit as stop:
+                if stop.code != 2:
+                    raise
+            else:
+                raise ValueError("board update has no --commits: a no-commit task leaves that route by move --to <change request>")
             with patch.object(board, "may_attend", lambda board=None: False):
                 fake = Fake(fixture)
                 code, _, errors = invoke(["update", loose, "--no-commit"], fake, "agnt0001")
@@ -4759,7 +4765,7 @@ def validate_board(root: Path) -> None:
             if code or any((w[:2] == ["update", ready] and w[2:4] == ["--assignee", ""]) for w in fake.writes()) or not any(w[:3] == ["comments", "add", ready] for w in fake.writes()) or not any(w[:3] == ["comments", "add", "fx-task"] for w in fake.writes()) \
                     or not any(a[0] == "create" for a, _ in fake.calls):
                 raise ValueError(f"a plan's links to its decision node are holds: every held item, an existing one and a plan item, gets the hold effects: {code} {errors} {fake.writes()}")
-            code, output, errors, fake = bd_graph({"nodes": nodes, "edges": [{"from_key": "t", "to_key": "q", "type": "parent-child"}]})
+            code, output, errors, fake = bd_graph({"nodes": nodes, "edges": [{"from_key": "t", "to_key": "q", "type": "relates-to"}]})
             if code != 2 or "names what it holds up" not in errors or any(a[0] == "create" for a, _ in fake.calls):
                 raise ValueError(f"a plan decision with no blocking link is refused unless --holds none: {code} {errors} {fake.calls}")
             code, output, errors, fake = bd_graph({"nodes": waiting_t, "edges": []}, "--holds", "none")
@@ -6391,6 +6397,9 @@ def validate_board(root: Path) -> None:
                 code, _, errors, writes = verb(["move", "t-cr.o", "--to", "t-cr2"], with_targets)
                 if code or writes != [["update", "t-cr.o", "--parent", "t-cr2", "--json"]]:
                     raise ValueError(f"board move: an open item re-parents to an open change request: {code} {errors!r} {writes}")
+                code, _, errors, writes = verb(["move", "t-n", "t-cr.o", "--to", "t-cr2"], [*with_targets, plain("t-n", metadata={"no_commit": True})])
+                if code or writes != [["update", "t-cr.o", "--parent", "t-cr2", "--json"], ["update", "t-n", "--parent", "t-cr2", "--unset-metadata", "no_commit", "--json"]]:
+                    raise ValueError(f"board move into a change request must clear no_commit in the same update: {code} {errors!r} {writes}")
                 landed_item = [cr_issue("t-crx", "closed"), cr_item("t-crx.i", "t-crx", "closed")]
                 code, _, errors, writes = verb(["reopen", "t-crx.i"], landed_item)
                 if code != 2 or "t-crx, which is closed" not in errors or writes:
@@ -8057,6 +8066,15 @@ else:
             result, calls = run_fake("create", *args, filed=False)
             if result.returncode != 2 or "outside a change request" not in result.stderr or writes_of(calls, "create"):
                 raise ValueError(f"board create {args} of loose work must be refused before bd is called: {result.returncode} {result.stderr!r} {calls}")
+        # a work task's parent is a change request: a task or milestone parent leaves it loose, and a no-commit task has no parent
+        files["bad.json"].write_text(json.dumps({"nodes": [{"key": "a", "title": "A", "description": "d", "parent_id": "fx-p"}]}), encoding="utf-8")
+        for args in (("T", "--parent", "fx-p"), ("T", "--parent", "fx-cr", "--no-commit"), ("--graph", str(files["bad.json"]))):
+            result, calls = run_fake("create", *args)
+            if result.returncode != 2 or "change request" not in result.stderr or writes_of(calls, "create"):
+                raise ValueError(f"board create {args} must be refused for its parent: {result.returncode} {result.stderr!r} {calls}")
+        result, calls = run_fake("create", "T", "--parent", "fx-cr")
+        if result.returncode != 0 or not writes_of(calls, "create"):
+            raise ValueError(f"board create --parent <change request> files the task there: {result.returncode} {result.stderr!r} {calls}")
         result, calls = run_fake("create", "T", "--no-commit")
         if result.returncode != 0 or not writes_of(calls, "create"):
             raise ValueError(f"board create --no-commit files work that commits nothing, outside a change request: {result.returncode} {result.stderr!r} {calls}")
@@ -8076,7 +8094,7 @@ else:
         if result.returncode != 2 or "--parent" not in result.stderr or writes_of(calls, "create"):
             raise ValueError(f"--deps parent-child: must name --parent: {result.returncode} {result.stderr!r}")
         # a whole plan: its ids print as `key id`; node flags beside it are refused; an unreadable or empty plan too
-        files["plan.json"].write_text(json.dumps({"nodes": [{"key": "a", "title": "A", "description": "d", "type": "task", "no_commit": True}, {"key": "b", "title": "B", "description": "d", "type": "task", "parent": "a"}]}), encoding="utf-8")
+        files["plan.json"].write_text(json.dumps({"nodes": [{"key": "a", "title": "A", "description": "d", "type": "change-request"}, {"key": "b", "title": "B", "description": "d", "type": "task", "parent": "a"}]}), encoding="utf-8")
         result, calls = run_fake("create", "--graph", str(files["plan.json"]))
         if result.returncode != 0 or result.stdout != "a fx-a-new\nb fx-b-new\n" or writes_of(calls, "create")[0]["plan"]["nodes"][1]["parent"] != "a":
             raise ValueError(f"board create --graph must create the plan and print key and id: {result.returncode} {result.stdout!r} {result.stderr!r}")

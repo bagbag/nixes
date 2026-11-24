@@ -6787,14 +6787,18 @@ def move_command(board: Board, args) -> int:
         part_of = 'milestone' if board.is_cr(item_id) else CR_TYPE
         if board.by_id[args.to].get('issue_type') != part_of or not board.is_open(args.to):
             raise BoardError(f"{args.to} is not an open {part_of.replace('-', ' ')}: {item_id} is part of one; work that commits nothing is a task, not an item")
-    bd_checked('update', *args.ids, '--parent', args.to, '--json')
+    cleared = [item_id for item_id in args.ids if is_no_commit(board.by_id[item_id]) and not board.is_cr(item_id)]  # a task in a change request is work that commits
+    if rest := [item_id for item_id in args.ids if item_id not in cleared]:
+        bd_checked('update', *rest, '--parent', args.to, '--json')
+    if cleared:
+        bd_checked('update', *cleared, '--parent', args.to, '--unset-metadata', NO_COMMIT, '--json')
     for item_id in args.ids:
         print(f'{item_id}: moved to {args.to}')
     return 0
 
 
 def update_command(board: Board, args) -> int:
-    """`board update <id>... [--title] [--priority] [--label L]... [--unlabel L]... [--no-commit|--commits]
+    """`board update <id>... [--title] [--priority] [--label L]... [--unlabel L]... [--no-commit]
     [--look|--view V|""]`: the short fields bd
     leaves to bd, with the board's value rules: labels the board routes on (queue:, for:) change through send, route and create --for; a parent
     a parent moves through `move`; a step for a person is a human gate (gate create)."""
@@ -6813,7 +6817,7 @@ def update_command(board: Board, args) -> int:
     changes += [flag for label in labels for flag in ('--add-label', label)] + [flag for label in unlabels for flag in ('--remove-label', label)]
     changes += setting_changes(board, args)
     if not changes:
-        raise BoardError('nothing to change: give --title, --priority, --label, --unlabel, --no-commit, --commits, --look or --view '
+        raise BoardError('nothing to change: give --title, --priority, --label, --unlabel, --no-commit, --look or --view '
                          '(long fields: agents board field; claim: agents board claim)')
     bd_checked('update', *args.ids, *changes, '--json')
     for item_id in args.ids:
@@ -6825,7 +6829,7 @@ def setting_changes(board: Board, args) -> list[str]:
     """The metadata writes of update's item settings, every item checked first: planning's call (a lead, solo or person, as a parent move),
     on an item no session holds and before its work starts: a work item open or deferred in no change request, a change request open."""
     cr_given = {name: getattr(args, name) for name in CR_SETTINGS if getattr(args, name) is not None}
-    if args.no_commit is None and not cr_given:
+    if not args.no_commit and not cr_given:
         return []
     if not may_attend(board):
         raise BoardError('only a lead or solo session or a person changes item settings (planning)')
@@ -6834,23 +6838,19 @@ def setting_changes(board: Board, args) -> list[str]:
         kind, holder = issue.get('issue_type'), issue.get('assignee')
         if holder:
             raise BoardError(f'{item_id}: held by {holder}; agents board unclaim or agents board take it first')
-        if args.no_commit is not None and (issue['status'] not in ('open', 'deferred') or board.cr_of(item_id)):
+        if args.no_commit and (issue['status'] not in ('open', 'deferred') or board.cr_of(item_id)):
             raise BoardError(f"{item_id}: {issue['status']}{' in ' + board.cr_of(item_id) if board.cr_of(item_id) else ''}; "
                              'its route changes while it is open or deferred outside any change request')
         if cr_given and issue['status'] != 'open':
             raise BoardError(f"{item_id}: {issue['status']}; a change request's settings change while it is open")
-        if args.no_commit is False and kind != WORK_TYPE:
-            raise BoardError(f'{item_id}: --commits takes a task')
-        if args.no_commit is False:  # it sits in no change request (checked above), so committing work would be loose
-            raise BoardError(loose_work_refusal(item_id, 'update --commits'))
         if cr_given and kind != CR_TYPE:
             raise BoardError(f'{item_id}: look and view are change request settings')
         given = {**({NO_COMMIT: True} if args.no_commit else {}), **{name: value for name, value in cr_given.items() if value}}
         if refusal := setting_refusal(item_id, kind, given):
             raise BoardError(refusal)
     changes = []
-    if args.no_commit is not None:
-        changes += ['--set-metadata', f'{NO_COMMIT}=true'] if args.no_commit else ['--unset-metadata', NO_COMMIT]
+    if args.no_commit:
+        changes += ['--set-metadata', f'{NO_COMMIT}=true']
     for name, value in cr_given.items():
         changes += ['--set-metadata', f'{name}={value}'] if value else ['--unset-metadata', name]
     return changes
@@ -7832,10 +7832,10 @@ def for_person(plan: dict, target: str) -> None:
         node['labels'] = [*(node.get('labels') or []), f'{FOR_PREFIX}{target}', f'{QUEUE_PREFIX}{me}']
 
 
-def loose_work_refusal(name: str, verb: str) -> str:
+def loose_work_refusal(name: str) -> str:
     """Work that commits here belongs to a change request (model.md Types); only a no-commit task stands outside one."""
-    return (f'{name}: {verb} would leave work outside a change request: file it in one (--parent <change request>, a graph node\'s parent; '
-            f'agents board move <id> --to <change request> for an existing task), or --no-commit for work that commits nothing to this repository')
+    return (f'{name}: create would leave work outside a change request: file it in one (--parent <change request>, a graph node\'s parent; a milestone or task '
+            f'is no change request; agents board move <id> --to <change request> for an existing task), or --no-commit for work that commits nothing to this repository')
 
 
 def create_command(args) -> int:
@@ -7888,8 +7888,14 @@ def create_command(args) -> int:
     named = parse_holds(holds_value) if holds_value is not None else []
     parents = plan_parents(plan, links)
     for node in nodes:
-        if (node.get('type') or WORK_TYPE) == WORK_TYPE and node['key'] not in parents and (node.get('metadata') or {}).get(NO_COMMIT) is not True:
-            raise BoardError(loose_work_refusal(node['key'], 'create'))
+        if (node.get('type') or WORK_TYPE) != WORK_TYPE:
+            continue
+        if (node.get('metadata') or {}).get(NO_COMMIT) is True:
+            if node['key'] in parents:
+                raise BoardError(f"{node['key']}: work that commits nothing stands outside any change request: drop --parent, or drop --no-commit to file it in one")
+        elif not any((types.get(parent) or ((found := bd_show([parent], comments=False)) and found[0].get('issue_type'))) == CR_TYPE
+                     for parent in parents.get(node['key'], [])):
+            raise BoardError(loose_work_refusal(node['key']))
     existing = named or any(waiting not in types or (blocking(kind) and (waiting in parents or other not in types)) for waiting, other, kind in links)
     deck = Board.load('all') if existing else None
     _, waits = link_rules(deck, links, 'create', types, named, parents)  # before anything is created
@@ -8225,10 +8231,8 @@ def run_command(argv: list[str]) -> int:
     sub.add_argument('-p', '--priority', type=priority, help='0-4 or P0-P4 (0 highest)')
     sub.add_argument('--label', action=Values, default=[], metavar='LABEL[,LABEL...]', help='add; repeatable, commas separate')
     sub.add_argument('--unlabel', action=Values, default=[], metavar='LABEL[,LABEL...]', help='remove; repeatable, commas separate')
-    commits = sub.add_mutually_exclusive_group()  # not `route`: that name is the route verb, registered below
-    commits.add_argument('--no-commit', dest='no_commit', action='store_const', const=True,
-                         help='the work commits nothing to this repository: it needs no change request')
-    commits.add_argument('--commits', dest='no_commit', action='store_const', const=False, help='the work commits here: it goes in a change request')
+    sub.add_argument('--no-commit', dest='no_commit', action='store_true',
+                     help='the work commits nothing to this repository: it needs no change request')
     for name, values in CR_SETTINGS.items():
         sub.add_argument(f'--{name}', choices=(*values, ''), help=f'a change request\'s {name} ("" drops it, back to the project default)')
     sub = add('link', 'link two items with a type that holds nothing up (a wait is agents board wait)', link_command)

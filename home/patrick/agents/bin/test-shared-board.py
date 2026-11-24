@@ -1334,12 +1334,18 @@ def t_cr() -> None:
     check(rc == 0 and run('a', 'wait', drop_c, '--on', question)[0] == 0, 'drop: a wait on a question closed dropped is accepted', err)
     run('a', 'unlink', drop_c, question)
 
-    # Work outside a change request is refused at create and update --commits: a work task files in a CR or commits nothing here.
+    # Work outside a change request is refused at create: a work task files in a CR or commits nothing here.
     rc, _, err, _ = run('a', 'create', 'loose work', '-t', 'task', '--description', 'x', '--silent', filed=False)
     check(rc != 0 and '--parent' in err and '--no-commit' in err, 'loose: create refuses a work task outside a change request, naming --parent and --no-commit', err)
     probe_task = create('a', 'a probe', '--no-commit', kind='task')
     rc, _, err, _ = run('a', 'update', probe_task, '--commits')
-    check(rc != 0 and 'outside a change request' in err and (items('a')[probe_task].get('metadata') or {}).get('no_commit') is True, 'loose: update --commits refuses to make a probe loose work', err)
+    check(rc == 2 and 'unrecognized arguments' in err, 'loose: update has no --commits', err)
+    milestone = create('a', 'a milestone', kind='milestone')
+    rc, _, err, _ = run('a', 'create', 'loose under a milestone', '-t', 'task', '--description', 'x', '--silent', '--parent', milestone, filed=False)
+    check(rc != 0 and 'change request' in err, 'loose: create refuses a milestone parent for a work task', err)
+    probe_home = create('a', 'a probe moves in')
+    rc, _, err, _ = run('a', 'move', probe_task, '--to', probe_home)
+    check(rc == 0 and not (items('a')[probe_task].get('metadata') or {}).get('no_commit'), 'loose: move into a change request clears no_commit', err)
 
     f = create('a', 'direct user review')
     f1 = task(f, 'F item')
