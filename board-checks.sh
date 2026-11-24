@@ -25,7 +25,8 @@ wait "${pids[@]}"
 failed=0
 for i in "${!suites[@]}"; do
   file=${suites[$i]%%|*}
-  status=$(cat "$dir/$i.status")
+  # A suite killed before it wrote its status fails, as a killed serial suite did.
+  read -r status <"$dir/$i.status" 2>/dev/null || status=137
   if [[ $status -eq 126 || $status -eq 127 ]]; then
     echo "board-checks: cannot run $file (exit $status)" >&2
     cat "$dir/$i.out" >&2
