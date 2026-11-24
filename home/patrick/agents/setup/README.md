@@ -16,16 +16,11 @@ Requires `python3` 3.11 or newer and `bd` (beads, tested with 1.3.1). Under an o
 before changing anything when `bd` is missing, when a target is a symlink, or when a settings file
 isn't valid JSON or `config.toml` isn't valid TOML. Then restart Claude Code and Codex. Codex asks you to trust the changed hooks.
 
-Add `~/.agents/commands` to your shell PATH. In a POSIX shell, put the following
-in the startup file your client reads:
-
-    export PATH="$HOME/.agents/commands:$PATH"
-    agents board help
-
-Only the `agents` dispatcher needs to be on PATH. It runs the tools from the
-private `~/.agents/bin` directory. Verify the command in a fresh shell and in
-Claude Code and Codex sessions started from the Dock before relying on it in
-agent instructions.
+Only the `agents` dispatcher needs to be on PATH; it runs the tools from the private `~/.agents/bin`
+directory. At a terminal the installer offers to add `~/.agents/commands` to PATH (step 11). Without a
+terminal, after a no, for a symlinked startup file or for a shell other than zsh and bash, it prints the
+line and the file to add it to. Codex runs commands in a non-interactive login shell, which does not read
+`~/.zshrc`; zsh reads `~/.zshenv` in every mode.
 
 The installer:
 1. Backs up everything it replaces or removes to `~/.agent-config-backup/<timestamp>/`.
@@ -53,6 +48,10 @@ The installer:
    new folder is absent; with both present it leaves both and prints a note (`--dry-run` only reports it).
 10. At a terminal, asks for your name for shared boards when `git config --global agents.person`
    is unset. Leave it blank to skip; set it per repository with `git config agents.person <name>`.
+11. At a terminal, asks to add a marked PATH block for `~/.agents/commands` when a fresh login shell
+   lacks it: `~/.zshenv` for zsh; for bash, the first of `~/.bash_profile`, `~/.bash_login` and
+   `~/.profile` that exists (else `~/.profile`) plus `~/.bashrc`. The block adds the folder only when PATH
+   lacks it. Then it starts a fresh login shell and prints a note unless that shell runs this `agents`.
 
 Board commands need elevated permissions in Codex's sandbox. To have Codex's reviewer approve them
 instead of prompting you, add `approvals_reviewer = "auto_review"` to `~/.codex/config.toml` yourself;
@@ -94,7 +93,8 @@ a fresh repository and the others rejoin with `agents board join <url>`.
 
     ./install.py --uninstall
 
-Removes everything the install recorded, its hook registrations, the permission rules it added and
+Removes everything the install recorded, its hook registrations, the permission rules it added, its
+PATH blocks (and a startup file it created that is left empty), and
 its `config.toml` block (a block you edited, or in a symlinked file, is left with a note; a `config.toml` the
 installer created is deleted when nothing else is in it). Your earlier instructions stay
 in the backup folder; restore them by hand.

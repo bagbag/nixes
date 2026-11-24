@@ -2,7 +2,8 @@
 """Installs the Claude Code + Codex agent setup into $HOME. Idempotent. A rerun from a newer bundle removes what the last
 install shipped and this one no longer does, recorded in ~/.agents/setup-state.json. It also grants the agents their write
 roots: Edit rules in Claude's permissions.allow, tracked in the state file, and a marked
-writable_roots block in ~/.codex/config.toml, found again by its marker.
+writable_roots block in ~/.codex/config.toml, found again by its marker. With a yes at a terminal it adds a marked PATH
+block for the agents dispatcher to the shell's startup files, then checks that a fresh login shell finds it.
 
 Usage: ./install.py [--no-mod] [--dry-run]
        ./install.py --uninstall [--dry-run]
@@ -39,6 +40,7 @@ if sys.version_info < (3, 11):
     os.execv(newer, [newer] + sys.argv)
 
 import json
+import pwd
 import re
 import stat
 import tempfile
@@ -56,6 +58,13 @@ GRANT_ROOTS = (
 )
 CODEX_MARK = "# claude-codex-setup: agent scratch and records (./install.py --uninstall removes this block)"
 CODEX_BLOCK = re.compile(r"^# claude-codex-setup: [^\r\n]*\r?\n\[sandbox_workspace_write\]\r?\nwritable_roots = (\[[^\r\n]*\])(?:\r?\n|\Z)", re.M)
+# Guarded by membership, not by a once-per-session marker: a process whose environment predates the block still gets
+# the entry, and nested shells do not repeat it.
+PATH_LINE = b'case ":$PATH:" in *":$HOME/.agents/commands:"*) ;; *) export PATH="$HOME/.agents/commands:$PATH" ;; esac'
+PATH_TEXT = b"# >>> claude-codex-setup: agents on PATH (./install.py --uninstall removes this block)\n" + PATH_LINE + b"\n# <<< claude-codex-setup\n"
+PATH_BLOCK = re.compile(rb"^# >>> claude-codex-setup: [^\n]*\n(.*?)^# <<< claude-codex-setup[^\n]*(?:\n|\Z)", re.M | re.S)
+BASH_LOGIN = (".bash_profile", ".bash_login", ".profile")
+STARTUP_FILES = (".zshenv",) + BASH_LOGIN + (".bashrc",)
 
 
 class Fail(Exception):
@@ -303,6 +312,87 @@ def refuse_symlinks(home: Path, rels) -> None:
                 raise Fail("~/%s is a symlink; resolve it first" % p)
 
 
+def user_shell() -> str:
+    return os.environ.get("SHELL") or pwd.getpwuid(os.getuid()).pw_shell
+
+
+def startup_files(home: Path, shell: str) -> list:
+    """The files a shell reads in every mode Codex (login, non-interactive) and Claude Code (interactive) start it in.
+    zsh reads ~/.zshenv always. A bash login shell reads only the first of BASH_LOGIN that exists, so writing a
+    missing ~/.bash_profile would hide the user's ~/.profile; interactive non-login bash reads ~/.bashrc."""
+    name = os.path.basename(shell)
+    if name == "zsh":
+        return [".zshenv"]
+    if name == "bash":
+        return [next((f for f in BASH_LOGIN if (home / f).exists()), ".profile"), ".bashrc"]
+    return []
+
+
+def login_path(shell: str, home: Path):
+    """PATH as a fresh login shell sets it from a clean environment, as an app started from the Dock gets it; None when
+    the shell does not answer."""
+    env = {"HOME": str(home), "SHELL": shell, "TERM": "dumb", "PATH": "/usr/bin:/bin:/usr/sbin:/sbin"}
+    try:
+        result = subprocess.run([shell, "-lc", 'printf "%s\\n" "$PATH"'], env=env, stdin=subprocess.DEVNULL,
+                                capture_output=True, text=True, timeout=10)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    lines = [line for line in result.stdout.splitlines() if line]
+    return lines[-1] if result.returncode == 0 and lines else None
+
+
+def plan_path_blocks(home: Path, shell: str, uninstall: bool) -> list:
+    """(rel, new bytes or None to delete, created) for each startup file whose PATH block changes. Only the marked block
+    is written or removed; an edited block or a symlinked file gets a NOTE."""
+    commands = str(home / ".agents" / "commands")
+    plan = []
+    if uninstall:
+        rels = STARTUP_FILES
+    else:
+        current = login_path(shell, home)
+        if current is not None and commands in current.split(":"):
+            return []
+        rels = startup_files(home, shell)
+    for rel in rels:
+        path = home / rel
+        text = path.read_bytes() if path.is_file() else b""
+        found = PATH_BLOCK.search(text)
+        if found is not None and found.group(0) != PATH_TEXT:
+            note("the claude-codex-setup PATH block in ~/%s was edited; %s." % (rel, "remove it by hand" if uninstall else "leaving it as it is"))
+            continue
+        if uninstall == (found is None):
+            continue
+        if path.is_symlink():
+            if uninstall:
+                note("remove the claude-codex-setup PATH block from ~/%s by hand; it is a symlink." % rel)
+            continue  # the post-install check names the line to add
+        if uninstall:
+            head = text[:found.start()]
+            plan.append((rel, (head[:-1] if head.endswith(b"\n\n") else head) + text[found.end():], False))
+        else:
+            plan.append((rel, text + (b"" if not text else b"\n" if text.endswith(b"\n") else b"\n\n") + PATH_TEXT, not path.exists()))
+    return plan
+
+
+def check_path(home: Path, shell: str) -> None:
+    """Notes when a fresh login shell does not run this install's agents."""
+    expected = home / ".agents" / "commands" / "agents"
+    rels = startup_files(home, shell)
+    line = PATH_LINE.decode()
+    if not rels:
+        note("add ~/.agents/commands to PATH in your shell's startup file (%s); the POSIX form is: %s" % (shell, line))
+        return
+    current = login_path(shell, home)
+    if current is None:
+        note("could not start %s as a login shell to check that agents is on PATH." % shell)
+        return
+    found = shutil.which("agents", path=current)
+    if found is None:
+        note("a new %s login shell does not find agents; add this line to %s: %s" % (os.path.basename(shell), " and ".join("~/" + r for r in rels), line))
+    elif os.path.realpath(found) != os.path.realpath(expected):
+        note("a new login shell runs %s, not ~/.agents/commands/agents; put ~/.agents/commands earlier on PATH." % found)
+
+
 def check_home() -> Path:
     value = os.environ.get("HOME", "")
     if not value.startswith("/"):
@@ -322,8 +412,10 @@ def list_shipped(files: Path, no_mod: bool) -> list:
 def read_state(path: Path, rel: str) -> dict:
     state = load_object(path, rel)
     files, hooks, grants = state.get("files", []), state.get("hooks", {}), state.get("grants", [])
+    path_created = state.get("path_created", [])
     ok = (isinstance(files, list) and all(isinstance(f, str) for f in files) and isinstance(hooks, dict)
-          and all(isinstance(v, list) for v in hooks.values()) and isinstance(grants, list))
+          and all(isinstance(v, list) for v in hooks.values()) and isinstance(grants, list)
+          and isinstance(path_created, list) and all(f in STARTUP_FILES for f in path_created))
     if not ok:
         raise Fail("%s is damaged; fix or delete it first" % rel)
     # The state decides what gets removed, so a damaged entry must not reach outside the install's own folders.
@@ -423,7 +515,23 @@ def run(uninstall: bool, no_mod: bool, dry: bool) -> int:
         elif why == "none":
             note("no python3 on PATH is this interpreter; the installed tools are pinned to %s." % pin)
 
-    new_state = {"version": version, "files": shipped, "hooks": {tool: hook_commands(t) for tool, t in templates.items()}, "grants": owned, "config_created": created}
+    # The PATH block goes in only with the user's yes at a terminal; otherwise the check after the install names the line.
+    shell = user_shell()
+    path_plan = plan_path_blocks(home, shell, uninstall)
+    if path_plan and not uninstall and not dry:
+        files = ", ".join("~/" + rel for rel, _, _ in path_plan)
+        answer = ""
+        if sys.stdin.isatty():
+            try:
+                answer = input("Add ~/.agents/commands to PATH in %s? [Y/n] " % files).strip().lower()
+            except EOFError:
+                answer = "n"
+        if not sys.stdin.isatty() or answer not in ("", "y", "yes"):
+            path_plan = []
+    path_created = sorted(set(state.get("path_created", [])) | {rel for rel, _, made in path_plan if made})
+
+    new_state = {"version": version, "files": shipped, "hooks": {tool: hook_commands(t) for tool, t in templates.items()}, "grants": owned,
+                 "config_created": created, "path_created": path_created}
 
     def content(rel: str) -> bytes:
         data = (here / "files" / rel).read_bytes()
@@ -484,6 +592,18 @@ def run(uninstall: bool, no_mod: bool, dry: bool) -> int:
             else:
                 replace_file(path, text.encode("utf-8"))
 
+    for rel, data, _ in path_plan:
+        changed = True
+        # A startup file this installer created goes once the uninstall leaves it blank.
+        gone = uninstall and rel in path_created and not data.strip()
+        print("path    " + rel + (" (asks first)" if dry and not uninstall else ""))
+        if not dry:
+            backup_path(rel)
+            if gone:
+                (home / rel).unlink()
+            else:
+                replace_file(home / rel, data)
+
     if not uninstall and sessions_move(home, os.environ, dry):
         changed = True
 
@@ -498,6 +618,9 @@ def run(uninstall: bool, no_mod: bool, dry: bool) -> int:
     # ---- 5. the person shared boards route to ----
     if not uninstall and not dry:
         person_prompt()
+
+    if not uninstall and not dry:
+        check_path(home, shell)
 
     if pin:
         print("python  " + pin)

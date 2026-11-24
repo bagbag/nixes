@@ -1425,7 +1425,7 @@ def validate_setup_installer(root: Path) -> None:
 
         def run(folder: Path, *flags: str, path: Path = tools):
             return subprocess.run([sys.executable, str(folder / "install.py"), *flags], capture_output=True, text=True, check=False,
-                                  stdin=subprocess.DEVNULL, env={"HOME": str(home), "PATH": str(path)})
+                                  stdin=subprocess.DEVNULL, env={"HOME": str(home), "PATH": str(path), "SHELL": "/nonexistent/shell"})
 
         def ok(folder: Path, *flags: str):
             result = run(folder, *flags)
@@ -1818,6 +1818,108 @@ def validate_setup_installer(root: Path) -> None:
             raise ValueError(f"--uninstall must not touch what it never added: {settings.read_text(encoding='utf-8')}")
 
 
+def validate_setup_path(root: Path) -> None:
+    """setup/install.py's PATH block in a fake home under bash: written only after a yes at a terminal, into the bash login
+    file that is read, idempotent in nested shells, checked through a fresh login shell, and removed on uninstall."""
+    import pty
+    bash = shutil.which("bash")
+    if bash is None:
+        raise ValueError("the PATH block test needs bash")
+    spec = importlib.util.spec_from_file_location("setup_install_path", root / "setup" / "install.py")
+    installer = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(installer)
+    block = installer.PATH_TEXT
+    with tempfile.TemporaryDirectory() as directory:
+        base = Path(directory)
+        folder = base / "bundle"
+        dispatcher = folder / "files" / ".agents" / "commands" / "agents"
+        dispatcher.parent.mkdir(parents=True)
+        dispatcher.write_text("#!/bin/sh\n", encoding="utf-8")
+        dispatcher.chmod(0o755)
+        (folder / "settings").mkdir()
+        for tool in ("claude", "codex"):
+            (folder / "settings" / f"{tool}-hooks.json").write_text('{"hooks": {}}', encoding="utf-8")
+        (folder / "VERSION").write_text("1\n", encoding="utf-8")
+        shutil.copy(root / "setup" / "install.py", folder / "install.py")
+        tools = base / "tools"
+        tools.mkdir()
+        (tools / "bd").write_text(f"#!/bin/sh\necho 'bd version {installer.BD_TESTED}'\n", encoding="utf-8")
+        (tools / "bd").chmod(0o755)
+        home = base / "home"
+        home.mkdir()
+
+        def run(*flags: str, answer: str | None = None, shell: str = bash):
+            command = [sys.executable, str(folder / "install.py"), *flags]
+            env = {"HOME": str(home), "PATH": str(tools), "SHELL": shell}
+            if answer is None:
+                result = subprocess.run(command, capture_output=True, text=True, stdin=subprocess.DEVNULL, env=env, timeout=120)
+            else:
+                main, terminal = pty.openpty()
+                try:
+                    os.write(main, answer.encode())
+                    result = subprocess.run(command, capture_output=True, text=True, stdin=terminal, env=env, timeout=120)
+                finally:
+                    os.close(main)
+                    os.close(terminal)
+            if result.returncode != 0:
+                raise ValueError(f"install.py {flags} failed: {result.stdout}{result.stderr}")
+            return result
+
+        def read(rel: str) -> bytes:
+            return (home / rel).read_bytes() if (home / rel).exists() else b""
+
+        # Without a terminal nothing is written; the check names the files bash reads.
+        quiet = run()
+        if read(".profile") or read(".bashrc") or "add this line to ~/.profile and ~/.bashrc" not in quiet.stderr:
+            raise ValueError(f"install.py must leave startup files alone without a terminal and name the line: {quiet.stderr}")
+        declined = run(answer="n\n")
+        if read(".profile") or "does not find agents" not in declined.stderr:
+            raise ValueError(f"install.py must not write the PATH block after a no: {declined.stderr}")
+        # A yes (the default) writes the block; a fresh login shell then finds agents, so the check is silent.
+        added = run(answer="\n")
+        if read(".profile") != block or read(".bashrc") != block or "NOTE" in added.stderr:
+            raise ValueError(f"install.py must add the PATH block to ~/.profile and ~/.bashrc: {added.stderr} {read('.profile')!r}")
+        nested = subprocess.run([bash, "-c", '. "$HOME/.profile"; . "$HOME/.bashrc"; printf %s "$PATH"'], capture_output=True, text=True,
+                                env={"HOME": str(home), "PATH": "/usr/bin:/bin"}, check=True).stdout
+        if nested.split(":").count(str(home / ".agents" / "commands")) != 1:
+            raise ValueError(f"the PATH block must add its folder once: {nested}")
+        again = run(answer="\n")
+        if read(".profile") != block or "path    " in again.stdout:
+            raise ValueError(f"a rerun must leave the PATH block alone: {again.stdout}")
+        # Uninstall removes startup files the installer created and left empty.
+        run("--uninstall")
+        if (home / ".profile").exists() or (home / ".bashrc").exists():
+            raise ValueError("--uninstall must remove the startup files it created")
+
+        # A user's ~/.bash_profile is the login file bash reads: the block goes there, not into a new ~/.profile.
+        own = b"# mine\nexport KEEP=1\n"
+        (home / ".bash_profile").write_bytes(own)
+        run(answer="y\n")
+        if read(".bash_profile") != own + b"\n" + block or (home / ".profile").exists():
+            raise ValueError(f"install.py must append the block to the existing ~/.bash_profile: {read('.bash_profile')!r}")
+        run("--uninstall")
+        if read(".bash_profile") != own or (home / ".bashrc").exists():
+            raise ValueError(f"--uninstall must restore ~/.bash_profile byte for byte: {read('.bash_profile')!r}")
+        # An edited block is named and left on uninstall.
+        run(answer="y\n")
+        edited = read(".bash_profile").replace(b"export PATH", b"export  PATH")
+        (home / ".bash_profile").write_bytes(edited)
+        left = run("--uninstall")
+        if "was edited" not in left.stderr or read(".bash_profile") != edited:
+            raise ValueError(f"--uninstall must name an edited PATH block and leave it: {left.stderr}")
+        (home / ".bash_profile").unlink()
+        (home / ".bashrc").unlink(missing_ok=True)
+
+        # zsh reads ~/.zshenv in every mode; a shell that does not start is reported, not fatal.
+        zsh_run = run(answer="\n", shell=str(base / "missing" / "zsh"))
+        if read(".zshenv") != block or "could not start" not in zsh_run.stderr:
+            raise ValueError(f"install.py must add the PATH block to ~/.zshenv for zsh: {zsh_run.stderr}")
+        # Another shell gets the line to add by hand.
+        fish = run(answer="\n", shell="/nonexistent/fish")
+        if "add ~/.agents/commands to PATH in your shell's startup file" not in fish.stderr:
+            raise ValueError(f"install.py must name the PATH line for a shell it does not edit: {fish.stderr}")
+
+
 def validate_hook_registrations(root: Path) -> None:
     """The Claude and Codex hook configs beside the agents root (absent from the store copy the build checks):
     session-activity runs on SubagentStart, SubagentStop and every tool's PreToolUse (a group without matcher),
@@ -1906,6 +2008,7 @@ def validate_hooks(root: Path) -> None:
     validate_agent_grants(root)
     validate_setup_portable(root)
     validate_setup_installer(root)
+    validate_setup_path(root)
     validate_session_registry(root)
     validate_session_register(root)
     validate_compact_reorient(root)
