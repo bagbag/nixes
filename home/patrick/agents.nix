@@ -39,11 +39,19 @@ in
     }
   ];
 
-  # The same python3 with pyyaml the build runs the suite on, so `python3 bin/test-...` works in any session.
-  home.packages = [ (lib.hiPrio agentPackage.python) ];
-
-  home.sessionPath = [ "${config.home.homeDirectory}/.agents/commands" ];
-  home.file.".agents/commands/agents".source = "${agentPackage.pinnedBin}/commands/agents";
+  home.packages = [
+    # The same python3 with pyyaml the build runs the suite on, so `python3 bin/test-...` works in any session.
+    (lib.hiPrio agentPackage.python)
+    # The dispatcher alone, so pinnedBin/bin stays private; it resolves this link to find those tools. The
+    # profile's bin stays on PATH across switches; a home.sessionPath entry misses long-lived processes (the
+    # Codex daemon) that sourced the session vars before it existed.
+    (pkgs.linkFarm "agents" [
+      {
+        name = "bin/agents";
+        path = "${agentPackage.pinnedBin}/commands/agents";
+      }
+    ])
+  ];
 
   home.file.".claude/CLAUDE.md".source = "${agentArtifacts}/AGENTS.md";
 

@@ -196,9 +196,11 @@ in Codex.
 ## Command-line tools
 
 Use `agents <command>` from your shell (`agents --help` lists the commands).
-Home Manager adds `~/.agents/commands` to the session PATH.
-The dispatcher is the only public command there. Hooks and running sessions
-keep using the private payload under `~/.agents/bin`.
+Home Manager (`../agents.nix`) installs the dispatcher into the user profile's
+`bin`, a PATH entry that sessions started before a switch already carry;
+the portable bundle installs it to `~/.agents/commands` (`setup/README.md`).
+The dispatcher is the only public command. Hooks and running sessions keep
+using the private payload under `~/.agents/bin`.
 
 ## Sharing the setup
 
