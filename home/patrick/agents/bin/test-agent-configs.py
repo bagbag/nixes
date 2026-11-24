@@ -6220,7 +6220,7 @@ def validate_board(root: Path) -> None:
                 issues[0]["metadata"].update(stage=None)
                 git("worktree", "remove", "--force", str(wt))
                 issues.append(cr_item("f3.open", "f3"))
-                with patch.object(board, "claim_one", lambda deck, issue, actor, fields=None: (False, "lost the race")):
+                with patch.object(board, "claim_one", lambda deck, issue, actor, fields=None, agreed=False: (False, "lost the race")):
                     invoke(["claim", "f3"], Fake(issues), "aaaa1111")
                 if not git("branch", "--list", "cr/f3") or git("log", "-1", "--format=%s", "cr/f3") != "f3: pass":
                     raise ValueError("F3: a failed claim deleted a branch that held unlanded work")
@@ -6779,7 +6779,7 @@ def validate_board(root: Path) -> None:
                 git("branch", "-D", "cr/cas")
                 issues.append(cr_item("cas.open", "cas"))
 
-                def lose_after_work(deck, issue, actor, fields=None):
+                def lose_after_work(deck, issue, actor, fields=None, agreed=False):
                     made = Path(repo_root, ".worktrees", "cas")
                     commit(made, "cas-work.txt", "work\n", "cas: work made while the claim was in flight")
                     return False, "lost the race"

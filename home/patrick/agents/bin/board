@@ -3060,7 +3060,7 @@ def self_review_refusal(issue: dict, actor: str, agreed: bool = False) -> str | 
     if not author:
         return f"{issue['id']}: no author is recorded for its hand-over, so its independence cannot be shown: /board-migrate records it"
     if actor in (author, session_actor(author)):
-        return (f"{issue['id']}: handed over by {author}; a fresh worker reviews it, or you with the user's word: "
+        return (f"{issue['id']}: your own hand-over (by {author}) needs a fresh worker as reviewer, or the user's word: "
                 f'agents board claim {issue["id"]} --agreed "<what they said>"')
     return None
 
