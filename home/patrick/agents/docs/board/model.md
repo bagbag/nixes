@@ -121,8 +121,8 @@ Printed by `model_tables()`; the test compares this block with it exactly. `Held
 | user | the user |
 | deciding | a deciding session (lead, solo or autopilot) |
 | holder | the holder's session (or anyone while it is unheld) |
-| gone | once the holder's session is gone, or the user agrees (--agreed) |
-| non-author | neither the actor that handed it over nor that actor's session itself (another worker of the session is independent), unless the user agrees (--agreed) |
+| gone | once the holder's session is gone, or the user agrees (take or unclaim --agreed) |
+| non-author | not the actor that handed it over or that actor's session itself, unless the user agrees (claim --agreed) |
 | planner | a session pulling plan |
 | deferrer | the deferrer's side (the deferring session or a deciding session; a user's deferral, or one without a deferrer, is a lead or solo session's or the user's) |
 | holding | the session holding it |
@@ -137,7 +137,7 @@ Guards: `reason` (a non-blank reason), `items-closed` (no open item), `look-befo
 The table's `Who` column is the authority; this is its shape. Item writes (close, reopen, wait) read the CR that holds the item.
 
 - A session claims, hands over and unclaims its work. Its workers hold under its actor. Deciding sessions are `lead`, `solo` and `autopilot` (`DECIDING_ROLES`).
-- Review claim, pass and Return need a reviewer that is neither the CR's author nor the author's session itself (another worker of that session starts fresh and may); every claim path refuses self-review unless the user's word is given (`--agreed`).
+- Review claim, pass and Return follow the `non-author` word; every claim path checks it.
 - Authority follows what a move risks, as the unattended protocol classes it. Two-way moves (sending a passed CR back to review, the Return of a `passed` CR) are for any deciding session, autopilot included, or the user. The `attended` word (a lead or solo session, or the user) covers the moves autopilot leaves to the user: rejecting a CR (one-way: it closes, and no CR reopen exists), releasing a ruling, closing or reopening a gate, and claiming, taking, closing or reopening a milestone. Accept (landing a `passed` look-before CR) is the user's through a lead or solo session (landing is `anyone` in the table; its command is the gate).
 - Taking or freeing another session's hold: the user, or a deciding session once the holder is gone (`--agreed` records the user's word).
 - Planner Return on a ruling, and defer and undefer of its own deferrals: a session pulling plan. (`move` needs the holder of the CR, the user or a deciding session.) Undeferring a user's deferral (or one that records no deferrer) needs the user, through a lead or solo session; autopilot undefers only its own.

@@ -300,8 +300,8 @@ STATES = {CR_GROUP: ('open', 'in_review', 'passed', 'deferred', 'closed'), WORK_
 # which must hold; an alternative is parts joined by '+', all of which must hold. What a command checks before it reaches `move`
 # (its pull, the worker cap, the check pair, the review) stays with the command and is not in the table.
 WHO_WORDS = {'anyone': 'anyone', 'agent': 'an agent session', 'user': 'the user', 'deciding': 'a deciding session (lead, solo or autopilot)',
-             'holder': "the holder's session (or anyone while it is unheld)", 'gone': "once the holder's session is gone, or the user agrees (--agreed)",
-             'non-author': "neither the actor that handed it over nor that actor's session itself (another worker of the session is independent), unless the user agrees (--agreed)", 'planner': 'a session pulling plan',
+             'holder': "the holder's session (or anyone while it is unheld)", 'gone': "once the holder's session is gone, or the user agrees (take or unclaim --agreed)",
+             'non-author': "not the actor that handed it over or that actor's session itself, unless the user agrees (claim --agreed)", 'planner': 'a session pulling plan',
              'deferrer': "the deferrer's side (the deferring session or a deciding session; a user's deferral, or one without a deferrer, is a lead or solo session's or the user's)",
              'holding': 'the session holding it', 'unheld': 'while it is unheld',
              'attended': "a lead or solo session (not autopilot: it leaves these moves, the user's to make or hard to undo, to the user; unattended protocol)"}
@@ -431,7 +431,7 @@ def refuse_held(issue: dict, row: Move, command: str, actor: str | None) -> None
         raise BoardError(f"{issue['id']}: {command} needs your session to hold it; held by {current or 'nobody'}")
 
 
-def authority_part(part: str, issue: dict, actor: str | None, board: 'Board', agreed: bool = False) -> bool:
+def authority_part(part: str, issue: dict, actor: str | None, board: 'Board', agreed: frozenset = frozenset()) -> bool:
     """One part of a row's `who`, for the caller (`actor`: None is a person's terminal). A worker holds and acts under its session but is
     no deciding session; the registry is read only when a part needs it."""
     current = issue.get('assignee') or ''
@@ -451,9 +451,9 @@ def authority_part(part: str, issue: dict, actor: str | None, board: 'Board', ag
     if part == 'unheld':
         return not current
     if part == 'non-author':
-        return self_review_refusal(issue, actor, agreed) is None
+        return self_review_refusal(issue, actor, 'non-author' in agreed) is None
     if part == 'gone':
-        return bool(current) and (agreed or holder_gone(board, board.registry(), current))
+        return bool(current) and ('gone' in agreed or holder_gone(board, board.registry(), current))
     entry = board.registry().get(session)
     if part == 'deciding':
         return actor == session and bool(entry) and entry.get('role') in DECIDING_ROLES
@@ -469,7 +469,7 @@ def authority_part(part: str, issue: dict, actor: str | None, board: 'Board', ag
     raise BoardError(f'internal: unknown who part {part}')
 
 
-def authority_refusal(issue: dict, row: 'Move', command: str, actor: str | None, board: 'Board | None', agreed: bool = False) -> str | None:
+def authority_refusal(issue: dict, row: 'Move', command: str, actor: str | None, board: 'Board | None', agreed: frozenset = frozenset()) -> str | None:
     """Why the caller may not make this move (the row's `who`), naming who may and, for a hold, whose it is."""
     if row.who == ('anyone',):
         return None
@@ -518,7 +518,7 @@ GUARDS = {
 
 def move(issue: dict, command: str, *, to: str | None = None, actor: str | None = None, fields: dict | None = None,
          reason: str | None = None, force: bool = False, via: str | None = None, check: bool = True,
-         board: 'Board | None' = None, outcome: str | None = None, agreed: bool = False) -> subprocess.CompletedProcess:
+         board: 'Board | None' = None, outcome: str | None = None, agreed: frozenset = frozenset()) -> subprocess.CompletedProcess:
     """The one status write. Finds the table row for the command, the item's type and its status (`to` picks among rows that
     differ only in where they go), refuses what the row forbids, then writes status and holder in one bd compare-and-set on
     the status and holder just read. A close is one compare-and-set write of status, outcome and holder (the closer takes a record another actor holds; bd validates the close in it), then `bd close` only records the reason. `via='supersede'` records
@@ -3285,7 +3285,7 @@ def claim_one(board: Board, issue: dict, actor: str, fields: dict | None = None,
     """Atomically claim one item: the holder is written only if it is still empty (and, for a change request, the status is the
     one just read: a planner can finish Return after a reviewer reads the unassigned CR)."""
     try:
-        result = move(issue, 'claim', actor=actor, fields=fields, check=False, board=board, agreed=agreed)
+        result = move(issue, 'claim', actor=actor, fields=fields, check=False, board=board, agreed=frozenset({'non-author'}) if agreed else frozenset())
     except BoardError as error:
         return False, str(error)
     return result.returncode == 0, (result.stderr or result.stdout).strip()
@@ -3617,7 +3617,7 @@ def take(board: Board, args) -> int:
         refusal = item_hold_refusal(board, issue) or foreign_claim(board, issue['id']) or elsewhere_refusal(board, issue, 'take', args.agreed)
         if refusal:
             raise BoardError(refusal)
-        if board.is_cr(issue['id']) and (refusal := self_review_refusal(issue, actor, bool(args.agreed))):
+        if board.is_cr(issue['id']) and (refusal := self_review_refusal(issue, actor)):
             raise BoardError(refusal)
         previous = issue.get('assignee') or 'nobody'
         if previous == actor:
@@ -3629,7 +3629,7 @@ def take(board: Board, args) -> int:
             failed = True
             print(f"{issue['id']}: not taken: {over}; hand over or unclaim one, or agents board take {issue['id']} --force \"<reason>\"", file=sys.stderr)
             continue
-        move(issue, 'take', board=board, actor=actor, agreed=bool(args.agreed))
+        move(issue, 'take', board=board, actor=actor, agreed=frozenset({'gone'}) if args.agreed else frozenset())
         comment(issue['id'], f'board take: {actor} took this item over from {previous}' + (f' (agreed: {args.agreed})' if args.agreed else '') + '.')
         if board.is_cr(issue['id']) and issue['status'] == 'in_review':  # the new holder has seen nothing yet
             put_meta(issue, reviewing_tip=None)
@@ -3666,7 +3666,7 @@ def unclaim(board: Board, args) -> int:
             failed = True
             continue
         reason = f"board unclaim: {actor} released {holder}'s hold" + (f' (agreed: {args.agreed})' if args.agreed else '') + '.'
-        move(issue, 'unclaim', board=board, actor=actor, agreed=bool(args.agreed), fields={RESUME_NOTE: args.resume} if args.resume else None)  # the status stays for the next claimer; a change request keeps its worktree and branch
+        move(issue, 'unclaim', board=board, actor=actor, agreed=frozenset({'gone'}) if args.agreed else frozenset(), fields={RESUME_NOTE: args.resume} if args.resume else None)  # the status stays for the next claimer; a change request keeps its worktree and branch
         comment(issue['id'], reason)
         if board.is_cr(issue['id']) and issue['status'] == 'open':
             try:
@@ -8264,7 +8264,7 @@ def run_command(argv: list[str]) -> int:
                             ('unclaim', unclaim, "free a hold, yours or another's (with a comment)")):
         sub = add(name, text, run)
         sub.add_argument('ids', nargs='+', type=board_id)
-        sub.add_argument('--agreed', metavar='TEXT', type=nonempty, help="the user agrees the holder is gone (a hold held elsewhere on a shared board always needs it), or, taking a change request in review, that you review your own hand-over: what they said; a deciding session may then free a live-looking hold")
+        sub.add_argument('--agreed', metavar='TEXT', type=nonempty, help="the user agrees the holder is gone (a hold held elsewhere on a shared board always needs it): what they said; a deciding session may then free a live-looking hold")
         if name == 'unclaim':
             sub.add_argument('--resume', metavar='TEXT', type=nonempty,
                              help='hand back your own work in progress unfinished, with its next action (work that waits on something: agents board wait)')

@@ -6702,9 +6702,9 @@ def validate_board(root: Path) -> None:
                 if code != 0 or not any(w[:3] == ["comments", "add", "a1"] and "agreed: review it yourself" in " ".join(w) for w in fake.writes()):
                     raise ValueError(f"the user's word must let the author's session claim its review, commented: {code} {output} {errors} {fake.writes()}")
                 fake = Fake(issues)
-                code, _, errors = invoke(["take", "a1", "--agreed", "review it yourself"], fake, "cccc3333")
-                if code != 0 or not fake.writes():
-                    raise ValueError(f"the user's word must let the author's session take its review: {code} {errors}")
+                code, _, errors = invoke(["take", "a1", "--agreed", "the holder is gone"], fake, "cccc3333")
+                if code != 1 or "your own hand-over" not in errors or fake.writes():
+                    raise ValueError(f"take --agreed (the holder is gone) must not lift the self-review refusal: {code} {errors} {fake.writes()}")
                 code, _, errors = invoke(["claim", "--agreed", "x"], Fake(issues), "cccc3333")
                 if code == 0 or "--agreed names" not in errors:
                     raise ValueError(f"a bare claim must refuse --agreed: {code} {errors}")

@@ -20,10 +20,9 @@ findings or stops. A challenge follows [Challenge](#challenge) in place of
 steps 3-7.
 
 1. **Claim.** `agents board claim` for your pull or `agents board claim <id>` for a named
-   CR or task. It prints `author <actor>` or `author unknown`: you are independent unless you are that doer or the session whose
-   worker it is (you briefed it); a fresh-context worker of the same session suffices, and the board refuses the others. Only on
-   the user's explicit word do you review your own: `agents board claim <id> --agreed "<what they said>"`. Review a CR in its
-   worktree as the author left it.
+   CR or task. It prints `author <actor>` or `author unknown`. Review only with fresh context, never as a fork of the
+   author's session; review your own hand-over only on the user's explicit word (the claim's refusal names how). Review a CR
+   in its worktree as the author left it.
    Output: `claimed <id>; author <actor>; independent`, or
    `claimed <id>` for a challenge's review task.
 2. **Read.** The CR's acceptance and items, its brief, the released rulings
@@ -79,7 +78,6 @@ steps 3-7.
 
 ## Stop
 
-- You are the author doer: `agents board unclaim <id>`, report it, stop.
 - A required gate cannot run: return the item naming the unestablished claim
   and its acceptance consequence.
 - Repairs on the same problem reach the retry limit: follow it, recording in
