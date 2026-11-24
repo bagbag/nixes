@@ -53,15 +53,10 @@ Steps 3–13 are the lenses; each outputs its findings, or
 11. **Bloat (`bloat`).** Find over-engineering and unnecessary magic.
 12. **Overfit (`overfit`).** Test the design against neighboring cases.
 13. **Clean (`clean`).** Apply each of the six cleanliness tests one by one.
-14. **Converge.** If any earlier step changes anything, restart at step 1 and
-    run every lens again. Carry a premise check forward only while its source
-    is unchanged. Stop after a run that changes nothing. If a run returns to an
-    earlier recommendation, stop and list the decisive trade-offs.
-    Output: the unchanged run, or the cycle and its decisive trade-offs.
-15. **Result.** State the end state, dropped options and why, and what remains
-    unverified.
-    Output: the recommendation and unresolved risks or questions.
-
-Write the run log to `step-back-<focus>.md` in the task's scratch folder, with a
-section for each run and step. In chat, give the result and one line per run
-stating what changed.
+14. **Converge.** When a step changes the recommendation, recheck the premises
+    and lenses the change touches; stop when they hold. If a recheck returns to
+    an earlier recommendation, stop and list the decisive trade-offs.
+    Output: what was rechecked or `no change`, or the cycle and its decisive
+    trade-offs.
+15. **Result.** Output: the end state with its decisive reasons, the dropped
+    options and why, and what remains unverified or open.
