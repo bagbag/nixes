@@ -176,6 +176,14 @@
       "autoUpdate": true
     }
   },
+  "autoCompactWindow": 409000,
+  "advisorModel": "opus",
+  "tui": "fullscreen",
+  "autoMemoryEnabled": false,
+  "autoCompactEnabled": true,
+  "inputNeededNotifEnabled": true,
+  "agentPushNotifEnabled": true,
+  "skipAutoPermissionPrompt": true,
   "modelSettings": {
     "claude-opus-5-5": {
       "effortLevel": "medium"
@@ -186,13 +194,5 @@
     "claude-haiku-5-5": {
       "effortLevel": "medium"
     }
-  },
-  "autoCompactWindow": 409000,
-  "advisorModel": "opus",
-  "tui": "fullscreen",
-  "autoMemoryEnabled": false,
-  "autoCompactEnabled": true,
-  "inputNeededNotifEnabled": true,
-  "agentPushNotifEnabled": true,
-  "skipAutoPermissionPrompt": true
+  }
 }
