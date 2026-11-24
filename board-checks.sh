@@ -15,7 +15,7 @@ suites=(
 )
 
 # Background jobs of a non-interactive shell ignore SIGINT (POSIX 2.11). Job control gives each suite its own process group,
-# so an interrupted check stops every suite with what it started: SIGINT first lets the suites run their own cleanup,
+# so an interrupted (or hung-up) check stops every suite with what it started: SIGINT first lets the suites run their own cleanup,
 # SIGTERM after a grace period ends what is left (a suite's own background children ignore SIGINT too).
 set -m
 pids=()
@@ -33,6 +33,7 @@ stop() {
 }
 trap 'stop 130' INT
 trap 'stop 143' TERM
+trap 'stop 129' HUP
 for i in "${!suites[@]}"; do
   command=${suites[$i]#*|}
   (eval "$command" </dev/null >"$dir/$i.out" 2>&1; echo $? >"$dir/$i.status") &
