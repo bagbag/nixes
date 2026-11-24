@@ -2,7 +2,7 @@
 # The change-request check (board setup --checks): the agent suites `nix flake check` runs, plus the console mod's check.
 # Contract (change-requests.md Settings): one `<file> <code>` line per failing suite on stdout, exit 1 when any failed;
 # a suite that cannot start (126, 127) is a broken check and exits 2. Each failure's tail goes to stderr.
-# The suites are independent, so they run in parallel: the check takes as long as its slowest suite.
+# The suites share no state, so they run in parallel.
 set -uo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")"
 dir=$(mktemp -d)
@@ -14,9 +14,8 @@ suites=(
   "home/patrick/agents/claude/mods/console/tests/check.sh|sh home/patrick/agents/claude/mods/console/tests/check.sh"
 )
 
-# Background jobs of a non-interactive shell ignore SIGINT (POSIX 2.11). Job control gives each suite its own process group,
-# so an interrupted (or hung-up) check stops every suite with what it started: SIGINT first lets the suites run their own cleanup,
-# SIGTERM after a grace period ends what is left (a suite's own background children ignore SIGINT too).
+# Background jobs of a non-interactive shell ignore SIGINT (POSIX 2.11), so each suite gets its own process group and an
+# interrupt stops every group: SIGINT for the suites' own cleanup, SIGTERM after a grace for what ignores it.
 set -m
 pids=()
 stop() {
@@ -44,7 +43,7 @@ wait "${pids[@]}"
 failed=0
 for i in "${!suites[@]}"; do
   file=${suites[$i]%%|*}
-  # A suite killed before it wrote its status fails, as a killed serial suite did.
+  # A suite killed before writing its status counts as failed.
   read -r status <"$dir/$i.status" 2>/dev/null || status=137
   if [[ $status -eq 126 || $status -eq 127 ]]; then
     echo "board-checks: cannot run $file (exit $status)" >&2
