@@ -4,14 +4,16 @@
 # Contract (change-requests.md Settings): one `<file> <code>` line per failing suite on stdout, exit 1 when any failed;
 # a suite that cannot start (126, 127) is a broken check and exits 2. A failed suite's full output is kept in a file outside the run's folder,
 # named on stderr (nixes-2aetg: a tail loses the failing test's name).
-# The suites share no state, so they run in parallel.
+# The suites share no state, so they run in parallel; the agent configuration suite spreads its own tests over xdist workers
+# (pytest and xdist come from the flake's agent-tests dev shell, which board-setup.sh checks).
 set -uo pipefail
+export PYTHONDONTWRITEBYTECODE=1
 cd "$(dirname "${BASH_SOURCE[0]}")"
 dir=$(mktemp -d)
 trap 'rm -rf "$dir"' EXIT
 
 suites=(
-  "home/patrick/agents/bin/test-agent-configs.py|python3 -B home/patrick/agents/bin/test-agent-configs.py"
+  "home/patrick/agents/bin/test-agent-configs.py|nix develop .#agent-tests --command python3 -B -m pytest -q -n auto home/patrick/agents/bin/test-agent-configs.py"
   "home/patrick/agents/bin/test-scratch.py|python3 -B home/patrick/agents/bin/test-scratch.py"
   # --seconds 15: a 6 s sync window is shorter than a loaded host's burst of writes.
   "home/patrick/agents/bin/test-shared-board.py|python3 -B home/patrick/agents/bin/test-shared-board.py --seconds 15"

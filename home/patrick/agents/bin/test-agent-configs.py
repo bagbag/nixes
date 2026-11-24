@@ -28,6 +28,7 @@ from unittest.mock import patch
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+import pytest
 import yaml
 
 
@@ -108,7 +109,8 @@ def validate_invocation_policy(path: Path, expected: bool) -> None:
         raise ValueError(f"{path}: unexpected implicit invocation policy")
 
 
-def validate_policy_semantics() -> None:
+@pytest.mark.core
+def test_policy_semantics() -> None:
     with tempfile.TemporaryDirectory() as directory:
         path = Path(directory) / "openai.yaml"
         validate_invocation_policy(path, True)
@@ -172,7 +174,8 @@ def validate_skills(root: Path) -> None:
             raise ValueError(f"{path}: references retired {match.group(0)}")
 
 
-def validate_generated_agents(root: Path, generator) -> None:
+@pytest.mark.core
+def test_generated_agents(root: Path, generator) -> None:
     source = root / "definitions"
     codex = generator.expected_outputs(source, "codex")
     claude = generator.expected_outputs(source, "claude")
@@ -295,7 +298,8 @@ def validate_generated_agents(root: Path, generator) -> None:
             raise ValueError(f"Claude {claude_name} lost its readonly Bash hook")
 
 
-def validate_skill_expander(root: Path, expander) -> None:
+@pytest.mark.core
+def test_skill_expander(root: Path, expander) -> None:
     with tempfile.TemporaryDirectory() as directory:
         temporary = Path(directory)
         source = temporary / "source"
@@ -442,7 +446,8 @@ def check_skill_loading(skills: Path, expander) -> None:
                 raise ValueError(f"{path}: unresolved anchor {raw}#{anchor}")
 
 
-def validate_skill_loading(root: Path, expander) -> None:
+@pytest.mark.core
+def test_skill_loading(root: Path, expander) -> None:
     check_skill_loading(root / "skills", expander)
     with tempfile.TemporaryDirectory() as directory:
         skills = Path(directory)
@@ -474,7 +479,8 @@ def validate_skill_loading(root: Path, expander) -> None:
         check_skill_loading(skills, expander)
 
 
-def validate_rendered_skills(root: Path, expander) -> None:
+@pytest.mark.core
+def test_rendered_skills(root: Path, expander) -> None:
     with tempfile.TemporaryDirectory() as directory:
         temporary_root = Path(directory)
         rendered_skills = temporary_root / "skills"
@@ -514,7 +520,8 @@ def validate_rendered_skills(root: Path, expander) -> None:
             raise ValueError(f"rendered skills contain include markers: {unresolved}")
 
 
-def validate_multiline_and_optional_names(generator) -> None:
+@pytest.mark.core
+def test_multiline_and_optional_names(generator) -> None:
     with tempfile.TemporaryDirectory() as directory:
         source = Path(directory) / "sample.md"
         source.write_text(
@@ -548,7 +555,8 @@ Second instruction.
             raise ValueError("multiline instructions were not preserved")
 
 
-def validate_agent_includes(generator) -> None:
+@pytest.mark.core
+def test_agent_includes(generator) -> None:
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory)
         (root / "definitions").mkdir()
@@ -574,7 +582,8 @@ def validate_agent_includes(generator) -> None:
             raise ValueError(f"invalid agent include accepted: {text!r}")
 
 
-def validate_effort_overrides(generator) -> None:
+@pytest.mark.core
+def test_effort_overrides(generator) -> None:
     def write(directory: str, extra: str) -> Path:
         source = Path(directory) / "sample.md"
         source.write_text(
@@ -678,7 +687,8 @@ def fake_board(base: Path, name: str = "proj", printed: Path | None = None) -> t
     return folder, {"PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}"}
 
 
-def validate_session_registry(root: Path) -> None:
+@pytest.mark.hooks
+def test_session_registry(root: Path) -> None:
     script = root / "bin" / "session"
 
     def run(*args: str, env: dict[str, str]) -> subprocess.CompletedProcess:
@@ -1117,7 +1127,8 @@ def rewritten(result: dict[str, object] | None, codex: bool) -> str | None:
     return output["updatedInput"]["command"]
 
 
-def validate_session_register(root: Path) -> None:
+@pytest.mark.hooks
+def test_session_register(root: Path) -> None:
     hook = root / "hooks" / "session-register.sh"
     worker = {"agent_id": "a43f14ee58a40ea36", "agent_type": "build"}
     for command in ("session activate lead", "~/.agents/bin/session activate agent --pulls plan",
@@ -1136,7 +1147,8 @@ def validate_session_register(root: Path) -> None:
             raise ValueError(f"session-register denied {command!r}")
 
 
-def validate_compact_reorient(root: Path) -> None:
+@pytest.mark.hooks
+def test_compact_reorient(root: Path) -> None:
     hook = root / "hooks" / "compact-reorient.sh"
     env_base = {"AGENT_SESSION_COMMAND": str(root / "bin" / "session")}
     pointer = "Recover under `$HOME/.agents/skills/shared/project-memory.md` Recovery."
@@ -1222,7 +1234,8 @@ def validate_compact_reorient(root: Path) -> None:
             raise ValueError(f"compact-reorient must say a missing protocol command: {context}")
 
 
-def validate_bd_guard(root: Path) -> None:
+@pytest.mark.hooks
+def test_bd_guard(root: Path) -> None:
     hook = root / "hooks" / "bd-guard.sh"
 
     def guard(command: object, **payload: object):
@@ -1361,7 +1374,8 @@ SETUP_BASH4 = re.compile(r"\$\{[^}]*(?:,,|\^\^)[^}]*\}|\$\{\w+@[QEPAa]\}|\b(?:ma
                          r"|&>>|\bwait -n\b|shopt -s globstar|\$EPOCHSECONDS")
 
 
-def validate_setup_portable(root: Path) -> None:
+@pytest.mark.hooks
+def test_setup_portable(root: Path) -> None:
     """The bundle's shell runs on the bash 3.2 macOS ships. The Claude-only hooks sit beside the agents root (absent
     from the store copy the build checks)."""
     shipped = [root / "bin" / "session", *sorted((root / "hooks").glob("*.sh")),
@@ -1372,7 +1386,8 @@ def validate_setup_portable(root: Path) -> None:
                 raise ValueError(f"{path}:{number} needs a newer bash than 3.2: {line.strip()}")
 
 
-def validate_shebang_modes(root: Path) -> None:
+@pytest.mark.core
+def test_shebang_modes(root: Path) -> None:
     """A file starting with a shebang is executable (the Claude-only scripts beside the agents root included when present)."""
     skip = {".git", "node_modules", "__pycache__"}
     files = [p for p in root.rglob("*") if p.is_file() and not skip & set(p.relative_to(root).parts)]
@@ -1383,7 +1398,8 @@ def validate_shebang_modes(root: Path) -> None:
                 raise ValueError(f"{path} starts with a shebang but is not executable: chmod +x it")
 
 
-def validate_setup_installer(root: Path) -> None:
+@pytest.mark.hooks
+def test_setup_installer(root: Path) -> None:
     """setup/install.py in a fake home: keeps the user's files, upgrades by its own state, stops before any change."""
     installer = root / "setup" / "install.py"
     board_version = re.search(r"\(bd (\d+\.\d+\.\d+)\)", (root / "bin" / "board").read_text(encoding="utf-8"))
@@ -1823,7 +1839,8 @@ def validate_setup_installer(root: Path) -> None:
             raise ValueError(f"--uninstall must not touch what it never added: {settings.read_text(encoding='utf-8')}")
 
 
-def validate_setup_path(root: Path) -> None:
+@pytest.mark.hooks
+def test_setup_path(root: Path) -> None:
     """setup/install.py's PATH block in a fake home under bash: written only after a yes at a terminal, into the bash login
     file that is read, idempotent in nested shells, checked through a fresh login shell, and removed on uninstall."""
     import pty
@@ -1925,7 +1942,8 @@ def validate_setup_path(root: Path) -> None:
             raise ValueError(f"install.py must name the PATH line for a shell it does not edit: {fish.stderr}")
 
 
-def validate_hook_registrations(root: Path) -> None:
+@pytest.mark.hooks
+def test_hook_registrations(root: Path) -> None:
     """The Claude and Codex hook configs beside the agents root (absent from the store copy the build checks):
     session-activity runs on SubagentStart, SubagentStop and every tool's PreToolUse (a group without matcher),
     and every registered hook script exists under the agents' or the tool's own hooks/."""
@@ -1972,7 +1990,8 @@ def validate_hook_registrations(root: Path) -> None:
                         raise ValueError(f"{path} runs hooks/{name}, which does not exist")
 
 
-def validate_agent_grants(root: Path) -> None:
+@pytest.mark.hooks
+def test_agent_grants(root: Path) -> None:
     """The installer's grant list names the folders the tools write outside repositories: the agents state root (bin/scratch and
     bin/session live under it) and the board-less decision records of protocol_engine/cli.py, each in an agents/ folder. (This machine's own
     settings.json and config.toml are not compared with it.)"""
@@ -2007,18 +2026,9 @@ def validate_agent_grants(root: Path) -> None:
         raise ValueError(f"every grant belongs under an agents/ folder: {roots}")
 
 
-def validate_hooks(root: Path) -> None:
+@pytest.mark.hooks
+def test_guard_hooks(root: Path) -> None:
     hooks = root / "hooks"
-    validate_hook_registrations(root)
-    validate_agent_grants(root)
-    validate_setup_portable(root)
-    validate_setup_installer(root)
-    validate_setup_path(root)
-    validate_session_registry(root)
-    validate_session_register(root)
-    validate_compact_reorient(root)
-    validate_bd_guard(root)
-
     stash = run_hook(
         hooks / "git-stash-guard.sh",
         {
@@ -2062,7 +2072,8 @@ def validate_hooks(root: Path) -> None:
         raise ValueError("readonly-guard blocked a read-only search")
 
 
-def validate_shared_board(root: Path) -> None:
+@pytest.mark.board
+def test_shared_board(root: Path) -> None:
     """Shared-board rules with bd faked; bin/test-shared-board.py runs the same behaviour through real clones, which the
     build sandbox can't."""
     from types import SimpleNamespace
@@ -2368,11 +2379,10 @@ def claimed_ids(fake) -> list[str]:
             and write[write.index("--if-assignee") - 2:write.index("--if-assignee")][0] == "--assignee" and write[write.index("--assignee") + 1] != ""]
 
 
-def validate_board(root: Path) -> None:
-    """The board CLI against a fixture from `bd export` of a throwaway db
-    (bd 1.3.1); bd writes are recorded, not run."""
-    from datetime import datetime, timezone
-
+@pytest.fixture(name="board_env")
+def loaded_board(root: Path):
+    """The board module loaded in-process with the bd fake, the `bd export` fixture and a throwaway git repository as the working
+    directory (change request claims run real git there); every board test starts from it."""
     loader = importlib.machinery.SourceFileLoader("board", str(root / "bin" / "board"))
     spec = importlib.util.spec_from_loader("board", loader)
     if spec is None:
@@ -2604,6 +2614,20 @@ def validate_board(root: Path) -> None:
     previous_cwd = os.getcwd()
     os.chdir(scratch_repo.name)
     os.environ.update(GIT_CONFIG_GLOBAL="/dev/null", GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t@e", GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t@e")
+    try:
+        yield types.SimpleNamespace(board=board, bare_deck=bare_deck, fixture=fixture, goal=goal, ids=ids, real_run=real_run, Fake=Fake,
+                                    invoke=invoke, variant=variant)
+    finally:
+        os.chdir(previous_cwd)
+        scratch_repo.cleanup()
+
+
+@pytest.mark.board
+def test_board(root: Path, board_env) -> None:
+    """The board CLI against a fixture from `bd export` of a throwaway db
+    (bd 1.3.1); bd writes are recorded, not run."""
+    board, bare_deck, fixture, goal, ids, real_run, Fake, invoke, variant = (
+        getattr(board_env, name) for name in ("board", "bare_deck", "fixture", "goal", "ids", "real_run", "Fake", "invoke", "variant"))
     with tempfile.TemporaryDirectory() as state_dir, tempfile.TemporaryDirectory() as raw_base:
         registry = root / "bin" / "session"
         project, project_env = fake_board(Path(raw_base).resolve())
@@ -7729,6 +7753,11 @@ def validate_board(root: Path) -> None:
                 subprocess.run(["git", "worktree", "prune"], capture_output=True)
                 scratch_cr.cleanup()
 
+
+@pytest.mark.board
+def test_board_liveness(board_env) -> None:
+    board, bare_deck, fixture, goal, ids, real_run, Fake, invoke, variant = (
+        getattr(board_env, name) for name in ("board", "bare_deck", "fixture", "goal", "ids", "real_run", "Fake", "invoke", "variant"))
     # Liveness in position: a registered process that ended is GONE; a live process or an entry without one
     # keeps the idle hint, judged by the holder's activity (a running worker's marker, else the session's own
     # activity file), else the item's update. A stopped worker (no marker) is marked only for its own session,
@@ -7867,6 +7896,11 @@ def validate_board(root: Path) -> None:
         if ", active" in row(fresh, "fx-nohook-marked"):
             raise ValueError(f"board position aged a hold by a session without live hooks:\n{fresh}")
 
+
+@pytest.mark.board
+def test_board_capacity_line(root: Path, board_env) -> None:
+    board, bare_deck, fixture, goal, ids, real_run, Fake, invoke, variant = (
+        getattr(board_env, name) for name in ("board", "bare_deck", "fixture", "goal", "ids", "real_run", "Fake", "invoke", "variant"))
     # Capacity line: last, for the session itself in a dispatching role, while fewer than its cap of workers were
     # active in the last 15 min and work it pulls is claimable; a Codex session's agents thread limits lower the cap.
     with tempfile.TemporaryDirectory() as state_dir, tempfile.TemporaryDirectory() as codex_home, \
@@ -8019,6 +8053,11 @@ def validate_board(root: Path) -> None:
                 "ready for your pulls: implement 2 → refill (plan Dispatch)":
             raise ValueError(f"board claim capacity line must leave out the claimed item:\n{out}")
 
+
+@pytest.mark.board
+def test_board_actor(board_env) -> None:
+    board, bare_deck, fixture, goal, ids, real_run, Fake, invoke, variant = (
+        getattr(board_env, name) for name in ("board", "bare_deck", "fixture", "goal", "ids", "real_run", "Fake", "invoke", "variant"))
     # The actor comes from BEADS_ACTOR, else the Codex session[/thread], else the Claude session.
     for env, expected in (({"BEADS_ACTOR": "outer123", "CODEX_SESSION_ID": "x" * 8}, "outer123"),
                           ({"CODEX_SESSION_ID": "s-1234abcd", "CODEX_THREAD_ID": "s-1234abcd"}, "1234abcd"),
@@ -8029,6 +8068,11 @@ def validate_board(root: Path) -> None:
             if board.derived_actor() != expected:
                 raise ValueError(f"board derived {board.derived_actor()!r} from {env}, expected {expected!r}")
 
+
+@pytest.mark.board
+def test_board_create_close_help(root: Path, board_env) -> None:
+    board, bare_deck, fixture, goal, ids, real_run, Fake, invoke, variant = (
+        getattr(board_env, name) for name in ("board", "bare_deck", "fixture", "goal", "ids", "real_run", "Fake", "invoke", "variant"))
     # board create, close, help <verb>: the plan the flags build, its checks, and what reaches bd (a recording fake bd on PATH).
     with tempfile.TemporaryDirectory() as repo:
         fake_bin, log = Path(repo) / "bin", Path(repo) / "log.jsonl"
@@ -8228,6 +8272,11 @@ else:
             if result.returncode != 2 or "no verb" not in result.stderr:
                 raise ValueError(f"board help {words} must be a usage error: {result.returncode} {result.stderr!r}")
 
+
+@pytest.mark.board
+def test_board_write_hints(root: Path, board_env) -> None:
+    board, bare_deck, fixture, goal, ids, real_run, Fake, invoke, variant = (
+        getattr(board_env, name) for name in ("board", "bare_deck", "fixture", "goal", "ids", "real_run", "Fake", "invoke", "variant"))
     # No printed fix names a `board bd` write the read-only passthrough refuses: every such text uses a board command or `board bd --raw --yes`.
     stale = re.compile(r"board bd (?!--raw|--yes|list|ready|where|export|conflicts show|memories|history|search|blocked|stats|<)(?:create|update|close|dep|sync|import|rename|dolt (?:commit|push)|reopen|label|comments add|sql)")
     for source in (root / "bin" / "board", *sorted((root / "bin" / "protocol_engine").glob("*.py"))):
@@ -8235,6 +8284,11 @@ else:
             if stale.search(line) and "RAW_RULE" not in line and not line.lstrip().startswith(("#", '"""')):
                 raise ValueError(f"{source.name}:{number} prints a board bd write the read-only passthrough refuses: {line.strip()[:160]}")
 
+
+@pytest.mark.board
+def test_board_bd_passthrough(root: Path, board_env) -> None:
+    board, bare_deck, fixture, goal, ids, real_run, Fake, invoke, variant = (
+        getattr(board_env, name) for name in ("board", "bare_deck", "fixture", "goal", "ids", "real_run", "Fake", "invoke", "variant"))
     # board bd: passthrough with the actor, exit code kept, no snapshot; a stopped server starts first,
     # except inside a Codex sandbox; agent-run starts are refused.
     with tempfile.TemporaryDirectory() as repo:
@@ -8569,8 +8623,6 @@ else:
         result, seen = run_board("bd", "dolt", "start")
         if result.returncode != 1 or seen:
             raise ValueError("board bd ran an agent's dolt start")
-    os.chdir(previous_cwd)
-    scratch_repo.cleanup()
 
 
 def engine_verb(call: dict) -> str:
@@ -8910,7 +8962,8 @@ def console_contract_states(root: Path) -> dict:
     return states
 
 
-def validate_default_records(root: Path) -> None:
+@pytest.mark.prepass
+def test_default_records(root: Path) -> None:
     """`start --no-board` keeps the records under ${XDG_DATA_HOME:-~/.local/share}/agents/decisions/<repo folder name of bin/scratch>,
     the same from a worktree; no option names another folder. Sessions get distinct round ids there, and a record file is never overwritten."""
     engine = load_engine(root / "bin")
@@ -8996,7 +9049,8 @@ def validate_default_records(root: Path) -> None:
         engine.record.write_record({"id": "q1"}, target, "again\n")
 
 
-def validate_prepass(root: Path) -> None:
+@pytest.mark.prepass
+def test_prepass(root: Path) -> None:
     """Every round opens with the pre-pass (decide.md Round 1): one step-back over the point set (and the --subject) before
     Collect; its report corrects the points and marks what to ask first, which Select and Stage carry on."""
     engine = load_engine(root / "bin")
@@ -9149,7 +9203,8 @@ def validate_prepass(root: Path) -> None:
             raise ValueError(f"a board item marked first leads Select: {rows}")
 
 
-def validate_console_unblocks(root: Path) -> None:
+@pytest.mark.board
+def test_console_unblocks(root: Path) -> None:
     """What a change request unblocks and the milestone it belongs to, as the console's rows carry them."""
     loader = importlib.machinery.SourceFileLoader("board_unblocks", str(root / "bin" / "board"))
     board = importlib.util.module_from_spec(importlib.util.spec_from_loader(loader.name, loader))
@@ -9266,7 +9321,8 @@ def validate_console_unblocks(root: Path) -> None:
         raise ValueError("claim and Accept use breadth within matched split credit, and keep priority ahead of unlocks")
 
 
-def validate_console_no_board(root: Path) -> None:
+@pytest.mark.board
+def test_console_no_board(root: Path) -> None:
     """r3-q18: `board console` outside a board reports that as data (exit 0, the console's shape, empty); inside one a bd failure stays an error."""
     with tempfile.TemporaryDirectory() as bare, tempfile.TemporaryDirectory() as bad:
         env = {k: v for k, v in os.environ.items() if k != "BEADS_DIR"}
@@ -9287,7 +9343,8 @@ def validate_console_no_board(root: Path) -> None:
             raise ValueError(f"board console on a board whose bd fails must keep the error: exit {ran.returncode}, {ran.stdout!r}, {ran.stderr!r}")
 
 
-def validate_session_prune(root: Path) -> None:
+@pytest.mark.board
+def test_session_prune(root: Path) -> None:
     """r3-q17, r5-q23, q25: activate drops registrations idle for over 7 days whose process ended (or that record none),
     recording their actors in `ended`, under one registry lock, re-reading each before removal; the board shows the holds of an
     ended actor without a registration as gone, shared boards included."""
@@ -9456,7 +9513,8 @@ def validate_session_prune(root: Path) -> None:
                 raise ValueError(f"ended actors read gone ({'shared' if shared else 'unshared'} board): {marks}")
 
 
-def validate_cr_rank(root: Path) -> None:
+@pytest.mark.board
+def test_cr_rank(root: Path) -> None:
     """r5-q20, q21, q26: a change request ranks with its work unit; the accept queue and the in-work list follow the claim
     order's milestone and priority; the console counts the queued requests that wait on your answers apart."""
     loader = importlib.machinery.SourceFileLoader("board_rank", str(root / "bin" / "board"))
@@ -9556,7 +9614,8 @@ def validate_cr_rank(root: Path) -> None:
         raise ValueError(f"console_crs lists none of the queued requests and counts them apart: {(listed, wait_count, queued)}")
 
 
-def validate_self_review(root: Path) -> None:
+@pytest.mark.contract
+def test_self_review(root: Path) -> None:
     """A change request's author and the author's session itself may not review it; another worker of that session may (it
     starts fresh), and the user's word (--agreed) lifts the refusal."""
     loader = importlib.machinery.SourceFileLoader("board_self_review", str(root / "bin" / "board"))
@@ -9574,7 +9633,8 @@ def validate_self_review(root: Path) -> None:
         raise ValueError("the user's word (--agreed) did not lift the self-review refusal")
 
 
-def validate_board_model(root: Path) -> None:
+@pytest.mark.contract
+def test_board_model(root: Path) -> None:
     """docs/board/model.md embeds the code's tables (`model_tables`): statuses, outcomes, transitions and authority words."""
     loader = importlib.machinery.SourceFileLoader("board_model", str(root / "bin" / "board"))
     board = importlib.util.module_from_spec(importlib.util.spec_from_loader(loader.name, loader))
@@ -9633,7 +9693,8 @@ def validate_board_model(root: Path) -> None:
             raise ValueError(f"board {' '.join(argv)} must print its rows from the model tables: {shown[-400:]}")
 
 
-def validate_console_contract(root: Path) -> None:
+@pytest.mark.contract
+def test_console_contract(root: Path) -> None:
     """CONSOLE_CONTRACT holds console_contract_states; regenerate it with WRITE_CONSOLE_CONTRACT=1 after a deliberate
     engine change, then update the console's parser and tests."""
     text = "// Generated by bin/test-agent-configs.py (WRITE_CONSOLE_CONTRACT=1): the real engine's show --json.\n" \
@@ -9713,7 +9774,8 @@ def load_engine(bin_dir: Path, name: str = "protocol_engine"):
     return package
 
 
-def validate_engine_counts(root: Path) -> None:
+@pytest.mark.core
+def test_engine_counts(root: Path) -> None:
     """r21-q141, q146: the board line prints each count's ready number and `(k wait)`; r21-q143: after the last answer the
     challenge re-derives only the strong marks of questions still unanswered."""
     engine = load_engine(root / "bin")
@@ -9753,7 +9815,8 @@ def engine_text(root: Path) -> str:
     return "\n".join(path.read_text(encoding="utf-8") for path in sorted((root / "bin" / "protocol_engine").glob("*.py")))
 
 
-def validate_lens_names(root: Path) -> None:
+@pytest.mark.core
+def test_lens_names(root: Path) -> None:
     """step-back's lens ids and their users agree; the console offers whole passes."""
     package = load_engine(root / "bin")
     engine = package.base
@@ -9766,7 +9829,8 @@ def validate_lens_names(root: Path) -> None:
         raise ValueError("lens names drifted: " + "; ".join(problems))
 
 
-def validate_strength_rules(root: Path) -> None:
+@pytest.mark.core
+def test_strength_rules(root: Path) -> None:
     """decision-protocol.md Recommendation strength owns the criteria and lean causes the engine enforces."""
     section = (root / "skills" / "shared" / "decision-protocol.md").read_text(encoding="utf-8").split("### Recommendation strength", 1)[1]
     section = section.split("\n### ", 1)[0]
@@ -9799,7 +9863,8 @@ def validate_strength_rules(root: Path) -> None:
         raise ValueError("the lean pass no longer offers 'stays a preference' as an equal exit")
 
 
-def validate_console_programs(root: Path) -> None:
+@pytest.mark.core
+def test_console_programs(root: Path) -> None:
     """The console runs ~/.agents/bin programs either directly (their bin/ file must be executable) or through bash;
     its test kit has no processes, so only this check sees a missing execute bit. A bin/ file carries its installed
     name (validate_copied_install)."""
@@ -9818,7 +9883,8 @@ def validate_console_programs(root: Path) -> None:
             raise ValueError(f"console {file} runs {name} directly, but bin/{name} is not executable: run it through bash")
 
 
-def validate_engine_board_fields(root: Path) -> None:
+@pytest.mark.core
+def test_engine_board_fields(root: Path) -> None:
     """`board show --field` refuses a field no shown item carries, unless it is listed (ITEM_FIELDS): the fake board accepts
     anything, so a field the engine asks for but the real board can refuse would only show on a real run."""
     engine, board = engine_text(root), (root / "bin" / "board").read_text()
@@ -9830,7 +9896,8 @@ def validate_engine_board_fields(root: Path) -> None:
         raise ValueError(f"the engine asks board show for fields it can refuse: {sorted(asked - listed - always)}")
 
 
-def validate_copied_install(root: Path) -> None:
+@pytest.mark.core
+def test_copied_install(root: Path) -> None:
     """~/.agents/bin may hold copies rather than links into this tree; the tools then find their siblings only when
     source and installed names agree."""
     with tempfile.TemporaryDirectory() as directory:
@@ -9857,7 +9924,8 @@ def validate_copied_install(root: Path) -> None:
 PROTOCOL_PARTS = ("rounds", "release", "answers", "texts", "rules", "context", "away", "coverage")
 
 
-def validate_start_round(root: Path) -> None:
+@pytest.mark.core
+def test_start_round(root: Path) -> None:
     """The console's Start press runs /start-round <row>; the skill of that name starts the stored proposal's row (a bare
     command starts row 1, the recommended one) through the engine's `start round --proposal`."""
     engine = (root / "claude" / "mods" / "console" / "hooks" / "engine.ts").read_text(encoding="utf-8")
@@ -9872,12 +9940,12 @@ def validate_start_round(root: Path) -> None:
         raise ValueError("the engine's start must take --proposal")
 
 
-def validate_protocol(root: Path, part: str) -> None:
+@pytest.mark.engine
+@pytest.mark.parametrize("part", PROTOCOL_PARTS)
+def test_protocol(root: Path, part: str) -> None:
     """bin/protocol, the round engine, against a fake board CLI (PROTOCOL_BOARD) and once through the real board
-    with a fake bd; every origin rule of the contract rulings. Each part runs its sections on a fresh fixture, in
-    its own process (GROUPS), so the parts run side by side; sections within a part share state in order."""
-    if part not in PROTOCOL_PARTS:
-        raise SystemExit(f"unknown protocol part {part}")
+    with a fake bd; every origin rule of the contract rulings. Each part runs its sections on a fresh fixture, as its own
+    test, so the parts run side by side; sections within a part share state in order."""
     engine = root / "bin" / "protocol"
     if not os.access(engine, os.X_OK):
         raise ValueError("bin/protocol must be executable")
@@ -14687,7 +14755,8 @@ def validate_protocol(root: Path, part: str) -> None:
             configure()
 
 
-def validate_worker_last_use(root: Path) -> None:
+@pytest.mark.core
+def test_worker_last_use(root: Path) -> None:
     """Exercise only synthetic transcripts, never the invoking session's workers."""
     from datetime import datetime, timedelta, timezone
 
@@ -14790,7 +14859,8 @@ SESSION_PROTOCOLS = {"lead": ("decide",), "solo": ("decide", "plan"), "autopilot
                      "agent implement": ("work",), "agent review": ("review",)}
 
 
-def validate_read_sizes(root: Path, expander, generator) -> None:
+@pytest.mark.core
+def test_read_sizes(root: Path, expander, generator) -> None:
     skills = root / "skills"
     sizes = {path.relative_to(root): len(expander.expand_markdown(path, skills))
              for path in sorted(skills.rglob("*.md"))}
@@ -14817,7 +14887,8 @@ def validate_read_sizes(root: Path, expander, generator) -> None:
         f"{name.removesuffix('.md')} {len(text.split('---', 2)[2].split())}" for name, text in sorted(agents.items()) if name.endswith(".md")))
 
 
-def validate_dispatcher(root: Path) -> None:
+@pytest.mark.core
+def test_dispatcher(root: Path) -> None:
     with tempfile.TemporaryDirectory() as directory:
         working_dir = Path(directory).resolve()
         layout = working_dir / "payload with spaces"
@@ -14855,7 +14926,8 @@ def validate_dispatcher(root: Path) -> None:
                 raise ValueError(f"dispatcher returned {result.returncode} for {option}, expected {expected}")
 
 
-def validate_board_rules(root: Path) -> None:
+@pytest.mark.board
+def test_board_rules(root: Path) -> None:
     """model.md Write rules as tests (nixes-jczod, nixes-fmf56). Both tables are parsed: every cell reads `runs` or `n/a` outside the open gaps;
     every parser write verb and every non-verb writer has a verb row, and every row a verb; every cell is named by a row or is writer-less; and
     every (verb, input form, kind, cell) of the verb table has a registered case here, none more. A case runs the verb in-process against a
@@ -15948,108 +16020,60 @@ def validate_board_rules(root: Path) -> None:
     print(f"board rules: {len(registered)} cases ({ran['run']} run, {ran['static']} static reach, {ran['gap']} open gap) over {len(kinds_run)} cells")
 
 
-def run_group(name: str, root: Path) -> None:
-    generator = load_generator(root)
-    expander = load_skill_expander(root)
-    if name == "core":
-        validate_skills(root)
-        validate_policy_semantics()
-        validate_skill_expander(root, expander)
-        validate_rendered_skills(root, expander)
-        validate_skill_loading(root, expander)
-        validate_read_sizes(root, expander, generator)
-        validate_generated_agents(root, generator)
-        validate_multiline_and_optional_names(generator)
-        validate_agent_includes(generator)
-        validate_effort_overrides(generator)
-        validate_worker_last_use(root)
-        validate_copied_install(root)
-        validate_engine_board_fields(root)
-        validate_start_round(root)
-        validate_console_programs(root)
-        validate_strength_rules(root)
-        validate_engine_counts(root)
-        validate_lens_names(root)
-        validate_shebang_modes(root)
-        validate_dispatcher(root)
-    elif name == "hooks":
-        validate_hooks(root)
-    elif name == "board":
-        validate_board(root)  # patches os.environ and stdout in-process: nothing else shares this process
-        validate_shared_board(root)
-        validate_console_unblocks(root)
-        validate_console_no_board(root)
-        validate_session_prune(root)
-        validate_cr_rank(root)
-    elif name == "rules":
-        validate_board_rules(root)
-    elif name == "contract":
-        validate_console_contract(root)
-        validate_board_model(root)
-        validate_self_review(root)
-    elif name == "prepass":
-        validate_prepass(root)
-        validate_default_records(root)
-    elif name.startswith("engine-"):
-        validate_protocol(root, name.removeprefix("engine-"))
-    else:
-        raise SystemExit(f"unknown group {name}")
-
-
-GROUPS = ("core", "hooks", "board", "rules", "contract", "prepass", *(f"engine-{part}" for part in PROTOCOL_PARTS))
-GROUP_LIMIT = 600  # seconds; the slowest group takes about 210 alone, twice that under load
+TEST_LIMIT = 600  # seconds per test; the slowest takes about 210 alone, twice that under load
 CALL_LIMIT = 60  # seconds for one protocol call (each takes a few): a hang ends with every thread's stack instead of the group's limit
-GROUP_DEADLINE = [None]  # monotonic deadline of the group's limit, re-armed after each call's own
+TEST_DEADLINE = [None]  # monotonic deadline of the test's limit, re-armed after each call's own
 
 
 @contextlib.contextmanager
 def call_limit():
-    """faulthandler keeps one timer: the call's limit replaces the group's for the call, then the group's is re-armed with what is left."""
+    """faulthandler keeps one timer: the call's limit replaces the test's for the call, then the test's is re-armed with what is left."""
     faulthandler.dump_traceback_later(CALL_LIMIT, exit=True)
     try:
         yield
     finally:
-        if GROUP_DEADLINE[0] is None:
+        if TEST_DEADLINE[0] is None:
             faulthandler.cancel_dump_traceback_later()
         else:
-            faulthandler.dump_traceback_later(max(1, GROUP_DEADLINE[0] - time.monotonic()), exit=True)
+            faulthandler.dump_traceback_later(max(1, TEST_DEADLINE[0] - time.monotonic()), exit=True)
 
 
-def main() -> int:
-    args = sys.argv[1:]
-    group = args.pop(args.index("--group") + 1) if "--group" in args else None
-    if group:
-        args.remove("--group")
-    root = Path(args[0]).resolve() if args else Path(__file__).resolve().parents[1]
-    if group:
-        # A hang (seen rarely, cause unknown) ends the group with every thread's stack instead of running on unseen.
-        faulthandler.dump_traceback_later(GROUP_LIMIT, exit=True)
-        GROUP_DEADLINE[0] = time.monotonic() + GROUP_LIMIT
-        run_group(group, root)
-        return 0
-    # The groups are independent: each runs as a child of this script, beside the others.
-    children = []
-    for name in GROUPS:
-        output = tempfile.TemporaryFile("w+", encoding="utf-8")
-        children.append((name, output, subprocess.Popen([sys.executable, "-B", str(Path(__file__).resolve()), str(root), "--group", name],
-                                                        stdin=subprocess.DEVNULL, stdout=output, stderr=subprocess.STDOUT, text=True)))
-    failed = []
-    for name, output, child in children:
-        code = child.wait()
-        output.seek(0)
-        text = output.read()
-        output.close()
-        if code != 0:
-            failed.append(name)
-            print(f"--- group {name} failed (exit {code}) ---\n{text}", file=sys.stderr)
-        elif text.strip():
-            print(text, end="" if text.endswith("\n") else "\n")
-    if failed:
-        print(f"agent-config validation failed: {', '.join(failed)}", file=sys.stderr)
-        return 1
-    print("shared agent and skill validation passed")
-    return 0
+@pytest.fixture(name="root", scope="session")
+def agents_root() -> Path:
+    return Path(__file__).resolve().parents[1]
 
 
-if __name__ == "__main__":
-    raise SystemExit(main())
+@pytest.fixture(name="generator", scope="session")
+def loaded_generator(root: Path):
+    return load_generator(root)
+
+
+@pytest.fixture(name="expander", scope="session")
+def loaded_expander(root: Path):
+    return load_skill_expander(root)
+
+
+@pytest.fixture(autouse=True)
+def own_process(root: Path):
+    """Each group ran in a process of its own; xdist reuses workers, so what a test changes in this one is undone: the
+    environment, working directory, standard streams and the modules it loaded from the tree. A hang (seen rarely, cause
+    unknown) ends the worker with every thread's stack after TEST_LIMIT instead of running on unseen."""
+    environment, directory, streams, modules = dict(os.environ), os.getcwd(), (sys.stdin, sys.stdout, sys.stderr), set(sys.modules)
+    faulthandler.dump_traceback_later(TEST_LIMIT, exit=True, file=sys.__stderr__)
+    TEST_DEADLINE[0] = time.monotonic() + TEST_LIMIT
+    yield
+    faulthandler.cancel_dump_traceback_later()
+    TEST_DEADLINE[0] = None
+    os.environ.clear()
+    os.environ.update(environment)
+    os.chdir(directory)
+    sys.stdin, sys.stdout, sys.stderr = streams
+    for name in set(sys.modules) - modules:
+        origin = getattr(sys.modules[name], "__file__", None)
+        if origin and Path(origin).resolve().is_relative_to(root):
+            del sys.modules[name]
+
+
+@pytest.mark.core
+def test_skills(root: Path) -> None:
+    validate_skills(root)

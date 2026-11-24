@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# The board's setup step provisions every prerequisite used by the console check.
+# The board's setup step provisions every prerequisite used by the checks: the console's types, and the tests' dev shell.
 set -euo pipefail
 
 repo=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
@@ -8,7 +8,11 @@ types="$console/.claude-plugin/types"
 
 command -v claude >/dev/null || { echo 'board-setup: claude is required to generate console types' >&2; exit 1; }
 command -v tsc >/dev/null || { echo 'board-setup: tsc is required to check the console' >&2; exit 1; }
+command -v nix >/dev/null || { echo 'board-setup: nix is required for the agent tests (pytest, pytest-xdist)' >&2; exit 1; }
 command -v timeout >/dev/null || { echo 'board-setup: timeout is required to bound Claude type generation' >&2; exit 1; }
+
+nix develop "$repo#agent-tests" --command python3 -c 'import pytest, xdist' ||
+  { echo 'board-setup: the agent-tests dev shell (pytest, pytest-xdist) did not build' >&2; exit 1; }
 
 tmp=$(mktemp -d "$console/.claude-plugin/.setup.XXXXXX")
 trap 'rm -rf "$tmp"' EXIT

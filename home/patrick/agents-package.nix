@@ -34,17 +34,24 @@ let
       ./codex/hooks.json
     ];
   };
+  # What the tests run on: the build's checks and the flake's agent-tests dev shell (nix develop .#agent-tests).
   testInputs = [
     # The build sandbox refuses the setuid /bin/ps; the registry liveness tests need a ps.
     ps
     # The protocol owner-path tests run git init and git check-ignore.
     git
     jq
-    python
+    testPython
   ];
 
-  # The python every agents/bin script and test runs on: the build's, and the user's profile via agents.nix.
+  # The python every agents/bin script runs on: the build's, and the user's profile via agents.nix.
   python = python3.withPackages (p: [ p.pyyaml ]);
+  # The tests' python: that one plus the runner and its parallel workers, which stay out of the installed tools.
+  testPython = python3.withPackages (p: [
+    p.pyyaml
+    p.pytest
+    p.pytest-xdist
+  ]);
 
   # Hook scripts under agents/hooks, per tool, and Claude's own under claude/hooks.
   claudeHooks = [
@@ -81,7 +88,7 @@ let
   # The full validator (behavior of board, protocol engine and hooks): `nix flake check`, or the dev-time gate
   # before staging; the switch builds artifacts only.
   checks = runCommand "agent-checks" { nativeBuildInputs = testInputs; } ''
-    python3 ${checkSrc}/agents/bin/test-agent-configs.py ${checkSrc}/agents
+    python3 -B -m pytest -n auto ${checkSrc}/agents/bin/test-agent-configs.py
     python3 ${checkSrc}/agents/bin/test-scratch.py </dev/null
     touch "$out"
   '';
@@ -93,7 +100,7 @@ let
       }
       ''
         # What the build produces: skills, definitions, generators and rendered sizes.
-        python3 ${buildSrc}/bin/test-agent-configs.py ${buildSrc} --group core
+        python3 -B -m pytest -n auto -m core ${buildSrc}/bin/test-agent-configs.py
         mkdir -p "$out/claude" "$out/codex" "$out/skills"
         python3 ${buildSrc}/bin/generate-agent-configs.py \
           --source ${buildSrc}/definitions \
@@ -174,6 +181,7 @@ in
 {
   inherit
     python
+    testInputs
     artifacts
     pinnedBin
     checks

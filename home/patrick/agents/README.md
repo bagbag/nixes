@@ -73,13 +73,18 @@ python3 home/patrick/agents/bin/expand-skills.py \
   --output "$output_dir/skills"
 ```
 
-To validate skills, generated formats, policies and hooks, use Python with
-PyYAML (the Nix build provides it):
+To validate skills, generated formats, policies and hooks, run the pytest
+suite in the flake's `agent-tests` dev shell (pytest, pytest-xdist and PyYAML;
+no rebuild needed, any checkout runs it):
 
 ```sh
-python3 home/patrick/agents/bin/test-agent-configs.py \
-  home/patrick/agents
+nix develop .#agent-tests --command python3 -B -m pytest -n auto \
+  home/patrick/agents/bin/test-agent-configs.py
 ```
+
+One test: add `-k test_hook_registrations` (or a node id such as
+`::test_protocol[rounds]`); one group: `-m core` (the markers are in
+`pytest.ini`); `-s` shows the sizes `test_read_sizes` prints.
 
 The generator translates portable fields to both formats. Each definition
 declares its Codex model and sandbox; Claude-specific models, tools, and hooks
@@ -154,9 +159,9 @@ Component references (behavior, verbs and rulings of each tool):
 - [Console mod](docs/console.md): `claude/mods/console/`, the Claude Code pane
   and hooks.
 
-The validator runs its groups (core, hooks, board, contract and the protocol
-engine's parts `engine-<part>`, `PROTOCOL_PARTS`) as parallel child processes
-(`--group <name>` runs one). The switch's build runs only `--group core` (what
+The validator is one pytest test per check, marked by group (core, hooks, board,
+contract, prepass, engine: one `test_protocol` per `PROTOCOL_PARTS` part);
+xdist balances them over workers. The switch's build runs only `-m core` (what
 it generates: skills, definitions, rendered sizes) from a source without the
 test-only files; the full validator is `nix flake check` (`checks.agent-configs`),
 the gate to run before staging. The nix sandbox has no `bd`: in-process test
