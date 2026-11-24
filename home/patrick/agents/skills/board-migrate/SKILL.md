@@ -388,7 +388,7 @@ log in `agents scratch dir`.
 
 - Comments are permanent (no edit or delete). Read them as JSON with
   `agents board show <id> --json --field comments`.
-- Merge duplicates after import: `agents board bd --raw --yes duplicate <dup> --of <keeper>`.
+- Merge duplicates after import: `agents board link <dup> <keeper> relates-to`, then close the duplicate `dropped`, naming the keeper.
 - `agents board bd --raw --yes import --dry-run <file>` first; it must report every issue as new,
   otherwise choose other ids. On retry, import only missing entries.
 - Import skips a dependency whose target is missing and still succeeds:

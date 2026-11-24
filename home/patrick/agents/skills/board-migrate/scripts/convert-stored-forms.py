@@ -452,7 +452,7 @@ def dates(b: Board, left: list[str]) -> list[Step]:
             try:
                 moment = datetime.fromisoformat(until.replace('Z', '+00:00')).astimezone()
             except ValueError:
-                left.append(Blocks(f'{issue["id"]}: defer_until {until!r} is not a date; set its revisit date by hand'))
+                left.append(Blocks(f'{issue["id"]}: defer_until {until!r} is not a date; set its revisit date by hand and clear defer_until'))
                 continue
             if issue['status'] != 'deferred' and not (moment > datetime.now().astimezone() and issue['status'] == 'open' and not issue.get('assignee')):
                 continue  # bd keeps defer_until on a record put back to work: a live record is not parked by a stale date

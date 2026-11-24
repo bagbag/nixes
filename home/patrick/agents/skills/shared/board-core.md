@@ -143,8 +143,7 @@ On a shared board (`.beads/board-shared.json` exists):
   generate every id; confirm creation before creating dependents. A found
   record carries `--found-in <id>`.
 - When an open item becomes redundant, move its leftover work into the owning
-  item's `--acceptance`, then `agents board bd --raw --yes supersede <id> --with <owner>`, or
-  `agents board bd --raw --yes duplicate <id> --of <canonical>` for an exact duplicate (no board command does either); close it `dropped`.
+  item's `--acceptance`, then `agents board bd --raw --yes supersede <id> --with <owner>`, (no board command does it); close it `dropped`. An exact duplicate: `agents board link <id> <canonical> relates-to`, then close it `dropped`, naming the canonical.
 
 ### Questions and rulings
 
@@ -202,7 +201,7 @@ help` and each verb's `--help`; `deferred` is [Deferral](../shared/board-coordin
 Closing records its outcome: the type's first by default; `close --outcome`
 takes only `done` or `dropped`, the others come from their verbs (land and
 `cr reject`; `ruling release --closes` and `ruling supersede` write `superseded`;
-a plain close of a ruling writes `planned`, of a milestone `accepted`; `gate
+a plain close of an in-force ruling writes `planned`, of a milestone `accepted`; `gate
 resolve`). `ruling record` closes nothing and writes no outcome.
 
 ### Dependencies

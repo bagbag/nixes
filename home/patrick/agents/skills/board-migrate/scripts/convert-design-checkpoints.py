@@ -63,7 +63,7 @@ def raw(*args: str, stdin: str | None = None) -> str:
 
 def comment_once(item_id: str, text: str) -> None:
     """A comment is permanent: an interrupted step's rerun writes it only when the record does not carry it yet."""
-    comments = json.loads(board('show', '--json', '--field', 'comments', item_id))[item_id].get('comments') or []
+    comments = json.loads(board('show', '--json', item_id))[item_id].get('comments') or []
     if text not in [str(c.get('text') or '') for c in comments]:
         raw('comments', 'add', item_id, text)
 

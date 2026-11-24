@@ -6246,7 +6246,7 @@ def link_rules(board: Board | None, links: list[tuple[str, str, str]], verb: str
         if kind in RULING_LINKS and verb not in ('ruling', 'record'):
             raise BoardError(f'{kind} links belong to rulings: agents board ruling supersede <old> --with <new>, agents board ruling revise <old> ...')
         if not blocking(kind) and kind not in PASS_LINKS:
-            raise BoardError(f"{waiting} -> {other}: {kind} is not a link the board writes ({', '.join(PASS_LINKS)}; a wait is agents board wait)")
+            raise BoardError(f"{waiting} -> {other}: {kind} is not a link the board writes (agents board link writes relates-to and parent-child; rulings write supersedes and tracks; a wait is agents board wait)")
         if blocking(kind) and verb == 'link':
             raise BoardError(f'a wait is agents board wait {waiting} --on {other} --for "<the input it uses>"')
         if blocking(kind) and board and other in board.by_id and (

@@ -86,8 +86,8 @@ item set (`agents board create --graph`) to a `plan` worker ([Cut work](#cut-wor
    items' acceptance.
 3. For a revision, update every consumer of the changed decision: related
    items, briefs, dependencies and active workers whose premise changed. Refresh questions written against
-   the superseded state. Repoint duplicate dependents to the keeper before
-   `agents board bd --raw --yes duplicate <duplicate> --of <keeper>`.
+   the superseded state. Repoint duplicate dependents to the keeper, then link the duplicate
+   `relates-to` the keeper and close it `dropped`, naming the keeper.
 4. Undefer items the ruling resolves (a planning session undefers its own
    deferrals; a user's deferral and the gates it covers wait for a lead or solo
    session or the user); clear superseded authority.
