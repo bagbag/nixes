@@ -163,8 +163,10 @@ Apply these to the choices you make; a brief's choices stand.
   proves nothing: a fixed bug's repro, a setup that may not reach the code, an
   assertion another path satisfies.
   Assert outcomes (exit code, state, files), not wording, unless users act on
-  the text. Run the tests covering a concern once it is done, and the full
-  suite before hand-back, each in the foreground with a timeout that fits it.
+  the text. Run the tests covering a concern once it is done, in the
+  foreground with a timeout that fits them; the whole-repository check runs
+  once per tree, as Evidence and gates in
+  `$HOME/.agents/skills/shared/acceptance.md` sets.
 
 ## Failures
 

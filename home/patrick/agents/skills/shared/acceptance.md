@@ -53,6 +53,11 @@ open), sized to stakes; a role protocol may tighten it.
 - Run targeted gates after isolated changes; whole-repository gates after
   cross-cutting changes, at agreed milestones and at final acceptance. With a
   red baseline, target the touched surfaces the broken gate would cover.
+- Run each gate once per tree. While working, run only the tests that cover
+  the change. On a board the handover runs the whole-repository check and
+  stores it for the tip: authors do not run it before, and reviewers and
+  deciding sessions read the stored result. Rerun a check only after a change
+  it covers; a pass on the same tree and base is never rerun.
 - A whole-project check in an item's criteria, failing for others' reasons,
   means no new errors from the item's change: compare the errors before and
   after, tracing new ones to their files; an item with no
