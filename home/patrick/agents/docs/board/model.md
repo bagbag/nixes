@@ -88,9 +88,9 @@ Printed by `model_tables()`; the test compares this block with it exactly. `Held
 | take | task | open | = | * | you | agent+holder / agent+deciding+gone | - | - |
 | unclaim | task | open | = | * | - | holder / user / deciding+gone | - | - |
 | close | task | open | closed | * | - | holder / user / deciding+gone | reason, no-waiters | done, dropped |
-| reopen | task | closed | open | * | - | holder / user / deciding+gone | - | - |
+| reopen | task | closed | open | * | - | holder / user / deciding+gone | no-dropped-target | - |
 | close | item | open | closed | * | - | holding / user / deciding+unheld / deciding+gone / planner+unheld | reason, no-waiters | done, dropped |
-| reopen | item | closed | open | * | - | holding / user / deciding+unheld / deciding+gone / planner+unheld | - | - |
+| reopen | item | closed | open | * | - | holding / user / deciding+unheld / deciding+gone / planner+unheld | no-dropped-target | - |
 | defer | task | open | deferred | * | - | planner+holder / deciding / user | - | - |
 | undefer | task | deferred | open | - | - | deferrer | - | - |
 | defer | decision | open | deferred | * | - | planner+holder / deciding / user | - | - |
@@ -110,7 +110,7 @@ Printed by `model_tables()`; the test compares this block with it exactly. `Held
 | unclaim | milestone | open | = | * | - | holder / user / deciding+gone | - | - |
 | close | milestone | open | closed | * | - | attended+holder / attended+gone / user | reason | accepted |
 | reopen | milestone | closed | open | * | - | attended+holder / attended+gone / user | - | - |
-| reopen | decision | closed | open | * | - | deciding+holder / deciding+gone / user | not-superseded | - |
+| reopen | decision | closed | open | * | - | deciding+holder / deciding+gone / user | not-superseded, no-dropped-target | - |
 | close | gate | open | closed | * | - | attended / user | reason | resolved |
 | reopen | gate | closed | open | * | - | attended / user | - | - |
 
@@ -165,7 +165,7 @@ One relation, written on the waiter, with a short "for" (content): "X waits on Y
 | a gate | it is resolved |
 | a task | it is closed done (a task closed dropped is refused while an open or deferred record waits on it) |
 
-A wait is met only by a delivering close, so nothing closes dropped under an open or deferred waiter (`close` and `cr reject` name each waiter and the fix: unlink, wait on the keeper, or close it in the same call) and no new wait names a record closed dropped (`wait`, `create --deps` and graph edges refuse it); defer's own rule stays live waiters only. `check` reports a wait on a dropped record (`dropped-blocker`) only when it was written outside the verbs.
+A wait is met only by a delivering close, so nothing closes dropped under an open or deferred waiter (`close` and `cr reject` name each waiter and the fix: unlink, wait on the keeper, or close it in the same call) and no wait names a record closed dropped (`wait`, `create --deps` and graph edges refuse a new one; `reopen` refuses a record that waits on one, naming unlink). A close of several ids is all or none: every id's whole close (row, authority, guards) is checked before the first write. Defer's own rule stays live waiters only. `check` reports a wait on a dropped record (`dropped-blocker`) only when it was written outside the verbs.
 
 ## Readiness
 

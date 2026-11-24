@@ -699,6 +699,46 @@ def t_pull() -> None:
     bd('b', 'sync')
 
 
+def t_writers() -> None:
+    """One owner per write kind (nixes-sjkpn): each review finding of r7p7f (F1-F5) through the public verbs, on clone a."""
+    def probe(title: str) -> str:
+        return create('a', title, '--no-commit', kind='task')
+
+    def status(item: str) -> str:
+        return items('a')[item]['status']
+
+    held = create('a', 'held by solo for the writer tests')
+    rc, _, err, _ = run('a', 'claim', held, role='solo')
+    check(rc == 0, 'writers: solo holds a change request', err)
+    item, other_item = create('a', 'an item of the held request', '--parent', held, kind='task'), create('a', 'a second item', '--parent', held, kind='task')
+
+    # F1 (nixes-i4pl3 all or none): a multi-id drop checks every id's whole close before writing any.
+    target, waiter = probe('F1 target'), probe('F1 deferred waiter')
+    check(run('a', 'wait', waiter, '--on', target, '--for', 'its output')[0] == 0 and run('a', 'defer', waiter, '--reason', 'parked while it waits')[0] == 0,
+          'F1: a deferred task waits on a task')
+    rc, _, err, _ = run('a', 'close', target, waiter, '--reason', 'dropped together with its waiter', '--outcome', 'dropped')
+    check(rc != 0 and status(target) == 'open' and status(waiter) == 'deferred', 'F1: a drop with a deferred waiter in the same call writes nothing', err)
+    item_target = probe('F1 target of a held item')
+    check(run('a', 'wait', item, '--on', item_target, '--for', 'its output', role='solo')[0] == 0, 'F1: an item of the held request waits on a task')
+    rc, _, err, _ = run('a', 'close', item_target, item, '--reason', 'dropped together with the held item', '--outcome', 'dropped')
+    check(rc != 0 and status(item_target) == 'open' and status(item) == 'open', "F1: a drop with an item the caller may not close writes nothing", err)
+    run('a', 'unlink', item, item_target, role='solo')
+
+    # F3 (nixes-i4pl3): reopen refuses a record that would wait on a record closed dropped.
+    target, waiter = probe('F3 target'), probe('F3 waiter')
+    run('a', 'wait', waiter, '--on', target, '--for', 'its output')
+    check(run('a', 'close', target, waiter, '--reason', 'dropped together in one call', '--outcome', 'dropped')[0] == 0, 'F3: target and waiter closed dropped in one call')
+    rc, _, err, _ = run('a', 'reopen', waiter)
+    check(rc != 0 and target in err and 'unlink' in err and status(waiter) == 'closed', 'F3: reopen refuses a waiter of a record closed dropped, naming unlink', err)
+    question, task_target = create('a', 'F3 question that waits', '-t', 'decision'), probe('F3 target of a question')
+    run('a', 'wait', question, '--on', task_target, '--for', 'its result')
+    check(run('a', 'close', task_target, question, '--reason', 'dropped together in one call', '--outcome', 'dropped')[0] == 0, 'F3: a question and its target closed dropped together')
+    rc, _, err, _ = run('a', 'reopen', question)
+    check(rc != 0 and task_target in err and status(question) == 'closed', 'F3: reopen refuses a question that would wait on a record closed dropped', err)
+
+    run('a', 'unclaim', held, '--resume', 'writer tests done', role='solo')
+
+
 def t_manual_and_dead_wait() -> None:
     settle('a', 'b')
     check(wait_until(lambda: not waits(), options.seconds * 3), 'idle')
@@ -2474,7 +2514,7 @@ def t_cleanup() -> None:
             shutil.rmtree(folder, ignore_errors=True)
 
 
-ORDER = ('unshared', 'share_join', 'setup', 'child_ids', 'queues', 'moves', 'inbox', 'cr', 'scenarios', 'window', 'pull', 'manual_and_dead_wait', 'soak', 'stopped', 'held_elsewhere', 'store', 'move', 'migrate', 'cleanup')
+ORDER = ('unshared', 'share_join', 'setup', 'child_ids', 'queues', 'moves', 'inbox', 'cr', 'writers', 'scenarios', 'window', 'pull', 'manual_and_dead_wait', 'soak', 'stopped', 'held_elsewhere', 'store', 'move', 'migrate', 'cleanup')
 only = {name for name in options.only.split(',') if name}
 stop_dead_servers()
 for signum in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):

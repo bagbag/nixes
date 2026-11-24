@@ -353,9 +353,9 @@ MOVES = (
     Move('take', WORK_GROUP, ('open',), '=', '*', 'you', ('agent+holder', 'agent+deciding+gone')),
     Move('unclaim', WORK_GROUP, ('open',), '=', '*', '-', FREE_HOLD),
     Move('close', WORK_GROUP, ('open',), 'closed', '*', '-', FREE_HOLD, ('reason', 'no-waiters'), ('done', 'dropped')),
-    Move('reopen', WORK_GROUP, ('closed',), 'open', '*', '-', FREE_HOLD),  # reopen takes close's authority; unheld, 'holder' admits anyone
+    Move('reopen', WORK_GROUP, ('closed',), 'open', '*', '-', FREE_HOLD, ('no-dropped-target',)),  # reopen takes close's authority; unheld, 'holder' admits anyone
     Move('close', ITEM_GROUP, ('open',), 'closed', '*', '-', ITEM_WRITE, ('reason', 'no-waiters'), ('done', 'dropped')),
-    Move('reopen', ITEM_GROUP, ('closed',), 'open', '*', '-', ITEM_WRITE),
+    Move('reopen', ITEM_GROUP, ('closed',), 'open', '*', '-', ITEM_WRITE, ('no-dropped-target',)),
     Move('defer', WORK_GROUP, ('open',), 'deferred', '*', '-', DEFER),
     Move('undefer', WORK_GROUP, ('deferred',), 'open', '-', '-', ('deferrer',)),
     Move('defer', 'decision', ('open',), 'deferred', '*', '-', DEFER),
@@ -375,7 +375,7 @@ MOVES = (
     Move('unclaim', 'milestone', ('open',), '=', '*', '-', FREE_HOLD),
     Move('close', 'milestone', ('open',), 'closed', '*', '-', ATTENDED_CLOSE, ('reason',), ('accepted',)),
     Move('reopen', 'milestone', ('closed',), 'open', '*', '-', ATTENDED_CLOSE),
-    Move('reopen', 'decision', ('closed',), 'open', '*', '-', DECIDING_CLOSE, ('not-superseded',)),
+    Move('reopen', 'decision', ('closed',), 'open', '*', '-', DECIDING_CLOSE, ('not-superseded', 'no-dropped-target')),
     Move('close', 'gate', ('open',), 'closed', '*', '-', ('attended', 'user'), ('reason',), ('resolved',)),
     Move('reopen', 'gate', ('closed',), 'open', '*', '-', ('attended', 'user')),
 )
@@ -514,6 +514,8 @@ GUARDS = {
     'look-before': lambda issue, board, reason, outcome, together: None if board is None or cr_look(board, issue) == 'before' else 'only a look before change request passes without an agent review',
     'not-open-for-review': lambda issue, board, reason, outcome, together: f'it is open for your review (tip {opened_tip(issue)[:12]}): end the review first' if opened_tip(issue) else None,
     'no-waiters': lambda issue, board, reason, outcome, together: board and outcome == 'dropped' and dropped_waits_refusal(board, issue['id'], together),
+    'no-dropped-target': lambda issue, board, reason, outcome, together: board and (found := dropped_targets(board, issue['id'])) and (
+        f"it waits on {', '.join(found)}, closed dropped, which never delivers; unlink it first ({'; '.join(dep_fix(issue['id'], b) for b in found)}) or wait on the record that keeps the work"),
     'not-superseded': lambda issue, board, reason, outcome, together: f'it is superseded by {", ".join(found)}: record a revision to put it back in force' if board and (found := superseding(board, issue['id'])) else None,
 }
 
@@ -521,13 +523,14 @@ GUARDS = {
 def move(issue: dict, command: str, *, to: str | None = None, actor: str | None = None, fields: dict | None = None,
          reason: str | None = None, force: bool = False, via: str | None = None, check: bool = True,
          board: 'Board | None' = None, outcome: str | None = None, agreed: frozenset = frozenset(),
-         together: frozenset = frozenset()) -> subprocess.CompletedProcess:
+         together: frozenset = frozenset(), write: bool = True) -> subprocess.CompletedProcess:
     """The one status write. Finds the table row for the command, the item's type and its status (`to` picks among rows that
     differ only in where they go), refuses what the row forbids, then writes status and holder in one bd compare-and-set on
     the status and holder just read. A close is one compare-and-set write of status, outcome and holder (the closer takes a record another actor holds; bd validates the close in it), then `bd close` only records the reason. `via='supersede'` records
     it through bd supersede, whose `reason` names the new record. `fields` are metadata keys written with it (None removes one), as
     `put_meta` writes them. A closing row records its `outcome` (default: the row's first) in the same write. `board` tells an item
-    (inside a change request) from a task. `together`: the ids closed in the same call, which do not hold each other up. The issue is updated in place."""
+    (inside a change request) from a task. `together`: the ids closed in the same call, which do not hold each other up. The issue is updated in place.
+    `write=False` is the check-only path: every refusal above (the row, the holder, authority, guards), nothing written; a multi-id call checks all its ids first."""
     group = group_of(board, issue)
     rows = [m for m in MOVES if m.command == command and m.group == group and issue['status'] in m.frm
             and (to is None or m.to in (to, '='))]
@@ -562,6 +565,8 @@ def move(issue: dict, command: str, *, to: str | None = None, actor: str | None 
 
     if refusal:
         return refused(refusal)
+    if not write:
+        return subprocess.CompletedProcess(['move', command, issue['id']], 0, '', '')
     target = issue['status'] if row.to == '=' else row.to
     holder_after = '' if row.holds == '-' else (actor or caller()) if row.holds == 'you' else current
     if group == CR_GROUP and row.holds == '-' and HOLD in meta(issue) and target != 'closed':
@@ -2410,10 +2415,19 @@ def dropped_blockers(board: Board) -> set[str]:
     unread = sorted({i for i in (*waited, *owner.values()) if i not in board.by_id})
     records = {**board.by_id, **{r['id']: r for r in bd_show(unread, comments=False)}} if unread else board.by_id
 
-    def dropped(record_id: str) -> bool:
-        record = records.get(record_id) or {}
-        return record.get('status') == 'closed' and meta(record).get('outcome') == 'dropped' and record.get('issue_type') != 'decision'
-    return {b for b in waited if dropped(b) or dropped(owner[b])}
+    return {b for b in waited if is_dropped_work(records.get(b)) or is_dropped_work(records.get(owner[b]))}
+
+
+def is_dropped_work(record: dict | None) -> bool:
+    """A record closed dropped that a wait can never see delivered (model.md Waits); a question closed dropped releases its waiters instead.
+    Every reader checks the target and its change request with it: an item of a request closed dropped never delivers either."""
+    return bool(record) and record.get('status') == 'closed' and meta(record).get('outcome') == 'dropped' and record.get('issue_type') != 'decision'
+
+
+def dropped_targets(board: 'Board', item_id: str) -> list[str]:
+    """What the record waits on that closed dropped, itself or with its change request (a complete snapshot: closed records are read)."""
+    return [b for b in board.blockers.get(item_id, []) if not b.startswith('external:')
+            and (is_dropped_work(board.by_id.get(b)) or is_dropped_work(board.by_id.get(board.cr_of(b) or b)))]
 
 
 def deviations(board: Board, root: str | None, dropped_targets: set[str] | frozenset[str] = frozenset()) -> list[tuple[str, str, str]]:
@@ -5942,10 +5956,15 @@ def close_command(args) -> int:
         raise BoardError(f"unknown {', '.join(missing)}")
     board = Board.load()  # an item closes by its change request's holder (item_write_refusal)
     together = frozenset(ids)
-    if args.outcome == 'dropped':  # all or none: a later id's refusal must not leave an earlier one closed under a waiter
-        for item_id in ids:
-            if group_of(board, found[item_id]) in (WORK_GROUP, ITEM_GROUP) and (why := dropped_waits_refusal(board, item_id, together)):
-                raise BoardError(f'{item_id}: close refused: {why}')
+    # All or none: every id's whole close is checked before the first write, so no refusal leaves an earlier id closed (a dropped target under its waiter).
+    refusals = []
+    for item_id in ids:
+        try:
+            move(found[item_id], 'close', reason=reason, force=args.force, outcome=args.outcome, board=board, together=together, write=False)
+        except BoardError as error:
+            refusals.append(str(error))
+    if refusals:
+        raise BoardError('\n'.join(refusals) + ('\nnothing closed' if len(ids) > 1 else ''))
     for item_id in ids:
         move(found[item_id], 'close', reason=reason, force=args.force, outcome=args.outcome, board=board, together=together)
         print(f'{item_id}: closed')
@@ -6695,9 +6714,7 @@ def wait_target_refusal(waiter: dict | None, target: str, record: dict, board: '
     if record.get('status') == 'deferred' or (board and board.by_id.get(unit, {}).get('status') == 'deferred'):
         return (f'{who} cannot wait on {target}: {"it" if unit == target else unit} is deferred, set aside by nothing that would bring it back; undefer it first '
                 f'(agents board undefer {unit}), or wait on the record that would')
-    if board and target in board.by_id and any(
-            (one := board.by_id.get(each, {})).get('status') == 'closed' and meta(one).get('outcome') == 'dropped' and one.get('issue_type') != 'decision'
-            for each in (target, unit)):
+    if board and target in board.by_id and any(is_dropped_work(board.by_id.get(each)) for each in (target, unit)):
         return (f'{who} cannot wait on {target}: {"it" if unit == target else unit} was closed dropped and never delivers; '
                 f'wait on the record that keeps the work')
     if waiter and waiter.get('issue_type') == 'decision' and waiter['status'] == 'in_force' and not planning_wait(record):
