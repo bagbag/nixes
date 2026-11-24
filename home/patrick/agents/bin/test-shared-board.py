@@ -723,6 +723,13 @@ def t_writers() -> None:
     rc, _, err, _ = run('a', 'close', item_target, item, '--reason', 'dropped together with the held item', '--outcome', 'dropped')
     check(rc != 0 and status(item_target) == 'open' and status(item) == 'open', "F1: a drop with an item the caller may not close writes nothing", err)
     run('a', 'unlink', item, item_target, role='solo')
+    target, waiter, other = probe('F1 target of a blocked waiter'), probe('F1 waiter with another blocker'), probe('F1 the other blocker')
+    check(run('a', 'wait', waiter, '--on', target, '--for', 'its output')[0] == 0 and run('a', 'wait', waiter, '--on', other, '--for', 'its output')[0] == 0,
+          'F1: a task waits on two tasks')
+    rc, _, err, _ = run('a', 'close', target, waiter, '--reason', 'dropped together with a waiter bd would refuse', '--outcome', 'dropped')
+    check(rc != 0 and other in err and status(target) == 'open' and status(waiter) == 'open', "F1: a drop with a waiter whose other blocker is open writes nothing", err)
+    rc, _, err, _ = run('a', 'close', waiter, target, other, '--reason', 'dropped together, waiter named first', '--outcome', 'dropped')
+    check(rc == 0 and status(target) == status(waiter) == status(other) == 'closed', 'F1: a waiter named before its targets closes with them', err)
 
     # F3 (nixes-i4pl3): reopen refuses a record that would wait on a record closed dropped.
     target, waiter = probe('F3 target'), probe('F3 waiter')

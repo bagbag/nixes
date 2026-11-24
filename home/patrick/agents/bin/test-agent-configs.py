@@ -8273,7 +8273,7 @@ else:
         def runs(owner: str, rule: str) -> bool:
             return any(getattr(node.func, "id", None) == rule for function in functions if function.name == owner for node in ast.walk(function) if isinstance(node, ast.Call))
 
-        creations = {"create_plan": ("create", "--graph"), "create_gate": ("gate", "create")}
+        creations = {"create_plan": ("create",), "create_gate": ("gate", "create")}  # every bd create, a plain one too, is create_plan's
         stray = [f"{owner} does not run edge_rules" for owner in ("write_edges", *creations) if not runs(owner, "edge_rules")]
         for function in functions:
             stray += [f"{function.name}:{node.lineno} a dep line" for node in ast.walk(function) if function.name != "write_edges"
@@ -8282,7 +8282,7 @@ else:
                 if (words[:1] in (["dep"], ["batch"]) or (words[:1] == ["update"] and "--parent" in words)) and function.name != "write_edges":
                     stray.append(f"{function.name}:{node.lineno} bd {' '.join(words[:3])}")
                 stray += [f"{function.name}:{node.lineno} bd {' '.join(head)} outside {name}" for name, head in creations.items()
-                          if tuple(words[:2]) == head and function.name != name]
+                          if tuple(words[:len(head)]) == head and function.name != name]
         for source in sorted((root / "bin" / "protocol_engine").glob("*.py")) + [root / "bin" / "protocol"]:
             if "'--raw'" in source.read_text(encoding="utf-8"):
                 stray.append(f"{source.name} writes through raw bd")

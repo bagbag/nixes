@@ -576,6 +576,13 @@ def move(issue: dict, command: str, *, to: str | None = None, actor: str | None 
             raise BoardError(why)
         return subprocess.CompletedProcess(['move', command, issue['id']], 1, '', why)  # a caller that reads the result sees every refusal as a failed write
 
+    if not refusal and not write and row.to == 'closed' and not force and board is not None:
+        # bd's own close validation, seen before any write of the call: open blockers and open children outside it refuse the close.
+        held_up = [b for b in board.open_blockers(issue['id']) if b not in together] + \
+                  [c for c in board.children.get(issue['id'], []) if board.is_open(c) and c not in together]
+        if held_up:
+            refusal = (f"{issue['id']}: {command} refused: {', '.join(held_up)} still open (it waits on them, or they are part of it); "
+                       'close them in the same call, or --force')
     if refusal:
         return refused(refusal)
     if not write:
@@ -5960,6 +5967,16 @@ def cr_close_refusal(ids: list[str]) -> str | None:
     return None
 
 
+def close_order(board: Board, ids: list[str]) -> list[str]:
+    """The call's ids with what an id waits on or holds as parts (in the same call) before it: bd closes nothing with an open blocker or child."""
+    before = {i: {b for b in [*board.blockers.get(i, []), *board.children.get(i, [])] if b in ids and b != i} for i in ids}
+    order: list[str] = []
+    while len(order) < len(ids):
+        ready = [i for i in ids if i not in order and before[i] <= set(order)]
+        order += ready or [i for i in ids if i not in order]  # a cycle the verbs refuse: the given order, and bd says which close it refuses
+    return order
+
+
 def close_command(args) -> int:
     """`board close <id>... --reason "<why>" [--force]`: closes items; a change request closes by board cr land or reject. `--force` is
     bd's: it closes an item that is blocked or has open children."""
@@ -5984,7 +6001,7 @@ def close_command(args) -> int:
             refusals.append(str(error))
     if refusals:
         raise BoardError('\n'.join(refusals) + ('\nnothing closed' if len(ids) > 1 else ''))
-    for item_id in ids:
+    for item_id in close_order(board, ids):
         move(found[item_id], 'close', reason=reason, force=args.force, outcome=args.outcome, board=board, together=together)
         print(f'{item_id}: closed')
     return 0
