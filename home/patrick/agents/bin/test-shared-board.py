@@ -1310,6 +1310,30 @@ def t_cr() -> None:
     check(any(d['id'] == kept and d['class'] == 'dropped-blocker' and gone in d['detail'] for d in found), 'drop: check reports a live wait on a record closed dropped', err + out[-400:])
     run('a', 'unlink', kept, gone)
 
+    # A drop refuses under a deferred waiter too, and no new wait lands on a record closed dropped (a question excepted): nixes-ze5lx.
+    drop_a, drop_b, drop_c = (create('a', f'drop probe {name}', '--no-commit', kind='task') for name in 'abc')
+    check(run('a', 'wait', drop_a, '--on', drop_b, '--for', 'needs its output')[0] == 0 and run('a', 'defer', drop_a, '--reason', 'parked while it waits')[0] == 0,
+          'drop: a deferred task waits on a task')
+    rc, _, err, _ = run('a', 'close', drop_b, '--reason', 'dropped under a deferred waiter', '--outcome', 'dropped')
+    check(rc != 0 and drop_a in err and items('a')[drop_b]['status'] == 'open', 'drop: a dropped close refuses under a deferred waiter, naming it', err)
+    rc, _, err, _ = run('a', 'defer', drop_b, '--reason', 'defer the target of a deferred waiter')
+    check(rc == 0, 'drop: defer keeps its own rule: only live waiters hold a deferral back', err)
+    check(run('a', 'undefer', drop_b)[0] == 0 and run('a', 'undefer', drop_a)[0] == 0 and run('a', 'close', drop_b, drop_a, '--reason', 'dropped together in one call', '--outcome', 'dropped')[0] == 0
+          and items('a')[drop_b]['status'] == 'closed', 'drop: a waiter closed in the same call does not hold it')
+    rc, _, err, _ = run('a', 'wait', drop_c, '--on', drop_b, '--for', 'needs its output')
+    check(rc != 0 and drop_b in err and 'dropped' in err, 'drop: wait refuses a record closed dropped', err)
+    rc, _, err, _ = run('a', 'create', 'waits on a dropped one', '--no-commit', '--description', 'x', '--deps', drop_b)
+    check(rc != 0 and drop_b in err and 'dropped' in err, 'drop: create --deps refuses a record closed dropped', err)
+    plan = ROOT / 'dropped-wait.json'
+    plan.write_text(json.dumps({'nodes': [{'key': 'n', 'title': 'graph node', 'type': 'task', 'description': 'x', 'no_commit': True,
+                                           'waits_on': [{'on': drop_b, 'for': 'its output'}]}]}))
+    rc, _, err, _ = run('a', 'create', '--graph', str(plan))
+    check(rc != 0 and drop_b in err and 'dropped' in err, 'drop: a graph node waiting on one refuses a record closed dropped', err)
+    question = create('a', 'a question dropped', '-t', 'decision')
+    rc, _, err, _ = run('a', 'close', question, '--reason', 'the question is moot', '--outcome', 'dropped')
+    check(rc == 0 and run('a', 'wait', drop_c, '--on', question)[0] == 0, 'drop: a wait on a question closed dropped is accepted', err)
+    run('a', 'unlink', drop_c, question)
+
     # Work outside a change request is refused at create and update --commits: a work task files in a CR or commits nothing here.
     rc, _, err, _ = run('a', 'create', 'loose work', '-t', 'task', '--description', 'x', '--silent', filed=False)
     check(rc != 0 and '--parent' in err and '--no-commit' in err, 'loose: create refuses a work task outside a change request, naming --parent and --no-commit', err)

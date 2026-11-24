@@ -6686,8 +6686,8 @@ def reason_optional(issue: dict, record: dict) -> bool:
 
 def wait_target_refusal(waiter: dict | None, target: str, record: dict, board: 'Board | None' = None) -> str | None:
     """The rules about what a wait may name, one owner for every writer (wait, create and plan links, ruling revise and supersede, the protocol
-    engine's links): nothing waits on a deferred record (set aside, it would never end), and an in-force ruling waits only for its planning, a
-    live decision or a human gate. `waiter` is None for a new item."""
+    engine's links): nothing waits on a deferred record (set aside, it would never end) or on one closed dropped (a question excepted: it
+    releases its waiters), and an in-force ruling waits only for its planning, a live decision or a human gate. `waiter` is None for a new item."""
     who = waiter['id'] if waiter else 'a new item'
     if waiter and waiter.get('issue_type') == 'milestone':
         return f'{who} is a milestone: it waits on nothing, a change request is part of it (agents board move <change request> --to {who})'
@@ -6695,6 +6695,11 @@ def wait_target_refusal(waiter: dict | None, target: str, record: dict, board: '
     if record.get('status') == 'deferred' or (board and board.by_id.get(unit, {}).get('status') == 'deferred'):
         return (f'{who} cannot wait on {target}: {"it" if unit == target else unit} is deferred, set aside by nothing that would bring it back; undefer it first '
                 f'(agents board undefer {unit}), or wait on the record that would')
+    if board and target in board.by_id and any(
+            (one := board.by_id.get(each, {})).get('status') == 'closed' and meta(one).get('outcome') == 'dropped' and one.get('issue_type') != 'decision'
+            for each in (target, unit)):
+        return (f'{who} cannot wait on {target}: {"it" if unit == target else unit} was closed dropped and never delivers; '
+                f'wait on the record that keeps the work')
     if waiter and waiter.get('issue_type') == 'decision' and waiter['status'] == 'in_force' and not planning_wait(record):
         return (f'{who}: an in-force ruling waits for planning only (a live decision or a human gate), '
                 f"not on {target} ({record.get('issue_type')} {record.get('status')}); plan the work the ruling changes and wait that work on {target}")
@@ -6905,24 +6910,24 @@ def reopen_command(board: Board, args) -> int:
     return 0
 
 
-def waiter_live(board: Board, w: str, set_aside: set[str] | frozenset[str]) -> bool:
-    """A record that still waits: open, not deferred, and not set aside with the call (an item goes with its change request)."""
+def waiter_live(board: Board, w: str, set_aside: set[str] | frozenset[str], deferred: bool = False) -> bool:
+    """A record that still waits: open, not deferred (`deferred`: a deferred one too), and not set aside with the call (an item goes with its change request)."""
     unit = board.cr_of(w) or w
-    return w not in set_aside and unit not in set_aside and board.is_open(w) and board.by_id[w]['status'] != 'deferred' and board.by_id[unit]['status'] != 'deferred'
+    return w not in set_aside and unit not in set_aside and board.is_open(w) and (deferred or (board.by_id[w]['status'] != 'deferred' and board.by_id[unit]['status'] != 'deferred'))
 
 
-def live_waits(board: Board, item_id: str, setting_aside: set[str] | frozenset[str] = frozenset()) -> list[tuple[str, str]]:
+def live_waits(board: Board, item_id: str, setting_aside: set[str] | frozenset[str] = frozenset(), deferred: bool = False) -> list[tuple[str, str]]:
     """(waiter, target) of the live records waiting on a task, item or change request or, for a change request, on one of its items
     (closed ones too: a wait on an item of a CR is met when the CR lands). Records in `setting_aside` (set aside or closed in the
-    same call), a milestone (it detaches) and a CR's own items do not count."""
+    same call), a milestone (it detaches) and a CR's own items do not count. `deferred`: the deferred waiters count too (a drop's waiter set)."""
     members = [item_id, *(t for t in board.dependents if t != item_id and board.cr_of(t) == item_id)] if board.is_cr(item_id) else [item_id]
     return list(dict.fromkeys((w, member) for member in members for w in board.dependents.get(member, [])
-                              if waiter_live(board, w, setting_aside) and board.cr_of(w) != item_id and board.by_id[w].get('issue_type') != 'milestone'))
+                              if waiter_live(board, w, setting_aside, deferred) and board.cr_of(w) != item_id and board.by_id[w].get('issue_type') != 'milestone'))
 
 
 def dropped_waits_refusal(board: Board, item_id: str, together: frozenset[str]) -> str | None:
-    """Why a close as dropped is refused: a wait is met only by a delivering close (model.md Waits), so none may be left waiting on it."""
-    waits = live_waits(board, item_id, together)
+    """Why a close as dropped is refused: a wait is met only by a delivering close (model.md Waits), so no open or deferred record may be left waiting on it."""
+    waits = live_waits(board, item_id, together, deferred=True)
     if not waits:
         return None
     return (f"{', '.join(f'{waiter} waits on {target}' for waiter, target in waits)}, and a dropped close never delivers what they wait for; "

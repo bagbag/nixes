@@ -130,7 +130,7 @@ Printed by `model_tables()`; the test compares this block with it exactly. `Held
 | attended | a lead or solo session (not autopilot: it leaves these moves, the user's to make or hard to undo, to the user; unattended protocol) |
 <!-- /model-tables -->
 
-Guards: `reason` (a non-blank reason), `items-closed` (no open item), `look-before` (only a look-before CR passes without agent review), `not-open-for-review` (end the user's review first), `no-waiters` (a close as dropped leaves no live record waiting on it: unlink the wait or close them in the same call), `not-superseded` (a superseded ruling is put back by a revision record).
+Guards: `reason` (a non-blank reason), `items-closed` (no open item), `look-before` (only a look-before CR passes without agent review), `not-open-for-review` (end the user's review first), `no-waiters` (a close as dropped leaves no open or deferred record waiting on it: unlink the wait, wait on the keeper, or close them in the same call), `not-superseded` (a superseded ruling is put back by a revision record).
 
 ## Authority
 
@@ -155,17 +155,17 @@ The table's `Who` column is the authority; this is its shape. Item writes (close
 
 ## Waits
 
-One relation, written on the waiter, with a short "for" (content): "X waits on Y for …" (`agents board wait <item> --on <target> --for "<input>"`). Every write and dry run prints the sentence. A cycle is refused at the write (`wait-cycle` in `check` covers what came from outside). Waiters: an item, a whole CR (scope: every item, present and future), a task, a question. Milestones do not wait. Every writer (wait, create, plan graphs, ruling revise and supersede) meets the same target rules: nothing waits on a deferred record (set aside, it would never end), and an in-force ruling waits only for its planning (a live decision or a human gate).
+One relation, written on the waiter, with a short "for" (content): "X waits on Y for …" (`agents board wait <item> --on <target> --for "<input>"`). Every write and dry run prints the sentence. A cycle is refused at the write (`wait-cycle` in `check` covers what came from outside). Waiters: an item, a whole CR (scope: every item, present and future), a task, a question. Milestones do not wait. Every writer (wait, create, plan graphs, ruling revise and supersede) meets the same target rules: nothing waits on a deferred record (set aside, it would never end) or on a record closed dropped (a question excepted: it releases its waiters; naming the keeper is the fix), and an in-force ruling waits only for its planning (a live decision or a human gate).
 
 | Waits on | Met when |
 |---|---|
-| an item in the same CR | it closes (done; an item closed dropped is refused while one waits on it) |
-| another CR, or one of its items | that CR lands, or the waiter's CR stacks on it; `cr reject` is refused while a live record waits on it or its items |
+| an item in the same CR | it closes (done; an item closed dropped is refused while an open or deferred record waits on it) |
+| another CR, or one of its items | that CR lands, or the waiter's CR stacks on it; `cr reject` is refused while an open or deferred record waits on it or its items |
 | a question | it closes: planned (planning may rewrite the waiter, so in force is not enough), dropped or superseded |
 | a gate | it is resolved |
-| a task | it is closed done (a task closed dropped is refused while a record waits on it) |
+| a task | it is closed done (a task closed dropped is refused while an open or deferred record waits on it) |
 
-A wait is met only by a delivering close, so nothing closes dropped under a live waiter (`close` and `cr reject` name each waiter and the unlink); `check` reports a live wait on a dropped record (`dropped-blocker`) from outside the verbs.
+A wait is met only by a delivering close, so nothing closes dropped under an open or deferred waiter (`close` and `cr reject` name each waiter and the fix: unlink, wait on the keeper, or close it in the same call) and no new wait names a record closed dropped (`wait`, `create --deps` and graph edges refuse it); defer's own rule stays live waiters only. `check` reports a wait on a dropped record (`dropped-blocker`) only when it was written outside the verbs.
 
 ## Readiness
 

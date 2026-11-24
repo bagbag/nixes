@@ -90,7 +90,8 @@ Who holds it is the holder field, not a status; the model's tables print from
   review, `open` or in work are waited for, so in `look` `after` projects
   children wait for the landing. A wait is met only by a delivering close: a CR
   that lands, never one rejected (a reject, or a close as dropped, is refused
-  while a live record waits on it). A returned parent holds
+  while an open or deferred record waits on it, and no new wait names a record
+  closed dropped, a question excepted). A returned parent holds
   its children: they cannot land and their reviews wait. A child's Accept waits
   until its parent has landed; its Return and Reject do not.
 - **Rebase:** always `rebase --onto <current base tip> <base_sha>`. A child
