@@ -50,18 +50,17 @@ def inbox_text(found: dict) -> tuple[str, set[str]]:
 
 def next_text(ctx: Context) -> str:
     """decide.md Release 7: what the next round or step can start from. The open-item list (waiting questions, change requests
-    to accept or review, ready milestones, what waits on the user) comes whole the first time between compactions, from
+    to accept or review, ready milestones) comes whole the first time between compactions, from
     one board read with the seeds; the model's judgment is the recommendation."""
     found, position = read_open(ctx) if ctx.board else ({}, {})
     seeded = seeds(ctx, found, position) if ctx.board else []
-    items, elsewhere, waiting = open_items(ctx, found, position) if ctx.board else ([], {}, [])
-    inbox, finds = inbox_text(found)
-    waiting = [item for item in waiting if item['id'] not in finds]
+    items, elsewhere = open_items(ctx, found, position) if ctx.board else ([], {})
+    inbox, _ = inbox_text(found)
     return lines(
         inbox,
         words.SEEDS_HEAD if ctx.board else '',
         *([words.seed_line(seed, priority_of(seed)) for seed in seeded] or ([words.SEEDS_NONE] if ctx.board else [])),
-        items_text(ctx, items, elsewhere, waiting),
+        items_text(ctx, items, elsewhere),
         *(topic_counts(items) if ctx.board else []),
         *words.proposal_text(proposal_rows(ctx.state.get('proposal'))),
         words.next_recommend(),

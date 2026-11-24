@@ -13838,15 +13838,13 @@ def validate_protocol(root: Path, part: str) -> None:
             configure(health={"counts": counts, "items": {
                 "questions": [{**row, "id": "fx-a", "title": "A?"}, {**row, "id": "fx-b", "title": "B?"},
                               {**row, "id": "fx-live", "title": "Live?", "holder": "other001"}],
-                "decided": [{**row, "id": "fx-d", "status": "decided", "title": "D"}],
-                "forUser": [{**row, "id": "fx-u", "type": "task", "title": "Needs you", "holder": "user"}]}},
-                position={"held": [{"id": "fx-live", "holder": "other001", "mark": None}, {"id": "fx-u", "holder": "user", "mark": None}],
+                "decided": [{**row, "id": "fx-d", "status": "decided", "title": "D"}]}},
+                position={"held": [{"id": "fx-live", "holder": "other001", "mark": None}],
                           "readyMilestones": [{**row, "id": "fx-m", "type": "milestone", "title": "Beta"}]},
                 items={"fx-closed": {"status": "closed"}, "fx-rel": {"status": "in_force"}, "fx-null": {"status": None}})
             out = proto("next", **listing_session).stdout
-            for needle in ("Open items (5):", "open questions · open (2):\n- fx-a: A?\n- fx-b: B?", "decided, awaiting release · decided (1):\n- fx-d: D",
+            for needle in ("Open items (4):", "open questions · open (2):\n- fx-a: A?\n- fx-b: B?", "decided, awaiting release · decided (1):\n- fx-d: D",
                            "ready milestones · open (1):\n- fx-m [milestone]: Beta",
-                           "waiting on the user · held by the user, not offered (1):\n- fx-u [task]: Needs you",
                            "Held by live session other001, not offered: fx-live", "Seeds for the next round"):
                 if needle not in out:
                     raise ValueError(f"protocol next prints the whole list, grouped, the first time ({needle!r} missing):\n{out}")
@@ -13854,13 +13852,13 @@ def validate_protocol(root: Path, part: str) -> None:
                 raise ValueError("the rows no longer repeat their view and status")
             again = proto("next", **listing_session).stdout
             if "Open items (" in again or "- fx-a: A?" in again or "open questions · open" in again \
-                    or "Open items: 1 decided, 2 open questions, 1 waiting on the user, 1 ready milestones" not in again \
+                    or "Open items: 1 decided, 2 open questions, 1 ready milestones" not in again \
                     or f"`{engine_module.base.LIST_COMMAND}`" not in again or "agents board position" not in again or "Seeds for the next round" not in again:
                 raise ValueError(f"protocol next lists nothing the second time between compactions: counts and the command:\n{again}")
             calls()
             bare = proto("start", "round", prepass=False, **listing_session).stdout
             scoped = json.loads(proto("scope", "--origin", "plugin", stdin={"command": "step-back", "pending": shown(**listing_session)["pending"]["id"]}, **listing_session).stdout)["text"]
-            if "- fx-b" in scoped or "Open items: 1 decided, 2 open questions, 1 waiting on the user" not in scoped or "List them before you select." not in scoped:
+            if "- fx-b" in scoped or "Open items: 1 decided, 2 open questions, 1 ready milestones" not in scoped or "List them before you select." not in scoped:
                 raise ValueError(f"a bare round after the list was printed counts and tells the model to list first:\n{bare}\n{scoped}")
             if "The point set is empty" in scoped or "The point set: the open items below" not in scoped:
                 raise ValueError(f"a started pre-pass that lists open items must not call the point set empty:\n{scoped}")
@@ -13874,7 +13872,7 @@ def validate_protocol(root: Path, part: str) -> None:
             proto("compacted", **listing_session)
             bare = proto("start", "round", prepass=False, **listing_session).stdout
             scoped = json.loads(proto("scope", "--origin", "plugin", stdin={"command": "step-back", "pending": shown(**listing_session)["pending"]["id"]}, **listing_session).stdout)["text"]
-            if "Open items (5):" not in scoped or "List them before you select." in scoped:
+            if "Open items (4):" not in scoped or "List them before you select." in scoped:
                 raise ValueError(f"after a compaction the started pre-pass prints the whole list:\n{bare}\n{scoped}")
             proto("abandon", **listing_session)
             if "Open items (" in proto("next", **listing_session).stdout:
@@ -13883,12 +13881,12 @@ def validate_protocol(root: Path, part: str) -> None:
             proto("compacted", **listing_session)
             named = proto("start", "round", "fx-a", "fx-b", prepass=False, **listing_session).stdout
             scoped = json.loads(proto("scope", "--origin", "plugin", stdin={"command": "step-back", "pending": shown(**listing_session)["pending"]["id"]}, **listing_session).stdout)["text"]
-            if "Open items (5):" not in scoped or "Named for this round: fx-a, fx-b." not in scoped:
+            if "Open items (4):" not in scoped or "Named for this round: fx-a, fx-b." not in scoped:
                 raise ValueError(f"a named round's started pre-pass prints the whole list first:\n{named}\n{scoped}")
             proto("abandon", **listing_session)
             named = proto("start", "round", "fx-a", prepass=False, **listing_session).stdout
             scoped = json.loads(proto("scope", "--origin", "plugin", stdin={"command": "step-back", "pending": shown(**listing_session)["pending"]["id"]}, **listing_session).stdout)["text"]
-            if "Named:\n- fx-a: A?\n" not in scoped or "Open items: 1 decided, 2 open questions, 1 waiting on the user" not in scoped or "- fx-b" in scoped \
+            if "Named:\n- fx-a: A?\n" not in scoped or "Open items: 1 decided, 2 open questions, 1 ready milestones" not in scoped or "- fx-b" in scoped \
                     or "List them before you select." in scoped or "Open items (" in scoped:
                 raise ValueError(f"a named round's started pre-pass lists its ids, counts and command:\n{named}\n{scoped}")
             if shown(**listing_session)["round"] is None:
@@ -13897,7 +13895,6 @@ def validate_protocol(root: Path, part: str) -> None:
             proto("step", stdin={"classes": {"fx-a": "user", "fx-b": "user"}}, **listing_session)  # the scope widens: fx-b was not named
             proto("abandon", **listing_session)
             for ids, needle in ((["fx-closed"], "fx-closed is closed"), (["fx-live"], "fx-live is held by live session other001"),
-                                (["fx-u"], "fx-u is held by the user"),
                                 (["fx-rel"], "fx-rel is in_force, an item no round offers"), (["fx-null"], "fx-null is unknown"),
                                 (["fx-a", "fx-closed", "fx-live"], "fx-closed is closed; fx-live is held by live session other001")):
                 refused("start", "round", *ids, needle=needle, **listing_session)

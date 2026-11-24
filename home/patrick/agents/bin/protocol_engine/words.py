@@ -209,14 +209,11 @@ def item_row(item: dict) -> str:
             + (f", held by {item['heldBy']}" if item.get('heldBy') else '') + f": {item['title']}")
 
 
-def items_whole(total: int, named: list[str] | None, groups: list[tuple[str, str, list[dict]]], waiting: list[dict],
-                elsewhere: dict[str, list[str]]) -> str:
+def items_whole(total: int, named: list[str] | None, groups: list[tuple[str, str, list[dict]]], elsewhere: dict[str, list[str]]) -> str:
     """The open-item list, whole: `groups` are (heading, status, rows) in listing order."""
     out = [f'Open items ({total}):'] + ([f"Named for this round: {', '.join(named)}."] if named else [])
     for heading, status, rows in groups:
         out += [f'{heading} · {status} ({len(rows)}):', *map(item_row, rows)]
-    if waiting:
-        out += [f'waiting on the user · held by the user, not offered ({len(waiting)}):', *map(item_row, waiting)]
     out += [f"Held by live session {holder}, not offered: {', '.join(ids)}" for holder, ids in elsewhere.items()]
     return '\n'.join(out)
 

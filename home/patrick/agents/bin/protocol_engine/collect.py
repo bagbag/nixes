@@ -9,13 +9,13 @@ from .engine import Context, fail
 from .told import first_time, report_hint
 
 
-def items_text(ctx: Context, items: list[dict], elsewhere: dict[str, list[str]], waiting: list[dict],
+def items_text(ctx: Context, items: list[dict], elsewhere: dict[str, list[str]],
                named: list[str] | None = None, bare: bool = False, whole: bool = False) -> str:
     """The open-item list: whole the first time between compactions that `protocol next` or a round's pre-pass needs it,
     its rows grouped under a heading per view and status (r18-q68, q69); `whole` (a topic round's pre-pass) prints it
     whole every time (r24-q104). Later the named ids, the counts per kind and the command that lists them again; `bare`
     adds that a bare round lists before it selects."""
-    if not items and not elsewhere and not waiting:
+    if not items and not elsewhere:
         return ''
     if first_time(ctx, 'items') or whole:
         groups: dict[tuple[str, str], list[dict]] = {}
@@ -23,9 +23,9 @@ def items_text(ctx: Context, items: list[dict], elsewhere: dict[str, list[str]],
             groups.setdefault((item['view'], str(item['status'])), []).append(item)
         listed = [(heading, status, rows) for view, (heading, _) in words.VIEW_LABELS.items()
                   for (group_view, status), rows in groups.items() if group_view == view]
-        return words.items_whole(len(items) + len(waiting), named, listed, waiting, elsewhere)
+        return words.items_whole(len(items), named, listed, elsewhere)
     by_id = {item['id']: item for item in items}
-    tally = {view: sum(1 for item in [*items, *waiting] if item['view'] == view) for view in words.VIEW_LABELS}
+    tally = {view: sum(1 for item in items if item['view'] == view) for view in words.VIEW_LABELS}
     counts = ', '.join(f'{n} {words.VIEW_LABELS[view][1]}' for view, n in tally.items() if n)
     return words.items_counted([by_id[rid] for rid in named or [] if rid in by_id] if named else None, counts, bare)
 
@@ -36,7 +36,7 @@ def collect_text(ctx: Context) -> str:
     points = [words.collect_point(point) for point in r['points']]
     missing = [p['id'] for p in r['points'] if p['id'] not in r['classes']]
     topic = r.get('topic')
-    listing = items_text(ctx, r['items'], r.get('heldElsewhere') or {}, r.get('waiting') or [], named)  # the pre-pass printed the list
+    listing = items_text(ctx, r['items'], r.get('heldElsewhere') or {}, named)  # the pre-pass printed the list
     return lines(
         words.collect_intro(r['id']),
         *([words.collect_topic(topic)] if topic else []),
@@ -157,11 +157,10 @@ def read_open(ctx: Context) -> tuple[dict, dict]:
     return ctx.board.json('health', '--json', '--items', COLLECT_VIEWS), ctx.board.json('position', '--json')
 
 
-def open_items(ctx: Context, found: dict, position: dict) -> tuple[list[dict], dict[str, list[str]], list[dict]]:
-    """(items, elsewhere, waiting): every open item Collect offers, once under the first view that has it, the ids another
-    live session holds by holder, and the items the user holds. Another live session's holds stay out (board claim
-    refuses them), and so do the user's, which the list shows apart; a gone session's hold stays, marked: a deciding
-    session takes it over (board take), as the release does."""
+def open_items(ctx: Context, found: dict, position: dict) -> tuple[list[dict], dict[str, list[str]]]:
+    """(items, elsewhere): every open item Collect offers, once under the first view that has it, and the ids another live
+    session holds by holder. Another live session's holds stay out (board claim refuses them); a gone session's hold stays,
+    marked: a deciding session takes it over (board take), as the release does."""
     seen = {}
     row = lambda item, view: {'id': item['id'], 'view': view, 'status': item.get('status'), 'type': item.get('type'),
                               'title': item.get('title', ''), 'priority': item.get('priority'),
@@ -174,21 +173,18 @@ def open_items(ctx: Context, found: dict, position: dict) -> tuple[list[dict], d
     live, gone = foreign_holds(ctx, [item for view in OPEN_VIEWS for item in view_rows(found, view)], position)
     for rid, holder in gone.items():
         seen[rid]['heldBy'] = f'{holder} (gone)'
-    elsewhere, waiting = {}, []
+    elsewhere = {}
     for rid, holder in live.items():
-        if holder == 'user':
-            waiting.append(seen[rid])
-        else:
-            elsewhere.setdefault(session_of(holder), []).append(rid)
+        elsewhere.setdefault(session_of(holder), []).append(rid)
         del seen[rid]
-    return list(seen.values()), elsewhere, waiting
+    return list(seen.values()), elsewhere
 
 
-def named_errors(ctx: Context, named: list[str], items: list[dict], elsewhere: dict[str, list[str]], waiting: list[dict]) -> list[str]:
+def named_errors(ctx: Context, named: list[str], items: list[dict], elsewhere: dict[str, list[str]]) -> list[str]:
     """`start round <ids>`: each named id must be an open item the round offers; one a live session holds, a closed or an
     unknown one, and an open one no round offers are refused by name."""
     offered = {item['id'] for item in items}
-    held = {rid: f'live session {holder}' for holder, ids in elsewhere.items() for rid in ids} | {item['id']: 'the user' for item in waiting}
+    held = {rid: f'live session {holder}' for holder, ids in elsewhere.items() for rid in ids}
     other = [rid for rid in named if rid not in offered and rid not in held]
     states = {}
     for rid in other:  # one read each: the board refuses a read naming an unknown id as a whole
@@ -214,7 +210,7 @@ def read_listing(ctx: Context) -> None:
         return  # a discussion round's points come from the model; board items join through Related
     found, position = read_open(ctx)
     ctx.state['counts'] = read_counts(found)
-    ctx.round['items'], ctx.round['heldElsewhere'], ctx.round['waiting'] = open_items(ctx, found, position)
-    errors = named_errors(ctx, ctx.round.get('named') or [], ctx.round['items'], ctx.round['heldElsewhere'], ctx.round['waiting'])
+    ctx.round['items'], ctx.round['heldElsewhere'] = open_items(ctx, found, position)
+    errors = named_errors(ctx, ctx.round.get('named') or [], ctx.round['items'], ctx.round['heldElsewhere'])
     if errors:
         fail('start round: ' + '; '.join(errors))
