@@ -143,7 +143,8 @@ On a shared board (`.beads/board-shared.json` exists):
   generate every id; confirm creation before creating dependents. A found
   record carries `--found-in <id>`.
 - When an open item becomes redundant, move its leftover work into the owning
-  item's `--acceptance`, then `agents board bd --raw --yes supersede <id> --with <owner>`, (no board command does it); close it `dropped`. An exact duplicate: `agents board link <id> <canonical> relates-to`, then close it `dropped`, naming the canonical.
+  item's `--acceptance`; then, as for an exact duplicate, `agents board link <id> <owner> relates-to` and close it
+  `dropped`, naming the owner.
 
 ### Questions and rulings
 

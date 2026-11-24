@@ -9232,6 +9232,24 @@ def validate_cr_rank(root: Path) -> None:
         raise ValueError(f"console_crs lists none of the queued requests and counts them apart: {(listed, wait_count, queued)}")
 
 
+def validate_self_review(root: Path) -> None:
+    """A change request's author and the author's session itself may not review it; another worker of that session may (it
+    starts fresh), and the user's word (--agreed) lifts the refusal."""
+    loader = importlib.machinery.SourceFileLoader("board_self_review", str(root / "bin" / "board"))
+    board = importlib.util.module_from_spec(importlib.util.spec_from_loader(loader.name, loader))
+    loader.exec_module(board)
+    by_worker = {"id": "cr", "status": "in_review", "metadata": {"author": "s1/w1"}}
+    by_session = {"id": "cr", "status": "in_review", "metadata": {"author": "s1"}}
+    refused = [(by_worker, "s1/w1"), (by_worker, "s1"), (by_session, "s1")]
+    allowed = [(by_worker, "s1/w2"), (by_session, "s1/w2"), (by_worker, "s2")]
+    if not all(board.self_review_refusal(issue, actor) for issue, actor in refused):
+        raise ValueError("the author or the author's session itself was let review its own hand-over")
+    if any(board.self_review_refusal(issue, actor) for issue, actor in allowed):
+        raise ValueError("a fresh worker of the author's session, or another session, was refused the review")
+    if any(board.self_review_refusal(issue, actor, True) for issue, actor in refused):
+        raise ValueError("the user's word (--agreed) did not lift the self-review refusal")
+
+
 def validate_board_model(root: Path) -> None:
     """docs/board/model.md embeds the code's tables (`model_tables`): statuses, outcomes, transitions and authority words."""
     loader = importlib.machinery.SourceFileLoader("board_model", str(root / "bin" / "board"))
@@ -14465,6 +14483,7 @@ def run_group(name: str, root: Path) -> None:
     elif name == "contract":
         validate_console_contract(root)
         validate_board_model(root)
+        validate_self_review(root)
     elif name == "prepass":
         validate_prepass(root)
         validate_default_records(root)

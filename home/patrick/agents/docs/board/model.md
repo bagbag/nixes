@@ -122,7 +122,7 @@ Printed by `model_tables()`; the test compares this block with it exactly. `Held
 | deciding | a deciding session (lead, solo or autopilot) |
 | holder | the holder's session (or anyone while it is unheld) |
 | gone | once the holder's session is gone, or the user agrees (--agreed) |
-| non-author | a session that did not hand it over |
+| non-author | neither the actor that handed it over nor that actor's session itself (another worker of the session is independent), unless the user agrees (--agreed) |
 | planner | a session pulling plan |
 | deferrer | the deferrer's side (the deferring session or a deciding session; a user's deferral, or one without a deferrer, is a lead or solo session's or the user's) |
 | holding | the session holding it |

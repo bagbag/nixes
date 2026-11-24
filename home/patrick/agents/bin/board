@@ -301,7 +301,7 @@ STATES = {CR_GROUP: ('open', 'in_review', 'passed', 'deferred', 'closed'), WORK_
 # (its pull, the worker cap, the check pair, the review) stays with the command and is not in the table.
 WHO_WORDS = {'anyone': 'anyone', 'agent': 'an agent session', 'user': 'the user', 'deciding': 'a deciding session (lead, solo or autopilot)',
              'holder': "the holder's session (or anyone while it is unheld)", 'gone': "once the holder's session is gone, or the user agrees (--agreed)",
-             'non-author': 'a session that did not hand it over', 'planner': 'a session pulling plan',
+             'non-author': "neither the actor that handed it over nor that actor's session itself (another worker of the session is independent), unless the user agrees (--agreed)", 'planner': 'a session pulling plan',
              'deferrer': "the deferrer's side (the deferring session or a deciding session; a user's deferral, or one without a deferrer, is a lead or solo session's or the user's)",
              'holding': 'the session holding it', 'unheld': 'while it is unheld',
              'attended': "a lead or solo session (not autopilot: it leaves these moves, the user's to make or hard to undo, to the user; unattended protocol)"}
@@ -451,7 +451,7 @@ def authority_part(part: str, issue: dict, actor: str | None, board: 'Board', ag
     if part == 'unheld':
         return not current
     if part == 'non-author':
-        return self_review_refusal(issue, actor) is None
+        return self_review_refusal(issue, actor, agreed) is None
     if part == 'gone':
         return bool(current) and (agreed or holder_gone(board, board.registry(), current))
     entry = board.registry().get(session)
@@ -3050,15 +3050,18 @@ AUTHOR = 'author'  # metadata: the actor that handed the change request over, wr
 RESUME_NOTE = 'resume'  # metadata: the next action of work handed back unfinished; the next claim prints and clears it
 
 
-def self_review_refusal(issue: dict, actor: str) -> str | None:
-    """Why this session may not review the change request in review: it handed it over, or no hand-over recorded who did (fails closed)."""
-    if issue['status'] != 'in_review':
+def self_review_refusal(issue: dict, actor: str, agreed: bool = False) -> str | None:
+    """Why this actor may not review the change request in review: it handed it over, or it is the session whose worker did (it
+    briefed that worker); another worker of the session starts fresh and may. The user's word (`agreed`) lifts it. No recorded
+    author fails closed."""
+    if issue['status'] != 'in_review' or agreed:
         return None
     author = meta(issue).get(AUTHOR)
     if not author:
         return f"{issue['id']}: no author is recorded for its hand-over, so its independence cannot be shown: /board-migrate records it"
-    if session_actor(author) == session_actor(actor):
-        return f"{issue['id']}: your own hand-over needs another reviewer"
+    if actor in (author, session_actor(author)):
+        return (f"{issue['id']}: handed over by {author}; a fresh worker reviews it, or you with the user's word: "
+                f'agents board claim {issue["id"]} --agreed "<what they said>"')
     return None
 
 
@@ -3278,11 +3281,11 @@ def capacity(board: Board, args) -> None:
               f"ready for your pulls: {', '.join(f'{kind} {count}' for kind, count in ready)} → refill (plan Dispatch)")
 
 
-def claim_one(board: Board, issue: dict, actor: str, fields: dict | None = None) -> tuple[bool, str]:
+def claim_one(board: Board, issue: dict, actor: str, fields: dict | None = None, agreed: bool = False) -> tuple[bool, str]:
     """Atomically claim one item: the holder is written only if it is still empty (and, for a change request, the status is the
     one just read: a planner can finish Return after a reviewer reads the unassigned CR)."""
     try:
-        result = move(issue, 'claim', actor=actor, fields=fields, check=False, board=board)
+        result = move(issue, 'claim', actor=actor, fields=fields, check=False, board=board, agreed=agreed)
     except BoardError as error:
         return False, str(error)
     return result.returncode == 0, (result.stderr or result.stdout).strip()
@@ -3475,7 +3478,7 @@ def claim(board: Board, args) -> int:
                         why.append(refusal)
                     print(f"{item_id}: not claimable ({issue['status']})" + ''.join(f'\n  {line}' for line in why), file=sys.stderr)
                     continue
-                if claim_cr_checked(board, issue, actor, kind, claimed, failed):
+                if claim_cr_checked(board, issue, actor, kind, claimed, failed, bool(args.agreed)):
                     issue['claim_kind'] = kind
                 continue
             over = cap_refusal(board, entry, actor, claimed) if is_work_hold(issue) else None
@@ -3519,6 +3522,8 @@ def claim(board: Board, args) -> int:
         inherited = effective_priority(board, issue)
         counts_as = f"; P{issue.get('priority', 9)}, counts as P{inherited[0]}: {'its item' if inherited[2] else 'blocks'} {inherited[1]}" if inherited[1] else ''
         print(f"claimed {issue['id']} ({kind}{by}{counts_as}): {issue.get('title', '')}")
+        if args.agreed and kind == 'review':
+            comment(issue['id'], f'board claim: {actor} reviews its own hand-over (agreed: {args.agreed}).')
         if kind == 'refresh':
             print(f"  refresh work: agents board cr refresh {issue['id']}, then agents board unclaim {issue['id']}")
         if resume := meta(issue).get(RESUME_NOTE):
@@ -3539,10 +3544,10 @@ def claim(board: Board, args) -> int:
     return 1 if failed or not (claimed or args.ids) else 0
 
 
-def claim_cr_checked(board: Board, issue: dict, actor: str, kind: str, claimed: list, failed: list) -> bool:
+def claim_cr_checked(board: Board, issue: dict, actor: str, kind: str, claimed: list, failed: list, agreed: bool = False) -> bool:
     """claim_cr with its refusals printed: a git or setting failure leaves the CR unclaimed."""
     try:
-        ok, message = claim_cr(board, issue, actor, kind)
+        ok, message = claim_cr(board, issue, actor, kind, agreed)
     except BoardError as error:
         failed.append(issue['id'])
         print(f"{issue['id']}: not claimed: {error}", file=sys.stderr)
@@ -3610,7 +3615,7 @@ def take(board: Board, args) -> int:
         refusal = item_hold_refusal(board, issue) or foreign_claim(board, issue['id']) or elsewhere_refusal(board, issue, 'take', args.agreed)
         if refusal:
             raise BoardError(refusal)
-        if board.is_cr(issue['id']) and (refusal := self_review_refusal(issue, actor)):
+        if board.is_cr(issue['id']) and (refusal := self_review_refusal(issue, actor, bool(args.agreed))):
             raise BoardError(refusal)
         previous = issue.get('assignee') or 'nobody'
         if previous == actor:
@@ -4888,19 +4893,19 @@ def sync_branch(board: Board, cr: dict, main: Path, wt: Path, check: bool = True
     return {'oldTip': old_tip, 'oldBase': resumed['fork'] if resumed else fork, 'moved': moved is not None, 'baseTip': base_tip, 'tip': tip, 'code': code, 'output': out}
 
 
-def claim_cr(board: Board, cr: dict, actor: str, kind: str) -> tuple[bool, str]:
+def claim_cr(board: Board, cr: dict, actor: str, kind: str, agreed: bool = False) -> tuple[bool, str]:
     """Claims a change request for the pull that found it. Work: the worktree first, then the hold (a worktree failure leaves
     it unclaimed), then setup (a failure keeps the claim, A5). Planning: the hold. Review, accept, refresh: the hold, status kept."""
     cid = cr['id']
     if kind == 'plan':
         return claim_one(board, cr, actor, {HOLD: 'plan', **({PLAN_FIRST: None} if meta(cr).get(PLAN_FIRST) else {})})
-    if kind == 'review' and (refusal := self_review_refusal(cr, actor)):
+    if kind == 'review' and (refusal := self_review_refusal(cr, actor, agreed)):
         return False, refusal
     main = main_root()
     if kind != 'accept':  # only a deciding session's accept claim takes an item open for the user's review
         refuse_open(cid, cr, f'a {kind} claim')
     created, made_tip = open_worktree(board, cr, main)
-    ok, message = (True, '') if holds_cr(cr, actor) else claim_one(board, cr, actor, {HOLD: 'work'} if kind == 'implement' else None)  # a planner's hold carries on
+    ok, message = (True, '') if holds_cr(cr, actor) else claim_one(board, cr, actor, {HOLD: 'work'} if kind == 'implement' else None, agreed)  # a planner's hold carries on
     if ok and kind == 'implement' and meta(cr).get(HOLD) != 'work':
         put_meta(cr, **{HOLD: 'work'})
     if not ok:
@@ -5152,10 +5157,13 @@ def handover(board: Board, args) -> None:
             comment(args.id, HANDOVER + args.evidence)
             comment(args.id, f'no agent review: {no_agent_reason}')
             print(f'handed over {args.id} to your Accept without agent review: {no_agent_reason}')
+            print("next: waits on the user's Accept")
             return
         move(cr, 'handover', board=board, fields={'no_agent_review_reason': None, 'reviewing_tip': None, HOLD: None, AUTHOR: actor})
         comment(args.id, HANDOVER + args.evidence)
         print(f'handed over {args.id} for review ({check_said(args)} on {result["tip"][:12]})')
+        after = 'lands on its pass' if cr_look(board, cr) == 'after' else "then the user's Accept"
+        print(f'next: waits on agent review by a fresh worker, not you (agents board claim {args.id}); {after}')
         return
     comment(args.id, f'board pass: {args.evidence}')
     put_meta(cr, review_tip=result['tip'], review_base_tip=result['baseTip'], no_agent_review_reason=None)
@@ -8129,6 +8137,8 @@ def run_command(argv: list[str]) -> int:
     sub.add_argument('ids', nargs='*', type=board_id)
     sub.add_argument('--force', metavar='REASON', type=nonempty,
                      help="hold a work item past your worker cap, flagged with this reason in position and check")
+    sub.add_argument('--agreed', metavar='TEXT', type=nonempty,
+                     help="the user's word that you review your own hand-over, or one your worker made: what they said (commented on the item)")
     sub = add('record', 'write the decision record you hold from a file and set it decided, or release it with --unratified', record, group='ruling')
     sub.add_argument('id', type=board_id)
     sub.add_argument('file')
@@ -8246,7 +8256,7 @@ def run_command(argv: list[str]) -> int:
                             ('unclaim', unclaim, "free a hold, yours or another's (with a comment)")):
         sub = add(name, text, run)
         sub.add_argument('ids', nargs='+', type=board_id)
-        sub.add_argument('--agreed', metavar='TEXT', type=nonempty, help="the user agrees the holder is gone (a hold held elsewhere on a shared board always needs it): what they said; a deciding session may then free a live-looking hold")
+        sub.add_argument('--agreed', metavar='TEXT', type=nonempty, help="the user agrees the holder is gone (a hold held elsewhere on a shared board always needs it), or, taking a change request in review, that you review your own hand-over: what they said; a deciding session may then free a live-looking hold")
         if name == 'unclaim':
             sub.add_argument('--resume', metavar='TEXT', type=nonempty,
                              help='hand back your own work in progress unfinished, with its next action (work that waits on something: agents board wait)')

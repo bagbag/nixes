@@ -20,9 +20,10 @@ findings or stops. A challenge follows [Challenge](#challenge) in place of
 steps 3-7.
 
 1. **Claim.** `agents board claim` for your pull or `agents board claim <id>` for a named
-   CR or task. It prints `author <actor>` or `author unknown`: you are independent unless you are that doer; a fresh-context worker of
-   the same session suffices. Review a CR in its worktree as the author left
-   it.
+   CR or task. It prints `author <actor>` or `author unknown`: you are independent unless you are that doer or the session whose
+   worker it is (you briefed it); a fresh-context worker of the same session suffices, and the board refuses the others. Only on
+   the user's explicit word do you review your own: `agents board claim <id> --agreed "<what they said>"`. Review a CR in its
+   worktree as the author left it.
    Output: `claimed <id>; author <actor>; independent`, or
    `claimed <id>` for a challenge's review task.
 2. **Read.** The CR's acceptance and items, its brief, the released rulings
