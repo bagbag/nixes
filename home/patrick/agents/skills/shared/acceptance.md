@@ -50,18 +50,16 @@ open), sized to stakes; a role protocol may tighten it.
   runs an outcome's acceptance at its close.
 - Scope evidence to the change's own effects and their consumers; attribute
   failures outside it to their cause instead of fixing them.
-- Scope a gate to the change: targeted for isolated changes, whole-repository
-  for cross-cutting changes, at agreed milestones and at final acceptance.
-  With a red baseline, target the touched surfaces the broken gate would cover.
-- Run each gate once per tree, at hand-over: on a board the handover runs the
-  whole-repository check and stores it for the tip; without a board, run it
-  once before hand-back. Run no tests while implementing, except to see a
-  new test fail once where the Tests rule in AGENTS.md asks for it (a fixed
-  bug's repro, a setup that may not reach the code, an assertion another
-  path satisfies) and before an irreversible write; after a failed check, run
-  the failing tests to fix it, then hand over again. Reviewers and deciding
-  sessions read the stored result; a pass on the same tree and base is never
-  rerun, except a reviewer's reproduction of a decisive check (first bullet).
+- Without a board, scope the hand-back run to the change: targeted for
+  isolated changes; whole-repository for cross-cutting ones, at agreed
+  milestones and at final acceptance. With a red baseline, target the touched
+  surfaces the broken gate would cover.
+- Run each gate once per tree, at hand-over; on a board, the handover's stored
+  check is that run. While implementing, run only a new test's first run where
+  the Tests rule in AGENTS.md asks for it, and checks before an irreversible
+  write; after a failed check, run the failing tests, then hand over again.
+  Read the stored result instead of rerunning a pass on the same tree and
+  base; reproduce a decisive check only under the first bullet.
 - A whole-project check in an item's criteria, failing for others' reasons,
   means no new errors from the item's change: compare the errors before and
   after, tracing new ones to their files; an item with no
