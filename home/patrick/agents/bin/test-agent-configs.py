@@ -5202,6 +5202,8 @@ def validate_board(root: Path) -> None:
                     or ["comments", "add", "fx-ovo.c2", "board handover: pnpm test: 0 failures"] not in fake.writes() \
                     or not any("check_result=pass" in args and f"check_base_tip={main_tip}" in args and f"check_tip={cr_tip}" in args for args in fake.writes()):
                 raise ValueError(f"board handover: {code} {fake.writes()} {errors}")
+            if "next: waits on agent review by a fresh worker" not in output:
+                raise ValueError(f"board handover must name whose turn is next: {output}")
             # A design-only CR is handed over like any other: its closed design item stays closed, an open one refuses the hand-over.
             class StatusWrites(Fake):
                 def __call__(self, command, **kwargs):
@@ -6690,6 +6692,22 @@ def validate_board(root: Path) -> None:
                 fake = Fake(issues)
                 if invoke(["take", "a1"], fake, "solo0001")[0] != 0 or not fake.writes():
                     raise ValueError("another session must be able to take the review")
+                # A fresh worker of the author's session reviews; the session itself does only on the user's word, commented.
+                fake = Fake(issues)
+                code, output, errors = invoke(["claim", "a1"], fake, "cccc3333/fresh001")
+                if code != 0 or not any(w[:2] == ["update", "a1"] for w in fake.writes()) or any(w[:2] == ["comments", "add"] for w in fake.writes()):
+                    raise ValueError(f"a fresh worker of the author's session must claim the review, uncommented: {code} {output} {errors} {fake.writes()}")
+                fake = Fake(issues)
+                code, output, errors = invoke(["claim", "a1", "--agreed", "review it yourself"], fake, "cccc3333")
+                if code != 0 or not any(w[:3] == ["comments", "add", "a1"] and "agreed: review it yourself" in " ".join(w) for w in fake.writes()):
+                    raise ValueError(f"the user's word must let the author's session claim its review, commented: {code} {output} {errors} {fake.writes()}")
+                fake = Fake(issues)
+                code, _, errors = invoke(["take", "a1", "--agreed", "review it yourself"], fake, "cccc3333")
+                if code != 0 or not fake.writes():
+                    raise ValueError(f"the user's word must let the author's session take its review: {code} {errors}")
+                code, _, errors = invoke(["claim", "--agreed", "x"], Fake(issues), "cccc3333")
+                if code == 0 or "--agreed names" not in errors:
+                    raise ValueError(f"a bare claim must refuse --agreed: {code} {errors}")
 
                 cache_dir = Path(git("rev-parse", "--path-format=absolute", "--git-common-dir")) / "board-base-checks"
                 tip_now = git("rev-parse", "main")

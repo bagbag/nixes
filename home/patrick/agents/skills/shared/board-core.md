@@ -142,9 +142,9 @@ On a shared board (`.beads/board-shared.json` exists):
 - Create items with one `agents board create --graph <plan.json>` per wave (a single item: `agents board create <title> --parent <cr> --description-file …`). Let Beads
   generate every id; confirm creation before creating dependents. A found
   record carries `--found-in <id>`.
-- When an open item becomes redundant, move its leftover work into the owning
-  item's `--acceptance`; then, as for an exact duplicate, `agents board link <id> <owner> relates-to` and close it
-  `dropped`, naming the owner.
+- When an open item becomes redundant or turns out an exact duplicate, move its leftover work into the owning
+  item's `--acceptance`; then `agents board link <id> <owner> --type relates-to` and
+  `agents board close <id> --outcome dropped --reason "<owner> covers it: …"`.
 
 ### Questions and rulings
 

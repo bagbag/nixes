@@ -3496,6 +3496,8 @@ def claim(board: Board, args) -> int:
     else:
         if args.force is not None:
             raise BoardError('--force holds a named item past your worker cap: agents board claim <id> --force "<reason>"')
+        if args.agreed is not None:
+            raise BoardError('--agreed names the change request you review on the user\'s word: agents board claim <id> --agreed "<what they said>"')
         kinds, passed = claim_kinds(board, entry, actor), []
         scoped = board.listed(args.root)
         for issue in claim_candidates(board, scoped, kinds, actor, entry, passed):
@@ -3522,7 +3524,7 @@ def claim(board: Board, args) -> int:
         inherited = effective_priority(board, issue)
         counts_as = f"; P{issue.get('priority', 9)}, counts as P{inherited[0]}: {'its item' if inherited[2] else 'blocks'} {inherited[1]}" if inherited[1] else ''
         print(f"claimed {issue['id']} ({kind}{by}{counts_as}): {issue.get('title', '')}")
-        if args.agreed and kind == 'review':
+        if args.agreed and kind == 'review' and self_review_refusal(issue, actor):
             comment(issue['id'], f'board claim: {actor} reviews its own hand-over (agreed: {args.agreed}).')
         if kind == 'refresh':
             print(f"  refresh work: agents board cr refresh {issue['id']}, then agents board unclaim {issue['id']}")
@@ -5162,7 +5164,13 @@ def handover(board: Board, args) -> None:
         move(cr, 'handover', board=board, fields={'no_agent_review_reason': None, 'reviewing_tip': None, HOLD: None, AUTHOR: actor})
         comment(args.id, HANDOVER + args.evidence)
         print(f'handed over {args.id} for review ({check_said(args)} on {result["tip"][:12]})')
-        after = 'lands on its pass' if cr_look(board, cr) == 'after' else "then the user's Accept"
+        base = cr_base(board, cr, main)[0]
+        if board.is_cr(base):
+            after = f'then it waits for its base {base} to land'
+        elif look == 'after' or no_own_commits(main, cr, result['tip']):
+            after = 'it lands on its pass'
+        else:
+            after = "then the user's Accept"
         print(f'next: waits on agent review by a fresh worker, not you (agents board claim {args.id}); {after}')
         return
     comment(args.id, f'board pass: {args.evidence}')
