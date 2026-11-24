@@ -491,6 +491,8 @@ def table_refusal(board: Board, issue: dict, command: str) -> str | None:
 def item_write_refusal(board: 'Board | None', issue: dict, command: str, actor: str | None) -> str | None:
     """Why the caller may not write this item: the Authority check of `move`, read on the change request that holds it (ITEM_WRITE, ITEM_WAIT
     for a wait or its removal). A change request nobody holds is claimed first, unless the user or a deciding session writes."""
+    if board is not None:
+        board.read_whole(board.parents.get(issue['id'], []))  # a stub parent would pass for an unheld one, or for no change request
     if board is None or group_of(board, issue) != ITEM_GROUP:
         return None
     cr_id = board.cr_of(issue['id'])
@@ -503,6 +505,17 @@ def item_write_refusal(board: 'Board | None', issue: dict, command: str, actor: 
         return None
     message = (f"{issue['id']}: " + refusal.removeprefix(f'{cr_id}: ')).replace('; it is held by', f'; its change request {cr_id} is held by')
     return message if cr.get('assignee') else f'{message}; nobody holds its change request {cr_id}: claim it first (agents board claim {cr_id})'
+
+
+def write_fields(board: 'Board', ids: list[str], flags: list[str], command: str = 'update', actor: str | None = None) -> None:
+    """The one write of record fields (title, priority, labels, the long fields, settings and metadata given with them): the hold rule on every
+    item of a change request (item_write_refusal, as `move` reads it), then one bd update. Status and holder: move; parents and links: write_edges;
+    the board's own bookkeeping metadata: put_meta. bin/test-agent-configs.py pins the writers."""
+    who = (actor if actor is not None else derived_actor()) or None
+    for item_id in ids:
+        if refusal := item_write_refusal(board, board.by_id[item_id], command, who):
+            raise BoardError(refusal)
+    bd_checked('update', *ids, *flags, '--json')
 
 
 CLOSE_REASON_MIN = 20  # bd refuses a shorter close reason
@@ -1361,6 +1374,12 @@ class Board:
             work = self.milestone_work(root) | {root}
             return [issue for issue in self.issues if issue['id'] in work]
         return [issue for issue in self.issues if root in self.ancestors(issue['id'])]
+
+    def read_whole(self, item_ids) -> None:
+        """Replaces the stubs of these records (an ids read holds its items' neighbours as stubs, without holder or type) with the records."""
+        stubs = sorted({i for i in item_ids if i in self.by_id and i not in self._loaded})
+        for record in bd_show(stubs, comments=False) if stubs else []:
+            self.by_id[record['id']] = record
 
     def routing(self, item_id: str) -> tuple[list[str], list[str]]:
         """(labels, parents) of an item, reading ancestors the snapshot lacks (a status read holds no closed items) in one call."""
@@ -2988,7 +3007,7 @@ def field_apply_one(board: Board, item_id: str, names: list[str] | None) -> list
         refusal = size_refusal(issue, {FIELDS[name]: text for name, text in changes.items()})
         if refusal:
             raise BoardError(f'{refusal} Nothing applied for {item_id}; your files stay.')
-        bd_checked('update', item_id, *flags, '--json')
+        write_fields(board, [item_id], flags)  # an item of a held change request is its holder's to write (nixes-cs2mp)
         for name, text in changes.items():
             old = issue.get(FIELDS[name]) or ''
             folder.drop(name)
@@ -3350,9 +3369,9 @@ def mark_forced(issue: dict, actor: str, reason: str | None) -> None:
     """Record a hold past the cap with its reason; a hold within it drops a mark the item's earlier holder left."""
     metadata = issue.get('metadata') if isinstance(issue.get('metadata'), dict) else {}
     if reason is not None:
-        bd_checked('update', issue['id'], '--set-metadata', f'{FORCED_BY}={actor}', '--set-metadata', f'{FORCED_REASON}={reason}', '--json')
+        put_meta(issue, **{FORCED_BY: actor, FORCED_REASON: reason})
     elif FORCED_BY in metadata:
-        bd_checked('update', issue['id'], '--unset-metadata', FORCED_BY, '--unset-metadata', FORCED_REASON, '--json')
+        put_meta(issue, **{FORCED_BY: None, FORCED_REASON: None})
 
 
 def held_skips(board: Board, scoped: list[dict], kinds: list[str], actor: str) -> list[str]:
@@ -6490,7 +6509,23 @@ def create_plan(plan: dict, board: Board | None, verb: str = 'create', holds: li
     (`board` holds the existing ends; `verb` writes them) before anything is written; atomic (bd rolls the whole plan back). Returns ({key: id},
     the waits apply_waits writes); `dry_run`: the checks only, no ids."""
     links, types = plan_links(plan)
-    _, waits = edge_rules(board, links, verb, types, holds, plan_parents(plan, links))
+    parents = plan_parents(plan, links)
+    for node in plan['nodes']:  # a work task files in an open change request, or commits nothing and stands outside every one (model.md Types)
+        if (node.get('type') or WORK_TYPE) != WORK_TYPE:
+            continue
+        if (node.get('metadata') or {}).get(NO_COMMIT) is True:
+            if node['key'] in parents:
+                raise BoardError(f"{node['key']}: work that commits nothing stands outside any change request: drop --parent, or drop --no-commit to file it in one")
+            continue
+        found = [types.get(parent) and {'id': parent, 'issue_type': types[parent], 'status': 'open'}
+                 or (board.by_id.get(parent) if board else None) or next(iter(bd_show([parent], comments=False)), None) for parent in parents.get(node['key'], [])]
+        requests = [record for record in found if record and record.get('issue_type') == CR_TYPE]
+        if not requests:
+            raise BoardError(loose_work_refusal(node['key']))
+        if closed := [record['id'] for record in requests if record.get('status') == 'closed']:
+            raise BoardError(f"{node['key']}: change request {', '.join(closed)} is closed (landed or dropped): an item under it would be reached by no queue; "
+                             'file the work in an open change request')
+    _, waits = edge_rules(board, links, verb, types, holds, parents)
     if dry_run:
         return {}, waits
     with tempfile.NamedTemporaryFile('w', suffix='.json', encoding='utf-8', delete=False) as handle:
@@ -6610,7 +6645,7 @@ def record(board: Board, args) -> int:
     if args.unratified:
         reversal = section_text({'description': text}, 'description', 'Reversal')
         confirmation = unratified_confirmation(board, issue, reversal)
-    bd_checked('update', args.id, '--body-file', args.file, '--json')
+    write_fields(board, [args.id], ['--body-file', args.file], 'ruling record')
     # Revision links before the supersedes: `ruling release` refuses an old a live record revises, so a stop before the end leaves a visible state the rerun finishes.
     move(issue, 'ruling record --unratified' if args.unratified else 'ruling record', board=board)  # the status by compare-and-set, then the links
     write_edges(board, 'ruling', f'board ruling record {args.id}', *operations)
@@ -6847,7 +6882,7 @@ def update_command(board: Board, args) -> int:
     leaves to bd, with the board's value rules: labels the board routes on (queue:, for:) change through send, route and create --for; a parent
     a parent moves through `move`; a step for a person is a human gate (gate create)."""
     known_items(board, args.ids)
-    for item_id in args.ids:
+    for item_id in args.ids:  # refused before the value rules; write_fields checks again at the write
         if refusal := item_write_refusal(board, board.by_id[item_id], 'update', derived_actor()):
             raise BoardError(refusal)
     changes = []
@@ -6863,7 +6898,7 @@ def update_command(board: Board, args) -> int:
     if not changes:
         raise BoardError('nothing to change: give --title, --priority, --label, --unlabel, --no-commit, --look or --view '
                          '(long fields: agents board field; claim: agents board claim)')
-    bd_checked('update', *args.ids, *changes, '--json')
+    write_fields(board, args.ids, changes)
     for item_id in args.ids:
         print(f'{item_id}: updated')
     return 0
@@ -7038,7 +7073,11 @@ def gate_create(args) -> int:
     if args.for_:
         created = re.search(r'Created gate (\S+)', out)
         label = FOR_PREFIX + args.for_
-        if not created or bd('update', created[1], '--add-label', label, '--json').returncode != 0:
+        try:
+            routed = bool(created) and write_fields(Board.load('ids', [created[1]]), [created[1]], ['--add-label', label]) is None
+        except BoardError:
+            routed = False
+        if not routed:
             raise BoardError(f'the gate stands but is not routed to {args.for_}: agents board bd --raw --yes update <gate id> --add-label {label}')
     return 0
 
@@ -7752,7 +7791,7 @@ def route(board: Board, args) -> int:
         flags = [flag for label in queue_labels(labels) + filed if label != target for flag in ('--remove-label', label)]
         flags += ['--add-label', target] if target not in labels else []
         if flags:
-            bd_checked('update', issue['id'], *flags, '--json')
+            write_fields(board, [issue['id']], flags, 'route')
         print(f"routed {issue['id']} to {args.person}'s queue" + (' (out of the inbox)' if filed else ''))
     return 0
 
@@ -7773,7 +7812,7 @@ def send(board: Board, args) -> int:
                  for flag in ('--remove-label', label)]
         flags += ['--add-label', target] if target not in labels else []
         # Every send stamps the time, a pass-on and a repeat included: the inbox shows how long an item waited there (r38-q217).
-        bd_checked('update', issue['id'], *flags, '--set-metadata', f"{SENT_AT}={stamp()}", '--json')
+        write_fields(board, [issue['id']], [*flags, '--set-metadata', f"{SENT_AT}={stamp()}"], 'send')
         print(f"sent {issue['id']} to {args.person}'s inbox")
     return 0
 
@@ -7923,15 +7962,6 @@ def create_command(args) -> int:
             raise BoardError(f'{waiter} waits on {target}, which is unknown')
     named = parse_holds(holds_value) if holds_value is not None else []
     parents = plan_parents(plan, links)
-    for node in nodes:
-        if (node.get('type') or WORK_TYPE) != WORK_TYPE:
-            continue
-        if (node.get('metadata') or {}).get(NO_COMMIT) is True:
-            if node['key'] in parents:
-                raise BoardError(f"{node['key']}: work that commits nothing stands outside any change request: drop --parent, or drop --no-commit to file it in one")
-        elif not any((types.get(parent) or ((found := bd_show([parent], comments=False)) and found[0].get('issue_type'))) == CR_TYPE
-                     for parent in parents.get(node['key'], [])):
-            raise BoardError(loose_work_refusal(node['key']))
     existing = named or any(waiting not in types or (blocking(kind) and (waiting in parents or other not in types)) for waiting, other, kind in links)
     deck = Board.load('all') if existing else None
     _, waits = create_plan(plan, deck, 'create', named, dry_run=True)  # before anything is created

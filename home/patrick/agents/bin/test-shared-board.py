@@ -748,6 +748,22 @@ def t_writers() -> None:
     check(rc != 0 and held in err and not any(i.get('issue_type') == 'gate' and i['status'] == 'open' for i in items('a').values()),
           "F2: a gate on an item of a request another session holds is refused like its wait", err)
 
+    # F4 (nixes-cs2mp): field apply on an item of a held request follows update's write rule.
+    for role in ('agent', 'lead'):
+        rc, _, err, _ = set_field('a', other_item, 'notes', f'notes by {role}', role=role)
+        check(rc != 0 and held in err and items('a')[other_item].get('notes', '') != f'notes by {role}', f'F4: field apply by a non-holder {role} is refused', err)
+        run('a', 'field', 'discard', other_item, role=role)
+    rc, _, err, _ = set_field('a', other_item, 'notes', 'notes by the holder', role='solo')
+    check(rc == 0 and items('a')[other_item].get('notes') == 'notes by the holder', 'F4: the holder applies a field', err)
+
+    # F5 (nixes-i4pl3, nixes-308o2): create files into an open change request; a planner or deciding session may file into a held one.
+    rejected = create('a', 'F5 request rejected')
+    check(run('a', 'cr', 'reject', rejected, 'the work is moot')[0] == 0, 'F5: a request is rejected')
+    rc, _, err, _ = run('a', 'create', 'filed under a rejected request', '-t', 'task', '--description', 'x', '--parent', rejected)
+    check(rc != 0 and rejected in err and not any(i.get('title') == 'filed under a rejected request' for i in items('a').values()), 'F5: create refuses a closed change request as parent', err)
+    for role in ('agent', 'lead'):
+        rc, _, err, _ = run('a', 'create', f'filed by {role} into a held request', '-t', 'task', '--description', 'x', '--parent', held, role=role)
+        check(rc == 0, f'F5: a {role} files an item into a request solo holds', err)
     run('a', 'unclaim', held, '--resume', 'writer tests done', role='solo')
 
 

@@ -8288,6 +8288,14 @@ else:
                 stray.append(f"{source.name} writes through raw bd")
         if stray:
             raise ValueError(f"every edge write goes through write_edges (bin/board), creations through edge_rules: {stray}")
+        # Fields: every other bd update is write_fields (under item_write_refusal, nixes-cs2mp), put_meta (the board's bookkeeping metadata) or move.
+        stray = [] if runs("write_fields", "item_write_refusal") else ["write_fields does not run item_write_refusal"]
+        stray += [f"{function.name}:{node.lineno} bd update" for function in functions if function.name not in ("move", "put_meta", "write_fields", "write_edges")
+                  for node, words in bd_calls(function) if words[:1] == ["update"]]
+        stray += [f"write_edges:{node.lineno} bd update without --parent" for function in functions if function.name == "write_edges"
+                  for node, words in bd_calls(function) if words[:1] == ["update"] and "--parent" not in words]
+        if stray:
+            raise ValueError(f"every field write goes through write_fields (bin/board): {stray}")
         # bd edit blocks on an editor: refused in one line naming the way on; a user's own --readonly is just bd's flag.
         result, seen = run_board("bd", "edit", "x")
         if result.returncode != 2 or seen or "agents board field export <id>" not in result.stderr or len(result.stderr.strip().splitlines()) != 1:

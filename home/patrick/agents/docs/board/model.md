@@ -134,14 +134,14 @@ Guards: `reason` (a non-blank reason), `items-closed` (no open item), `look-befo
 
 ## Authority
 
-The table's `Who` column is the authority; this is its shape. Item writes (close, reopen, wait) read the CR that holds the item.
+The table's `Who` column is the authority; this is its shape. Item writes (close, reopen, wait, move, and every field write: `update`, `field apply`) read the CR that holds the item; one writer per write kind applies it (`move`, `write_edges`, `write_fields` in `bin/board`).
 
 - A session claims, hands over and unclaims its work. Its workers hold under its actor. Deciding sessions are `lead`, `solo` and `autopilot` (`DECIDING_ROLES`).
 - Review claim, pass and Return follow the `non-author` word; every claim path checks it.
 - Authority follows what a move risks, as the unattended protocol classes it. Two-way moves (sending a passed CR back to review, the Return of a `passed` CR) are for any deciding session, autopilot included, or the user. The `attended` word (a lead or solo session, or the user) covers the moves autopilot leaves to the user: rejecting a CR (one-way: it closes, and no CR reopen exists), releasing a ruling, closing or reopening a gate, and claiming, taking, closing or reopening a milestone. Accept (landing a `passed` look-before CR) is the user's through a lead or solo session (landing is `anyone` in the table; its command is the gate).
 - Taking or freeing another session's hold: the user, or a deciding session once the holder is gone (`--agreed` records the user's word).
 - Planner Return on a ruling, and defer and undefer of its own deferrals: a session pulling plan. Undeferring a user's deferral (or one that records no deferrer) needs the user, through a lead or solo session; autopilot undefers only its own.
-- The writes to an item of a CR nobody holds come from the user, a deciding session or a planner (a session pulling plan: its waits, moves, updates and closes of items); any other session claims the CR first. A planner never writes an item of a held CR: it comments the change on the CR, and its ruling stays in force until the hold ends. A deciding session also waits an item of a held CR.
+- The writes to an item of a CR nobody holds come from the user, a deciding session or a planner (a session pulling plan: its waits, moves, updates and closes of items); any other session claims the CR first. A planner never writes an item of a held CR: it comments the change on the CR, and its ruling stays in force until the hold ends. A deciding session also waits an item of a held CR. Filing a new item into a CR needs an open one (`create --parent` refuses a landed or dropped CR); a planner or a deciding session may file into a CR another session holds (nixes-308o2), and handover then refuses until the holder closes it or a deciding session moves it.
 - Exceptions the table does not carry: autopilot never accepts or ratifies (acceptance needs the user; the unattended protocol owns it; `autopilot_barred` keeps it out of the queue's accept work) and runs the agent rows unattended; `MODEL_EXEMPT` names the writes that need no marker.
 
 ## Holding
@@ -208,7 +208,7 @@ part of (item in its CR, CR in a milestone), supersedes, context (`relates-to`, 
 7. A user step ("rotate the API key" before deploy) → a human gate the CR waits on; it shows in the user's view.
 8. A worker crashes holding a CR → a deciding session takes the dead session's hold; a CR whose items are all closed is ready for handover.
 9. Two sessions claim at once → compare-and-set lets one win.
-10. A planner adds an item mid-work → handover refuses until the worker closes it or the planner moves it; nothing is closed unseen.
+10. A planner adds an item mid-work → handover refuses until the holder closes it or a deciding session moves it; nothing is closed unseen.
 11. A duplicate: `link <dup> <original> --type relates-to`, then `close <dup> --outcome dropped --reason "duplicate of <original>: …"`; the original stays open and the link stays.
 
 ## Operation notes
