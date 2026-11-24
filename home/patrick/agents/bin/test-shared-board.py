@@ -93,11 +93,14 @@ def board_create_args(args: tuple[str, ...], stdin: str | None) -> tuple[list[st
     return (out + ['--description-file', '-'], text) if text is not None else (out, stdin)
 
 
-def run(side: str, *args: str, role: str | None = 'lead', stdin: str | None = None, timeout: float = 200):
+def run(side: str, *args: str, role: str | None = 'lead', stdin: str | None = None, timeout: float = 200, filed: bool = True):
     if args[:1] == ('create',) and '--id' in args:
         return raw(side, *args)
     if args[:1] == ('create',):
         converted, stdin = board_create_args(args[1:], stdin)
+        kind = next((converted[at + 1] for at, arg in enumerate(converted) if arg in ('-t', '--type')), 'task')
+        if filed and kind == 'task' and not {'--parent', '--no-commit', '--graph'} & set(converted):
+            converted.append('--no-commit')  # work files in a change request or commits nothing: the tests that are not about the refusal file the second
         args = ('create', *converted)
     env = base_env(side)
     if role:
@@ -409,8 +412,8 @@ def t_child_ids() -> None:
     check(rc != 0, 'child ids: an unknown parent fails', out)
     # Links (real bd): a blocking edge between two new work items is bd's own write; a pair with another link kind refuses before record writes.
     plan = ROOT / 'links-plan.json'
-    plan.write_text(json.dumps({'nodes': [{'key': 'one', 'title': 'first new task', 'type': 'task', 'description': 'x'},
-                                          {'key': 'two', 'title': 'second new task', 'type': 'task', 'description': 'x', 'waits_on': [{'on': 'one', 'for': 'the first task'}]}],
+    plan.write_text(json.dumps({'nodes': [{'key': 'one', 'title': 'first new task', 'type': 'task', 'description': 'x', 'no_commit': True},
+                                          {'key': 'two', 'title': 'second new task', 'type': 'task', 'description': 'x', 'no_commit': True, 'waits_on': [{'on': 'one', 'for': 'the first task'}]}],
                                 'edges': []}))
     rc, out, err, _ = run('a', 'create', '--graph', str(plan))
     made = dict(line.split() for line in out.splitlines() if len(line.split()) == 2)
@@ -1015,7 +1018,7 @@ def t_cr() -> None:
     check(wt(a).parent == side / '.worktrees' and '/.worktrees/' in exclude.read_text().splitlines()
           and '.worktrees' not in git('status', '--porcelain', '--untracked-files=all', cwd=side),
           'cr: the worktree lives in <main>/.worktrees, hidden from git status by the local exclude file', exclude.read_text())
-    loose = bd('a', 'create', 'loose task', '-t', 'task', '--description', 'x', '--silent')[1].strip().splitlines()[-1]
+    loose = create('a', 'loose task', '--status', 'open', kind='task')  # raw: the create verb no longer files work outside a change request
     rc, _, err, _ = run('a', 'claim', loose, role='agent')
     check(rc == 1 and 'move' in err and not items('a')[loose].get('assignee'), 'cr: a work item outside any change request is refused with the fix', err)
     rc, _, err, _ = run('a', 'handover', a, 'too early', role='agent')
@@ -1306,6 +1309,13 @@ def t_cr() -> None:
     found = json.loads(out)['deviations'] if rc == 0 else []
     check(any(d['id'] == kept and d['class'] == 'dropped-blocker' and gone in d['detail'] for d in found), 'drop: check reports a live wait on a record closed dropped', err + out[-400:])
     run('a', 'unlink', kept, gone)
+
+    # Work outside a change request is refused at create and update --commits: a work task files in a CR or commits nothing here.
+    rc, _, err, _ = run('a', 'create', 'loose work', '-t', 'task', '--description', 'x', '--silent', filed=False)
+    check(rc != 0 and '--parent' in err and '--no-commit' in err, 'loose: create refuses a work task outside a change request, naming --parent and --no-commit', err)
+    probe_task = create('a', 'a probe', '--no-commit', kind='task')
+    rc, _, err, _ = run('a', 'update', probe_task, '--commits')
+    check(rc != 0 and 'outside a change request' in err and (items('a')[probe_task].get('metadata') or {}).get('no_commit') is True, 'loose: update --commits refuses to make a probe loose work', err)
 
     f = create('a', 'direct user review')
     f1 = task(f, 'F item')

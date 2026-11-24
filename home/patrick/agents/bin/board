@@ -6835,6 +6835,8 @@ def setting_changes(board: Board, args) -> list[str]:
             raise BoardError(f"{item_id}: {issue['status']}; a change request's settings change while it is open")
         if args.no_commit is False and kind != WORK_TYPE:
             raise BoardError(f'{item_id}: --commits takes a task')
+        if args.no_commit is False:  # it sits in no change request (checked above), so committing work would be loose
+            raise BoardError(loose_work_refusal(item_id, 'update --commits'))
         if cr_given and kind != CR_TYPE:
             raise BoardError(f'{item_id}: look and view are change request settings')
         given = {**({NO_COMMIT: True} if args.no_commit else {}), **{name: value for name, value in cr_given.items() if value}}
@@ -7824,6 +7826,12 @@ def for_person(plan: dict, target: str) -> None:
         node['labels'] = [*(node.get('labels') or []), f'{FOR_PREFIX}{target}', f'{QUEUE_PREFIX}{me}']
 
 
+def loose_work_refusal(name: str, verb: str) -> str:
+    """Work that commits here belongs to a change request (model.md Types); only a no-commit task stands outside one."""
+    return (f'{name}: {verb} would leave work outside a change request: file it in one (--parent <change request>, a graph node\'s parent; '
+            f'agents board move <id> --to <change request> for an existing task), or --no-commit for work that commits nothing to this repository')
+
+
 def create_command(args) -> int:
     """`board create`: the board-owned flags describe one node of a graph plan, or `--graph <plan.json>` is the whole plan; either way
     the plan passes the board's checks (types, the project-default look, decisions naming what they hold up, queue labels, `--for`,
@@ -7873,6 +7881,9 @@ def create_command(args) -> int:
             raise BoardError(f'{waiter} waits on {target}, which is unknown')
     named = parse_holds(holds_value) if holds_value is not None else []
     parents = plan_parents(plan, links)
+    for node in nodes:
+        if (node.get('type') or WORK_TYPE) == WORK_TYPE and node['key'] not in parents and (node.get('metadata') or {}).get(NO_COMMIT) is not True:
+            raise BoardError(loose_work_refusal(node['key'], 'create'))
     existing = named or any(waiting not in types or (blocking(kind) and (waiting in parents or other not in types)) for waiting, other, kind in links)
     deck = Board.load('all') if existing else None
     _, waits = link_rules(deck, links, 'create', types, named, parents)  # before anything is created
@@ -7907,7 +7918,7 @@ EXAMPLES = {
     'move': 'agents board move <item> <item> --to <change request>  |  agents board move <change request> --to <milestone>',
     'route': 'agents board route ben <id> <id>',
     'send': 'agents board send ben <id>',
-    'create': 'agents board create "Login fails on Safari" --label kind:bug --description-file report.md [--for ben] [--parent <id>] [--label a,b] [--dry-run]  |  agents board create --graph plan.json [--dry-run]',
+    'create': 'agents board create "Login fails on Safari" --parent <change request> --label kind:bug --description-file report.md [--label a,b] [--dry-run]  |  agents board create --no-commit "Run the migration probe"  |  agents board create --graph plan.json [--dry-run]',
     'health': 'agents board health --items ready,blocked',
     'position': 'agents board position --limit 20  (--limit 0: every row)',
     'holders': 'agents board holders --root <milestone or change request>',

@@ -3134,7 +3134,6 @@ def validate_board(root: Path) -> None:
             cr = {**fixture[0], "id": "fx-cr", "title": "A CR", "issue_type": "change-request", "status": "open", "assignee": None, "dependencies": [], "metadata": {}}
             for argv, issues, want in (
                     (["update", loose, "--no-commit"], fixture, ["update", loose, "--set-metadata", "no_commit=true", "--json"]),
-                    (["update", loose, "--commits"], no_commit, ["update", loose, "--unset-metadata", "no_commit", "--json"]),
                     (["update", "fx-cr", "--look", "after", "--view", ""], [*fixture, cr],
                      ["update", "fx-cr", "--set-metadata", "look=after", "--unset-metadata", "view", "--json"])):
                 fake = Fake(issues)
@@ -3144,7 +3143,8 @@ def validate_board(root: Path) -> None:
             for argv, issues, needle in ((["update", loose, ids["Ready task"], "--no-commit"], fixture, "outside any change request"),
                                          (["update", "fx-cr", "--view", "result"], [*fixture, {**cr, "assignee": "lead0001", "metadata": {**cr.get("metadata", {}), "hold": "work"}}], "held by"),
                                          (["update", "fx-cr", "--view", "result"], [*fixture, {**cr, "status": "in_review"}], "while it is open"),
-                                         (["update", loose, "--look", "after"], fixture, "change request settings")):
+                                         (["update", loose, "--look", "after"], fixture, "change request settings"),
+                                         (["update", loose, "--commits"], no_commit, "outside a change request")):
                 fake = Fake(issues)
                 code, _, errors = invoke(argv, fake)
                 if code == 0 or fake.writes() or needle not in errors:
@@ -4723,7 +4723,7 @@ def validate_board(root: Path) -> None:
                 with patch.object(board.subprocess, "run", fake_bd), patch.object(board, "has_board", lambda: True), patch.object(board, "ensure_server", lambda *a: None), \
                         patch.dict(os.environ, {"BEADS_ACTOR": "lead0001", "CODEX_SESSION_ID": "", "CLAUDE_CODE_SESSION_ID": ""}), \
                         contextlib.redirect_stdout(out_bd), contextlib.redirect_stderr(err_bd):
-                    code_bd = board.main(["create", "T", "--description-file", str(description_file), *argv])
+                    code_bd = board.main(["create", "T", "--description-file", str(description_file), *argv, *([] if "--parent" in argv or {"decision", "change-request"} & set(argv) else ["--no-commit"])])
                 return code_bd, out_bd.getvalue(), err_bd.getvalue(), fake_bd
             def without_request():
                 return Creating([{**row, "dependencies": [d for d in row.get("dependencies") or [] if d["type"] != "parent-child"]}
@@ -4753,7 +4753,7 @@ def validate_board(root: Path) -> None:
                         contextlib.redirect_stdout(out_bd), contextlib.redirect_stderr(err_bd):
                     code_bd = board.main(["create", "--graph", str(plan_file), *extra])
                 return code_bd, out_bd.getvalue(), err_bd.getvalue(), fake_bd
-            nodes = [{"key": "q", "title": "q", "type": "decision", "description": "d"}, {"key": "t", "title": "t", "type": "task", "description": "d"}]
+            nodes = [{"key": "q", "title": "q", "type": "decision", "description": "d"}, {"key": "t", "title": "t", "type": "task", "description": "d", "no_commit": True}]
             waiting_t = [nodes[0], dict(nodes[1], waits_on=[{"on": "q", "for": "its ruling"}])]
             code, output, errors, fake = bd_graph({"nodes": waiting_t, "edges": []}, "--holds", ready)
             if code or any((w[:2] == ["update", ready] and w[2:4] == ["--assignee", ""]) for w in fake.writes()) or not any(w[:3] == ["comments", "add", ready] for w in fake.writes()) or not any(w[:3] == ["comments", "add", "fx-task"] for w in fake.writes()) \
@@ -4770,7 +4770,7 @@ def validate_board(root: Path) -> None:
                 raise ValueError(f"--holds ids with a plan are held up by its decision (no refusal): {code} {errors} {fake.writes()}")
             # A wait between two new work items is bd's own write: waits_on becomes the node's dep before bd sees the plan, its for a comment on the
             # waiter, and the sentence is printed; a dry run prints the sentence and writes nothing.
-            tasks = [dict(node, type="task") for node in nodes]
+            tasks = [dict(node, type="task", no_commit=True) for node in nodes]
             for plan_wait in ({"nodes": [dict(tasks[1], waits_on=[{"on": ids["Spike perf"], "for": "x"}])], "edges": []},):
                 code, _, errors, fake = bd_graph(plan_wait, deck=Graphing(list(variant(**{"Spike perf": {"status": "deferred"}}))))
                 if code != 2 or "deferred" not in errors or any(a[0] == "create" for a, _ in fake.calls):
@@ -8004,7 +8004,9 @@ else:
         env = {k: v for k, v in os.environ.items() if not k.startswith(("CODEX_", "CLAUDE_CODE_SESSION")) and k != "BEADS_ACTOR"}
         env.update(PATH=f"{fake_bin}:{env['PATH']}", CLAUDE_CODE_SESSION_ID="c-9999aaaa")
 
-        def run_fake(*args, stdin="", described=True):
+        def run_fake(*args, stdin="", described=True, filed=True):
+            if filed and args[:1] == ("create",) and not {"--graph", "--parent", "--no-commit", "-h", "--help", "decision", "change-request"} & set(args):
+                args = (*args, "--no-commit")  # work files in a change request or commits nothing; the tests that are not about that file the second
             if described and args[:1] == ("create",) and not {"--description-file", "--body-file", "--graph", "-h", "--help"} & set(args):
                 args = (*args, "--description-file", str(Path(repo, "desc.md")))  # a node needs a description; the tests that are not about it give one
             log.unlink(missing_ok=True)
@@ -8045,6 +8047,15 @@ else:
             result, calls = run_fake("create", *args, described=False)
             if result.returncode != 2 or "needs a description" not in result.stderr or writes_of(calls, "create"):
                 raise ValueError(f"board create {args} without a description must be refused: {result.returncode} {result.stderr!r} {calls}")
+        # work outside a change request is refused at the write, flags and plan nodes alike: --parent, or --no-commit for work that commits nothing here
+        files["bad.json"].write_text(json.dumps({"nodes": [{"key": "a", "title": "A", "description": "d"}]}), encoding="utf-8")
+        for args in (("T",), ("--graph", str(files["bad.json"]))):
+            result, calls = run_fake("create", *args, filed=False)
+            if result.returncode != 2 or "outside a change request" not in result.stderr or writes_of(calls, "create"):
+                raise ValueError(f"board create {args} of loose work must be refused before bd is called: {result.returncode} {result.stderr!r} {calls}")
+        result, calls = run_fake("create", "T", "--no-commit")
+        if result.returncode != 0 or not writes_of(calls, "create"):
+            raise ValueError(f"board create --no-commit files work that commits nothing, outside a change request: {result.returncode} {result.stderr!r} {calls}")
         files["bad.json"].write_text(json.dumps({"nodes": [{"key": "a", "title": "A", "description": "  "}]}), encoding="utf-8")
         result, calls = run_fake("create", "--graph", str(files["bad.json"]))
         if result.returncode != 2 or "needs a description" not in result.stderr or writes_of(calls, "create"):
@@ -8055,13 +8066,13 @@ else:
             raise ValueError(f"a bare --deps id and waits-on: make the new item wait: {result.stderr!r} {calls}")
         result, calls = run_fake("create", "T", "--found-in", "fx-p")  # found-in is a field on the found item, no link
         node = (writes_of(calls, "create")[0]["plan"]["nodes"] or [{}])[0] if writes_of(calls, "create") else {}
-        if result.returncode != 0 or node.get("metadata") != {"found_in": "fx-p"} or node.get("deps"):
+        if result.returncode != 0 or node.get("metadata") != {"found_in": "fx-p", "no_commit": True} or node.get("deps"):
             raise ValueError(f"board create --found-in sets the found_in field and no link: {result.returncode} {result.stderr!r} {calls}")
         result, calls = run_fake("create", "T", "--deps", "parent-child:fx-p")
         if result.returncode != 2 or "--parent" not in result.stderr or writes_of(calls, "create"):
             raise ValueError(f"--deps parent-child: must name --parent: {result.returncode} {result.stderr!r}")
         # a whole plan: its ids print as `key id`; node flags beside it are refused; an unreadable or empty plan too
-        files["plan.json"].write_text(json.dumps({"nodes": [{"key": "a", "title": "A", "description": "d", "type": "task"}, {"key": "b", "title": "B", "description": "d", "type": "task", "parent": "a"}]}), encoding="utf-8")
+        files["plan.json"].write_text(json.dumps({"nodes": [{"key": "a", "title": "A", "description": "d", "type": "task", "no_commit": True}, {"key": "b", "title": "B", "description": "d", "type": "task", "parent": "a"}]}), encoding="utf-8")
         result, calls = run_fake("create", "--graph", str(files["plan.json"]))
         if result.returncode != 0 or result.stdout != "a fx-a-new\nb fx-b-new\n" or writes_of(calls, "create")[0]["plan"]["nodes"][1]["parent"] != "a":
             raise ValueError(f"board create --graph must create the plan and print key and id: {result.returncode} {result.stdout!r} {result.stderr!r}")

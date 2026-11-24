@@ -19,7 +19,7 @@ Absorbs the risk-tiered workflow (release r2). Parts not yet built are marked **
 |---|---|
 | change request | Commit work: one branch, one reviewed range, one Accept. |
 | item | A structured part of exactly one CR (a bd `task` inside a CR). Kind (bug, feature, design, cleanup) is a `kind:` label: no rule reads it. |
-| task | Standalone work that commits nothing (research, a spike, an outside step): a bd `task` outside any CR. |
+| task | Standalone work that commits nothing (research, a spike, an outside step): a bd `task` outside any CR (`--no-commit`). `create`, a graph node and `update --commits` refuse work that would commit outside a CR. |
 | decision | A question, then a ruling; also an agent's two-way choice. |
 | gate | A step only a person takes (`await_type` human; label `for:<person>` on a shared board). Gates are human only: no timer or event gate. |
 | milestone | A goal the user accepts; CRs are parts of it (`agents board move <cr> --to <milestone>`). It waits on nothing. |
