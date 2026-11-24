@@ -61,6 +61,13 @@ def raw(*args: str, stdin: str | None = None) -> str:
     return run(BOARD, 'bd', '--raw', '--yes', *args, stdin=stdin)
 
 
+def comment_once(item_id: str, text: str) -> None:
+    """A comment is permanent: an interrupted step's rerun writes it only when the record does not carry it yet."""
+    comments = json.loads(board('show', '--json', '--field', 'comments', item_id))[item_id].get('comments') or []
+    if text not in [str(c.get('text') or '') for c in comments]:
+        raw('comments', 'add', item_id, text)
+
+
 def git(cwd: Path, *args: str) -> str | None:
     result = subprocess.run(['git', '-C', str(cwd), *args], capture_output=True, text=True)
     return result.stdout.strip() if result.returncode == 0 else None
@@ -288,8 +295,8 @@ def convert_record(entry: dict, main: Path, write: bool, log: list[str]) -> None
     if needs_return:
         log.append(f'{cr_id}: back to open')
         if write:
+            comment_once(cr_id, RETURN_NOTE)  # before the status write: the rerun of a stop between them finds the checkpoint still approved, not returned
             raw('update', cr_id, '--status', 'open', '--assignee', '', '--json')
-            raw('comments', 'add', cr_id, RETURN_NOTE)
     log.append(f'{cr_id}: clear the checkpoint marker')
     if write:
         raw('update', cr_id, '--unset-metadata', 'checkpoint', '--json')
@@ -318,7 +325,7 @@ def add_wait(edge: dict, cr_id: str, main: Path, write: bool, log: list[str]) ->
                               f"{'' if (waiter, via) in waits else ', the old wait is gone'}); stopped before writing")
     log.append(f'{waiter}: wait on {cr_id}')
     if write:
-        raw('comments', 'add', waiter, f'Waits on {cr_id} for the design change request to land (checkpoint conversion)')
+        comment_once(waiter, f'Waits on {cr_id} for the design change request to land (checkpoint conversion)')
         raw('batch', '-m', f'board-migrate {waiter}', '--json', stdin=f'dep add {waiter} {cr_id} blocks\n')
         if (waiter, cr_id) not in read_waits():
             raise ConversionError(f'{waiter}: the wait on {cr_id} is not recorded after the write')

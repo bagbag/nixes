@@ -33,6 +33,12 @@ setup, run `/role autopilot` again.
     their dependents wait. Continue independent tracks.
 - Finished `look` `before` CRs and ready milestones wait for the user's
   Accept; autopilot never accepts or ratifies choices.
+- The moves the board's `attended` word refuses autopilot are the user's to make or hard
+  to undo: rejecting a CR (`cr reject`), releasing rulings (`ruling release`),
+  resolving or reopening a gate (`gate resolve`, `reopen`), claiming, taking over, closing
+  or reopening a milestone, landing (`cr land`, the Accept), moving an item into another person's queue, and undeferring a deferral that is the user's.
+  Park each as a question or report it; do not work around the refusal.
+  Autopilot's own deferrals it undefers itself.
 - Treat public contracts, durable design and substantial downstream work as
   costly to reverse. Before non-trivial action, resolve facts and obtain
   independent assessment; review findings authorize no expansion. Assess scope
@@ -76,9 +82,9 @@ findings or stops.
    `registered autopilot`.
 2. **Execute and reassess:**
    - Work only in CR worktrees; the user's tree and branches stay untouched.
-   - Beyond the recheck triggers in
-     [Evidence and gates](../../shared/acceptance.md#evidence-and-gates), have a non-author
-     rerun the decisive check of every result later work builds on. Satisfy
+   - Read the stored check of every result later work builds on, under
+     [Evidence and gates](../../shared/acceptance.md#evidence-and-gates); a pass
+     on the same tree and base is never rerun. Satisfy
      review and verification gates before dependent work. When retry and
      escalation fail, park with a diagnosis.
    - Treat baseline regressions as blockers to hand-over and acceptance;

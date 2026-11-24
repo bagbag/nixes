@@ -42,8 +42,8 @@ shared board, the user an unshared one (`bd dolt push`/`pull`).
   `<session actor>/<last 8 of its agent id>`. `board` derives it; Claude
   workers get theirs from bd-guard.
 - **Hold:** the holder field, set by claim and never by status. Holdable: a
-  [change request](../shared/change-requests.md#change-requests) (CR), a task
-  and a decision. A session holds a whole CR; an item has no holder of its
+  [change request](../shared/change-requests.md#change-requests) (CR), a task,
+  a decision and a milestone. A session holds a whole CR; an item has no holder of its
   own, so the holder's session and its workers close its items (`agents board
   close <item> --reason "<what>"`); nothing is assigned to the user (a user
   step is a human gate, [Dependencies](#dependencies)).
@@ -200,8 +200,10 @@ labels only classify (`topic:<topic-slug>`, `kind:<kind>`, `export:<capability>`
 label. The statuses, outcomes and transitions by type print from `agents board
 help` and each verb's `--help`; `deferred` is [Deferral](../shared/board-coordination.md#deferrals-and-environment-facts).
 Closing records its outcome: the type's first by default; `close --outcome`
-takes only `done` or `dropped`, the others come from their verbs (land,
-supersede, ruling record, gate resolve).
+takes only `done` or `dropped`, the others come from their verbs (land and
+`cr reject`; `ruling release --closes` and `ruling supersede` write `superseded`;
+a plain close of a ruling writes `planned`, of a milestone `accepted`; `gate
+resolve`). `ruling record` closes nothing and writes no outcome.
 
 ### Dependencies
 

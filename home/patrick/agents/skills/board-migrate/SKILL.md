@@ -123,7 +123,7 @@ intermediate landing.
      looks after would otherwise land it unasked), standalone `in_review` open,
      `released` in_force, a ruling at `needs_ratification` in_force with a
      question to confirm or revise it;
-   - holds on items cleared (one held by the user is listed); legacy holders
+   - holds on items cleared (one held by the user stays held and is listed: its step is a human gate you make); legacy holders
      cleared; a deferred item of a deferred change request is open (the
      deferral holds it), a deferred item of a live one leaves it as the only
      item of a deferred change request of its own, `relates-to` the old one;
@@ -144,16 +144,18 @@ intermediate landing.
    - `defer_until` becomes the `revisit` day and leaves bd; a deferral whose
      reason names a condition (after, until, when, once, waits on, blocked by)
      and an open record becomes a wait on it, the record open;
-   - closed decisions get `superseded` (a supersedes link), `planned` (the
-     close reason starts "planned in") or `dropped`; closed gates `resolved`,
-     closed milestones `accepted`; an open record carries no outcome;
+   - closed decisions get `superseded` (a supersedes link, or a close reason
+     starting "superseded" or "Answered by released"), `planned` (a close reason
+     starting "planned") or `dropped` (starting "dropped"); a closed decision
+     whose reason says none of these is listed, not guessed; closed gates
+     `resolved`, closed milestones `accepted`; an open record carries no outcome;
    - an in-force ruling's waits on work (designs, spikes) become `relates-to`
      links, and the rulings are listed for planning, which makes the work wait
      on the design;
-   - an open epic's children get its topic label and the epic closes;
+   - an open epic's children get its topic label, then the epic closes;
    - an open design or landing ratification is listed, not converted;
    - an open gate that is not a human gate, and an item assigned to the user,
-     become a human gate of the same title that supersedes the old record;
+     become a human gate of the same title that the old record is superseded by;
      waiters move to it; on a shared board it is `for:` the board's person.
    The converter writes no interim form and marks no record it made: grouped
    writes go out as one multi-id `bd update` and one `bd batch` per phase, and
@@ -181,14 +183,21 @@ intermediate landing.
    - a change request in review without an author: another session reviews
      it, or the user passes it;
    - a timer or CI gate, a milestone waiting on something that is no change
-     request: resolve or drop it;
+     request, a work item outside a change request under a live parent, a
+     `defer_until` that is no date, an item of a change request held by the
+     user (make its human gate with `gate create --type=human --blocks <change
+     request>` through `agents board bd --raw --yes`, then clear the hold), a
+     closed ruling listed without an outcome (set `outcome` on it):
+     resolve or drop it;
    - a checkpoint hold: [Checkpoints](#checkpoints) step 3.
    The rulings the converter lists for planning stay in force, related to
    their designs.
+   Rerun `--apply` after the raw writes: a settled form can leave a conversion of its own (a closed gate's outcome, a cleared hold's mark).
    Output: each form's resolution; `agents board check --limit 0` reports no
    deviation.
 6. **Mark.** `convert-stored-forms.py --mark` writes the marker only with
-   nothing left to convert and `agents board check` clean. Tell the user sessions
+   nothing left to convert, none of the step 5 forms left (it lists each that
+   remains), and `agents board check` clean. Tell the user sessions
    may resume.
    Output: `custom.board.model = <MODEL>`.
 
@@ -196,7 +205,7 @@ intermediate landing.
 
 1. **Discover.**
    - Where a board exists, run `agents board check --limit 0` for its mechanical
-     deviations and flags, and save one `agents board bd export` as
+     deviations, and save one `agents board bd export` as
      `board-baseline.jsonl` in the plan's directory (step 2); derive every
      board mapping from it.
    - Inventory what it can't see: backlog and review files, Markdown boards,
@@ -244,7 +253,7 @@ intermediate landing.
    Output: one line per applied part; each moot close with its reason.
 5. **Reconcile.** Compare counts per source with the target and history; read
    back mapped dependencies (`agents board bd dep list <id>`); run `agents board check --limit 0`
-   until it reports no deviation (flags are reported, not required clean);
+   until it reports no deviation;
    resolve every gap.
    Output: reconciliation table.
 6. **Retire.** With counts reconciled, `git mv` replaced trackers to

@@ -398,7 +398,7 @@ CHAT_STDIN = '{"question": "<q id>", "answer": "<the answer>", "quote": "<the us
 EDIT_WORDS = 'a question the edit adds or whose recommendation it changes is checked before it is asked.'
 FORMAT_AGAIN = 'The report format: `protocol show` prints it again.'  # a refused report left out the formats the session was told
 EDIT_FORMAT = f'Edit format: `protocol edit` with stdin {EDIT_STDIN}.'
-DEFER_STDIN = '{"question": "<id>", "quote": "<the user\'s exact words>", "until": "<optional: a date or duration bd reads, e.g. 2026-12-01 or +2w>"}'
+DEFER_STDIN = '{"question": "<id>", "quote": "<the user\'s exact words>", "until": "<optional: a date, e.g. 2026-12-01>"}'
 DEFER_FORMAT = f'Defer format: `protocol defer` with stdin {DEFER_STDIN}.'
 CHAT_FORMAT = f'Chat answer format: stdin {CHAT_STDIN}.'
 

@@ -109,7 +109,7 @@ export type ConsoleCr = {
  */
 export type ConsoleProblem = { kind: string; text: string; next: { action: string; command: string | null; paths: string[] } }
 
-/** What a request or ratification open for your review holds (`board console` `crs[].review`, `ratifications[].review`): `opened` the tip it was opened at; `edited` you made commits after it or have uncommitted changes (null: the board cannot read it, e.g. an amended opened tip); `files` the paths that differ from `opened`. Null: it is not open for review. */
+/** What a request open for your review holds (`board console` `crs[].review`): `opened` the tip it was opened at; `edited` you made commits after it or have uncommitted changes (null: the board cannot read it, e.g. an amended opened tip); `files` the paths that differ from `opened`. Null: it is not open for review. */
 export type ConsoleReview = { opened: string; edited: boolean | null; files: string[] }
 
 /** Where the round stands inside its step: Collect's items, points and classes, Select's candidates, the selection. */

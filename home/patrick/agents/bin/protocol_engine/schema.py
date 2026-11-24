@@ -313,7 +313,7 @@ class Defer:
     a round without a board only notes it."""
     question: Text = req()
     quote: Text = req("the user's exact words asking for it")
-    until: str | None = opt('a date, an offset (+36h, +3d, +2w) or tomorrow')
+    until: str | None = opt('a date (2026-12-01)')
 
 
 @form('say', where='say')

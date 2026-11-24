@@ -3,7 +3,7 @@
 1. The delivering upstream record carries `export:<capability>`. With user
    approval, the waiting session files a missing task or labels/comments an
    existing one:
-   `cd <upstream path> && agents board create <title> -t task --no-commit --label export:<capability>`
+   `cd <upstream path> && agents board create <title> -t task --no-commit --description-file <file> --label export:<capability>`
    (`agents board create` acts on the board of the folder it runs in);
    description names the waiting item. Another person's step there is a human
    gate on their board.
@@ -14,7 +14,7 @@
    (`agents board wait <item> --on <gate>`).
    Output: the gate id.
 3. Upstream runs `agents board bd --raw --yes ship <capability>` at closure. The waiting
-   session resolves the gate (`agents board gate resolve <gate>`; a deciding session or the user, so a planning session asks one) once
+   session resolves the gate (`agents board gate resolve <gate>`; a lead or solo session or the user, so a planning session asks one) once
    `agents board bd -C <upstream path> list --label provides:<capability> --status closed`
    shows the capability.
    Output: gate resolved, or still waiting.

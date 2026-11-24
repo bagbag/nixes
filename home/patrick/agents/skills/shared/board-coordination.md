@@ -30,7 +30,7 @@ milestones, recorded rulings and deferrals. The board model is
 - A member change request brings its items; file work that ships later under
   another milestone.
 - Membership orders work and never cuts it. `agents board claim` order: P0 items,
-  then planning of in-force rulings, then milestone work, then reviewing
+  then planning (in-force rulings, a `plan_first` CR, no-commit tasks), then milestone work, then reviewing
   (CR reviews and refresh work) and accepting, then the rest. Within
   each, priority, then kind (plan, review, refresh, accept, question,
   implement). A record counts
@@ -92,5 +92,5 @@ milestones, recorded rulings and deferrals. The board model is
 
 | Item | Lifecycle |
 |---|---|
-| Deferral | `agents board defer <id> --reason "<why>"`: someday, off the queue, blocked by nothing; `--until <day>` only shows it as due then. For CRs, tasks and questions (an item: move it into its own CR first). A condition on a record or event is a wait ([Dependencies](board-core.md#dependencies)); `defer` refuses one, and nothing waits on a deferred record. Only the deferrer undefers (`agents board undefer`): a planning session its own, the user's through a deciding session. Deferred records are the backlog. |
+| Deferral | `agents board defer <id> --reason "<why>"`: someday, off the queue, blocked by nothing; `--until <day>` only shows it as due then. For CRs, tasks and questions (an item: move it into its own CR first). A condition on a record or event is a wait ([Dependencies](board-core.md#dependencies)); `defer` refuses one, and nothing waits on a deferred record. Only the deferrer undefers (`agents board undefer`): a planning session or autopilot its own, the user's through a lead or solo session. Deferred records are the backlog. |
 | Environment fact | `agents board bd --raw --yes remember --key <key>` (no board command) for temporary repository-wide facts needed by every current session, a user's broad stop (area, paths, kind of action) included with its words and date; state a removal condition; remove with `agents board bd --raw --yes forget`. |

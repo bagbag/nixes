@@ -34,6 +34,7 @@ from typing import Callable
 BOARD = Path(__file__).resolve().parents[3] / 'bin' / 'board'  # agents/bin/board, beside agents/skills
 ACTOR = re.compile(r'[0-9a-f]{8}(/.+)?')
 KIND_OF_TYPE = {'bug': 'bug', 'feature': 'feature', 'design': 'design', 'chore': 'cleanup', 'spike': None}  # old bd type -> its kind label (None: a plain task)
+NOT_LINKS = ('related', 'duplicates', 'until', 'caused-by', 'validates')  # link types the board does not write: the context link is relates-to (a duplicate is that link and a dropped close)
 OLD_WAITS = ('waits-for', 'conditional-blocks')  # old spellings of a wait; bd's own `blocks` is the stored form
 CONDITION = re.compile(r'\b(after|until|when|once|waits? on|blocked by)\b', re.IGNORECASE)  # a deferral reason that named a condition
 HANDOVER = 'board handover: '
@@ -42,6 +43,11 @@ Step = tuple[str, Callable[[], None]]
 
 class Stop(Exception):
     pass
+
+
+class Blocks(str):
+    """A listed form the agent resolves under the skill before --mark: one that is read from the board again on every run until it is settled.
+    The other `for the user:` lines tell what a conversion did or leave a choice that stays open."""
 
 
 def board(*args: str, stdin: str | None = None) -> subprocess.CompletedProcess:
@@ -154,6 +160,14 @@ def update(item_id: str, *flags: str) -> Update:
     return Update(item_id, *flags)
 
 
+def note_once(b: 'Board', item_id: str, text: str) -> Callable[[], None]:
+    """A comment is permanent and never grouped: a rerun of an interrupted step writes it only when the record does not carry it yet."""
+    def add() -> None:
+        if text not in [str(c.get('text') or '') for c in b.issues[item_id].get('comments') or []]:
+            write('comments', 'add', item_id, text)
+    return add
+
+
 GROUP = 100  # ids or lines per grouped call
 
 
@@ -220,7 +234,7 @@ def files(b: Board, left: list[str]) -> list[Step]:
             continue
         parents = [p for p in b.parents.get(item_id, []) if b.issues.get(p, {}).get('status') != 'closed']
         if parents:
-            left.append(f'{item_id}: a work item outside any change request under {", ".join(parents)}; move it into a change request, or mark it no-commit')
+            left.append(Blocks(f'{item_id}: a work item outside any change request under {", ".join(parents)}; move it into a change request, or mark it no-commit'))
             continue
         orphan = take_orphan(free, issue.get('title', item_id))
         steps.append((f'{item_id}: becomes the only item of a change request of its own, marked for planning', lambda issue=issue, orphan=orphan: file_item(issue, orphan['id'] if orphan else None)))
@@ -252,8 +266,11 @@ def holds(b: Board, left: list[str]) -> list[Step]:
     for issue in b.live():
         item_id, holder = issue['id'], issue.get('assignee') or ''
         if b.is_item(issue) and (holder or 'hold' in meta(issue)):
-            if holder == 'user':
-                left.append(f'{item_id}: an item of {b.cr_of(item_id)} was held by you, so its hold is cleared; a step only you take is a human gate (agents board gate create --blocks {b.cr_of(item_id)})')
+            if holder == 'user':  # the hold is the only trace of the user's step: it stays until the agent has made the human gate, so a killed run loses nothing
+                cr = b.cr_of(item_id)
+                left.append(Blocks(f'{item_id}: an item of {cr} is held by you; a step only you take is a human gate: agents board bd --raw --yes gate create --type=human --blocks {cr} '
+                                   f'--reason "<what you do>" --title "<title>", then agents board bd --raw --yes update {item_id} --assignee "" (or close it)'))
+                continue
             steps.append((f'{item_id}: the hold on an item is cleared (holder {holder or "none"})',
                           update(item_id, *(['--assignee', ''] if holder else []), *(['--unset-metadata', 'hold'] if 'hold' in meta(issue) else []))))
         elif holder and not ACTOR.fullmatch(holder) and not (holder == 'user' and issue.get('issue_type') == 'task'):
@@ -415,15 +432,15 @@ def links(b: Board, left: list[str]) -> list[Step]:
                     steps.append((f'{item_id}: its wait on {target} becomes membership ({target} is part of the milestone)',
                                   Lines(item_id, f'dep remove {item_id} {target}', f'dep add {target} {item_id} parent-child')))
                 else:
-                    left.append(f'{item_id}: a milestone waits on {target} ({part.get("issue_type")}), which cannot be part of it: put the work in a change request and move that in, or drop the wait')
+                    left.append(Blocks(f'{item_id}: a milestone waits on {target} ({part.get("issue_type")}), which cannot be part of it: put the work in a change request and move that in, or drop the wait'))
             elif kind in OLD_WAITS:
-                note = lambda i=item_id, t=target, k=kind: write('comments', 'add', i, f'Waits on {t} for an earlier {k} link; the reason is not recorded')  # a comment is one record's text: never grouped
+                note = note_once(b, item_id, f'Waits on {target} for an earlier {kind} link; the reason is not recorded')
                 steps.append((f'{item_id}: the {kind} link to {target} becomes a wait', Seq(note, Lines(item_id, f'dep remove {item_id} {target}', f'dep add {item_id} {target} blocks'))))
             elif kind == 'discovered-from':
                 steps.append((f'{item_id}: discovered-from {target} becomes the found_in field',
                               Seq(update(item_id, '--set-metadata', f'found_in={target}'), Lines(item_id, f'dep remove {item_id} {target}'))))
-            elif kind == 'related':
-                steps.append((f'{item_id}: related {target} becomes relates-to', Lines(item_id, f'dep remove {item_id} {target}', f'dep add {item_id} {target} relates-to')))
+            elif kind in NOT_LINKS:
+                steps.append((f'{item_id}: {kind} {target} becomes relates-to', Lines(item_id, f'dep remove {item_id} {target}', f'dep add {item_id} {target} relates-to')))
     return steps
 
 
@@ -435,7 +452,7 @@ def dates(b: Board, left: list[str]) -> list[Step]:
             try:
                 moment = datetime.fromisoformat(until.replace('Z', '+00:00')).astimezone()
             except ValueError:
-                left.append(f'{issue["id"]}: defer_until {until!r} is not a date; set its revisit date by hand')
+                left.append(Blocks(f'{issue["id"]}: defer_until {until!r} is not a date; set its revisit date by hand'))
                 continue
             if issue['status'] != 'deferred' and not (moment > datetime.now().astimezone() and issue['status'] == 'open' and not issue.get('assignee')):
                 continue  # bd keeps defer_until on a record put back to work: a live record is not parked by a stale date
@@ -466,11 +483,24 @@ def deferrals(b: Board, left: list[str]) -> list[Step]:
             continue
 
         present = {t for t, _ in edges(issue)}
-        notes = [lambda i=item_id, t=target, why=reason: write('comments', 'add', i, f'Waits on {t} for {why[:300]}') for target in named if target not in present]  # a comment is never grouped
+        notes = [note_once(b, item_id, f'Waits on {target} for {reason[:300]}') for target in named if target not in present]
         steps.append((f'{item_id}: the deferral condition becomes a wait on {", ".join(named)} (open again)',  # the edges and the reopening are one batch: the record reopens with its waits
                       Seq(*notes, Lines(item_id, *(f'dep add {item_id} {target} blocks' for target in named if target not in present), f'update {item_id} status=open'))))
         left.append(f'{item_id}: its deferral condition became a wait on {", ".join(named)}; check the wait says what you meant')
     return steps
+
+
+SUPERSEDED_REASON = re.compile(r'\s*(superseded\b|answered by released\b)', re.IGNORECASE)  # what `ruling release --closes` and `ruling supersede` write
+PLANNED_REASON = re.compile(r'\s*planned\b', re.IGNORECASE)  # "Planned in …", "Planned: carried into …": planning closes the ruling it claimed
+DROPPED_REASON = re.compile(r'\s*dropped\b', re.IGNORECASE)
+
+
+def decision_outcome(issue: dict) -> str | None:
+    """A closed decision's outcome from what the record says; None when it says none of the three (the agent settles it, nothing is guessed)."""
+    why = str(issue.get('close_reason') or '')
+    if any(kind == 'supersedes' for _, kind in edges(issue)) or SUPERSEDED_REASON.match(why):
+        return 'superseded'
+    return 'planned' if PLANNED_REASON.match(why) else 'dropped' if DROPPED_REASON.match(why) else None
 
 
 def outcomes(b: Board, left: list[str]) -> list[Step]:
@@ -483,8 +513,10 @@ def outcomes(b: Board, left: list[str]) -> list[Step]:
         elif 'outcome' not in meta(issue):
             outcome = {'gate': 'resolved', 'milestone': 'accepted'}.get(kind)
             if kind == 'decision':
-                outcome = 'superseded' if any(k == 'supersedes' for _, k in edges(issue)) \
-                    else 'planned' if re.match(r'\s*planned in\b', str(issue.get('close_reason') or ''), re.IGNORECASE) else 'dropped'
+                outcome = decision_outcome(issue)
+                if outcome is None:
+                    left.append(Blocks(f'{item_id}: a closed ruling whose close reason maps to no outcome ("{str(issue.get("close_reason") or "")[:100]}"); set it: '
+                                       f'agents board bd --raw --yes update {item_id} --set-metadata outcome=<planned|superseded|dropped>'))
             if outcome:
                 steps.append((f'{item_id}: closed {kind}, outcome {outcome}', update(item_id, '--set-metadata', f'outcome={outcome}')))
     return steps
@@ -497,12 +529,16 @@ def epics(b: Board, left: list[str]) -> list[Step]:
             continue
         topics = [label for label in epic.get('labels') or [] if label.startswith('topic:')]
         topic = topics[0] if topics else 'topic:' + (re.sub(r'[^a-z0-9]+', '-', epic.get('title', '').lower()).strip('-') or epic['id'])
-        for child in b.live():
-            if epic['id'] in b.parents.get(child['id'], []) and topic not in (child.get('labels') or []):
-                steps.append((f'{child["id"]}: topic label {topic} from epic {epic["id"]}', update(child['id'], '--add-label', topic)))
-        steps.append((f'{epic["id"]}: epic closed, its children carry {topic}',
-                      lambda e=epic['id'], t=topic: write('close', e, '--force', '--reason', f'board-migrate: the epic is retired, its children carry {t}')))
+        bare = [child['id'] for child in b.live() if epic['id'] in b.parents.get(child['id'], []) and topic not in (child.get('labels') or [])]
+        steps.append((f'{epic["id"]}: epic closed, its children ({len(bare)} to label) carry {topic}', lambda e=epic['id'], t=topic, bare=bare: retire_epic(e, t, bare)))
     return steps
+
+
+def retire_epic(epic: str, topic: str, bare: list[str]) -> None:
+    """The labels first, the close last: a run that stops between leaves the epic live, so the rerun finds the children still to label."""
+    for at in range(0, len(bare), GROUP):
+        write('update', *bare[at:at + GROUP], '--add-label', topic, '--json')
+    write('close', epic, '--force', '--reason', f'board-migrate: the epic is retired, its children carry {topic}')
 
 
 def shared_person() -> str | None:
@@ -526,7 +562,7 @@ def ratifications(b: Board, left: list[str]) -> list[Step]:
         if old['status'] == 'needs_ratification' and old.get('issue_type') != 'decision':
             cr = b.issues.get(b.cr_of(old['id']) or '', {})
             form = meta(old).get('ratification') or ('landing' if 'landing' in old.get('title', '').lower() else 'design')
-            left.append(f'{old["id"]}: an open {form} ratification of {cr.get("id", "a change request")} ("{old.get("title", "")}"); resolve it under the skill before --mark')
+            left.append(Blocks(f'{old["id"]}: an open {form} ratification of {cr.get("id", "a change request")} ("{old.get("title", "")}"); resolve it under the skill before --mark'))
     return []
 
 
@@ -543,7 +579,7 @@ def human_gates(b: Board, left: list[str]) -> list[Step]:
         if not (user_item or kind == 'gate'):
             continue
         if kind == 'gate' and old.get('await_type'):
-            left.append(f'{item_id}: a {old["await_type"]} gate is no step a person takes; resolve or drop it')
+            left.append(Blocks(f'{item_id}: a {old["await_type"]} gate is no step a person takes; resolve or drop it'))
             continue
         title = re.sub(r'^user\s+', '', old.get('title', ''), flags=re.IGNORECASE).strip() or old.get('title', '')
         steps.append((f'{item_id}: becomes a human gate "{title}" that supersedes it', lambda old=old, title=title: regate(b, old, title)))
@@ -553,7 +589,7 @@ def human_gates(b: Board, left: list[str]) -> list[Step]:
 def regate(now: Board, old: dict, title: str) -> None:
     item_id = old['id']
     human = [g for g in now.issues.values() if g.get('issue_type') == 'gate' and g.get('await_type') == 'human' and g['status'] != 'closed']
-    gate = next((g['id'] for g in human if (item_id, 'supersedes') in edges(g)), None)  # an earlier run got as far as the links
+    gate = next((g['id'] for g in human if (g['id'], 'supersedes') in edges(now.issues[item_id])), None)  # an earlier run got as far as the links
     if gate is None:
         gate = next((g['id'] for g in human if g.get('title') == title and (g['id'], 'blocks') in edges(now.issues[item_id])), None)  # ...or only as far as the gate: one with the title this run gave it, not any human gate the old record waited on
         if gate is None:  # the gate is made holding up the old record, whose waiters then move to it
@@ -572,7 +608,7 @@ def regate(now: Board, old: dict, title: str) -> None:
         for waiter in now.waiters.get(item_id, []):
             if waiter != gate:
                 lines += [f'dep remove {waiter} {item_id}', f'dep add {waiter} {gate} blocks']
-        lines += [f'dep remove {item_id} {gate}', f'dep add {gate} {item_id} supersedes']
+        lines += [f'dep remove {item_id} {gate}', f'dep add {item_id} {gate} supersedes']  # the old record is superseded by the gate: its outgoing link, as `ruling supersede` writes it
         write('batch', '-m', f'board-migrate {item_id}', '--json', stdin='\n'.join(lines) + '\n')
     write('update', item_id, '--set-metadata', f'outcome={"resolved" if old.get("issue_type") == "gate" else "dropped"}', '--assignee', '', '--json')
     write('close', item_id, '--force', '--reason', f'board-migrate: replaced by the human gate {gate}')
@@ -782,10 +818,16 @@ def rehearse() -> int:
 
 
 def mark() -> int:
-    with contextlib.redirect_stdout(io.StringIO()):  # only the count matters here
+    with contextlib.redirect_stdout(io.StringIO()):  # only the count and the forms left matter here
         found, left = run(False)
     if found:
         print(f'{found} conversion(s) remain: run convert-stored-forms.py --apply first', file=sys.stderr)
+        return 1
+    unsettled = [row for row in left if isinstance(row, Blocks)]
+    if unsettled:
+        for row in unsettled:
+            print(row, file=sys.stderr)
+        print(f'{len(unsettled)} form(s) listed for the agent remain: settle each under the skill, then rerun --mark', file=sys.stderr)
         return 1
     deviations = json.loads(read('check', '--json'))['deviations']
     if deviations:
@@ -809,9 +851,9 @@ def main() -> int:
     mode.add_argument('--rehearse', action='store_true', help='convert a copy of this board in a temporary board and report; writes nothing here')
     args = parser.parse_args()
     try:
+        refuse_newer_board()
         if args.rehearse:
             return rehearse()  # the copy gets the current statuses from setup; this board may still lack them
-        refuse_newer_board()
         check_status_custom()
         if args.mark:
             return mark()

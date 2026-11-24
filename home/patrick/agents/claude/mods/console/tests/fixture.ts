@@ -75,7 +75,7 @@ export type World = {
   sessions: unknown[]
   activateError: string | undefined
   items: unknown[]
-  /** `board console` `forYou`: the ready items assigned to the user. */
+  /** `board console` `forYou`: the ready items that are the user's step. */
   forYou: unknown[]
   held: unknown[]
   /** `board console` `crs` (Front B's shape, tests/board-console-contract.ts). */

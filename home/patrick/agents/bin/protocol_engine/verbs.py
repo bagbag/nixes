@@ -189,8 +189,8 @@ def edit_round(ctx: Context, report: dict) -> str:
 DEFERRABLE = ('draft', 'held', 'ready', 'asked', 'answered')
 
 
-# The forms of bd's `defer --until` (bd defer/create --help): checked up front, a bad one cannot be corrected after Record.
-DEFER_UNTIL = re.compile(r'\d{4}-\d{2}-\d{2}|\+\d+[hdwm]|tomorrow')
+# The one form `agents board defer --until` takes (a day): checked up front, a bad one cannot be corrected after Record.
+DEFER_UNTIL = re.compile(r'\d{4}-\d{2}-\d{2}')
 
 
 def defer_round(ctx: Context, report: dict) -> str:
@@ -205,8 +205,8 @@ def defer_round(ctx: Context, report: dict) -> str:
         fail('answer the cap question first')
     schema.require_needs(schema.Defer, report, 'question', 'quote')
     qid, quote, until = report['question'], report['quote'], report.get('until')
-    if until is not None and not (isinstance(until, str) and DEFER_UNTIL.fullmatch(until.strip())):
-        fail('defer: `until` is a date (2026-12-01), an offset (+36h, +3d, +2w) or tomorrow, as bd reads it; left out for no date')
+    if until is not None and not (isinstance(until, str) and DEFER_UNTIL.fullmatch(until)):
+        fail('defer: `until` is a date (2026-12-01); left out for no date')
     quote_check(ctx, 'defer', quote)
     target = by_id(ctx, qid)
     if target.get('recorded') or target['status'] not in DEFERRABLE:

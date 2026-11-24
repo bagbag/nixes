@@ -159,7 +159,7 @@ def read_open(ctx: Context) -> tuple[dict, dict]:
 
 def open_items(ctx: Context, found: dict, position: dict) -> tuple[list[dict], dict[str, list[str]], list[dict]]:
     """(items, elsewhere, waiting): every open item Collect offers, once under the first view that has it, the ids another
-    live session holds by holder, and the items assigned to the user. Another live session's holds stay out (board claim
+    live session holds by holder, and the items the user holds. Another live session's holds stay out (board claim
     refuses them), and so do the user's, which the list shows apart; a gone session's hold stays, marked: a deciding
     session takes it over (board take), as the release does."""
     seen = {}

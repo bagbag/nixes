@@ -46,10 +46,11 @@ steps 3-7.
 6. **Fix.** Unless the brief forbids assessor fixes, fix wording, doc,
    comment and local design findings yourself, and fix a code finding when
    the fix is the only clean option and stays within a few lines, as
-   commits on `cr/<id>` in its worktree; rerun the gates after a code fix.
+   commits on `cr/<id>` in its worktree; run the targeted tests the fix covers
+   ([Evidence and gates](../../shared/acceptance.md#evidence-and-gates): the board's check runs once per tree).
    Return larger fixes, and every fix to a design that opens a one-way
    door, to the author.
-   Output: each fix with its commit, or `no fixes`; gate reruns.
+   Output: each fix with its commit, or `no fixes`; the targeted tests run.
 7. **Pass or return.** Pass only when certain everything is clean and every
    required gate passed (your fixes included, listed in the verdict):
    `agents board handover <cr> "<verdict>"`; otherwise

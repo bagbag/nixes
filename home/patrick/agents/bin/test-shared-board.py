@@ -960,8 +960,7 @@ def t_inbox() -> None:
 
 def t_cr() -> None:
     """The change-request flow against real bd and real git in clone a: claim (worktree, setup), a worker's item, hand-over
-    (rebase, checks, stored pair), agent review, the Accept (look before), a look-after pass that lands and opens its
-    ratification, a CR stacked on one in review that lands only after its base, and a landing finished by the next read."""
+    (rebase, checks, stored pair), agent review, the Accept (look before), a look-after pass that lands, a CR stacked on one in review that lands only after its base, and a landing finished by the next read."""
     settle('a', 'b')
     side = ROOT / 'a'
     target = git('symbolic-ref', '--short', 'HEAD', cwd=side).strip()
@@ -1547,10 +1546,9 @@ def t_cr() -> None:
 
 
 def t_scenarios() -> None:
-    """The board model's Verified scenarios that board code owns, through the real verbs (docs: the model's Verified scenarios).
-    1 and 15 are t_cr's (a look-after pass lands; hand-over refuses open items); 5 is t_cr's stacking and the fake suite's landing of a
-    look-after child; 6 (ratify) and 11 (filing a find) belong to nixes-cop95 and nixes-5smx7; 9 is the fake suite's milestones;
-    12 is the fake suite's gone-holder takeover; 14 has no verb; 16 is judgment. Here: 2, 3, 4, 7, 8, 10 and 13."""
+    """The scenarios of docs/board/model.md (Scenarios the tests cover) that board code owns, through the real verbs, by that list's numbers.
+    1, 5 and 10 are t_cr's (a look-after pass lands; a CR stacked on one in review; hand-over refuses open items), 5 also the fake suite's
+    landing of a look-after child; 8 is the fake suite's gone-holder takeover. Here: 2, 3, 4, 6, 7, 9 and 11, and milestones (no scenario)."""
     settle('a', 'b')
     side = ROOT / 'a'
     target = git('symbolic-ref', '--short', 'HEAD', cwd=side).strip()
@@ -1700,42 +1698,42 @@ def t_scenarios() -> None:
     rc, _, err, _ = run('a', 'ruling', 'release', answering, '--closes', f'{answered}={answering}')
     check(rc == 0 and row(answered)['status'] == 'closed' and outcome(answered) == 'superseded', 'answered: the question closes as superseded', err)
 
-    # 7 and 8. Someday and "remind me on a day" are deferred, not started by themselves; a question put off is deferred too; the user's
-    # deferral is undone only by the user (through a deciding session).
-    someday = create('a', 'scenario 7: someday dark mode', '--no-commit', kind='task')
-    remind = create('a', 'scenario 7: remind me', '--no-commit', kind='task')
-    parked = create('a', 'scenario 8: a question put off', '-t', 'decision', kind='decision')
+    # 6. Someday and "remind me on a day" are deferred, not started by themselves; a question put off is deferred too; the user's
+    # deferral is undone only by the user (through a lead or solo session).
+    someday = create('a', 'scenario 6: someday dark mode', '--no-commit', kind='task')
+    remind = create('a', 'scenario 6: remind me', '--no-commit', kind='task')
+    parked = create('a', 'scenario 6: a question put off', '-t', 'decision', kind='decision')
     check(run('a', 'defer', someday, '--reason', 'someday: nobody needs dark mode yet')[0] == 0
           and run('a', 'defer', remind, '--reason', 'remind me', '--until', '2020-01-06')[0] == 0
-          and run('a', 'defer', parked, '--reason', 'put off without a date')[0] == 0, 'scenario 7, 8: set aside')
+          and run('a', 'defer', parked, '--reason', 'put off without a date')[0] == 0, 'scenario 6: set aside')
     run('a', 'queue')  # a read: nothing reopens by itself
     check(all(row(one)['status'] == 'deferred' for one in (someday, remind, parked))
           and (row(remind).get('metadata') or {}).get('revisit') == '2020-01-06' and not (row(someday).get('metadata') or {}).get('revisit'),
-          'scenario 7, 8: they stay deferred after a read, the date only a revisit day')
+          'scenario 6: they stay deferred after a read, the date only a revisit day')
     rc, _, err, _ = run('a', 'claim', someday, role='agent')
-    check(rc == 1 and not row(someday).get('assignee'), 'scenario 7: a deferred task is not claimable', err)
+    check(rc == 1 and not row(someday).get('assignee'), 'scenario 6: a deferred task is not claimable', err)
     rc, _, err, _ = run('a', 'undefer', someday, role='agent')
-    check(rc != 0 and row(someday)['status'] == 'deferred', "scenario 7: an agent session does not undo the user's deferral", err)
+    check(rc != 0 and row(someday)['status'] == 'deferred', "scenario 6: an agent session does not undo the user's deferral", err)
     check(run('a', 'undefer', someday, remind, parked)[0] == 0 and all(row(one)['status'] == 'open' for one in (someday, remind, parked)),
-          'scenario 7, 8: a deciding session undefers for the user')
+          'scenario 6: a deciding session undefers for the user')
 
-    # 10. A step only the user takes is a human gate: the CR waits on it; resolving the gate frees the CR.
-    ten = create('a', 'scenario 10: deploy waits for the key rotation')
+    # 7. A step only the user takes is a human gate: the CR waits on it; resolving the gate frees the CR.
+    ten = create('a', 'scenario 7: deploy waits for the key rotation')
     task(ten, 'deploy')
     rc, out, err, _ = run('a', 'gate', 'create', '--blocks', ten, '--reason', 'rotate the API key before deploy')
     gate = next((one['id'] for one in items('a').values() if one.get('issue_type') == 'gate' and one['status'] != 'closed'), None)
-    check(rc == 0 and gate, 'scenario 10: the gate is filed', err + out)
+    check(rc == 0 and gate, 'scenario 7: the gate is filed', err + out)
     rc, _, err, _ = run('a', 'claim', ten, role='agent')
-    check(rc == 1 and not row(ten).get('assignee'), 'scenario 10: the CR waits on the gate', err)
+    check(rc == 1 and not row(ten).get('assignee'), 'scenario 7: the CR waits on the gate', err)
     rc, _, err, _ = run('a', 'gate', 'resolve', gate, role='agent')
-    check(rc != 0 and row(gate)['status'] != 'closed', 'scenario 10: a worker does not resolve the user\'s step', err)
+    check(rc != 0 and row(gate)['status'] != 'closed', 'scenario 7: a worker does not resolve the user\'s step', err)
     check(run('a', 'gate', 'resolve', gate, '--reason', 'the key is rotated')[0] == 0 and run('a', 'claim', ten, role='agent')[0] == 0,
-          'scenario 10: resolving the gate frees the CR')
+          'scenario 7: resolving the gate frees the CR')
 
-    # 10b. A forced close takes the record in its guard: two closers at once, exactly one wins, and the other is told it changed meanwhile.
-    raced = create('a', 'scenario 10b: two closers at once')
+    # 7b. A forced close takes the record in its guard: two closers at once, exactly one wins, and the other is told it changed meanwhile.
+    raced = create('a', 'scenario 7b: two closers at once')
     task(raced, 'the item')
-    run('a', 'gate', 'create', '--blocks', raced, '--reason', 'scenario 10b: a gate two sessions resolve at once')
+    run('a', 'gate', 'create', '--blocks', raced, '--reason', 'scenario 7b: a gate two sessions resolve at once')
     race_gate = next((one['id'] for one in items('a').values() if one.get('issue_type') == 'gate' and one['status'] != 'closed'), None)
     outcomes: dict[str, tuple[int, str]] = {}
     closers = [threading.Thread(target=lambda role=role: outcomes.__setitem__(role, run('a', 'gate', 'resolve', race_gate, role=role)[:3:2])) for role in ('lead', 'solo')]
@@ -1744,48 +1742,48 @@ def t_scenarios() -> None:
     for thread in closers:
         thread.join()
     check(race_gate and sorted(code == 0 for code, _ in outcomes.values()) == [False, True] and row(race_gate)['status'] == 'closed',
-          'scenario 10b: exactly one of two forced closers wins', outcomes)
-    check(any('changed meanwhile' in err or 'does not apply' in err for code, err in outcomes.values() if code), 'scenario 10b: the other is refused', outcomes)
+          'scenario 7b: exactly one of two forced closers wins', outcomes)
+    check(any('changed meanwhile' in err or 'does not apply' in err for code, err in outcomes.values() if code), 'scenario 7b: the other is refused', outcomes)
     # Whichever reads second, the guard is what bd's compare-and-set gives: taking an unheld record twice, the second take exits 13 and writes nothing
     # (the board turns that exit into "changed meanwhile": test-agent-configs); a loser that read after the winner closed is refused by the table.
-    guarded = create('a', 'scenario 10b: the guard itself', '--no-commit', kind='task')
+    guarded = create('a', 'scenario 7b: the guard itself', '--no-commit', kind='task')
     first = raw('a', 'update', guarded, '--assignee', 'closer-one', '--if-assignee', '', '--if-status', 'open', '--json')
     second = raw('a', 'update', guarded, '--assignee', 'closer-two', '--if-assignee', '', '--if-status', 'open', '--json')
-    check(first[0] == 0 and second[0] == 13 and row(guarded).get('assignee') == 'closer-one', 'scenario 10b: a second take of an unheld record is refused by the guard, exit 13', (first[0], second[0], second[2]))
+    check(first[0] == 0 and second[0] == 13 and row(guarded).get('assignee') == 'closer-one', 'scenario 7b: a second take of an unheld record is refused by the guard, exit 13', (first[0], second[0], second[2]))
 
-    # 9. A milestone waits on nothing: its change requests are part of it, and it is accepted once their work is done.
-    milestone = create('a', 'scenario 9: the milestone', kind='milestone')
-    member = create('a', 'scenario 9: a member')
+    # Milestones (no model scenario). A milestone waits on nothing: its change requests are part of it, and it is accepted once their work is done.
+    milestone = create('a', 'scenario milestone: the milestone', kind='milestone')
+    member = create('a', 'scenario milestone: a member')
     member_item = task(member, 'the member\'s work')
-    check(run('a', 'move', member, '--to', milestone)[0] == 0, 'scenario 9: a change request joins a milestone')
+    check(run('a', 'move', member, '--to', milestone)[0] == 0, 'scenario milestone: a change request joins a milestone')
     rc, _, err, _ = run('a', 'wait', milestone, '--on', member, '--for', 'its members')
-    check(rc != 0 and 'waits on nothing' in err, 'scenario 9: a milestone does not wait', err)
+    check(rc != 0 and 'waits on nothing' in err, 'scenario milestone: a milestone does not wait', err)
     rc, _, err, _ = run('a', 'claim', milestone)
-    check(rc != 0 and not row(milestone).get('assignee') and member_item in err, 'scenario 9: the milestone is not ready while its work is open, naming it', err)
-    check(run('a', 'close', member_item, '--reason', 'scenario 9: the work is moot', '--outcome', 'dropped')[0] == 0
-          and run('a', 'cr', 'reject', member, 'scenario 9: the member is dropped')[0] == 0, 'scenario 9: the member is done')
+    check(rc != 0 and not row(milestone).get('assignee') and member_item in err, 'scenario milestone: the milestone is not ready while its work is open, naming it', err)
+    check(run('a', 'close', member_item, '--reason', 'scenario milestone: the work is moot', '--outcome', 'dropped')[0] == 0
+          and run('a', 'cr', 'reject', member, 'scenario milestone: the member is dropped')[0] == 0, 'scenario milestone: the member is done')
     check(run('a', 'claim', milestone)[0] == 0 and run('a', 'close', milestone, '--reason', 'the user accepted the milestone')[0] == 0
           and row(milestone)['status'] == 'closed' and (row(milestone).get('metadata') or {}).get('outcome') == 'accepted',
-          'scenario 9: ready once its work is done, and accepted')
+          'scenario milestone: ready once its work is done, and accepted')
     rc, _, err, _ = bd('a', 'create', 'a timer gate', '-t', 'gate', '--description', 'x', '--silent')
     check(rc != 0 and 'agents board gate create' in err, 'a gate is made by the human gate verb only', err)
 
-    # 9b. A close takes the record by holder compare-and-set, so bd's own actor check passes without --force: the user closes a task a session holds,
+    # Milestones b. A close takes the record by holder compare-and-set, so bd's own actor check passes without --force: the user closes a task a session holds,
     # and a session closes its worker's task.
-    held_task = create('a', 'scenario 9b: closed by the user', '--no-commit', kind='task')
-    check(run('a', 'claim', held_task, role='agent')[0] == 0 and row(held_task).get('assignee'), 'scenario 9b: a session holds the task')
-    rc, _, err, _ = run('a', 'close', held_task, '--reason', 'scenario 9b: the user closes a held task', role=None)
-    check(rc == 0 and row(held_task)['status'] == 'closed' and (row(held_task).get('metadata') or {}).get('outcome') == 'done', 'scenario 9b: the user closes a task a session holds', err)
-    worker_task = create('a', 'scenario 9b: closed by the session of its worker', '--no-commit', kind='task')
+    held_task = create('a', 'scenario milestone b: closed by the user', '--no-commit', kind='task')
+    check(run('a', 'claim', held_task, role='agent')[0] == 0 and row(held_task).get('assignee'), 'scenario milestone b: a session holds the task')
+    rc, _, err, _ = run('a', 'close', held_task, '--reason', 'scenario milestone b: the user closes a held task', role=None)
+    check(rc == 0 and row(held_task)['status'] == 'closed' and (row(held_task).get('metadata') or {}).get('outcome') == 'done', 'scenario milestone b: the user closes a task a session holds', err)
+    worker_task = create('a', 'scenario milestone b: closed by the session of its worker', '--no-commit', kind='task')
     worker_actor = f"{session('a', 'agent')[-8:]}/worker01"
     claimed = subprocess.run([sys.executable, '-B', BOARD, 'claim', worker_task], cwd=ROOT / 'a', capture_output=True, text=True, input='',
                              env={**base_env('a'), 'BEADS_ACTOR': worker_actor, 'CLAUDE_CODE_SESSION_ID': session('a', 'agent')})
-    check(claimed.returncode == 0 and row(worker_task).get('assignee') == worker_actor, "scenario 9b: a worker holds the task under its session's actor", claimed.stderr)
-    rc, _, err, _ = run('a', 'close', worker_task, '--reason', 'scenario 9b: the session closes its worker task', role='agent')
-    check(rc == 0 and row(worker_task)['status'] == 'closed', "scenario 9b: a session closes its worker's task", err)
+    check(claimed.returncode == 0 and row(worker_task).get('assignee') == worker_actor, "scenario milestone b: a worker holds the task under its session's actor", claimed.stderr)
+    rc, _, err, _ = run('a', 'close', worker_task, '--reason', 'scenario milestone b: the session closes its worker task', role='agent')
+    check(rc == 0 and row(worker_task)['status'] == 'closed', "scenario milestone b: a session closes its worker's task", err)
 
-    # 13. Two sessions claim at once: the compare-and-set lets exactly one win.
-    race = create('a', 'scenario 13: two claims at once')
+    # 9. Two sessions claim at once: the compare-and-set lets exactly one win.
+    race = create('a', 'scenario 9: two claims at once')
     task(race, 'the item')
     results: dict[str, int] = {}
     threads = [threading.Thread(target=lambda role=role: results.__setitem__(role, run('a', 'claim', race, role=role)[0])) for role in ('agent', 'solo')]
@@ -1795,8 +1793,17 @@ def t_scenarios() -> None:
         thread.join()
     holder = row(race).get('assignee')
     check(sorted(results.values()) == [0, 1] and holder and holder.startswith(session('a', next(role for role, code in results.items() if code == 0))[-8:]),
-          'scenario 13: exactly one claim wins, and holds', (results, holder))
-    check(wt(race).is_dir() and git('branch', '--list', f'cr/{race}', cwd=side).strip(), 'scenario 13: the winner\'s worktree and branch survive the loser\'s claim')
+          'scenario 9: exactly one claim wins, and holds', (results, holder))
+    check(wt(race).is_dir() and git('branch', '--list', f'cr/{race}', cwd=side).strip(), 'scenario 9: the winner\'s worktree and branch survive the loser\'s claim')
+
+    # 11. A duplicate is a relates-to link to the original and a close as dropped naming it; the original stays open and the link stays.
+    original = create('a', 'scenario 11: the original', '--no-commit', kind='task')
+    duplicate = create('a', 'scenario 11: its duplicate', '--no-commit', kind='task')
+    check(run('a', 'link', duplicate, original, '--type', 'relates-to')[0] == 0, 'scenario 11: the duplicate links to the original')
+    rc, _, err, _ = run('a', 'close', duplicate, '--reason', f'duplicate of {original}: same work', '--outcome', 'dropped', role='agent')
+    check(rc == 0 and row(duplicate)['status'] == 'closed' and (row(duplicate).get('metadata') or {}).get('outcome') == 'dropped'
+          and row(original)['status'] == 'open' and any(dep['depends_on_id'] == original and dep['type'] == 'relates-to' for dep in row(duplicate).get('dependencies') or []),
+          'scenario 11: the duplicate closes as dropped, the original stays open, the link stays', err)
 
 
 def t_move() -> None:
@@ -1996,7 +2003,7 @@ def t_migrate() -> None:
     make('reopened', 'reopened item', '--parent', ids['cr1'])
     update('reopened', '--set-metadata', 'outcome=done', '--set-metadata', 'triaged_tip=abc')
     make('target', 'link target', *no_commit)
-    for name, kind in (('waits', 'waits-for'), ('cond', 'conditional-blocks'), ('found', 'discovered-from'), ('related', 'related')):
+    for name, kind in (('waits', 'waits-for'), ('cond', 'conditional-blocks'), ('found', 'discovered-from'), ('related', 'related'), ('dup', 'duplicates')):
         make(name, f'item with {kind}', '--parent', ids['cr1'])
         link(name, 'target', kind)
     make('replanned', 'change request returned for replanning', kind='change-request')
@@ -2021,6 +2028,10 @@ def t_migrate() -> None:
     link('ruling_cr', 'cr1', 'blocks')
     make('planned', 'planned ruling', kind='decision')
     make('dropped', 'dropped ruling', kind='decision')
+    for name in ('planned_carried', 'planned_lower', 'answered', 'dropped_word', 'unmapped'):
+        make(name, f'{name} ruling', kind='decision')
+    make('user_held', 'item held by the user', '--parent', ids['cr1'])
+    update('user_held', '--assignee', 'user')
     make('user_gate', 'user rotate the key', kind='gate')
     make('waiter', 'item waiting on the gate', '--parent', ids['cr1'])
     link('waiter', 'user_gate', 'blocks')
@@ -2065,7 +2076,9 @@ def t_migrate() -> None:
     for name in ('cr2', 'cr3', 'cr4', 'cr5', 'cr6', 'ck1', 'ck2'):
         git('worktree', 'add', '-q', f'.worktrees/{ids[name]}', '-b', f'cr/{ids[name]}', cwd=ROOT / side)
     for name, reason in (('ms_closed', 'closed in the earlier model'), ('closed_gate', 'closed in the earlier model'), ('old_ruling', 'superseded by the newer ruling'),
-                         ('planned', 'planned in nixes-abc and done'), ('dropped', 'no longer wanted at all')):
+                         ('planned', 'planned in nixes-abc and done'), ('dropped', 'Dropped: no longer wanted at all'),
+                         ('planned_carried', 'Planned: carried into nixes-abc and done'), ('planned_lower', 'planned the work as nixes-abc'),
+                         ('answered', 'Answered by released nixes-abc'), ('dropped_word', 'dropped, no longer wanted'), ('unmapped', 'no longer wanted at all')):
         raw(side, 'close', ids[name], '--reason', reason)
     run(side, 'setup', role=None)  # status.custom to the current list; the records keep their old statuses
     raw(side, 'config', 'unset', 'custom.board.model')
@@ -2176,7 +2189,7 @@ def t_migrate() -> None:
     check((ids['target'], 'blocks') in deps('waits') and (ids['target'], 'blocks') in deps('cond') and not {'waits-for', 'conditional-blocks'} & {kind for _, kind in deps('waits') | deps('cond')},
           'migrate: waits-for and conditional-blocks become waits', (deps('waits'), deps('cond')))
     check(meta_of('found').get('found_in') == ids['target'] and not any(kind == 'discovered-from' for _, kind in deps('found')), 'migrate: discovered-from becomes found_in', (meta_of('found'), deps('found')))
-    check((ids['target'], 'relates-to') in deps('related'), 'migrate: related becomes relates-to', deps('related'))
+    check((ids['target'], 'relates-to') in deps('related') and (ids['target'], 'relates-to') in deps('dup'), 'migrate: related and duplicates become relates-to', (deps('related'), deps('dup')))
     check((ids['milestone'], 'parent-child') in deps('cr4') and not deps('milestone') and row('cr4')['status'] == 'passed',
           'migrate: a milestone waiting on a change request holds it as a part; needs_acceptance is passed', (deps('cr4'), deps('milestone')))
     check(row('cr5')['status'] == 'passed' and meta_of('cr5').get('look') == 'before' and 'look' not in meta_of('cr4'),
@@ -2193,14 +2206,20 @@ def t_migrate() -> None:
     confirm = confirmations('unratified')
     check(len(confirm) == 1 and confirm[0]['status'] == 'open' and (ids['unratified'], 'relates-to') in {(d['depends_on_id'], d['type']) for d in confirm[0].get('dependencies') or []}
           and 'Undo this by hand' in confirm[0]['description'], 'migrate: an unratified ruling stays in force with a question to confirm or revise it', confirm)
-    check([meta_of(name).get('outcome') for name in ('old_ruling', 'planned', 'dropped', 'closed_gate', 'ms_closed')] == ['superseded', 'planned', 'dropped', 'resolved', 'accepted'],
-          'migrate: closed decisions, gates and milestones get their outcome', [meta_of(name).get('outcome') for name in ('old_ruling', 'planned', 'dropped', 'closed_gate', 'ms_closed')])
+    names = ('old_ruling', 'planned', 'dropped', 'closed_gate', 'ms_closed', 'planned_carried', 'planned_lower', 'answered', 'dropped_word', 'unmapped')
+    check([meta_of(name).get('outcome') for name in names] == ['superseded', 'planned', 'dropped', 'resolved', 'accepted', 'planned', 'planned', 'superseded', 'dropped', None],
+          'migrate: closed decisions, gates and milestones get their outcome from what their close says; one that says nothing is left for the agent, not guessed', [meta_of(name).get('outcome') for name in names])
+    check(row('user_held')['assignee'] == 'user' and f"{ids['user_held']}: an item of {ids['cr1']} is held by you" in first_apply and f"{ids['unmapped']}: a closed ruling" in first_apply,
+          'migrate: a user-held item of a change request keeps its hold until the agent made its gate, and both it and an unmapped closed ruling are listed', first_apply[-900:])
+    check(raw(side, 'update', ids['user_held'], '--assignee', '')[0] == 0, 'migrate: the agent makes the gate and clears the hold (the check flags a user holder)')
+    check(migrate('--apply')[0] == 0, 'migrate: a rerun clears the hold mark that the cleared holder left')
+    now = items(side)
     check(meta_of('dated').get('revisit') == '2027-03-04' and row('dated')['status'] == 'deferred' and not row('dated').get('defer_until'),
           'migrate: defer_until becomes the revisit field and leaves bd', (meta_of('dated'), row('dated').get('defer_until')))
     check(row('conditional')['status'] == 'open' and (ids['target'], 'blocks') in deps('conditional'), 'migrate: a deferral on a condition becomes a wait', (row('conditional')['status'], deps('conditional')))
     gates = [i for i in now.values() if i['issue_type'] == 'gate' and i['status'] == 'open' and i.get('await_type') == 'human']
-    gates = [g for g in gates if any(kind == 'supersedes' for _, kind in {(d['depends_on_id'], d['type']) for d in g.get('dependencies') or []})]
-    check(len(gates) == 3
+    gates = [g for g in gates if any((g['id'], 'supersedes') in {(d['depends_on_id'], d['type']) for d in i.get('dependencies') or []} for i in now.values() if i['status'] == 'closed')]  # the old record is superseded by the gate
+    check(len(gates) == 3 and all(any((g['id'], 'supersedes') in deps(name) for g in gates) for name in ('user_gate', 'user_item', 'user_item2'))
           and any((g['id'], 'blocks') in deps('waiter') for g in gates) and row('user_gate')['status'] == 'closed' and row('user_item')['status'] == 'closed',
           'migrate: a gate and a user item become human gates that supersede them, the waiter moved to the new gate', (gates, deps('waiter')))
     check(row('dated_live')['status'] == 'open' and 'revisit' not in meta_of('dated_live'), 'migrate: a live record with a stale defer_until is not parked by it', (row('dated_live')['status'], meta_of('dated_live')))
@@ -2244,6 +2263,14 @@ def t_migrate() -> None:
           and (ids['ck1'], 'blocks') in deps('ck_waiter'), 'migrate: a checkpoint change request is an ordinary open one, its waiter waits on it', (row('ck2')['status'], deps('ck_waiter')))
     rc, out, err, _ = run(side, 'check', '--limit', '0')
     check(rc == 0 and 'convention deviations: 0' in out, 'migrate: check is clean after the conversions', err + out)
+    rc, out, err = migrate('--mark')
+    timer = next(i['id'] for i in items(side).values() if i['issue_type'] == 'gate' and i.get('await_type') == 'timer' and i['status'] != 'closed')
+    check(rc == 1 and setting(side, 'custom.board.model') == '' and all(one in err for one in (ids['unmapped'], timer)),
+          'migrate: --mark refuses while forms listed for the agent remain, naming them', err + out)
+    for one, flags in ((ids['unmapped'], ('--set-metadata', 'outcome=dropped')),):  # the agent's resolutions, raw writes
+        check(raw(side, 'update', one, *flags)[0] == 0, f'migrate: the agent settles {one}')
+    check(raw(side, 'close', timer, '--force', '--reason', 'the agent resolved the timer gate with the user')[0] == 0, 'migrate: the agent resolves the timer gate')
+    check(migrate('--apply')[0] == 0, 'migrate: a rerun writes the outcome of the gate the agent closed')
     rc, out, err = migrate('--mark')
     check(rc == 0 and setting(side, 'custom.board.model') == '1', 'migrate: --mark writes the marker last', err + out)
     rc, out, err, _ = run(side, 'update', ids['bug'], '--title', 'a bug item, retitled', role=None)

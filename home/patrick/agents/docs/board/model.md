@@ -34,7 +34,7 @@ The first table below gives each type's statuses and the outcomes its closing ro
 - **Item:** `open` → `closed` (done or dropped). The worker closes each item it did; dropped when a ruling makes it moot. An item has no holder and no review: its CR's holder decides who writes it.
 - **Task:** `open` → `closed` (done or dropped), holdable.
 - **Decision:** `open` (a question; it can wait and be waited on) → `decided` (answered or ruled and recorded, not yet binding: a wait on it stays unmet until release) → `in_force` (a ruling) → `closed`. Outcomes: `dropped` (never ruled), `planned` (carried into work: planning closes the ruling, citing the CRs or tasks it made), `superseded` (a later ruling replaces it, or another ruling answered the question). `rejected` (an agent's choice the user rejected) arrives with `ratify` (**planned**, nixes-cop95); no row writes it yet.
-- **Gate:** `open` → `closed` (resolved). **Milestone:** `open` → `closed` (accepted), by a deciding session with the user.
+- **Gate:** `open` → `closed` (resolved). **Milestone:** `open` → `closed` (accepted), by a lead or solo session with the user (the table: `attended`).
 - **Reopen** needs the authority of close: the item rows, milestone, gate and decision rows say so. A task's reopen row reads `holder / user / deciding+gone`, close's own (see the table).
 
 A **choice record** (**planned**, nixes-cop95) is an agent's two-way choice: the option taken, the one not taken, why, how to reverse it and the CR it shaped. It is in force at once with `ratified` unset; `ratify <ids…> yes|no` sets it, or closes it as rejected and files the recorded reversal as a CR. Today `agents board ruling record --unratified` writes such a record with a `## Reversal` and a `Confirm or revise` question linked by `relates-to`.
@@ -45,7 +45,7 @@ The protocol engine owns a round (questions asked, quotes, staged text); the boa
 
 `look` (`before` | `after`; the project default, overridable per CR), `view` (`code` | `result`: how the console shows a landing), `base` and `base_sha`, `plan_first` (a reason: the CR needs planning before anyone implements it; set by base rejection and by board-migrate for migrated loose work, cleared by the plan claim, and an open CR carrying it is `plan` work), `hold` (below), and the stored `check` and `review` evidence. A look-after default for new boards is **planned** (nixes-8b15o); this project stays `before`.
 
-- **Stacking:** a CR may stack on a `passed` CR that waits for the user's Accept (its base is that CR's branch; `stackable` in `bin/board`: not one in agent review, and a look-after parent lands at once); a CR on an unlanded, unstackable base is not ready. "Its base allows it" means the base has landed, or is stackable and this CR stacks on it. When the base lands the stacked CR's base becomes the target.
+- **Stacking:** a CR may stack on any `passed` CR (its base is that CR's branch; `stackable` in `bin/board`: not one in agent review). A passed look-after CR waiting for its own base is a base too: landing the first base lands each look-after CR stacked on it in turn, and a look-before one stays for its Accept with its base reset to the target; a CR on an unlanded, unstackable base is not ready. "Its base allows it" means the base has landed, or is stackable and this CR stacks on it. When the base lands the stacked CR's base becomes the target.
 - **Refresh:** when the base moves a CR's stored check is stale; a `passed` look-after CR with a stale check does not land with its base but becomes refresh work (rebase, check again) for its holder or the queue.
 - **Handover:** the board runs the configured check and stores it; the range, the check and the item outcomes are the evidence; an optional prose note carries judgment evidence. Handover refuses while any item is open, naming them and `close <ids>`; it never closes items itself. A waiting item: unclaim with `--resume` (the CR is ready again when the wait is met) or the planner moves it into its own CR.
 - A CR whose branch has no commits of its own lands on its passed review in either look, with no Accept (a stacked one with its base).
@@ -124,7 +124,7 @@ Printed by `model_tables()`; the test compares this block with it exactly. `Held
 | gone | once the holder's session is gone, or the user agrees (--agreed) |
 | non-author | a session that did not hand it over |
 | planner | a session pulling plan |
-| deferrer | the deferrer's side (a user's deferral, or one without a deferrer: the user or a deciding session) |
+| deferrer | the deferrer's side (the deferring session or a deciding session; a user's deferral, or one without a deferrer, is a lead or solo session's or the user's) |
 | holding | the session holding it |
 | unheld | while it is unheld |
 | attended | a lead or solo session (not autopilot: it leaves these moves, the user's to make or hard to undo, to the user; unattended protocol) |
@@ -140,7 +140,7 @@ The table's `Who` column is the authority; this is its shape. Item writes (close
 - Review claim, pass and Return need a session that did not author the CR; every claim path refuses self-review.
 - Authority follows what a move risks, as the unattended protocol classes it. Two-way moves (sending a passed CR back to review, the Return of a `passed` CR) are for any deciding session, autopilot included, or the user. The `attended` word (a lead or solo session, or the user) covers the moves autopilot leaves to the user: rejecting a CR (one-way: it closes, and no CR reopen exists), releasing a ruling, closing or reopening a gate, and claiming, taking, closing or reopening a milestone. Accept (landing a `passed` look-before CR) is the user's through a lead or solo session (landing is `anyone` in the table; its command is the gate).
 - Taking or freeing another session's hold: the user, or a deciding session once the holder is gone (`--agreed` records the user's word).
-- Planner Return on a ruling, and defer and undefer of its own deferrals: a session pulling plan. (`move` needs the holder of the CR, the user or a deciding session.) Undeferring a user's deferral needs the user, through a deciding session.
+- Planner Return on a ruling, and defer and undefer of its own deferrals: a session pulling plan. (`move` needs the holder of the CR, the user or a deciding session.) Undeferring a user's deferral (or one that records no deferrer) needs the user, through a lead or solo session; autopilot undefers only its own.
 - The writes to an item of a CR nobody holds come only from the user or a deciding session; any other session claims the CR first.
 - Exceptions the table does not carry: autopilot never accepts or ratifies (acceptance needs the user; the unattended protocol owns it; `autopilot_barred` keeps it out of the queue's accept work) and runs the agent rows unattended; `MODEL_EXEMPT` names the writes that need no marker.
 
@@ -170,18 +170,18 @@ One relation, written on the waiter, with a short "for" (content): "X waits on Y
 - CR: unheld, its base allows it, every CR-scope wait met, and either an open item is ready or no item is open (its next step is handover).
 - Task, question: unheld, waits met. A CR waits as a whole only for CR-scope waits; what an item waits on holds the item.
 - Pulls: `plan` (rulings in force, tasks, a CR marked `plan_first`: rejected base, migrated loose work), `implement` (a ready open CR), `review` (an `in_review` CR, refresh work). A bare `claim` takes what the session's role and pulls route; a claim by id checks no pull. Deciding sessions also take questions, `passed` CRs waiting for Accept and ready milestones. Inside a session, dispatch may pick a worker agent by an item's kind label.
-- Claim order: priority P0 first, then planning of rulings in force, milestone work, review and refresh, Accept, the rest; within a tier priority, then unlock rank (board-coordination).
+- Claim order: priority P0 first, then planning (rulings in force, a `plan_first` CR, no-commit tasks), milestone work, review and refresh, Accept, the rest; within a tier priority, then unlock rank (board-coordination).
 
 ## Deferral
 
 - `deferred` = set aside, blocked by nothing, off the queue: someday or maybe, no condition. Only an explicit `undefer` reopens it.
 - Applies to CRs, tasks and questions. To set one item aside, move it into its own CR first.
 - A condition on another record or event is a wait, not a deferral: `defer` takes no condition. `defer` refuses an item that live items wait on (they would hang), naming the fix.
-- A deferral records who deferred (`deferred_by`: `user`, or the planning session's actor) and an optional `revisit` day (a board field; not bd's `defer_until`, so bd never wakes it). Due is derived at read (revisit <= today): a due user deferral shows in the user's view, a due planner deferral as plan work. It stays deferred until undeferred: parked work never starts unasked. Only the deferrer's side undefers. `defer --until` sets the day.
+- A deferral records who deferred (`deferred_by`: `user` for the user, a lead or solo session acting for them, or a migrated deferral that records none; else the deferring session's actor, autopilot's included) and an optional `revisit` day (a board field; not bd's `defer_until`, so bd never wakes it). Due is derived at read (revisit <= today): a due user deferral shows in the user's view, a due session deferral as plan work. It stays deferred until undeferred: parked work never starts unasked. Only the deferrer's side undefers. `defer --until` sets the day.
 
 ## Relations and fields
 
-part of (item in its CR, CR in a milestone), duplicate of, supersedes, context (`relates-to`, ruling context), `discovered-from`. Found-in is a field on the found record (`--found-in`), so bd's one link per pair stays free for the real relation. bd's blocking link spellings are refused, naming `wait`; `check` flags a link type the board does not write (`unknown-link`) and metadata outside `BOARD_METADATA` (`unknown-metadata`). Retired metadata keys and the earlier `related` link are board-migrate's to convert; the board keeps no repair for them (`check` has no `--fix`).
+part of (item in its CR, CR in a milestone), supersedes, context (`relates-to`, ruling context). A duplicate is a `relates-to` link to the original and a close with outcome `dropped` whose reason names it. Found-in is a field on the found record (`--found-in`), so bd's one link per pair stays free for the real relation; `discovered-from` is refused, naming it. bd's blocking link spellings are refused, naming `wait`; `create`, `--graph` and `link` write only the relations here, and a plan edge or `--deps` type outside them is refused; `check` flags a link type the board does not write (`unknown-link`) and metadata outside `BOARD_METADATA` (`unknown-metadata`). Retired metadata keys and the earlier `related` link are board-migrate's to convert; the board keeps no repair for them (`check` has no `--fix`).
 
 ## After the fact (look after)
 
@@ -207,6 +207,7 @@ part of (item in its CR, CR in a milestone), duplicate of, supersedes, context (
 8. A worker crashes holding a CR → a deciding session takes the dead session's hold; a CR whose items are all closed is ready for handover.
 9. Two sessions claim at once → compare-and-set lets one win.
 10. A planner adds an item mid-work → handover refuses until the worker closes it or the planner moves it; nothing is closed unseen.
+11. A duplicate: `link <dup> <original> --type relates-to`, then `close <dup> --outcome dropped --reason "duplicate of <original>: …"`; the original stays open and the link stays.
 
 ## Operation notes
 
@@ -259,4 +260,4 @@ A CR whose worktree is mid a rebase, merge, cherry-pick, revert or bisect the bo
 
 `agents board console` prints the console pane's JSON from one snapshot (health counts, `mine`, `position` sessions and holds, `sync` and `queueLine`). Each `crs[]` row's `problems` lists what holds the CR up with the step that clears it, `{kind, text, next: {action, command?, paths?}}` (`cr_problems`): `setup-failed`, `git-state`, `check`, `waits`, `land-blocked`. A refusal (`BoardError`) carries its steps in the same shape; `report_error` prints the reason, then one `next: <step>` line per step, on stderr after flushing stdout. `health`, `position`, `related` and `check` take `--json` (every row). The console pane reads review state from the board's JSON only (`review: {opened, edited, files}`); edits made after the board's last read are caught by the board's own refusal of `land` and `return`. More: [console.md](../console.md).
 
-Every multi-verb tool answers `help` (each verb with one example) and prints the same for a bare call, exit 0: `board`, `protocol`, `session` and `scratch`. `protocol help` and the stdin forms come from the frozen `base.Verb` records and `protocol_engine/schema.py` (see [protocol-engine.md](../protocol-engine.md)). An unknown `board` verb that the installed bd knows fails with exit 2 and `board: no verb 'ready'; run: board bd ready <args>`; nothing runs or forwards.
+Every multi-verb tool answers `help` (each verb with one example) and prints the same for a bare call, exit 0: `board`, `protocol`, `session` and `scratch`. `protocol help` and the stdin forms come from the frozen `base.Verb` records and `protocol_engine/schema.py` (see [protocol-engine.md](../protocol-engine.md)). An unknown `board` verb that the installed bd knows fails with exit 2 and `board: no verb 'ready'; run: agents board bd ready <args>`; nothing runs or forwards.

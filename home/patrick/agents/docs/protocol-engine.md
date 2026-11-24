@@ -364,7 +364,7 @@ A round:
   `protocol defer` (stdin `{"question", "quote", "until"?}`; where `edit` applies, the quote
   checked the same way) defers a question the person asked to put off and the questions
   waiting on it, through chains (an answer already given to one goes; a batch holding one
-  comes back without it; `until` is a date or duration `bd` reads). Record has no `defer`
+  comes back without it; `until` is a date, YYYY-MM-DD). Record has no `defer`
   input (a report with one is refused) and files every deferral through one writer: on a board
   the question's item (a decision created for a draft, never a revision) is unclaimed and
   `agents board defer <id> --reason <the quote> [--until <date>]`d, outside waits too (no date);

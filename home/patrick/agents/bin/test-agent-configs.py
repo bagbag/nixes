@@ -2163,8 +2163,8 @@ def validate_shared_board(root: Path) -> None:
         expect(made_plans[-1]["nodes"][0]["labels"] == ["topic:a"], "a label is not repeated", made_plans[-1])
         board.create_item(None, "t", "task", description="d")
         expect("labels" not in made_plans[-1]["nodes"][0] and "parent_id" not in made_plans[-1]["nodes"][0], "an unshared top-level item stays bare", made_plans[-1])
-        board.create_item(None, "t", "decision", description="d", deps=[("revises", "fx-o")], holds=["fx-h"], assignee=None)
-        expect(made_plans[-1]["nodes"][0]["deps"] == [{"target": "fx-o", "type": "revises"}] and "assignee" not in made_plans[-1]["nodes"][0]
+        board.create_item(None, "t", "decision", description="d", deps=[("relates-to", "fx-o")], holds=["fx-h"], assignee=None)
+        expect(made_plans[-1]["nodes"][0]["deps"] == [{"target": "fx-o", "type": "relates-to"}] and "assignee" not in made_plans[-1]["nodes"][0]
                and made_plans[-1]["edges"] == [{"from_id": "fx-h", "to_key": "item", "type": "blocks"}], "links the item holds, and items waiting on it", made_plans[-1])
     with patch.object(board, "bd_show", lambda ids, *flags, **kw: []), patch.object(board, "shared", None), patch.object(board, "create_plan", fake_plan):
         try:
@@ -2736,24 +2736,12 @@ def validate_board(root: Path) -> None:
                           "Unformatted ruling", "Old milestone"):
                 if any(f"  {cid[clean]}  " in row for row in deviation_lines):
                     raise ValueError(f"board check flagged conforming {clean}")
-            # A decision's blocker is its question (board wait needs no reason for it); a work item's is not.
-            for blocker_kind, flagged in (("decision", []), ("task", [("w", "waits on b without naming it")])):
-                waits = [{"id": "w", "title": "W", "issue_type": "task", "status": "open", "priority": 2, "description": "d", "created_at": "2026-10-22T15:29:00Z",
-                          "updated_at": "2026-10-22T15:29:00Z", "dependencies": [{"issue_id": "w", "depends_on_id": "b", "type": "blocks"}]},
-                         {"id": "b", "title": "B", "issue_type": blocker_kind, "status": "open", "priority": 2, "description": "d", "created_at": "2026-10-22T15:29:00Z",
-                          "updated_at": "2026-10-22T15:29:00Z"}]
-                if board.unnamed_waits(bare_deck(waits), None) != flagged:
-                    raise ValueError(f"unnamed_waits on a {blocker_kind} blocker: {board.unnamed_waits(bare_deck(waits), None)}")
             # Old data: a milestone's blockers were its members, unnamed in its text: no deviation (board-migrate makes them parts).
             members_edges = [{**issue, "dependencies": [*issue["dependencies"], *(
                 {"issue_id": issue["id"], "depends_on_id": cid[title], "type": "blocks"} for title in ("Squashed text", "Labelled status"))]}
                 if issue["title"] == "Old milestone" else issue for issue in checked]
             if f"  {cid['Old milestone']}  " in invoke(["check"], Fake(members_edges))[1]:
                 raise ValueError("board check flagged a milestone's member edges")
-            # bd keeps no reason on an edge: an unnamed wait is a flag, not a deviation.
-            unnamed = report.split("flag, not a deviation")[1]
-            if f"  {cid['Unnamed wait']}  unnamed-blocker" not in unnamed or f"  {cid['Old milestone']}  " in unnamed:
-                raise ValueError(f"board check missed or misplaced the unnamed-wait flag:\n{report}")
             if "convention deviations: 6 — run /board-migrate" not in health_check:
                 raise ValueError("board health lacks the deviation hint")
             # A status outside the model (a legacy needs_ratification decision) is a deviation only /board-migrate converts.
@@ -2801,17 +2789,10 @@ def validate_board(root: Path) -> None:
             if "Ready task" in invoke(["queue"], Fake(chore))[1] or "Spike perf" in invoke(["queue"], Fake(chore))[1]:
                 raise ValueError("board routed a retired chore or check")
 
-            # A closed blocker holds nothing up.
-            satisfied = [{**issue, "status": "closed"} if issue["title"] == "Clean task" else issue for issue in checked]
-            report = invoke(["check"], Fake(satisfied))[1]
-            if f"  {cid['Unnamed wait']}  unnamed-blocker" in report:
-                raise ValueError(f"board check counted a closed blocker:\n{report}")
-
             # Closed items are immutable history: no class or flag looks at them.
             closed_all = [{**issue, "status": "closed"} if issue["title"] != "Goal" else issue for issue in checked]
             code, report, _ = invoke(["check"], Fake(closed_all))
-            if code != 0 or "convention deviations: 0\n" not in report \
-                    or "unnamed waits on open items (board-core.md#dependencies): 0" not in report:
+            if code != 0 or "convention deviations: 0\n" not in report:
                 raise ValueError(f"board check looked at closed items:\n{report}")
 
             conforming = [issue for issue in checked if issue["title"] in ("Goal", "CR everything", "Clean task", "User action")]
@@ -3786,7 +3767,7 @@ def validate_board(root: Path) -> None:
                     raise ValueError(f"board console crs lacks keys the console's contract declares: {sorted(declared - real_keys)}")
                 contract = contract_file.read_text(encoding="utf-8").split("export const BOARD_CONSOLE_CONTRACT")[1]
                 top = set(re.findall(r"^  (\w+):", contract, re.M))
-                if top - {"counts", "crs", "queued", "waitingOnYou", "prefix", "noBoard", "ratifications"} or {"queued", "waitingOnYou", "prefix", "noBoard"} - top \
+                if top - {"counts", "crs", "queued", "waitingOnYou", "prefix", "noBoard"} or {"queued", "waitingOnYou", "prefix", "noBoard"} - top \
                         or (top - {"counts", "crs"}) - set(json.loads(text)):
                     raise ValueError(f"the console's contract names keys board console does not print: {sorted(top)}")
                 counts_body = contract.split("counts: {")[1].split("\n  },")[0]
@@ -4729,6 +4710,10 @@ def validate_board(root: Path) -> None:
                 code, _, errors, fake = bd_create("--deps", f"{word}:{ready}")
                 if code != 2 or "is not a link word" not in errors or any(a[0] == "create" for a, _ in fake.calls):
                     raise ValueError(f"--deps {word}: is refused before anything is created: {code} {errors} {fake.calls}")
+            for word in ("until", "caused-by", "validates"):  # a type the model has no relation for is refused before anything is created
+                code, _, errors, fake = bd_create("--deps", f"{word}:{ready}")
+                if code != 2 or "is not a link the board writes" not in errors or any(a[0] == "create" for a, _ in fake.calls):
+                    raise ValueError(f"--deps {word}: is refused before anything is created: {code} {errors} {fake.calls}")
             code, output, errors, fake = bd_create("--deps", f"relates-to:{ready}")
             if code != 2 or "names what it holds up" not in errors or any(a[0] == "create" for a, _ in fake.calls):
                 raise ValueError(f"a decision whose links block nothing needs --holds none: {code} {errors} {fake.calls}")
@@ -4911,11 +4896,11 @@ def validate_board(root: Path) -> None:
             code, _, errors = invoke(["ruling", "supersede", "fx-b", "--with", "fx-d"], fake, "lead0001")
             if code != 1 or "keeps one revision rule" not in errors or fake.writes():
                 raise ValueError(f"board ruling supersede must refuse a carry onto a record that revises another: {errors}\n{fake.writes()}")
-            # board check --json: deviations and flags only; a record's prose naming another ruling is no finding (the
+            # board check --json: deviations only; a record's prose naming another ruling is no finding (the
             # release Board check's `revises` class judges revisions).
             prose = [record("fx-a", "in_force"), record("fx-b", "decided", notes="This revises fx-a for the cache.")]
             code, text, _ = invoke(["check", "--json"], Fake(prose))
-            if code or set(json.loads(text)) != {"deviations", "unnamedBlockers"}:
+            if code or set(json.loads(text)) != {"deviations"}:
                 raise ValueError(f"board check --json: {text}")
 
             # board check: a standalone review waiting on a blocker deviates no more (reviews do not wait); revision prose flags nothing.
@@ -4929,13 +4914,6 @@ def validate_board(root: Path) -> None:
             if invoke(["ruling", "supersede", old, "--with", new, "--partial", "Rule 2"], Fake(closed_new), "lead0001")[0] \
                     or invoke(["ruling", "supersede", old, "--with", new], Fake(closed_new), "lead0001")[0] != 1:
                 raise ValueError("board ruling supersede must take a closed new record for --partial only")
-            # A wait named only in a comment (board wait's reason) is named.
-            wire, work = ids["Wire caller"], ids["Ready task"]
-            waiting = {"Wire caller": {"dependencies": [{"issue_id": wire, "depends_on_id": work, "type": "blocks"}]}}
-            if f"  {wire}  unnamed-blocker" not in invoke(["check"], Fake(variant(**waiting)))[1] or f"  {wire}  unnamed-blocker" in invoke(
-                    ["check"], Fake(variant(**{"Wire caller": {**waiting["Wire caller"], "comments": [{"text": f"Waits on {work} for r"}]}})))[1]:
-                raise ValueError("board check must read a wait's reason from the item's comments")
-
             # Views: --limit everywhere (--all is --limit 0), a READ_BUDGET cut names a --limit that fits.
             many = fixture + [{**next(i for i in fixture if i["title"] == "CR ready"), "id": f"fx-wide{n:03}",
                                "title": "t" * 300} for n in range(200)]
@@ -5388,7 +5366,7 @@ def validate_board(root: Path) -> None:
                 return {i["id"]: (deck.claimable(i), deck.cr_waits(i)) for i in issues if i["issue_type"] == "change-request" and i["status"] != "closed"}
 
             # A2/A10: a CR waits while its blocker CR is open, in work or returned; in review it waits too; at Accept it is the base,
-            # unless it is design-only (never a stack base); two bases are one too many; closed is landed.
+            # two bases are one too many; closed is landed.
             item_of = lambda cr, *, blocks=(): [cr_item(f"{cr['id']}.i", cr["id"], blocks=blocks)]
             for blocker, expect in ((cr_issue("b", "passed"), ("implement", [], ["b"])),
                                     (cr_issue("b", "in_review"), (None, ["b"], [])),
@@ -5829,6 +5807,15 @@ def validate_board(root: Path) -> None:
                             or any(w[:2] == ["update", f"cp{look}.d"] for w in written) \
                             or (look == "before" and not any(w[:4] == ["update", f"cp{look}", "--status", "passed"] for w in written)):
                         raise ValueError(f"the pass of a design-only CR in a look-{look} project: {code} {errors}\n{written}\n{output}")
+                # A stored full pass for this tip and base is never rerun: the hand-over reads it instead of running the check again.
+                issues, tip, wt = make_cr("cpstored", "cpstored.txt", "d\n")
+                issues[0].update(assignee="bbbb2222", status="in_review")
+                issues[0]["metadata"].update(look="after", reviewing_tip=tip, check_tip=tip, check_base_tip=at_main(), check_result="pass", check_at="2026-10-22T15:00:00Z")
+                issues[1] = cr_item("cpstored.d", "cpstored", "closed", kind="task")
+                with patch.object(board, "check_verdict", side_effect=AssertionError("the stored pass was rerun")):
+                    code, output, errors = invoke(["handover", "cpstored", "reviewed: the stored pass covers it"], Fake(issues), "bbbb2222")
+                if code or "rerun" in errors:
+                    raise ValueError(f"a hand-over must reuse a stored full pass for the same tip and base: {code} {errors}\n{output}")
                 # r10-q50: a CR whose branch has no commits of its own lands when its review passes (nothing to merge), in either look,
                 # without a ratification and without the Accept.
                 def make_empty_cr(name, look, status="in_review", **extra):
@@ -5872,6 +5859,20 @@ def validate_board(root: Path) -> None:
                 code, output, errors = invoke(["cr", "land", "ep", "--tip", p_tip[:8], "--base", at_main()], fake, "lead0001")
                 if code or not any(w[:2] == ["close", "ec"] for w in fake.writes()):
                     raise ValueError(f"an empty stacked look-before CR must land with its base: {code} {errors}\n{output}\n{fake.writes()}")
+                # Any passed CR is a stack base, a look-after one waiting for its own base too; accepting the first base lands the chain after it (CR1 look before, CR2 and CR3 look after).
+                s_issues, s_tip, _ = make_cr("cs1", "cs1.txt", "x\n")
+                chain = []
+                for name, parent in (("cs2", "cs1"), ("cs3", "cs2")):
+                    git("worktree", "add", "-q", "-b", f"cr/{name}", str(Path(repo_root, ".worktrees", name)), f"cr/{parent}")
+                    chain += [cr_issue(name, "passed", look="after", base=parent, base_sha=s_tip, setup_sha=s_tip, review_tip=s_tip, review_base_tip=s_tip,
+                                       check_tip=s_tip, check_base_tip=s_tip, check_result="pass", check_at="2026-10-22T15:00:00Z"), cr_item(f"{name}.i", name, "closed")]
+                if not bare_deck([*s_issues, *chain]).stackable(chain[0]) or bare_deck([{**chain[0], "status": "in_review"}]).stackable({**chain[0], "status": "in_review"}):
+                    raise ValueError("a passed look-after CR waiting for its base is a stack base; one in agent review is not")
+                fake = Fake([*s_issues, *chain])
+                code, output, errors = invoke(["cr", "land", "cs1", "--tip", s_tip[:8], "--base", at_main()], fake, "lead0001")
+                closed = [w[1] for w in fake.writes() if w[0] == "close"]
+                if code or not {"cs1", "cs2", "cs3"} <= set(closed):
+                    raise ValueError(f"accepting the first base of a three-CR stack must land the chain after it: {code} {errors}\n{output}\n{fake.writes()}")
                 # A design-only CR at the user's Accept lands like any CR, on the pair shown, and files no design ratification.
                 issues, tip, wt = make_cr("cpuser", "cpuser.txt", "d\n")
                 issues[1] = cr_item("cpuser.d", "cpuser", "closed", kind="task")
@@ -6406,7 +6407,8 @@ def validate_board(root: Path) -> None:
                 code, _, errors, writes = verb(["link", "t-a", "t-b", "--type", "relates-to"], world)
                 if code or writes != [["batch", "-m", "board link t-a t-b", "--json"]]:
                     raise ValueError(f"board link: {code} {errors!r} {writes}")
-                for argv, word in ((["link", "t-a", "t-b", "--type", "blocks"], "agents board wait <item> --on <target>"), (["link", "t-a", "t-b", "--type", "nonsense"], "is not one of"),
+                for argv, word in ((["link", "t-a", "t-b", "--type", "blocks"], "agents board wait <item> --on <target>"), (["link", "t-a", "t-b", "--type", "nonsense"], "is not a link the board writes"),
+                                   *((["link", "t-a", "t-b", "--type", kind], "is not a link the board writes") for kind in ("until", "caused-by", "validates")),
                                    (["link", "t-r", "t-b", "--type", "discovered-from"], "--found-in")):
                     code, _, errors, writes = verb(argv, world)
                     if code != 2 or word not in errors or writes:
@@ -6427,6 +6429,11 @@ def validate_board(root: Path) -> None:
                 code, output, errors, writes = verb(["unlink", "t-l", "t-a"], world)  # unlink removes a wait, saying so as the sentence's end
                 if code or writes != [["dep", "remove", "t-l", "t-a"]] or "t-l no longer waits on t-a" not in output:
                     raise ValueError(f"board unlink must remove a wait: {code} {output!r} {errors!r} {writes}")
+                held_cr = [plain("t-a"), cr_issue("t-uc", assignee="aaaa1111"), cr_item("t-uc.i", "t-uc", blocks=("t-a",))]
+                for who, allowed in (("bbbb2222", False), ("aaaa1111", True), ("", True)):  # an item's wait is freed by its change request's holder, not by any session
+                    code, _, errors, writes = verb(["unlink", "t-uc.i", "t-a"], held_cr, who)
+                    if bool(code == 0 and writes) != allowed or (not allowed and (code != 2 or writes or "is held by" not in errors)):
+                        raise ValueError(f"board unlink of an item's wait by {who or 'the user'} (allowed {allowed}): {code} {errors!r} {writes}")
                 for word in ("conditional-blocks", "waits-for", "blocked-by", "depends-on", "related"):  # an old word is refused at the write, naming the new form
                     code, _, errors, writes = verb(["link", "t-k", "t-a", "--type", word], [plain("t-a"), plain("t-k")])
                     if code != 2 or "is not a link word" not in errors or writes:
@@ -6512,7 +6519,8 @@ def validate_board(root: Path) -> None:
                 # A deferral records its side and an optional revisit day; only that side undefers, and a due day only surfaces it.
                 parked = [plain("t-d1", "deferred", metadata={"deferred_by": "user", "revisit": "2000-01-01"}),
                           plain("t-d2", "deferred", metadata={"deferred_by": "aaaa1111", "revisit": "2000-01-01"}),
-                          plain("t-d3", "deferred", metadata={"deferred_by": "user", "revisit": "2999-01-01"})]
+                          plain("t-d3", "deferred", metadata={"deferred_by": "user", "revisit": "2999-01-01"}),
+                          plain("t-d5", "deferred", metadata={"revisit": "2000-01-01"})]  # migrated: no deferrer, the user's
                 code, _, errors, writes = verb(["undefer", "t-d1"], parked, "aaaa1111")
                 if code != 2 or "undefer is for the deferrer's side" not in errors or writes:
                     raise ValueError(f"an agent session undeferred the user's deferral: {code} {errors!r} {writes}")
@@ -6520,13 +6528,13 @@ def validate_board(root: Path) -> None:
                 if code or not writes or writes[0][:4] != ["update", "t-d2", "--status", "open"] or "deferred_by" not in " ".join(writes[0]):
                     raise ValueError(f"the deferring session must undefer its own deferral and clear its fields: {code} {errors!r} {writes}")
                 # Deferral authority: a session pulling plan defers for itself, a deciding session or the user for the user; a worker without the pull
-                # defers nothing. A deferral that records no deferrer is the user's: only the user or a deciding session undefers it (autopilot included).
-                for who, allowed, recorded in (("aaaa1111", False, None), ("plan0001", True, "plan0001"), ("lead0001", True, "user"), ("auto0001", True, "user"), ("", True, "user")):
+                # defers nothing; autopilot's deferral records its own actor. A deferral that records no deferrer is the user's: only the user or a lead or solo session undefers it.
+                for who, allowed, recorded in (("aaaa1111", False, None), ("plan0001", True, "plan0001"), ("lead0001", True, "user"), ("auto0001", True, "auto0001"), ("", True, "user")):
                     code, _, errors, writes = verb(["defer", "t-b", "--reason", "set aside for later work"], world, who)
                     if bool(code == 0 and writes) != allowed or (allowed and f"deferred_by={recorded}" not in " ".join(writes[0])) or (not allowed and (code != 2 or "defer is for" not in errors)):
                         raise ValueError(f"board defer by {who or 'the user'} (allowed {allowed}, deferrer {recorded}): {code} {errors!r} {writes}")
                 nameless = [plain("t-d4", "deferred", metadata={})]
-                for who, allowed in (("aaaa1111", False), ("plan0001", False), ("lead0001", True), ("auto0001", True), ("", True)):
+                for who, allowed in (("aaaa1111", False), ("plan0001", False), ("lead0001", True), ("auto0001", False), ("", True)):
                     code, _, errors, writes = verb(["undefer", "t-d4"], nameless, who)
                     if bool(code == 0 and writes) != allowed:
                         raise ValueError(f"board undefer of a deferral without a deferrer by {who or 'the user'} (allowed {allowed}): {code} {errors!r} {writes}")
@@ -6558,7 +6566,7 @@ def validate_board(root: Path) -> None:
                     if bool(code == 0 and writes) != allowed or (not allowed and "claim it first" not in errors):
                         raise ValueError(f"board close of an item of an unheld change request by {who or 'the user'} (allowed {allowed}): {code} {errors!r} {writes}")
                 due = lambda one, side: board.due_deferral(next(r for r in parked if r["id"] == one), side)
-                if not (due("t-d1", "user") and not due("t-d1", "plan") and due("t-d2", "plan") and not due("t-d2", "user") and not due("t-d3", "user")):
+                if not (due("t-d1", "user") and not due("t-d1", "plan") and due("t-d2", "plan") and not due("t-d2", "user") and not due("t-d3", "user") and due("t-d5", "user") and not due("t-d5", "plan")):
                     raise ValueError("a due deferral belongs to the side that deferred it, and only from its revisit day")
                 # Rulings: link and unlink refuse the supersedes and tracks edges; reopen refuses a superseded ruling, naming the revision that puts it back.
                 decision = lambda item_id, status, **more: {**plain(item_id, status, **more), "issue_type": "decision"}
@@ -13514,6 +13522,7 @@ def validate_protocol(root: Path, part: str) -> None:
             refused("defer", stdin={"question": ids[0]}, needle='needs "question" and "quote"', **rules)
             refused("defer", stdin={"question": ids[0], "quote": "defer the first one", "until": " "}, needle="`until`", **rules)
             refused("defer", stdin={"question": ids[0], "quote": "defer the first one", "until": "in a few weeks"}, needle="2026-12-01", **rules)
+            refused("defer", stdin={"question": ids[0], "quote": "defer the first one", "until": "+3d"}, needle="2026-12-01", **rules)
             proto("defer", stdin={"question": ids[0], "quote": "defer the first one", "until": "2026-12-01"}, **rules)
             proto("defer", stdin={"question": ids[3], "quote": "the old store can wait"}, **rules)
             states = [q["status"] for q in shown(**rules)["questions"]]
