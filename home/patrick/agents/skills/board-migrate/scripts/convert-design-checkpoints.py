@@ -81,6 +81,13 @@ def active_decider() -> None:
         raise ConversionError('run the conversion in a registered lead or solo session')
 
 
+def rehearsal_copy(folder: str, main_root: Path) -> None:
+    """Only a rehearsal may skip the deciding-session check: its folder is the board-rehearsal-* one it made, and this checkout is that folder."""
+    path = Path(folder).resolve()
+    if not path.name.startswith('board-rehearsal-') or main_root.resolve() != path:
+        raise ConversionError(f'--copy {folder}: this board is not that rehearsal copy; a real board needs a lead or solo session')
+
+
 # --- reading the board -------------------------------------------------------------------------------------------
 
 def show(ids: list[str]) -> dict[str, dict]:
@@ -381,7 +388,7 @@ def main() -> int:
     app = sub.add_parser('apply')
     app.add_argument('mapping')
     app.add_argument('--apply', action='store_true', help='write; without it, print the steps a run would take after its rechecks')
-    app.add_argument('--copy', action='store_true', help='the board is a rehearsal copy: no deciding session is required')
+    app.add_argument('--copy', metavar='FOLDER', help='the board is the rehearsal copy in FOLDER (convert-stored-forms.py --rehearse makes it): no deciding session is required')
     sub.add_parser('verify')
     args = parser.parse_args()
     try:
@@ -396,7 +403,9 @@ def main() -> int:
         elif args.verb == 'apply':
             mapping = load_mapping(args.mapping)
             if args.apply:
-                if not args.copy:
+                if args.copy:
+                    rehearsal_copy(args.copy, main_root)
+                else:
                     active_decider()
                 apply(mapping, main_root, False)  # recheck every record before the first write
             for line in apply(mapping, main_root, args.apply):

@@ -1505,9 +1505,9 @@ class Convert:
     """A stateful fake board (raw bd writes and the reads the conversion makes) beside a real git checkout with cr/<id> branches. The script runs from
     a copy laid out as agents/skills/board-migrate/scripts, so it finds the fake agents/bin/board beside it."""
 
-    def __init__(self, e: Env):
+    def __init__(self, e: Env, folder: str = 'proj'):
         self.e = e
-        self.repo = f'{e.tmp}/proj'
+        self.repo = f'{e.tmp}/{folder}'
         self.state_path = f'{e.tmp}/convert-state.json'
         self.mapping = f'{e.tmp}/mapping.json'
         bins = Path(e.tmp) / 'agents' / 'bin'
@@ -1555,8 +1555,8 @@ class Convert:
         return sum(c[:3] == ['bd', '--raw', '--yes'] for c in self.state['calls'])
 
 
-def checkpoint_board(e: Env) -> Convert:
-    c = Convert(e)
+def checkpoint_board(e: Env, folder: str = 'proj') -> Convert:
+    c = Convert(e, folder)
     body = 'Design text of the checkpoint.'
     c.item('cp-user', 'change-request', 'passed', metadata={'checkpoint': 'user', 'review_tip': 'abc'}, comments=['board handover: checks green'])
     c.item('d-user', 'design', 'open', 'cp-user', design=body)
@@ -1631,7 +1631,15 @@ def convert_checkpoints_applies_reruns_and_refuses_divergence(e: Env):
     dry = c.run('apply', c.mapping)
     check(dry.returncode == 0 and 'cp-user: back to open' in dry.stdout and c.writes() == 0, f'a dry run writes nothing: {dry.stdout}{dry.stderr}')
     check(c.run('apply', c.mapping, '--apply', role='agent').returncode and c.writes() == 0, 'only a lead or solo session writes')
-    check(c.run('apply', c.mapping, '--apply', '--copy', role='agent').returncode == 0 and c.load()['cp-user']['status'] == 'open', 'a rehearsal copy needs no deciding session')
+    refused = c.run('apply', c.mapping, '--apply', '--copy', c.repo, role='agent')
+    check(refused.returncode and c.writes() == 0 and 'not that rehearsal copy' in refused.stderr, 'a real board refuses --copy, even naming its own folder: ' + refused.stderr)
+    rehearsal = checkpoint_board(Env(tempfile.mkdtemp(prefix='test-scratch.', dir=e.tmp)), 'board-rehearsal-x')
+    rehearsal.run('inventory', '--mapping', rehearsal.mapping)
+    Path(rehearsal.mapping).write_text(json.dumps({**json.loads(Path(rehearsal.mapping).read_text()), 'approved_by': 'owner'}))
+    elsewhere = rehearsal.run('apply', rehearsal.mapping, '--apply', '--copy', c.repo, role='agent')
+    check(elsewhere.returncode and rehearsal.writes() == 0, 'a rehearsal copy is the folder --copy names, not another: ' + elsewhere.stderr)
+    check(rehearsal.run('apply', rehearsal.mapping, '--apply', '--copy', rehearsal.repo, role='agent').returncode == 0 and rehearsal.load()['cp-user']['status'] == 'open',
+          'a rehearsal copy needs no deciding session')
     c = checkpoint_board(Env(tempfile.mkdtemp(prefix='test-scratch.', dir=e.tmp)))
     c.run('inventory', '--mapping', c.mapping)
     Path(c.mapping).write_text(json.dumps({**json.loads(Path(c.mapping).read_text()), 'approved_by': 'owner'}))

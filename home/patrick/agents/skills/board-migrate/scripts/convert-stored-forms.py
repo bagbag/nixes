@@ -775,7 +775,7 @@ def rehearse() -> int:
             approved = json.loads(mapping.read_text(encoding='utf-8'))
             approved['approved_by'] = 'rehearsal'
             mapping.write_text(json.dumps(approved), encoding='utf-8')
-            detail['checkpoint conversion'] = run(sys.executable, '-B', str(checkpoints), 'apply', str(mapping), '--apply', '--copy')
+            detail['checkpoint conversion'] = run(sys.executable, '-B', str(checkpoints), 'apply', str(mapping), '--apply', '--copy', folder)
             detail['checkpoint verify'] = run(sys.executable, '-B', str(checkpoints), 'verify')
         detail['check'] = run(str(BOARD), 'check', '--limit', '0')
         detail['mark'] = run(sys.executable, '-B', str(here), '--mark')
