@@ -80,16 +80,16 @@ Printed by `model_tables()`; the test compares this block with it exactly. `Held
 | return | change request | passed | open | * | - | deciding / user | - | - |
 | return --ruling | change request | in_review | open | you | - | planner | - | - |
 | landing | change request | open, in_review, passed | closed | * | - | anyone | - | landed |
-| cr reject | change request | open, in_review, passed, deferred | closed | * | - | attended / user | reason, items-closed | dropped |
+| cr reject | change request | open, in_review, passed, deferred | closed | * | - | attended / user | reason, items-closed, no-waiters | dropped |
 | base rejected | change request | open, in_review, passed | open | * | - | anyone | - | - |
 | defer | change request | open | deferred | * | - | planner+holder / deciding / user | - | - |
 | undefer | change request | deferred | open | - | - | deferrer | - | - |
 | claim | task | open | = | - | you | agent | - | - |
 | take | task | open | = | * | you | agent+holder / agent+deciding+gone | - | - |
 | unclaim | task | open | = | * | - | holder / user / deciding+gone | - | - |
-| close | task | open | closed | * | - | holder / user / deciding+gone | reason | done, dropped |
+| close | task | open | closed | * | - | holder / user / deciding+gone | reason, no-waiters | done, dropped |
 | reopen | task | closed | open | * | - | holder / user / deciding+gone | - | - |
-| close | item | open | closed | * | - | holding / user / deciding+unheld / deciding+gone | reason | done, dropped |
+| close | item | open | closed | * | - | holding / user / deciding+unheld / deciding+gone | reason, no-waiters | done, dropped |
 | reopen | item | closed | open | * | - | holding / user / deciding+unheld / deciding+gone | - | - |
 | defer | task | open | deferred | * | - | planner+holder / deciding / user | - | - |
 | undefer | task | deferred | open | - | - | deferrer | - | - |
@@ -130,7 +130,7 @@ Printed by `model_tables()`; the test compares this block with it exactly. `Held
 | attended | a lead or solo session (not autopilot: it leaves these moves, the user's to make or hard to undo, to the user; unattended protocol) |
 <!-- /model-tables -->
 
-Guards: `reason` (a non-blank reason), `items-closed` (no open item), `look-before` (only a look-before CR passes without agent review), `not-open-for-review` (end the user's review first), `not-superseded` (a superseded ruling is put back by a revision record).
+Guards: `reason` (a non-blank reason), `items-closed` (no open item), `look-before` (only a look-before CR passes without agent review), `not-open-for-review` (end the user's review first), `no-waiters` (a close as dropped leaves no live record waiting on it: unlink the wait or close them in the same call), `not-superseded` (a superseded ruling is put back by a revision record).
 
 ## Authority
 
@@ -159,11 +159,13 @@ One relation, written on the waiter, with a short "for" (content): "X waits on Y
 
 | Waits on | Met when |
 |---|---|
-| an item in the same CR | it closes |
-| another CR, or one of its items | that CR lands, or the waiter's CR stacks on it |
+| an item in the same CR | it closes (done; an item closed dropped is refused while one waits on it) |
+| another CR, or one of its items | that CR lands, or the waiter's CR stacks on it; `cr reject` is refused while a live record waits on it or its items |
 | a question | it closes: planned (planning may rewrite the waiter, so in force is not enough), dropped or superseded |
 | a gate | it is resolved |
-| a task | it is closed |
+| a task | it is closed done (a task closed dropped is refused while a record waits on it) |
+
+A wait is met only by a delivering close, so nothing closes dropped under a live waiter (`close` and `cr reject` name each waiter and the unlink); `check` reports a live wait on a dropped record (`dropped-blocker`) from outside the verbs.
 
 ## Readiness
 

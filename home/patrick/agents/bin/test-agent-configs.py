@@ -6395,12 +6395,15 @@ def validate_board(root: Path) -> None:
                 code, _, errors, writes = verb(["reopen", "t-crx.i"], landed_item)
                 if code != 2 or "t-crx, which is closed" not in errors or writes:
                     raise ValueError(f"board reopen of an item of a landed change request must be refused: {code} {errors!r} {writes}")
-                for argv, outcome in ((["close", "t-a", "--reason", "finished with the cache change"], "done"),
-                                      (["close", "t-a", "--reason", "moot after the ruling", "--outcome", "dropped"], "dropped")):
+                for argv, outcome, closed in ((["close", "t-a", "--reason", "finished with the cache change"], "done", "t-a"),  # t-l waits on t-a: only a delivering close meets it
+                                              (["close", "t-b", "--reason", "moot after the ruling", "--outcome", "dropped"], "dropped", "t-b")):
                     code, _, errors, writes = verb(argv, world)
-                    if code or writes[0] != ["update", "t-a", "--status", "closed", "--assignee", "", "--if-assignee", "", "--if-status", "open", "--set-metadata", f"outcome={outcome}", "--json"] \
-                            or writes[1][:2] != ["close", "t-a"]:
+                    if code or writes[0] != ["update", closed, "--status", "closed", "--assignee", "", "--if-assignee", "", "--if-status", "open", "--set-metadata", f"outcome={outcome}", "--json"] \
+                            or writes[1][:2] != ["close", closed]:
                         raise ValueError(f"board close records its outcome ({outcome}) with the holder compare-and-set: {code} {errors!r} {writes}")
+                code, _, errors, writes = verb(["close", "t-a", "--reason", "moot after the ruling", "--outcome", "dropped"], world)
+                if code != 2 or "t-l waits on t-a" not in errors or writes:
+                    raise ValueError(f"board close as dropped must be refused while t-l waits on it, before any write: {code} {errors!r} {writes}")
                 for status, outcome in (("open", "dropped"), ("decided", "dropped"), ("in_force", "planned")):  # a closed decision records how it ended
                     code, _, errors, writes = verb(["close", "t-d", "--reason", "closed with its planning"], [{**plain("t-d"), "issue_type": "decision", "status": status}])
                     if code or writes[0] != ["update", "t-d", "--status", "closed", "--assignee", "", "--if-assignee", "", "--if-status", status, "--set-metadata", f"outcome={outcome}", "--json"] \

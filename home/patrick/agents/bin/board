@@ -344,16 +344,16 @@ MOVES = (
     Move('return', CR_GROUP, ('passed',), 'open', '*', '-', ('deciding', 'user')),  # a change request waiting for its Accept is the Accept's to return
     Move('return --ruling', CR_GROUP, ('in_review',), 'open', 'you', '-', ('planner',)),
     Move('landing', CR_GROUP, _ANY_CR, 'closed', '*', '-', ('anyone',), (), ('landed',)),  # the target already holds the tip: the command checked before the fast-forward
-    Move('cr reject', CR_GROUP, (*_ANY_CR, 'deferred'), 'closed', '*', '-', ('attended', 'user'), ('reason', 'items-closed'), ('dropped',)),
+    Move('cr reject', CR_GROUP, (*_ANY_CR, 'deferred'), 'closed', '*', '-', ('attended', 'user'), ('reason', 'items-closed', 'no-waiters'), ('dropped',)),
     Move('base rejected', CR_GROUP, _ANY_CR, 'open', '*', '-', ('anyone',)),
     Move('defer', CR_GROUP, ('open',), 'deferred', '*', '-', DEFER),
     Move('undefer', CR_GROUP, ('deferred',), 'open', '-', '-', ('deferrer',)),
     Move('claim', WORK_GROUP, ('open',), '=', '-', 'you', ('agent',)),
     Move('take', WORK_GROUP, ('open',), '=', '*', 'you', ('agent+holder', 'agent+deciding+gone')),
     Move('unclaim', WORK_GROUP, ('open',), '=', '*', '-', FREE_HOLD),
-    Move('close', WORK_GROUP, ('open',), 'closed', '*', '-', FREE_HOLD, ('reason',), ('done', 'dropped')),
+    Move('close', WORK_GROUP, ('open',), 'closed', '*', '-', FREE_HOLD, ('reason', 'no-waiters'), ('done', 'dropped')),
     Move('reopen', WORK_GROUP, ('closed',), 'open', '*', '-', FREE_HOLD),  # reopen takes close's authority; unheld, 'holder' admits anyone
-    Move('close', ITEM_GROUP, ('open',), 'closed', '*', '-', ITEM_WRITE, ('reason',), ('done', 'dropped')),
+    Move('close', ITEM_GROUP, ('open',), 'closed', '*', '-', ITEM_WRITE, ('reason', 'no-waiters'), ('done', 'dropped')),
     Move('reopen', ITEM_GROUP, ('closed',), 'open', '*', '-', ITEM_WRITE),
     Move('defer', WORK_GROUP, ('open',), 'deferred', '*', '-', DEFER),
     Move('undefer', WORK_GROUP, ('deferred',), 'open', '-', '-', ('deferrer',)),
@@ -508,23 +508,25 @@ CLOSE_REASON_MIN = 20  # bd refuses a shorter close reason
 
 
 GUARDS = {
-    'reason': lambda issue, board, reason: None if reason and reason.strip() else 'a reason is required',
-    'items-closed': lambda issue, board, reason: board and open_item_refusal(board, issue),
-    'look-before': lambda issue, board, reason: None if board is None or cr_look(board, issue) == 'before' else 'only a look before change request passes without an agent review',
-    'not-open-for-review': lambda issue, board, reason: f'it is open for your review (tip {opened_tip(issue)[:12]}): end the review first' if opened_tip(issue) else None,
-    'not-superseded': lambda issue, board, reason: f'it is superseded by {", ".join(found)}: record a revision to put it back in force' if board and (found := superseding(board, issue['id'])) else None,
+    'reason': lambda issue, board, reason, outcome, together: None if reason and reason.strip() else 'a reason is required',
+    'items-closed': lambda issue, board, reason, outcome, together: board and open_item_refusal(board, issue),
+    'look-before': lambda issue, board, reason, outcome, together: None if board is None or cr_look(board, issue) == 'before' else 'only a look before change request passes without an agent review',
+    'not-open-for-review': lambda issue, board, reason, outcome, together: f'it is open for your review (tip {opened_tip(issue)[:12]}): end the review first' if opened_tip(issue) else None,
+    'no-waiters': lambda issue, board, reason, outcome, together: board and outcome == 'dropped' and dropped_waits_refusal(board, issue['id'], together),
+    'not-superseded': lambda issue, board, reason, outcome, together: f'it is superseded by {", ".join(found)}: record a revision to put it back in force' if board and (found := superseding(board, issue['id'])) else None,
 }
 
 
 def move(issue: dict, command: str, *, to: str | None = None, actor: str | None = None, fields: dict | None = None,
          reason: str | None = None, force: bool = False, via: str | None = None, check: bool = True,
-         board: 'Board | None' = None, outcome: str | None = None, agreed: frozenset = frozenset()) -> subprocess.CompletedProcess:
+         board: 'Board | None' = None, outcome: str | None = None, agreed: frozenset = frozenset(),
+         together: frozenset = frozenset()) -> subprocess.CompletedProcess:
     """The one status write. Finds the table row for the command, the item's type and its status (`to` picks among rows that
     differ only in where they go), refuses what the row forbids, then writes status and holder in one bd compare-and-set on
     the status and holder just read. A close is one compare-and-set write of status, outcome and holder (the closer takes a record another actor holds; bd validates the close in it), then `bd close` only records the reason. `via='supersede'` records
     it through bd supersede, whose `reason` names the new record. `fields` are metadata keys written with it (None removes one), as
     `put_meta` writes them. A closing row records its `outcome` (default: the row's first) in the same write. `board` tells an item
-    (inside a change request) from a task. The issue is updated in place."""
+    (inside a change request) from a task. `together`: the ids closed in the same call, which do not hold each other up. The issue is updated in place."""
     group = group_of(board, issue)
     rows = [m for m in MOVES if m.command == command and m.group == group and issue['status'] in m.frm
             and (to is None or m.to in (to, '='))]
@@ -548,7 +550,7 @@ def move(issue: dict, command: str, *, to: str | None = None, actor: str | None 
         refusal = item_write_refusal(board, issue, command, actor or derived_actor()) if group == ITEM_GROUP \
             else authority_refusal(issue, row, command, actor or derived_actor(), board, agreed)
     for name in row.guards if not refusal else ():
-        if why := GUARDS[name](issue, board, reason):
+        if why := GUARDS[name](issue, board, reason, fields.get('outcome') if fields else None, together):
             refusal = why if why.startswith(f"{issue['id']}:") else f"{issue['id']}: {command} refused: {why}"
             break
 
@@ -2398,7 +2400,22 @@ def doc_ref(anchor: str) -> str:
 COMMAND_FIXED = ('ruling-blocked', 'wait-cycle')
 
 
-def deviations(board: Board, root: str | None) -> list[tuple[str, str, str]]:
+def dropped_blockers(board: Board) -> set[str]:
+    """The records waited on that closed dropped, or whose change request did: the verbs refuse such a close under a live waiter, so a live
+    wait on one stands only from outside them. A status snapshot holds no closed record, so those are read here."""
+    waited = {b for w, record in board.by_id.items() if record['status'] != 'closed' and group_of(board, record) in (WORK_GROUP, ITEM_GROUP, CR_GROUP)
+              for b in board.blockers.get(w, []) if not b.startswith('external:')}
+    owner = {b: board.cr_of(b) or b for b in waited}
+    unread = sorted({i for i in (*waited, *owner.values()) if i not in board.by_id})
+    records = {**board.by_id, **{r['id']: r for r in bd_show(unread, comments=False)}} if unread else board.by_id
+
+    def dropped(record_id: str) -> bool:
+        record = records.get(record_id) or {}
+        return record.get('status') == 'closed' and meta(record).get('outcome') == 'dropped' and record.get('issue_type') != 'decision'
+    return {b for b in waited if dropped(b) or dropped(owner[b])}
+
+
+def deviations(board: Board, root: str | None, dropped_targets: set[str] | frozenset[str] = frozenset()) -> list[tuple[str, str, str]]:
     """(id, class, detail) for every convention deviation of a live (not closed) item in scope."""
     found = []
     for issue in board.scoped(root):
@@ -2425,6 +2442,9 @@ def deviations(board: Board, root: str | None) -> list[tuple[str, str, str]]:
         if foreign:
             found.append((item_id, 'ruling-blocked', f"in-force ruling waits on {', '.join(foreign)}, work and not planning: "
                                                      f"{'; '.join(dep_fix(item_id, blocker) for blocker in foreign)}"))
+        if group in (WORK_GROUP, ITEM_GROUP, CR_GROUP):
+            for blocker in sorted(dropped_targets.intersection(board.blockers.get(item_id, []))):
+                found.append((item_id, 'dropped-blocker', f'waits on {blocker}, closed dropped, which never delivers: {dep_fix(item_id, blocker)}, or wait on the record that keeps the work'))
         if issue['status'] == 'deferred':
             waiting = deferred_waiters(board, item_id)
             if waiting:
@@ -2461,12 +2481,12 @@ def dep_fix(item_id: str, blocker: str) -> str:
 
 def check_json(board: Board, args) -> dict:
     """Every finding of `board check`, unbudgeted: the deviations by class."""
-    return {'deviations': [{'id': item_id, 'class': kind, 'detail': detail} for item_id, kind, detail in deviations(board, args.root)]}
+    return {'deviations': [{'id': item_id, 'class': kind, 'detail': detail} for item_id, kind, detail in deviations(board, args.root, dropped_blockers(board))]}
 
 
 def check(board: Board, args) -> int:
     limit = args.limit
-    found = deviations(board, args.root)
+    found = deviations(board, args.root, dropped_blockers(board))
     print(f'convention deviations: {len(found)}')
     for name, anchor in CHECK_CLASSES.items():
         rows = [f'  {item_id}  {name}  {doc_ref(anchor)}  {detail}'
@@ -5407,8 +5427,8 @@ def reject(board: Board, args) -> int:
         ids = ' '.join(item['id'] for item in open_items)
         raise BoardError(f'{args.id}: items still open: {ids}; no open item stays under a closed change request: '
                          f'agents board close {ids} --outcome dropped --reason "<why>", or agents board move {ids} --to <change request>')
-    comment(args.id, f'board cr reject: {actor}: {args.reason}')
     move(cr, 'cr reject', board=board, reason=f"rejected: {args.reason}"[:300].ljust(20, '.'), force=True)
+    comment(args.id, f'board cr reject: {actor}: {args.reason}')
     target = board_setting(board, 'target')
     back = []
     for other in live_crs(board):
@@ -5920,8 +5940,13 @@ def close_command(args) -> int:
     if missing := [item_id for item_id in ids if item_id not in found]:
         raise BoardError(f"unknown {', '.join(missing)}")
     board = Board.load()  # an item closes by its change request's holder (item_write_refusal)
+    together = frozenset(ids)
+    if args.outcome == 'dropped':  # all or none: a later id's refusal must not leave an earlier one closed under a waiter
+        for item_id in ids:
+            if group_of(board, found[item_id]) in (WORK_GROUP, ITEM_GROUP) and (why := dropped_waits_refusal(board, item_id, together)):
+                raise BoardError(f'{item_id}: close refused: {why}')
     for item_id in ids:
-        move(found[item_id], 'close', reason=reason, force=args.force, outcome=args.outcome, board=board)
+        move(found[item_id], 'close', reason=reason, force=args.force, outcome=args.outcome, board=board, together=together)
         print(f'{item_id}: closed')
     return 0
 
@@ -6877,21 +6902,40 @@ def reopen_command(board: Board, args) -> int:
     return 0
 
 
+def waiter_live(board: Board, w: str, set_aside: set[str] | frozenset[str]) -> bool:
+    """A record that still waits: open, not deferred, and not set aside with the call (an item goes with its change request)."""
+    unit = board.cr_of(w) or w
+    return w not in set_aside and unit not in set_aside and board.is_open(w) and board.by_id[w]['status'] != 'deferred' and board.by_id[unit]['status'] != 'deferred'
+
+
+def live_waits(board: Board, item_id: str, setting_aside: set[str] | frozenset[str] = frozenset()) -> list[tuple[str, str]]:
+    """(waiter, target) of the live records waiting on a task, item or change request or, for a change request, on one of its items
+    (closed ones too: a wait on an item of a CR is met when the CR lands). Records in `setting_aside` (set aside or closed in the
+    same call), a milestone (it detaches) and a CR's own items do not count."""
+    members = [item_id, *(t for t in board.dependents if t != item_id and board.cr_of(t) == item_id)] if board.is_cr(item_id) else [item_id]
+    return list(dict.fromkeys((w, member) for member in members for w in board.dependents.get(member, [])
+                              if waiter_live(board, w, setting_aside) and board.cr_of(w) != item_id and board.by_id[w].get('issue_type') != 'milestone'))
+
+
+def dropped_waits_refusal(board: Board, item_id: str, together: frozenset[str]) -> str | None:
+    """Why a close as dropped is refused: a wait is met only by a delivering close (model.md Waits), so none may be left waiting on it."""
+    waits = live_waits(board, item_id, together)
+    if not waits:
+        return None
+    return (f"{', '.join(f'{waiter} waits on {target}' for waiter, target in waits)}, and a dropped close never delivers what they wait for; "
+            f"unlink them ({'; '.join(dep_fix(waiter, target) for waiter, target in waits)}), wait on the record that keeps the work, or close them in the same call")
+
+
 def deferred_waiters(board: Board, item_id: str, deferring: set[str] = frozenset()) -> list[str]:
     """What deferring it would hang (board-coordination.md#deferrals-and-environment-facts). Deferred work holds up no live item:
     the live items waiting on it (a milestone's member detaches instead). A deferred question is a parked decision its held items
     still need (decide.md Pre-pass), unless work in progress, in review or at Accept waits on it through open items: that work."""
-    def live(w: str) -> bool:
-        unit = board.cr_of(w) or w  # an item is set aside with its change request
-        return w not in deferring and unit not in deferring and board.is_open(w) and board.by_id[w]['status'] != 'deferred' and board.by_id[unit]['status'] != 'deferred'
     if board.by_id.get(item_id, {}).get('issue_type') != 'decision':
-        members = [item_id, *(item['id'] for item in board.cr_items(item_id))] if board.is_cr(item_id) else [item_id]  # the waits on its items hang too
-        return list(dict.fromkeys(w for member in members for w in board.dependents.get(member, [])
-                                  if live(w) and board.cr_of(w) != item_id and board.by_id[w].get('issue_type') != 'milestone'))
+        return list(dict.fromkeys(waiter for waiter, _ in live_waits(board, item_id, deferring)))
     in_work, seen, todo = [], set(), list(board.dependents.get(item_id, []))
     while todo:
         w = todo.pop()
-        if w in seen or not live(w):
+        if w in seen or not waiter_live(board, w, deferring):
             continue
         seen.add(w)
         unit = board.cr_of(w) or w  # an item waits with its change request (cr_waits)

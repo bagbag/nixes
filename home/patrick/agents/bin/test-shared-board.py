@@ -1285,6 +1285,28 @@ def t_cr() -> None:
     check(rc == 0 and items('a')[e]['status'] == 'closed' and git('branch', '--list', f'cr/{e}', cwd=side).strip() and wt(e).is_dir(),
           'cr: reject closes it unlanded, the branch and worktree stay until confirmed', err + out)
 
+    # A wait is met only by a delivering close (model.md Waits): a reject or a dropped close refuses while a live record waits on it.
+    kept, gone = create('a', 'keeps waiting'), create('a', 'rejected while waited on')
+    gone_item, kept_item, gone_done = task(gone, 'G item'), task(kept, 'K item'), task(gone, 'G done item')
+    kept_other = task(create('a', 'waits on a done item'), 'O item')
+    check(run('a', 'wait', kept, '--on', gone, '--for', 'needs its output', role='solo')[0] == 0
+          and run('a', 'wait', kept_item, '--on', gone_item, '--for', 'needs its output', role='solo')[0] == 0
+          and run('a', 'wait', kept_other, '--on', gone_done, '--for', 'needs its output', role='solo')[0] == 0, 'drop: waits on a CR and on its items')
+    rc, _, err, _ = run('a', 'close', gone_item, '--reason', 'dropped while a record waits on it', '--outcome', 'dropped', role='solo')
+    check(rc != 0 and kept_item in err and items('a')[gone_item]['status'] == 'open', 'drop: closing an item dropped refuses while a record waits on it, naming the waiter', err)
+    rc, _, err, _ = run('a', 'close', gone_item, kept_item, '--reason', 'dropped together in one call', '--outcome', 'dropped', role='solo')
+    check(rc == 0 and items('a')[gone_item]['status'] == 'closed' and items('a')[kept_item]['status'] == 'closed', 'drop: records closed dropped in one call do not block each other', err)
+    check(run('a', 'close', gone_done, '--reason', 'done while a record waits on it', role='solo')[0] == 0, 'drop: a done close meets its waiters')
+    rc, _, err, _ = run('a', 'cr', 'reject', gone, 'the work is moot')
+    check(rc != 0 and kept in err and kept_other in err and items('a')[gone]['status'] == 'open', 'drop: reject refuses while a CR or an item of another waits on it or its items, naming them', err)
+    check(run('a', 'unlink', kept, gone)[0] == 0 and run('a', 'unlink', kept_other, gone_done)[0] == 0
+          and run('a', 'cr', 'reject', gone, 'the work is moot')[0] == 0 and items('a')[gone]['status'] == 'closed', 'drop: unlinking the waits lets the reject through')
+    run('a', 'bd', '--raw', '--yes', 'dep', 'add', kept, gone)  # a wait written outside the verbs
+    rc, out, err, _ = run('a', 'check', '--json')
+    found = json.loads(out)['deviations'] if rc == 0 else []
+    check(any(d['id'] == kept and d['class'] == 'dropped-blocker' and gone in d['detail'] for d in found), 'drop: check reports a live wait on a record closed dropped', err + out[-400:])
+    run('a', 'unlink', kept, gone)
+
     f = create('a', 'direct user review')
     f1 = task(f, 'F item')
     run('a', 'claim', f, role='agent')

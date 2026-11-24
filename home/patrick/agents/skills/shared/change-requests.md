@@ -88,7 +88,9 @@ Who holds it is the holder field, not a status; the model's tables print from
   `passed` and waiting for the Accept: the CR stacks on it (`base` = that CR).
   At most one unlanded parent, else wait for the rest. Parents in agent
   review, `open` or in work are waited for, so in `look` `after` projects
-  children wait for the landing. Closed means landed. A returned parent holds
+  children wait for the landing. A wait is met only by a delivering close: a CR
+  that lands, never one rejected (a reject, or a close as dropped, is refused
+  while a live record waits on it). A returned parent holds
   its children: they cannot land and their reviews wait. A child's Accept waits
   until its parent has landed; its Return and Reject do not.
 - **Rebase:** always `rebase --onto <current base tip> <base_sha>`. A child
