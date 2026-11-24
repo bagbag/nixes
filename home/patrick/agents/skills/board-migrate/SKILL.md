@@ -130,7 +130,9 @@ intermediate landing.
    - a work item outside any change request (not no-commit, deferred or
      waiting on a question) becomes the only item of a change request of its
      own, marked `plan_first` with its reason, listed for planning;
-   - retired metadata (`no_code` becomes `no_commit` on work items,
+   - retired metadata (`no_code` becomes `no_commit` on work items outside
+     any change request; a no-code task inside one is listed to settle with
+     the user: close it and file a task, or drop the mark;
      `triaged_tip` and `triaged_base_tip` are dropped, `replan` becomes
      `plan_first` with the same reason);
    - types bug, design, feature, chore (kind `cleanup`) and spike become

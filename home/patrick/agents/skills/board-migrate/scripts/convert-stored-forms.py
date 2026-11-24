@@ -644,10 +644,14 @@ RETIRED_METADATA = {'no_code': 'no_commit', 'triaged_tip': None, 'triaged_base_t
 
 def retired_metadata(b: Board, left: list[str]) -> list[Step]:
     """Metadata keys an earlier board wrote: dropped, or moved to the key that replaced them (no_code is no_commit on work items only; replan, a
-    reason, is plan_first with the same reason)."""
+    reason, is plan_first with the same reason). no_commit never sits on a change request's member (nixes-59psf): a no-code task inside one is listed
+    to settle and keeps its no_code until then."""
     steps = []
     for issue in b.live():
         retired = sorted(set(meta(issue)) & set(RETIRED_METADATA))
+        if 'no_code' in retired and b.is_item(issue):
+            retired.remove('no_code')
+            left.append(Blocks(f"{issue['id']}: a no-commit task inside change request {b.cr_of(issue['id'])}; close it and file a task, or drop the mark"))
         moved = sorted({RETIRED_METADATA[key] for key in retired if RETIRED_METADATA[key] and issue.get('issue_type') == 'task'})
         replan = meta(issue).get('replan')
         if not retired and replan is None:

@@ -2144,6 +2144,7 @@ def t_migrate() -> None:
     make('bug', 'a bug item', '--parent', ids['cr1'], kind='bug')
     make('design', 'a design item', '--parent', ids['cr1'], kind='design')
     make('spike', 'a spike', *no_commit, kind='spike')
+    make('nocode', 'no-code task inside a change request', '--parent', ids['cr1'], '--metadata', '{"no_code":true}')
     make('reopened', 'reopened item', '--parent', ids['cr1'])
     update('reopened', '--set-metadata', 'outcome=done', '--set-metadata', 'triaged_tip=abc')
     make('target', 'link target', *no_commit)
@@ -2293,6 +2294,11 @@ def t_migrate() -> None:
     rc, out, err = migrate('--apply')
     first_apply = out
     check(rc == 0 and 'conversion(s) applied' in out and 'no recorded author' in out and 'timer gate' in out and f"{ids['ratify']}: an open landing ratification" in out, 'migrate: --apply converts and lists what is left for the user', err + out)
+    nocode_line = f"{ids['nocode']}: a no-commit task inside change request {ids['cr1']}"
+    check(nocode_line in first_apply and 'no_commit' not in (items(side)[ids['nocode']].get('metadata') or {}), 'migrate: a no-code task inside a change request is listed to settle, never no_commit', first_apply)
+    rc, out, err = migrate('--apply')
+    check(nocode_line in out, 'migrate: the no-code member is listed again until it is settled', out)
+    check(raw(side, 'update', ids['nocode'], '--unset-metadata', 'no_code')[0] == 0, 'migrate: the agent settles the no-code member (drops the mark)')
     rc, out, err = migrate('--apply')
     check(rc == 0 and out.startswith('0 conversion(s) applied') and all(ids[name] in next((l for l in out.splitlines() if 'in-force ruling(s)' in l), '') for name in ('ruling_wait', 'ruling_cr')), 'migrate: a rerun finds nothing to convert and lists the rulings to plan again, a wait on a change request included', err + out)
 

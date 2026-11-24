@@ -2,7 +2,8 @@
 # The change-request check (board setup --checks): the agent suites `nix flake check` runs, plus the shared-board suite and the console mod's check.
 # The shared-board suite needs real bd, Dolt and git clones, which the nix sandbox lacks, so the gate is its one runner.
 # Contract (change-requests.md Settings): one `<file> <code>` line per failing suite on stdout, exit 1 when any failed;
-# a suite that cannot start (126, 127) is a broken check and exits 2. Each failure's tail goes to stderr.
+# a suite that cannot start (126, 127) is a broken check and exits 2. A failed suite's full output is kept in a file outside the run's folder,
+# named on stderr (nixes-2aetg: a tail loses the failing test's name).
 # The suites share no state, so they run in parallel.
 set -uo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")"
@@ -55,7 +56,13 @@ for i in "${!suites[@]}"; do
   fi
   if [[ $status -ne 0 ]]; then
     echo "$file failed"
-    tail -n 30 "$dir/$i.out" >&2
+    tmp=${TMPDIR:-/tmp}
+    if kept=$(mktemp "${tmp%/}/board-checks.${file##*/}.XXXXXX") && cp "$dir/$i.out" "$kept"; then
+      echo "board-checks: $file failed (exit $status); its full output: $kept" >&2
+    else
+      echo "board-checks: $file failed (exit $status); its output follows (no file could be kept)" >&2
+      cat "$dir/$i.out" >&2
+    fi
     failed=1
   fi
 done
