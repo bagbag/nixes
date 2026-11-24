@@ -289,8 +289,8 @@ step goes in a change set and runs on the user's confirmation.
    Output: holds by holder, in-review items, dirty path count.
 2. **Drain.** The user stops starting pull sessions; holds and agent reviews
    of in-review tasks finish (`agents board mine` per session) before the board
-   switches: the standalone review is retired, so one left over is converted
-   to an open task, not reviewed.
+   switches: the standalone review is retired, so one left over is not reviewed;
+   the conversion files it as a `plan_first` CR (a no-commit task stays a task) for planning to cut.
    Stop no holder. Designs waiting for the user's
    accept stay; step 5 wraps them. Holds left from before the board switched
    (no drain first) cannot hand over: their edits stay in the main tree for

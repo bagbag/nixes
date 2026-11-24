@@ -359,7 +359,7 @@ MOVES = (
     Move('defer', WORK_GROUP, ('open',), 'deferred', '*', '-', DEFER),
     Move('undefer', WORK_GROUP, ('deferred',), 'open', '-', '-', ('deferrer',)),
     Move('defer', 'decision', ('open',), 'deferred', '*', '-', DEFER),
-    Move('undefer', 'decision', ('deferred',), 'open', '*', '-', ('deferrer',)),
+    Move('undefer', 'decision', ('deferred',), 'open', '-', '-', ('deferrer',)),
     Move('claim', 'decision', ('open', 'decided'), '=', '-', 'you', ('agent',)),  # which sessions a bare claim gives a question is the pull (ROLE_KINDS)
     Move('claim', 'decision', ('in_force',), '=', '-', 'you', ('planner',)),
     Move('take', 'decision', ('open', 'decided', 'in_force'), '=', '*', 'you', ('agent+holder', 'agent+deciding+gone')),
@@ -5272,7 +5272,7 @@ def reserve_planner_return(board: Board, cr: dict, ruling_id: str, actor: str) -
     if refusal := foreign_claim(board, cr['id']):
         raise BoardError(refusal)
     if not any(ruling_id in board.blockers.get(item['id'], ()) for item in board.cr_items(cr['id'])):
-        raise BoardError(f'{ruling_id}: it does not hold any open item of {cr["id"]}; block the affected items first')
+        raise BoardError(f'{ruling_id}: it does not hold any open item of {cr["id"]}; make the affected items wait on it first (agents board wait <item> --on {ruling_id})')
     move(cr, 'claim', board=board, actor=actor)
 
 
@@ -7094,7 +7094,7 @@ def release(board: Board, args) -> int:
                     for result in lint.get('results') or [] if result.get('missing')]
         if unlinted:
             raise BoardError('release refused, record text fails bd lint (write the record first):\n  ' + '\n  '.join(unlinted))
-        # An in-force ruling keeps blocking the items it changes; planning closes it and unblocks them.
+        # The items an in-force ruling changes wait on it; planning closes it and they are ready.
         for issue in pending:  # one compare-and-set each; a stop leaves the rest decided, and a rerun releases them. The snapshot takes the new status: the waits below read it
             move(issue, 'ruling release', board=board)
     for old in taking:

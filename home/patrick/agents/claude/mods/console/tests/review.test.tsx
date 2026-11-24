@@ -8,7 +8,7 @@ import { COUNTS, NO_ROUND, PANE_PROPS, SESSION, world } from './fixture'
 import { CR_TREE, git, repo, sha } from './review-world'
 import type { Repo } from './review-world'
 import { parseBoardConsole, parseRound } from '../hooks/engine'
-import { canUpdateCr, consoleText, countText, crCheckText, crDetailsText, crFailuresText, crMarks, crPriorityHint, crRows, crUnblocksHint, crUnblocksText, fitText, requestReviewText } from '../hooks/words'
+import { canUpdateCr, consoleText, countText, crCheckText, crDetailsText, crFailuresText, crMarks, crPriorityHint, crRows, crStageText, crUnblocksHint, crUnblocksText, fitText, requestReviewText } from '../hooks/words'
 import type { ConsoleBoard, ConsoleCr } from '../types'
 
 const PANE = { plugin: 'console', component: 'Pane', requestId: 'console', props: PANE_PROPS } as const
@@ -639,6 +639,12 @@ describe('what holds a request up', () => {
       { text: 'setup failed', isProblem: true }, { text: 'land blocked: a, b, c, …', isProblem: true },
       { text: 'lands with p-cr0', isProblem: false },
     ])
+  })
+
+  test('a passed look-after request waiting for its base is not "in review"', () => {
+    expect(crStageText(cr({ id: 'p-cr2', status: 'passed', after: 'p-cr1' }) as unknown as ConsoleCr)).toBe('waiting for its base')
+    expect(crStageText(cr({ id: 'p-cr2', status: 'in_review' }) as unknown as ConsoleCr)).toBe('in review')
+    expect(crStageText(cr({ id: 'p-cr2', status: 'passed' }) as unknown as ConsoleCr)).toBe('to accept')
   })
 
   test('marks name short ids under the board prefix', () => {

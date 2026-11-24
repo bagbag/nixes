@@ -33,10 +33,9 @@ setup, run `/role autopilot` again.
     their dependents wait. Continue independent tracks.
 - Finished `look` `before` CRs and ready milestones wait for the user's
   Accept; autopilot never accepts or ratifies choices.
-- The moves the board's `attended` word refuses autopilot are the user's to make or hard
-  to undo: rejecting a CR (`cr reject`), releasing rulings (`ruling release`),
-  resolving or reopening a gate (`gate resolve`, `reopen`), claiming, taking over, closing
-  or reopening a milestone, landing (`cr land`, the Accept), moving an item into another person's queue, and undeferring a deferral that is the user's.
+- The moves the board's `attended` word refuses autopilot (the rows with it in the Who column of
+  `$HOME/.agents/docs/board/model.md` Tables) are the user's to make or hard to undo; so are
+  landing (`cr land`, the Accept), moving an item into another person's queue, and undeferring a deferral that is the user's.
   Park each as a question or report it; do not work around the refusal.
   Autopilot's own deferrals it undefers itself.
 - Treat public contracts, durable design and substantial downstream work as

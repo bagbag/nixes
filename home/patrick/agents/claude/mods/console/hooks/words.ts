@@ -322,6 +322,7 @@ const short = (sha: string): string => sha.slice(0, 7)
 
 export function crStageText(cr: ConsoleCr): string {
   if (isCrAccepting(cr)) return 'to accept'
+  if (cr.status === 'passed' && cr.after !== null) return 'waiting for its base'  // review passed; it lands with its base
   if (cr.status === 'in_review' || cr.status === 'passed') return 'in review'
   return 'in work'
 }
