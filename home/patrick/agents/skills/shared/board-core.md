@@ -233,7 +233,7 @@ acceptance, never in a wait; when only part of B uses A, split B
    with complete evidence for the CR's acceptance and every item closed
    (handover refuses open items and never closes them). An item that starts
    waiting: `agents board wait <item> --on <blocker> --for "<input>"`, then
-   unclaim the CR (`--resume "<next action>"`) or ask the planner to move the item into its own CR.
+   unclaim the CR (`--resume "<next action>"`) or ask the planner to move the item into its own CR once nobody holds the CR (a planner writes items only of an unheld CR).
 3. Hand over: `agents board handover <cr> "<evidence>"` ([Change requests](../shared/change-requests.md#change-requests)).
 4. The reviewer passes with `agents board handover <cr> "<verdict>"` or returns it
    with `agents board return <cr> "<findings>"` (each finding becomes an open

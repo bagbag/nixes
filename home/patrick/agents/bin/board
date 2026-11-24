@@ -325,8 +325,9 @@ _ANY_CR = ('open', 'in_review', 'passed')
 FREE_HOLD = ('holder', 'user', 'deciding+gone')  # freeing a hold: its own session, the user, or a deciding session once the holder is gone
 DEFER = ('planner+holder', 'deciding', 'user')  # setting aside: a session pulling plan (its own deferrals), a deciding session, the user
 # An item has no hold of its own: its change request's holder decides who writes it (item_write_refusal). A change request nobody holds is
-# claimed first; only the user or a deciding session write its items without that. A wait is also written by a deciding session whoever holds.
-ITEM_WRITE = ('holding', 'user', 'deciding+unheld', 'deciding+gone')
+# claimed first; only the user, a deciding session or (items of an unheld request only) a planner write its items without that. A wait is also
+# written by a deciding session whoever holds.
+ITEM_WRITE = ('holding', 'user', 'deciding+unheld', 'deciding+gone', 'planner+unheld')
 ITEM_WAIT = (*ITEM_WRITE, 'deciding')
 DECIDING_CLOSE = ('deciding+holder', 'deciding+gone', 'user')
 ATTENDED_CLOSE = ('attended+holder', 'attended+gone', 'user')  # a milestone is accepted with the user: not autopilot

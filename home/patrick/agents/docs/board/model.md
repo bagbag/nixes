@@ -89,8 +89,8 @@ Printed by `model_tables()`; the test compares this block with it exactly. `Held
 | unclaim | task | open | = | * | - | holder / user / deciding+gone | - | - |
 | close | task | open | closed | * | - | holder / user / deciding+gone | reason, no-waiters | done, dropped |
 | reopen | task | closed | open | * | - | holder / user / deciding+gone | - | - |
-| close | item | open | closed | * | - | holding / user / deciding+unheld / deciding+gone | reason, no-waiters | done, dropped |
-| reopen | item | closed | open | * | - | holding / user / deciding+unheld / deciding+gone | - | - |
+| close | item | open | closed | * | - | holding / user / deciding+unheld / deciding+gone / planner+unheld | reason, no-waiters | done, dropped |
+| reopen | item | closed | open | * | - | holding / user / deciding+unheld / deciding+gone / planner+unheld | - | - |
 | defer | task | open | deferred | * | - | planner+holder / deciding / user | - | - |
 | undefer | task | deferred | open | - | - | deferrer | - | - |
 | defer | decision | open | deferred | * | - | planner+holder / deciding / user | - | - |
@@ -140,8 +140,8 @@ The table's `Who` column is the authority; this is its shape. Item writes (close
 - Review claim, pass and Return follow the `non-author` word; every claim path checks it.
 - Authority follows what a move risks, as the unattended protocol classes it. Two-way moves (sending a passed CR back to review, the Return of a `passed` CR) are for any deciding session, autopilot included, or the user. The `attended` word (a lead or solo session, or the user) covers the moves autopilot leaves to the user: rejecting a CR (one-way: it closes, and no CR reopen exists), releasing a ruling, closing or reopening a gate, and claiming, taking, closing or reopening a milestone. Accept (landing a `passed` look-before CR) is the user's through a lead or solo session (landing is `anyone` in the table; its command is the gate).
 - Taking or freeing another session's hold: the user, or a deciding session once the holder is gone (`--agreed` records the user's word).
-- Planner Return on a ruling, and defer and undefer of its own deferrals: a session pulling plan. (`move` needs the holder of the CR, the user or a deciding session.) Undeferring a user's deferral (or one that records no deferrer) needs the user, through a lead or solo session; autopilot undefers only its own.
-- The writes to an item of a CR nobody holds come only from the user or a deciding session; any other session claims the CR first.
+- Planner Return on a ruling, and defer and undefer of its own deferrals: a session pulling plan. Undeferring a user's deferral (or one that records no deferrer) needs the user, through a lead or solo session; autopilot undefers only its own.
+- The writes to an item of a CR nobody holds come from the user, a deciding session or a planner (a session pulling plan: its waits, moves, updates and closes of items); any other session claims the CR first. A planner never writes an item of a held CR: it comments the change on the CR, and its ruling stays in force until the hold ends. A deciding session also waits an item of a held CR.
 - Exceptions the table does not carry: autopilot never accepts or ratifies (acceptance needs the user; the unattended protocol owns it; `autopilot_barred` keeps it out of the queue's accept work) and runs the agent rows unattended; `MODEL_EXEMPT` names the writes that need no marker.
 
 ## Holding

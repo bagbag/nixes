@@ -6565,11 +6565,15 @@ def validate_board(root: Path) -> None:
                     code, _, errors, writes = verb(["close", "t-r1", "--reason", "planned in the change requests it made"], in_force_held, who)
                     if bool(code == 0 and writes) != allowed or (allowed and "outcome=planned" not in " ".join(writes[0])):
                         raise ValueError(f"board close of an in-force ruling by {who} (allowed {allowed}): {code} {errors!r} {writes}")
-                # An item of a change request nobody holds is written by the user or a deciding session; any other session claims the request first.
-                for who, allowed in (("aaaa1111", False), ("plan0001", False), ("lead0001", True), ("auto0001", True), ("", True)):
+                # An item of a change request nobody holds is written by the user, a deciding session or a planner (a session pulling plan); any other session claims
+                # the request first. A request someone holds keeps its items from the planner.
+                for who, allowed in (("aaaa1111", False), ("plan0001", True), ("lead0001", True), ("auto0001", True), ("", True)):
                     code, _, errors, writes = verb(["close", "t-cr.o", "--reason", "finished with the change of it"], world, who)
                     if bool(code == 0 and writes) != allowed or (not allowed and "claim it first" not in errors):
                         raise ValueError(f"board close of an item of an unheld change request by {who or 'the user'} (allowed {allowed}): {code} {errors!r} {writes}")
+                code, _, errors, writes = verb(["close", "t-cr.o", "--reason", "finished with the change of it"], [{**r, "assignee": "work0001"} if r["id"] == "t-cr" else r for r in world], "plan0001")
+                if code == 0 or writes or "t-cr is held by work0001" not in errors:
+                    raise ValueError(f"a planner must not close an item of a held change request: {code} {errors!r} {writes}")
                 due = lambda one, side: board.due_deferral(next(r for r in parked if r["id"] == one), side)
                 if not (due("t-d1", "user") and not due("t-d1", "plan") and due("t-d2", "plan") and not due("t-d2", "user") and not due("t-d3", "user") and due("t-d5", "user") and not due("t-d5", "plan")):
                     raise ValueError("a due deferral belongs to the side that deferred it, and only from its revisit day")

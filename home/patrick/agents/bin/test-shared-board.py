@@ -1687,9 +1687,20 @@ def t_scenarios() -> None:
     check(run('a', 'claim', solo_cr, role='solo')[0] == 0, 'item waits: solo holds a request')
     rc, _, err, _ = run('a', 'wait', solo_item, '--on', other_cr, '--for', 'another session waits it', role='agent')
     check(rc != 0 and solo_cr in err and not any(dep.get('type') == 'blocks' for dep in row(solo_item).get('dependencies') or []), 'item waits: a session that does not hold the request cannot wait its item', err)
-    unheld_item = task(create('a', 'nobody holds this'), 'an item of an unheld request')
-    rc, _, err, _ = run('a', 'wait', unheld_item, '--on', other_cr, '--for', 'an agent waits it', role='agent')
-    check(rc != 0 and 'claim it first' in err, 'item waits: an unheld request is claimed first', err)
+    unheld_cr = create('a', 'nobody holds this')
+    unheld_item = task(unheld_cr, 'an item of an unheld request')
+    rc, _, err, _ = run('a', 'wait', unheld_item, '--on', other_cr, '--for', 'a planner waits it', role='agent')
+    check(rc == 0 and any(dep.get('type') == 'blocks' and dep.get('depends_on_id') == other_cr for dep in row(unheld_item).get('dependencies') or []),
+          'item waits: a planner (a session pulling plan) waits an item of an unheld request', err)
+    check(run('a', 'unlink', unheld_item, other_cr, role='agent')[0] == 0 and not any(dep.get('type') == 'blocks' for dep in row(unheld_item).get('dependencies') or []),
+          'item writes: a planner unlinks the wait of an item of an unheld request')
+    movable = task(unheld_cr, 'a planner moves this item')
+    rc, _, err, _ = run('a', 'move', movable, '--to', other_cr, role='agent')
+    check(rc == 0 and any(dep.get('type') == 'parent-child' and dep.get('depends_on_id') == other_cr for dep in row(movable).get('dependencies') or []),
+          'item writes: a planner moves an item of an unheld request', err)
+    rc, _, err, _ = run('a', 'move', solo_item, '--to', other_cr, role='agent')
+    check(rc != 0 and solo_cr in err and any(dep.get('type') == 'parent-child' and dep.get('depends_on_id') == solo_cr for dep in row(solo_item).get('dependencies') or []),
+          'item writes: a planner cannot move an item of a held request; it comments the change', err)
     check(run('a', 'wait', mine, '--on', other_cr, '--for', 'a deciding session waits it', role='solo')[0] == 0
           and run('a', 'wait', unheld_item, '--on', other_cr, '--for', 'a deciding session waits it', role='autopilot')[0] == 0,
           'item waits: a deciding session writes a wait whoever holds the request')

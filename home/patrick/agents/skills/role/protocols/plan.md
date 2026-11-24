@@ -75,8 +75,10 @@ item set (`agents board create --graph`) to a `plan` worker ([Cut work](#cut-wor
    items it only informs (`agents board link <ruling> <item> --type relates-to`).
    Return an unclaimed review the ruling changes with
    `agents board return <cr> "<what changes>" --ruling <ruling>` (its
-   consequences become the CR's items); for a held one,
-   comment the change on the CR for its reviewer. Add the ruling id and owner
+   consequences become the CR's items); for a held one (a planner writes
+   waits, moves and closes only on items of a CR nobody holds),
+   comment the change on the CR for its reviewer: the ruling stays in force
+   until the hold ends. Add the ruling id and owner
    anchor to each item's design, then drop the wait of each item whose text now
    carries the ruling (`agents board unlink <item> <ruling>`).
    Create missing work items; when cutting needs a design or spike first,
