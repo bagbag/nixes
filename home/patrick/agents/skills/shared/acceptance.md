@@ -55,8 +55,10 @@ open), sized to stakes; a role protocol may tighten it.
   With a red baseline, target the touched surfaces the broken gate would cover.
 - Run each gate once per tree, at hand-over: on a board the handover runs the
   whole-repository check and stores it for the tip; without a board, run it
-  once before hand-back. Run no tests while implementing, except a bug's
-  reproduction and before an irreversible write; after a failed check, run
+  once before hand-back. Run no tests while implementing, except to see a
+  new test fail once where the Tests rule in AGENTS.md asks for it (a fixed
+  bug's repro, a setup that may not reach the code, an assertion another
+  path satisfies) and before an irreversible write; after a failed check, run
   the failing tests to fix it, then hand over again. Reviewers and deciding
   sessions read the stored result; a pass on the same tree and base is never
   rerun, except a reviewer's reproduction of a decisive check (first bullet).
