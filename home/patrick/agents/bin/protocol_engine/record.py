@@ -228,31 +228,33 @@ def settled_blockers(ctx: Context, q: dict) -> list[str]:
                    and dep['depends_on_id'] != q['board'] and not dep['depends_on_id'].startswith('external:')})
 
 
-def premise_first(ctx: Context, todo: list[dict]) -> tuple[list[dict], dict[str, list[str]]]:
-    """Record's order (nixes-9cbib): an away answer comes after the questions of this Record its premises name, in-round (`waitsOn`)
-    or inherited (a blocker of an item it settles that is another question's item or settled item), so a premise is in force, or
-    its item closed, before the record that rests on it; otherwise the listed order. Returns the order and each away answer's
-    inherited premises."""
+def premise_first(ctx: Context, todo: list[dict]) -> tuple[list[dict], dict[str, list[str]], dict[str, set[str]]]:
+    """Record's order (nixes-9cbib): an answer comes after the questions of this Record its premises name, in-round (`waitsOn`) or, for an
+    away answer, inherited (a blocker of an item it settles that is another question's item or settled item), so a premise is recorded
+    before the record that rests on it; otherwise the listed order. Returns the order, each away answer's inherited premises and each
+    question's premises among this Record's questions."""
     inherited = {q['id']: settled_blockers(ctx, q) for q in todo if q['origin'] == AWAY} if ctx.board else {}
     ids = {q['id'] for q in todo}
 
     def premises(q: dict) -> set[str]:
         board = set(inherited.get(q['id'], []))
         return {p['id'] for p in todo if p is not q and (p['id'] in (q.get('waitsOn') or []) or
-                                                          (p['board'] in board or board & set(board_keys(p.get('settles')))))} & ids if q['id'] in inherited else set()
+                                                          (board and (p['board'] in board or board & set(board_keys(p.get('settles'))))))} & ids
 
+    rests = {q['id']: premises(q) for q in todo}
     order, left = [], list(todo)
     while left:
-        ready = next((q for q in left if not premises(q) - {o['id'] for o in order}), left[0])  # a circle keeps the listed order
+        ready = next((q for q in left if not rests[q['id']] - {o['id'] for o in order}), left[0])  # a circle keeps the listed order
         order.append(ready)
         left.remove(ready)
-    return order, inherited
+    return order, inherited, rests
 
 
-def open_premises(ctx: Context, inherited: list[str]) -> list[str]:
-    """An away answer's inherited premises open outside in force now: `ruling record --unratified` refuses its record
-    (status.release-holds), so Record defers it."""
-    return [rid for rid, status in statuses(ctx, inherited).items() if status not in ('closed', 'in_force')] if inherited else []
+def open_premises(ctx: Context, q: dict, inherited: list[str]) -> list[str]:
+    """The premises of an answer open outside in force now (the release rule's open, status.release-holds): its inherited ones (an
+    away answer's) and the items of the round's questions it `waitsOn`."""
+    items = list(dict.fromkeys([*inherited, *(item for other in q.get('waitsOn') or [] if (item := by_id(ctx, other).get('board')))]))
+    return [rid for rid, status in statuses(ctx, items).items() if status not in ('closed', 'in_force')] if items else []
 
 
 def link_record(ctx: Context, q: dict) -> None:
@@ -301,7 +303,39 @@ def deferred_text(ctx: Context, q: dict, found: dict) -> str:
     """What a deferred question's new board item carries: the question with its parts, and why it was deferred."""
     parts = '\n\n'.join(words.part_block(name, text) for name, text in question_parts(ctx, q).items())
     return (f"## Question\n{q['text']}\n\n{parts}\n\nDeferred in round {ctx.round['id']}: {found['reason']}"
-            + (f" (until {found['until']})" if found['until'] else '') + '\n' + (f"\n{found['proposed']}\n" if found.get('proposed') else ''))
+            + (f" (until {found['until']})" if found['until'] else '') + '\n')
+
+
+def waiting_text(ctx: Context, q: dict, premises: list[str], proposed: str) -> str:
+    """What an away answer resting on open premises leaves on its item: the question with its parts, what it waits on and the answer
+    proposed, for the round that takes the question up once they settle (nixes-rzfij)."""
+    parts = '\n\n'.join(words.part_block(name, text) for name, text in question_parts(ctx, q).items())
+    return f"## Question\n{q['text']}\n\n{parts}\n\n{words.premise_wait(ctx.round['id'], premises)}\n\n{proposed}\n"
+
+
+def file_premise_wait(ctx: Context, q: dict, premises: list[str], proposed: str, folder: Path) -> None:
+    """An away answer on open premises stays an open question waiting on them (nixes-rzfij): its item (a decision created for a draft,
+    never a revision) carries the proposed answer, in its text or, on an existing item, a comment, is unclaimed, and waits on each
+    premise (`board wait`); the board brings it back when they close. A rerun repeats only what is left: the comment once, the waits
+    as the board keeps them (board wait is idempotent)."""
+    path = folder / f"{ctx.round['id']}-{q['id']}.md"
+    text = waiting_text(ctx, q, premises, proposed)
+    before = q['board']
+    item = board_item(ctx, q, path, text, plain=True)
+    done = q.setdefault('premiseWait', {'item': item, 'on': premises, 'commented': item != before})  # a new item carries the text already
+    if not done['commented']:
+        packet = path.with_suffix('.packet.md')
+        packet.write_text(text, encoding='utf-8')
+        ctx.board.checked('comment', item, '-f', str(packet), '--board-packet')  # the board's own packet: exempt from the comment limit
+        done['commented'] = True
+    claimed = ctx.round.get('claimed', [])
+    if item in claimed:
+        ctx.board.checked('unclaim', item)
+        claimed.remove(item)
+    for premise in done['on']:
+        ctx.board.checked('wait', item, '--on', premise, '--for', words.PREMISE_FOR)
+    q['recorded'] = 'waiting'
+    ctx.log('waiting', question=q['id'], board=item, on=done['on'])
 
 
 def file_deferral(ctx: Context, q: dict, found: dict, folder: Path) -> None:
@@ -396,12 +430,21 @@ def record_accept(ctx: Context, report: dict) -> str:
         fail('; '.join(unnamed))
     folder = Path(ctx.round['records']) if ctx.round.get('records') else ctx.store.dir / 'records'
     folder.mkdir(parents=True, exist_ok=True)
-    errors = []
-    todo, inherited = premise_first(ctx, todo)
+    errors, failed = [], set()
+    todo, inherited, rests = premise_first(ctx, todo)
     for q in todo:
-        if q['id'] in inherited and (unsettled := open_premises(ctx, inherited[q['id']])):
-            found[q['id']] = {'reason': words.premise_open(unsettled), 'until': None, 'kind': 'premise',
-                              'proposed': words.proposed_answer(q, records[q['id']])}  # deferred below, its answer kept on the item
+        if stuck := sorted(rests[q['id']] & failed):  # a premise of this Record not recorded: the rerun records them in order
+            errors.append(words.premise_not_recorded(q['id'], stuck))
+            failed.add(q['id'])
+            continue
+        unsettled = open_premises(ctx, q, inherited.get(q['id'], [])) if ctx.board else []
+        if unsettled and q['origin'] == AWAY:
+            try:
+                file_premise_wait(ctx, q, unsettled, words.proposed_answer(q, records[q['id']]), folder)
+            except ProtocolError as error:
+                errors.append(f"{q['id']}: {error}")
+                failed.add(q['id'])
+            checkpoint(ctx)
             continue
         path = folder / f"{ctx.round['id']}-{q['id']}.md"
         write_record(q, path, record_file(q, records[q['id']], None if ctx.board else ctx.round.get('topic')))
@@ -427,6 +470,8 @@ def record_accept(ctx: Context, report: dict) -> str:
                 if left or not replaces:  # the record, a link or a close did not happen: the rerun picks up what is left
                     fail(f"`agents board ruling record {item}` exited {result.returncode}: {(result.stderr or result.stdout).strip()}")
                 ctx.messages.append(words.record_exited(item, result.returncode, (result.stderr or result.stdout).strip()))  # all closed: only the items waiting on the old ones are not blocked
+            for premise in unsettled:  # a person's answer on an open premise is decided and waits on it: the release rule holds it (nixes-rzfij)
+                ctx.board.checked('wait', item, '--on', premise, '--for', words.PREMISE_FOR)
             if q['origin'] == AWAY:
                 close_settled_away(ctx, q, item)
             elif board_keys(q.get('settles')):
@@ -440,6 +485,7 @@ def record_accept(ctx: Context, report: dict) -> str:
             (ctx.state.get('dropReasons') or {}).pop(item, None)  # a re-recorded record is back in the default set
         except ProtocolError as error:
             errors.append(f"{q['id']}: {error}")
+            failed.add(q['id'])
         ctx.log('recorded', question=q['id'], board=q['board'], file=str(path), ok=bool(q.get('recorded')))
         superseded = (q.get('replaces') or []) + ([q['revises']] if q.get('revises') else []) if q['origin'] == AWAY else []
         for old in [one for one in superseded if q.get('recorded') and one not in q.setdefault('reported', [])]:  # after the record's own line
@@ -461,14 +507,14 @@ def record_accept(ctx: Context, report: dict) -> str:
 
 def abandon_note(round_questions: list[dict]) -> str:
     """What an abandoned round leaves behind: records written before the abandon stay decided (r24-q108)."""
-    kept = [q.get('board') or q['id'] for q in round_questions if q.get('recorded') not in (None, 'deferred')]
+    kept = [q.get('board') or q['id'] for q in round_questions if q.get('recorded') not in (None, 'deferred', 'waiting')]
     return words.abandoned_records(kept)
 
 
 def release_claims(ctx: Context) -> None:
-    """A hold ends with its work: the round releases what it claimed and did not record (deferred, held for the next
+    """A hold ends with its work: the round releases what it claimed and did not record (deferred, waiting on a premise, held for the next
     round's Select, removed, or the round abandoned). Best effort: the round closes either way."""
-    done = [q for q in ctx.round['questions'] if q.get('recorded') not in (None, 'deferred', 'file')]
+    done = [q for q in ctx.round['questions'] if q.get('recorded') not in (None, 'deferred', 'waiting', 'file')]
     recorded = {q['board'] for q in done} | {key for q in done for key in q.get('settles') or []}  # settled items stay held to the release, or an away ruling closed them
     release = [item for item in dict.fromkeys(ctx.round.get('claimed', [])) if item not in recorded]
     if not release or not ctx.board:

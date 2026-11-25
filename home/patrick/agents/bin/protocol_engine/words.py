@@ -504,17 +504,24 @@ def record_row(q: dict, note: str | None, prior: str | None = None) -> str:
 def waits_on_deferred(premise: str, reason: str, kind: str) -> str:
     """Why a question whose premise is deferred is deferred with it: `kind` is how the premise is deferred (r8-q31, r9-q40):
     `outside` waits for a result, `person` was deferred by the person's words, `chain` waits on a question that is."""
-    return f"waits on {premise}, which " + {'outside': f'waits for {reason}', 'person': f'was deferred: {reason}', 'chain': reason, 'premise': reason}[kind]
+    return f"waits on {premise}, which " + {'outside': f'waits for {reason}', 'person': f'was deferred: {reason}', 'chain': reason}[kind]
 
 
-def premise_open(premises: list[str]) -> str:
-    """Why Record defers an away answer (nixes-9cbib): a ruling comes into force only on settled premises."""
-    return (f"rests on {', '.join(premises)}, not settled yet: an away answer comes into force only on settled premises; "
-            'it returns once they are')
+PREMISE_FOR = 'its answer rests on it: a ruling comes into force only on settled premises (nixes-9cbib)'
+
+
+def premise_wait(round_id: str, premises: list[str]) -> str:
+    """Why an away answer stays an open question at Record (nixes-rzfij): a ruling comes into force only on settled premises."""
+    return (f"Waits since round {round_id} on {', '.join(premises)}, not settled yet: an away answer comes into force only on settled "
+            'premises; the question comes back when they close.')
+
+
+def premise_not_recorded(qid: str, premises: list[str]) -> str:
+    return f"{qid}: rests on {', '.join(premises)}, not recorded in this run; the rerun records it after them"
 
 
 def proposed_answer(q: dict, fields: dict) -> str:
-    """The away answer a deferral keeps on the item, for the round that takes the question up again."""
+    """The away answer a premise wait keeps on the item, for the round that takes the question up again."""
     said = ' '.join(str(fields.get(key) or '').strip() for key in ('decision', 'rationale') if str(fields.get(key) or '').strip())
     return f"Proposed answer (away, not in force): {q.get('answer')}" + (f"\n{said}" if said else '')
 
@@ -607,6 +614,8 @@ BOARD_LINE_LABELS = (('questions', 'open questions'), ('decided', 'decided await
 def closed_done(q: dict) -> str:
     if q['recorded'] == 'deferred':
         return f"- {q['id']} deferred" + (f" → {q['deferralItem']}" if q.get('deferralItem') else ' (no board: noted here only)')
+    if q['recorded'] == 'waiting':
+        return f"- {q['id']} waits on {', '.join(q['premiseWait']['on'])} → {q['premiseWait']['item']}: an open question with its proposed answer"
     return (f"- {q['id']} → {q['recorded'] if q['recorded'] not in ('file',) else q['recordFile']}"
             + (f", replaces {', '.join(q['replaces'])}" if q.get('replaces') else ''))
 
@@ -809,7 +818,7 @@ def log_text(event: dict) -> str | None:
         'cap': f"cycle cap at {e.get('cycle')}" + (': the questions park' if e.get('away') else ''), 'cap-decision': f"cap: {e.get('choice')}",
         'settled': f"away: acted {ids('acted')}, parked {ids('parked')}", 'parked': f"parked {e.get('question')} → {e.get('board')}",
         'batch-withdrawn': f"batch {batch_number(e.get('marker'))} withdrawn for updates", 'recorded': f"recorded {e.get('question')} → {e.get('board') or 'file'}",
-        'deferred': f"deferred {e.get('question')}", 'defer': f"deferred {ids('questions')} (your words)", 'released': f"released {ids('items')}",
+        'deferred': f"deferred {e.get('question')}", 'waiting': f"{e.get('question')} waits on {ids('on')} → {e.get('board')}", 'defer': f"deferred {ids('questions')} (your words)", 'released': f"released {ids('items')}",
         'refused': f"refused {e.get('verb')}: {(e.get('error') or '')[:90]}", 'removed': f"removed {e.get('question')}",
         'edited': f"edited {ids('questions')} (your words)",
         'checking': f"{ids('questions')}: " + ('challenge-rulings on the raised strong mark' if e.get('kind') == 'raised'

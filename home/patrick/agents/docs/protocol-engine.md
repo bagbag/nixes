@@ -350,6 +350,13 @@ A round:
   cut Record (the console's time limit) reports again with the same report: the
   questions already recorded are skipped, the rest continue. Unknown or unanswered
   ids still fail.
+- Record records a question after the questions of the same Record its premises name (`waitsOn`, and for an away answer the
+  blockers of the items it settles): an answer resting on a premise still open outside in force (nixes-9cbib, nixes-rzfij) is not
+  deferred. An away answer stays an open question: its item (a decision created for a draft) carries the proposed answer, in its
+  text or, on an existing item, a comment, is unclaimed and `agents board wait`s on each open premise (`recorded` `waiting`, logged
+  `waiting`); the board brings it back once they close. A person's answer is recorded `decided` and waits on them, so the release
+  rule (`status.release-holds`) holds it. A question whose premise's record failed in the same run is left for the rerun, which
+  records them in order.
 - Record writes the records; closing or abandoning releases the claims the
   round made and did not record (a hold the session had before, such as a
   decided record, stays). A question waits only within its round: `waitsOn` refuses

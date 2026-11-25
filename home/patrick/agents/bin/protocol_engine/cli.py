@@ -435,7 +435,7 @@ def run(ctx: Context, args) -> str:
             return words.release_abandoned(headline(ctx), ctx.messages, r['id'], ctx.board is not None)
         release_claims(ctx)
         r['step'] = 'closed'
-        if ctx.board and any(q.get('recorded') not in (None, 'deferred', 'file') for q in r['questions']):
+        if ctx.board and any(q.get('recorded') not in (None, 'deferred', 'waiting', 'file') for q in r['questions']):
             refresh_board(ctx)  # records written before the abandon are decided and held
         return words.round_abandoned(headline(ctx), ctx.messages, r['id'], abandon_note(r['questions']))
     fail(f'unknown command {command}')

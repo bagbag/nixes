@@ -377,12 +377,12 @@ MOVES = (
     Move('claim for work', CR_GROUP, ('open',), '=', 'you', 'you', ('agent',)),  # the planner's own hold becomes work (hold plan -> work)
     Move('take', CR_GROUP, _ANY_CR, '=', '*', 'you', ('agent+holder+non-author', 'agent+deciding+gone+non-author')),
     Move('unclaim', CR_GROUP, _ANY_CR, '=', '*', '-', FREE_HOLD),
-    Move('handover', CR_GROUP, ('open',), 'in_review', 'you', '-', ('agent',), ('items-closed', 'not-open-for-review')),
-    Move('handover --no-agent-review', CR_GROUP, ('open',), 'passed', 'you', '-', ('agent',), ('items-closed', 'look-before', 'not-open-for-review')),
+    Move('handover', CR_GROUP, ('open',), 'in_review', 'you', '-', ('agent',), ('in-work', 'items-closed', 'not-open-for-review')),
+    Move('handover --no-agent-review', CR_GROUP, ('open',), 'passed', 'you', '-', ('agent',), ('in-work', 'items-closed', 'look-before', 'not-open-for-review')),
     Move('handover (reviewer passes)', CR_GROUP, ('in_review',), 'passed', 'you', '-', ('agent',), ('items-closed',)),
-    Move('send to review', CR_GROUP, ('passed',), 'in_review', '*', '-', ('holding', 'deciding', 'user')),
-    Move('return', CR_GROUP, ('in_review',), 'open', '*', '-', ('agent+holder', 'deciding', 'user')),
-    Move('return', CR_GROUP, ('passed',), 'open', '*', '-', ('deciding', 'user')),  # a change request waiting for its Accept is the Accept's to return
+    Move('send to review', CR_GROUP, ('passed',), 'in_review', '*', '-', ('holding', 'deciding', 'user'), ('unheld-or-yours',)),
+    Move('return', CR_GROUP, ('in_review',), 'open', '*', '-', ('agent+holder', 'deciding', 'user'), ('held-by-you',)),
+    Move('return', CR_GROUP, ('passed',), 'open', '*', '-', ('deciding', 'user'), ('unheld-or-yours',)),  # a change request waiting for its Accept is the Accept's to return
     Move('return --ruling', CR_GROUP, ('in_review',), 'open', 'you', '-', ('planner',)),
     Move('landing', CR_GROUP, _ANY_CR, 'closed', '*', '-', ('anyone',), (), ('landed',)),  # the target already holds the tip: the command checked before the fast-forward
     Move('cr reject', CR_GROUP, (*_ANY_CR, 'deferred'), 'closed', '*', '-', ('attended', 'user'), ('reason', 'items-closed', 'no-waiters'), ('dropped',)),
@@ -651,20 +651,26 @@ def write_fields(board: 'Board', ids: list[str], flags: list[str], command: str 
 CLOSE_REASON_MIN = 20  # bd refuses a shorter close reason
 
 
-GUARDS = {  # name -> (its Write-rules cell, the rule: None or why the move is refused)
-    'reason': ('status.row', lambda issue, board, reason, outcome, together: None if reason and reason.strip() else 'a reason is required'),
-    'items-closed': ('status.items-closed', lambda issue, board, reason, outcome, together: board and open_item_refusal(board, issue)),
-    'look-before': ('status.row', lambda issue, board, reason, outcome, together: None if board is None or cr_look(board, issue) == 'before' else 'only a look before change request passes without an agent review'),
-    'not-open-for-review': ('status.not-open-for-review', lambda issue, board, reason, outcome, together: f'it is open for your review (tip {opened_tip(issue)[:12]}): end the review first' if opened_tip(issue) else None),
-    'no-waiters': ('blocks.no-dropped-close', lambda issue, board, reason, outcome, together: board and outcome == 'dropped' and dropped_waits_refusal(board, issue['id'], together)),
-    'no-dropped-target': ('blocks.reopen', lambda issue, board, reason, outcome, together: board and (found := dropped_targets(board, issue['id'])) and (
+GUARDS = {  # name -> (its Write-rules cell, the rule: None or why the move is refused); `who`: the caller (None: a person)
+    'reason': ('status.row', lambda issue, board, reason, outcome, together, who: None if reason and reason.strip() else 'a reason is required'),
+    'items-closed': ('status.items-closed', lambda issue, board, reason, outcome, together, who: board and open_item_refusal(board, issue)),
+    'look-before': ('status.row', lambda issue, board, reason, outcome, together, who: None if board is None or cr_look(board, issue) == 'before' else '--no-agent-review is refused in a look-after project: only a look-before change request passes without an agent review'),
+    'not-open-for-review': ('status.not-open-for-review', lambda issue, board, reason, outcome, together, who: f'it is open for your review (tip {opened_tip(issue)[:12]}): end the review first' if opened_tip(issue) else None),
+    'no-waiters': ('blocks.no-dropped-close', lambda issue, board, reason, outcome, together, who: board and outcome == 'dropped' and dropped_waits_refusal(board, issue['id'], together)),
+    'no-dropped-target': ('blocks.reopen', lambda issue, board, reason, outcome, together, who: board and (found := dropped_targets(board, issue['id'])) and (
         f"it waits on {', '.join(dropped_wait_text(board, b) for b in found)}, which never delivers; unlink it first ({'; '.join(dep_fix(issue['id'], b) for b in found)}) "
         'or wait on the record that keeps the work')),
-    'not-superseded': ('supersedes.row', lambda issue, board, reason, outcome, together: f'it is superseded by {", ".join(found)}: record a revision to put it back in force (agents board ruling revise {issue["id"]})' if board and (found := superseding(board, issue['id'])) else None),
-    'settled-premises': ('status.release-holds', lambda issue, board, reason, outcome, together: board and issue['status'] != 'in_force' and release_holds_refusal(board, issue['id'], together)),
-    'no-hung-waiters': ('blocks.target', lambda issue, board, reason, outcome, together: board and (waiting := deferred_waiters(board, issue['id'], set(together))) and (
+    'not-superseded': ('supersedes.row', lambda issue, board, reason, outcome, together, who: f'it is superseded by {", ".join(found)}: record a revision to put it back in force (agents board ruling revise {issue["id"]})' if board and (found := superseding(board, issue['id'])) else None),
+    'settled-premises': ('status.release-holds', lambda issue, board, reason, outcome, together, who: board and issue['status'] != 'in_force' and release_holds_refusal(board, issue['id'], together)),
+    'no-hung-waiters': ('blocks.target', lambda issue, board, reason, outcome, together, who: board and (waiting := deferred_waiters(board, issue['id'], set(together))) and (
         f"{', '.join(waiting)} would hang on it deferred: {deferred_fix(board, issue['id'], waiting)}")),
-    'open-parent': ('status.open-parent', lambda issue, board, reason, outcome, together: board and (cr := board.cr_of(issue['id'])) and cr != issue['id'] and board.by_id.get(cr, {}).get('status') == 'closed' and (
+    'in-work': ('status.row', lambda issue, board, reason, outcome, together, who: None if in_work(issue) else
+                f'held for planning, not in work; claim it for work first: agents board claim {issue["id"]}'),
+    'unheld-or-yours': ('status.row', lambda issue, board, reason, outcome, together, who: None if not issue.get('assignee') or holds_cr(issue, who or '') else
+                        f"{issue['id']}: held by {issue['assignee']}; wait until that session releases it"),
+    'held-by-you': ('status.row', lambda issue, board, reason, outcome, together, who: None if holds_cr(issue, who or '') else
+                    f"{issue['id']}: {issue['status']}, held by {issue.get('assignee') or 'nobody'}; its reviewer returns it: claim it first"),
+    'open-parent': ('status.open-parent', lambda issue, board, reason, outcome, together, who: board and (cr := board.cr_of(issue['id'])) and cr != issue['id'] and board.by_id.get(cr, {}).get('status') == 'closed' and (
         f'it is an item of {cr}, which is closed (landed or dropped): an open item under it would be reached by no queue; file the work again in an open '
         'change request (agents board create --parent <change request>). move re-parents only open items')),
 }
@@ -703,7 +709,7 @@ def move(issue: dict, command: str, *, to: str | None = None, actor: str | None 
         refusal = refuse('status.row', why)
     for name in row.guards if not refusal else ():
         cell, rule = GUARDS[name]
-        if why := rule(issue, board, reason, fields.get('outcome') if fields else None, together):
+        if why := rule(issue, board, reason, fields.get('outcome') if fields else None, together, who):
             why = str(why)
             refusal = refuse(cell, why if why.startswith(f"{issue['id']}:") else f"{issue['id']}: {command} refused: {why}")
             break
@@ -3330,13 +3336,49 @@ def own_entry(board: Board, actor: str) -> dict | None:
     return entry
 
 
-def cap_refusal(board: Board, entry: dict | None, actor: str, claimed: list[dict]) -> str | None:
+def cap_reached(board: Board, entry: dict | None, actor: str, claimed: list[dict]) -> str | None:
     """Why this actor may not claim one more work item, None when it may (an unregistered session has no cap)."""
     if entry is None:
         return None
     held = len({issue['id'] for issue in counted_holds(board, actor)} | {issue['id'] for issue in claimed if is_work_hold(issue)})  # claims and takeovers this call included
     cap = worker_cap(entry)
     return f'{actor} holds {held} of {cap} work items (its worker cap)' if held >= cap else None
+
+
+def cap_refusal(item_id: str, over: str, verb: str, outcome: str) -> BoardError:
+    """assignee.row's cap: a claim or take past the worker cap (`over`, from cap_reached) is refused unless --force gives a reason."""
+    return refuse('assignee.row', f'{item_id}: {outcome}: {over}; hand over or unclaim one, or agents board {verb} {item_id} --force "<reason>"')
+
+
+def ready_refusal(board: Board, issue: dict) -> BoardError | None:
+    """assignee.ready: a claim by id takes only a record ready for a pull (model.md Readiness)."""
+    item_id = issue['id']
+    if board.kind(issue) == 'milestone' and not board.milestone_ready(item_id):  # accepting a milestone needs its work done (board-coordination.md#milestones)
+        return refuse('assignee.ready', f"{item_id}: milestone not ready, its work is open: {', '.join(sorted(board.milestone_work(item_id)))}")
+    if not board.is_cr(item_id):
+        waits = board.waits_of(issue)
+        return refuse('assignee.ready', f"{item_id}: not claimable: waits on {', '.join(waits)}") if waits else None
+    if board.claimable(issue) is not None or issue['status'] == PASSED and after_base(board, issue) and may_attend(board):
+        return None  # a passed look-after child waiting for its parent: a deciding session takes it so it can return it
+    if board.kind(issue) == 'accept' and autopilot_barred(board):
+        return refuse('assignee.ready', f"{item_id}: not claimable: a finished change request waits for the user's Accept")
+    if board.kind(issue) == 'accept' and accept_waits(board, issue) and not cr_worktree_state(board, issue):
+        return None  # named: the Accept protocol may still return or reject it; landing refuses while it waits
+    why = [problem_line(one) for one in cr_problems(board, issue, cr_info(board, issue), refresh_target(board))]
+    if refusal := open_refusal(item_id, issue, 'a claim'):
+        why.append(refusal)
+    return refuse('assignee.ready', f"{item_id}: not claimable ({issue['status']})" + ''.join(f'\n  {line}' for line in why))
+
+
+def resume_refusal(issue: dict, actor: str, resume: str | None) -> BoardError | None:
+    """meta.resume: one's own work in progress is handed back with a resume note, and only one's own work takes one."""
+    own_work = in_hand(issue, actor) and (issue.get('issue_type') == CR_TYPE or is_work_hold(issue))
+    if own_work and not resume:
+        return refuse('meta.resume', f"{issue['id']}: your work in progress: if it waits on something, record that first (agents board wait <item> --on <id> --for \"<the input it waits for>\"), "
+                      f"then hand it back: agents board unclaim {issue['id']} --resume \"<next action>\"")
+    if resume and not own_work:
+        return refuse('meta.resume', f"{issue['id']}: --resume hands back your own work in progress; {issue.get('assignee')} holds it {issue['status']}")
+    return None
 
 
 def forced_reason(issue: dict) -> str | None:
@@ -3484,19 +3526,19 @@ def capacity(board: Board, args) -> None:
               f"ready for your pulls: {', '.join(f'{kind} {count}' for kind, count in ready)} → refill (plan Dispatch)")
 
 
-def claim_one(board: Board, issue: dict, actor: str, fields: dict | None = None, agreed: bool = False) -> tuple[bool, str]:
+def claim_one(board: Board, issue: dict, actor: str, fields: dict | None = None, agreed: bool = False) -> BoardError | None:
     """Atomically claim one item: the holder is written only if it is still empty (and, for a change request, the status is the
     one just read: a planner can finish Return after a reviewer reads the unassigned CR). The claim row clears the resume note of work handed
-    back (meta.resume); the claimer prints it once (`resume_note`)."""
+    back (meta.resume); the claimer prints it once (`resume_note`). Returns the refusal or failure, None once claimed."""
     resume = meta(issue).get(RESUME_NOTE)
     try:
-        result = move(issue, 'claim', actor=actor, fields={**(fields or {}), **({RESUME_NOTE: None} if resume else {})}, check=False, board=board,
-                      agreed=frozenset({'non-author'}) if agreed else frozenset())
+        move(issue, 'claim', actor=actor, fields={**(fields or {}), **({RESUME_NOTE: None} if resume else {})}, board=board,
+             agreed=frozenset({'non-author'}) if agreed else frozenset())
     except BoardError as error:
-        return False, str(error)
-    if result.returncode == 0 and resume:
+        return error
+    if resume:
         issue['resume_note'] = resume
-    return result.returncode == 0, (result.stderr or result.stdout).strip()
+    return None
 
 
 def in_work(cr: dict) -> bool:
@@ -3591,7 +3633,7 @@ def claim_candidates(board: Board, scoped: list[dict], kinds: tuple[str, ...], a
     for issue in sorted((i for i in scoped if board.claimable(i) in kinds), key=lambda i: claim_order(board, i)):
         if board.claimable(issue) == 'review' and self_review_refusal(issue, actor):
             continue  # your own hand-over needs another reviewer
-        if is_work_hold(issue) and issue['status'] == 'open' and (over := cap_refusal(board, entry, actor, [])):
+        if is_work_hold(issue) and issue['status'] == 'open' and (over := cap_reached(board, entry, actor, [])):
             if passed is not None:
                 passed.append(f'  at your worker cap ({over}): {issue["id"]}; agents board claim {issue["id"]} --force "<reason>" takes it')
             continue  # a review hold counts against no cap
@@ -3632,10 +3674,10 @@ def claim(board: Board, args) -> int:
                 continue
             if not board.is_cr(item_id) and holder and session_actor(holder) == session_actor(actor):
                 # The session owns its workers' holds (design item 16): hand the item down. A work item counts against the cap.
-                over = cap_refusal(board, entry, actor, claimed) if is_work_hold(issue) else None
+                over = cap_reached(board, entry, actor, claimed) if is_work_hold(issue) else None
                 if over and args.force is None:
                     failed.append(item_id)
-                    print(f'{item_id}: not taken over: {over}; hand over or unclaim one, or agents board claim {item_id} --force "<reason>"', file=sys.stderr)
+                    print(cap_refusal(item_id, over, 'claim', 'not taken over'), file=sys.stderr)
                     continue
                 move(issue, 'take', board=board, actor=actor)
                 comment(item_id, f'board claim: {actor} took this item over from {holder} in the same session.')
@@ -3647,65 +3689,45 @@ def claim(board: Board, args) -> int:
                 failed.append(item_id)
                 print(refusal, file=sys.stderr)
                 continue
-            if holder and shared is not None and ACTOR.fullmatch(holder) and session_actor(holder) not in board.registry():
-                failed.append(item_id)
-                print(f'{item_id}: held elsewhere by {holder}, updated {age(board.last_activity(issue))} ago', file=sys.stderr)
-                continue
             if holder:
                 failed.append(item_id)
-                print(f'{item_id}: held by {holder}; once its session is gone, a deciding session takes it with agents board take {item_id}; otherwise only the user frees it with agents board unclaim',
-                      file=sys.stderr)
+                try:
+                    move(issue, 'claim', board=board, actor=actor, write=False)  # every claim row needs it unheld: status.row refuses it
+                except BoardError as refusal:
+                    elsewhere = shared is not None and ACTOR.fullmatch(holder) and session_actor(holder) not in board.registry()
+                    print(combined([refusal], f'{item_id}: held elsewhere by {holder}, updated {age(board.last_activity(issue))} ago' if elsewhere else
+                                   f'{item_id}: held by {holder}; once its session is gone, a deciding session takes it with agents board take {item_id}; '
+                                   'otherwise only the user frees it with agents board unclaim'), file=sys.stderr)
                 continue
-            if board.kind(issue) == 'milestone' and not board.milestone_ready(item_id):
-                # Accepting a milestone needs its work done (board-coordination.md#milestones).
+            if refusal := ready_refusal(board, issue):
                 failed.append(item_id)
-                print(f"{item_id}: milestone not ready, its work is open: {', '.join(sorted(board.milestone_work(item_id)))}", file=sys.stderr)
-                continue
-            if not board.is_cr(item_id) and (waits := board.waits_of(issue)):
-                failed.append(item_id)  # readiness: unheld and every wait met (board model, Readiness)
-                print(f"{item_id}: not claimable: waits on {', '.join(waits)}", file=sys.stderr)
+                print(refusal, file=sys.stderr)
                 continue
             if board.is_cr(item_id):
                 kind = board.claimable(issue)
                 if kind is None and issue['status'] == PASSED and after_base(board, issue) and may_attend(board):
                     # a passed look-after child waiting for its parent: a deciding session takes it so it can return it
-                    ok, message = claim_one(board, issue, actor, {'reviewing_tip': None} if 'reviewing_tip' in meta(issue) else None)
-                    if ok:
+                    if refusal := claim_one(board, issue, actor, {'reviewing_tip': None} if 'reviewing_tip' in meta(issue) else None):
+                        failed.append(item_id)
+                        print(combined([refusal], f'{item_id}: not claimed: {refusal}'), file=sys.stderr)
+                    else:
                         claimed.append(issue)
                         issue['claim_kind'] = 'review'
-                    else:
-                        failed.append(item_id)
-                        print(f'{item_id}: not claimed: {message}', file=sys.stderr)
                     continue
-                if kind is None and board.kind(issue) == 'accept' and autopilot_barred(board):
-                    failed.append(item_id)
-                    print(f"{item_id}: not claimable: a finished change request waits for the user's Accept",
-                          file=sys.stderr)
-                    continue
-                if kind is None and board.kind(issue) == 'accept' and accept_waits(board, issue) and not cr_worktree_state(board, issue):
-                    kind = 'accept'  # named: the Accept protocol may still return or reject it; landing refuses while it waits
-                if kind is None:
-                    failed.append(item_id)
-                    why = [problem_line(one) for one in cr_problems(board, issue, cr_info(board, issue), refresh_target(board))]
-                    if refusal := open_refusal(item_id, issue, 'a claim'):
-                        why.append(refusal)
-                    print(f"{item_id}: not claimable ({issue['status']})" + ''.join(f'\n  {line}' for line in why), file=sys.stderr)
-                    continue
-                if claim_cr_checked(board, issue, actor, kind, claimed, failed, bool(args.agreed)):
-                    issue['claim_kind'] = kind
+                if claim_cr_checked(board, issue, actor, kind or 'accept', claimed, failed, bool(args.agreed)):  # ready_refusal admits no other unclaimable CR
+                    issue['claim_kind'] = kind or 'accept'
                 continue
-            over = cap_refusal(board, entry, actor, claimed) if is_work_hold(issue) else None
+            over = cap_reached(board, entry, actor, claimed) if is_work_hold(issue) else None
             if over and args.force is None:
                 failed.append(item_id)
-                print(f'{item_id}: not claimed: {over}; hand over or unclaim one, or agents board claim {item_id} --force "<reason>"', file=sys.stderr)
+                print(cap_refusal(item_id, over, 'claim', 'not claimed'), file=sys.stderr)
                 continue
-            ok, message = claim_one(board, issue, actor)
-            if ok:
+            if refusal := claim_one(board, issue, actor):
+                failed.append(item_id)
+                print(combined([refusal], f'{item_id}: not claimed: {refusal}'), file=sys.stderr)
+            else:
                 claimed.append(issue)
                 forced[item_id] = args.force if over else None
-            else:
-                failed.append(item_id)
-                print(f'{item_id}: not claimed: {message}', file=sys.stderr)
     else:
         if args.force is not None:
             raise bad_input('--force holds a named item past your worker cap: agents board claim <id> --force "<reason>"')
@@ -3720,8 +3742,7 @@ def claim(board: Board, args) -> int:
                     issue['claim_kind'] = kind
                     break
                 continue
-            ok, _ = claim_one(board, issue, actor)
-            if ok:
+            if not claim_one(board, issue, actor):
                 claimed.append(issue)
                 break
         for hint in passed:
@@ -3759,16 +3780,14 @@ def claim(board: Board, args) -> int:
 
 
 def claim_cr_checked(board: Board, issue: dict, actor: str, kind: str, claimed: list, failed: list, agreed: bool = False) -> bool:
-    """claim_cr with its refusals printed: a git or setting failure leaves the CR unclaimed."""
+    """claim_cr with its refusals printed: a refusal, or a git or setting failure, leaves the CR unclaimed."""
     try:
-        ok, message = claim_cr(board, issue, actor, kind, agreed)
+        refusal = claim_cr(board, issue, actor, kind, agreed)
     except BoardError as error:
+        refusal = error
+    if refusal:
         failed.append(issue['id'])
-        print(f"{issue['id']}: not claimed: {error}", file=sys.stderr)
-        return False
-    if not ok:
-        failed.append(issue['id'])
-        print(f"{issue['id']}: not claimed: {message}", file=sys.stderr)
+        print(combined([refusal], f"{issue['id']}: not claimed: {refusal}"), file=sys.stderr)
         return False
     claimed.append(issue)
     return True
@@ -3848,10 +3867,10 @@ def take(board: Board, args) -> int:
             print(f"{issue['id']}: already held by {actor}")
             continue
         # A work item held counts against the worker cap however the hold arrives.
-        over = cap_refusal(board, entry, actor, taken) if is_work_hold(issue) else None
+        over = cap_reached(board, entry, actor, taken) if is_work_hold(issue) else None
         if over and args.force is None:
             failed = True
-            print(f"{issue['id']}: not taken: {over}; hand over or unclaim one, or agents board take {issue['id']} --force \"<reason>\"", file=sys.stderr)
+            print(cap_refusal(issue['id'], over, 'take', 'not taken'), file=sys.stderr)
             continue
         move(issue, 'take', board=board, actor=actor, agreed=frozenset({'gone'}) if args.agreed else frozenset(),
              fields={'reviewing_tip': None} if board.is_cr(issue['id']) and issue['status'] == 'in_review' else None)  # the new holder has seen nothing yet
@@ -3888,14 +3907,8 @@ def unclaim(board: Board, args) -> int:
             print(refusal, file=sys.stderr)
             failed = True
             continue
-        own_work = in_hand(issue, actor) and (board.is_cr(issue['id']) or is_work_hold(issue))
-        if own_work and not args.resume:
-            print(f"{issue['id']}: your work in progress: if it waits on something, record that first (agents board wait <item> --on <id> --for \"<the input it waits for>\"), "
-                  f"then hand it back: agents board unclaim {issue['id']} --resume \"<next action>\"", file=sys.stderr)
-            failed = True
-            continue
-        if args.resume and not own_work:
-            print(f"{issue['id']}: --resume hands back your own work in progress; {holder} holds it {issue['status']}", file=sys.stderr)
+        if refusal := resume_refusal(issue, actor, args.resume):
+            print(refusal, file=sys.stderr)
             failed = True
             continue
         reason = unclaim_text(actor, issue, args.agreed)
@@ -3914,13 +3927,6 @@ def unclaim(board: Board, args) -> int:
             comment(issue['id'], RESUME + args.resume)
         print(f"unclaimed {issue['id']} from {holder} ({issue['status']})")
     return 1 if failed else 0
-
-
-def held(board: Board, item_id: str, actor: str, status: str | None = None) -> dict:
-    issue = require_open(board, [item_id])[0]
-    if issue.get('assignee') != actor or (status and issue['status'] != status):
-        raise refuse('status.record', f"{item_id}: {issue['status']}, held by {issue.get('assignee') or 'nobody'}; claim it first")
-    return issue
 
 
 def git(root: Path, *args: str, env: dict[str, str] | None = None, check: bool = True, input: str | None = None) -> subprocess.CompletedProcess:
@@ -5140,31 +5146,33 @@ def sync_branch(board: Board, cr: dict, main: Path, wt: Path, check: bool = True
     return {'oldTip': old_tip, 'oldBase': resumed['fork'] if resumed else fork, 'moved': moved is not None, 'baseTip': base_tip, 'tip': tip, 'code': code, 'output': out}
 
 
-def claim_cr(board: Board, cr: dict, actor: str, kind: str, agreed: bool = False) -> tuple[bool, str]:
+def claim_cr(board: Board, cr: dict, actor: str, kind: str, agreed: bool = False) -> BoardError | None:
     """Claims a change request for the pull that found it. Work: the worktree first, then the hold (a worktree failure leaves
-    it unclaimed), then setup (a failure keeps the claim, A5). Planning: the hold. Review, accept, refresh: the hold, status kept."""
+    it unclaimed), then setup (a failure keeps the claim, A5). Planning: the hold. Review, accept, refresh: the hold, status kept.
+    Returns the refusal, None once claimed."""
     cid = cr['id']
     if kind == 'plan':
         return claim_one(board, cr, actor, {HOLD: 'plan', **({PLAN_FIRST: None} if meta(cr).get(PLAN_FIRST) else {})})
     if kind == 'review' and (refusal := self_review_refusal(cr, actor, agreed)):
-        return False, refusal
+        return refusal
     main = main_root()
     if kind != 'accept':  # only a deciding session's accept claim takes an item open for the user's review
         refuse_open(cid, cr, f'a {kind} claim')
     created, made_tip = open_worktree(board, cr, main)
     tip = rev(main, f'refs/heads/{cr_branch(cid)}') if kind == 'review' else None
+    refusal = None
     if not holds_cr(cr, actor):
-        ok, message = claim_one(board, cr, actor, {HOLD: 'work'} if kind == 'implement' else {'reviewing_tip': tip} if kind == 'review' else None,
-                                agreed)  # review: the tip this reviewer is shown
+        refusal = claim_one(board, cr, actor, {HOLD: 'work'} if kind == 'implement' else {'reviewing_tip': tip} if kind == 'review' else None,
+                            agreed)  # review: the tip this reviewer is shown
     elif kind == 'implement' and meta(cr).get(HOLD) != 'work':  # a planner's hold carries on as work
-        result = move(cr, 'claim for work', board=board, actor=actor, fields={HOLD: 'work'}, check=False)
-        ok, message = result.returncode == 0, (result.stderr or result.stdout).strip()
-    else:
-        ok, message = True, ''
-    if not ok:
+        try:
+            move(cr, 'claim for work', board=board, actor=actor, fields={HOLD: 'work'})
+        except BoardError as error:
+            refusal = error
+    if refusal:
         if created and kind == 'implement':
             drop_worktree(main, cid, made_tip)
-        return False, message
+        return refusal
     if kind == 'implement':
         print(f'  worktree {cr_worktree(main, cid)} on {cr_branch(cid)}; base {meta(cr).get("base") or target_branch(board, main)}')
         failure = ensure_setup(board, cr, cr_worktree(main, cid))
@@ -5178,7 +5186,7 @@ def claim_cr(board: Board, cr: dict, actor: str, kind: str, agreed: bool = False
                 delta = range_delta(main, cr, info['baseTip'], tip)
                 print('  prior range unavailable; read the full change' if delta is None else
                       '  range-diff since the last covered series:\n' + (delta or '(no changes since prior coverage)'))
-    return True, ''
+    return None
 
 
 def open_item_refusal(board: Board, cr: dict) -> BoardError | None:
@@ -5358,27 +5366,28 @@ def handover(board: Board, args) -> None:
     actor = caller()
     cr = cr_arg(board, args.id, 'handover')
     holder = cr.get('assignee')
-    if not holds_cr(cr, actor):
-        raise refuse('status.handover', f"{args.id}: {cr['status']}, held by {holder or 'nobody'}; claim it first",
-                         next=[{'action': 'wait'} if holder else {'action': 'claim', 'command': f'agents board claim {args.id}'}])
     m, status = meta(cr), cr['status']
     author = status == 'open'
-    if author and not in_work(cr):
-        raise refuse('status.handover', f'{args.id}: held for planning, not in work; claim it for work first: agents board claim {args.id}',
-                         next=[{'action': 'claim', 'command': f'agents board claim {args.id}'}])
-    if not author and status != 'in_review':
-        raise refuse('status.handover', f'{args.id}: {status}; only work in hand is handed over or an agent review is passed (use agents board cr request-review at Accept)',
-                         next=[{'action': 'review', 'command': f'agents board cr request-review {args.id} "<reason>"'} if status == PASSED else {'action': 'wait'}])
     no_agent_reason = args.no_agent_review
+    row = 'handover --no-agent-review' if no_agent_reason is not None else 'handover' if author else 'handover (reviewer passes)'
     if no_agent_reason is not None:
-        if not author:
-            raise refuse('status.handover', '--no-agent-review is only available on an author handover, not a reviewer pass')
-        if cr_look(board, cr) != 'before':
-            raise refuse('status.handover', '--no-agent-review is refused in a look-after project')
         refuse_long_comment(f'no agent review: {no_agent_reason}')
     refuse_long_comment(HANDOVER + args.evidence)
-    if refusal := open_item_refusal(board, cr):
-        raise refusal
+    try:  # the row: held by the caller's session, work in hand (in-work) or a review to pass, the look and the open items (status.row and its guards)
+        move(cr, row, board=board, write=False)
+    except BoardError as error:
+        if status == PASSED:
+            error.next = [{'action': 'review', 'command': f'agents board cr request-review {args.id} "<reason>"'}]
+            raise combined([error], f'{error}: only work in hand is handed over or an agent review is passed (use agents board cr request-review at Accept)') from None
+        if status == 'in_review' and no_agent_reason is not None:
+            raise combined([error], f'{error}: --no-agent-review is only available on an author handover, not a reviewer pass') from None
+        if holder and not holds_cr(cr, actor):
+            error.next = [{'action': 'wait'}]
+        elif not holder:
+            error.next = [{'action': 'claim', 'command': f'agents board claim {args.id}'}]
+        elif author and not in_work(cr):
+            error.next = [{'action': 'claim', 'command': f'agents board claim {args.id}'}]
+        raise
     main = main_root()
     wt = cr_worktree(main, args.id)
     if not wt.is_dir():
@@ -5399,7 +5408,7 @@ def handover(board: Board, args) -> None:
         else:
             shown = git(wt, 'log', '--stat', '--format=%h %s', f"{result['baseTip']}..{result['tip']}", check=False).stdout.decode('utf-8', 'replace')
             said = f"no tip is recorded as seen by you (the CR was taken over); the tip is {result['tip'][:12]}"
-        raise refuse('status.handover', f"{args.id}: {said}; nothing was recorded. Review the change, then pass again:\n{shown.rstrip() or '(nothing to show)'}")
+        raise refuse('meta.seen-tip', f"{args.id}: {said}; nothing was recorded. Review the change, then pass again:\n{shown.rstrip() or '(nothing to show)'}")
     if author:
         if no_agent_reason is not None:
             pass_to_user(board, cr, 'handover --no-agent-review', no_agent_review_reason=no_agent_reason, reviewing_tip=None, hold=None, author=actor)
@@ -5462,10 +5471,11 @@ def route_uncovered(board: Board, cr: dict, info: dict) -> bool:
 def request_review(board: Board, args) -> int:
     actor = derived_actor() or 'user'
     cr = cr_arg(board, args.id, 'request-review')
-    if cr['status'] != PASSED:
-        raise refuse('status.request-review', f"{args.id}: {cr['status']}; request-review works only at the user's Accept", next=[{'action': 'wait'}])
-    if cr.get('assignee') and not holds_cr(cr, actor):
-        raise refuse('status.request-review', f"{args.id}: held by {cr['assignee']}; request review once that session releases it", next=[{'action': 'wait'}])
+    try:  # the send to review row: a passed CR (the user's Accept), its Who, unheld or the caller's (status.row)
+        move(cr, 'send to review', board=board, write=False)
+    except BoardError as error:
+        error.next = [{'action': 'wait'}]
+        raise
     review = review_read(board, cr)
     if review:
         refuse_unrecorded(args.id, review, f'{edits_line(args.id, review["opened"])} records them, then request review')
@@ -5473,8 +5483,6 @@ def request_review(board: Board, args) -> int:
     info = cr_info(board, cr)
     if not info['tip'] or not info['baseTip']:
         raise fault(f'{args.id}: its branch or base is gone; cannot request review')
-    if why := table_refusal(board, cr, 'send to review'):
-        raise why
     said = f'board cr request-review: {args.reason}' if args.reason else 'board cr request-review'
     refuse_long_comment(said)
     shown = range_delta(main, cr, info['baseTip'], info['tip'])
@@ -5490,8 +5498,9 @@ def request_review(board: Board, args) -> int:
 
 def reserve_planner_return(board: Board, cr: dict, ruling_id: str, actor: str) -> None:
     """Reserve an unclaimed review before returning it for a ruling."""
-    if cr['status'] != 'in_review' or cr.get('assignee'):
+    if cr['status'] != 'in_review':  # the return --ruling row's From, read before the claim that reserves it (the row's Held is then the caller)
         raise refuse('status.return', f"{cr['id']}: --ruling requires an unclaimed change request in review")
+    move(cr, 'claim', board=board, actor=actor, write=False)  # unheld, by an agent session that is no author (status.row)
     if why := table_refusal(board, cr, 'return --ruling'):  # status.who-planner: the row's Who, before any write
         raise why
     ruling = board.by_id.get(ruling_id) or {}
@@ -5518,16 +5527,14 @@ def return_item(board: Board, args) -> None:
         refuse_long_comment(f'board return: {text}')
     if args.ruling:
         reserve_planner_return(board, cr, args.ruling, caller())
-    elif cr['status'] not in ('in_review', PASSED):
-        raise refuse('status.return', f"{args.id}: {cr['status']}; only a change request in review or waiting for its Accept is returned (unclaim frees work in hand)")
-    elif cr['status'] == PASSED:
-        if why := table_refusal(board, cr, 'return'):
-            raise combined([why], f'{why}; the lead returns it with the findings you gave')
-        if cr.get('assignee') and not holds_cr(cr, actor):
-            raise refuse('status.return', f"{args.id}: held by {cr['assignee']} (a refresh); return it once that is released", next=[{'action': 'wait'}])
-    elif not holds_cr(cr, actor):
-        raise refuse('status.return', f"{args.id}: {cr['status']}, held by {cr.get('assignee') or 'nobody'}; claim it first",
-                         next=[{'action': 'wait'} if cr.get('assignee') else {'action': 'claim', 'command': f'agents board claim {args.id}'}])
+    else:
+        try:  # the return row: in review and held by its reviewer, or passed (the Accept's), unheld or the caller's (status.row and its guards)
+            move(cr, 'return', board=board, write=False)
+        except BoardError as error:
+            if cr['status'] == PASSED and not cr.get('assignee'):
+                raise combined([error], f'{error}; the lead returns it with the findings you gave') from None
+            error.next = [{'action': 'wait'} if cr.get('assignee') else {'action': 'claim', 'command': f'agents board claim {args.id}'}]
+            raise
     try:
         review = review_read(board, cr)
         if review:  # a review with edits must record them before Return
@@ -6139,7 +6146,7 @@ def comment_command(args) -> int:
         try:
             comment(item_id, text, args.packet)
         except BoardError as error:
-            print(f'board: {item_id}: {error}', file=sys.stderr)
+            print(combined([error], f'board: {item_id}: {error}'), file=sys.stderr)
             failed = True
         else:
             print(f'{item_id}: commented')
@@ -6348,6 +6355,8 @@ def parent_move_refusal(board: Board, ids: list[str], target: str | None, *,
         issue = board.by_id.get(item_id)
         if issue is None:
             continue
+        if issue['status'] == 'closed':
+            return refuse('parent-child.leave', f"{item_id} is closed: only an open record changes its parent (reopen it first)")
         if issue.get('issue_type') == CR_TYPE:
             if target is not None and board.by_id.get(target, {}).get('issue_type') == 'milestone':
                 continue  # a change request is part of a milestone
@@ -6954,12 +6963,16 @@ def unratified_confirmation(board: Board, issue: dict, reversal: str) -> str:
 
 def record(board: Board, args) -> int:
     actor = caller()
-    issue = held(board, args.id, actor)
+    issue = require_open(board, [args.id])[0]
     if issue.get('issue_type') != 'decision':
         raise bad_input(f'{args.id}: {issue.get("issue_type")}, not a decision')
-    allowed_statuses = ('open', 'decided')
-    if issue['status'] not in allowed_statuses and not (args.unratified and issue['status'] == 'in_force'):
-        raise refuse('status.record', f"{args.id}: {issue['status']}; an in-force record changes through agents board ruling revise")
+    command = 'ruling record --unratified' if args.unratified else 'ruling record'
+    try:  # the row: the caller's session holds it, open or decided (in force only --unratified), and its guards (status.row)
+        move(issue, command, board=board, write=False)
+    except BoardError as error:
+        if issue['status'] == 'in_force':
+            raise combined([error], f'{error}; an in-force record changes through agents board ruling revise') from None
+        raise
     try:
         text = Path(args.file).read_text(encoding='utf-8')
     except (OSError, UnicodeDecodeError) as error:
@@ -6972,8 +6985,6 @@ def record(board: Board, args) -> int:
     replaces = list(dict.fromkeys(args.replaces))
     status = 'in_force' if args.unratified else 'decided'
     closing, taking, operations = replaced_checks(board, args.id, replaces, actor, args.unratified)  # every refusal before the first write
-    command = 'ruling record --unratified' if args.unratified else 'ruling record'
-    move(issue, command, board=board, write=False)  # the status write's refusals (blocks.waiter included)
     confirmation = None
     if args.unratified:
         reversal = section_text({'description': text}, 'description', 'Reversal')
@@ -7002,15 +7013,48 @@ def record(board: Board, args) -> int:
     return 1 if failed else 0
 
 
-def hold_refusal(board: Board, issue: dict, actor: str) -> str | None:
-    """Whether a record about to be superseded is held by another session: None (free or this session's), 'gone' (a gone
-    session's hold, taken first), else the refusal."""
+def hold_refusal(board: Board, issue: dict, actor: str) -> BoardError | None:
+    """Why a record about to be superseded may not be (supersedes.hold): another live session holds it, or a gone session's hold lies
+    outside this person's queue (queue.claim). None when it is free, this session's, or a gone session's, which is taken first (`gone_hold`)."""
     held = holder(issue)
     if not held or session_actor(held) == session_actor(actor):
         return None
     if not holder_gone(board, board.registry(), held):
-        return f'held by {held}, another live session; ask it to hand it off (agents board unclaim), then run this again'
-    return foreign_claim(board, issue['id']) or 'gone'
+        return refuse('supersedes.hold', f"{issue['id']}: held by {held}, another live session; ask it to hand it off (agents board unclaim), then run this again")
+    return foreign_claim(board, issue['id'])
+
+
+def gone_hold(board: Board, issue: dict, actor: str) -> bool:
+    """A gone session's hold on a record about to be superseded: the writer takes it first (after hold_refusal passed)."""
+    held = holder(issue)
+    return bool(held) and session_actor(held) != session_actor(actor) and holder_gone(board, board.registry(), held)
+
+
+def replaceable_refusal(board: Board, old: str) -> BoardError | None:
+    """Why `old` cannot be replaced or revised (tracks.revisable): a ruling is decided, in force, or closed planned; not an open question,
+    a closed one, or one already superseded. A closed record superseded by the replacing record itself is the caller's to skip first."""
+    issue = board.by_id.get(old)
+    if issue is None:
+        return bad_input(f'{old}: unknown')
+    if issue.get('issue_type') != 'decision':
+        return bad_input(f'{old}: not another decision ruling')
+    if issue['status'] == 'closed':
+        if superseding(board, old):
+            return refuse('tracks.revisable', f'{old}: closed and already superseded')
+        if missing := missing_sections(str(issue.get('description') or '')):
+            return refuse('tracks.revisable', f"{old}: closed question, not a planned ruling (missing {', '.join(missing)})")
+        return None
+    if issue['status'] not in ('decided', 'in_force'):
+        return refuse('tracks.revisable', f"{old}: {issue['status']}, not decided or released: not yet a ruling; amend the question instead")
+    return None
+
+
+def one_revision_refusal(carried: set[tuple[str, str | None]], new: str) -> BoardError | None:
+    """tracks.one-revision for a record taking over the revisions of what it replaces: bd keeps one revision (target and rule) per record."""
+    if len(carried) <= 1:
+        return None
+    return refuse('tracks.one-revision', f"{new} would revise more than one record or rule ({', '.join(sorted(target + (f' ({rule})' if rule else '') for target, rule in carried))}); "
+                  'bd keeps one revision rule per record: finish the revisions one record at a time')
 
 
 def replaced_checks(board: Board, new: str, replaces: list[str], actor: str, in_force: bool) -> tuple[list[str], list[str], list[str]]:
@@ -7025,28 +7069,19 @@ def replaced_checks(board: Board, new: str, replaces: list[str], actor: str, in_
     removes: list[Edge] = []  # later: superseded at the release, carrying their revisions then
     for old in replaces:
         issue = board.by_id.get(old)
-        if issue is None:
-            problems.append(bad_input(f'--replaces {old}: unknown'))
-        elif old == new or issue.get('issue_type') != 'decision':
-            problems.append(bad_input(f'--replaces {old}: not another decision ruling'))
+        if issue is not None and issue['status'] == 'closed' and new in superseding(board, old):
+            continue  # done: a rerun
+        if refusal := bad_input(f'{old}: not another decision ruling') if old == new else replaceable_refusal(board, old):
+            problems.append(combined([refusal], f'--replaces {refusal}'))
         elif issue['status'] == 'closed':
-            if new in superseding(board, old):
-                continue
-            if superseding(board, old):
-                problems.append(refuse('tracks.revisable', f'--replaces {old}: closed and already superseded'))
-            elif missing_sections(str(issue.get('description') or '')):
-                problems.append(refuse('tracks.revisable', f'--replaces {old}: closed question, not a planned ruling'))
+            removes += [(a, b, kind) for a, b, kind in board.between(new, old) if kind != 'parent-child' and (a, b, kind) != (new, old, REVISES)]
+            links.append((new, old, REVISES))
+            if in_force:
+                closing.append(old)
+                if refusal := supersede_who_refusal(board, old, actor):
+                    problems.append(combined([refusal], f'--replaces {refusal}'))
             else:
-                removes += [(a, b, kind) for a, b, kind in board.between(new, old) if kind != 'parent-child' and (a, b, kind) != (new, old, REVISES)]
-                links.append((new, old, REVISES))
-                if in_force:
-                    closing.append(old)
-                    if refusal := supersede_who_refusal(board, old, actor):
-                        problems.append(combined([refusal], f'--replaces {refusal}'))
-                else:
-                    later.append(old)
-        elif issue['status'] not in ('decided', 'in_force'):
-            problems.append(refuse('tracks.revisable', f"--replaces {old}: {issue['status']}, not decided or released"))
+                later.append(old)
         else:
             # The supersede replaces any other link on the pair (bd keeps one edge per pair), so the revision link replaces it now.
             removes += [(a, b, kind) for a, b, kind in board.between(new, old) if kind != 'parent-child' and (a, b, kind) != (new, old, REVISES)]
@@ -7054,18 +7089,17 @@ def replaced_checks(board: Board, new: str, replaces: list[str], actor: str, in_
             if not in_force:
                 later.append(old)
                 continue
-            if (refusal := hold_refusal(board, issue, actor)) == 'gone':
+            if refusal := hold_refusal(board, issue, actor):
+                problems.append(combined([refusal], f'--replaces {refusal}'))
+            elif gone_hold(board, issue, actor):
                 taking.append(old)
-            elif refusal:
-                problems.append(refuse('supersedes.hold', f'--replaces {old}: {refusal}'))
             if refusal := supersede_who_refusal(board, old, actor):
                 problems.append(combined([refusal], f'--replaces {refusal}'))
             closing.append(old)
     carried = {(target, rule_of(board.by_id[old])) for old in [*closing, *later] for target in board.revises(old) if target != new and target not in replaces}
     carried |= {(target, rule_of(board.by_id[new])) for target in board.revises(new) if target not in replaces}  # a rerun's own links are no other revision
-    if len(carried) > 1:  # the supersedes carry the closing records' pending revisions onto `new`, which keeps one revision (target and rule)
-        problems.append(refuse('tracks.one-revision', f"{new} would revise more than one record or rule ({', '.join(sorted(target + (f' ({rule})' if rule else '') for target, rule in carried))}); "
-                                'bd keeps one revision rule per record: finish the revisions one record at a time'))
+    if refusal := one_revision_refusal(carried, new):  # the supersedes carry the closing records' pending revisions onto `new`
+        problems.append(refusal)
     if problems:
         raise combined(problems, 'record refused:\n  ' + '\n  '.join(map(str, problems)))
     edge_rules(board, links, 'ruling', removes=removes)  # write_edges checks again at the write
@@ -7073,46 +7107,24 @@ def replaced_checks(board: Board, new: str, replaces: list[str], actor: str, in_
 
 
 def check_replaces(board: Board, args) -> None:
-    """Validate and classify the records a staged question proposes to replace. Record repeats the mutable checks with its new id."""
+    """Validate and classify the records a staged question proposes to replace, by the rules `ruling record --replaces` and `ruling revise`
+    apply (replaceable_refusal, hold_refusal, one_revision_refusal); Record repeats them with its new id."""
     hits = list(dict.fromkeys(args.ids))
-    rows = {item_id: board.by_id.get(item_id) for item_id in hits}
-    problems = []
-    for item_id, issue in rows.items():
-        if issue is None or issue.get('issue_type') != 'decision' or issue.get('status') in (None, 'open'):
-            status = issue.get('status') if issue else None
-            kind = issue.get('issue_type') if issue else None
-            problems.append(f'{item_id} is {status} {kind}, not a ruling')
-            continue
-        if issue['status'] == 'closed':
-            if superseding(board, item_id):
-                problems.append(f'{item_id} is closed and already superseded')
-            missing = missing_sections(str(issue.get('description') or ''))
-            if missing:
-                problems.append(f"{item_id} is a closed question, not a planned ruling (missing {', '.join(missing)})")
-        elif issue['status'] not in ('decided', 'in_force'):
-            problems.append(f'{item_id} is {issue["status"]} decision, not a decided or in-force ruling')
+    problems = [refusal for item_id in hits if (refusal := replaceable_refusal(board, item_id))]
     if problems:
-        raise bad_input('supersedes needs a recorded ruling: ' + '; '.join(problems))
-
-    replaces = [item_id for item_id, issue in rows.items() if issue['status'] == 'decided']
+        raise combined(problems, 'supersedes needs a recorded ruling: ' + '; '.join(map(str, problems)))
+    rows = {item_id: board.by_id[item_id] for item_id in hits}
+    replaces = [item_id for item_id, issue in rows.items() if issue['status'] == 'decided']  # closed at Record (an away record) or at its release
     revises = [item_id for item_id in hits if item_id not in replaces]
-    if len(revises) > 1:
-        raise bad_input(f'a question revises at most one in-force record ({", ".join(revises)}); split the question')
-
     actor = caller()
-    held = [(item_id, rows[item_id].get('assignee'), hold_refusal(board, rows[item_id], actor)) for item_id in replaces]
-    refused = [(item_id, holder, reason) for item_id, holder, reason in held if reason and reason != 'gone']
-    if refused:
-        item_id, holder, _ = refused[0]
-        raise bad_input(f'{item_id} (held by {holder}) would close at Record; ask that session to hand it off (agents board unclaim), or choose another outcome')
-
+    if held := [refusal for item_id in replaces if (refusal := hold_refusal(board, rows[item_id], actor))]:
+        raise combined(held, f'{held[0]}; or choose another outcome')
     carried = {(dep['depends_on_id'], rule_of(rows[item_id]))
                for item_id in replaces for dep in rows[item_id].get('dependencies') or []
                if dep.get('issue_id') == item_id and dep.get('type') == REVISES}
     carried.update((item_id, None) for item_id in revises)
-    if len(carried) > 1:
-        detail = ', '.join(sorted(target + (f' ({rule})' if rule else '') for target, rule in carried))
-        raise bad_input(f'the new record would revise more than one record or rule ({detail}); a record keeps one revision: split the question')
+    if refusal := one_revision_refusal(carried, 'the new record'):
+        raise combined([refusal], f'{refusal}: split the question')
 
     print(json.dumps({'replaces': replaces, 'revises': revises[0] if revises else None,
                       'titles': {item_id: rows[item_id].get('title') or '' for item_id in hits}}))
@@ -7189,7 +7201,7 @@ def wait_items(board: Board, ids: list[str], blocker: str, reason: str | None, a
             print(wait_one(board, item_id, blocker, reason, actor))
         except BoardError as error:
             failed.append(item_id)
-            print(f'{item_id}: does not wait: {error}', file=sys.stderr)
+            print(combined([error], f'{item_id}: does not wait: {error}'), file=sys.stderr)
     return failed
 
 
@@ -7412,16 +7424,9 @@ def revise(board: Board, args) -> int:
     _, waits = edge_rules(board, links, 'ruling', types, parse_holds(value) if value is not None else ())
     require_holds_declared(waits, types, value)
     holds = waits['item'][0]
-    old = board.by_id.get(args.old)
-    if old is None or old.get('issue_type') != 'decision':
-        raise bad_input(f'{args.old}: unknown or not a decision')
-    if old['status'] == 'open':
-        raise refuse('tracks.revisable', f"{args.old}: {old['status']}, not yet a ruling; amend the question instead")
-    if old['status'] == 'closed':
-        if superseding(board, args.old):
-            raise refuse('tracks.revisable', f"{args.old}: closed and already superseded, not a planned ruling")
-        if missing_sections(str(old.get('description') or '')):
-            raise refuse('tracks.revisable', f"{args.old}: closed question, not a planned ruling")
+    if refusal := replaceable_refusal(board, args.old):
+        raise refusal
+    old = board.by_id[args.old]
     labels = args.label if args.label \
         else [label for label in old.get('labels') or [] if label.startswith('topic:')]
     new = create_ruling_revision(board, args.old, args.title, read_text_arg(args.body_file), holds=holds,
@@ -7450,19 +7455,17 @@ def release(board: Board, args) -> int:
             continue
         if issue.get('issue_type') != 'decision':
             problems.append(bad_input(f"{issue['id']}: not a decision"))
-        elif issue['status'] not in ('decided', 'in_force'):
-            problems.append(refuse('status.release', f"{issue['id']}: {issue['status']}, not decided"))
-        elif issue['status'] == 'decided':  # the release row: its status, Who and the settled premises (status.release-holds), all ids before the first write
+        elif issue['status'] != 'in_force':  # the release row: its status, Who and the settled premises (status.release-holds), all ids before the first write
             try:
                 move(issue, 'ruling release', board=board, together=frozenset(args.ids), write=False)
             except BoardError as error:
-                problems.append(error)
+                problems.append(error if issue['status'] == 'decided' else combined([error], f"{issue['id']}: {issue['status']}, not decided"))
         if issue['status'] in ('decided', 'in_force'):  # every record it revises is superseded below: a live session's hold refuses first
             for old in board.revises(issue['id']):
-                if (refusal := hold_refusal(board, board.by_id.get(old, {}), actor)) == 'gone':
+                if refusal := hold_refusal(board, board.by_id.get(old, {'id': old}), actor):
+                    problems.append(refusal)
+                elif gone_hold(board, board.by_id.get(old, {'id': old}), actor):
                     taking.append(old)
-                elif refusal:
-                    problems.append(refuse('supersedes.hold', f'{old}: {refusal}'))
     closes = []
     for question, records in args.closes:
         issue = board.by_id.get(question)
@@ -7597,10 +7600,10 @@ def supersede_pair(board: Board, old: str, new: str, rule: str | None, actor: st
     # supersedes.who and supersedes.hold, partial and full, before the first write: a refused supersede leaves no carried revision behind.
     if refusal := supersede_who_refusal(board, old, actor):
         raise refusal
-    if (held := hold_refusal(board, board.by_id.get(old, {'id': old}), actor)) == 'gone':
+    if refusal := hold_refusal(board, board.by_id.get(old, {'id': old}), actor):
+        raise refusal
+    if gone_hold(board, board.by_id.get(old, {'id': old}), actor):
         take(board, argparse.Namespace(ids=[old], force=None, agreed=None))
-    elif held:
-        raise refuse('supersedes.hold', f'{old}: {held}')
     removes = [(a, b, kind) for a, b, kind in board.between(old, new) if kind != 'parent-child' and (a, b, kind) not in partial]
     carried, uncarried = carry_revisions(board, old, new, closing) if carry and rule is None else ([], [])
     write_edges(board, 'ruling', f'board ruling supersede {old} --with {new}', [*partial, *carried], [*removes, *uncarried])
@@ -8799,8 +8802,8 @@ def run_command(argv: list[str]) -> int:
     JSON_VIEWS = {health: health_json, position: position_json, related: related_json, check: check_json}
     try:
         # Status views read non-closed items. These read closed items too (check: closed decisions named in text;
-        # wait, revise, release, supersede: a closed blocker or old record) or comments (related, check).
-        scope = 'ids' if args.run in (show, route, send, field_export, field_apply) else 'all' if args.run in (related, check, check_replaces, wait_command, revise, record, release, supersede, update_command, link_command, unlink_command, reopen_command) \
+        # wait, revise, release, supersede: a closed blocker or old record; move: a closed parent or record, refused by its rule) or comments (related, check).
+        scope = 'ids' if args.run in (show, route, send, field_export, field_apply) else 'all' if args.run in (related, check, check_replaces, wait_command, revise, record, release, supersede, update_command, link_command, unlink_command, reopen_command, move_command) \
             else 'status'
         if args.run in (route, send):
             attended_issues(None, args, args.command)  # refuse before reading
