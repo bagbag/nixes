@@ -528,7 +528,8 @@ GUARDS = {
     'not-open-for-review': lambda issue, board, reason, outcome, together: f'it is open for your review (tip {opened_tip(issue)[:12]}): end the review first' if opened_tip(issue) else None,
     'no-waiters': lambda issue, board, reason, outcome, together: board and outcome == 'dropped' and dropped_waits_refusal(board, issue['id'], together),
     'no-dropped-target': lambda issue, board, reason, outcome, together: board and (found := dropped_targets(board, issue['id'])) and (
-        f"it waits on {', '.join(found)}, closed dropped, which never delivers; unlink it first ({'; '.join(dep_fix(issue['id'], b) for b in found)}) or wait on the record that keeps the work"),
+        f"it waits on {', '.join(dropped_wait_text(board, b) for b in found)}, which never delivers; unlink it first ({'; '.join(dep_fix(issue['id'], b) for b in found)}) "
+        'or wait on the record that keeps the work'),
     'not-superseded': lambda issue, board, reason, outcome, together: f'it is superseded by {", ".join(found)}: record a revision to put it back in force' if board and (found := superseding(board, issue['id'])) else None,
 }
 
@@ -629,10 +630,9 @@ def move(issue: dict, command: str, *, to: str | None = None, actor: str | None 
         holder_after = holder_closing
         result = bd('supersede', issue['id'], '--with', reason or '') if via == 'supersede' else bd('close', issue['id'], '--reason', reason or '')
     else:
-        args = ['update', issue['id'], *(['--status', target] if row.to != '=' else []),
-                *(['--assignee', holder_after] if holder_after != current or row.holds == '-' else []),
-                '--if-assignee', current, '--if-status', issue['status'], *meta_args, '--json']
-        result = bd(*args)
+        result = bd('update', issue['id'], *(['--status', target] if row.to != '=' else []),
+                    *(['--assignee', holder_after] if holder_after != current or row.holds == '-' else []),
+                    '--if-assignee', current, '--if-status', issue['status'], *meta_args, '--json')
     if check and result.returncode != 0:
         raise BoardError(f"{issue['id']}: {command} failed: {bd_message(result)}")
     if result.returncode == 0:
@@ -2450,6 +2450,12 @@ def is_dropped_work(record: dict | None) -> bool:
     return bool(record) and record.get('status') == 'closed' and meta(record).get('outcome') == 'dropped' and record.get('issue_type') != 'decision'
 
 
+def dropped_wait_text(board: 'Board', target: str) -> str:
+    """A dropped wait target as a refusal names it: the record closed dropped, or the change request that was when the target is its item."""
+    unit = board.cr_of(target) or target
+    return f'{target} (closed dropped)' if unit == target or is_dropped_work(board.by_id.get(target)) else f'{target} (its change request {unit} closed dropped)'
+
+
 def dropped_targets(board: 'Board', item_id: str) -> list[str]:
     """What the record waits on that closed dropped, itself or with its change request (a complete snapshot: closed records are read)."""
     return [b for b in board.blockers.get(item_id, []) if not b.startswith('external:')
@@ -3784,7 +3790,10 @@ def meta(issue: dict) -> dict:
 
 def put_meta(issue: dict, **fields) -> None:
     """Sets (None: removes) metadata keys on the item and in the snapshot. Flat string keys: a whole-object write would
-    replace what a concurrent writer set."""
+    replace what a concurrent writer set. The board's bookkeeping only: an item setting (no_commit, look, view) is an item field under the
+    hold rule, written by write_fields."""
+    if settings := [key for key in fields if key in ITEM_SETTING_KEYS]:
+        raise BoardError(f"internal: put_meta writes the board's bookkeeping, not the item setting {', '.join(settings)} (write_fields does)")
     if not isinstance(issue.get('metadata'), dict):
         issue['metadata'] = {}
     flags = []
@@ -5121,8 +5130,7 @@ def land_core(board: Board, cr: dict, main: Path, tip: str, base_tip: str) -> li
     blocked = land_blocked(main, name, branch_tip)
     if blocked:
         raise BoardError(f"{cid}: land blocked: uncommitted edits in the worktree with {name} checked out overlap: {', '.join(blocked)}; they are the user's: ask the user to commit or move them, and do not restore or stash them yourself")
-    landing_fields = {'landing': branch_tip, **({OPENED: None} if review else {})}
-    put_meta(cr, **landing_fields)  # vouches for this tip: if the close fails after the fast-forward, the next read finishes it
+    put_meta(cr, landing=branch_tip, **({OPENED: None} if review else {}))  # vouches for this tip: if the close fails after the fast-forward, the next read finishes it
     done = git(where, 'merge', '--ff-only', branch_tip, check=False) if where else git(main, 'update-ref', ref, branch_tip, old, check=False)
     if done.returncode != 0:
         put_meta(cr, landing=None)
@@ -6336,6 +6344,10 @@ def edge_rules(board: Board | None, links: list[Edge], verb: str, new: dict[str,
     def kind_of(item: str):
         return new.get(item) or (board.by_id.get(item, {}).get('issue_type') if board else None)
 
+    def planned(key: str) -> dict:
+        """A new record as the rules on its waits see it: open, no id yet; a gate is a human gate (the board makes no other: type_refusal)."""
+        return {'issue_type': new[key], 'status': 'open', **({'await_type': 'human'} if new[key] == 'gate' else {})}
+
     # bd writes the graph together, so both ends of a wait may acquire a CR in the same plan.
     planned_crs = {item: cr for item, candidates in parents.items()
                    if (cr := next((parent for parent in candidates if kind_of(parent) == CR_TYPE), None))}
@@ -6364,8 +6376,9 @@ def edge_rules(board: Board | None, links: list[Edge], verb: str, new: dict[str,
                              'rulings write supersedes and tracks; a wait is agents board wait; a parent is agents board move)')
         if blocking(kind) and verb == 'link':
             raise BoardError(f'a wait is agents board wait {waiting} --on {other} --for "<the input it uses>"')
-        if blocking(kind) and board and other in board.by_id and (
-                refusal := wait_target_refusal(board.by_id.get(waiting) if waiting not in new else None, other, board.by_id[other], board)):
+        if blocking(kind) and (other in new or (board and other in board.by_id)) and (refusal := wait_target_refusal(
+                planned(waiting) if waiting in new else board.by_id.get(waiting) if board else None, other,
+                planned(other) if other in new else board.by_id[other], board)):
             raise BoardError(refusal)
         if blocking(kind) and waiting not in new and board and waiting in board.by_id and (
                 refusal := item_write_refusal(board, board.by_id[waiting], 'wait', who)):
@@ -6811,10 +6824,11 @@ def reason_optional(issue: dict, record: dict) -> bool:
 def wait_target_refusal(waiter: dict | None, target: str, record: dict, board: 'Board | None' = None) -> str | None:
     """The rules about what a wait may name, one owner for every writer (wait, create and plan links, ruling revise and supersede, the protocol
     engine's links): nothing waits on a deferred record (set aside, it would never end) or on one closed dropped (a question excepted: it
-    releases its waiters), and an in-force ruling waits only for its planning, a live decision or a human gate. `waiter` is None for a new item."""
-    who = waiter['id'] if waiter else 'a new item'
+    releases its waiters), and an in-force ruling waits only for its planning, a live decision or a human gate. A new record (in a plan, or a gate
+    being made) has no id: `waiter` and `record` are then what it will be, or `waiter` None when only the target is known."""
+    who = waiter.get('id') or f"the new {waiter.get('issue_type')}" if waiter else 'a new item'
     if waiter and waiter.get('issue_type') == 'milestone':
-        return f'{who} is a milestone: it waits on nothing, a change request is part of it (agents board move <change request> --to {who})'
+        return f"{who} is a milestone: it waits on nothing, a change request is part of it (agents board move <change request> --to {waiter.get('id') or '<milestone>'})"
     unit = (board.cr_of(target) or target) if board and target in board.by_id else target  # an item of a deferred change request is set aside with it
     if record.get('status') == 'deferred' or (board and board.by_id.get(unit, {}).get('status') == 'deferred'):
         return (f'{who} cannot wait on {target}: {"it" if unit == target else unit} is deferred, set aside by nothing that would bring it back; undefer it first '

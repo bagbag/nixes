@@ -771,6 +771,116 @@ def t_writers() -> None:
     for role in ('agent', 'lead'):
         rc, _, err, _ = run('a', 'create', f'filed by {role} into a held request', '-t', 'task', '--description', 'x', '--parent', held, role=role)
         check(rc == 0, f'F5: a {role} files an item into a request solo holds', err)
+    # The rule x write-path matrix (nixes-z94o1): each rule through every verb that writes its kind, for an existing and a new end. A refusal leaves
+    # nothing written; a positive cell shows the path writes at all. The writers by kind: model.md Authority; the allowlist in test-agent-configs pins them.
+    def titled(title: str) -> list[str]:
+        return [i for i, row in items('a').items() if row.get('title') == title]
+
+    def deps_of(record: str) -> list[tuple[str, str]]:
+        return [(d.get('depends_on_id'), d.get('type')) for d in items('a')[record].get('dependencies') or []]
+
+    def refused(cell: str, result, needle: str | None, unchanged) -> None:
+        rc, out, err, _ = result
+        check(rc != 0 and (needle is None or needle in err) and unchanged(), cell, (rc, err.strip()[-300:], out.strip()[-200:]))
+
+    def created(cell: str, args: tuple, title: str, role: str | None = 'lead', needle: str | None = None):
+        refused(cell, run('a', 'create', title, *args, role=role), needle, lambda: not titled(title))
+
+    def new_waiter(cell: str, kind: str, target: str, title: str) -> None:
+        """A plan's new node that waits on an existing record (waits_on): the graph path of a new waiter."""
+        plan = ROOT / f'matrix-{len(titled_plans)}.json'
+        titled_plans.append(plan)
+        node = {'key': 'n', 'title': title, 'type': kind, 'description': 'x', 'waits_on': [{'on': target, 'for': 'its output'}],
+                **({'no_commit': True} if kind == 'task' else {})}
+        plan.write_text(json.dumps({'nodes': [node]}))
+        refused(cell, run('a', 'create', '--graph', str(plan)), target if kind != 'milestone' else 'milestone', lambda: not titled(title))
+    titled_plans: list = []
+
+    milestone = create('a', 'matrix milestone', kind='milestone')
+    ruling = create('a', 'matrix in-force ruling', '-t', 'decision', '--status', 'in_force', kind='decision')
+    task, deferred, dropped = probe('matrix task'), probe('matrix deferred target'), probe('matrix dropped target')
+    check(run('a', 'defer', deferred, '--reason', 'set aside for the matrix')[0] == 0
+          and run('a', 'close', dropped, '--reason', 'dropped for the matrix tests', '--outcome', 'dropped')[0] == 0
+          and status(ruling) == 'in_force', 'matrix: a deferred and a dropped target, an in-force ruling')
+    dropped_cr = create('a', 'matrix dropped request')
+    dropped_item = create('a', 'matrix item of the dropped request', '--parent', dropped_cr, kind='task')
+    check(run('a', 'close', dropped_item, '--reason', 'done before its request was dropped')[0] == 0
+          and run('a', 'cr', 'reject', dropped_cr, 'the request is dropped for the matrix')[0] == 0, 'matrix: an item done in a dropped request')
+
+    # A milestone waits on nothing: wait (existing target), gate create and create --holds (a new target), a new milestone's deps (a new waiter).
+    refused('matrix milestone x wait: refused', run('a', 'wait', milestone, '--on', task, '--for', 'its output'), 'milestone', lambda: not deps_of(milestone))
+    refused('matrix milestone x gate create (new target): refused, no gate', run('a', 'gate', 'create', '--blocks', milestone, '--reason', 'a person signs it off', '--title', 'matrix gate on the milestone'),
+            'milestone', lambda: not deps_of(milestone) and not titled('matrix gate on the milestone'))
+    created('matrix milestone x create --holds (new target): refused before the create', ('-t', 'decision', '--description', 'x', '--holds', milestone),
+            'matrix question the milestone would wait on', needle='milestone')
+    new_waiter('matrix milestone x graph waits_on (new waiter): refused', 'milestone', task, 'matrix new milestone that waits')
+    # An in-force ruling waits only for its planning: wait on work refused; a new human gate or a new question it may wait on.
+    refused('matrix in-force ruling x wait on work: refused', run('a', 'wait', ruling, '--on', task, '--for', 'its output'), 'planning', lambda: not deps_of(ruling))
+    rc, out, err, _ = run('a', 'gate', 'create', '--blocks', ruling, '--reason', 'the user gives the go', '--title', 'matrix gate on the ruling')
+    check(rc == 0 and any(d[1] == 'blocks' for d in deps_of(ruling)), 'matrix in-force ruling x gate create (new human gate): written', err)
+    # Nothing waits on a deferred or dropped record (an item of a dropped request included): wait, and a new waiter's create --deps.
+    for name, target in (('deferred', deferred), ('dropped', dropped), ('item of a dropped request', dropped_item)):
+        waiter = probe(f'matrix waiter on the {name} target')
+        refused(f'matrix {name} target x wait: refused', run('a', 'wait', waiter, '--on', target, '--for', 'its output'), target, lambda: not deps_of(waiter))
+        new_waiter(f'matrix {name} target x graph waits_on (new waiter): refused', 'task', target, f'matrix new waiter on the {name} target')
+    # The cycle rule: wait, and a new item that would close a cycle through existing waits.
+    first, second = probe('matrix cycle first'), probe('matrix cycle second')
+    check(run('a', 'wait', second, '--on', first, '--for', 'its output')[0] == 0, 'matrix: one wait of a would-be cycle')
+    refused('matrix cycle x wait: refused', run('a', 'wait', first, '--on', second, '--for', 'its output'), 'cycle', lambda: not deps_of(first))
+    # The hold rule on a wait: an agent that does not hold the request writes no wait on its item (wait, unlink, create --holds; gate create: F2 above).
+    agent_target = probe('matrix target of the held item')
+    check(run('a', 'wait', item, '--on', agent_target, '--for', 'its output', role='solo')[0] == 0, 'matrix: the holder makes its item wait')
+    refused('matrix hold x wait by a non-holder agent: refused', run('a', 'wait', other_item, '--on', agent_target, '--for', 'its output', role='agent'),
+            held, lambda: not deps_of(other_item) or all(d[1] == 'parent-child' for d in deps_of(other_item)))
+    refused('matrix hold x unlink by a non-holder agent: refused', run('a', 'unlink', item, agent_target, role='agent'), held,
+            lambda: (agent_target, 'blocks') in deps_of(item))
+    created('matrix hold x create --holds by a non-holder agent: refused before the create', ('-t', 'decision', '--description', 'x', '--holds', item),
+            'matrix question the held item would wait on', role='agent', needle=held)
+    run('a', 'unlink', item, agent_target, role='solo')
+    # A parent changes through move only: a plan edge giving an existing record a parent (link and unlink: F2 above); move by a non-holder.
+    graph = ROOT / 'matrix-parent-graph.json'
+    graph.write_text(json.dumps({'nodes': [{'key': 'cr', 'title': 'matrix new request', 'type': 'change-request', 'description': 'x'}],
+                                 'edges': [{'from_id': task, 'to_key': 'cr', 'type': 'parent-child'}]}))
+    refused('matrix parent x create --graph edge to an existing record: refused', run('a', 'create', '--graph', str(graph)), 'move',
+            lambda: not titled('matrix new request') and not deps_of(task))
+    loose, open_cr = probe('matrix task moved into a closed request'), create('a', 'matrix open request')
+    refused('matrix parent x move of an item by a non-holder agent: refused', run('a', 'move', other_item, '--to', open_cr, role='agent'), held,
+            lambda: (held, 'parent-child') in deps_of(other_item))
+    refused('matrix parent x move into a closed request: refused', run('a', 'move', loose, '--to', dropped_cr), dropped_cr, lambda: not deps_of(loose))
+    # The hold rule on item fields: title, priority, label, close, route, send by a non-holder (field apply: F4 above); the holder writes and routes.
+    person = git('config', 'agents.person', cwd=ROOT / 'a').strip()
+    before = items('a')[other_item]
+    for role in ('agent', 'lead'):
+        for cell, args in (('update --title', ('update', other_item, '--title', f'retitled by {role}')), ('update --priority', ('update', other_item, '--priority', '0')),
+                           ('update --label', ('update', other_item, '--label', 'topic:matrix')),
+                           ('close', ('close', other_item, '--reason', f'closed by a non-holder {role} session')),
+                           ('route', ('route', person, other_item)), ('send', ('send', person, other_item))):
+            if role == 'agent' and cell in ('route', 'send'):
+                continue  # route and send are a deciding session's (attended): an agent is refused before the hold rule
+            refused(f'matrix hold x {cell} by a non-holder {role}: refused', run('a', *args, role=role), held if cell != 'send' else None,
+                    lambda: all(items('a')[other_item].get(key) == before.get(key) for key in ('title', 'priority', 'labels', 'status')))
+    rc, _, err, _ = run('a', 'route', person, other_item, role='solo')
+    check(rc == 0, "matrix hold x route by the holder: written", err)
+    # The dropped-wait rules: a drop under a live waiter (close, cr reject of a request whose item is waited on), a deferral under one, and a reopen
+    # whose wait would name a dropped record: a task, and an item done in a request that was dropped (S1: the refusal names the request).
+    waited, waiter = probe('matrix waited task'), probe('matrix its waiter')
+    run('a', 'wait', waiter, '--on', waited, '--for', 'its output')
+    refused('matrix dropped wait x close --outcome dropped under a waiter: refused', run('a', 'close', waited, '--reason', 'dropped while it is waited on',
+                                                                                       '--outcome', 'dropped'), waiter, lambda: status(waited) == 'open')
+    refused('matrix deferred wait x defer under a waiter: refused', run('a', 'defer', waited, '--reason', 'set aside while it is waited on'), waiter,
+            lambda: status(waited) == 'open')
+    rejected_cr = create('a', 'matrix request whose item is waited on')
+    waited_item = create('a', 'matrix waited item', '--parent', rejected_cr, kind='task')
+    outside, later = probe('matrix outside waiter of the item'), probe('matrix waiter of the item, done first')
+    check(all(run('a', 'wait', w, '--on', waited_item, '--for', 'its output')[0] == 0 for w in (outside, later))
+          and run('a', 'close', later, waited_item, '--reason', 'both done before the request is dropped')[0] == 0, 'matrix: two waiters of an item, one done with it')
+    refused('matrix dropped wait x cr reject under a waiter of its item: refused', run('a', 'cr', 'reject', rejected_cr, 'dropped while its item is waited on'),
+            outside, lambda: status(rejected_cr) != 'closed')
+    check(run('a', 'unlink', outside, waited_item)[0] == 0 and run('a', 'cr', 'reject', rejected_cr, 'the request is dropped after its item was done')[0] == 0,
+          'matrix: the request is dropped once the live wait is gone')
+    rc, _, err, _ = run('a', 'reopen', later)
+    check(rc != 0 and rejected_cr in err and 'unlink' in err and status(later) == 'closed',
+          'S2: reopen refuses a waiter whose target is an item of a dropped request, naming the request', err)
     run('a', 'unclaim', held, '--resume', 'writer tests done', role='solo')
 
 

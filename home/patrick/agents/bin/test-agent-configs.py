@@ -8244,58 +8244,122 @@ else:
         written |= {names[name] for name in re.findall(r"'--set-metadata', f[\"']\{([A-Za-z_]+)\}=", Path(root, "bin", "board").read_text(encoding="utf-8")) if name in names}  # a loop's own key is checked where it is set
         if written - board.BOARD_METADATA:
             raise ValueError(f"bin/board writes metadata keys missing from BOARD_METADATA: {sorted(written - board.BOARD_METADATA)}")
-        # No status write outside `move`: every bd call that sets a status, closes, reopens or supersedes is in it.
-        writers = {"move"}
-        stray = []
-        for function in (node for node in ast.walk(tree) if isinstance(node, ast.FunctionDef) and node.name not in writers):
-            for call in (node for node in ast.walk(function) if isinstance(node, ast.Call)):
-                words = [arg.value for arg in call.args if isinstance(arg, ast.Constant) and isinstance(arg.value, str)]
-                if getattr(call.func, "id", None) in ("bd", "bd_checked") and words[:1] and words[0] != "list" \
-                        and (words[0] in ("close", "reopen", "supersede", "defer", "undefer") or "--status" in words or "--defer" in words):
-                    stray.append(f"{function.name}:{call.lineno} bd {' '.join(words[:3])}")
-            for text in (node for node in ast.walk(function) if isinstance(node, ast.Constant) and isinstance(node.value, str)):
-                if re.search(r"\bupdate \S+ status=", text.value):
-                    stray.append(f"{function.name}:{text.lineno} batch status write")
-        for source in sorted((root / "bin" / "protocol_engine").glob("*.py")) + [root / "bin" / "protocol"]:
-            if re.search(r"--status|\bupdate \S+ status=", source.read_text(encoding="utf-8")):
-                stray.append(f"{source.name} writes a status itself")
-        if stray:
-            raise ValueError(f"every status write goes through move() (bin/board): {stray}")
-        # One owner per write kind (nixes-sjkpn). Edges: every bd dep or batch write, parent write and `dep add/remove` line is in write_edges; the two
-        # creations that write edges with their new record (create --graph, gate create --blocks) run edge_rules themselves; move's bd supersede is a status write.
+        # One owner per write kind (nixes-sjkpn, nixes-z94o1): an allowlist of every bd invocation in bin/board. A call names its verb as a constant;
+        # a read verb runs anywhere (sql only as a select, any verb as --help); every other verb runs only in its named owners. bd() and
+        # bd_checked() are the wrapper and run_bd the raw door (board bd --raw --yes): only they pass a verb along.
+        parents = {child: node for node in ast.walk(tree) for child in ast.iter_child_nodes(node)}
         functions = [node for node in ast.walk(tree) if isinstance(node, ast.FunctionDef)]
+        owner_of = {node: function.name for function in functions for node in ast.walk(function)}  # the innermost function wins: walked outer first
+        reads = {"show", "list", "export", "where", "lint", "history", "config get", "config list"}
+        owners = {
+            "update": {"move", "put_meta", "write_edges", "write_fields"},  # status and holder; bookkeeping; parents; item fields
+            "close": {"move"}, "supersede": {"move"},
+            "batch": {"write_edges"}, "dep": {"write_edges"},
+            "create": {"create_plan"}, "gate create": {"create_gate"},
+            "comments add": {"comment", "comment_command"},  # comments are free of the hold rule (model.md Authority)
+            "config set": {"set_config", "setup", "share", "move_board"}, "config unset": {"move_board"},
+            "init": {"setup", "fresh_join", "to_server"}, "backup": {"to_server"}, "flatten": {"move_board"}, "label add": {"share"},
+            "dolt start": {"ensure_server"}, "dolt stop": {"stop_server"}, "dolt pull": {"pull"}, "dolt remote": {"share", "move_board"},
+            "dolt commit": {"setup", "share", "fresh_join", "move_board", "sync_once"}, "dolt push": {"move_board", "send_first"},
+            "sync": {"move_board", "send_first", "sync_once"},
+        }
+        passers = {"bd", "bd_checked", "run_bd"}
+        two_word = {"config", "gate", "comments", "dolt", "label"}
 
-        def bd_calls(function):
-            for node in ast.walk(function):
-                if isinstance(node, ast.Call) and getattr(node.func, "id", None) in ("bd", "bd_checked"):
-                    yield node, [arg.value for arg in node.args if isinstance(arg, ast.Constant) and isinstance(arg.value, str)]
+        def leading_text(node) -> str | None:
+            if isinstance(node, ast.Constant) and isinstance(node.value, str):
+                return node.value
+            if isinstance(node, ast.JoinedStr) and node.values and isinstance(node.values[0], ast.Constant):
+                return node.values[0].value
+            return None
 
-        def runs(owner: str, rule: str) -> bool:
-            return any(getattr(node.func, "id", None) == rule for function in functions if function.name == owner for node in ast.walk(function) if isinstance(node, ast.Call))
+        def invocations():
+            """(function, line, argument nodes after `bd`) of every bd call: bd(...)/bd_checked(...) and a ['bd', ...] list run directly."""
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Name) and node.id in ("bd", "bd_checked") and not (isinstance(parents.get(node), ast.Call) and parents[node].func is node):
+                    yield owner_of.get(node, "<module>"), node.lineno, None  # an alias or a passed reference hides the calls behind it
+                elif isinstance(node, ast.Call) and getattr(node.func, "id", None) in ("bd", "bd_checked"):
+                    yield owner_of.get(node, "<module>"), node.lineno, node.args
+                elif isinstance(node, (ast.List, ast.Tuple)) and node.elts and leading_text(node.elts[0]) == "bd" and len(node.elts) > 1:
+                    yield owner_of.get(node, "<module>"), node.lineno, node.elts[1:]
 
-        creations = {"create_plan": ("create",), "create_gate": ("gate", "create")}  # every bd create, a plain one too, is create_plan's
-        stray = [f"{owner} does not run edge_rules" for owner in ("write_edges", *creations) if not runs(owner, "edge_rules")]
+        stray = []
+        for function, line, args in invocations():
+            where = f"{function}:{line}"
+            if args is None:
+                stray.append(f"{where} bd or bd_checked referenced, not called")
+                continue
+            words = [leading_text(arg) for arg in args]
+            if not args or words[0] is None or isinstance(args[0], ast.JoinedStr):
+                if function not in passers and not any(isinstance(arg, ast.Constant) and arg.value == "--help" for arg in args):
+                    stray.append(f"{where} bd with a verb that is not a constant")
+                continue
+            if "--help" in words:
+                continue
+            verb = words[0] if words[0] not in two_word or len(words) < 2 or words[1] is None else f"{words[0]} {words[1]}"
+            if verb == "sql":
+                statement = next((arg for arg, word in zip(args[1:], words[1:]) if word is None or not word.startswith("-")), None)
+                if not (leading_text(statement) or "").lstrip().lower().startswith("select"):
+                    stray.append(f"{where} bd sql that is not a select")
+            elif verb in reads:
+                pass
+            elif verb not in owners:
+                stray.append(f"{where} bd {verb}: no owner writes it")
+            elif function not in owners[verb]:
+                stray.append(f"{where} bd {verb} outside {', '.join(sorted(owners[verb]))}")
+            if function != "move" and verb not in reads and ("--status" in words or "--defer" in words):
+                stray.append(f"{where} bd {verb} writes a status outside move")
+            if verb == "update" and ("--parent" in words) != (function == "write_edges"):
+                stray.append(f"{where} bd update {'--parent outside write_edges' if function != 'write_edges' else 'without --parent in write_edges'}")
         for function in functions:
-            stray += [f"{function.name}:{node.lineno} a dep line" for node in ast.walk(function) if function.name != "write_edges"
-                      and isinstance(node, ast.Constant) and isinstance(node.value, str) and re.match(r"dep (add|remove)\b", node.value)]
-            for node, words in bd_calls(function):
-                if (words[:1] in (["dep"], ["batch"]) or (words[:1] == ["update"] and "--parent" in words)) and function.name != "write_edges":
-                    stray.append(f"{function.name}:{node.lineno} bd {' '.join(words[:3])}")
-                stray += [f"{function.name}:{node.lineno} bd {' '.join(head)} outside {name}" for name, head in creations.items()
-                          if tuple(words[:len(head)]) == head and function.name != name]
+            for node in ast.walk(function):
+                text = leading_text(node) if isinstance(node, (ast.Constant, ast.JoinedStr)) else None
+                if text is None:
+                    continue
+                if re.search(r"\bupdate \S+ status=", text):
+                    stray.append(f"{function.name}:{node.lineno} a batch status write")
+                if function.name != "write_edges" and re.match(r"dep (add|remove)\b", text):
+                    stray.append(f"{function.name}:{node.lineno} a dep line outside write_edges")
+        # put_meta writes the board's bookkeeping only: an item setting (no_commit, a CR's look and view) is an item field, written by write_fields
+        # under the hold rule (or cleared by move's parent write). Every key it is given resolves to a constant.
+        for node in ast.walk(tree):
+            if not (isinstance(node, ast.Call) and getattr(node.func, "id", None) == "put_meta"):
+                continue
+            keys, opaque = [], []
+            for keyword in node.keywords:
+                if keyword.arg:
+                    keys.append(keyword.arg)
+                    continue
+                branches = [keyword.value.body, keyword.value.orelse] if isinstance(keyword.value, ast.IfExp) else [keyword.value]
+                for branch in branches:
+                    if not isinstance(branch, ast.Dict) or None in branch.keys:
+                        opaque.append(ast.unparse(branch))
+                        continue
+                    for key in branch.keys:
+                        value = key.value if isinstance(key, ast.Constant) else getattr(board, getattr(key, "id", ""), None)
+                        keys.append(value) if isinstance(value, str) else opaque.append(ast.unparse(key))
+            where = f"{owner_of.get(node, '<module>')}:{node.lineno}"
+            stray += [f"{where} put_meta key {key} is an item setting" for key in keys if key in board.ITEM_SETTING_KEYS]
+            stray += [f"{where} put_meta keys that are not constants: {text}" for text in opaque]
+        stray += [f"{owner} does not run {rule}" for owner, rule in (("write_edges", "edge_rules"), ("create_plan", "edge_rules"), ("create_gate", "edge_rules"),
+                                                                    ("write_fields", "item_write_refusal"))
+                  if not any(getattr(node.func, "id", None) == rule for function in functions if function.name == owner
+                             for node in ast.walk(function) if isinstance(node, ast.Call))]
         for source in sorted((root / "bin" / "protocol_engine").glob("*.py")) + [root / "bin" / "protocol"]:
-            if "'--raw'" in source.read_text(encoding="utf-8"):
+            text = source.read_text(encoding="utf-8")
+            if re.search(r"--status|\bupdate \S+ status=", text):
+                stray.append(f"{source.name} writes a status itself")
+            if "'--raw'" in text:
                 stray.append(f"{source.name} writes through raw bd")
         if stray:
-            raise ValueError(f"every edge write goes through write_edges (bin/board), creations through edge_rules: {stray}")
-        # Fields: every other bd update is write_fields (under item_write_refusal, nixes-cs2mp), put_meta (the board's bookkeeping metadata) or move.
-        stray = [] if runs("write_fields", "item_write_refusal") else ["write_fields does not run item_write_refusal"]
-        stray += [f"{function.name}:{node.lineno} bd update" for function in functions if function.name not in ("move", "put_meta", "write_fields", "write_edges")
-                  for node, words in bd_calls(function) if words[:1] == ["update"]]
-        stray += [f"write_edges:{node.lineno} bd update without --parent" for function in functions if function.name == "write_edges"
-                  for node, words in bd_calls(function) if words[:1] == ["update"] and "--parent" not in words]
-        if stray:
-            raise ValueError(f"every field write goes through write_fields (bin/board): {stray}")
+            raise ValueError(f"every bd write runs in its owner (bin/board; nixes-sjkpn): {stray}")
+        try:
+            with patch.object(board, "bd", side_effect=AssertionError("put_meta wrote")):
+                board.put_meta({"id": "x"}, **{board.NO_COMMIT: "true"})
+        except board.BoardError:
+            pass
+        else:
+            raise ValueError("put_meta must refuse an item setting (no_commit, look, view): it is an item field under the hold rule")
         # bd edit blocks on an editor: refused in one line naming the way on; a user's own --readonly is just bd's flag.
         result, seen = run_board("bd", "edit", "x")
         if result.returncode != 2 or seen or "agents board field export <id>" not in result.stderr or len(result.stderr.strip().splitlines()) != 1:

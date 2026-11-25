@@ -134,7 +134,7 @@ Guards: `reason` (a non-blank reason), `items-closed` (no open item), `look-befo
 
 ## Authority
 
-The table's `Who` column is the authority; this is its shape. Item writes (close, reopen, wait, move, and every field write: `update`, `field apply`) read the CR that holds the item; one writer per write kind applies it (`move`, `write_edges`, `write_fields` in `bin/board`).
+The table's `Who` column is the authority; this is its shape. Item writes (close, reopen, wait, move, and every field write: `update`, `field apply`) read the CR that holds the item; one writer per write kind applies it (`move`, `write_edges`, `write_fields` in `bin/board`; `put_meta` writes only the board's bookkeeping). A test allows each bd write verb only in its owner, and a rule x write-path matrix runs each rule through every writer of its kind.
 
 - A session claims, hands over and unclaims its work. Its workers hold under its actor. Deciding sessions are `lead`, `solo` and `autopilot` (`DECIDING_ROLES`).
 - Review claim, pass and Return follow the `non-author` word; every claim path checks it.
@@ -155,7 +155,7 @@ The table's `Who` column is the authority; this is its shape. Item writes (close
 
 ## Waits
 
-One relation, written on the waiter, with a short "for" (content): "X waits on Y for …" (`agents board wait <item> --on <target> --for "<input>"`). Every write and dry run prints the sentence. A cycle is refused at the write (`wait-cycle` in `check` covers what came from outside). Waiters: an item, a whole CR (scope: every item, present and future), a task, a question. Milestones do not wait. Every writer (wait, create, plan graphs, ruling revise and supersede) meets the same target rules: nothing waits on a deferred record (set aside, it would never end) or on a record closed dropped (a question excepted: it releases its waiters; naming the keeper is the fix), and an in-force ruling waits only for its planning (a live decision or a human gate).
+One relation, written on the waiter, with a short "for" (content): "X waits on Y for …" (`agents board wait <item> --on <target> --for "<input>"`). Every write and dry run prints the sentence. A cycle is refused at the write (`wait-cycle` in `check` covers what came from outside). Waiters: an item, a whole CR (scope: every item, present and future), a task, a question. Milestones do not wait. Every writer (wait, create, plan graphs, gate create, ruling revise and supersede) meets the same rules, a new record at either end included: nothing waits on a deferred record (set aside, it would never end) or on a record closed dropped (a question excepted: it releases its waiters; naming the keeper is the fix), and an in-force ruling waits only for its planning (a live decision or a human gate).
 
 | Waits on | Met when |
 |---|---|
