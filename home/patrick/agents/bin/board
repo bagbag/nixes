@@ -63,15 +63,15 @@ PULLS = ('plan', 'implement', 'review')  # an item's kind (a `kind:` label) is n
 KINDS = (*PULLS, 'question', 'accept', 'milestone', 'refresh')  # refresh: review pulls take it (session_kinds)
 WORK_TYPE = 'task'  # an item and a task are one bd type; a `kind:` label (KIND_LABELS) says what sort, and no rule reads it
 KIND_LABEL, KIND_LABELS = 'kind:', ('bug', 'feature', 'design', 'cleanup')
-# An in-force ruling waits only for planning (r21-q139): a live decision (an open question, or an unreleased revision
-# record) or a human gate. Any other wait is work or a container: refused by `board wait`,
+# An in-force ruling waits only for planning (r21-q139): a live decision (an open question, an unreleased revision
+# record, or an in-force ruling until it is planned and closed: nixes-r0e01) or a human gate. Any other wait is work or a container: refused by `board wait`,
 # ignored when claiming (q140).
 LIVE_DECISIONS = ('open', 'decided')
 
 
 def planning_wait(record: dict) -> bool:
     kind = record.get('issue_type')
-    return is_human_gate(record) or (kind == 'decision' and record.get('status') in LIVE_DECISIONS)
+    return is_human_gate(record) or (kind == 'decision' and record.get('status') in (*LIVE_DECISIONS, 'in_force'))
 
 
 def is_human_gate(record: dict) -> bool:
@@ -382,8 +382,8 @@ MOVES = (
     Move('take', 'decision', ('open', 'decided', 'in_force'), '=', '*', 'you', ('agent+holder', 'agent+deciding+gone')),
     Move('unclaim', 'decision', ('open', 'decided', 'in_force'), '=', '*', '-', FREE_HOLD),
     Move('ruling record', 'decision', ('open', 'decided'), 'decided', 'you', '=', ('holder',)),
-    Move('ruling record --unratified', 'decision', ('open', 'decided', 'in_force'), 'in_force', 'you', '=', ('holder',)),
-    Move('ruling release', 'decision', ('decided',), 'in_force', '*', '-', ('attended', 'user')),
+    Move('ruling record --unratified', 'decision', ('open', 'decided', 'in_force'), 'in_force', 'you', '=', ('holder',), ('ruling-waits',)),
+    Move('ruling release', 'decision', ('decided',), 'in_force', '*', '-', ('attended', 'user'), ('ruling-waits',)),
     Move('supersede', 'decision', ('open', 'decided', 'in_force', 'closed'), 'closed', '*', '-', ('deciding', 'user'), (), ('superseded',)),
     Move('close', 'decision', ('open', 'decided'), 'closed', '*', '-', DECIDING_CLOSE, ('reason',), ('dropped', 'superseded')),  # superseded: another ruling answered it
     Move('close', 'decision', ('in_force',), 'closed', '*', '-', ('planner+holding', *DECIDING_CLOSE), ('reason',), ('planned',)),  # planning closes the ruling it claimed
@@ -513,7 +513,7 @@ def record_write_refusal(board: 'Board | None', issue: dict, command: str, actor
     of a change request is written under its request's hold, any other held record under its own (nixes-7mt77). The rule is ITEM_WRITE, or ITEM_WAIT
     for a wait or its removal (`command` wait or unlink), read on the holding record. A change request nobody holds is claimed first, unless the
     user or a deciding session writes; any other unheld record is free."""
-    if board is None:
+    if board is None or command == 'share':  # share's first queue label on an unlabelled top-level record passes (nixes-3se1p); route and send stay under the rule
         return None
     board.read_whole(board.parents.get(issue['id'], []))  # a stub parent would pass for an unheld one, or for no change request
     rule = ITEM_WAIT if command in ('wait', 'unlink') else ITEM_WRITE
@@ -605,10 +605,10 @@ def field_values(board: 'Board', ids: list[str], pairs: list[tuple[str, str]], c
             raise BoardError(refusal)
 
 
-def write_fields(board: 'Board', ids: list[str], flags: list[str], command: str = 'update', actor: str | None = None) -> None:
+def write_fields(board: 'Board', ids: list[str], flags: list[str], command: str = 'update', actor: str | None = None, write: bool = True) -> None:
     """The one write of record fields: title, priority, labels, the long fields, the item settings and `send`'s sent_at (FIELD_FLAGS; every other
     flag is refused). Every rule runs here, for every id before the write: the hold rule (record_write_refusal, as `move` reads it) and the value
-    rules (field_values); then one bd update. Status and holder: move; parents and links: write_edges; bookkeeping metadata: put_meta.
+    rules (field_values); then one bd update (`write=False`: only the checks, for a caller that checks every write before its first side effect). Status and holder: move; parents and links: write_edges; bookkeeping metadata: put_meta.
     bin/test-agent-configs.py pins the writers."""
     who = acting(actor)
     pairs = field_pairs(flags)
@@ -616,6 +616,8 @@ def write_fields(board: 'Board', ids: list[str], flags: list[str], command: str 
         if refusal := record_write_refusal(board, board.by_id[item_id], command, who):
             raise BoardError(refusal)
     field_values(board, ids, pairs, command, who)
+    if not write:
+        return
     bd_checked('update', *ids, *flags, '--json')  # the flags as given: each one passed field_pairs
 
 
@@ -632,6 +634,9 @@ GUARDS = {
         f"it waits on {', '.join(dropped_wait_text(board, b) for b in found)}, which never delivers; unlink it first ({'; '.join(dep_fix(issue['id'], b) for b in found)}) "
         'or wait on the record that keeps the work'),
     'not-superseded': lambda issue, board, reason, outcome, together: f'it is superseded by {", ".join(found)}: record a revision to put it back in force' if board and (found := superseding(board, issue['id'])) else None,
+    'ruling-waits': lambda issue, board, reason, outcome, together: board and next(  # blocks.waiter on a status write into in_force
+        filter(None, (wait_target_refusal({**issue, 'status': 'in_force'}, b, board.by_id[b], board)
+                      for b in board.open_blockers(issue['id']) if b in board.by_id)), None),
     'open-parent': lambda issue, board, reason, outcome, together: board and (cr := board.cr_of(issue['id'])) and cr != issue['id'] and board.by_id.get(cr, {}).get('status') == 'closed' and (
         f'it is an item of {cr}, which is closed (landed or dropped): an open item under it would be reached by no queue; file the work again in an open '
         'change request (agents board create --parent <change request>). move re-parents only open items'),
@@ -3880,7 +3885,7 @@ def unclaim(board: Board, args) -> int:
                 pass
         if args.resume:
             comment(issue['id'], RESUME + args.resume)
-        if not args.deep_review and DEEP_REVIEW in meta(issue):  # the deep-review's own release ends the escalation
+        if not args.deep_review and not args.resume and DEEP_REVIEW in meta(issue):  # the deep review ends here; --resume pauses it (nixes-eitq9)
             put_meta(issue, **{DEEP_REVIEW: None})
         print(f"unclaimed {issue['id']} from {holder} ({issue['status']})")
     return 1 if failed else 0
@@ -7874,6 +7879,14 @@ def share(args) -> int:
                   f"Nothing has changed yet. To share, rerun: agents board share {args.url + ' ' if args.url else ''}--yes")
             return 1
     who = ask_person()
+    top, deck = [], None
+    if not config_value(SHARED_BY):
+        # Closed items too: an open child takes its queue from a closed parent.
+        issues = exported()
+        top = [issue['id'] for issue in issues if issue.get('_type', 'issue') == 'issue' and not queue_labels(issue.get('labels') or [])
+               and not any(dep.get('type') == 'parent-child' for dep in issue.get('dependencies') or [])]
+        deck = Board([issue for issue in issues if issue.get('_type', 'issue') == 'issue'])
+        write_fields(deck, top, ['--add-label', QUEUE_PREFIX + who], 'share', write=False)  # every write is checked before the first push
     if remote not in remotes:
         bd_checked('dolt', 'remote', 'add', remote, url, '--allow-git-origin')
     try:
@@ -7885,12 +7898,7 @@ def share(args) -> int:
     write_mark(beads, remote)
     set_config((*LOCAL_CONFIG, *SERVER_CONFIG, *SHARED_CONFIG, *TRAVELLING_CONFIG))
     labelled = 0
-    if not config_value(SHARED_BY):
-        # Closed items too: an open child takes its queue from a closed parent.
-        issues = exported()
-        top = [issue['id'] for issue in issues if issue.get('_type', 'issue') == 'issue' and not queue_labels(issue.get('labels') or [])
-               and not any(dep.get('type') == 'parent-child' for dep in issue.get('dependencies') or [])]
-        deck = Board([issue for issue in issues if issue.get('_type', 'issue') == 'issue'])
+    if deck is not None and not config_value(SHARED_BY):  # the push may have pulled another person's share
         for start in range(0, len(top), 200):  # queue.owner: through the label owner
             write_fields(deck, top[start:start + 200], ['--add-label', QUEUE_PREFIX + who], 'share')
         labelled = len(top)

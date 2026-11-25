@@ -4366,7 +4366,7 @@ def validate_board(root: Path) -> None:
             code, _, errors = invoke(["wait", ids["Wire caller"], "--on", ids["Ready task"], "--for", "r"], fake, "lead0001")
             if code or not fake.writes():  # an item waits on another request's item: it is ready when that request lands or stacks
                 raise ValueError(f"board wait refused an item's wait on another request's item: {code} {errors} {fake.writes()}")
-            # Only a live decision, a human gate is a planning wait (q139).
+            # Only a live decision, an in-force ruling (until planned: nixes-r0e01) or a human gate is a planning wait (q139).
             def stub(item_id, kind, status, title, **more):
                 return {"id": item_id, "title": title, "issue_type": kind, "status": status, "priority": 2,
                         "created_at": "2026-10-20T10:00:00Z", "dependencies": [], **more}
@@ -4375,7 +4375,7 @@ def validate_board(root: Path) -> None:
                      stub("w-decided", "decision", "decided", "revision"),
                      stub("w-released", "decision", "in_force", "settled"), stub("w-deferred", "decision", "deferred", "later")]
             for blocker, allowed in (("w-user", True), ("w-gate", False), ("w-decided", True),
-                                     ("w-released", False), ("w-deferred", False)):
+                                     ("w-released", True), ("w-deferred", False)):
                 fake = Fake([*fixture, *waits])
                 code, _, errors = invoke(["wait", ruling, "--on", blocker, "--for", "r"], fake, "lead0001")
                 if (code == 0) != allowed or (not allowed and (fake.writes() or ("deferred" if blocker == "w-deferred" else "planning only") not in errors)):
@@ -4386,7 +4386,7 @@ def validate_board(root: Path) -> None:
             code, _, errors = invoke(["wait", ready, "--on", ids["Spike perf"], "--for", "r"], fake, "lead0001")
             if code == 0 or fake.writes() or "deferred" not in errors:
                 raise ValueError(f"board wait on a deferred record must be refused: {code} {errors} {fake.writes()}")
-            for blocker, ignored in (("w-user", False), ("w-gate", True), ("w-decided", False), ("w-released", True), ("w-deferred", True)):
+            for blocker, ignored in (("w-user", False), ("w-gate", True), ("w-decided", False), ("w-released", False), ("w-deferred", True)):
                 rows = [*fixture, *waits]
                 rows = [{**row, "dependencies": [*(row.get("dependencies") or []), *([{"issue_id": ruling, "depends_on_id": blocker, "type": "blocks"}]
                                                                                   if row["id"] == ruling else [])]} for row in rows]
@@ -14750,7 +14750,7 @@ def validate_board_rules(root: Path) -> None:
         cols = columns(row)
         if len(cols) == 6 and cols[1].startswith("`"):
             cells[cols[1].strip("`")] = (cols[3], cols[4], cols[5])
-    open_gaps = {"blocks.waiter": "G16", "assignee.stale-evidence": "G25"}  # G16: returned (craft-fmf56 STOP); G25: nixes-qzzc1
+    open_gaps = {"assignee.stale-evidence": "G25"}  # G25: nixes-qzzc1
     problems = []
     for cell, (_, new, existing) in cells.items():
         for column, token in (("New", new), ("Existing", existing)):
@@ -15074,13 +15074,14 @@ def validate_board_rules(root: Path) -> None:
                           ("create", "holds"): refused([*CREATE, "-t", "decision", "--holds", "r-ms"], "milestone", actor=None),
                           ("create", "graph"): every(refused(["create", "--graph", plan_file([node("m", "milestone", waits_on=[{"on": "r-q", "for": "x"}])])], "milestone", actor=None),
                                                     refused(["create", "--graph", plan_file([node("m", "milestone", waits_on=[{"on": "t", "for": "x"}]), node("t", no_commit=True)])], "milestone", actor=None)),
-                          ("wait", "same-cr"): refused(["wait", "r-rule", "--on", "r-t", "--for", "x"], "planning", actor=solo),
+                          ("wait", "same-cr"): every(refused(["wait", "r-rule", "--on", "r-t", "--for", "x"], "planning", actor=solo),
+                                                    wrote(["wait", "r-rule", "--on", "r-rule2", "--for", "x"], lambda writes, fake: bool(writes), actor=solo)),  # an in-force ruling is a planning wait (nixes-r0e01)
                           ("wait", "other-cr"): refused(["wait", "r-ms", "--on", "r-t", "--for", "x"], "milestone", actor=solo),
                           ("wait", "cr"): refused(["wait", "r-ms", "--on", "r-cr", "--for", "x"], "milestone", actor=solo),
                           ("gate create", "any"): refused(["gate", "create", "--blocks", "r-ms", "--reason", "a person signs"], "milestone", actor=None),
                           ("ruling revise", "holds"): refused(["ruling", "revise", "r-rule", "--title", "t", "--body-file", str(body), "--holds", "r-ms"], "milestone", actor=lead),
                           ("ruling record", "any"): None, ("ruling release", "any"): None, ("ruling supersede", "any"): None,
-                          ("ruling record", "unratified"): gap("blocks.waiter", "ruling record --unratified")})
+                          ("ruling record", "unratified"): refused(["ruling", "record", "r-dec", str(body), "--unratified"], "planning", issues=W(("r-dec", "r-t", "blocks")), actor=lead)})
     cycle_world = W(("r-item", "r-cr-item", "blocks"))
     add("blocks.cycle", {("create", "deps-id"): refused([*CREATE, "--parent", "r-cr", "--deps", "r-item"], "cycle", issues=cycle_world, actor=None),
                          ("create", "holds"): refused([*CREATE, "-t", "decision", "--deps", "r-q", "--holds", "r-q"], "cycle", actor=None),
@@ -15219,7 +15220,8 @@ def validate_board_rules(root: Path) -> None:
                               ("field apply", "any"): None,
                               ("route", "any"): refused(["route", "ben", "r-theld"], "aaaa1111", actor=lead, shared=stub),
                               ("send", "any"): refused(["send", "ben", "r-held"], "solo0001", actor=lead, shared=stub),
-                              ("ruling record", "any"): None, ("ruling revise", "any"): None})
+                              ("ruling record", "any"): None, ("ruling revise", "any"): None,
+                              ("share", "any"): None})  # share's own label passes the rule; its live case is test-shared-board's share_join
     add("queue.route", {("create", "label"): refused([*CREATE, "--no-commit", "-l", "for:ben"], "--for", actor=None),
                         ("create", "for"): refused([*CREATE, "--no-commit", "--for", "ben"], "not shared", actor=None),
                         ("create", "graph"): refused(["create", "--graph", plan_file([node(parent_id="r-cr", labels=["queue:ben"])])], "parent's queue", actor=None),
@@ -15250,6 +15252,8 @@ def validate_board_rules(root: Path) -> None:
                                                             ("decision", "r-qd", [*world(), record("r-qd", "decision", status="deferred", metadata={"deferred_by": "user"})]))}})
     add("meta.deep-review", {("unclaim", "any"): None, ("handover", "any"): None,
                              ("unclaim", "deep-review"): wrote(["unclaim", "r-ir", "--deep-review", "the failure path"], update_has("r-ir", "deep_review=the failure path"), issues=W(r_ir={"assignee": agent}), actor=agent)})
+    add("meta.deep-review", {("unclaim", "resume"): wrote(["unclaim", "r-held", "--resume", "next action"], lambda writes, fake: any(w[:1] == ["update"] for w in writes) and not any("deep_review" in " ".join(w) for w in writes),
+                                                          issues=W(r_held={"metadata": {"hold": "work", "deep_review": "the failure path"}}), actor=solo)})  # --resume keeps the mark (nixes-eitq9)
     add("meta.resume", {("claim", "any"): wrote(["claim", "r-t"], update_has("r-t", "--unset-metadata", "resume"), issues=W(r_t={"metadata": {**NC, "resume": "next"}}), actor=agent),
                         ("unclaim", "any"): None,
                         ("unclaim", "resume"): wrote(["unclaim", "r-theld", "--resume", "next action"], update_has("r-theld", "resume=next action"), actor=agent)})
@@ -15314,6 +15318,13 @@ def validate_board_rules(root: Path) -> None:
                 problems.append(f"case ({', '.join(key)}, {cell}) is in no verb row")
     if problems:
         raise ValueError("model.md Write rules and their cases disagree:\n  " + "\n  ".join(problems))
+    # The cases run real git (main_root, worktree lookups) in the process cwd: a throwaway repository on branch main, as validate_board does.
+    scratch_repo = tempfile.TemporaryDirectory()
+    git_env = {**os.environ, "GIT_CONFIG_GLOBAL": "/dev/null", "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@e", "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@e"}
+    for command in (["init", "-q", "-b", "main"], ["commit", "-q", "--allow-empty", "-m", "init"]):
+        subprocess.run(["git", *command], cwd=scratch_repo.name, check=True, env=git_env, capture_output=True)
+    previous_cwd = os.getcwd()
+    os.chdir(scratch_repo.name)
     with tempfile.TemporaryDirectory() as state_dir, tempfile.TemporaryDirectory() as raw_base:
         registry = root / "bin" / "session"
         project, project_env = fake_board(Path(raw_base).resolve())
@@ -15332,6 +15343,8 @@ def validate_board_rules(root: Path) -> None:
                 kinds_run[key[3]] += 1
         if failures:
             raise ValueError(f"{len(failures)} of {len(registered)} write-rule cases fail:\n  " + "\n  ".join(failures))
+    os.chdir(previous_cwd)
+    scratch_repo.cleanup()
     print(f"board rules: {len(registered)} cases ({ran['run']} run, {ran['static']} static reach) over {len(kinds_run)} cells")
 
 

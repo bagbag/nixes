@@ -327,9 +327,18 @@ def t_share_join() -> None:
     check(rc == 1 and 'git emails' in out and 'remote.git' in out and '--yes' in out, 'share without --yes: says what goes out and where, then stops', err + out)
     check(not remotes('a') and commits('a') == before and not mark('a') and 'auto-commit: batch' not in (ROOT / 'a/.beads/config.yaml').read_text(),
           'share without --yes: no remote, no config, no commit, no mark', remotes('a'))
+    env = {**base_env('a'), 'CLAUDE_CODE_SESSION_ID': 'garbage'}  # a session whose actor cannot be derived: its label write is refused, so share refuses before its push
+    refused = subprocess.run([sys.executable, '-B', BOARD, 'share', '--yes'], cwd=ROOT / 'a', capture_output=True, text=True, env=env, input='')
+    check(refused.returncode == 1 and 'cannot be derived' in refused.stderr and not remotes('a') and commits('a') == before and not mark('a'),
+          'share: a refused label write refuses before any push, remote or mark', refused.stderr)
+    held = next(i for i, issue in items('a').items() if issue.get('title') == 'unshared parent')
+    run('a', 'claim', held, role='solo')
+    rc, out, err, _ = run('a', 'share', '--yes', role='lead')  # another live session holds a top-level record: share's first label passes the hold rule (nixes-3se1p)
+    check(rc == 0 and 'queue:anna' in items('a')[held].get('labels', []) and '3 top-level' in out, "share: another session's held top-level record is labelled", err + out)
+    run('a', 'unclaim', held, '--resume', 'held across the share', role='solo')
     rc, out, err, _ = run('a', 'share', '--yes', role=None)
     check(rc == 0 and mark('a').get('remote') == 'origin', 'share --yes: default remote is the project repository, marked shared after the push', err + out)
-    check('3 top-level items labelled queue:anna' in out, 'share: existing top-level unlabelled items go to the sharer', out)  # the parent, the closed item and the decision record, which has no parent
+    check('queue:anna' in items('a')[held].get('labels', []) and '0 top-level' in out, 'share: existing top-level unlabelled items go to the sharer (the parent, the closed item and the decision record, which has no parent: 3, in the lead\'s share above)', out)
     check('queue:anna' in items('a')[CLOSED[0]].get('labels', []), 'share: closed top-level items are labelled too')
     rc, out, err, _ = run('a', 'share', role=None)
     check(rc == 0 and '0 top-level' in out and 'git emails' not in out, 'share again: quiet, nothing relabelled', err + out)

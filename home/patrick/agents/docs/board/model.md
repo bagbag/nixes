@@ -43,7 +43,7 @@ The protocol engine owns a round (questions asked, quotes, staged text); the boa
 
 ### Change request fields
 
-`look` (`before` | `after`; the project default, overridable per CR), `view` (`code` | `result`: how the console shows a landing), `base` and `base_sha`, `plan_first` (a reason: the CR needs planning before anyone implements it; set by base rejection and by board-migrate for migrated loose work, cleared by the plan claim, and an open CR carrying it is `plan` work), `hold` (below), the stored `check` and `review` evidence, and `deep_review` (the path a review escalated to a deep review: set by `unclaim --deep-review <path>` under the hold, cleared by the deep-review's own handover or unclaim; nixes-df7kf). A look-after default for new boards is **planned** (nixes-8b15o); this project stays `before`.
+`look` (`before` | `after`; the project default, overridable per CR), `view` (`code` | `result`: how the console shows a landing), `base` and `base_sha`, `plan_first` (a reason: the CR needs planning before anyone implements it; set by base rejection and by board-migrate for migrated loose work, cleared by the plan claim, and an open CR carrying it is `plan` work), `hold` (below), the stored `check` and `review` evidence, and `deep_review` (the path a review escalated to a deep review: set by `unclaim --deep-review <path>` under the hold, cleared by the deep-review's own handover and by unclaim without `--resume`, which keeps it; nixes-df7kf, nixes-eitq9). A look-after default for new boards is **planned** (nixes-8b15o); this project stays `before`.
 
 - **Stacking:** a CR may stack on any `passed` CR (its base is that CR's branch; `stackable` in `bin/board`: not one in agent review). A passed look-after CR waiting for its own base is a base too: landing the first base lands each look-after CR stacked on it in turn, and a look-before one stays for its Accept with its base reset to the target; a CR on an unlanded, unstackable base is not ready. "Its base allows it" means the base has landed, or is stackable and this CR stacks on it. When the base lands the stacked CR's base becomes the target.
 - **Refresh:** when the base moves a CR's stored check is stale; a `passed` look-after CR with a stale check does not land with its base but becomes refresh work (rebase, check again) for its holder or the queue.
@@ -101,8 +101,8 @@ Printed by `model_tables()`; the test compares this block with it exactly. `Held
 | take | decision | open, decided, in_force | = | * | you | agent+holder / agent+deciding+gone | - | - |
 | unclaim | decision | open, decided, in_force | = | * | - | holder / user / deciding+gone | - | - |
 | ruling record | decision | open, decided | decided | you | = | holder | - | - |
-| ruling record --unratified | decision | open, decided, in_force | in_force | you | = | holder | - | - |
-| ruling release | decision | decided | in_force | * | - | attended / user | - | - |
+| ruling record --unratified | decision | open, decided, in_force | in_force | you | = | holder | ruling-waits | - |
+| ruling release | decision | decided | in_force | * | - | attended / user | ruling-waits | - |
 | supersede | decision | open, decided, in_force, closed | closed | * | - | deciding / user | - | superseded |
 | close | decision | open, decided | closed | * | - | deciding+holder / deciding+gone / user | reason | dropped, superseded |
 | close | decision | in_force | closed | * | - | planner+holding / deciding+holder / deciding+gone / user | reason | planned |
@@ -131,7 +131,7 @@ Printed by `model_tables()`; the test compares this block with it exactly. `Held
 | attended | a lead or solo session (not autopilot: it leaves these moves, the user's to make or hard to undo, to the user; unattended protocol) |
 <!-- /model-tables -->
 
-Guards: `reason` (a non-blank reason), `items-closed` (no open item), `look-before` (only a look-before CR passes without agent review), `not-open-for-review` (end the user's review first), `no-waiters` (a close as dropped leaves no open or deferred record waiting on it: unlink the wait, wait on the keeper, or close them in the same call), `not-superseded` (a superseded ruling is put back by a revision record).
+Guards: `reason` (a non-blank reason), `items-closed` (no open item), `look-before` (only a look-before CR passes without agent review), `not-open-for-review` (end the user's review first), `no-waiters` (a close as dropped leaves no open or deferred record waiting on it: unlink the wait, wait on the keeper, or close them in the same call), `not-superseded` (a superseded ruling is put back by a revision record), `ruling-waits` (a record moving into `in_force` waits only for planning: `blocks.waiter`).
 
 ## Authority
 
@@ -217,7 +217,7 @@ An explicit `actor` argument is a non-empty actor or None (derive it); `''` is r
 | `blocks` (a wait) | `blocks.writers` | A wait is written only as a wait: `wait`, `waits_on` and `--deps`, `--holds`, `gate create`, and the ruling verbs. `link` refuses one, and bd's link words are refused, naming `wait`. | `edge_rules` | runs | runs |
 | | `blocks.target` | Nothing waits on a deferred record, on a record in a deferred CR, or on a record closed dropped, a question excepted (nixes-ze5lx). Held when a wait is written, when a waited-on record moves into a deferred CR (`move`), and when a record is deferred (`deferred_waiters`: a question is refused only when an in-work unit would hang on it, any other record when a live record waits on it). | `edge_rules` (`wait_target_refusal`), `deferred_waiters` | runs | runs |
 | | `blocks.external` | An `external:` wait target is refused at every writer: it never blocks (Operation notes, Beads features the board avoids), and upstream waits use a human gate (nixes-7oqkc). | `edge_rules` (`wait_target_refusal`) | runs | runs |
-| | `blocks.waiter` | A milestone waits on nothing. An in-force ruling waits only for its planning: a live decision or a human gate. Checked on the wait write and on every status write into `in_force` (`ruling release`, `ruling record --unratified`). | `edge_rules` (`wait_target_refusal`) | runs | gap G16 |
+| | `blocks.waiter` | A milestone waits on nothing. An in-force ruling waits only for its planning: a live decision, another in-force ruling until it is planned and closed (nixes-r0e01), or a human gate. Checked on the wait write and on every status write into `in_force` (`ruling release`, `ruling record --unratified`: the `ruling-waits` guard of their `MOVES` rows). | `edge_rules` (`wait_target_refusal`) | runs | runs |
 | | `blocks.cycle` | No cycle in the lifted wait graph (waits between items of different CRs count as waits between the CRs; a plan's new records sit in the CRs it gives them), after any write that changes it: a wait added (`wait`, plan `deps`, `waits_on` and edges, `--holds`, `gate create`, supersede waits) or an item's CR changed (`move`). Checked before the first write. | `edge_rules` (`wait_cycle`) | runs | runs |
 | | `blocks.hold` | Adding or removing an item's wait needs `ITEM_WAIT` on its CR. A held non-item waiter: `held-record.wait`. | `edge_rules` | n/a | runs |
 | | `blocks.for` | A wait on work needs a for, whichever writer adds it. An existing record made to wait on a new work item is refused, naming `wait`. | `edge_rules`, `wait_one` | runs | runs |
@@ -244,7 +244,7 @@ An explicit `actor` argument is a non-empty actor or None (derive it); `''` is r
 | `issue_type` | `issue_type.types` | Only board types; a gate only through `gate create`. | `create_plan` (`type_refusal`) | runs | n/a |
 | | `issue_type.owner` | `write_fields` refuses `--type`. | `write_fields` | n/a | runs |
 | any bd update flag | `fields.allowlist` | `write_fields` writes only the flags listed above and refuses every other (`--metadata`, `--set-labels`, `--force`, `--description` and the rest). | `write_fields` | n/a | runs |
-| a held CR, task, decision or milestone (the record itself) | `held-record.write` | Its fields, labels and parent moves (a held CR into a milestone) need `ITEM_WRITE` read on the record: its holder, the user, or a deciding session once the holder is gone. An unheld record is free (nixes-7mt77). | `write_fields`, `edge_rules` | n/a | runs |
+| a held CR, task, decision or milestone (the record itself) | `held-record.write` | Its fields, labels and parent moves (a held CR into a milestone) need `ITEM_WRITE` read on the record: its holder, the user, or a deciding session once the holder is gone. An unheld record is free (nixes-7mt77). `share`'s first queue label on an unlabelled top-level record passes this rule (nixes-3se1p: before a share every holder is the user's own session); `route` and `send` stay under it. | `write_fields`, `edge_rules` | n/a | runs |
 | | `held-record.wait` | Adding or removing a wait of a held record needs `ITEM_WAIT` read on the record (`ITEM_WRITE` plus `deciding`). An unheld record is free (nixes-7mt77). | `edge_rules` | n/a | runs |
 | `title`, `priority`, `description`, `design`, `acceptance_criteria`, `notes`, `external_ref`, `spec_id`, `estimate` | `content.hold` | Writes to an item need `ITEM_WRITE` on its CR. | `write_fields` | n/a | runs |
 | | `content.size` | A work task's long fields stay within `FIELD_LIMIT` unless the write shrinks them or only changes paths. Decisions are exempt. | `create_plan` (new), `write_fields` (existing) | runs | runs |
@@ -254,7 +254,7 @@ An explicit `actor` argument is a non-empty actor or None (derive it); `''` is r
 | `queue:`, `for:` labels | `queue.route` | Only `route`, `send`, `create --for`, `gate create --for` and the creator's own queue on a parentless node change these; `update` refuses them. | `write_fields`, `create_plan` | runs | runs |
 | | `queue.attended` | `route`, `send`, and a plan putting work in another person's queue: a lead, solo or person only. | `attended_issues`, `plan_queue_refusal` | runs | runs |
 | | `queue.top-level` | `send` takes only a top-level item: one with a parent takes its parent's queue. | `send` | n/a | runs |
-| | `queue.owner` | Every label write goes through the label owner. | `write_fields` | n/a | runs |
+| | `queue.owner` | Every label write goes through the label owner. `share` checks every write, its labels included, before its first push, so a refusal leaves nothing half-done (nixes-3se1p). | `write_fields` | n/a | runs |
 | comments | `comments.size` | A session's comment stays within `FIELD_LIMIT` whichever verb writes it; `--board-packet` is exempt. Comments are free of the hold rule. | `comment` | runs | runs |
 | | `comments.owner` | `comment()` is the one comment writer: it passes the text to bd on stdin (`-f -`) and runs `comments.size`, and `comment_command` and every verb that comments call it (nixes-7oqkc). | `comment` | runs | runs |
 | `no_commit`, `look`, `view` | `setting.values` | `setting_refusal`: `no_commit` on a task only, `look`/`view` on a CR from their value sets, never the project default. | `create_plan` (new), `write_fields` (existing) | runs | runs |
@@ -274,7 +274,7 @@ An explicit `actor` argument is a non-empty actor or None (derive it); `''` is r
 | `resume` | `meta.resume` | One owner: `move` sets it on unclaim and clears it in the claim row. | `move` | n/a | runs |
 | `forced_hold_by`, `forced_hold` | `meta.forced` | Written only by a forced claim. | `mark_forced` | n/a | runs |
 | `since`, `setup_sha` | `meta.info` | `since` orders the queue within a tier and `setup_sha` decides whether setup reruns; neither decides status, authority or landing. | `move`, `reject`, `ensure_setup` | n/a | runs |
-| `deep_review` | `meta.deep-review` | Written by `unclaim --deep-review <path>` under the CR's hold (`put_meta`); cleared by the deep-review's own `handover` or `unclaim` (nixes-df7kf). review.md's step uses it. | `unclaim`, `handover` | n/a | runs |
+| `deep_review` | `meta.deep-review` | Written by `unclaim --deep-review <path>` under the CR's hold (`put_meta`); cleared by the deep-review's own `handover` and by `unclaim` without `--resume`; `unclaim --resume` keeps it (nixes-df7kf, nixes-eitq9). review.md's step uses it. | `unclaim`, `handover` | n/a | runs |
 | `checkpoint` | `meta.checkpoint` | A legacy key owned by board-migrate (`convert-design-checkpoints.py`); `check` flags it (`cr-checkpoint`). No board verb writes it. | board-migrate | n/a | n/a |
 | `custom.board.*` (`target`, `setup`, `checks`, `look`, `view`, `model`, `shared`, `moved`) | `config.owner` | `setup` writes the settings, and the model marker on a board it creates (board-migrate's converter marks an existing one). `share` and `join` write the shared config (`set_config`) and `shared`; `relocate` writes `moved`. They are not records. | `setup`, `share`, `join`, `relocate` | runs | runs |
 | the database (init, backup, dolt commit, push, pull, remote, sync, flatten) | `db.owner` | Run by `setup`, `share`, `join`, `relocate`, `Shared.before` (pull) and `_sync-wait` (commit and sync). They are not records. | `setup`, `share`, `join`, `relocate`, `Shared.before`, `_sync-wait` | runs | runs |
@@ -283,11 +283,10 @@ An explicit `actor` argument is a non-empty actor or None (derive it); `''` is r
 
 ### Gaps
 
-What the code does today where a cell reads `gap Gn`. nixes-fmf56 closed G1-G24 except G16, whose cell as written would refuse a release the protocol engine makes (returned for a ruling); G25 is nixes-qzzc1's.
+What the code does today where a cell reads `gap Gn`. nixes-fmf56 closed G1-G24; G25 is nixes-qzzc1's.
 
 | Gap | Today |
 |---|---|
-| G16 | `ruling record --unratified` moves a record into `in_force` without checking its waits; `ruling release` refuses only unsettled blockers, so a record waiting on an in-force ruling is released (a settled premise), and the protocol engine's inherited waits reach that state. |
 | G25 | Not built: the stale-hold evidence in `take`/`unclaim` and the `stale: assess` line (nixes-qzzc1, nixes-b8y69). |
 
 
@@ -330,7 +329,7 @@ What the code does today where a cell reads `gap Gn`. nixes-fmf56 closed G1-G24 
 | `take` | any | any | status.row, assignee.{row, stale-evidence}, status.who-planner, meta.{holder-keys, review}, actor.none |
 | `take` | agreed | any | comments.size |
 | `unclaim` | any | any | status.row, assignee.{row, stale-evidence}, status.who-planner, meta.{holder-keys, resume, review}, meta.deep-review, actor.none |
-| `unclaim` | resume | any | meta.resume, comments.size |
+| `unclaim` | resume | any | meta.{resume, deep-review}, comments.size |
 | `unclaim` | agreed | any | comments.size |
 | `unclaim` | deep-review | cr | meta.deep-review, meta.allowlist |
 | `handover` | any | cr | status.row, meta.{holder-keys, review, check, deep-review}, comments.size, meta.allowlist, actor.none |
@@ -358,7 +357,7 @@ What the code does today where a cell reads `gap Gn`. nixes-fmf56 closed G1-G24 
 | `ruling supersede` | any | decision | supersedes.{ruling-only, row, who, hold}, blocks.{target, waiter, cycle, hold, for}, tracks.one-revision, meta.revises-rule, held-record.wait, actor.none |
 | `ruling supersede` | partial | decision | supersedes.{ruling-only, who, hold}, tracks.one-revision, meta.revises-rule, comments.size |
 | `setup` | any | any | config.owner, db.owner |
-| `share` | any | any | config.owner, db.owner, queue.owner, actor.none |
+| `share` | any | any | config.owner, db.owner, queue.owner, held-record.write, actor.none |
 | `join` | any | any | config.owner, db.owner |
 | `relocate` | any | any | config.owner, db.owner |
 | `_sync-wait` | any | any | db.owner |
