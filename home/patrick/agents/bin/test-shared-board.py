@@ -99,7 +99,7 @@ def run(side: str, *args: str, role: str | None = 'lead', stdin: str | None = No
     if args[:1] == ('create',):
         converted, stdin = board_create_args(args[1:], stdin)
         kind = next((converted[at + 1] for at, arg in enumerate(converted) if arg in ('-t', '--type')), 'task')
-        if filed and kind == 'task' and not {'--parent', '--no-commit', '--graph'} & set(converted):
+        if filed and kind == 'task' and not {'--parent', '--no-commit', '--graph'} & {arg.split('=')[0] for arg in converted}:
             converted.append('--no-commit')  # work files in a change request or commits nothing: the tests that are not about the refusal file the second
         args = ('create', *converted)
     env = base_env(side)
@@ -291,7 +291,7 @@ CLOSED: list[str] = []
 
 def t_unshared() -> None:
     parent = create('a', 'unshared parent')
-    child = create('a', 'unshared child', '--parent', parent)
+    child = create('a', 'unshared child', '--parent', parent, kind='task')
     check('.' not in child, 'unshared board: a child has a plain id', child)
     CLOSED.append(create('a', 'closed top-level'))
     bd('a', 'close', CLOSED[0], '--force', '--reason', 'closed before the share, which labels it too')
@@ -314,7 +314,7 @@ def t_unshared() -> None:
     rc, out, err, _ = bd('a', 'create', 'short stdin', '-t', 'task', '--stdin', '--parent', parent, '--silent', stdin='short text')
     made = out.strip().splitlines()[-1] if rc == 0 and out.strip() else ''
     check(made != '' and items('a').get(made, {}).get('description') == 'short text', 'a short description through stdin reaches bd', err or out)
-    rc, out, err, _ = bd('a', 'create', 'record', '-t', 'decision', '--description', long, '--parent', parent, '--holds', 'none', '--silent')
+    rc, out, err, _ = bd('a', 'create', 'record', '-t', 'decision', '--description', long, '--holds', 'none', '--silent')  # a decision has no parent (nixes-7oqkc)
     check(rc == 0, 'a decision is not limited', err)
     bd('a', 'dolt', 'commit', '-m', 'unshared items')
 
@@ -329,7 +329,7 @@ def t_share_join() -> None:
           'share without --yes: no remote, no config, no commit, no mark', remotes('a'))
     rc, out, err, _ = run('a', 'share', '--yes', role=None)
     check(rc == 0 and mark('a').get('remote') == 'origin', 'share --yes: default remote is the project repository, marked shared after the push', err + out)
-    check('2 top-level items labelled queue:anna' in out, 'share: existing top-level unlabelled items go to the sharer', out)
+    check('3 top-level items labelled queue:anna' in out, 'share: existing top-level unlabelled items go to the sharer', out)  # the parent, the closed item and the decision record, which has no parent
     check('queue:anna' in items('a')[CLOSED[0]].get('labels', []), 'share: closed top-level items are labelled too')
     rc, out, err, _ = run('a', 'share', role=None)
     check(rc == 0 and '0 top-level' in out and 'git emails' not in out, 'share again: quiet, nothing relabelled', err + out)
@@ -391,7 +391,7 @@ def t_child_ids() -> None:
     check(rc == 0 and items('a')[atomic_id].get('status') == 'closed',
           'child ids: close the temporary passed row after checking its status and sync', err + out)
     settle('a', 'b')
-    made = [create('a', 'a child', '--parent', epic), create('b', 'b child', f'--parent={epic}')]
+    made = [create('a', 'a child', '--parent', epic, kind='task'), create('b', 'b child', f'--parent={epic}', kind='task')]
     check(all('.' not in item for item in made), 'child ids: --parent on both sides makes plain ids', made)
     settle('a', 'b')
     rows = items('a')
@@ -405,7 +405,7 @@ def t_child_ids() -> None:
     rc, out, err, _ = bd('a', 'q', 'quick child', '--parent', epic)
     check(rc != 0 and 'board create' in err and not out.strip(), 'q is refused read-only, naming board create', out + err)
     tracked = create('a', 'tracked')
-    both = create('a', 'two link kinds', '--deps', f'relates-to:{tracked}', '--parent', epic)
+    both = create('a', 'two link kinds', '--deps', f'relates-to:{tracked}', '--parent', epic, kind='task')
     kinds = {(dep['type'], dep['depends_on_id']) for dep in items('a')[both].get('dependencies', [])}
     check(kinds == {('relates-to', tracked), ('parent-child', epic)}, "child ids: a node's dep and its parent link both land (real bd; a revision's tracks link and its parent do alike)", kinds)
     rc, out, err, _ = bd('a', 'create', 'no such parent', '-t', 'task', '--description', 'x', '--parent', 'sb-nope')
@@ -498,7 +498,7 @@ def t_child_ids() -> None:
 
 
 def t_queues() -> None:
-    epic = create('a', 'anna epic')
+    epic = create('a', 'anna epic', kind='milestone')  # a change request is part of a milestone (nixes-s378b): parents route their parts
     child = create('a', 'anna child', '--parent', epic)
     ben = create('b', 'ben top')
     settle('a', 'b')
@@ -533,7 +533,7 @@ def t_queues() -> None:
     check(rc != 0 and 'board claim' in err, 'bd update --claim is refused read-only, naming board claim', err)
     rc, out, _, _ = run('a', 'claim', role='agent')
     check(rc == 0 and ben not in out and 'claimed' in out, 'bare claim: mine only', out)
-    run('a', 'unclaim', out.split()[1], '--resume', 'claim it again', role='agent') if rc == 0 else None
+    run('a', 'unclaim', re.search(r'claimed (\S+)', out)[1], '--resume', 'claim it again', role='agent') if rc == 0 else None  # a CR claim prints its worktree first
     # A blocker in another queue, always listed.
     blocked = create('a', 'anna waits')
     bd('a', 'dep', 'add', blocked, ben)
@@ -576,7 +576,7 @@ def t_queues() -> None:
     bd('a', 'update', epic, '--remove-label', 'queue:ben', '--add-label', 'queue:anna')
     settle('a', 'b')
     # A closed parent's label still routes.
-    closing = create('a', 'closed parent')
+    closing = create('a', 'closed parent', kind='milestone')
     kid = create('a', 'kid of closed', '--parent', closing)
     settle('a', 'b')
     bd('a', 'close', closing, '--force', '--reason', 'closed to test a closed parent still routes its child')
@@ -884,7 +884,7 @@ def t_writers() -> None:
     # Create authority (nixes-0an9j): filing into a CR is for its holder, the user, a planner or a deciding session; any other session is refused
     # through every creation path (create, graph nodes); a CR the same plan creates is its creator's to fill.
     rc, _, err, _ = run('a', 'create', 'filed by a roleless session', '-t', 'task', '--description', 'x', '--parent', held, role='none')
-    check(rc != 0 and held in err and 'standalone' in err and not titled('filed by a roleless session'), '0an9j: create --parent by a session that may not file is refused', err)
+    check(rc != 0 and held in err and '--no-commit' in err and 'create --graph' in err and not titled('filed by a roleless session'), '0an9j: create --parent by a session that may not file is refused', err)
     graph = ROOT / 'authority-graph.json'
     graph.write_text(json.dumps({'nodes': [{'key': 'item', 'title': 'graph node filed by a roleless session', 'type': 'task', 'description': 'x', 'parent_id': held}]}))
     rc, _, err, _ = run('a', 'create', '--graph', str(graph), role='none')
@@ -1141,7 +1141,7 @@ def t_inbox() -> None:
     check(rc == 0 and 'queue:ben' in row['labels'] and 'for:ben' not in row['labels'], 'route takes an inbox item into the queue, dropping for:', err + out)
     rc, out, err, _ = run('b', 'claim', found, role='agent')
     check(rc == 0, 'then it claims', err)
-    run('b', 'unclaim', found, role='agent')
+    run('b', 'unclaim', found, '--resume', 'pass it on', role='agent')  # a held record is its holder's to send (nixes-7mt77)
     # route on a find drops for:.
     rc, out, _, _ = run('a', 'create', '--for', 'ben', 'second find', '-t', 'change-request', '--description', 'x', '--silent', role='agent')
     second = out.strip().splitlines()[-1]
@@ -1150,7 +1150,7 @@ def t_inbox() -> None:
     check(rc == 0 and not rows[second].get('assignee') and 'for:ben' not in rows[second]['labels'] and 'queue:ben' in rows[second]['labels'],
           "route on a find: drops for:", (err, rows[second]))
     parent = create('a', 'a parent')
-    kid = create('a', 'a kid', '--parent', parent)
+    kid = create('a', 'a kid', '--parent', parent, kind='task')
     rc, _, err, _ = run('a', 'send', 'ben', kid)
     check(rc == 1 and 'parent' in err, 'send refuses an item that inherits a queue', err)
     time.sleep(1.1)

@@ -70,9 +70,8 @@ steps 3-7.
    Escalate instead of passing when a
    [hidden-and-costly](../../shared/acceptance.md#review-policy) path stays
    unsettled: comment your findings and evidence, then
-   `agents board bd --raw --yes update <id> --set-metadata deep_review="<the path>"` and
-   `agents board unclaim <id>`. A `deep-review` ending an escalated item removes the
-   mark (`--unset-metadata deep_review`).
+   `agents board unclaim <id> --deep-review "<the path>"`, which marks the CR under your
+   hold. The `deep-review`'s own `handover` or `unclaim` clears the mark.
    Output: `passed <cr> to <status>`, `returned <cr>`, `question <id>`,
    `escalated <id>`, plus the new ids for a filed idea.
 

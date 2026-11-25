@@ -71,9 +71,12 @@ findings or stops.
    [Actors and holds](../../shared/board-core.md#actors-and-holds).
    Output: `handed over <cr> to <status>`, `waiting <cr> on <id>` or
    `kept <cr> open: <next action>`.
-6. **Remainders.** Record every gap and follow-up as a new item (in this CR
-   when it belongs to the change, else a new CR) or question, with `--found-in`
-   naming this CR.
+6. **Remainders.** A gap in this CR's scope is fixed before the hand-over, or
+   the CR goes back unfinished (step 5): a hand-over means its work is done.
+   Record every other follow-up, with `--found-in` naming this CR, as a new CR
+   filed with its items in one `agents board create --graph`, a `--no-commit`
+   task, or a question; after the hand-over you no longer hold this CR, so
+   nothing is filed into it.
    Output: new ids, or `none`.
 
 ## Item worker

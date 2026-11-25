@@ -3,7 +3,9 @@
 
 from __future__ import annotations
 
+import argparse
 import ast
+import collections
 import contextlib
 import faulthandler
 import hashlib
@@ -2153,7 +2155,7 @@ def validate_shared_board(root: Path) -> None:
 
     def fake_plan(plan, board_=None, verb="create", holds=(), dry_run=False):
         made_plans.append(json.loads(json.dumps(plan)))
-        return {"item": "fx-new"}, {}
+        return {"item": "fx-new"}, {}, []
 
     with patch.object(board, "bd_show", lambda ids, *flags, **kw: parent), patch.object(board, "shared", None), patch.object(board, "create_plan", fake_plan):
         expect(board.create_item(None, "t", "task", description="d", parent="fx-p", priority=1) == "fx-new", "create_item returns the id")
@@ -2174,12 +2176,11 @@ def validate_shared_board(root: Path) -> None:
             pass
     with patch.object(board, "shared", SimpleNamespace()), patch.object(board, "person", lambda: "anna"), patch.object(board, "create_plan", fake_plan), \
             patch.object(board, "bd_show", lambda ids, *flags, **kw: parent):
-        board.create_item(None, "t", "task", description="d")
-        expect(made_plans[-1]["nodes"][0]["labels"] == ["queue:anna"], "a top-level item takes its creator's queue", made_plans[-1])
-        board.create_item(None, "t", "task", description="d", labels=["queue:ben"])
-        expect(made_plans[-1]["nodes"][0]["labels"] == ["queue:ben"], "an explicit queue stays", made_plans[-1])
-        board.create_item(None, "t", "task", description="d", parent="fx-p")
-        expect(made_plans[-1]["nodes"][0]["labels"] == ["topic:a"], "a child takes its parent's queue, not a label of its own", made_plans[-1])
+        for given, want, what in (({}, ["queue:anna"], "a top-level item takes its creator's queue"), ({"labels": ["queue:ben"]}, ["queue:ben"], "an explicit queue stays"),
+                                  ({"parent": "fx-p"}, ["topic:a"], "a child takes its parent's queue, not a label of its own")):
+            board.create_item(None, "t", "task", description="d", **given)
+            board.plan_with_queue(made_plans[-1])  # create_plan's queue step, after its checks
+            expect(made_plans[-1]["nodes"][0]["labels"] == want, what, made_plans[-1])
     # board create --for on a shared board: top-level nodes only, labelled for:<person> in the creator's queue;
     # a plan's child nodes (parent, parent_key, parent_id, a parent-child edge) take their parent's queue; a node that sets those itself is refused.
     with patch.object(board, "shared", SimpleNamespace()), patch.object(board, "person", lambda: "anna"):
@@ -2248,7 +2249,7 @@ def validate_shared_board(root: Path) -> None:
                          (["field", "apply", "x"], True)):
         expect(board.writes(argv) == writes, "which commands write", argv)
     entries = [{"actor": "lead0001", "role": "lead"}, {"actor": "solo0001", "role": "solo"}, {"actor": "agnt0001", "role": "agent"}]
-    with patch.object(board, "registrations", lambda: (entries, set())):
+    with patch.object(board, "registrations", lambda: (entries, set())), patch.dict(os.environ, {name: "" for name in board.SESSION_ENVIRONMENT}):  # None: a person's terminal
         for actor, allowed in (("lead0001", True), ("solo0001", True), ("agnt0001", False), ("gone0001", False), ("lead0001/wrkr", False), (None, True)):
             with patch.object(board, "derived_actor", lambda: actor):
                 expect(board.may_attend() == allowed, "may_attend", actor)
@@ -2490,10 +2491,12 @@ def validate_board(root: Path) -> None:
             """The write calls; a `create --graph` call carries its plan's node values as further words (title, text, type, each label,
             `type:target` per dep), so a test can look for what the create made."""
             rows = []
-            for at, (args, _) in enumerate(self.calls):
+            for at, (args, stdin) in enumerate(self.calls):
                 if args[0] in ("export", "list", "show", "lint", "history", "config"):
                     continue
-                if args[:2] == ["create", "--graph"] and (graph := self.graph_at.get(at)):
+                if args[:2] == ["comments", "add"] and args[3:] == ["-f", "-"]:  # the one comment writer passes its text on stdin: shown as the text
+                    rows.append([*args[:3], stdin])
+                elif args[:2] == ["create", "--graph"] and (graph := self.graph_at.get(at)):
                     words = [str(value) for node in graph["nodes"] for key, value in node.items() if isinstance(value, (str, int))]
                     words += [label for node in graph["nodes"] for label in node.get("labels") or []]
                     words += [f"{dep.get('type')}:{dep.get('target')}" for node in graph["nodes"] for dep in node.get("deps") or []]
@@ -3578,7 +3581,7 @@ def validate_board(root: Path) -> None:
                 return code, output, errors, fake
 
             code, output, errors, fake = comment_run(ready, ids["Spike perf"], "-m", "x" * 2000)
-            if code or fake.writes() != [["comments", "add", ready, "-f", "-"], ["comments", "add", ids["Spike perf"], "-f", "-"]] \
+            if code or fake.writes() != [["comments", "add", ready, "x" * 2000], ["comments", "add", ids["Spike perf"], "x" * 2000]] \
                     or any(call[1] != "x" * 2000 for call in fake.calls if call[0][:2] == ["comments", "add"]) or f"{ready}: commented" not in output:
                 raise ValueError(f"board comment must add the same comment to each item: {code} {output} {errors} {fake.writes()}")
             code, _, errors, fake = comment_run(ready, "-m", long)
@@ -3592,11 +3595,11 @@ def validate_board(root: Path) -> None:
                     raise ValueError(f"board comment -f must judge the file: {code} {errors}")
                 packet.write_text("a note from a file\n", encoding="utf-8")
                 code, _, _, fake = comment_run(ready, "-f", str(packet))
-                if code or fake.writes() != [["comments", "add", ready, "-f", "-"]] or fake.calls[-1][1] != "a note from a file\n":
+                if code or fake.writes() != [["comments", "add", ready, "a note from a file\n"]] or fake.calls[-1][1] != "a note from a file\n":
                     raise ValueError(f"board comment -f must pass the file's text: {code} {fake.calls}")
                 packet.write_text(long, encoding="utf-8")
                 code, _, _, fake = comment_run(ready, "-f", str(packet), PACKET)
-                if code or fake.writes() != [["comments", "add", ready, "-f", "-"]] or fake.calls[-1][1] != long:
+                if code or fake.writes() != [["comments", "add", ready, long]] or fake.calls[-1][1] != long:
                     raise ValueError(f"the board's own packet must pass the size limit through board comment --board-packet: {code} {fake.calls}")
             code, _, errors, fake = comment_run(ready, "-f", "-", stdin=long)
             if code != 2 or "comment is 2001 characters" not in errors or fake.writes():
@@ -4143,7 +4146,7 @@ def validate_board(root: Path) -> None:
                     raise ValueError(f"board ruling record --unratified releases and unclaims the record, creating its confirmation question: {fake.writes()} {errors}")
                 question_node = graphs[0]["nodes"][0]
                 if question_node.get("type") != "decision" or question_node.get("title") != "Confirm or revise: Open cache question?" \
-                        or question_node.get("parent_id") != ids["Goal"] or question_node.get("deps") != [{"target": question, "type": "relates-to"}] \
+                        or "parent_id" in question_node or question_node.get("deps") != [{"target": question, "type": "relates-to"}] \
                         or question_node.get("description") != f"## Question\nConfirm ruling {question} or revise it?\n\n## Reversal\nrevert x\n" \
                         or not output.endswith(f"(in force): Open cache question\nconfirmation question: fx-new\n"):
                     raise ValueError(f"board ruling record --unratified must create an ordinary related question with the ruling id and Reversal: {question_node} {output}")
@@ -4557,21 +4560,22 @@ def validate_board(root: Path) -> None:
             node = fake.graphs[-1]["nodes"][0] if fake.graphs else {}
             if code or output != "fx-new\n" or [w[:2] for w in fake.writes()] != [["create", "--graph"]] or fake.graphs[-1].get("edges") \
                     or node != {"key": "item", "title": "May B replace A?", "type": "decision", "description": "The revised question.\n", "priority": 2,
-                                "metadata": {"board.revises_rule": "Rule 2"}, "parent_id": "fx-ovo", "labels": ["topic:store"],
+                                "metadata": {"board.revises_rule": "Rule 2"}, "labels": ["topic:store"],
                                 "deps": [{"target": ids["Released ruling"], "type": "tracks"}]}:
                 raise ValueError(f"board ruling revise: {fake.writes()} {fake.graphs}\n{output}{errors}")
             fake = Fake(topical)
-            invoke(["ruling", "revise", ids["Released ruling"], "--title", "t", "--body-file", "p.md", "-p", "1", "--parent", goal,
+            invoke(["ruling", "revise", ids["Released ruling"], "--title", "t", "--body-file", "p.md", "-p", "1",
                     "-l", "topic:a,topic:b", "--holds", "none"], fake, "lead0001")
             node = fake.graphs[-1]["nodes"][0] if fake.graphs else {}
-            if node.get("priority") != 1 or node.get("parent_id") != goal or node.get("labels") != ["topic:a", "topic:b"] or "metadata" in node:
-                raise ValueError(f"board ruling revise ignored -p/--parent/-l or set metadata without --partial: {fake.graphs}")
-            fake = Fake(topical)
-            fake.settings["issue_prefix"] = "fx"
-            board._prefix.clear()
-            invoke(["ruling", "revise", ids["Released ruling"], "--title", "t", "--body-file", "p.md", "--parent", goal.removeprefix("fx-"), "--holds", "none"], fake, "lead0001")
-            if not fake.graphs or fake.graphs[-1]["nodes"][0].get("parent_id") != goal:
-                raise ValueError(f"board ruling revise --parent takes a bare id: {fake.graphs}")
+            if node.get("priority") != 1 or "parent_id" in node or node.get("labels") != ["topic:a", "topic:b"] or "metadata" in node:
+                raise ValueError(f"board ruling revise ignored -p/-l, set metadata without --partial, or gave the decision a parent: {fake.graphs}")
+            try:  # a decision has no parent (parent-child.kind-fit, nixes-7oqkc): revise takes no --parent
+                invoke(["ruling", "revise", ids["Released ruling"], "--title", "t", "--body-file", "p.md", "--parent", goal, "--holds", "none"], Fake(topical), "lead0001")
+            except SystemExit as error:
+                if error.code != 2:
+                    raise
+            else:
+                raise ValueError("board ruling revise must not take --parent: a decision has no parent")
             board._prefix.clear()
             fake = Fake(topical)
             invoke(["ruling", "revise", ids["Released ruling"], "--title", "t", "--body-file", "p.md", "--external-ref", "protocol:s1:r2:q3", "--holds", "none"], fake, "lead0001")
@@ -4735,9 +4739,9 @@ def validate_board(root: Path) -> None:
                 return Creating([{**row, "dependencies": [d for d in row.get("dependencies") or [] if d["type"] != "parent-child"]}
                                  if row["id"] == ready else row for row in mine_rows])
 
-            code, _, errors, fake = bd_make("-t", "task", "--deps", f"waits-on:{ready}")
-            if code or any((w[:1] == ["update"] and w[2:4] == ["--assignee", ""]) for w in fake.writes()):
-                raise ValueError(f"a link that makes the new item wait stays as it is: {code} {errors} {fake.writes()}")
+            code, _, errors, fake = bd_make("-t", "task", "--deps", f"waits-on:{ready}")  # blocks.for (G24): --deps names no for
+            if code != 2 or "without saying for what" not in errors or fake.writes():
+                raise ValueError(f"create --deps on work makes a wait with no for: refused, naming the forms that give one: {code} {errors} {fake.writes()}")
 
             class Graphing(Creating):
                 def __call__(self, command, **kwargs):
@@ -7995,7 +7999,8 @@ if args[:2] == ["create", "--graph"]:
 with open({str(log)!r}, "a") as handle:
     handle.write(json.dumps({{"args": args, "stdin": stdin, "plan": plan}}) + "\\n")
 items = [{{"id": "fx-" + name, "title": name, "status": "open", "issue_type": "task", "priority": 2, "labels": ["topic:t", "queue:ann"]}}
-         for name in ("a", "b", "p", "x", "y")] + [{{"id": "fx-cr", "title": "cr", "status": "open", "issue_type": "change-request", "priority": 2}}]
+         for name in ("a", "b", "p", "x", "y")] + [{{"id": "fx-cr", "title": "cr", "status": "open", "issue_type": "change-request", "priority": 2}}] \\
+        + [{{"id": "fx-" + name, "title": name, "status": "open", "issue_type": "decision", "priority": 2}} for name in ("d", "e")]
 if args[:2] == ["config", "get"]:
     print(json.dumps({{"value": "before" if args[-1].endswith("look") else "code"}}))
 elif args[:2] == ["create", "--graph"] and "--dry-run" in args:
@@ -8047,15 +8052,15 @@ else:
         # the flags describe one node of a graph plan; --deps waits-on: (or a bare id) makes the new item wait on that one
         result, calls = run_fake("create", "Login fails", "-t", "decision", "-p", "1", "--label", "topic:a,topic:b", "-l", "topic:c", "--description-file", str(files["desc.md"]),
                                  "--design-file", str(files["design.md"]), "--acceptance-file", str(files["accept.md"]), "--deps", "relates-to:fx-x",
-                                 "--deps", "waits-on:fx-y,waits-on:fx-a", "--holds", "none", "--parent", "fx-p")
+                                 "--deps", "waits-on:fx-d,waits-on:fx-e", "--holds", "none")
         made = writes_of(calls, "create")
         plan = made[0]["plan"] if made else {}
         node = (plan.get("nodes") or [{}])[0]
         want = {"key": "item", "title": "Login fails", "type": "decision", "priority": 1, "description": "What and where.\n",
-                "design": "The design.\n", "acceptance_criteria": "Done when it works.\n", "labels": ["topic:a", "topic:b", "topic:c", "topic:t"], "parent_id": "fx-p",
-                "deps": [{"target": "fx-x", "type": "relates-to"}, {"target": "fx-y", "type": "blocks"}, {"target": "fx-a", "type": "blocks"}]}
+                "design": "The design.\n", "acceptance_criteria": "Done when it works.\n", "labels": ["topic:a", "topic:b", "topic:c"],
+                "deps": [{"target": "fx-x", "type": "relates-to"}, {"target": "fx-d", "type": "blocks"}, {"target": "fx-e", "type": "blocks"}]}
         if result.returncode != 0 or len(made) != 1 or made[0]["args"][:2] != ["create", "--graph"] or "--json" not in made[0]["args"] or node != want \
-                or plan.get("edges") or result.stdout != "fx-item-new\nfx-item-new waits on fx-y\nfx-item-new waits on fx-a\n":
+                or plan.get("edges") or result.stdout != "fx-item-new\nfx-item-new waits on fx-d\nfx-item-new waits on fx-e\n":
             raise ValueError(f"board create must build one graph node from the flags and print its id: {result.returncode} {result.stdout!r} {result.stderr!r} {plan}")
         # item settings are typed: stored as the board's metadata, refused on an item they do not fit
         for args, metadata in ((("T", "--no-commit"), {"no_commit": True}), (("T", "-t", "change-request", "--look", "after", "--view", "result"),
@@ -8084,7 +8089,7 @@ else:
             if result.returncode != 2 or "change request" not in result.stderr or writes_of(calls, "create"):
                 raise ValueError(f"board create {args} must be refused for its parent: {result.returncode} {result.stderr!r} {calls}")
         result, calls = run_fake("create", "T", "--parent", "fx-cr")  # this session registers no role: not the holder, a planner or deciding (nixes-0an9j)
-        if result.returncode == 0 or "standalone" not in result.stderr or writes_of(calls, "create"):
+        if result.returncode == 0 or "--no-commit" not in result.stderr or "create --graph" not in result.stderr or writes_of(calls, "create"):
             raise ValueError(f"board create --parent <change request> by a session that may not file there must be refused: {result.returncode} {result.stderr!r} {calls}")
         result, calls = run_fake("create", "T", "--no-commit")
         if result.returncode != 0 or not writes_of(calls, "create"):
@@ -8094,9 +8099,12 @@ else:
         if result.returncode != 2 or "needs a description" not in result.stderr or writes_of(calls, "create"):
             raise ValueError(f"a plan node with a blank description must be refused: {result.returncode} {result.stderr!r} {calls}")
         # a bare dependency or waits-on: makes the new item wait on the other; parent-child is --parent
-        result, calls = run_fake("create", "T", "--deps", "fx-x", "--deps", "waits-on:fx-y")
-        if (writes_of(calls, "create")[0]["plan"]["nodes"][0].get("deps") != [{"target": "fx-x", "type": "blocks"}, {"target": "fx-y", "type": "blocks"}]):
+        result, calls = run_fake("create", "T", "--deps", "fx-d", "--deps", "waits-on:fx-e")
+        if not writes_of(calls, "create") or writes_of(calls, "create")[0]["plan"]["nodes"][0].get("deps") != [{"target": "fx-d", "type": "blocks"}, {"target": "fx-e", "type": "blocks"}]:
             raise ValueError(f"a bare --deps id and waits-on: make the new item wait: {result.stderr!r} {calls}")
+        result, calls = run_fake("create", "T", "--deps", "fx-x")  # blocks.for: a wait on work says for what, and --deps cannot
+        if result.returncode != 2 or "without saying for what" not in result.stderr or writes_of(calls, "create"):
+            raise ValueError(f"create --deps on a work item must be refused: {result.returncode} {result.stderr!r}")
         result, calls = run_fake("create", "T", "--found-in", "fx-p")  # found-in is a field on the found item, no link
         node = (writes_of(calls, "create")[0]["plan"]["nodes"] or [{}])[0] if writes_of(calls, "create") else {}
         if result.returncode != 0 or node.get("metadata") != {"found_in": "fx-p", "no_commit": True} or node.get("deps"):
@@ -8255,27 +8263,36 @@ else:
         written |= {names[name] for name in re.findall(r"'--set-metadata', f[\"']\{([A-Za-z_]+)\}=", Path(root, "bin", "board").read_text(encoding="utf-8")) if name in names}  # a loop's own key is checked where it is set
         if written - board.BOARD_METADATA:
             raise ValueError(f"bin/board writes metadata keys missing from BOARD_METADATA: {sorted(written - board.BOARD_METADATA)}")
-        # One owner per write kind (nixes-sjkpn, nixes-z94o1): an allowlist of every bd invocation in bin/board. A call names its verb as a constant;
-        # a read verb runs anywhere (sql only as a select, any verb as --help); every other verb runs only in its named owners. bd() and
-        # bd_checked() are the wrapper and run_bd the raw door (board bd --raw --yes): only they pass a verb along.
+        # One owner per write kind (nixes-sjkpn, nixes-jczod; model.md Write rules): an allowlist of every bd invocation in bin/board. A call names
+        # its verb as a constant; a read verb runs anywhere (sql only as one select, `bd <verb> --help` only as exactly that); every other verb runs
+        # only in its named owners. bd() and bd_checked() are the wrapper and run_bd the raw door (board bd --raw --yes): only they pass a verb along.
+        # An owner is a definition, not a name: the module-level function (or `Class.method`) that contains the call, nested definitions included.
         parents = {child: node for node in ast.walk(tree) for child in ast.iter_child_nodes(node)}
-        functions = [node for node in ast.walk(tree) if isinstance(node, ast.FunctionDef)]
-        owner_of = {node: function.name for function in functions for node in ast.walk(function)}  # the innermost function wins: walked outer first
+        owner_of = {}
+        for top in tree.body:
+            if isinstance(top, ast.FunctionDef):
+                owner_of.update({node: top.name for node in ast.walk(top)})
+            elif isinstance(top, ast.ClassDef):
+                for member in top.body:
+                    if isinstance(member, ast.FunctionDef):
+                        owner_of.update({node: f"{top.name}.{member.name}" for node in ast.walk(member)})
+        defined = {top.name: top for top in tree.body if isinstance(top, ast.FunctionDef)}
         reads = {"show", "list", "export", "where", "lint", "history", "config get", "config list"}
         owners = {
             "update": {"move", "put_meta", "write_edges", "write_fields"},  # status and holder; bookkeeping; parents; item fields
             "close": {"move"}, "supersede": {"move"},
             "batch": {"write_edges"}, "dep": {"write_edges"},
             "create": {"create_plan"}, "gate create": {"create_gate"},
-            "comments add": {"comment", "comment_command"},  # comments are free of the hold rule (model.md Authority)
+            "comments add": {"comment"},  # the one comment writer (comments.owner)
             "config set": {"set_config", "setup", "share", "move_board"}, "config unset": {"move_board"},
-            "init": {"setup", "fresh_join", "to_server"}, "backup": {"to_server"}, "flatten": {"move_board"}, "label add": {"share"},
-            "dolt start": {"ensure_server"}, "dolt stop": {"stop_server"}, "dolt pull": {"pull"}, "dolt remote": {"share", "move_board"},
-            "dolt commit": {"setup", "share", "fresh_join", "move_board", "sync_once"}, "dolt push": {"move_board", "send_first"},
-            "sync": {"move_board", "send_first", "sync_once"},
+            "init": {"setup", "fresh_join", "to_server"}, "backup": {"to_server"}, "flatten": {"move_board"},
+            "dolt start": {"ensure_server"}, "dolt stop": {"stop_server"}, "dolt pull": {"Shared.pull"}, "dolt remote": {"share", "move_board"},
+            "dolt commit": {"setup", "share", "fresh_join", "move_board", "Shared.sync_once"}, "dolt push": {"move_board", "send_first"},
+            "sync": {"move_board", "send_first", "Shared.sync_once"},
         }
         passers = {"bd", "bd_checked", "run_bd"}
         two_word = {"config", "gate", "comments", "dolt", "label"}
+        shells = {"run_shell_full", "run_shell", "run_check", "project_pairs"}  # a project's setup and check commands, and resolving one: no bd in them
 
         def leading_text(node) -> str | None:
             if isinstance(node, ast.Constant) and isinstance(node.value, str):
@@ -8284,15 +8301,22 @@ else:
                 return node.values[0].value
             return None
 
+        def bd_list(node) -> bool:
+            return isinstance(node, (ast.List, ast.Tuple)) and bool(node.elts) and leading_text(node.elts[0]) == "bd"
+
         def invocations():
-            """(function, line, argument nodes after `bd`) of every bd call: bd(...)/bd_checked(...) and a ['bd', ...] list run directly."""
+            """(function, line, argument nodes after `bd`) of every bd call: bd(...)/bd_checked(...) and a ['bd', ...] list of any length, alone
+            or concatenated (an empty tail has no verb)."""
             for node in ast.walk(tree):
                 if isinstance(node, ast.Name) and node.id in ("bd", "bd_checked") and not (isinstance(parents.get(node), ast.Call) and parents[node].func is node):
                     yield owner_of.get(node, "<module>"), node.lineno, None  # an alias or a passed reference hides the calls behind it
                 elif isinstance(node, ast.Call) and getattr(node.func, "id", None) in ("bd", "bd_checked"):
                     yield owner_of.get(node, "<module>"), node.lineno, node.args
-                elif isinstance(node, (ast.List, ast.Tuple)) and node.elts and leading_text(node.elts[0]) == "bd" and len(node.elts) > 1:
+                elif bd_list(node) and (len(node.elts) > 1 or isinstance(parents.get(node), (ast.BinOp, ast.Call, ast.Starred))):  # a comparison with ['bd'] runs nothing
                     yield owner_of.get(node, "<module>"), node.lineno, node.elts[1:]
+
+        def call_name(node) -> str:
+            return ast.unparse(node.func) if isinstance(node, ast.Call) else ""
 
         stray = []
         for function, line, args in invocations():
@@ -8301,17 +8325,18 @@ else:
                 stray.append(f"{where} bd or bd_checked referenced, not called")
                 continue
             words = [leading_text(arg) for arg in args]
+            if len(args) == 2 and words[1] == "--help" and not isinstance(args[1], ast.JoinedStr):
+                continue  # `bd <verb> --help`: is it a bd command (the verb may be the caller's word)
             if not args or words[0] is None or isinstance(args[0], ast.JoinedStr):
-                if function not in passers and not any(isinstance(arg, ast.Constant) and arg.value == "--help" for arg in args):
+                if function not in passers:
                     stray.append(f"{where} bd with a verb that is not a constant")
-                continue
-            if "--help" in words:
                 continue
             verb = words[0] if words[0] not in two_word or len(words) < 2 or words[1] is None else f"{words[0]} {words[1]}"
             if verb == "sql":
                 statement = next((arg for arg, word in zip(args[1:], words[1:]) if word is None or not word.startswith("-")), None)
-                if not (leading_text(statement) or "").lstrip().lower().startswith("select"):
-                    stray.append(f"{where} bd sql that is not a select")
+                text = leading_text(statement) or ""
+                if not text.lstrip().lower().startswith("select") or ";" in text:
+                    stray.append(f"{where} bd sql that is not one select")
             elif verb in reads:
                 pass
             elif verb not in owners:
@@ -8322,55 +8347,144 @@ else:
                 stray.append(f"{where} bd {verb} writes a status outside move")
             if verb == "update" and ("--parent" in words) != (function == "write_edges"):
                 stray.append(f"{where} bd update {'--parent outside write_edges' if function != 'write_edges' else 'without --parent in write_edges'}")
-        for function in functions:
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            name, where = call_name(node), f"{owner_of.get(node, '<module>')}:{node.lineno}"
+            if name in ("os.system", "os.popen", "os.execv", "os.execvp", "os.spawnv", "globals", "vars", "eval", "exec") or "sys.modules" in ast.unparse(node.func):
+                stray.append(f"{where} {name}: a call the allowlist cannot read")
+            if name in ("subprocess.run", "subprocess.Popen", "subprocess.call", "subprocess.check_call", "subprocess.check_output"):
+                if any(kw.arg == "shell" for kw in node.keywords):
+                    stray.append(f"{where} a shell string")
+                head = node.args[0] if node.args else None
+                first = head.elts[0] if isinstance(head, (ast.List, ast.Tuple)) and head.elts else None
+                plain = leading_text(first) is not None and not isinstance(first, ast.JoinedStr) or ast.unparse(first or head or node) in (
+                    "sys.executable", "shutil.which('ps') or '/bin/ps'")
+                if first is None or not plain:
+                    stray.append(f"{where} {name} whose command is not a list headed by a constant")
+                elif leading_text(first) in ("/bin/sh", "sh", "bash") and leading_text(head.elts[1]) == "-c" and owner_of.get(node) not in shells:
+                    stray.append(f"{where} a shell command outside {', '.join(sorted(shells))}")
+            if name == "run_bd" and owner_of.get(node) != "passthrough":
+                stray.append(f"{where} run_bd (the raw door) outside passthrough")
+            if any(kw.arg == "actor" and isinstance(kw.value, ast.Constant) and kw.value.value == "" for kw in node.keywords):
+                stray.append(f"{where} actor='': a missing actor never stands for the user (actor.none)")
+            ruling_verb = [arg for arg in node.args[1:2] if leading_text(arg) in ("ruling", "record")] + \
+                          [kw.value for kw in node.keywords if kw.arg == "verb" and leading_text(kw.value) in ("ruling", "record")]
+            if name in ("write_edges", "edge_rules", "create_item", "create_plan") and ruling_verb and owner_of.get(node) not in (
+                    "record", "supersede_pair", "revise", "replaced_checks", "create_ruling_revision", "unratified_confirmation"):
+                stray.append(f"{where} {name} with a ruling verb outside the ruling verbs (supersedes and tracks are theirs)")
+            if name == "write_fields" and len(node.args) > 2 and isinstance(node.args[2], (ast.List, ast.Tuple)):
+                for element in node.args[2].elts:
+                    flag = (leading_text(element) or "").split("=")[0]
+                    if flag.startswith("-") and flag not in board.FIELD_FLAGS:
+                        stray.append(f"{where} write_fields given {flag}, outside fields.allowlist")
+        for function in [node for node in ast.walk(tree) if isinstance(node, ast.FunctionDef)]:
             for node in ast.walk(function):
                 text = leading_text(node) if isinstance(node, (ast.Constant, ast.JoinedStr)) else None
                 if text is None:
                     continue
                 if re.search(r"\bupdate \S+ status=", text):
-                    stray.append(f"{function.name}:{node.lineno} a batch status write")
-                if function.name != "write_edges" and re.match(r"dep (add|remove)\b", text):
-                    stray.append(f"{function.name}:{node.lineno} a dep line outside write_edges")
-        # put_meta writes the board's bookkeeping only: an item setting (no_commit, a CR's look and view) is an item field, written by write_fields
-        # under the hold rule (or cleared by move's parent write). Every key it is given resolves to a constant.
-        for node in ast.walk(tree):
-            if not (isinstance(node, ast.Call) and getattr(node.func, "id", None) == "put_meta"):
-                continue
+                    stray.append(f"{owner_of.get(node)}:{node.lineno} a batch status write")
+                if owner_of.get(node) != "write_edges" and re.match(r"dep (add|remove)\b", text):
+                    stray.append(f"{owner_of.get(node)}:{node.lineno} a dep line outside write_edges")
+        # Metadata keys are pinned to the functions model.md's meta.* rows name as their owners (meta.allowlist): a put_meta key resolves to a
+        # constant written by an owner of its row, and so does a key `move` writes for its caller (`fields`).
+        model = Path(root, "docs", "board", "model.md").read_text(encoding="utf-8")
+        rules = model[model.index("| Row (data) | Cell |"):model.index("### Gaps")]
+        key_owners: dict[str, set[str]] = {}
+        for row in rules.splitlines():
+            cols = [col.strip() for col in row.strip().strip("|").split("|")]
+            if len(cols) == 6 and cols[1].startswith("`meta."):
+                for key in re.findall(r"`([\w.]+)`", cols[0]):
+                    key_owners.setdefault(key, set()).update(re.findall(r"`([\w.]+)`", cols[3]))
+
+        def branches_of(value):
+            return [*branches_of(value.body), *branches_of(value.orelse)] if isinstance(value, ast.IfExp) else [value]
+
+        def keys_of(node) -> tuple[list[str], list[str]]:
             keys, opaque = [], []
             for keyword in node.keywords:
-                if keyword.arg:
+                if keyword.arg and keyword.arg != "fields":
                     keys.append(keyword.arg)
                     continue
-                branches = [keyword.value.body, keyword.value.orelse] if isinstance(keyword.value, ast.IfExp) else [keyword.value]
-                for branch in branches:
-                    if not isinstance(branch, ast.Dict) or None in branch.keys:
+                for branch in branches_of(keyword.value):
+                    if isinstance(branch, ast.Constant) and branch.value is None:
+                        continue
+                    if isinstance(branch, ast.Call) and ast.unparse(branch.func) == "dict.fromkeys" or isinstance(branch, ast.DictComp):
+                        continue  # keys of the record's own metadata, cleared
+                    if ast.unparse(branch) in ("fields", "fields or {}"):
+                        continue  # the caller's own fields, checked at its call site
+                    if not isinstance(branch, ast.Dict):
                         opaque.append(ast.unparse(branch))
                         continue
-                    for key in branch.keys:
-                        value = key.value if isinstance(key, ast.Constant) else getattr(board, getattr(key, "id", ""), None)
-                        keys.append(value) if isinstance(value, str) else opaque.append(ast.unparse(key))
-            where = f"{owner_of.get(node, '<module>')}:{node.lineno}"
-            stray += [f"{where} put_meta key {key} is an item setting" for key in keys if key in board.ITEM_SETTING_KEYS]
-            stray += [f"{where} put_meta keys that are not constants: {text}" for text in opaque]
+                    for key, inner in zip(branch.keys, branch.values):
+                        if key is None:
+                            sub = keys_of(ast.Call(func=node.func, args=[], keywords=[ast.keyword(arg=None, value=inner)]))
+                            keys += sub[0]
+                            opaque += sub[1]
+                            continue
+                        found = key.value if isinstance(key, ast.Constant) else getattr(board, getattr(key, "id", ""), None)
+                        keys.append(found) if isinstance(found, str) else opaque.append(ast.unparse(key))
+            return keys, opaque
+
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call) or call_name(node) not in ("put_meta", "move", "claim_one", "pass_to_user"):
+                continue
+            if call_name(node) != "put_meta" and not any(kw.arg in ("fields", None) or (call_name(node) == "pass_to_user" and kw.arg) for kw in node.keywords) \
+                    and not (call_name(node) == "claim_one" and len(node.args) > 3):
+                continue
+            function, where = owner_of.get(node, "<module>"), f"{owner_of.get(node, '<module>')}:{node.lineno}"
+            keys, opaque = keys_of(ast.Call(func=node.func, args=[], keywords=[ast.keyword(arg=None, value=node.args[3])])
+                                   if call_name(node) == "claim_one" and len(node.args) > 3 else node)
+            writer = "put_meta" if call_name(node) == "put_meta" else "move"
+            for key in keys:
+                allowed = key_owners.get(key, set())
+                if writer == "put_meta" and (key not in board.PUT_META_KEYS or function not in allowed):
+                    stray.append(f"{where} put_meta key {key}: not a key its owner writes (model.md meta rows: {', '.join(sorted(allowed)) or 'none'})")
+                if writer == "move" and key in key_owners and "move" not in allowed:
+                    stray.append(f"{where} move writes {key}, which its model.md row does not give to move")
+            stray += [f"{where} {writer} keys that are not constants: {text}" for text in opaque]
         stray += [f"{owner} does not run {rule}" for owner, rule in (("write_edges", "edge_rules"), ("create_plan", "edge_rules"), ("create_gate", "edge_rules"),
-                                                                    ("write_fields", "item_write_refusal"))
-                  if not any(getattr(node.func, "id", None) == rule for function in functions if function.name == owner
-                             for node in ast.walk(function) if isinstance(node, ast.Call))]
+                                                                    ("write_fields", "record_write_refusal"), ("write_fields", "field_values"),
+                                                                    ("comment", "refuse_long_comment"))
+                  if owner not in defined or not any(call_name(node) == rule for node in ast.walk(defined[owner]) if isinstance(node, ast.Call))]
         for source in sorted((root / "bin" / "protocol_engine").glob("*.py")) + [root / "bin" / "protocol"]:
             text = source.read_text(encoding="utf-8")
             if re.search(r"--status|\bupdate \S+ status=", text):
                 stray.append(f"{source.name} writes a status itself")
-            if "'--raw'" in text:
+            if re.search(r"""['"]--raw['"]""", text):
                 stray.append(f"{source.name} writes through raw bd")
         if stray:
-            raise ValueError(f"every bd write runs in its owner (bin/board; nixes-sjkpn): {stray}")
-        try:
-            with patch.object(board, "bd", side_effect=AssertionError("put_meta wrote")):
-                board.put_meta({"id": "x"}, **{board.NO_COMMIT: "true"})
-        except board.BoardError:
-            pass
-        else:
-            raise ValueError("put_meta must refuse an item setting (no_commit, look, view): it is an item field under the hold rule")
+            raise ValueError(f"every bd write runs in its owner (bin/board; nixes-sjkpn, model.md Write rules): {stray}")
+        for flags, why in ((["--status", "closed"], "a status"), (["--assignee", "me"], "a holder"), (["--parent", "x"], "a parent"),
+                           (["--metadata", "{}"], "a whole metadata object"), (["--set-labels", "a"], "every label"),
+                           (["--set-metadata", "outcome=dropped"], "move's outcome"), (["--set-metadata", "hold=work"], "move's hold")):
+            try:
+                with patch.object(board, "bd", side_effect=AssertionError("write_fields wrote")):
+                    board.write_fields(board.Board([{"id": "x", "status": "open", "issue_type": "task"}]), ["x"], flags)
+            except board.BoardError:
+                pass
+            else:
+                raise ValueError(f"write_fields must refuse {why} ({flags}): fields.allowlist")
+        for fields in ({board.NO_COMMIT: "true"}, {"outcome": "dropped"}, {board.DEFERRED_BY: "me"}, {board.HOLD: "work"}, {board.RESUME_NOTE: "x"},
+                       {board.SENT_AT: "now"}, {"unknown_key": "x"}):
+            try:
+                with patch.object(board, "bd", side_effect=AssertionError("put_meta wrote")):
+                    board.put_meta({"id": "x"}, **fields)
+            except board.BoardError:
+                pass
+            else:
+                raise ValueError(f"put_meta must refuse {list(fields)}: meta.allowlist")
+        with patch.dict(os.environ, {"BEADS_ACTOR": ""}):
+            for call in (lambda: board.write_fields(board.Board([{"id": "x", "status": "open", "issue_type": "task"}]), ["x"], ["--title", "t"], actor=""),
+                         lambda: board.edge_rules(None, [], "wait", actor=""), lambda: board.acting("")):
+                try:
+                    with patch.object(board, "bd", side_effect=AssertionError("wrote as the user")):
+                        call()
+                except board.BoardError:
+                    pass
+                else:
+                    raise ValueError("actor '' must be refused: a missing actor never stands for the user (actor.none)")
         # bd edit blocks on an editor: refused in one line naming the way on; a user's own --readonly is just bd's flag.
         result, seen = run_board("bd", "edit", "x")
         if result.returncode != 2 or seen or "agents board field export <id>" not in result.stderr or len(result.stderr.strip().splitlines()) != 1:
@@ -14608,6 +14722,619 @@ def validate_dispatcher(root: Path) -> None:
                 raise ValueError(f"dispatcher returned {result.returncode} for {option}, expected {expected}")
 
 
+def validate_board_rules(root: Path) -> None:
+    """model.md Write rules as tests (nixes-jczod, nixes-fmf56). Both tables are parsed: every cell reads `runs` or `n/a` outside the open gaps;
+    every parser write verb and every non-verb writer has a verb row, and every row a verb; every cell is named by a row or is writer-less; and
+    every (verb, input form, kind, cell) of the verb table has a registered case here, none more. A case runs the verb in-process against a
+    recording bd (Rules.run): a refusal writes nothing, a write shows the data; a case marked static checks, from the source, that the verb's
+    handler reaches the cell's owner (the bookkeeping cells, whose key -> owner pin is the board group's allowlist)."""
+    loader = importlib.machinery.SourceFileLoader("board_rules", str(root / "bin" / "board"))
+    board = importlib.util.module_from_spec(importlib.util.spec_from_loader(loader.name, loader))
+    loader.exec_module(board)
+    model = (root / "docs" / "board" / "model.md").read_text(encoding="utf-8")
+    rule_text = model[model.index("| Row (data) | Cell |"):model.index("### Gaps")]
+    verb_text = model[model.index("| Verb | Input form | Kinds | Cells |"):model.index("`command start` is `settle_landed`")]
+
+    def columns(row: str) -> list[str]:
+        return [col.strip() for col in row.strip().strip("|").split("|")]
+
+    def expand(text: str) -> list[str]:
+        found = []
+        for part in re.findall(r"[\w.-]+\{[^}]*\}|[\w.-]+", text):
+            group = re.fullmatch(r"([\w-]+)\.\{([^}]*)\}", part)
+            found += [f"{group[1]}.{name.strip()}" for name in group[2].split(",")] if group else [part]
+        return found
+
+    cells = {}
+    for row in rule_text.splitlines()[2:]:
+        cols = columns(row)
+        if len(cols) == 6 and cols[1].startswith("`"):
+            cells[cols[1].strip("`")] = (cols[3], cols[4], cols[5])
+    open_gaps = {"blocks.waiter": "G16", "assignee.stale-evidence": "G25"}  # G16: returned (craft-fmf56 STOP); G25: nixes-qzzc1
+    problems = []
+    for cell, (_, new, existing) in cells.items():
+        for column, token in (("New", new), ("Existing", existing)):
+            if token not in ("runs", "n/a") and token != f"gap {open_gaps.get(cell)}":
+                problems.append(f"{cell} {column}: {token} (only runs or n/a, outside the open gaps {open_gaps})")
+    rows = []
+    for row in verb_text.splitlines()[2:]:
+        cols = columns(row)
+        if len(cols) == 4:
+            rows.append((cols[0].strip("`"), cols[1], [kind.strip() for kind in cols[2].split(",")], expand(cols[3])))
+    tuples = {(verb, form, kind, cell) for verb, form, kinds, named in rows for kind in kinds for cell in named}
+    problems += [f"verb table names unknown cell {cell}" for cell in sorted({t[3] for t in tuples} - set(cells))]
+    problems += [f"cell {cell} is named by no verb row" for cell in sorted(set(cells) - {t[3] for t in tuples} - {"meta.checkpoint"})]
+
+    # The parser's verbs, from the parser itself: every verb but the reads and the three that write no record has a row, and so do the writers
+    # that are no verb (settle_landed before every CR_AWARE command, Shared.before, _sync-wait).
+    built = {}
+
+    def capture(self, *args, **kwargs):
+        built.setdefault("parser", self)
+        raise SystemExit(0)
+
+    with patch.object(argparse.ArgumentParser, "parse_known_args", capture), contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+        try:
+            board.run_command(["help"])
+        except SystemExit:
+            pass
+    verbs = set()
+    for action in built["parser"]._subparsers._group_actions:
+        for name, sub in action.choices.items():
+            nested = [a for a in sub._actions if isinstance(a, argparse._SubParsersAction)]
+            verbs |= {f"{name} {verb}" for a in nested for verb in a.choices} if nested else {name}
+    no_record = {"field export", "field discard", "ruling check-replaces", "help"}
+    writers = (verbs - board.READS - no_record) | {"command start", "Shared.before", "_sync-wait"}
+    tabled = {verb for verb, *_ in rows}
+    problems += [f"write verb {verb} has no row in model.md's verb table" for verb in sorted(writers - tabled)]
+    problems += [f"verb row {verb} is no parser write verb or non-verb writer" for verb in sorted(tabled - writers)]
+
+    # Static reach: the verb's handler (or the named writer) calls, through bin/board's own functions, one of the cell's owners.
+    tree = ast.parse((root / "bin" / "board").read_text(encoding="utf-8"))
+    functions = {node.name: node for node in tree.body if isinstance(node, ast.FunctionDef)}
+    for node in tree.body:
+        if isinstance(node, ast.ClassDef):
+            functions.update({f"{node.name}.{member.name}": member for member in node.body if isinstance(member, ast.FunctionDef)})
+    calls = {name: {ast.unparse(call.func).split(".")[-1] for call in ast.walk(fn) if isinstance(call, ast.Call)} for name, fn in functions.items()}
+    handlers = {}
+    for action in built["parser"]._subparsers._group_actions:
+        for name, sub in action.choices.items():
+            nested = [a for a in sub._actions if isinstance(a, argparse._SubParsersAction)]
+            for verb, parser in ([(f"{name} {v}", p) for a in nested for v, p in a.choices.items()] if nested else [(name, sub)]):
+                run = parser.get_default("run")
+                handlers[verb] = getattr(run, "__name__", None)
+    handlers.update({"command start": "settle_landed", "Shared.before": "Shared.before", "_sync-wait": "Shared.wait", "bd": "passthrough"})
+
+    def reaches(start: str, owners: set[str]) -> bool:
+        seen, todo = set(), [start]
+        while todo:
+            name = todo.pop()
+            if name in owners:
+                return True
+            if name in seen or name not in calls:
+                continue
+            seen.add(name)
+            todo += [callee for callee in calls[name] if callee in functions or callee in owners]
+        return False
+
+    def owners_of(cell: str) -> set[str]:
+        return set(re.findall(r"`([\w.]+)`", cells[cell][0])) | (
+            {"put_meta"} if cell == "meta.allowlist" else set())
+
+    class Rules:
+        """A recording bd over a small world (Rules.world), the board's own registry sessions, and one in-process board call."""
+        def __init__(self, issues):
+            self.issues, self.calls, self.graphs = [json.loads(json.dumps(issue)) for issue in issues], [], {}
+
+        def __call__(self, command, **kwargs):
+            if command[0] != "bd":
+                return real_run(command, **kwargs)
+            args = command[1:]
+            self.calls.append((args, kwargs.get("input")))
+            by_id = {issue["id"]: issue for issue in self.issues}
+            if args[:1] == ["export"]:
+                return subprocess.CompletedProcess(command, 0, "\n".join(json.dumps(issue) for issue in self.issues) + "\n", "")
+            if args[:1] == ["list"]:
+                return subprocess.CompletedProcess(command, 0, json.dumps([i for i in self.issues if i["status"] != "closed"]), "")
+            if args[:1] == ["show"]:
+                wanted = args[args.index("--") + 1:] if "--" in args else args[1:]
+                records = []
+                for item_id in wanted:
+                    if item_id not in by_id:
+                        continue
+                    record = {k: v for k, v in by_id[item_id].items() if k != "dependencies"}
+                    stub = lambda other, kind: {"id": other, "title": by_id[other].get("title", ""), "status": by_id[other]["status"],
+                                                "issue_type": by_id[other].get("issue_type"), "dependency_type": kind}
+                    record["dependencies"] = [stub(d["depends_on_id"], d["type"]) for d in by_id[item_id].get("dependencies") or [] if d["depends_on_id"] in by_id]
+                    record["dependents"] = [stub(i["id"], d["type"]) for i in self.issues for d in i.get("dependencies") or [] if d["depends_on_id"] == item_id]
+                    record["comments"] = by_id[item_id].get("comments") or []
+                    records.append(record)
+                return subprocess.CompletedProcess(command, 0, json.dumps(records), "")
+            if args[:2] == ["config", "list"]:
+                return subprocess.CompletedProcess(command, 0, json.dumps({"custom.board.target": "main", "custom.board.look": "before", "custom.board.view": "code",
+                                                                           "custom.board.model": "1", "custom.board.setup": "true", "custom.board.checks": "true"}), "")
+            if args[:2] == ["config", "get"]:
+                return subprocess.CompletedProcess(command, 0, json.dumps({"key": args[-1], "value": {"custom.board.look": "before", "custom.board.view": "code",
+                                                                                                    "custom.board.model": "1"}.get(args[-1], "")}), "")
+            if args[:1] == ["where"]:
+                return subprocess.CompletedProcess(command, 0, f"{Rules.project}/.beads\n", "")
+            if args[:2] == ["create", "--graph"]:
+                plan = json.loads(Path(args[2]).read_text(encoding="utf-8"))
+                self.graphs[len(self.calls) - 1] = plan
+                return subprocess.CompletedProcess(command, 0, json.dumps({"ids": {node["key"]: f"r-new{at}" for at, node in enumerate(plan["nodes"])}}), "")
+            if args[:2] == ["gate", "create"]:
+                return subprocess.CompletedProcess(command, 0, "Created gate r-gnew\n", "")
+            if args[:1] == ["lint"]:
+                return subprocess.CompletedProcess(command, 0, json.dumps({"results": []}), "")
+            if args[:1] == ["history"]:
+                return subprocess.CompletedProcess(command, 0, "[]", "")
+            return subprocess.CompletedProcess(command, 0, "[]", "")
+
+        def writes(self):
+            reads = ("export", "list", "show", "where", "lint", "history", "config")
+            return [[*args[:3], stdin] if args[:2] == ["comments", "add"] else args for args, stdin in self.calls
+                    if args[0] not in reads and not (args[-1:] == ["--help"])]
+
+    real_run = subprocess.run
+
+    def record(item_id, kind, status="open", parent=None, assignee=None, metadata=None, waits=(), **extra):
+        deps = ([{"issue_id": item_id, "depends_on_id": parent, "type": "parent-child"}] if parent else []) + \
+               [{"issue_id": item_id, "depends_on_id": target, "type": "blocks"} for target in waits]
+        return {"id": item_id, "title": item_id, "issue_type": kind, "status": status, "priority": 2, "description": "d", "labels": [],
+                "assignee": assignee, "metadata": metadata or {}, "dependencies": deps, "created_at": "2026-10-22T15:00:00Z",
+                "updated_at": "2026-10-22T15:00:00Z", **extra}
+
+    NC = {"no_commit": True}
+    WORLD = [
+        record("r-held", "change-request", assignee="solo0001", metadata={"hold": "work"}),  # a CR the solo session holds
+        record("r-item", "task", parent="r-held"), record("r-item2", "task", parent="r-held"),
+        record("r-cr", "change-request"), record("r-cr-item", "task", parent="r-cr"),  # an unheld CR
+        record("r-cr2", "change-request"),
+        record("r-crd", "change-request", status="deferred", metadata={"deferred_by": "user"}), record("r-crd-item", "task", parent="r-crd"),
+        record("r-crx", "change-request", status="closed", metadata={"outcome": "dropped"}), record("r-crx-item", "task", status="closed", parent="r-crx", metadata={"outcome": "done"}),
+        record("r-ms", "milestone"), record("r-msx", "milestone", status="closed", metadata={"outcome": "accepted"}),
+        record("r-t", "task", metadata=NC), record("r-t2", "task", metadata=NC),
+        record("r-theld", "task", assignee="aaaa1111", metadata=NC),  # a no-commit task an agent session holds
+        record("r-tdef", "task", status="deferred", metadata={**NC, "deferred_by": "user"}),
+        record("r-tdrop", "task", status="closed", metadata={**NC, "outcome": "dropped"}),
+        record("r-tdone", "task", status="closed", metadata={**NC, "outcome": "done"}),
+        record("r-q", "decision"), record("r-qheld", "decision", assignee="aaaa1111"),
+        record("r-dec", "decision", status="decided", assignee="lead0001"),
+        record("r-rule", "decision", status="in_force", description="## Question\nq\n## Decision\nd\n## Rule owner\nx\n"),
+        record("r-rule2", "decision", status="in_force", description="## Question\nq\n## Decision\nd\n## Rule owner\nx\n"),
+        record("r-gate", "gate", await_type="human"),
+        record("r-ir", "change-request", status="in_review", metadata={"author": "cccc3333"}), record("r-ir-item", "task", status="closed", parent="r-ir", metadata={"outcome": "done"}),
+    ]
+
+    def world(*extra, **changes):
+        issues = [{**issue, **changes.get(issue["id"].replace("-", "_"), {})} for issue in WORLD]
+        return [*issues, *extra]
+
+    def run(argv, issues=None, actor="solo0001", stdin="", shared=None, env=None):
+        fake = Rules(world() if issues is None else issues)
+        board._prefix.clear()
+        out, err = io.StringIO(), io.StringIO()
+        with patch.object(board.subprocess, "run", fake), patch.object(board, "has_board", lambda: True), patch.object(board, "ensure_server", lambda *a: None), \
+                patch.object(board, "find_shared", lambda directory=None: shared), patch.object(board.sys, "stdin", io.StringIO(stdin)), \
+                patch.dict(os.environ, {"BEADS_ACTOR": actor or "", "CODEX_SESSION_ID": "", "CODEX_THREAD_ID": "", "CLAUDE_CODE_SESSION_ID": "", **(env or {})}), \
+                contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            try:
+                code = board.main(argv)
+            except SystemExit as error:
+                code = error.code if isinstance(error.code, int) else 2
+        return code, out.getvalue(), err.getvalue(), fake
+
+    def refused(argv, needle, issues=None, actor="solo0001", **kw):
+        def check():
+            code, _, err, fake = run(argv, issues, actor, **kw)
+            if code == 0 or (needle and needle.lower() not in err.lower()) or fake.writes():
+                raise ValueError(f"must be refused ({needle!r}) before any write: board {argv} as {actor}: {code} {err.strip()[-400:]!r} {fake.writes()}")
+        return check
+
+    def wrote(argv, test, issues=None, actor="solo0001", **kw):
+        def check():
+            code, out, err, fake = run(argv, issues, actor, **kw)
+            if code != 0 or not test(fake.writes(), fake):
+                raise ValueError(f"must write it: board {argv} as {actor}: {code} {err.strip()[-400:]!r} {fake.writes()}")
+        return check
+
+    def every(*checks):
+        """One case, several shapes of the same write (a node's parent field and a plan edge; one id and several)."""
+        def check():
+            for one in checks:
+                one()
+        return check
+
+    def static(verb):
+        def check(cell):
+            owners = owners_of(cell)
+            if not reaches(handlers[verb], owners):
+                raise ValueError(f"{verb} ({handlers[verb]}) reaches no owner of {cell} ({', '.join(sorted(owners))})")
+        return check
+
+    def plan_file(nodes, edges=()):
+        path = Path(tempfile.mkdtemp()) / "plan.json"
+        path.write_text(json.dumps({"nodes": nodes, **({"edges": list(edges)} if edges else {})}), encoding="utf-8")
+        return str(path)
+
+    def node(key="n", kind="task", **fields):
+        return {"key": key, "title": key, "type": kind, "description": "d", **fields}
+
+    def holding(item_id, actor):
+        return {item_id.replace("-", "_"): {"assignee": actor}}
+
+    body = Path(tempfile.mkdtemp()) / "body.md"
+    body.write_text("## Question\nq\n## Alternatives Considered\na\n## Decision\nd\n## Rationale\nr\n## Rule owner\nx\n## Reversal\nrevert\n", encoding="utf-8")
+    long_text = "x" * 2001
+    with_comment = lambda argv, item: lambda writes, fake: any(w[:3] == ["comments", "add", item] for w in writes)
+    SUBJECT = {"task": "r-t", "no-commit": "r-t", "cr": "r-cr", "decision": "r-q", "gate": "r-gate", "milestone": "r-ms"}
+    WORLD += [record("r-crd-item2", "task", parent="r-crd"), record("r-loose", "task"),
+              record("r-qx", "decision", status="closed", metadata={"outcome": "dropped"}, waits=("r-tdrop",)),
+              record("r-tdone2", "task", status="closed", metadata={**NC, "outcome": "done"}, waits=("r-tdrop",)),
+              record("r-ruleold", "decision", status="closed", metadata={"outcome": "superseded"})]
+    WORLD[-1]["dependencies"].append({"issue_id": "r-ruleold", "depends_on_id": "r-rule", "type": "supersedes"})
+
+    def W(*edges, **changes):
+        """The world with `edges` (waiter, target, kind) added and `changes` {underscored id: fields} applied."""
+        issues = world(**changes)
+        by_id = {issue["id"]: issue for issue in issues}
+        for waiter, target, kind in edges:
+            by_id[waiter]["dependencies"] = [*by_id[waiter]["dependencies"], {"issue_id": waiter, "depends_on_id": target, "type": kind}]
+        return issues
+
+    desc = Path(tempfile.mkdtemp()) / "desc.md"
+    desc.write_text("d\n", encoding="utf-8")
+    long_file = Path(tempfile.mkdtemp()) / "long.md"
+    long_file.write_text(long_text, encoding="utf-8")
+    CREATE = ["create", "T", "--description-file", str(desc)]
+    stub = types.SimpleNamespace(before=lambda: None, after=lambda: None, report=lambda: None, moved=lambda: None)
+    graph_has = lambda test: lambda writes, fake: any(test(plan) for plan in fake.graphs.values())
+    batch_has = lambda text: lambda writes, fake: any(args[:1] == ["batch"] and text in (stdin or "") for args, stdin in fake.calls)
+    update_has = lambda *words: lambda writes, fake: any(w[:1] == ["update"] and all(word in " ".join(w) for word in words) for w in writes)
+    queued = lambda **ids: {key: {"labels": [f"queue:{who}"]} for key, who in ids.items()}
+
+    def broken_actor(argv, issues=None):
+        """actor.none: a session environment whose actor cannot be derived writes nothing, never as the user."""
+        def check():
+            with patch.object(board, "derived_actor", lambda: None):
+                code, _, err, fake = run(argv, issues, actor="", env={"CLAUDE_CODE_SESSION_ID": "c-broken0"})
+            if code == 0 or fake.writes():
+                raise ValueError(f"actor.none: board {argv} in a session with no derivable actor must write nothing: {code} {err!r} {fake.writes()}")
+        return check
+
+    def gap(cell, verb):
+        def check():
+            if not cells[cell][2].startswith(f"gap {open_gaps[cell]}") and not cells[cell][1].startswith(f"gap {open_gaps[cell]}"):
+                raise ValueError(f"{cell} is no longer an open gap: give ({verb}, {cell}) its case")
+        return check
+
+    # Cases by cell: {(verb, form): check} (a kind-specific verb: {(verb, form, kind): check}). A check of None is the static reach.
+    cases: dict[str, dict] = {}
+
+    def add(cell, mapping):
+        cases.setdefault(cell, {}).update(mapping)
+
+    agent, planner, solo, lead, roleless = "aaaa1111", "plan0001", "solo0001", "lead0001", "cccc3333"
+    add("parent-child.kind-fit", {
+        ("create", "parent"): refused([*CREATE, "-t", "decision", "--holds", "none", "--parent", "r-cr"], "has no parent", actor=None),
+        ("create", "graph"): refused(["create", "--graph", plan_file([node("d", "decision", parent_id="r-cr")]), "--holds", "none"], "has no parent", actor=None),
+        ("return", "finding"): None, ("ruling record", "unratified"): wrote(["ruling", "record", "r-dec", str(body), "--unratified"],
+                                                                           graph_has(lambda plan: all("parent_id" not in n for n in plan["nodes"])), actor=lead),
+        **{("move", "any", kind): refused(["move", SUBJECT[kind], "--to", target], None, actor=None)
+           for kind, target in (("task", "r-ms"), ("no-commit", "r-ms"), ("cr", "r-cr2"), ("decision", "r-cr"), ("gate", "r-cr"), ("milestone", "r-ms"))},
+    })
+    add("parent-child.work-needs-cr", {("create", "parent"): refused([*CREATE, "--parent", "r-t"], "outside a change request", actor=None),
+                                       ("create", "graph"): refused(["create", "--graph", plan_file([node()])], "outside a change request", actor=None),
+                                       ("return", "finding"): None})
+    add("parent-child.open-parent", {("create", "parent"): refused([*CREATE, "--parent", "r-crx"], "not an open change request", actor=None),
+                                     ("create", "graph"): refused(["create", "--graph", plan_file([node(parent_id="r-crx")])], "not an open change request", actor=None),
+                                     ("return", "finding"): None,
+                                     **{("move", "any", kind): refused(["move", SUBJECT[kind] if kind != "task" else "r-cr-item", "--to", "r-crx" if kind != "cr" else "r-msx"], None, actor=None)
+                                        for kind in SUBJECT}})
+    add("parent-child.item-create", {("create", "parent"): refused([*CREATE, "--parent", "r-held"], "filing into", actor=agent),
+                                     ("create", "graph"): every(refused(["create", "--graph", plan_file([node(parent_id="r-held")])], "filing into", actor=agent),
+                                                               refused(["create", "--graph", plan_file([node()], [{"from_key": "n", "to_id": "r-held", "type": "parent-child"}])], "filing into", actor=agent)),
+                                     ("return", "finding"): None,
+                                     **{("move", "any", kind): refused(["move", SUBJECT[kind] if kind != "task" else "r-cr-item", "--to", "r-held"], None, actor=agent) for kind in SUBJECT}})
+    add("parent-child.refusal-text", {("create", "parent"): refused([*CREATE, "--parent", "r-held"], "create --graph", actor=roleless),
+                                      ("create", "graph"): refused(["create", "--graph", plan_file([node(parent_id="r-held")])], "--no-commit", actor=roleless)})
+    add("parent-child.one-parent", {("create", "graph"): refused(["create", "--graph", plan_file([node(parent_id="r-cr"), node("c", "change-request")],
+                                                                                                   [{"from_key": "n", "to_key": "c", "type": "parent-child"}])], "one parent", actor=None)})
+    add("parent-child.only-move", {("create", "graph"): refused(["create", "--graph", plan_file([node("c", "change-request")], [{"from_id": "r-t", "to_key": "c", "type": "parent-child"}])], "agents board move", actor=None),
+                                   ("link", "any"): refused(["link", "r-t", "r-cr", "--type", "parent-child"], "agents board move", actor=None),
+                                   ("unlink", "any"): refused(["unlink", "r-cr-item", "r-cr"], "agents board move", actor=None)})
+    add("parent-child.leave", {("move", "any", kind): refused(["move", "r-item" if kind == "task" else SUBJECT[kind], "--to", "r-cr"], None, actor=agent) for kind in SUBJECT})
+    add("parent-child.cr-stays", {("move", "any", kind): (wrote(["move", SUBJECT[kind] if kind == "no-commit" else "r-cr-item", "--to", "r-cr2"], update_has("--parent", "r-cr2"), actor=None)
+                                                          if kind in ("task", "no-commit") else refused(["move", SUBJECT[kind], "--to", "r-cr2" if kind != "milestone" else "r-cr"],
+                                                                                                        "change request" if kind == "cr" else None, actor=None)) for kind in SUBJECT})
+    add("parent-child.queue", {("move", "any", kind): refused(["move", SUBJECT[kind] if kind != "task" else "r-cr-item", "--to", "r-cr2"], None, actor=agent, shared=stub,
+                                                              issues=world(**queued(r_t="anna", r_cr="anna", r_cr2="ben"))) for kind in SUBJECT})
+    add("parent-child.no-commit", {("move", "any", kind): (wrote(["move", "r-t", "--to", "r-cr"], update_has("--parent", "r-cr", "--unset-metadata", "no_commit"), actor=None)
+                                                           if kind == "no-commit" else wrote(["move", "r-cr-item", "--to", "r-cr2"], lambda w, f: "no_commit" not in " ".join(sum(w, [])), actor=None)
+                                                           if kind == "task" else refused(["move", SUBJECT[kind], "--to", "r-cr"], None, actor=None)) for kind in SUBJECT})
+    add("blocks.target", {
+        **{("move", "any", kind): (refused(["move", "r-t2", "--to", "r-crd"], "deferred", issues=W(("r-t", "r-t2", "blocks")), actor=None) if kind in ("no-commit", "task")
+                                   else refused(["move", SUBJECT[kind], "--to", "r-crd"], None, actor=None)) for kind in SUBJECT},
+        ("create", "deps-id"): refused([*CREATE, "--no-commit", "--deps", "r-tdef"], "deferred", actor=None),
+        ("create", "holds"): wrote([*CREATE, "-t", "decision", "--holds", "r-t"], graph_has(lambda plan: True), actor=None),
+        ("create", "graph"): refused(["create", "--graph", plan_file([node(no_commit=True, waits_on=[{"on": "r-tdef", "for": "x"}])])], "deferred", actor=None),
+        ("wait", "same-cr"): refused(["wait", "r-crd-item", "--on", "r-crd-item2", "--for", "x"], "deferred", actor=solo),
+        ("wait", "other-cr"): refused(["wait", "r-item", "--on", "r-crd-item", "--for", "x"], "deferred"),
+        ("wait", "cr"): refused(["wait", "r-cr", "--on", "r-crd", "--for", "x"], "deferred", actor=solo),
+        **{("defer", "any", kind): refused(["defer", target, "--reason", "set aside"], waiter, issues=W((waiter, target, "blocks")), actor=None)
+           for kind, target, waiter in (("task", "r-t2", "r-t"), ("cr", "r-cr2", "r-t"))},
+        ("defer", "any", "decision"): refused(["defer", "r-q", "--reason", "set aside"], "r-held", issues=W(("r-item", "r-q", "blocks")), actor=None),
+        ("gate create", "any"): None, ("ruling record", "any"): None, ("ruling revise", "holds"): None, ("ruling release", "any"): None, ("ruling supersede", "any"): None,
+    })
+    add("blocks.external", {("create", "deps-id"): refused([*CREATE, "--no-commit", "--deps", "external:proj:cap"], "external", actor=None),
+                            ("create", "graph"): refused(["create", "--graph", plan_file([node(no_commit=True, waits_on=[{"on": "external:proj:cap", "for": "x"}])])], "external", actor=None),
+                            **{("wait", form): refused(["wait", waiter, "--on", "external:proj:cap", "--for", "x"], "external", actor=solo)
+                               for form, waiter in (("same-cr", "r-cr-item"), ("other-cr", "r-cr-item"), ("cr", "r-cr"))}})
+    add("blocks.waiter", {("create", "deps-id"): refused([*CREATE, "-t", "milestone", "--deps", "r-q"], "milestone", actor=None),
+                          ("create", "holds"): refused([*CREATE, "-t", "decision", "--holds", "r-ms"], "milestone", actor=None),
+                          ("create", "graph"): every(refused(["create", "--graph", plan_file([node("m", "milestone", waits_on=[{"on": "r-q", "for": "x"}])])], "milestone", actor=None),
+                                                    refused(["create", "--graph", plan_file([node("m", "milestone", waits_on=[{"on": "t", "for": "x"}]), node("t", no_commit=True)])], "milestone", actor=None)),
+                          ("wait", "same-cr"): refused(["wait", "r-rule", "--on", "r-t", "--for", "x"], "planning", actor=solo),
+                          ("wait", "other-cr"): refused(["wait", "r-ms", "--on", "r-t", "--for", "x"], "milestone", actor=solo),
+                          ("wait", "cr"): refused(["wait", "r-ms", "--on", "r-cr", "--for", "x"], "milestone", actor=solo),
+                          ("gate create", "any"): refused(["gate", "create", "--blocks", "r-ms", "--reason", "a person signs"], "milestone", actor=None),
+                          ("ruling revise", "holds"): refused(["ruling", "revise", "r-rule", "--title", "t", "--body-file", str(body), "--holds", "r-ms"], "milestone", actor=lead),
+                          ("ruling record", "any"): None, ("ruling release", "any"): None, ("ruling supersede", "any"): None,
+                          ("ruling record", "unratified"): gap("blocks.waiter", "ruling record --unratified")})
+    cycle_world = W(("r-item", "r-cr-item", "blocks"))
+    add("blocks.cycle", {("create", "deps-id"): refused([*CREATE, "--parent", "r-cr", "--deps", "r-item"], "cycle", issues=cycle_world, actor=None),
+                         ("create", "holds"): refused([*CREATE, "-t", "decision", "--deps", "r-q", "--holds", "r-q"], "cycle", actor=None),
+                         ("create", "graph"): refused(["create", "--graph", plan_file([node(parent_id="r-cr", waits_on=[{"on": "r-item", "for": "x"}])])], "cycle", issues=cycle_world, actor=None),
+                         **{("move", "any", kind): (refused(["move", "r-t", "--to", "r-held"], "cycle", issues=W(("r-cr-item", "r-item", "blocks"), ("r-t", "r-cr-item", "blocks")))
+                                                    if kind in ("task", "no-commit") else refused(["move", SUBJECT[kind], "--to", "r-held"], None)) for kind in SUBJECT},
+                         ("wait", "same-cr"): refused(["wait", "r-item", "--on", "r-item2", "--for", "x"], "cycle", issues=W(("r-item2", "r-item", "blocks"))),
+                         ("wait", "other-cr"): refused(["wait", "r-item", "--on", "r-cr-item", "--for", "x"], "cycle", issues=W(("r-cr-item", "r-item", "blocks"))),
+                         ("wait", "cr"): refused(["wait", "r-cr", "--on", "r-cr2", "--for", "x"], "cycle", issues=W(("r-cr2", "r-cr", "blocks")), actor=solo),
+                         ("gate create", "any"): None, ("ruling record", "any"): None, ("ruling revise", "holds"): None, ("ruling release", "any"): None, ("ruling supersede", "any"): None})
+    add("blocks.hold", {("create", "holds"): refused([*CREATE, "-t", "decision", "--holds", "r-item"], "r-held", actor=agent),
+                        ("wait", "same-cr"): refused(["wait", "r-item", "--on", "r-item2", "--for", "x"], "r-held", actor=agent),
+                        ("wait", "other-cr"): refused(["wait", "r-item", "--on", "r-cr-item", "--for", "x"], "r-held", actor=agent),
+                        ("unlink", "any"): refused(["unlink", "r-item", "r-item2"], "r-held", issues=W(("r-item", "r-item2", "blocks")), actor=agent),
+                        ("gate create", "any"): refused(["gate", "create", "--blocks", "r-item", "--reason", "a person signs"], "r-held", actor=agent),
+                        ("ruling revise", "holds"): refused(["ruling", "revise", "r-rule", "--title", "t", "--body-file", str(body), "--holds", "r-item"], "r-held", actor=agent),
+                        ("ruling record", "any"): None, ("ruling release", "any"): None, ("ruling supersede", "any"): None})
+    add("held-record.wait", {("create", "holds"): refused([*CREATE, "-t", "decision", "--holds", "r-qheld"], "aaaa1111", actor=planner),
+                             ("wait", "same-cr"): refused(["wait", "r-qheld", "--on", "r-q"], "aaaa1111", actor=planner),
+                             ("wait", "other-cr"): refused(["wait", "r-theld", "--on", "r-t", "--for", "x"], "aaaa1111", actor=planner),
+                             ("wait", "cr"): refused(["wait", "r-held", "--on", "r-cr2", "--for", "x"], "solo0001", actor=agent),
+                             ("unlink", "any"): refused(["unlink", "r-theld", "r-t"], "aaaa1111", issues=W(("r-theld", "r-t", "blocks")), actor=planner),
+                             ("gate create", "any"): refused(["gate", "create", "--blocks", "r-theld", "--reason", "a person signs"], "aaaa1111", actor=planner),
+                             ("ruling revise", "holds"): refused(["ruling", "revise", "r-rule", "--title", "t", "--body-file", str(body), "--holds", "r-qheld"], "aaaa1111", actor=planner),
+                             ("ruling record", "any"): None, ("ruling release", "any"): None, ("ruling supersede", "any"): None})
+    add("blocks.for", {("create", "deps-id"): refused([*CREATE, "--no-commit", "--deps", "r-t"], "for what", actor=None),
+                       ("create", "graph"): refused(["create", "--graph", plan_file([node(no_commit=True, waits_on=[{"on": "r-t"}])])], "for what", actor=None),
+                       ("wait", "same-cr"): refused(["wait", "r-item", "--on", "r-item2"], "--for"),
+                       ("wait", "other-cr"): refused(["wait", "r-item", "--on", "r-cr-item"], "--for"),
+                       ("wait", "cr"): refused(["wait", "r-cr", "--on", "r-cr2"], "--for", actor=solo),
+                       ("ruling record", "any"): None, ("ruling release", "any"): None, ("ruling supersede", "any"): None})
+    add("blocks.writers", {("create", "deps-id"): wrote([*CREATE, "--no-commit", "--deps", "r-q"], graph_has(lambda plan: plan["nodes"][0].get("deps") == [{"target": "r-q", "type": "blocks"}]), actor=None),
+                           ("create", "graph"): refused(["create", "--graph", plan_file([node("a", no_commit=True), node("b", no_commit=True)], [{"from_key": "a", "to_key": "b", "type": "blocks"}])], "not a link word", actor=None),
+                           **{("wait", form): wrote(["wait", waiter, "--on", target, "--for", "x"], batch_has(f"dep add {waiter} {target} blocks"), actor=solo)
+                              for form, waiter, target in (("same-cr", "r-cr-item", "r-cr-item"), ("other-cr", "r-cr-item", "r-t"), ("cr", "r-cr", "r-cr2"))},
+                           ("link", "any"): refused(["link", "r-t", "r-t2", "--type", "blocks"], "not a link word", actor=None)})
+    cases["blocks.writers"][("wait", "same-cr")] = wrote(["wait", "r-crd-item", "--on", "r-crd-item2", "--for", "x"], lambda w, f: True, issues=W(r_crd={"status": "open"}), actor=solo)
+    add("blocks.pair", {("wait", form): wrote(["wait", waiter, "--on", target, "--for", "x"], batch_has(f"dep remove {waiter} {target}"), issues=W((waiter, target, "relates-to")), actor=solo)
+                        for form, waiter, target in (("same-cr", "r-crd-item", "r-crd-item2"), ("other-cr", "r-cr-item", "r-t"), ("cr", "r-cr", "r-cr2"))})
+    cases["blocks.pair"][("wait", "same-cr")] = wrote(["wait", "r-item", "--on", "r-item2", "--for", "x"], batch_has("dep remove r-item r-item2"), issues=W(("r-item", "r-item2", "relates-to")))
+    add("blocks.no-dropped-close", {("close", "one-id"): refused(["close", "r-t2", "--reason", "dropped while it is waited on", "--outcome", "dropped"], "r-t", issues=W(("r-t", "r-t2", "blocks")), actor=None),
+                                    ("close", "ids"): refused(["close", "r-q", "r-t2", "--reason", "dropped while it is waited on", "--outcome", "dropped"], "r-t", issues=W(("r-t", "r-t2", "blocks")), actor=None),
+                                    ("close", "conflict"): None,
+                                    ("cr reject", "any"): refused(["cr", "reject", "r-cr", "dropped while its item is waited on"], "r-t",
+                                                                  issues=W(("r-t", "r-cr-item", "blocks"), r_cr_item={"status": "closed", "metadata": {"outcome": "done"}}), actor=None)})
+    add("blocks.reopen", {("reopen", "any", kind): refused(["reopen", subject], "r-tdrop", actor=None) if subject else wrote(["reopen", "r-msx"], update_has("r-msx", "--status", "open"), actor=None)
+                          for kind, subject in (("task", "r-tdone2"), ("decision", "r-qx"), ("gate", None), ("milestone", None))})
+    cases["blocks.reopen"][("reopen", "any", "gate")] = wrote(["reopen", "r-gatex"], update_has("r-gatex", "--status", "open"), issues=[*world(), record("r-gatex", "gate", status="closed", await_type="human", metadata={"outcome": "resolved"})], actor=None)
+    add("relates-to.free", {("link", "any"): wrote(["link", "r-item", "r-t", "--type", "relates-to"], batch_has("dep add r-item r-t relates-to"), actor=agent),
+                            ("unlink", "any"): wrote(["unlink", "r-item", "r-t"], batch_has("dep remove r-item r-t"), issues=W(("r-item", "r-t", "relates-to")), actor=agent)})
+    add("relates-to.types", {("create", "deps-type"): refused([*CREATE, "--no-commit", "--deps", "related:r-q"], "relates-to", actor=None),
+                             ("link", "any"): refused(["link", "r-t", "r-t2", "--type", "discovered-from"], "found-in", actor=None),
+                             ("ruling record", "unratified"): wrote(["ruling", "record", "r-dec", str(body), "--unratified"],
+                                                                   graph_has(lambda plan: plan["nodes"][0].get("deps") == [{"target": "r-dec", "type": "relates-to"}]), actor=lead)})
+    add("relates-to.pair", {("link", "any"): refused(["link", "r-t", "r-t2", "--type", "relates-to"], "linked already", issues=W(("r-t", "r-t2", "blocks")), actor=None)})
+    add("supersedes.ruling-only", {("create", "deps-type"): refused([*CREATE, "-t", "decision", "--holds", "none", "--deps", "supersedes:r-rule"], "rulings", actor=None),
+                                   ("link", "any"): refused(["link", "r-q", "r-rule", "--type", "supersedes"], "rulings", actor=None),
+                                   ("unlink", "any"): refused(["unlink", "r-ruleold", "r-rule"], "rulings", actor=None),
+                                   ("ruling record", "replaces"): None, ("ruling record", "unratified"): None, ("ruling release", "any"): None,
+                                   ("ruling supersede", "any"): None, ("ruling supersede", "partial"): None})
+    add("tracks.ruling-only", {("create", "deps-type"): refused([*CREATE, "-t", "decision", "--holds", "none", "--deps", "tracks:r-rule"], "rulings", actor=None),
+                               ("link", "any"): refused(["link", "r-q", "r-rule", "--type", "tracks"], "rulings", actor=None),
+                               ("unlink", "any"): refused(["unlink", "r-q", "r-rule"], "rulings", issues=W(("r-q", "r-rule", "tracks")), actor=None),
+                               ("ruling record", "replaces"): None,
+                               ("ruling revise", "any"): wrote(["ruling", "revise", "r-rule", "--title", "t", "--body-file", str(body), "--holds", "none"],
+                                                              graph_has(lambda plan: {"target": "r-rule", "type": "tracks"} in plan["nodes"][0].get("deps", [])), actor=lead)})
+    add("tracks.one-revision", {("ruling record", "replaces"): None, ("ruling release", "any"): None, ("ruling supersede", "any"): None, ("ruling supersede", "partial"): None})
+    rule_held = W(r_rule={"assignee": planner})
+    add("supersedes.who", {("ruling record", "replaces"): None,
+                           ("ruling record", "unratified"): refused(["ruling", "record", "r-qheld", str(body), "--unratified", "--replaces", "r-rule"], "deciding", actor=agent),
+                           ("ruling release", "any"): None,
+                           ("ruling supersede", "any"): refused(["ruling", "supersede", "r-rule", "--with", "r-rule2"], "deciding", actor=agent),
+                           ("ruling supersede", "partial"): refused(["ruling", "supersede", "r-rule", "--with", "r-rule2", "--partial", "Rule 2"], "deciding", actor=agent)})
+    add("supersedes.hold", {("ruling record", "replaces"): None,
+                            ("ruling record", "unratified"): refused(["ruling", "record", "r-dec", str(body), "--unratified", "--replaces", "r-rule"], "plan0001", issues=rule_held, actor=lead),
+                            ("ruling release", "any"): None,
+                            ("ruling supersede", "any"): refused(["ruling", "supersede", "r-rule", "--with", "r-rule2"], "plan0001", issues=rule_held, actor=solo),
+                            ("ruling supersede", "partial"): refused(["ruling", "supersede", "r-rule", "--with", "r-rule2", "--partial", "Rule 2"], "plan0001", issues=rule_held, actor=solo)})
+    add("supersedes.row", {("reopen", "any", kind): refused(["reopen", "r-ruleold"], "superseded", actor=None) if kind == "decision" else None for kind in ("task", "decision", "gate", "milestone")})
+    add("supersedes.row", {("ruling record", "replaces"): None, ("ruling record", "unratified"): None, ("ruling release", "any"): None, ("ruling supersede", "any"): None})
+    add("status.row", {**{("wait", form): wrote(["wait", "r-theld", "--on", "r-t2", "--for", "x"], update_has("r-theld", "--assignee", ""), actor=agent) for form in ("same-cr", "other-cr", "cr")},
+                       ("close", "one-id"): refused(["close", "r-item", "--reason", "closed by a non-holder session"], "r-held", actor=agent),
+                       ("close", "ids"): refused(["close", "r-t", "r-item", "--reason", "closed by a non-holder session"], "r-held", actor=agent),
+                       **{("reopen", "any", kind): refused(["reopen", subject], None, actor=agent) for kind, subject in (("task", "r-crx-item"), ("decision", "r-qx"), ("milestone", "r-msx"))},
+                       ("reopen", "any", "gate"): refused(["reopen", "r-gatex"], None, issues=[*world(), record("r-gatex", "gate", status="closed", await_type="human")], actor=agent),
+                       **{("defer", "any", kind): refused(["defer", SUBJECT[kind], "--reason", "set aside"], None, actor=agent) for kind in ("task", "cr", "decision")},
+                       **{("undefer", "any", kind): refused(["undefer", subject], None, actor=agent) for kind, subject in (("task", "r-tdef"), ("cr", "r-crd"))},
+                       ("undefer", "any", "decision"): refused(["undefer", "r-qd"], None, issues=[*world(), record("r-qd", "decision", status="deferred", metadata={"deferred_by": "user"})], actor=agent),
+                       ("claim", "any"): refused(["claim", "r-held"], "held by", actor=agent), ("take", "any"): refused(["take", "r-held"], None, actor=agent),
+                       ("unclaim", "any"): refused(["unclaim", "r-held"], None, actor=agent),
+                       ("cr reject", "any"): refused(["cr", "reject", "r-cr", "the approach fails"], None, actor=agent),
+                       ("gate resolve", "any"): refused(["gate", "resolve", "r-gate", "--reason", "it shipped"], None, actor=agent),
+                       ("ruling record", "any"): refused(["ruling", "record", "r-dec", str(body)], "claim it first", actor=agent),
+                       ("ruling release", "any"): refused(["ruling", "release", "r-dec"], None, actor=agent),
+                       ("return", "ruling"): refused(["return", "r-ir", "x", "--ruling", "r-rule"], None, actor=agent),
+                       **{key: None for key in (("handover", "any"), ("handover", "look-after"), ("return", "any"), ("cr request-review", "any"), ("cr refresh", "any"),
+                                                ("cr edits", "any"), ("cr land", "any"), ("command start", "any"))}})
+    add("status.who-planner", {("claim", "any"): refused(["claim", "r-rule"], None, actor=agent), ("take", "any"): None, ("unclaim", "any"): None,
+                               ("return", "ruling"): refused(["return", "r-ir", "x", "--ruling", "r-rule"], "plan", actor=agent)})
+    add("status.open-parent", {("reopen", "any", kind): refused(["reopen", "r-crx-item"], "closed", actor=None) if kind == "task" else
+                               wrote(["reopen", "r-msx"], update_has("r-msx", "open"), actor=None) for kind in ("task", "decision", "gate", "milestone")})
+    cases["status.open-parent"][("reopen", "any", "decision")] = wrote(["reopen", "r-q2x"], update_has("r-q2x", "open"), issues=[*world(), record("r-q2x", "decision", status="closed", metadata={"outcome": "dropped"})], actor=None)
+    cases["status.open-parent"][("reopen", "any", "gate")] = wrote(["reopen", "r-gatex"], update_has("r-gatex", "open"), issues=[*world(), record("r-gatex", "gate", status="closed", await_type="human")], actor=None)
+    add("status.owner", {("update", "refused-flag"): refused(["update", "r-t", "--status", "closed"], None, actor=None)})
+    add("assignee.owner", {("update", "refused-flag"): refused(["update", "r-t", "--assignee", "x"], None, actor=None)})
+    add("issue_type.owner", {("update", "refused-flag"): refused(["update", "r-t", "--type", "bug"], None, actor=None)})
+    add("parent-child.owner", {("update", "refused-flag"): refused(["update", "r-t", "--parent", "r-cr"], None, actor=None)})
+    add("assignee.row", {("create", "any"): refused([*CREATE, "--assignee", "x"], None, actor=None),
+                         ("claim", "any"): wrote(["claim", "r-t"], update_has("r-t", "--assignee", agent), actor=agent),
+                         ("take", "any"): None, ("unclaim", "any"): None, ("return", "ruling"): None, ("ruling record", "any"): None,
+                         ("ruling record", "unratified"): None, ("ruling release", "any"): None})
+    add("assignee.work-needs-cr", {("claim", "any"): refused(["claim", "r-loose"], "change request", actor=agent)})
+    add("assignee.stale-evidence", {("take", "any"): gap("assignee.stale-evidence", "take"), ("unclaim", "any"): gap("assignee.stale-evidence", "unclaim")})
+    add("issue_type.types", {("create", "any"): refused([*CREATE, "-t", "feature"], "not a board type", actor=None),
+                             ("create", "graph"): refused(["create", "--graph", plan_file([node(kind="gate")])], "gate create", actor=None),
+                             ("gate create", "any"): wrote(["gate", "create", "--blocks", "r-t", "--reason", "a person signs"], lambda w, f: any(x[:3] == ["gate", "create", "--type=human"] for x in w), actor=None)})
+    add("content.size", {("create", "any"): refused(["create", "T", "--no-commit", "--description-file", str(long_file)], "2001 characters", actor=None),
+                         ("create", "graph"): refused(["create", "--graph", plan_file([node(no_commit=True, description=long_text)])], "2001 characters", actor=None),
+                         ("field apply", "any"): None, ("return", "finding"): refused(["return", "r-ir", long_text], None, issues=W(r_ir={"assignee": agent}), actor=agent)})
+    add("content.hold", {("update", "content"): every(refused(["update", "r-item", "--title", "x"], "r-held", actor=agent),
+                                                      refused(["update", "r-t", "r-item", "--title", "x"], "r-held", actor=agent)),  # every id before the write
+                         ("field apply", "any"): None})
+    add("content.export", {("field apply", "any"): None})
+    add("labels.form", {("create", "any"): refused([*CREATE, "--no-commit", "-l", "loose"], "topic:", actor=None),
+                        ("create", "graph"): refused(["create", "--graph", plan_file([node(no_commit=True, labels=["waiting"])])], "status", actor=None),
+                        ("update", "label"): refused(["update", "r-t", "--label", "loose"], "topic:", actor=None), ("return", "finding"): None,
+                        ("ruling revise", "label"): refused(["ruling", "revise", "r-rule", "--title", "t", "--body-file", str(body), "--holds", "none", "-l", "loose"], "topic:", actor=lead)})
+    add("labels.hold", {("update", "label"): refused(["update", "r-item", "--label", "topic:x"], "r-held", actor=agent),
+                        ("route", "any"): refused(["route", "ben", "r-item"], "r-held", actor=lead, shared=stub),
+                        ("send", "any"): refused(["send", "ben", "r-theld"], "aaaa1111", actor=lead, shared=stub)})
+    add("held-record.write", {**{("move", "any", kind): (refused(["move", "r-theld", "--to", "r-cr"], "aaaa1111", actor=planner) if kind in ("task", "no-commit")
+                                                         else refused(["move", "r-held", "--to", "r-ms"], "solo0001", actor=agent) if kind == "cr"
+                                                         else refused(["move", SUBJECT[kind], "--to", "r-ms"], None, actor=agent)) for kind in SUBJECT},
+                              ("update", "content"): refused(["update", "r-theld", "--title", "x"], "aaaa1111", actor=planner),
+                              ("update", "label"): refused(["update", "r-theld", "--label", "topic:x"], "aaaa1111", actor=planner),
+                              ("field apply", "any"): None,
+                              ("route", "any"): refused(["route", "ben", "r-theld"], "aaaa1111", actor=lead, shared=stub),
+                              ("send", "any"): refused(["send", "ben", "r-held"], "solo0001", actor=lead, shared=stub),
+                              ("ruling record", "any"): None, ("ruling revise", "any"): None})
+    add("queue.route", {("create", "label"): refused([*CREATE, "--no-commit", "-l", "for:ben"], "--for", actor=None),
+                        ("create", "for"): refused([*CREATE, "--no-commit", "--for", "ben"], "not shared", actor=None),
+                        ("create", "graph"): refused(["create", "--graph", plan_file([node(parent_id="r-cr", labels=["queue:ben"])])], "parent's queue", actor=None),
+                        ("update", "label"): refused(["update", "r-t", "--label", "queue:ben"], "board send", actor=None), ("return", "finding"): None,
+                        ("gate create", "for"): refused(["gate", "create", "--blocks", "r-t", "--reason", "a person signs", "--for", "ben"], "not shared", actor=None),
+                        ("ruling revise", "label"): refused(["ruling", "revise", "r-rule", "--title", "t", "--body-file", str(body), "--holds", "none", "-l", "for:ben"], "--for", actor=lead)})
+    add("queue.attended", {("create", "for"): None,
+                           ("create", "graph"): refused(["create", "--graph", plan_file([node(no_commit=True, labels=["queue:ben"])])], "lead and solo", actor=agent, shared=stub),
+                           ("route", "any"): refused(["route", "ben", "r-t"], "lead and solo", actor=agent, shared=stub),
+                           ("send", "any"): refused(["send", "ben", "r-t"], "lead and solo", actor=agent, shared=stub)})
+    add("queue.top-level", {("send", "any"): refused(["send", "ben", "r-cr-item"], "parent", actor=lead, shared=stub, issues=world(**queued(r_cr="anna")))})
+    add("queue.owner", {("share", "any"): None})
+    add("setting.values", {("create", "any"): refused([*CREATE, "-t", "decision", "--holds", "none", "--no-commit"], "marks a task", actor=None),
+                           ("create", "graph"): refused(["create", "--graph", plan_file([node("c", "change-request", look="before")])], "project default", actor=None),
+                           ("update", "setting"): refused(["update", "r-cr", "--look", "before"], "project default", actor=None)})
+    add("setting.who", {("update", "setting"): refused(["update", "r-t", "--no-commit"], "lead or solo", actor=agent)})
+    add("meta.found-in", {("create", "any"): refused([*CREATE, "--no-commit", "--found-in", "r-nope"], "unknown", actor=None),
+                          ("create", "graph"): refused(["create", "--graph", plan_file([node(no_commit=True, found_in="r-nope")])], "unknown", actor=None)})
+    add("meta.move-keys", {("update", "refused-flag"): refused(["update", "r-t", "--set-metadata", "outcome=dropped"], None, actor=None),
+                           ("close", "one-id"): wrote(["close", "r-t", "--reason", "done with the probe here"], update_has("r-t", "outcome=done"), actor=None),
+                           **{("reopen", "any", kind): wrote(["reopen", subject], update_has(subject, "--unset-metadata", "outcome"), actor=None)
+                              for kind, subject in (("task", "r-tdone"), ("milestone", "r-msx"))},
+                           ("reopen", "any", "decision"): wrote(["reopen", "r-q2x"], update_has("r-q2x", "--unset-metadata", "outcome"), issues=[*world(), record("r-q2x", "decision", status="closed", metadata={"outcome": "dropped"})], actor=None),
+                           ("reopen", "any", "gate"): wrote(["reopen", "r-gatex"], update_has("r-gatex", "--unset-metadata", "outcome"), issues=[*world(), record("r-gatex", "gate", status="closed", await_type="human", metadata={"outcome": "resolved"})], actor=None),
+                           **{("defer", "any", kind): wrote(["defer", SUBJECT[kind], "--reason", "set aside"], update_has(SUBJECT[kind], "deferred_by="), actor=None) for kind in ("task", "cr", "decision")},
+                           **{("undefer", "any", kind): wrote(["undefer", subject], update_has(subject, "--unset-metadata", "deferred_by"), issues=issues, actor=None)
+                              for kind, subject, issues in (("task", "r-tdef", None), ("cr", "r-crd", None),
+                                                            ("decision", "r-qd", [*world(), record("r-qd", "decision", status="deferred", metadata={"deferred_by": "user"})]))}})
+    add("meta.deep-review", {("unclaim", "any"): None, ("handover", "any"): None,
+                             ("unclaim", "deep-review"): wrote(["unclaim", "r-ir", "--deep-review", "the failure path"], update_has("r-ir", "deep_review=the failure path"), issues=W(r_ir={"assignee": agent}), actor=agent)})
+    add("meta.resume", {("claim", "any"): wrote(["claim", "r-t"], update_has("r-t", "--unset-metadata", "resume"), issues=W(r_t={"metadata": {**NC, "resume": "next"}}), actor=agent),
+                        ("unclaim", "any"): None,
+                        ("unclaim", "resume"): wrote(["unclaim", "r-theld", "--resume", "next action"], update_has("r-theld", "resume=next action"), actor=agent)})
+    add("meta.sent-at", {("send", "any"): wrote(["send", "ben", "r-t"], update_has("r-t", "for:ben", "sent_at="), actor=lead, shared=stub)})
+    add("meta.revises-rule", {("ruling revise", "partial"): wrote(["ruling", "revise", "r-rule", "--title", "t", "--body-file", str(body), "--holds", "none", "--partial", "Rule 2"],
+                                                                 graph_has(lambda plan: plan["nodes"][0].get("metadata") == {"board.revises_rule": "Rule 2"}), actor=lead),
+                              ("ruling record", "any"): None, ("ruling release", "any"): None, ("ruling supersede", "any"): None, ("ruling supersede", "partial"): None})
+    long_comment = {
+        ("comment", "any"): refused(["comment", "r-t", "-m", long_text], "2001", actor=None),
+        **{("wait", form): refused(["wait", waiter, "--on", target, "--for", long_text], "characters", actor=solo)
+           for form, waiter, target in (("same-cr", "r-cr-item", "r-cr-item"), ("other-cr", "r-cr-item", "r-t"), ("cr", "r-cr", "r-cr2"))},
+        ("create", "deps-id"): refused(["create", "--graph", plan_file([node(no_commit=True, waits_on=[{"on": "r-t", "for": long_text}])])], "characters", actor=None),
+        ("create", "graph"): refused(["create", "--graph", plan_file([node(no_commit=True, waits_on=[{"on": "r-q", "for": long_text}])])], "characters", actor=None),
+        **{("defer", "any", kind): refused(["defer", SUBJECT[kind], "--reason", long_text], "characters", actor=None) for kind in ("task", "cr", "decision")},
+        ("claim", "agreed"): refused(["claim", "r-ir", "--agreed", long_text], "characters", actor=agent),
+        ("take", "agreed"): refused(["take", "r-held", "--agreed", long_text], "characters", actor=lead),
+        ("unclaim", "resume"): refused(["unclaim", "r-theld", "--resume", long_text], "characters", actor=agent),
+        ("unclaim", "agreed"): refused(["unclaim", "r-held", "--agreed", long_text], "characters", actor=lead),
+        ("handover", "any"): refused(["handover", "r-held", long_text], "characters"),
+        ("return", "any"): refused(["return", "r-ir", long_text], "characters", issues=W(r_ir={"assignee": agent}), actor=agent),
+        ("cr request-review", "any"): None, ("cr land", "any"): None,
+        ("cr reject", "any"): refused(["cr", "reject", "r-cr", long_text], "characters", actor=None),
+        ("ruling supersede", "partial"): refused(["ruling", "supersede", "r-rule", "--with", "r-rule2", "--partial", long_text], "characters", actor=solo)}
+    long_comment[("wait", "same-cr")] = refused(["wait", "r-crd-item", "--on", "r-crd-item2", "--for", long_text], "characters", issues=W(r_crd={"status": "open"}), actor=solo)
+    add("comments.size", long_comment)
+    add("comments.owner", {("comment", "any"): wrote(["comment", "r-t", "-m", "tests green"], lambda w, f: ["comments", "add", "r-t", "tests green"] in w, actor=None)})
+    add("raw.door", {("bd", "any"): None})
+    add("actor.none", {})
+    # The bookkeeping and plumbing cells: their owners write keys or config no other function writes (the board group's allowlist pins key ->
+    # owner); here each verb that names one must reach an owner.
+    static_cells = {"meta.landing", "meta.check", "meta.base", "meta.review", "meta.user-review", "meta.info", "meta.plan-first", "meta.forced",
+                    "meta.holder-keys", "meta.allowlist", "fields.allowlist", "config.owner", "db.owner"}
+    actor_argv = {"create": [*CREATE, "--no-commit"], "move": ["move", "r-t", "--to", "r-cr"], "wait": ["wait", "r-t", "--on", "r-q"],
+                  "link": ["link", "r-t", "r-t2", "--type", "relates-to"], "unlink": ["unlink", "r-t", "r-t2"], "update": ["update", "r-t", "--title", "x"],
+                  "field apply": ["field", "apply", "r-t"], "route": ["route", "ben", "r-t"], "send": ["send", "ben", "r-t"], "comment": ["comment", "r-t", "-m", "x"],
+                  "close": ["close", "r-t", "--reason", "done with the probe here"], "reopen": ["reopen", "r-tdone"], "defer": ["defer", "r-t", "--reason", "x"],
+                  "undefer": ["undefer", "r-tdef"], "claim": ["claim", "r-t"], "take": ["take", "r-theld"], "unclaim": ["unclaim", "r-theld"],
+                  "handover": ["handover", "r-held", "evidence"], "return": ["return", "r-ir", "x"], "cr request-review": ["cr", "request-review", "r-ir"],
+                  "cr refresh": ["cr", "refresh", "r-cr"], "cr edits": ["cr", "edits", "r-cr", "--tip", "abc"], "review open": ["review", "open", "r-cr"],
+                  "cr land": ["cr", "land", "r-cr", "--tip", "abc", "--base", "def"], "cr reject": ["cr", "reject", "r-cr", "x"],
+                  "gate create": ["gate", "create", "--blocks", "r-t", "--reason", "x"], "gate resolve": ["gate", "resolve", "r-gate", "--reason", "x"],
+                  "ruling record": ["ruling", "record", "r-dec", str(body)], "ruling revise": ["ruling", "revise", "r-rule", "--title", "t", "--body-file", str(body), "--holds", "none"],
+                  "ruling release": ["ruling", "release", "r-dec"], "ruling supersede": ["ruling", "supersede", "r-rule", "--with", "r-rule2"]}
+    registered, ran, kinds_run = {}, collections.Counter(), collections.Counter()
+    for verb, form, kind, cell in sorted(tuples):
+        if cell in static_cells:
+            registered[(verb, form, kind, cell)] = ("static", lambda verb=verb, cell=cell: static(verb)(cell))
+        elif cell == "actor.none":
+            registered[(verb, form, kind, cell)] = ("run", broken_actor(actor_argv[verb]) if verb in actor_argv
+                                                    else (lambda verb=verb: None if reaches(handlers[verb], {"acting"}) else (_ for _ in ()).throw(ValueError(f"{verb} reaches no acting()"))))
+        else:
+            table = cases.get(cell, {})
+            key = (verb, form, kind) if (verb, form, kind) in table else (verb, form)
+            if key not in table:
+                problems.append(f"no case for ({verb}, {form}, {kind}, {cell})")
+                continue
+            check = table[key]
+            registered[(verb, form, kind, cell)] = ("static", lambda verb=verb, cell=cell: static(verb)(cell)) if check is None else ("run", check)
+    for cell, table in cases.items():
+        for key in table:
+            if not any(t[3] == cell and t[:len(key)] == key for t in tuples):
+                problems.append(f"case ({', '.join(key)}, {cell}) is in no verb row")
+    if problems:
+        raise ValueError("model.md Write rules and their cases disagree:\n  " + "\n  ".join(problems))
+    with tempfile.TemporaryDirectory() as state_dir, tempfile.TemporaryDirectory() as raw_base:
+        registry = root / "bin" / "session"
+        project, project_env = fake_board(Path(raw_base).resolve())
+        Rules.project = str(project)
+        for args, identity in ((("agent", "--pulls", "implement,review"), as_session("0000-aaaa1111", "codex")), (("agent", "--pulls", "plan,implement"), as_session("0000-plan0001")),
+                               (("lead",), as_session("0000-lead0001")), (("solo",), as_session("0000-solo0001")), (("autopilot",), as_session("0000-auto0001"))):
+            subprocess.run(["bash", str(registry), "activate", *args], check=True, capture_output=True, env={**os.environ, **session_env(state_dir), **identity, **project_env})
+        failures = []
+        with patch.dict(os.environ, session_env(state_dir)), patch.object(board, "holder_gone", lambda *a: False), patch.object(board, "person", lambda: "anna"):
+            for key, (mode, check) in sorted(registered.items()):
+                try:
+                    check()
+                except Exception as error:  # every failing case is reported, not only the first
+                    failures.append(f"{key}: {str(error)[:600]}")
+                ran[mode] += 1
+                kinds_run[key[3]] += 1
+        if failures:
+            raise ValueError(f"{len(failures)} of {len(registered)} write-rule cases fail:\n  " + "\n  ".join(failures))
+    print(f"board rules: {len(registered)} cases ({ran['run']} run, {ran['static']} static reach) over {len(kinds_run)} cells")
+
+
 def run_group(name: str, root: Path) -> None:
     generator = load_generator(root)
     expander = load_skill_expander(root)
@@ -14641,6 +15368,8 @@ def run_group(name: str, root: Path) -> None:
         validate_console_no_board(root)
         validate_session_prune(root)
         validate_cr_rank(root)
+    elif name == "rules":
+        validate_board_rules(root)
     elif name == "contract":
         validate_console_contract(root)
         validate_board_model(root)
@@ -14654,7 +15383,7 @@ def run_group(name: str, root: Path) -> None:
         raise SystemExit(f"unknown group {name}")
 
 
-GROUPS = ("core", "hooks", "board", "contract", "prepass", *(f"engine-{part}" for part in PROTOCOL_PARTS))
+GROUPS = ("core", "hooks", "board", "rules", "contract", "prepass", *(f"engine-{part}" for part in PROTOCOL_PARTS))
 GROUP_LIMIT = 600  # seconds; the slowest group takes about 210 alone, twice that under load
 CALL_LIMIT = 60  # seconds for one protocol call (each takes a few): a hang ends with every thread's stack instead of the group's limit
 GROUP_DEADLINE = [None]  # monotonic deadline of the group's limit, re-armed after each call's own

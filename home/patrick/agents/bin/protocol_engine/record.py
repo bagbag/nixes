@@ -183,8 +183,8 @@ def board_item(ctx: Context, q: dict, path: Path, body: str | None = None, plain
         if held:
             ctx.board.checked('wait', *held, '--on', found, '--for', f'{found} holds it up until answered or its ruling is planned.')
         return found
-    # The released record it revises, else the first record it replaces: the new question is linked to it (parent and topic
-    # labels come from it); `ruling record --replaces` links the other records it replaces.
+    # The released record it revises, else the first record it replaces: the new question is linked to it (its topic labels
+    # come from it; a decision has no parent); `ruling record --replaces` links the other records it replaces.
     revised = None if plain else q.get('revises') or next(iter(q.get('replaces') or []), None)
     output = ctx.board.checked(*record_board_command(ctx, q, path, body, plain))
     new = output.strip() if revised else tagged_item(ctx, tag)  # the create output is not parsed, so find its id by tag
