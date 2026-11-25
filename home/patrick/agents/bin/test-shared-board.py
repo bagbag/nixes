@@ -881,6 +881,22 @@ def t_writers() -> None:
     rc, _, err, _ = run('a', 'reopen', later)
     check(rc != 0 and rejected_cr in err and 'unlink' in err and status(later) == 'closed',
           'S2: reopen refuses a waiter whose target is an item of a dropped request, naming the request', err)
+    # Create authority (nixes-0an9j): filing into a CR is for its holder, the user, a planner or a deciding session; any other session is refused
+    # through every creation path (create, graph nodes); a CR the same plan creates is its creator's to fill.
+    rc, _, err, _ = run('a', 'create', 'filed by a roleless session', '-t', 'task', '--description', 'x', '--parent', held, role='none')
+    check(rc != 0 and held in err and 'standalone' in err and not titled('filed by a roleless session'), '0an9j: create --parent by a session that may not file is refused', err)
+    graph = ROOT / 'authority-graph.json'
+    graph.write_text(json.dumps({'nodes': [{'key': 'item', 'title': 'graph node filed by a roleless session', 'type': 'task', 'description': 'x', 'parent_id': held}]}))
+    rc, _, err, _ = run('a', 'create', '--graph', str(graph), role='none')
+    check(rc != 0 and held in err and not titled('graph node filed by a roleless session'), '0an9j: a graph node by a session that may not file is refused', err)
+    graph.write_text(json.dumps({'nodes': [{'key': 'cr', 'title': 'a roleless session files its own request', 'type': 'change-request', 'description': 'x'},
+                                           {'key': 'item', 'title': 'its item', 'type': 'task', 'description': 'x', 'parent_key': 'cr'}]}))
+    rc, _, err, _ = run('a', 'create', '--graph', str(graph), role='none')
+    check(rc == 0 and titled('its item'), '0an9j: a session files items into the request its plan creates', err)
+    for role in ('solo', None):
+        title = f'filed by {role or "the user"} into the held request'
+        rc, _, err, _ = run('a', 'create', title, '-t', 'task', '--description', 'x', '--parent', held, role=role)
+        check(rc == 0 and titled(title), f'0an9j: {role or "the user"} files into the request solo holds', err)
     run('a', 'unclaim', held, '--resume', 'writer tests done', role='solo')
 
 

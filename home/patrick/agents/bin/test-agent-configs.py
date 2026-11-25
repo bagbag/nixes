@@ -5133,6 +5133,17 @@ def validate_board(root: Path) -> None:
             if fake.writes()[0] != ["update", ids["Held task"], "--assignee", "lead0001", "--if-assignee", "aaaa1111/build-12345678", "--if-status", "open", "--json"] \
                     or fake.writes()[1][:3] != ["comments", "add", ids["Held task"]]:
                 raise ValueError(f"board take: {fake.writes()}")
+            # A multi-id close checks every id first, but a compare-and-set can still be lost mid-call (nixes-i2cgg: bd has no conditional batch):
+            # the refusal names what closed and the wait left on dropped work, as check reports it.
+            loose = {**next(i for i in fixture if i["id"] == ids["Held task"]), "assignee": "", "comments": []}
+            dropped, waiter = {**loose, "id": "fx-cdrop", "title": "dropped first"}, \
+                {**loose, "id": "fx-cwait", "title": "conflicts", "dependencies": [{"issue_id": "fx-cwait", "depends_on_id": "fx-cdrop", "type": "blocks"}]}
+            fake = Fake([*fixture, dropped, waiter], refuse={"fx-cwait"})
+            code, _, errors = invoke(["close", "fx-cwait", "fx-cdrop", "--reason", reason, "--outcome", "dropped"], fake, "lead0001")
+            report = errors.splitlines()
+            if code == 0 or not any(w[:2] == ["close", "fx-cdrop"] for w in fake.writes()) or any(w[:2] == ["close", "fx-cwait"] for w in fake.writes()) \
+                    or not any("fx-cdrop" in line and "closed" in line for line in report[1:]) or not any("fx-cwait" in line and "fx-cdrop" in line for line in report[1:]):
+                raise ValueError(f"a close losing its compare-and-set mid-call must name what closed and the wait now on dropped work: {code} {errors!r} {fake.writes()}")
 
             fake = Fake(variant(**{"Released ruling": {"assignee": "cccc3333"}}))
             invoke(["unclaim", ids["Held task"], ids["Released ruling"], "--agreed", "anna: go ahead"], fake, "lead0001")
@@ -8072,9 +8083,9 @@ else:
             result, calls = run_fake("create", *args)
             if result.returncode != 2 or "change request" not in result.stderr or writes_of(calls, "create"):
                 raise ValueError(f"board create {args} must be refused for its parent: {result.returncode} {result.stderr!r} {calls}")
-        result, calls = run_fake("create", "T", "--parent", "fx-cr")
-        if result.returncode != 0 or not writes_of(calls, "create"):
-            raise ValueError(f"board create --parent <change request> files the task there: {result.returncode} {result.stderr!r} {calls}")
+        result, calls = run_fake("create", "T", "--parent", "fx-cr")  # this session registers no role: not the holder, a planner or deciding (nixes-0an9j)
+        if result.returncode == 0 or "standalone" not in result.stderr or writes_of(calls, "create"):
+            raise ValueError(f"board create --parent <change request> by a session that may not file there must be refused: {result.returncode} {result.stderr!r} {calls}")
         result, calls = run_fake("create", "T", "--no-commit")
         if result.returncode != 0 or not writes_of(calls, "create"):
             raise ValueError(f"board create --no-commit files work that commits nothing, outside a change request: {result.returncode} {result.stderr!r} {calls}")

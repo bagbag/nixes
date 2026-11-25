@@ -329,6 +329,7 @@ DEFER = ('planner+holder', 'deciding', 'user')  # setting aside: a session pulli
 # written by a deciding session whoever holds.
 ITEM_WRITE = ('holding', 'user', 'deciding+unheld', 'deciding+gone', 'planner+unheld')
 ITEM_WAIT = (*ITEM_WRITE, 'deciding')
+ITEM_CREATE = ('holding', 'user', 'planner', 'deciding')  # filing a new item into a CR, held or not (nixes-308o2, nixes-0an9j); others file standalone
 DECIDING_CLOSE = ('deciding+holder', 'deciding+gone', 'user')
 ATTENDED_CLOSE = ('attended+holder', 'attended+gone', 'user')  # a milestone is accepted with the user: not autopilot
 MOVES = (
@@ -2491,7 +2492,7 @@ def deviations(board: Board, root: str | None, dropped_targets: set[str] | froze
                                                      f"{'; '.join(dep_fix(item_id, blocker) for blocker in foreign)}"))
         if group in (WORK_GROUP, ITEM_GROUP, CR_GROUP):
             for blocker in sorted(dropped_targets.intersection(board.blockers.get(item_id, []))):
-                found.append((item_id, 'dropped-blocker', f'waits on {blocker}, closed dropped, which never delivers: {dep_fix(item_id, blocker)}, or wait on the record that keeps the work'))
+                found.append((item_id, 'dropped-blocker', dead_wait_text(item_id, blocker)))
         if issue['status'] == 'deferred':
             waiting = deferred_waiters(board, item_id)
             if waiting:
@@ -6000,7 +6001,8 @@ def close_command(args) -> int:
         raise BoardError(f"unknown {', '.join(missing)}")
     board = Board.load()  # an item closes by its change request's holder (item_write_refusal)
     together = frozenset(ids)
-    # All or none: every id's whole close is checked before the first write, so no refusal leaves an earlier id closed (a dropped target under its waiter).
+    # All or none: every id's whole close is checked before the first write, so no refusal leaves an earlier id closed (a dropped target under its
+    # waiter), up to a mid-call conflict (a record changed between the check and its write; bd has no conditional batch), which the refusal reports.
     refusals = []
     for item_id in ids:
         try:
@@ -6009,10 +6011,31 @@ def close_command(args) -> int:
             refusals.append(str(error))
     if refusals:
         raise BoardError('\n'.join(refusals) + ('\nnothing closed' if len(ids) > 1 else ''))
+    closed = []
     for item_id in close_order(board, ids):
-        move(found[item_id], 'close', reason=reason, force=args.force, outcome=args.outcome, board=board, together=together)
+        try:
+            move(found[item_id], 'close', reason=reason, force=args.force, outcome=args.outcome, board=board, together=together)
+        except BoardError as error:
+            if closed:
+                raise BoardError(f'{error}\n' + partial_close_report(board, closed, found)) from error
+            raise
+        closed.append(item_id)
         print(f'{item_id}: closed')
     return 0
+
+
+def partial_close_report(board: Board, closed: list[str], found: dict[str, dict]) -> str:
+    """What a multi-id close left when a later id met a conflict (nixes-i2cgg): the ids it closed and each live wait now on dropped work, as check
+    reports it (dropped_blockers; unlink or reopen repairs it)."""
+    board.by_id.update({item_id: found[item_id] for item_id in closed})  # move updated them in place: closed, with their outcome
+    dead = dropped_blockers(board)
+    waits = [(waiter, blocker) for waiter, record in board.by_id.items() if record['status'] != 'closed'
+             and group_of(board, record) in (WORK_GROUP, ITEM_GROUP, CR_GROUP) for blocker in sorted(dead.intersection(board.blockers.get(waiter, [])))]
+    return '\n'.join([f"closed before it: {', '.join(closed)}", *(f'{waiter} {dead_wait_text(waiter, blocker)}' for waiter, blocker in waits)])
+
+
+def dead_wait_text(waiter: str, blocker: str) -> str:
+    return f'waits on {blocker}, closed dropped, which never delivers: {dep_fix(waiter, blocker)}, or wait on the record that keeps the work'
 
 
 GLOBAL_VALUES = ('-C', '--directory', '--db', '--database', '--actor', '--dolt-auto-commit', '--mem-profile')
@@ -6555,6 +6578,11 @@ def create_plan(plan: dict, board: Board | None, verb: str = 'create', holds: li
         if closed := [record['id'] for record in requests if record.get('status') == 'closed']:
             raise BoardError(f"{node['key']}: change request {', '.join(closed)} is closed (landed or dropped): an item under it would be reached by no queue; "
                              'file the work in an open change request')
+        for request in (record for record in requests if record['id'] not in types):  # a change request the plan makes is its creator's to fill
+            row = Move('create', ITEM_GROUP, (request['status'],), '=', '*', '=', ITEM_CREATE)
+            if refusal := authority_refusal(request, row, 'create', derived_actor(), board):
+                raise BoardError(f"{node['key']}: filing into {refusal}; file it standalone (agents board create without --parent, "
+                                 f"--found-in {request['id']}) or comment on {request['id']}")
     _, waits = edge_rules(board, links, verb, types, holds, parents)
     if dry_run:
         return {}, waits
