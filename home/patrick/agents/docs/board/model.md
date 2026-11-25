@@ -1,6 +1,6 @@
 # Board model
 
-What `bin/board` and `bin/session` do and why; the README links here. The code is the source of truth: the tables below are printed from it (`model_tables` in `bin/board`) and `bin/test-agent-configs.py` (contract group) keeps this file's copy equal. Prose says only what the code cannot show. Skills under `skills/` keep procedure and judgment and name these rules; they are not installed beside this file, so a rule a session must follow without it is in the verb's refusal or help.
+What `bin/board` and `bin/session` do and why; the README links here. The code is the source of truth: the tables below are printed from it (`model_tables` in `bin/board`) and `bin/test-agent-configs.py` (contract group) keeps this file's copy equal. [Write rules](#write-rules) is the exception: that table is the contract the code and its tests follow (nixes-jczod). Prose says only what the code cannot show. Skills under `skills/` keep procedure and judgment and name these rules; they are not installed beside this file, so a rule a session must follow without it is in the verb's refusal or help.
 
 Absorbs the risk-tiered workflow (release r2). Parts not yet built are marked **planned** with their change request.
 
@@ -201,6 +201,7 @@ Every rule is keyed to the data it guards, not to the verb that writes it (nixes
 | | `parent-child.cr-stays` | A CR keeps its parent and moves only into a milestone. | `edge_rules` | n/a | runs |
 | | `parent-child.queue` | On a shared board, only a lead, solo or person moves an item into another queue by its parent. | `edge_rules` | n/a (a child takes its parent's queue) | runs |
 | | `parent-child.no-commit` | Entering a CR clears `no_commit` in the same write (nixes-x62oy). | `write_edges` | n/a (refused with a parent) | runs |
+| | `parent-child.owner` | No other writer: `write_fields` refuses `--parent`. | `write_fields` refuses | n/a | gap G7 |
 | | `parent-child.refusal-text` | A refusal by `item-create` names routes that work: a no-commit task, a new CR with its items in one `create --graph`, or a comment (nixes-psxz8). | `edge_rules` | gap G6 | gap G6 |
 | `blocks` (a wait) | `blocks.writers` | A wait is written only as a wait: `wait`, `waits_on` and `--deps`, `--holds`, `gate create`, and the ruling verbs. `link` refuses one, and bd's link words are refused, naming `wait`. | `edge_rules` | runs | runs |
 | | `blocks.target` | Nothing waits on a deferred record, or one in a deferred CR, or on a record closed dropped, a question excepted (nixes-ze5lx). An `external:` target skips this rule: open Q2. | `edge_rules` (`wait_target_refusal`) | runs | runs |
@@ -226,8 +227,8 @@ Every rule is keyed to the data it guards, not to the verb that writes it (nixes
 | `assignee` | `assignee.row` | Only claim, take, unclaim and the closing rows write it, by compare-and-set (non-author, gone, cap). `create` takes no holder. | `move` | runs | runs |
 | | `assignee.owner` | `write_fields` refuses `--assignee` and `--if-*`. | `write_fields` refuses | gap G7 | gap G7 |
 | `issue_type` | `issue_type.types` | Only board types; a gate only through `gate create`. | `create_plan` (`type_refusal`) | runs | n/a |
-| | `issue_type.owner` | `write_fields` refuses `--type`, and the parent flags (`parent-child.only-move`). | `write_fields` refuses | n/a | gap G7 |
-| `title`, `priority`, `description`, `design`, `acceptance_criteria`, `notes`, `external_ref`, `spec_id` | `content.hold` | Writes to an item need `ITEM_WRITE` on its CR. | `write_fields` | n/a (`parent-child.item-create`) | runs |
+| | `issue_type.owner` | `write_fields` refuses `--type`. | `write_fields` refuses | n/a | gap G7 |
+| `title`, `priority`, `description`, `design`, `acceptance_criteria`, `notes`, `external_ref`, `spec_id`, `estimate` | `content.hold` | Writes to an item need `ITEM_WRITE` on its CR. | `write_fields` | n/a (`parent-child.item-create`) | runs |
 | | `content.size` | A work task's long fields stay within `FIELD_LIMIT` unless the write shrinks them or only changes paths. Decisions are exempt. | `create_plan` (new), `write_fields` (existing) | runs for `create`; gap G13 for `return` | runs |
 | | `content.export` | `field apply` refuses a field that moved since its export, or an empty file. | `field_apply_one` | n/a | runs |
 | `labels` | `labels.hold` | A label write to an item needs `ITEM_WRITE` on its CR. | `write_fields` | n/a | runs |
@@ -239,13 +240,13 @@ Every rule is keyed to the data it guards, not to the verb that writes it (nixes
 | | `comments.owner` | One comment writer: `comment_command` adds by its own bd call. Open Q6. | `comment` | open Q6 | open Q6 |
 | `no_commit`, `look`, `view` | `setting.values` | `setting_refusal`: `no_commit` on a task only, `look`/`view` on a CR from their value sets, never the project default. | `create_plan` (new), `write_fields` (existing) | runs | runs |
 | | `setting.who` | `update` sets them only from a lead, solo or person, on an unheld record: `no_commit` outside any CR, `look`/`view` on an open CR. `put_meta` refuses them. | `write_fields` | n/a | runs |
-| `outcome`, `deferred_by`, `revisit` | `meta.move-keys` | Written only with `move`'s row: the closing row (reopen clears `outcome`), `defer` and `undefer`. `put_meta` refuses them. | `move` | n/a | gap G8 |
+| `outcome`, `deferred_by`, `revisit` | `meta.move-keys` | Written only with `move`'s row: the closing row (reopen clears `outcome`), `defer` and `undefer`. `put_meta`, and `write_fields`' `--set-metadata`/`--unset-metadata`, refuse them. | `move` | n/a | gap G8 |
 | `hold`, `author` | `meta.holder-keys` | `hold`: claim writes it, every release clears it. `author`: the hand-over writes it. Whether `put_meta` refuses them, given that `claim_cr` writes `hold` through `put_meta` today: open Q5. | `move` | open Q5 | open Q5 |
 | `found_in` | `meta.found-in` | Set at creation to a known record; `discovered-from` is refused. | `create_plan` | runs | n/a |
 | `board.revises_rule` | `meta.revises-rule` | Written only by the ruling verbs (`revise --partial`, `carry_revisions`). | `create_plan`, `put_meta` | runs | runs |
 | `sent_at` | `meta.sent-at` | Every `send` stamps it with the label write. Owner: open Q6. | `write_fields` | n/a | runs |
-| `plan_first`, `resume`, `forced_hold_by`, `forced_hold`, `since`, `reviewing_tip`, `no_agent_review_reason`, `opened_tip`, `base`, `base_sha`, `setup_sha`, `rebase_onto`, `rebase_from`, `landing`, `review_tip`, `review_base_tip`, `review_edits`, `user_seen_tip`, `user_seen_base_tip`, `check_*` | `meta.bookkeeping` | The verb whose step a key records writes it, and `move` carries some keys in its compare-and-set. No data rule beyond `BOARD_METADATA`: `check` flags any other key. | `put_meta`, `move` (fields) | runs | runs |
-| `deep_review` | `meta.deep-review` | A review sets it to the path it escalates (review.md step 7), through raw bd. No board verb writes it: open Q4. | none | open Q4 | open Q4 |
+| `plan_first`, `resume`, `forced_hold_by`, `forced_hold`, `since`, `reviewing_tip`, `no_agent_review_reason`, `opened_tip`, `base`, `base_sha`, `setup_sha`, `rebase_onto`, `rebase_from`, `landing`, `review_tip`, `review_base_tip`, `review_edits`, `user_seen_tip`, `user_seen_base_tip`, `check_at`, `check_base_count`, `check_base_tip`, `check_command`, `check_kind`, `check_new`, `check_output`, `check_reason`, `check_result`, `check_tip`, `check_tip_count` | `meta.bookkeeping` | The verb whose step a key records writes it, and `move` carries some keys in its compare-and-set. No data rule beyond `BOARD_METADATA`: `check` flags any other key. | `put_meta`, `move` (fields) | runs | runs |
+| `deep_review`, `checkpoint` | `meta.no-writer` | A review sets `deep_review` to the path it escalates (review.md step 7) through raw bd; `checkpoint` is only read, as legacy (`check` skips it). No board verb writes either: open Q4. | none | open Q4 | open Q4 |
 | `custom.board.*` (`target`, `setup`, `checks`, `look`, `view`, `model`, `shared`, `moved`) | `config.owner` | `setup` writes the settings, and the model marker on a board it creates (board-migrate's converter marks an existing one). `share` and `join` write the shared config (`set_config`) and `shared`; `relocate` writes `moved`. They are not records. | `setup`, `share`, `join`, `relocate` | runs | runs |
 | the database (init, backup, dolt commit, push, pull, remote, sync, flatten) | `db.owner` | Run by `setup`, `share`, `join`, `relocate`, and `Shared` for the sync window. They are not records. | those verbs | runs | runs |
 | any (raw) | `raw.door` | `bd --raw --yes` runs bd without the board's rules, by design (board-core). `bd` alone runs `--readonly`. The protocol engine reaches bd only through `board`, and its one `board bd` is a `list`, so no allowlist covers it (nixes-k7617). | `run_bd` | n/a | n/a |
@@ -260,14 +261,14 @@ Every rule is keyed to the data it guards, not to the verb that writes it (nixes
 | `wait` | `blocks.{writers, target, waiter, cycle, hold, for, pair}`, the target in the waiter's CR, in another CR, or a CR; `status.row` (the holder's own wait unclaims); `actor.none`. |
 | `link` | `relates-to.{free, types, pair}`, `parent-child.only-move`, `blocks.writers`, `supersedes.ruling-only`, `tracks.ruling-only`. |
 | `unlink` | `blocks.hold` (removal), `parent-child.only-move`, `supersedes.ruling-only`, `tracks.ruling-only`, `relates-to.free`. |
-| `update` | `content.hold` (`--title`, `--priority`), `labels.{hold, form}`, `queue.route` (`--label`, `--unlabel`), `setting.{values, who}` (`--no-commit`, `--look`, `--view`), `actor.none`. |
+| `update` | `content.hold` (`--title`, `--priority`), `labels.{hold, form}`, `queue.route` (`--label`, `--unlabel`), `setting.{values, who}` (`--no-commit`, `--look`, `--view`), `actor.none`; the owner refusals `status.owner`, `assignee.owner`, `issue_type.owner`, `parent-child.owner`, `meta.move-keys` through `write_fields`. |
 | `field apply` | `content.{hold, size, export}`. |
 | `route`, `send` | `queue.attended`, `labels.hold`; `send`: also `meta.sent-at` and top level only. |
 | `comment` | `comments.{size, owner}`. |
 | `close` | `status.row` for each type, `blocks.no-dropped-close` (one id, several ids, a mid-call conflict), `meta.move-keys` (`outcome`). |
 | `reopen` | `status.row`, `blocks.reopen`, `supersedes.row`, `meta.move-keys`; a CR, or an item of a closed CR, is refused. |
 | `defer`, `undefer` | `status.row`, `blocks.defer`, `meta.move-keys`. |
-| `claim`, `take`, `unclaim` | `status.row`, `assignee.row`, `status.who-planner`, `meta.holder-keys`, `meta.bookkeeping` (`plan_first`, `resume`, `forced_hold*`, `reviewing_tip`). |
+| `claim`, `take`, `unclaim` | `status.row`, `assignee.row`, `status.who-planner`, `meta.holder-keys`, `meta.bookkeeping` (`plan_first`, `resume`, `forced_hold_by`, `forced_hold`, `reviewing_tip`). |
 | `handover` | `status.row` (`items-closed`, `look-before`, `not-open-for-review`), `meta.holder-keys`, `meta.bookkeeping`; a look-after pass covers `cr land`'s cells. |
 | `return` | `status.row` (`return`, `return --ruling`), `status.who-planner`; each finding item: `parent-child.item-create`, `content.size`. |
 | `cr request-review`, `cr refresh`, `cr edits`, `review open` | `status.row` (`cr request-review`: the `send to review` row), `meta.bookkeeping`. |
