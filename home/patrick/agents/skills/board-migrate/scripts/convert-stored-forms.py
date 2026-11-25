@@ -452,7 +452,7 @@ def rule_board(b: Board):
 
 def deferrals(b: Board, left: list[str]) -> list[Step]:
     """A deferral whose reason named a condition (the words the old check refused) reopens only when it already waits (a blocks link) on an open record,
-    and only when the board's rules accept the reopened record (`undefer` would: nothing it or its items wait on is deferred, and no other wait problem
+    and only when the board's rules accept the reopened record (`undefer` would: its own refusal and no other wait problem
     check reports; N8). No wait is read out of the note's prose (nixes-gym2j): any other such deferral stays a someday record with its links, listed
     for the agent to decide with the user."""
     steps = []
@@ -470,6 +470,8 @@ def deferrals(b: Board, left: list[str]) -> list[Step]:
         if waits:
             reopened = BOARD_MODULE.post_state(deck, {item_id: {'status': 'open'}})
             conflicts = [f'{one} {problem}' for (_, one, _), (problem, _, _) in BOARD_MODULE.new_problems(deck, reopened, [item_id]).items()]
+            if refusal := BOARD_MODULE.undefer_refusal(deck, deck.by_id[item_id], frozenset([item_id])):  # undefer's own rule: nothing it waits on stays deferred
+                conflicts.append(f'{item_id} {refusal}')
             if not conflicts:
                 steps.append((f'{item_id}: the deferral already waits on {", ".join(waits)}: open again', update(item_id, '--status', 'open')))
                 deck = reopened  # a later reopen sees this one

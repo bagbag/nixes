@@ -2427,6 +2427,13 @@ def t_migrate() -> None:
     link('cond_mixed', 'someday', 'blocks')
     raw(side, 'defer', ids['someday'])
     raw(side, 'defer', ids['cond_mixed'])
+    make('cond_qd', 'deferred question', kind='decision')  # the same, but the deferred record is a question: undefer's own rule refuses it, check tolerates it
+    make('cond_q', 'conditional deferral that also waits on a deferred question', *no_commit)
+    update('cond_q', '--notes', f"revisit after {ids['target']} lands")
+    link('cond_q', 'target', 'blocks')
+    link('cond_q', 'cond_qd', 'blocks')
+    raw(side, 'defer', ids['cond_qd'])
+    raw(side, 'defer', ids['cond_q'])
     make('rule_a', 'in-force ruling that waits on an in-force ruling', kind='decision')
     update('rule_a', '--status', 'released')
     make('rule_b', 'in-force ruling the other waits on', kind='decision')
@@ -2607,6 +2614,10 @@ def t_migrate() -> None:
           and any(f"{ids['cond_mixed']}:" in line and ids['someday'] in line for line in first_apply.splitlines()),
           'migrate: a condition-worded deferral that also waits on a deferred record stays deferred, both waits kept, and is listed (N8)',
           (row('cond_mixed')['status'], deps('cond_mixed'), first_apply[-600:]))
+    check(row('cond_q')['status'] == 'deferred' and {(ids['target'], 'blocks'), (ids['cond_qd'], 'blocks')} <= deps('cond_q')
+          and any(f"{ids['cond_q']}:" in line and ids['cond_qd'] in line for line in first_apply.splitlines()),
+          'migrate: a condition-worded deferral that also waits on a deferred question stays deferred, both waits kept, and is listed (undefer refuses it, P6)',
+          (row('cond_q')['status'], deps('cond_q'), first_apply[-600:]))
     check((ids['rule_b'], 'blocks') in deps('rule_a') and (ids['rule_b'], 'relates-to') not in deps('rule_a'), 'migrate: an in-force ruling keeps its wait on an in-force ruling', deps('rule_a'))
     gates = [i for i in now.values() if i['issue_type'] == 'gate' and i['status'] == 'open' and i.get('await_type') == 'human']
     gates = [g for g in gates if any((g['id'], 'supersedes') in {(d['depends_on_id'], d['type']) for d in i.get('dependencies') or []} for i in now.values() if i['status'] == 'closed')]  # the old record is superseded by the gate

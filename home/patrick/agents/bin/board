@@ -652,12 +652,12 @@ def write_fields(board: 'Board', ids: list[str], flags: list[str], command: str 
 CLOSE_REASON_MIN = 20  # bd refuses a shorter close reason
 
 
-def guard_problems(board: 'Board', issue: dict, together: frozenset, change, kind: str, fix=None) -> str | None:
-    """A guard of the one rule set (nixes-pn847): the wait problems of `kind` (wait_problems) that the call's status writes (`change(record)`: the
+def guard_problems(board: 'Board', issue: dict, together: frozenset, change, kind: str | None, fix=None) -> str | None:
+    """A guard of the one rule set (nixes-pn847): the wait problems of `kind` (None: every class; wait_problems) that the call's status writes (`change(record)`: the
     fields it sets, on the record and every id written with it) leave on the board, which check would report next; their sentences, then `fix`
     of their keys (None: wait_problems' own fixes)."""
     ids = [i for i in dict.fromkeys([issue['id'], *together]) if i in board.by_id]
-    found = new_problems(board, post_state(board, {i: change(board.by_id[i]) for i in ids}), ids, (kind,))
+    found = new_problems(board, post_state(board, {i: change(board.by_id[i]) for i in ids}), ids, (kind,) if kind else WAIT_CLASSES)
     if not found:
         return None
     fixes = [fix(list(found))] if fix else list(dict.fromkeys(f for _, f, _ in found.values()))
@@ -685,8 +685,7 @@ GUARDS = {  # name -> (its Write-rules cell, the rule: None or why the move is r
         board, issue, together, lambda record: {'status': 'closed', 'metadata': {**meta(record), 'outcome': outcome}}, 'dropped-blocker',
         lambda keys: f"unlink them ({'; '.join(dep_fix(w, b) for _, w, b in keys)}), wait on the record that keeps the work, or close them in the same call")),
     'no-dropped-target': ('blocks.reopen', lambda issue, board, reason, outcome, together, who: board and guard_problems(
-        board, issue, together, lambda record: {'status': 'open', 'metadata': {k: v for k, v in meta(record).items() if k != 'outcome'}}, 'dropped-blocker',
-        lambda keys: f"unlink it first ({'; '.join(dep_fix(w, b) for _, w, b in keys)}) or wait on the record that keeps the work")),
+        board, issue, together, lambda record: {'status': 'open', 'metadata': {k: v for k, v in meta(record).items() if k != 'outcome'}}, None)),
     'not-superseded': ('supersedes.row', lambda issue, board, reason, outcome, together, who: f'it is superseded by {", ".join(found)}: record a revision to put it back in force (agents board ruling revise {issue["id"]})' if board and (found := superseding(board, issue['id'])) else None),
     'settled-premises': ('status.release-holds', lambda issue, board, reason, outcome, together, who: board and issue['status'] != 'in_force' and release_holds_refusal(board, issue['id'], together)),
     'no-deferred-target': ('blocks.target', lambda issue, board, reason, outcome, together, who: board and (undefer_refusal(board, issue, together) or guard_problems(
@@ -2014,6 +2013,12 @@ class WorkWait(NamedTuple):
     def relevant(self) -> frozenset[str]:
         return self.hard | self.bases | self.stacks | frozenset().union(*(waits | bases for waits, bases in self.items))
 
+    def credited(self, token: str) -> bool:
+        """Whether delivering `token` can itself help unlock this unit: a wait no stack meets; an own base or a stack candidate only while there are several
+        (`relevant` also holds the single base that merely triggers a new look: it needs no delivery, N7)."""
+        return token in self.hard or len(self.bases) > 1 and token in self.bases or len(self.stacks) > 1 and token in self.stacks \
+            or any(token in waits for waits, _ in self.items)
+
 
 class UnlockImpact(NamedTuple):
     score: Fraction = Fraction()
@@ -2056,7 +2061,7 @@ class WorkUnlocks:
             if issue['status'] == PASSED and (parent := live_parent(board, issue)):
                 hard.append(parent)
             items = tuple((frozenset(waits), frozenset(item_bases)) for item in board.cr_items(item_id) if item.get('issue_type') != CR_TYPE
-                          for waits, item_bases in [board.item_parts(item, item_id)])
+                          for waits, item_bases in [board.item_parts(item, item_id, projected=True)])
             return WorkWait(frozenset(hard), frozenset(bases), items, frozenset(stacks), live_parent(board, issue))
         hard = set()
         ignored = set(board.foreign_waits(issue))
@@ -2137,7 +2142,7 @@ class WorkUnlocks:
             unit, added = pending.popleft()
             for token in self.delivers[unit]:
                 for waiting in self.reverse.get(token, []):
-                    if waiting in reachable and (token, waiting) not in impossible:
+                    if waiting in reachable and self.waits[waiting].credited(token) and (token, waiting) not in impossible:
                         found = participants.setdefault(waiting, set())
                         new = added - found
                         if new:
@@ -2770,8 +2775,8 @@ def new_problems(before: Board, later: Board, ids: Iterable[str], classes: tuple
 
 def write_order(board: Board, ids: list[str], fields: dict) -> list[str]:
     """The call's ids in an order whose every prefix leaves no new wait problem (N4): what an id needs is written before it (undefer a target
-    before its waiter, defer a waiter before its target), so a stop between two writes leaves a board check accepts. Ids that need each other
-    keep the given order."""
+    before its waiter, defer a waiter before its target), so a stop between two writes leaves a board check accepts. Refuses before the first write
+    when none is safe."""
     order: list[str] = []
     ids = list(dict.fromkeys(ids))
     while len(order) < len(ids):
@@ -2780,7 +2785,10 @@ def write_order(board: Board, ids: list[str], fields: dict) -> list[str]:
         def blocked(i: str) -> bool:
             later = post_state(board, {**written, i: fields})
             return bool(new_problems(post_state(board, written), later, [i]) or fields.get('status') == 'open' and deferred_targets(later, i))
-        order.append(next((i for i in left if not blocked(i)), left[0]))
+        safe = next((i for i in left if not blocked(i)), None)
+        if safe is None:  # every next write would add a problem a stop there leaves behind
+            raise bad_input(f"{', '.join(left)}: no order writes them one by one without a wait problem in between (they wait on each other); unlink one wait first")
+        order.append(safe)
     return order
 
 
@@ -7178,12 +7186,12 @@ def record(board: Board, args) -> int:
             raise combined([error], f'{error}; an in-force record changes through agents board ruling revise') from None
         raise
     ruled = post_state(board, {args.id: {'status': status}})
-    edge_rules(ruled, premises, 'wait', removes=[edge for _, target, _ in premises for edge in board.between(args.id, target) if edge[2] == 'relates-to'], actor=actor)
     closes, problems = answered_refusals(board, [(question, [args.id]) for question in dict.fromkeys(args.answers)], actor)
     if problems:
         raise combined(problems, 'record refused:\n  ' + '\n  '.join(map(str, problems)))
-    if carried := answer_waits(board, closes):
-        edge_rules(ruled, [wait for wait, _ in carried], 'wait', removes=[edge for _, edges in carried for edge in edges], actor=actor)
+    carried = answer_waits(board, closes)  # the premises and the carried waits meet the wait rules together: one graph, so a cycle between them shows
+    gives_way = [edge for _, target, _ in premises for edge in board.between(args.id, target) if edge[2] == 'relates-to'] + [e for _, edges in carried for e in edges]
+    edge_rules(ruled, [*premises, *(wait for wait, _ in carried)], 'wait', removes=gives_way, actor=actor)
     try:
         text = Path(args.file).read_text(encoding='utf-8')
     except (OSError, UnicodeDecodeError) as error:
@@ -7713,10 +7721,20 @@ def release(board: Board, args) -> int:
                     for result in lint.get('results') or [] if result.get('missing')]
         if unlinted:
             raise bad_input('release refused, record text fails bd lint (write the record first):\n  ' + '\n  '.join(unlinted))
-    carry_waits(board, carried)  # what waits on an answered question waits on its ruling before the ruling is plannable (nixes-ymay1)
     if pending:
         # The items an in-force ruling changes wait on it; planning closes it and they are ready.
-        for issue in pending:  # one compare-and-set each; a stop leaves the rest decided, and a rerun releases them. The snapshot takes the new status: the waits below read it
+        order: list[dict] = []
+        seen: set[str] = set()
+        def place(issue: dict) -> None:  # a premise before the record resting on it: the guard reads the snapshot, where the premise is already in force
+            if issue['id'] not in seen:
+                seen.add(issue['id'])
+                for one in pending:
+                    if one['id'] in board.blockers.get(issue['id'], []):
+                        place(one)
+                order.append(issue)
+        for issue in pending:
+            place(issue)
+        for issue in order:  # one compare-and-set each; a stop leaves the rest decided, and a rerun releases them. The snapshot takes the new status: the waits below read it
             move(issue, 'ruling release', board=board)
     for old in taking:
         take(board, argparse.Namespace(ids=[old], force=None, agreed=None))
@@ -7728,7 +7746,7 @@ def release(board: Board, args) -> int:
         metadata = issue.get('metadata') if isinstance(issue.get('metadata'), dict) else {}
         for old in board.revises(issue['id']):
             failed += supersede_chain(board, old, issue['id'], metadata.get(REVISES_RULE), actor, {issue['id']})
-    left = close_answered(board, closes, set(args.ids), carry=False)  # their waits are written above
+    left = close_answered(board, closes, set(args.ids))
     return 1 if failed or left else 0
 
 
@@ -7754,7 +7772,7 @@ def answered_refusals(board: Board, closes: list[tuple[str, list[str]]], actor: 
 def answer_waits(board: Board, closes: list[tuple[str, list[str]]]) -> list[tuple[Edge, list[Edge]]]:
     """The waits an answered question hands to the rulings that answer it: what still waits on the question waits on them (a ruling in force holds
     the work it changes until planned), as Record's inherited waits did (nixes-ymay1). Records answered in the same call, the rulings themselves and
-    a pair already linked otherwise are left; a relates-to link gives way to the wait. Each as (the wait, the edges it replaces)."""
+    a wait already there are left; a relates-to link gives way to the wait. Each as (the wait, the edges it replaces)."""
     answered = {question for question, _ in closes} | {r for _, records in closes for r in records}
     found = []
     for question, records in closes:
@@ -7762,9 +7780,9 @@ def answer_waits(board: Board, closes: list[tuple[str, list[str]]]) -> list[tupl
             if waiter in answered or not board.is_open(waiter) or board.by_id[waiter].get('issue_type') == 'milestone':
                 continue
             for ruling in records:
-                edges = board.between(waiter, ruling)
-                if all(kind == 'relates-to' for _, _, kind in edges) and (waiter, ruling, WAIT_LINK) not in [f[0] for f in found]:
-                    found.append(((waiter, ruling, WAIT_LINK), edges))
+                edges = board.between(waiter, ruling)  # a wait counts only in this direction; the reverse one is for the edge rules to refuse as a cycle
+                if not any(a == waiter and blocking(kind) for a, _, kind in edges) and (waiter, ruling, WAIT_LINK) not in [f[0] for f in found]:
+                    found.append(((waiter, ruling, WAIT_LINK), [edge for edge in edges if edge[2] == 'relates-to']))
     return found
 
 
@@ -7775,10 +7793,10 @@ def carry_waits(board: Board, carried: list[tuple[Edge, list[Edge]]]) -> None:
         comment(wait[0], wait_comment(wait[1], 'the ruling answers a question it waited on'))
 
 
-def close_answered(board: Board, closes: list[tuple[str, list[str]]], released: set[str], carry: bool = True) -> list[str]:
+def close_answered(board: Board, closes: list[tuple[str, list[str]]], released: set[str]) -> list[str]:
     """Closes each answered question once every unsettled blocker is a ruling of this release or a question closed
     before it here (dependency order); forces only past those and in-force rulings. What waits on a question waits on its rulings first
-    (answer_waits; `carry` False: the caller wrote them), so its close releases nothing. Returns the questions left open."""
+    (answer_waits), so its close releases nothing; a question left open carries none. Returns the questions left open."""
     closed: set[str] = set()
     pending = list(closes)
     while pending:
@@ -7788,8 +7806,7 @@ def close_answered(board: Board, closes: list[tuple[str, list[str]]], released: 
             if any(b not in released and b not in closed for b in board.unsettled_blockers(question)):
                 continue
             pending.remove((question, records))
-            if carry:
-                carry_waits(board, answer_waits(board, [(question, records)]))
+            carry_waits(board, answer_waits(board, [(question, records)]))
             result = move(board.by_id[question], 'close', board=board, reason=f"Answered by released {', '.join(records)}", force=bool(blockers), check=False,
                           outcome='superseded')
             if result.returncode != 0:

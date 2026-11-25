@@ -3958,7 +3958,7 @@ def validate_board(root: Path) -> None:
             closes = [args for args in fake.writes() if args[0] == "close"]
             if code != 1 or closes != [["close", cache, "--reason", f"Answered by released {store}", "--force"],
                                        ["close", spike, "--reason", f"Answered by released {store}", "--force"]] \
-                    or [w[:3] for w in fake.writes() if w[0] != "comments"][:2] != [["batch", "-m", f"board: {ids['Wire caller']} waits on {store}"], ["update", store, "--status"]] \
+                    or [w[:3] for w in fake.writes() if w[0] != "comments"][:2] != [["update", store, "--status"], ["batch", "-m", f"board: {ids['Wire caller']} waits on {store}"]] \
                     or f"{loose}: left open, blocked by {ready}" not in errors \
                     or sum("outcome=superseded" in w for w in fake.writes() if w[0] == "update") != 2 \
                     or f"closed {cache}: answered by released {store}" not in output:
@@ -11007,11 +11007,17 @@ def validate_protocol(root: Path, part: str) -> None:
                     or item_status("fx-r7") != "closed" or item_status("fx-u7") != "closed" \
                     or {e["old"] for e in history if e["event"] == "superseded" and e["question"] == qid} != {"fx-r7", "fx-u7"}:
                 raise ValueError(f"an away record must supersede the released record it revises and the decided one at Record: {rows}\n{out}")
-            # A supersede bd made before the record call exited 1 counts as done, and says so.
+            # Any nonzero ruling record is a failure (P1); the rerun finds the record complete, claims nothing and writes no second record (P2).
             qid, report = away_record("Iota point", ["fx-u10"], {"fx-u10": decided}, "fx-n8", supersedeFail=["fx-u10"])
             out = proto("step", stdin=report, cwd=repo).stdout
-            if "superseded the records it replaces but exited 1" not in out or item_status("fx-u10") != "closed" or shown(cwd=repo)["round"] is not None:
-                raise ValueError(f"an away record's supersede bd made before exiting 1 counts as done:\n{out}")
+            if "Not recorded" not in out or shown(cwd=repo)["round"] is None:
+                raise ValueError(f"a ruling record that exits 1 leaves the question unrecorded:\n{out}")
+            patch_config(supersedeFail=[])
+            calls()
+            proto("step", stdin=report, cwd=repo)
+            again = [c["args"] for c in calls()]
+            if any(args[:1] == ["claim"] or args[:2] == ["ruling", "record"] for args in again) or shown(cwd=repo)["round"] is not None:
+                raise ValueError(f"the rerun after a finished record goes on with the engine's own steps only: {again}")
             configure()
             # Two released records, or a revision to carry besides a released one, are refused at Related.
             released_tracked = {**decided, "dependencies": [{"issue_id": "fx-u7", "depends_on_id": "fx-r2", "type": "tracks"}]}
@@ -11072,7 +11078,7 @@ def validate_protocol(root: Path, part: str) -> None:
             calls()
             report = {"records": {qid: {"rationale": "Replaces fx-u9.", "ruleOwner": "o"}}}
             out = proto("step", stdin=report, cwd=repo).stdout
-            if "Not recorded" not in out or "agents board ruling record fx-n7" not in out or shown(cwd=repo)["step"] != "record" or item_status("fx-u9") != "decided":
+            if "Not recorded" not in out or "board ruling record fx-n7" not in out or shown(cwd=repo)["step"] != "record" or item_status("fx-u9") != "decided":
                 raise ValueError(f"a failed close must leave the question unrecorded:\n{out}")
             patch_config(fail=[])
             out = proto("step", stdin=report, cwd=repo).stdout
@@ -15192,6 +15198,26 @@ def validate_board_rules(root: Path) -> None:
             by_id[waiter]["dependencies"] = [*by_id[waiter]["dependencies"], {"issue_id": waiter, "depends_on_id": target, "type": kind}]
         return issues
 
+    def no_write_of(argv, text, issues, actor):
+        """The call writes nothing that contains `text` (it may be refused or end early)."""
+        def check(case_cell=None):
+            *_, fake = run(argv, issues, actor)
+            if wrong := [x for x in fake.calls if text in (x[1] or "") or text in " ".join(x[0])]:
+                raise ValueError(f"board {argv} wrote {text!r}: {wrong}")
+        return check
+
+    def contributors(issues, expected):
+        unlocks = board.Board(issues).unlocks
+        if set(unlocks.impact) != expected:
+            raise ValueError(f"credit goes to {sorted(unlocks.impact)}, not {sorted(expected)}: {unlocks.impact}")
+
+    def unresolved_item_holds():
+        issues = [record("W", "change-request"), record("W.i", "task", parent="W", waits=["ghost"])]
+        with patch.object(board, "bd_show", lambda *a, **k: []), patch.object(board, "bd_closed", lambda *a, **k: []):
+            ready = board.Board(issues, complete=False).unlocks.ready
+        if ready:
+            raise ValueError(f"a status snapshot readies {sorted(ready)} whose item waits on an unknown record")
+
     desc = Path(tempfile.mkdtemp()) / "desc.md"
     desc.write_text("d\n", encoding="utf-8")
     long_file = Path(tempfile.mkdtemp()) / "long.md"
@@ -15787,14 +15813,14 @@ def validate_board_rules(root: Path) -> None:
             rows.append(issue)
         return rows
 
-    def rule_sequences(seeds=(1, 2, 3, 4), steps=40):
+    def rule_sequences(seeds=(1, 2, 3, 4), steps=40, least=10):
         """nixes-pn847's oracle: seeded random verb sequences on one in-memory board. After every accepted write check reports no wait problem
         (wait_problems over every record); readiness from a status snapshot equals the complete board's; and each ready unit's projected first
         unlock wave (WorkUnlocks.release) equals what readiness says once that unit is delivered on a rebuilt board."""
         import random
         found, accepted = [], 0
         for seed in seeds:
-            rng = random.Random(seed)
+            floor, rng = accepted + least, random.Random(seed)
             fake = Applying(sequence_world(rng))
             for step in range(steps):
                 argv = sequence_command(rng, fake.issues)
@@ -15829,6 +15855,8 @@ def validate_board_rules(root: Path) -> None:
                             break
                 if found and found[-1].startswith(where):
                     break
+            if accepted < floor and not found:  # a generator that stops reaching the writes would pass unseen
+                found.append(f"seed {seed}: {accepted - floor + least} writes accepted, fewer than {least}")
         print(f"board rules: random sequences, seeds {list(seeds)}, {steps} steps each: {accepted} writes accepted")
         return found
 
@@ -15868,10 +15896,30 @@ def validate_board_rules(root: Path) -> None:
                                                                           issues=[*W(("r-tdef", "r-tdef2", "blocks")), record("r-tdef2", "task", status="deferred", metadata={**NC, "deferred_by": "user"})], actor=None),
                 # The undefer target rule stays stricter than check: a wait on a deferred question is refused too
                 "undefer refuses a wait on a deferred question": refused(["undefer", "r-tdef"], "r-qd", cell="blocks.target", actor=None, issues=W(("r-tdef", "r-qd", "blocks"))),
-                # nixes-ymay1 on the attended path: what waits on an answered question waits on the ruling before the release puts it in force
-                "release writes the answered question's waiters before the ruling's status": wrote(
-                    ["ruling", "release", "r-dec", "--closes", "r-q=r-dec"], lambda w, f: (at := [n for n, x in enumerate(f.calls) if x[0][:1] == ["batch"] and "dep add r-t r-dec" in (x[1] or "")])
-                    and at[0] < next(n for n, x in enumerate(f.calls) if x[0][:2] == ["update", "r-dec"] and "in_force" in x[0]), issues=W(("r-t", "r-q", "blocks")), actor=lead),
+                # nixes-ymay1 on the attended path: what waits on an answered question waits on the ruling when the question closes (nixes-3eqxa P4)
+                "release hands the waiters of a question it closes to the ruling": wrote(
+                    ["ruling", "release", "r-dec", "--closes", "r-q=r-dec"], lambda w, f: any(x[0][:1] == ["batch"] and "dep add r-t r-dec" in (x[1] or "") for x in f.calls), issues=W(("r-t", "r-q", "blocks")), actor=lead),
+                "P4 release leaves a question it cannot close, and its waiters, alone": no_write_of(
+                    ["ruling", "release", "r-dec", "--closes", "r-q2=r-dec"], "dep add r-t r-dec",
+                    [*W(("r-t", "r-q2", "blocks")), record("r-q2", "decision", waits=["r-q"])], lead),
+                # P3: the premise and the carried wait are one edge check (R waits on P, which waits on the question R answers: a cycle)
+                "P3 record refuses a premise that waits on the question it answers": refused(
+                    ["ruling", "record", "r-dec", str(body), "--unratified", "--waits-on", "r-rule", "--answers", "r-q"], "cycle", cell="blocks.cycle", actor=lead, issues=W(("r-rule", "r-q", "blocks"))),
+                # P5: a reopen meets every wait class (a deferred target), as check reports them
+                "P5 reopen refuses a record that waits on a deferred one": refused(["reopen", "r-tdone"], "deferred", cell="blocks.reopen", actor=None, issues=W(("r-tdone", "r-tdef", "blocks"))),
+                # P7: a ruling released with the premise it waits on, named after it
+                "P7 release writes a premise before its record whatever the argument order": wrote(
+                    ["ruling", "release", "r-a", "r-dec"], lambda w, f: [x[1] for x in w if x[0] == "update" and "in_force" in x] == ["r-dec", "r-a"],
+                    issues=[*W(), record("r-a", "decision", status="decided", assignee="lead0001", waits=["r-dec"])], actor=lead),
+                # P9: no order of writes keeps the board clean (two deferred records waiting on each other)
+                "P9 undefer refuses before the first write when no order is safe": refused(
+                    ["undefer", "r-tdef", "r-tdef2"], "no order", actor=None,
+                    issues=[*W(("r-tdef", "r-tdef2", "blocks")), record("r-tdef2", "task", status="deferred", metadata={**NC, "deferred_by": "user"}, waits=["r-tdef"])]),
+                # P8: only a wait that can contribute is credited (the passed base B alone frees nothing; Q alone frees W)
+                "P8 ranking credits the question, not the single base": lambda case_cell=None: contributors(
+                    [record("Q", "decision"), record("B", "change-request", status="passed"), record("W", "change-request"), record("W.i", "task", parent="W", waits=["Q", "B"])], {"Q"}),
+                # P11: an item waiting on a record no snapshot holds keeps its CR held on a status read too
+                "P11 a status snapshot holds a CR whose item waits on an unknown record": lambda case_cell=None: unresolved_item_holds(),
                 # N5: a cycle lifted through a done item of a live CR (A1 waits on B1, done in open B; B2 would wait on A1)
                 "N5 a lifted cycle through a done item is refused": refused(["wait", "r-cr2-item", "--on", "r-cr-item", "--for", "x"], "cycle", cell="blocks.cycle", actor=solo,
                                                                             issues=[*W(("r-cr-item", "r-cr2-done", "blocks")), done_in("r-cr2-done", "r-cr2"), record("r-cr2-item", "task", parent="r-cr2")])}

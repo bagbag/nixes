@@ -585,10 +585,6 @@ def counts_unavailable(error) -> str:
     return f'Board counts unavailable ({error}); run `agents board health`.'
 
 
-def record_exited(item: str, returncode: int, output: str) -> str:
-    return f"`agents board ruling record {item}` recorded it and superseded the records it replaces but exited {returncode}: {output}"
-
-
 def abandoned_records(kept: list[str]) -> str:
     """What an abandoned round leaves behind: records written before the abandon stay decided (r24-q108)."""
     return f"recorded {', '.join(kept)} stay decided" if kept else 'nothing recorded'

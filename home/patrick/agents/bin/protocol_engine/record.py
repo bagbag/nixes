@@ -236,6 +236,14 @@ def open_premises(ctx: Context, q: dict, inherited: list[str]) -> list[str]:
     return [rid for rid, status in statuses(ctx, items).items() if status not in ('closed', 'in_force')] if items else []
 
 
+def stands_complete(ctx: Context, item: str, waits_on: list[str], answers: list[str]) -> bool:
+    """An away record's board call finished (ruling record unclaims last): in force or decided, free, its premises waited on, its answered questions closed."""
+    row = ctx.board.json('show', item, '--json', '--field', 'status', '--field', 'assignee', '--field', 'dependencies').get(item) or {}
+    waited = {dep['depends_on_id'] for dep in row.get('dependencies') or [] if dep.get('issue_id') == item and dep.get('type') == 'blocks'}
+    return row.get('status') in ('in_force', 'decided') and not row.get('assignee') and set(waits_on) <= waited \
+        and all(status == 'closed' for status in statuses(ctx, answers).values())
+
+
 def link_record(ctx: Context, q: dict) -> None:
     """Relates the question's item to its `relate` hits; retried on a rerun until it succeeded once (a pair already linked is left). Free of
     the hold rule and holding nothing up, so it may follow the record. The replaced records are not here: `ruling record --replaces` links
@@ -420,7 +428,6 @@ def record_accept(ctx: Context, report: dict) -> str:
             continue
         try:
             item = board_item(ctx, q, path)
-            ctx.board.checked('claim', item)  # a rerun's own hold: board claim keeps it ("already held")
             away = q['origin'] == AWAY
             # Every record it replaces is linked; an unratified record is released at once, so it supersedes them now, the released
             # one it revises included; any other record supersedes them at its release (r9-q33).
@@ -431,14 +438,11 @@ def record_accept(ctx: Context, report: dict) -> str:
                 if board_keys(q.get('settles')) else []
             waits_on = list(dict.fromkeys([*inherited_open, *unsettled]))
             answers = board_keys(q.get('settles')) if away else []
-            result = ctx.board.run('ruling', 'record', item, str(path), *(['--unratified'] if away else []),
-                                   *(['--replaces', ','.join(replaces)] if replaces else []), *(['--waits-on', ','.join(waits_on)] if waits_on else []),
-                                   *(['--answers', ','.join(answers)] if answers else []))
-            if result.returncode != 0:
-                left = [old for old, status in statuses(ctx, replaces).items() if status != 'closed'] if away else replaces
-                if left or not replaces:  # the record, a link or a close did not happen: the rerun picks up what is left
-                    fail(f"`agents board ruling record {item}` exited {result.returncode}: {(result.stderr or result.stdout).strip()}")
-                ctx.messages.append(words.record_exited(item, result.returncode, (result.stderr or result.stdout).strip()))  # all closed: only the items waiting on the old ones are not blocked
+            if not (away and stands_complete(ctx, item, waits_on, answers)):  # else a rerun after the board call: only the engine's own steps are left
+                ctx.board.checked('claim', item)  # a rerun's own hold: board claim keeps it ("already held")
+                ctx.board.checked('ruling', 'record', item, str(path), *(['--unratified'] if away else []),
+                                  *(['--replaces', ','.join(replaces)] if replaces else []), *(['--waits-on', ','.join(waits_on)] if waits_on else []),
+                                  *(['--answers', ','.join(answers)] if answers else []))
             link_record(ctx, q)
             if q['origin'] != AWAY and board_keys(q.get('settles')):
                 move_settled(ctx, item, board_keys(q['settles']))  # the release closes them
