@@ -174,13 +174,15 @@ A round:
   or removed rule question releases them as any other claim). Record writes one
   record per rule (its own `board`, else a new decision item) and refuses one
   whose `rationale`/`decision` names no settled id. It claims the record (not again
-  when this session holds it already), records it, then writes its `relate` links
-  and the settled items' waits both ways (the open items a settled item blocks wait
-  on the record, the record waits on the open items it waits on; links among the
-  settled items, to the record or to an item it is linked to already are left, and
-  a wait wins over a relate), because a released ruling blocks what it changes until
-  planned. The waits come after the record: a recorded ruling is no longer open, so
-  its holder's own wait does not hand it back (`board wait`). The
+  when this session holds it already) and records it in one `agents board ruling record`
+  call (nixes-ymay1), because a released ruling blocks what it changes until planned:
+  `--waits-on` the open items the settled items wait on (and a person's open premises),
+  and for an away ruling `--answers` the settled questions, which the board closes as
+  superseded after what waits on each waits on the record; the call releases an away
+  record's hold last, so no session plans it before its waits stand and a stop leaves
+  it held for the rerun. A decided record's settled questions hand their waiters to it
+  when the release closes them (`--closes`). Then Record writes its `relate` links
+  (a wait wins over a relate). The
   release pre-fills, for each settled board item of a rule record in its set
   (this session's state), the answers row `answered: close` and the close by
   that record, so `agents board ruling release --closes` closes it; one still open afterwards
@@ -189,7 +191,7 @@ A round:
 - A question's optional `holds` (list of board ids; absent or empty: none) names the items it holds up
   (board-core.md "Questions and rulings"): Record passes `--holds <ids>` (or `--holds none`) to the
   `agents board ruling revise` or `agents board create --graph` (a decision node) that creates its record, which records the
-  blocks edges (the settled items' inherited links above are separate). It is content: an update of it
+  blocks edges (the settled items' premises and waiters above are separate). It is content: an update of it
   counts as a change; `show --json` questions carry `holds`.
 - Every round opens with the pre-pass (step `prepass`, before Collect; r1-q7): the
   engine queues a `step-back` pass with the lenses `goal decisions` and the focus `pre-pass over the round's points`
@@ -357,7 +359,7 @@ A round:
   deferred. An away answer stays an open question: its item (a decision created for a draft) carries the proposed answer, in its
   text or, on an existing item, a comment, is unclaimed and `agents board wait`s on each open premise (`recorded` `waiting`, logged
   `waiting`); the board brings it back once they close. A person's answer is recorded `decided` and waits on them, so the release
-  rule (`status.release-holds`) holds it. A question whose premise's record failed in the same run is left for the rerun, which
+  rule (`status.release-holds`) holds it: `ruling record --waits-on` writes those waits in the record's own call. A question whose premise's record failed in the same run is left for the rerun, which
   records them in order.
 - Record writes the records; closing or abandoning releases the claims the
   round made and did not record (a hold the session had before, such as a

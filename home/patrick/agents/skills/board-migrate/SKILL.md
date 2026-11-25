@@ -145,9 +145,11 @@ intermediate landing.
      request that change request's membership;
    - `defer_until` becomes the `revisit` day and leaves bd; a deferral whose
      reason names a condition (after, until, when, once, waits on, blocked by)
-     reopens only when it already waits (a `blocks` link) on an open record;
-     no wait is guessed from the reason's text, and any other such deferral
-     stays deferred and is listed with its candidate ids and links;
+     reopens only when it already waits (a `blocks` link) on an open record
+     and `undefer` would accept it (nothing it waits on is deferred); no wait
+     is guessed from the reason's text, and any other such deferral stays
+     deferred with its links and is listed with its candidate ids, links and
+     the conflict;
    - closed decisions get `superseded` (a supersedes link, or a close reason
      starting "superseded" or "Answered by released"), `planned` (a close reason
      starting "planned") or `dropped` (starting "dropped"); a closed decision

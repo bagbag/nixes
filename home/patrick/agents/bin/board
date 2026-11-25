@@ -652,22 +652,47 @@ def write_fields(board: 'Board', ids: list[str], flags: list[str], command: str 
 CLOSE_REASON_MIN = 20  # bd refuses a shorter close reason
 
 
+def guard_problems(board: 'Board', issue: dict, together: frozenset, change, kind: str, fix=None) -> str | None:
+    """A guard of the one rule set (nixes-pn847): the wait problems of `kind` (wait_problems) that the call's status writes (`change(record)`: the
+    fields it sets, on the record and every id written with it) leave on the board, which check would report next; their sentences, then `fix`
+    of their keys (None: wait_problems' own fixes)."""
+    ids = [i for i in dict.fromkeys([issue['id'], *together]) if i in board.by_id]
+    found = new_problems(board, post_state(board, {i: change(board.by_id[i]) for i in ids}), ids, (kind,))
+    if not found:
+        return None
+    fixes = [fix(list(found))] if fix else list(dict.fromkeys(f for _, f, _ in found.values()))
+    return '; '.join(f'{item_id} {problem}' for (_, item_id, _), (problem, _, _) in found.items()) + ': ' + '; '.join(fixes)
+
+
+def undefer_refusal(board: 'Board', issue: dict, together: frozenset) -> str | None:
+    """no-deferred-target: what the record or its open items would wait on that stays deferred (`deferred_targets`), and the way out: undefer
+    it in the same call, or unlink each wait (from the waiter to what it waits on: an item of a deferred change request is named itself, N3)."""
+    found = deferred_targets(board, issue['id'], together)
+    if not found:
+        return None
+    units = list(dict.fromkeys(unit for _, unit in found))
+    unlinks = [dep_fix(waiter, b) for waiter, unit in found for b in board.blockers.get(waiter, []) if board.unit_of(b) == unit]
+    return (f"{', '.join(f'{waiter} waits on {unit}' for waiter, unit in found)}, which is deferred: undefer {' '.join(units)} in the same call "
+            f"(agents board undefer {issue['id']} {' '.join(units)}), or unlink the wait ({'; '.join(unlinks)})")
+
+
 GUARDS = {  # name -> (its Write-rules cell, the rule: None or why the move is refused); `who`: the caller (None: a person)
     'reason': ('status.row', lambda issue, board, reason, outcome, together, who: None if reason and reason.strip() else 'a reason is required'),
     'items-closed': ('status.items-closed', lambda issue, board, reason, outcome, together, who: board and open_item_refusal(board, issue)),
     'look-before': ('status.row', lambda issue, board, reason, outcome, together, who: None if board is None or cr_look(board, issue) == 'before' else '--no-agent-review is refused in a look-after project: only a look-before change request passes without an agent review'),
     'not-open-for-review': ('status.not-open-for-review', lambda issue, board, reason, outcome, together, who: f'it is open for your review (tip {opened_tip(issue)[:12]}): end the review first' if opened_tip(issue) else None),
-    'no-waiters': ('blocks.no-dropped-close', lambda issue, board, reason, outcome, together, who: board and outcome == 'dropped' and dropped_waits_refusal(board, issue['id'], together)),
-    'no-dropped-target': ('blocks.reopen', lambda issue, board, reason, outcome, together, who: board and (found := dropped_targets(board, issue['id'])) and (
-        f"it waits on {', '.join(dropped_wait_text(board, b) for b in found)}, which never delivers; unlink it first ({'; '.join(dep_fix(issue['id'], b) for b in found)}) "
-        'or wait on the record that keeps the work')),
+    'no-waiters': ('blocks.no-dropped-close', lambda issue, board, reason, outcome, together, who: board and outcome == 'dropped' and guard_problems(
+        board, issue, together, lambda record: {'status': 'closed', 'metadata': {**meta(record), 'outcome': outcome}}, 'dropped-blocker',
+        lambda keys: f"unlink them ({'; '.join(dep_fix(w, b) for _, w, b in keys)}), wait on the record that keeps the work, or close them in the same call")),
+    'no-dropped-target': ('blocks.reopen', lambda issue, board, reason, outcome, together, who: board and guard_problems(
+        board, issue, together, lambda record: {'status': 'open', 'metadata': {k: v for k, v in meta(record).items() if k != 'outcome'}}, 'dropped-blocker',
+        lambda keys: f"unlink it first ({'; '.join(dep_fix(w, b) for _, w, b in keys)}) or wait on the record that keeps the work")),
     'not-superseded': ('supersedes.row', lambda issue, board, reason, outcome, together, who: f'it is superseded by {", ".join(found)}: record a revision to put it back in force (agents board ruling revise {issue["id"]})' if board and (found := superseding(board, issue['id'])) else None),
     'settled-premises': ('status.release-holds', lambda issue, board, reason, outcome, together, who: board and issue['status'] != 'in_force' and release_holds_refusal(board, issue['id'], together)),
-    'no-deferred-target': ('blocks.target', lambda issue, board, reason, outcome, together, who: board and (found := deferred_targets(board, issue['id'], together)) and (
-        f"{', '.join(f'{waiter} waits on {unit}' for waiter, unit in found)}, which is deferred: undefer {' '.join(dict.fromkeys(u for _, u in found))} in the same call "
-        f"(agents board undefer {issue['id']} {' '.join(dict.fromkeys(u for _, u in found))}), or unlink the wait ({'; '.join(dep_fix(w, u) for w, u in found)})")),
-    'no-hung-waiters': ('blocks.target', lambda issue, board, reason, outcome, together, who: board and (waiting := deferred_waiters(board, issue['id'], set(together))) and (
-        f"{', '.join(waiting)} would hang on it deferred: {deferred_fix(board, issue['id'], waiting)}")),
+    'no-deferred-target': ('blocks.target', lambda issue, board, reason, outcome, together, who: board and (undefer_refusal(board, issue, together) or guard_problems(
+        board, issue, together, lambda record: {'status': 'open'}, 'deferred-blocker'))),
+    'no-hung-waiters': ('blocks.target', lambda issue, board, reason, outcome, together, who: board and guard_problems(
+        board, issue, together, lambda record: {'status': 'deferred'}, 'deferred-blocker')),
     'in-work': ('status.row', lambda issue, board, reason, outcome, together, who: None if in_work(issue) else
                 f'held for planning, not in work; claim it for work first: agents board claim {issue["id"]}'),
     'unheld-or-yours': ('status.row', lambda issue, board, reason, outcome, together, who: None if not issue.get('assignee') or holds_cr(issue, who or '') else
@@ -1673,6 +1698,10 @@ class Board:
     def is_cr(self, item_id: str) -> bool:
         return self.by_id.get(item_id, {}).get('issue_type') == CR_TYPE
 
+    def unit_of(self, item_id: str) -> str:
+        """What delivers it: its live change request's landing for an item, else itself. A record a complete snapshot lacks is unknown: itself."""
+        return (self.cr_of(item_id) if item_id in self.by_id or not self.complete else None) or item_id
+
     def cr_of(self, item_id: str) -> str | None:
         """The live change request an item belongs to (itself, for a change request), else None."""
         if self.is_cr(item_id):
@@ -1730,25 +1759,33 @@ class Board:
         waits, own = self.wait_parts(issue['id'], self.cr_blockers(issue, scope=True), projected)
         return waits, own, bases
 
-    def item_waits(self, item: dict, cr_id: str | None = None) -> list[str]:
-        """What an open item of a CR still waits on: a sibling that is open, another CR that has not landed (unless its CR stacks on it), a
-        question that is not closed (planned, dropped or superseded), a gate or task not closed."""
-        cr_id = cr_id or self.cr_of(item['id'])
+    def item_parts(self, item: dict, cr_id: str, projected: bool = False) -> tuple[list[str], list[str]]:
+        """(what an open item of a CR waits on that no stack meets: a sibling that is open, another CR that has not landed and cannot be
+        stacked on, a question that is not closed, a gate or task not closed; the stackable CRs it waits on, met when its CR stacks on one)."""
         blockers = self.blockers.get(item['id'], [])
         siblings = [b for b in blockers if self.is_open(b) and self.cr_of(b) == cr_id]
-        waits, bases = self.wait_parts(cr_id, [b for b in blockers if b not in siblings], False)
-        stack = self.cr_waits(self.by_id[cr_id])[1]
-        return [*siblings, *waits, *(b for b in bases if b not in stack)]  # a CR stacks on one base only: another base holds the item
+        waits, bases = self.wait_parts(cr_id, [b for b in blockers if b not in siblings], projected)
+        return [*siblings, *waits], bases
+
+    def item_waits(self, item: dict, cr_id: str | None = None, stack: list[str] | None = None) -> list[str]:
+        """What an open item of a CR still waits on (`item_parts`): a CR stacks on one base only, so another base holds the item. `stack`: the
+        CR's stack base as its evaluation chose it once (`cr_waits`; N9), else chosen here."""
+        cr_id = cr_id or self.cr_of(item['id'])
+        waits, bases = self.item_parts(item, cr_id)
+        stack = self.cr_waits(self.by_id[cr_id])[1] if stack is None else stack
+        return [*waits, *(b for b in bases if b not in stack)]
 
     def cr_stuck(self, cr: dict) -> list[str]:
-        """What holds an open CR with open items when none of them is ready (the items' unmet waits), else []."""
-        items = self.cr_items(cr['id'])
+        """What holds an open CR with open items when none of them is ready (the items' unmet waits), else []. The stack base is chosen once."""
+        items = [item for item in self.cr_items(cr['id']) if item.get('issue_type') != CR_TYPE]
         if cr['status'] != 'open' or not items:
             return []
-        waits = [self.item_waits(item, cr['id']) for item in items if item.get('issue_type') != CR_TYPE]
-        if not waits or any(not one for one in waits):
-            return []
-        return list(dict.fromkeys(b for one in waits for b in one))
+        stack, found = self.cr_waits(cr)[1], []
+        for item in items:
+            if not (waits := self.item_waits(item, cr['id'], stack)):
+                return []  # a ready item: the CR is ready
+            found += waits
+        return list(dict.fromkeys(found))
 
     def wait_parts(self, owner: str | None, blockers: list[str], projected: bool) -> tuple[list[str], list[str]]:
         """The unmet waits and candidate stack bases of `blockers` waited on from the CR `owner`: other CRs unlanded are waits, a stackable one a base."""
@@ -1784,12 +1821,12 @@ class Board:
         return waits, bases
 
     def cr_waits(self, issue: dict) -> tuple[list[str], list[str]]:
-        """(what holds the CR as a whole, the base it stacks on). A request stacks on at most one unlanded stackable base: its own base (a wait
-        on the whole CR) when it has one, two of them hold it; else its items' one candidate. An item's other base holds only that item (`item_waits`)."""
+        """(what holds the CR as a whole, the base it stacks on). A request stacks on at most one unlanded stackable base (`stack_choice`). An
+        item's other base holds only that item (`item_waits`)."""
         waits, own, bases = self.cr_wait_parts(issue)
         if len(own) > 1:
             return waits + own, []
-        return waits, own or (bases if len(bases) == 1 else [])
+        return waits, stack_choice(own, bases, live_parent(self, issue))
 
     @cached_property
     def unlocks(self) -> WorkUnlocks:
@@ -1947,16 +1984,35 @@ def work_rank(board: Board, issue: dict) -> tuple[bool, int]:
     return bool(milestones_of(board, issue)), effective_priority(board, issue)[0]
 
 
+def stack_choice(own: Iterable[str], bases: Iterable[str], stored: str | None) -> list[str]:
+    """The one base a change request stacks on, from its candidates: its own (a wait on the whole CR), else the base its branch already
+    stacks on while that is still a candidate (N6), else its items' only candidate; none when that leaves a choice. Two own bases hold the CR
+    (`cr_waits`)."""
+    own, bases = list(own), list(bases)
+    if own:
+        return own[:1] if len(own) == 1 else []
+    if stored in bases:
+        return [stored]
+    return bases if len(bases) == 1 else []
+
+
 class WorkWait(NamedTuple):
     hard: frozenset[str]
-    bases: frozenset[str]
-    items: tuple[frozenset[str], ...] = ()  # a change request: what each open item waits on; the request is ready when one has nothing left to wait for
+    bases: frozenset[str]  # a change request's own candidate bases (waits on the whole CR)
+    items: tuple[tuple[frozenset[str], frozenset[str]], ...] = ()  # each open item's (waits no stack meets, candidate bases); ready when one has nothing left
+    stacks: frozenset[str] = frozenset()  # every candidate base of the CR and its items
+    stored: str | None = None  # the base its branch stacks on
 
     def ready(self, delivered: set[str]) -> bool:
-        return self.hard <= delivered and len(self.bases - delivered) <= 1 and (not self.items or any(waits <= delivered for waits in self.items))
+        """Ready once `delivered` lands: the stack base is chosen again from what is left (N7), as the rebuilt board would choose it."""
+        own = self.bases - delivered
+        if not self.hard <= delivered or len(own) > 1:
+            return False
+        stack = set(stack_choice(sorted(own), sorted(self.stacks - delivered), self.stored))
+        return not self.items or any(waits <= delivered and bases - delivered <= stack for waits, bases in self.items)
 
     def relevant(self) -> frozenset[str]:
-        return (self.hard | self.bases if len(self.bases) > 1 else self.hard).union(*self.items)
+        return self.hard | self.bases | self.stacks | frozenset().union(*(waits | bases for waits, bases in self.items))
 
 
 class UnlockImpact(NamedTuple):
@@ -1996,11 +2052,12 @@ class WorkUnlocks:
     def wait_for(self, issue: dict) -> WorkWait:
         board, item_id = self.board, issue['id']
         if issue.get('issue_type') == CR_TYPE:
-            hard, bases, _ = board.cr_wait_parts(issue, projected=True)  # its own bases: past the threshold once all but one delivered
+            hard, bases, stacks = board.cr_wait_parts(issue, projected=True)  # its own bases: past the threshold once all but one delivered
             if issue['status'] == PASSED and (parent := live_parent(board, issue)):
                 hard.append(parent)
-            items = tuple(frozenset(board.item_waits(item, item_id)) for item in board.cr_items(item_id) if item.get('issue_type') != CR_TYPE)
-            return WorkWait(frozenset(hard), frozenset(bases), items)
+            items = tuple((frozenset(waits), frozenset(item_bases)) for item in board.cr_items(item_id) if item.get('issue_type') != CR_TYPE
+                          for waits, item_bases in [board.item_parts(item, item_id)])
+            return WorkWait(frozenset(hard), frozenset(bases), items, frozenset(stacks), live_parent(board, issue))
         hard = set()
         ignored = set(board.foreign_waits(issue))
         blockers = board.blockers.get(item_id, [])
@@ -2116,7 +2173,7 @@ class WorkUnlocks:
                 available[qid] = frozenset({qid}).union(*(available[q] for q in required))
 
         observed: dict[frozenset[str], list[str]] = {}
-        for item_id, (hard, bases, _) in self.waits.items():
+        for item_id, (hard, bases, *_) in self.waits.items():
             if hard and len(bases) <= 1 and hard <= available.keys():
                 required = frozenset().union(*(available[q] for q in hard))
                 observed.setdefault(required, []).append(item_id)
@@ -2324,7 +2381,7 @@ def health_counts(board: Board, views: dict) -> dict:
 def health_json(board: Board, args) -> dict:
     views = health_views(board, args.root)
     ready = views['ready'][1]
-    found = deviations(board, args.root)
+    found = deviations(board, args.root, set())  # the closed records a dropped wait needs are check's read
     return {**queues_json(board, args.root), 'counts': health_counts(board, views),
             'claimable': {kind: sum(1 for i in ready if board.claimable(i) == kind) for kind in KINDS},
             'items': {JSON_COUNTS.get(view, view): [item_json(board, issue) for issue in sorted(views[view][1], key=by_priority)]
@@ -2360,7 +2417,7 @@ def health(board: Board, args) -> None:
         print(f"milestone {state['id']} ({state['title']}): open work {state['openWork']}, "
               f"ready {state['ready']}, held {state['held']}, "
               f"blocked {state['blocked']}; milestone {'ready' if state['milestoneReady'] else 'not ready'}")
-    found = deviations(board, args.root)
+    found = deviations(board, args.root, set())  # the closed records a dropped wait needs are check's read
     if found:
         fixed = sum(1 for _, kind, _ in found if kind in COMMAND_FIXED)  # fixed by a board command, not a migration
         hints = (['run /board-migrate'] if fixed < len(found) else []) + ([f'board fixes: {fixed} (agents board check)'] if fixed else [])
@@ -2585,12 +2642,13 @@ def doc_ref(anchor: str) -> str:
 
 # Deviations a board command fixes, which /board-migrate does not.
 COMMAND_FIXED = ('ruling-blocked', 'wait-cycle')
+WAIT_CLASSES = ('ruling-blocked', 'dropped-blocker', 'deferred-blocker', 'wait-cycle')  # wait_problems: check's and every write's
 
 
 def dropped_blockers(board: Board) -> set[str]:
     """The records waited on that closed dropped, or whose change request did: the verbs refuse such a close under a live waiter, so a live
     wait on one stands only from outside them. A status snapshot holds no closed record, so those are read here."""
-    waited = {b for w, record in board.by_id.items() if record['status'] != 'closed' and group_of(board, record) in (WORK_GROUP, ITEM_GROUP, CR_GROUP)
+    waited = {b for w, record in board.by_id.items() if record['status'] != 'closed' and record.get('issue_type') != 'milestone'
               for b in board.blockers.get(w, []) if not b.startswith('external:')}
     owner = {b: board.cr_of(b) or b for b in waited}
     unread = sorted({i for i in (*waited, *owner.values()) if i not in board.by_id})
@@ -2611,27 +2669,124 @@ def dropped_wait_text(board: 'Board', target: str) -> str:
     return f'{target} (closed dropped)' if unit == target or is_dropped_work(board.by_id.get(target)) else f'{target} (its change request {unit} closed dropped)'
 
 
-def dropped_targets(board: 'Board', item_id: str) -> list[str]:
-    """What the record waits on that closed dropped, itself or with its change request (a complete snapshot: closed records are read)."""
-    return [b for b in board.blockers.get(item_id, []) if not b.startswith('external:')
-            and (is_dropped_work(board.by_id.get(b)) or is_dropped_work(board.by_id.get(board.cr_of(b) or b)))]
+def post_state(board: Board, fields: dict[str, dict] | None = None, adds: Iterable[Edge] = (), removes: Iterable[Edge] = (),
+               new: dict[str, dict] | None = None) -> Board:
+    """The snapshot as a write would leave it (one rule set, nixes-pn847): a copy with `fields` set on records ({id: {field: value}}), the
+    edges removed and added (a parent-child edge replaces the child's parent) and the `new` records ({key: record}) in it. The copy shares
+    what the snapshot read outside itself (closed records, the registry, settings), so checking it reads nothing the snapshot had."""
+    fields, new = fields or {}, new or {}
+    gone = {(a, b) for a, b, _ in removes}
+    adds = list(adds)
+    moved = {a for a, _, kind in adds if kind == 'parent-child'}
+    issues = []
+    for issue in [*board.by_id.values(), *({'id': key, 'dependencies': [], **record} for key, record in new.items())]:
+        deps = [d for d in issue.get('dependencies') or [] if (d['issue_id'], d['depends_on_id']) not in gone
+                and not (d['type'] == 'parent-child' and d['issue_id'] in moved)]
+        deps += [{'issue_id': a, 'depends_on_id': b, 'type': kind} for a, b, kind in adds if a == issue['id']]
+        issues.append({**issue, **fields.get(issue['id'], {}), 'dependencies': deps})
+    copy = Board(issues, complete=board.complete)
+    copy._loaded = board._loaded | set(new)
+    for name in ('settings', '_registry', '_unreadable', '_ended', '_outside', '_closed_blockers', '_outside_blockers_read', 'view'):
+        setattr(copy, name, getattr(board, name))
+    return copy
 
 
-def deferred_targets(board: 'Board', item_id: str, together: frozenset[str] = frozenset()) -> list[tuple[str, str]]:
+def deferred_targets(board: Board, item_id: str, together: frozenset[str] = frozenset()) -> list[tuple[str, str]]:
     """(waiter, deferred unit) of what undeferring the record would leave waiting on a record set aside: a wait of the record, or of an open
-    item of a change request, on a deferred record or an item of a deferred change request, unless that unit is undeferred in the same call."""
+    item of a change request, on a deferred record or an item of a deferred change request (closed done ones too, N3), unless that unit is
+    undeferred in the same call. Stricter than check's deferred-blocker, as `wait_target_refusal` is: nothing waits on a deferred record."""
     members = [item_id, *(i['id'] for i in board.cr_items(item_id))] if board.is_cr(item_id) else [item_id]
     found = []
     for member in members:
         for blocker in board.blockers.get(member, []):
-            unit = board.cr_of(blocker) or blocker if blocker in board.by_id else None
+            unit = None if blocker.startswith('external:') else board.unit_of(blocker)
             if unit and unit != item_id and unit not in together and board.by_id.get(unit, {}).get('status') == 'deferred':
                 found.append((member, unit))
     return list(dict.fromkeys(found))
 
 
-def deviations(board: Board, root: str | None, dropped_targets: set[str] | frozenset[str] = frozenset()) -> list[tuple[str, str, str]]:
-    """(id, class, detail) for every convention deviation of a live (not closed) item in scope."""
+def wait_scope(board: Board, ids: Iterable[str]) -> set[str]:
+    """The records whose wait invariants a write to `ids` can change: each record, its change request and that request's open items, what
+    they wait on (with its change request) and what waits on them."""
+    scope: set[str] = set()
+    board.fetch_outside_blockers()
+    for item_id in ids:
+        unit = board.cr_of(item_id) if item_id in board.by_id else None
+        for member in [item_id, *([unit, *(i['id'] for i in board.cr_items(unit))] if unit else [])]:
+            scope.add(member)
+            scope.update(board.dependents.get(member, []))
+            if board.is_cr(member):  # what waits on its closed items too: met only when it lands
+                scope.update(w for t, waiting in board.dependents.items() if t not in board.by_id or not board.is_open(t)
+                             if board.unit_of(t) == member for w in waiting)
+            for blocker in board.blockers.get(member, []):
+                if not blocker.startswith('external:'):
+                    scope.update((blocker, board.unit_of(blocker)))
+    return {item_id for item_id in scope if item_id in board.by_id}
+
+
+def dead_blockers(board: Board, item_id: str, dropped: set[str] | None = None) -> list[str]:
+    """What the record waits on that closed dropped, itself or with its change request: `dropped` names such records the caller read (check reads
+    the closed records a status snapshot lacks: dropped_blockers); else the snapshot's own records decide."""
+    return [b for b in board.blockers.get(item_id, []) if not b.startswith('external:')
+            and (b in dropped if dropped is not None else
+                 is_dropped_work(board.by_id.get(b)) or is_dropped_work(board.by_id.get(board.unit_of(b))))]
+
+
+def wait_problems(board: Board, ids: Iterable[str], dropped: set[str] | None = None) -> dict[tuple[str, str, str], tuple[str, str, frozenset | None]]:
+    """The wait invariants of the live records `ids` (model.md Waits, Deferral), one entry per relation that breaks one: (class, record, other)
+    -> (what is wrong, read after the record's id, its fix, the cycle's records for a wait-cycle). The classes are check's (`deviations`) and every write's: a write is
+    refused when the board it would leave has an entry the board before it lacks (`new_problems`)."""
+    found: dict[tuple[str, str, str], tuple[str, str, frozenset | None]] = {}
+    board.fetch_outside_blockers()  # a closed target's change request, in one read
+    for item_id in ids:
+        issue = board.by_id.get(item_id)
+        if not issue or issue.get('status') in (None, 'closed'):
+            continue
+        for blocker in board.foreign_waits(issue):
+            found[('ruling-blocked', item_id, blocker)] = (f'in-force ruling waits on {blocker}, work and not planning', dep_fix(item_id, blocker), None)
+        if issue.get('issue_type') != 'milestone':
+            for blocker in dead_blockers(board, item_id, dropped):
+                found[('dropped-blocker', item_id, blocker)] = (f'waits on {dropped_wait_text(board, blocker)}, which never delivers',
+                                                                f'{dep_fix(item_id, blocker)}, or wait on the record that keeps the work', None)
+        if issue['status'] == 'deferred':
+            waiting = deferred_waiters(board, item_id)
+            for waiter in waiting:
+                found[('deferred-blocker', item_id, waiter)] = (f'is deferred, yet {waiter} waits on it', deferred_fix(board, item_id, waiting), None)
+        for blocker in board.blockers.get(item_id, []):
+            if not blocker.startswith('external:') and (chain := wait_cycle(board, [(item_id, blocker)])):
+                found[('wait-cycle', item_id, blocker)] = (f"waits form a cycle, nothing in it can start: {' waits on '.join(chain)}",
+                                                           f'agents board unlink {item_id} {blocker} breaks it here', frozenset(chain[:-1]))
+    return found
+
+
+def new_problems(before: Board, later: Board, ids: Iterable[str], classes: tuple[str, ...] = WAIT_CLASSES) -> dict[tuple[str, str, str], tuple[str, str, frozenset | None]]:
+    """What check would newly report of `classes` once the write from `before` to `later` (`post_state`) is made, around the records it writes
+    (`ids`): the one rule set every write meets (nixes-pn847)."""
+    ids = list(ids)
+    scope = wait_scope(before, ids) | wait_scope(later, ids)
+    old = wait_problems(before, scope)
+    return {key: found for key, found in wait_problems(later, scope).items() if key[0] in classes and key not in old}
+
+
+def write_order(board: Board, ids: list[str], fields: dict) -> list[str]:
+    """The call's ids in an order whose every prefix leaves no new wait problem (N4): what an id needs is written before it (undefer a target
+    before its waiter, defer a waiter before its target), so a stop between two writes leaves a board check accepts. Ids that need each other
+    keep the given order."""
+    order: list[str] = []
+    ids = list(dict.fromkeys(ids))
+    while len(order) < len(ids):
+        written = {i: fields for i in order}
+        left = [i for i in ids if i not in order]
+        def blocked(i: str) -> bool:
+            later = post_state(board, {**written, i: fields})
+            return bool(new_problems(post_state(board, written), later, [i]) or fields.get('status') == 'open' and deferred_targets(later, i))
+        order.append(next((i for i in left if not blocked(i)), left[0]))
+    return order
+
+
+def deviations(board: Board, root: str | None, dropped: set[str] | None = None) -> list[tuple[str, str, str]]:
+    """(id, class, detail) for every convention deviation of a live (not closed) item in scope; the wait classes are `wait_problems`', one row
+    per relation (a cycle: one row). `dropped`: the waited-on records closed dropped (dropped_blockers), which a status snapshot lacks."""
     found = []
     for issue in board.scoped(root):
         item_id, kind, title = issue['id'], issue.get('issue_type'), issue.get('title', '')
@@ -2653,18 +2808,6 @@ def deviations(board: Board, root: str | None, dropped_targets: set[str] | froze
         labels = sorted(set(issue.get('labels') or []) & set(LIFECYCLE_LABELS))
         if labels:
             found.append((item_id, 'label-status', f"labels {', '.join(labels)}"))
-        foreign = board.foreign_waits(issue)
-        if foreign:
-            found.append((item_id, 'ruling-blocked', f"in-force ruling waits on {', '.join(foreign)}, work and not planning: "
-                                                     f"{'; '.join(dep_fix(item_id, blocker) for blocker in foreign)}"))
-        if group in (WORK_GROUP, ITEM_GROUP, CR_GROUP):
-            for blocker in sorted(dropped_targets.intersection(board.blockers.get(item_id, []))):
-                found.append((item_id, 'dropped-blocker', dead_wait_text(item_id, blocker)))
-        if issue['status'] == 'deferred':
-            waiting = deferred_waiters(board, item_id)
-            if waiting:
-                found.append((item_id, 'deferred-blocker', f"deferred, yet {', '.join(waiting)} wait on it: "
-                                                           f"{deferred_fix(board, item_id, waiting)}"))
         if is_work_hold(issue) and board.cr_of(item_id) is None and issue['status'] != 'deferred' and not is_no_commit(issue) \
                 and not board.waits_on_decision(item_id):
             found.append((item_id, 'no-cr', f'work item outside any change request: agents board move {item_id} --to <change request>, '
@@ -2679,14 +2822,12 @@ def deviations(board: Board, root: str | None, dropped_targets: set[str] | froze
             if label_shape(label) == 'label-form':
                 found.append((item_id, 'label-form', f'label {label}: agents board update {item_id} --unlabel {label} --label topic:{label} (or drop it)'))
     seen_cycles: set[frozenset] = set()
-    for issue in board.scoped(root):
-        if issue['status'] == 'closed':
-            continue
-        for blocker in board.open_blockers(issue['id']):
-            if (chain := wait_cycle(board, [(issue['id'], blocker)])) and (ring := frozenset(chain[:-1])) not in seen_cycles:
-                seen_cycles.add(ring)
-                found.append((issue['id'], 'wait-cycle', f"waits form a cycle, nothing in it can start: {' waits on '.join(chain)}; "
-                                                          f"agents board unlink {issue['id']} {blocker} breaks it here"))
+    for (kind, item_id, _), (problem, fix, ring) in wait_problems(board, [issue['id'] for issue in board.scoped(root)], dropped).items():
+        if ring is not None:  # a cycle: one row, at its first record
+            if ring in seen_cycles:
+                continue
+            seen_cycles.add(ring)
+        found.append((item_id, kind, f'{problem}: {fix}'))
     return found + cr_deviations(board, root)
 
 
@@ -4887,8 +5028,9 @@ def cr_problems(board: Board, cr: dict, info: dict, refresh_id: str | None) -> l
         text = f'lands after {wait} (accept it first)' if status == PASSED else f'waits on {wait} ({said})'
         out.append({'kind': 'waits', 'text': text, 'next': {'action': 'wait'}})
     if board.cr_stuck(cr):  # no item is ready: name what each waits on, and a cycle among them
+        stack = board.cr_waits(cr)[1]
         for item in board.cr_items(cid):
-            for blocker in board.item_waits(item, cid):
+            for blocker in board.item_waits(item, cid, stack):
                 out.append({'kind': 'waits', 'text': wait_sentence(item['id'], blocker, None), 'next': {'action': 'wait'}})
                 if chain := wait_cycle(board, [(item['id'], blocker)]):
                     out.append({'kind': 'waits', 'text': f"wait cycle: {' waits on '.join(chain)}", 'next': {'action': 'wait'}})
@@ -6524,28 +6666,26 @@ def plan_parents(plan: dict, links: list[tuple[str, str, str]]) -> dict[str, lis
     return parents
 
 
-def wait_cycle(board: Board | None, edges: list[tuple[str, str]], planned: dict[str, str] | None = None) -> list[str] | None:
-    """The chain an added wait would close into a cycle, [waiter, target, ..., waiter], else None. `edges` are the new (waiter, target) waits; the
-    existing ones are the open items' open blockers. A wait on a closed item is met and never part of a cycle. Waits between items of different
-    change requests are also followed as waits between those requests (each needs the other to land), so two items waiting on each other's
-    request through different items are a cycle too. `planned` {item: change request} is the write's one map of membership it changes: a plan's
-    new items and the existing items a plan or move places; every other item stays where the board has it."""
-    planned = planned or {}
-
-    def place(item: str) -> str | None:
-        return planned.get(item) or (board.cr_of(item) if board and item in board.by_id else None)
-
+def wait_cycle(board: Board, edges: list[tuple[str, str]]) -> list[str] | None:
+    """The chain a wait closes into a cycle, [waiter, target, ..., waiter], else None: `edges` are the (waiter, target) waits to start from, on the
+    board as it stands (a write checks the board it would leave: `after`). Between items a wait on a closed item is met. Waits between items of
+    different change requests are also followed as waits between those requests (each needs the other to land), so two items waiting on each
+    other's request through different items are a cycle too; there a done item of a live request still holds its waiter until that request
+    lands (nixes-pn847 N5), while a done sibling in the waiter's own request is met."""
     graph: dict[str, list[str]] = {}
     for waiter, target in edges:
         graph.setdefault(waiter, []).append(target)
 
-    def items(item: str) -> list[str]:
-        return [*(board.open_blockers(item) if board and board.is_open(item) else []), *graph.get(item, [])]
+    def place(item: str) -> str | None:
+        return None if item.startswith('external:') else board.unit_of(item)
 
-    def requests(unit: str) -> list[str]:  # the lifted graph: a request stands for itself and its open items, stored or placed by this write
-        stored = [i['id'] for i in board.cr_items(unit) if i['id'] not in planned] if board and board.is_cr(unit) else []
-        members = [unit, *stored, *(i for i, cr in planned.items() if cr == unit)]
-        lifted = [place(b) or b for m in members for b in items(m)]
+    def items(item: str) -> list[str]:
+        return [*(board.open_blockers(item) if board.is_open(item) else []), *graph.get(item, [])]
+
+    def requests(unit: str) -> list[str]:  # the lifted graph: a request stands for itself and its open items
+        members = [unit, *(i['id'] for i in board.cr_items(unit))] if board.is_cr(unit) else [unit]
+        lifted = [place(b) for m in members if board.is_open(m) for b in [*board.blockers.get(m, []), *graph.get(m, [])]
+                  if not b.startswith('external:') and (board.is_open(b) or board.is_open(place(b)) or board.complete and b not in board.by_id)]
         return [b for b in dict.fromkeys(lifted) if b != unit]
 
     def find(start: str, goal: str, succ) -> list[str] | None:
@@ -6561,7 +6701,7 @@ def wait_cycle(board: Board | None, edges: list[tuple[str, str]], planned: dict[
         return None
 
     for waiter, target in edges:
-        if chain := find(target, waiter, items):
+        if board.is_open(target) and (chain := find(target, waiter, items)):
             return [waiter, *chain]
         lifted_waiter, lifted_target = place(waiter) or waiter, place(target) or target
         if lifted_waiter != lifted_target and (chain := find(lifted_target, lifted_waiter, requests)):
@@ -6665,10 +6805,6 @@ def edge_rules(board: Board | None, links: list[Edge], verb: str, new: dict[str,
         if parent not in new and not board.is_open(parent):  # open-parent
             raise refuse('parent-child.open-parent', f"{child}: {parent} is not an open {parent_kind.replace('-', ' ')}: it is closed (landed or dropped), so a part of it would be "
                              f"reached by no queue; file it under an open {parent_kind.replace('-', ' ')}")
-        if child not in new:
-            if board.by_id[parent].get('status') == 'deferred' and (waiting := [w for w, _ in live_waits(board, child) if board.cr_of(w) != parent]):
-                raise refuse('blocks.target', f"{child}: {', '.join(dict.fromkeys(waiting))} wait on it, and {parent} is deferred: it would hang them (blocks.target); "
-                                 f'{deferred_fix(board, child, waiting)}')
         if parent_kind == CR_TYPE and parent not in new:  # item-create: entering a change request is a write to its items (nixes-0an9j)
             cr = board.by_id[parent]
             if refusal := authority_refusal(cr, ITEM_CREATE, verb, who, board):
@@ -6677,13 +6813,19 @@ def edge_rules(board: Board | None, links: list[Edge], verb: str, new: dict[str,
     waits: Waits = {key: ([], []) for key in new}
     ops = []
     held_up = [(one, key) for one in holds for key, type_ in new.items() if type_ == 'decision']
-    cycle_edges = [(waiting, other) for waiting, other, kind in links if blocking(kind)] + held_up
-    moved = [child for child in planned_crs if child not in new and board and child in board.by_id]
-    if moved:  # a re-parented item lifts its waits and waiters to the new change request
-        cycle_edges += [(child, b) for child in moved for b in board.open_blockers(child)] + \
-                       [(w, child) for child in moved for w in board.dependents.get(child, []) if board.is_open(w)]
-    if chain := wait_cycle(board, cycle_edges, planned_crs):  # blocks.cycle, before anything is written
-        raise refuse('blocks.cycle', f"these waits would form a cycle, nothing would ever start: {' waits on '.join(chain)}")
+    # The one rule set (nixes-pn847), before anything is written: the board the write leaves (a plan's new records and parents in it) has no new
+    # wait problem: a cycle (blocks.cycle), a live record waiting on a deferred or dropped one (blocks.target), an in-force ruling on work (blocks.waiter).
+    if board is not None or new:
+        adds = [*((a, b, kind) for a, b, kind in links if kind != 'parent-child'), *((one, key, WAIT_LINK) for one, key in held_up),
+                *((child, parent, 'parent-child') for child, parent in parent_edges)]
+        deck = board if board is not None else Board([])
+        later = post_state(deck, adds=adds, removes=removes, new={key: planned(key) for key in new})
+        found = new_problems(deck, later, dict.fromkeys(i for a, b, _ in [*adds, *removes] for i in (a, b)))
+        hits = {kind: '; '.join(f'{item_id} {problem}: {fix}' for (one, item_id, _), (problem, fix, _) in found.items() if one == kind) for kind in WAIT_CLASSES}
+        if hits['wait-cycle']:
+            raise refuse('blocks.cycle', hits['wait-cycle'])
+    else:
+        hits = {}
     for waiting, other, kind in links + [(one, key, WAIT_LINK) for one, key in held_up]:
         if kind in RULING_LINKS and verb not in ('ruling', 'record'):
             raise refuse('supersedes.ruling-only' if kind == 'supersedes' else 'tracks.ruling-only',
@@ -6729,6 +6871,10 @@ def edge_rules(board: Board | None, links: list[Edge], verb: str, new: dict[str,
         if board is None or not any(source == waiting and target == other and (edge == kind or blocking(edge) and blocking(kind))
                                     for source, target, edge in board.between(waiting, other)):
             ops.append((waiting, other, kind))
+    if hits.get('deferred-blocker') or hits.get('dropped-blocker'):  # after each wait's own target rules, which name the target (wait_target_refusal)
+        raise refuse('blocks.target', hits['deferred-blocker'] or hits['dropped-blocker'])
+    if hits.get('ruling-blocked'):
+        raise refuse('blocks.waiter', hits['ruling-blocked'])
     return ops, {key: (list(dict.fromkeys(ids)), list(dict.fromkeys(keys))) for key, (ids, keys) in waits.items()}
 
 
@@ -7003,18 +7149,41 @@ def unratified_confirmation(board: Board, issue: dict, reversal: str) -> str:
                        deps=[('relates-to', item_id)])
 
 
+PREMISE_FOR = 'the record rests on it: a ruling comes into force only on settled premises (nixes-9cbib)'
+
+
 def record(board: Board, args) -> int:
+    """`ruling record <id> <file> [--unratified] [--replaces <ids>] [--waits-on <ids>] [--answers <ids>]`: one call writes the record, its status,
+    its links, the waits on its premises and (in force at once) the closes of the questions it answers, then releases the hold last: a stop
+    anywhere leaves the record held and the call rerunnable, and no other session sees it before its waits stand (nixes-ymay1)."""
     actor = caller()
     issue = require_open(board, [args.id])[0]
     if issue.get('issue_type') != 'decision':
         raise bad_input(f'{args.id}: {issue.get("issue_type")}, not a decision')
+    if args.answers and not args.unratified:
+        raise bad_input('--answers closes the questions a ruling in force answers: it needs --unratified (a decided record closes them at its release: '
+                        'agents board ruling release <id> --closes <question>=<id>)')
     command = 'ruling record --unratified' if args.unratified else 'ruling record'
+    status = 'in_force' if args.unratified else 'decided'
+    premises = [(args.id, target, WAIT_LINK) for target in dict.fromkeys(args.waits_on) if not any(  # a wait already there is done (a rerun)
+        a == args.id and blocking(kind) for a, _, kind in board.between(args.id, target))]
+    if unknown := [target for _, target, _ in premises if target not in board.by_id]:
+        raise bad_input(f"unknown {', '.join(unknown)}")
+    # The row on the board with its premises (status.row; settled-premises reads them), and the waits on the record as it will stand.
+    staged = post_state(board, adds=premises)
     try:  # the row: the caller's session holds it, open or decided (in force only --unratified), and its guards (status.row)
-        move(issue, command, board=board, write=False)
+        move(staged.by_id[args.id], command, board=staged, write=False)
     except BoardError as error:
         if issue['status'] == 'in_force':
             raise combined([error], f'{error}; an in-force record changes through agents board ruling revise') from None
         raise
+    ruled = post_state(board, {args.id: {'status': status}})
+    edge_rules(ruled, premises, 'wait', removes=[edge for _, target, _ in premises for edge in board.between(args.id, target) if edge[2] == 'relates-to'], actor=actor)
+    closes, problems = answered_refusals(board, [(question, [args.id]) for question in dict.fromkeys(args.answers)], actor)
+    if problems:
+        raise combined(problems, 'record refused:\n  ' + '\n  '.join(map(str, problems)))
+    if carried := answer_waits(board, closes):
+        edge_rules(ruled, [wait for wait, _ in carried], 'wait', removes=[edge for _, edges in carried for edge in edges], actor=actor)
     try:
         text = Path(args.file).read_text(encoding='utf-8')
     except (OSError, UnicodeDecodeError) as error:
@@ -7025,7 +7194,6 @@ def record(board: Board, args) -> int:
     if missing:
         raise bad_input(f"{args.file} lacks the record section(s) {', '.join('## ' + name for name in missing)}")
     replaces = list(dict.fromkeys(args.replaces))
-    status = 'in_force' if args.unratified else 'decided'
     closing, taking, operations = replaced_checks(board, args.id, replaces, actor, args.unratified)  # every refusal before the first write
     confirmation = None
     if args.unratified:
@@ -7033,8 +7201,14 @@ def record(board: Board, args) -> int:
         confirmation = unratified_confirmation(board, issue, reversal)
     write_fields(board, [args.id], ['--body-file', args.file], 'ruling record')
     # Revision links before the supersedes: `ruling release` refuses an old a live record revises, so a stop before the end leaves a visible state the rerun finishes.
-    move(issue, command, board=board)  # the status by compare-and-set, then the links
+    move(issue, command, board=board)  # the status by compare-and-set, then the links and the waits on its premises
     write_edges(board, 'ruling', f'board ruling record {args.id}', *operations)
+    if premises:
+        write_edges(board, 'wait', f'board ruling record {args.id} --waits-on', premises,
+                    [edge for _, target, _ in premises for edge in board.between(args.id, target) if edge[2] == 'relates-to'], actor=actor)
+    for _, target, _ in premises:
+        if not reason_optional(issue, board.by_id[target]) and wait_comment(target, PREMISE_FOR) not in [c.get('text') for c in issue.get('comments') or []]:
+            comment(args.id, wait_comment(target, PREMISE_FOR))
     lint = json.loads(bd_checked('lint', args.id, '--json') or '{}')
     unlinted = [', '.join(result.get('missing') or []) for result in lint.get('results') or [] if result.get('missing')]
     if unlinted:
@@ -7045,8 +7219,11 @@ def record(board: Board, args) -> int:
             take(board, argparse.Namespace(ids=[old], force=None, agreed=None))
         board = Board.load('all')  # the links just written and the earlier olds' supersedes are in the snapshot
         failed += supersede_pair(board, old, args.id, None, actor, carry=True, closing=frozenset(closing))
+    left = close_answered(board, closes, {args.id})  # what waits on each question waits on the record first
+    if left:
+        raise fault(f"{args.id}: recorded ({status.replace('_', ' ')}), but {', '.join(left)} stayed open; it stays held: run this again once that is settled")
     if args.unratified:  # unclaim last, so any earlier stop leaves the record held and rerunnable
-        move(issue, 'unclaim', board=board)
+        move(board.by_id.get(args.id, issue), 'unclaim', board=board)
     print(f"recorded {args.id} ({status.replace('_', ' ')}): {issue.get('title', '')}")
     if confirmation:
         print(f'confirmation question: {confirmation}')
@@ -7350,15 +7527,6 @@ def live_waits(board: Board, item_id: str, setting_aside: set[str] | frozenset[s
                               if waiter_live(board, w, setting_aside, deferred) and board.cr_of(w) != item_id and board.by_id[w].get('issue_type') != 'milestone'))
 
 
-def dropped_waits_refusal(board: Board, item_id: str, together: frozenset[str]) -> str | None:
-    """Why a close as dropped is refused: a wait is met only by a delivering close (model.md Waits), so no open or deferred record may be left waiting on it."""
-    waits = live_waits(board, item_id, together, deferred=True)
-    if not waits:
-        return None
-    return (f"{', '.join(f'{waiter} waits on {target}' for waiter, target in waits)}, and a dropped close never delivers what they wait for; "
-            f"unlink them ({'; '.join(dep_fix(waiter, target) for waiter, target in waits)}), wait on the record that keeps the work, or close them in the same call")
-
-
 def release_holds_refusal(board: Board, item_id: str, together: frozenset[str]) -> str | None:
     """Why a record does not come into force (status.release-holds, nixes-9cbib): it waits on an open record that is not in force, or a live
     record revises it, and neither comes into force in the same call (`together`)."""
@@ -7410,13 +7578,14 @@ def defer_command(args) -> int:
     if args.until and not calendar_day(args.until):
         raise bad_input(f'--until takes a day of the calendar, YYYY-MM-DD: {args.until}')
     board = Board.load('status')
-    known_items(board, args.ids)
+    ids = list(dict.fromkeys(args.ids))
+    known_items(board, ids)
     by = 'user' if may_attend(board) else session_actor(caller())  # a lead or solo session defers for the user; autopilot's deferral is its own
     refuse_long_comment(f'board defer: {args.reason}')
-    for item_id in args.ids:  # every id's whole deferral first (blocks.target: guard no-hung-waiters)
-        move(board.by_id[item_id], 'defer', board=board, together=frozenset(args.ids), write=False)
-    for item_id in args.ids:
-        move(board.by_id[item_id], 'defer', board=board, together=frozenset(args.ids), fields={DEFERRED_BY: by, REVISIT: args.until})  # --until: a date that only surfaces it
+    for item_id in ids:  # every id's whole deferral first (blocks.target: guard no-hung-waiters)
+        move(board.by_id[item_id], 'defer', board=board, together=frozenset(ids), write=False)
+    for item_id in write_order(board, ids, {'status': 'deferred'}):  # a waiter before what it waits on: a stop leaves nothing hung (N4)
+        move(board.by_id[item_id], 'defer', board=board, together=frozenset(ids), fields={DEFERRED_BY: by, REVISIT: args.until})  # --until: a date that only surfaces it
         comment(item_id, f'board defer: {args.reason}')
         print(f'{item_id}: deferred')
     return 0
@@ -7426,11 +7595,12 @@ def undefer_command(args) -> int:
     """`board undefer <id>...`: back to open. Every id's whole undeferral is checked first; ids undeferred together may wait on each other
     (blocks.target: guard no-deferred-target)."""
     board = Board.load('status')
-    known_items(board, args.ids)
-    together = frozenset(args.ids)
-    for item_id in args.ids:
+    ids = list(dict.fromkeys(args.ids))  # a repeated id is one undeferral (N4)
+    known_items(board, ids)
+    together = frozenset(ids)
+    for item_id in ids:
         move(board.by_id[item_id], 'undefer', board=board, together=together, write=False)
-    for item_id in args.ids:
+    for item_id in write_order(board, ids, {'status': 'open'}):  # what a record waits on before it: a stop leaves nothing waiting on a deferred one (N4)
         move(board.by_id[item_id], 'undefer', board=board, together=together, fields={DEFERRED_BY: None, REVISIT: None})
         print(f'{item_id}: undeferred')
     return 0
@@ -7522,22 +7692,17 @@ def release(board: Board, args) -> int:
                     problems.append(refusal)
                 elif gone_hold(board, board.by_id.get(old, {'id': old}), actor):
                     taking.append(old)
-    closes = []
-    for question, records in args.closes:
-        issue = board.by_id.get(question)
-        if issue is None:
-            problems.append(bad_input(f'{question}: unknown'))
-        elif issue['status'] == 'closed':
-            print(f'{question}: already closed')
-            continue
-        elif issue.get('issue_type') != 'decision' or issue['status'] != 'open':
-            problems.append(refuse('status.release', f"{question}: {issue['status']} {issue.get('issue_type')}, not an open question"))
-        elif issue.get('assignee') and session_actor(issue['assignee']) != session_actor(actor):
-            problems.append(refuse('status.release', f"{question}: held by {issue['assignee']}; hand it off before closing it"))
-        unknown = [record for record in records if record not in args.ids]
-        if unknown:
+    closes, found = answered_refusals(board, args.closes, actor)
+    problems += found
+    for question, records in closes:
+        if unknown := [record for record in records if record not in args.ids]:
             problems.append(bad_input(f"{question}: answered by {', '.join(unknown)}, which this call does not release"))
-        closes.append((question, records))
+    carried = answer_waits(board, closes) if not problems else []
+    if carried:
+        try:  # the waits the answered questions hand on meet every wait rule before the first write
+            edge_rules(board, [wait for wait, _ in carried], 'wait', removes=[edge for _, edges in carried for edge in edges], actor=actor)
+        except BoardError as error:
+            problems.append(error)
     if problems:
         raise combined(problems, 'release refused:\n  ' + '\n  '.join(str(problem) for problem in problems))
 
@@ -7548,6 +7713,8 @@ def release(board: Board, args) -> int:
                     for result in lint.get('results') or [] if result.get('missing')]
         if unlinted:
             raise bad_input('release refused, record text fails bd lint (write the record first):\n  ' + '\n  '.join(unlinted))
+    carry_waits(board, carried)  # what waits on an answered question waits on its ruling before the ruling is plannable (nixes-ymay1)
+    if pending:
         # The items an in-force ruling changes wait on it; planning closes it and they are ready.
         for issue in pending:  # one compare-and-set each; a stop leaves the rest decided, and a rerun releases them. The snapshot takes the new status: the waits below read it
             move(issue, 'ruling release', board=board)
@@ -7561,13 +7728,57 @@ def release(board: Board, args) -> int:
         metadata = issue.get('metadata') if isinstance(issue.get('metadata'), dict) else {}
         for old in board.revises(issue['id']):
             failed += supersede_chain(board, old, issue['id'], metadata.get(REVISES_RULE), actor, {issue['id']})
-    left = close_answered(board, closes, set(args.ids))
+    left = close_answered(board, closes, set(args.ids), carry=False)  # their waits are written above
     return 1 if failed or left else 0
 
 
-def close_answered(board: Board, closes: list[tuple[str, list[str]]], released: set[str]) -> list[str]:
+def answered_refusals(board: Board, closes: list[tuple[str, list[str]]], actor: str) -> tuple[list[tuple[str, list[str]]], list[BoardError]]:
+    """status.release, for every question before the first write (`ruling release --closes`, `ruling record --answers`): each is an open question,
+    unheld or the caller's; one already closed is done (a rerun). Returns (the closes left, the refusals)."""
+    left, problems = [], []
+    for question, records in closes:
+        issue = board.by_id.get(question)
+        if issue is None:
+            problems.append(bad_input(f'{question}: unknown'))
+        elif issue['status'] == 'closed':
+            print(f'{question}: already closed')
+            continue
+        elif issue.get('issue_type') != 'decision' or issue['status'] != 'open':
+            problems.append(refuse('status.release', f"{question}: {issue['status']} {issue.get('issue_type')}, not an open question"))
+        elif issue.get('assignee') and session_actor(issue['assignee']) != session_actor(actor):
+            problems.append(refuse('status.release', f"{question}: held by {issue['assignee']}; hand it off before closing it"))
+        left.append((question, records))
+    return left, problems
+
+
+def answer_waits(board: Board, closes: list[tuple[str, list[str]]]) -> list[tuple[Edge, list[Edge]]]:
+    """The waits an answered question hands to the rulings that answer it: what still waits on the question waits on them (a ruling in force holds
+    the work it changes until planned), as Record's inherited waits did (nixes-ymay1). Records answered in the same call, the rulings themselves and
+    a pair already linked otherwise are left; a relates-to link gives way to the wait. Each as (the wait, the edges it replaces)."""
+    answered = {question for question, _ in closes} | {r for _, records in closes for r in records}
+    found = []
+    for question, records in closes:
+        for waiter in board.dependents.get(question, []):
+            if waiter in answered or not board.is_open(waiter) or board.by_id[waiter].get('issue_type') == 'milestone':
+                continue
+            for ruling in records:
+                edges = board.between(waiter, ruling)
+                if all(kind == 'relates-to' for _, _, kind in edges) and (waiter, ruling, WAIT_LINK) not in [f[0] for f in found]:
+                    found.append(((waiter, ruling, WAIT_LINK), edges))
+    return found
+
+
+def carry_waits(board: Board, carried: list[tuple[Edge, list[Edge]]]) -> None:
+    """Writes the waits answered questions hand on (`answer_waits`), each with its for."""
+    for wait, replaced in carried:
+        write_edges(board, 'wait', f'board: {wait[0]} waits on {wait[1]}', [wait], replaced)
+        comment(wait[0], wait_comment(wait[1], 'the ruling answers a question it waited on'))
+
+
+def close_answered(board: Board, closes: list[tuple[str, list[str]]], released: set[str], carry: bool = True) -> list[str]:
     """Closes each answered question once every unsettled blocker is a ruling of this release or a question closed
-    before it here (dependency order); forces only past those and in-force rulings. Returns the questions left open."""
+    before it here (dependency order); forces only past those and in-force rulings. What waits on a question waits on its rulings first
+    (answer_waits; `carry` False: the caller wrote them), so its close releases nothing. Returns the questions left open."""
     closed: set[str] = set()
     pending = list(closes)
     while pending:
@@ -7577,6 +7788,8 @@ def close_answered(board: Board, closes: list[tuple[str, list[str]]], released: 
             if any(b not in released and b not in closed for b in board.unsettled_blockers(question)):
                 continue
             pending.remove((question, records))
+            if carry:
+                carry_waits(board, answer_waits(board, [(question, records)]))
             result = move(board.by_id[question], 'close', board=board, reason=f"Answered by released {', '.join(records)}", force=bool(blockers), check=False,
                           outcome='superseded')
             if result.returncode != 0:
@@ -8363,7 +8576,7 @@ EXAMPLES = {
     'comment': 'agents board comment <id> <id> -m "tests green: 412 passed"  |  agents board comment <id> -f note.txt',
     'close': 'agents board close <id> <id> --reason "superseded by the cache ruling" [--force: a blocked item]',
     'claim': 'agents board claim [<id>] [--force "waits on the cache ruling"]',
-    'ruling record': 'agents board ruling record <id> record.md [--unratified] [--replaces <old>,<old>]',
+    'ruling record': 'agents board ruling record <id> record.md [--unratified] [--replaces <old>,<old>] [--waits-on <id>,<id>] [--answers <question>,<question>]',
     'ruling check-replaces': 'agents board ruling check-replaces <old> [<old>]',
     'update': 'agents board update <id> <id> --title "New title" --priority 1 --label topic:x --unlabel topic:y',
     'link': 'agents board link <a> <b> --type relates-to',
@@ -8640,6 +8853,10 @@ def run_command(argv: list[str]) -> int:
     sub.add_argument('--replaces', action=Values, default=[], metavar='ID[,ID...]',
                      help='the rulings this record replaces, rerunnable after a stop: each decided or released one gets a pending revision link and is superseded when '
                           'this record comes into force (its release; with --unratified at once); one already superseded by it is done; anything else refuses before any write (repeatable)')
+    sub.add_argument('--waits-on', dest='waits_on', action=Values, default=[], metavar='ID[,ID...]',
+                     help='the premises the record rests on: it waits on each, written before the hold is released (a ruling comes into force only on settled premises)')
+    sub.add_argument('--answers', action=Values, default=[], metavar='ID[,ID...]',
+                     help='with --unratified: the open questions this ruling answers, closed as superseded after what waits on each waits on the record')
     sub = add('check-replaces', 'validate and classify rulings a staged question proposes to replace', check_replaces, group='ruling')
     sub.add_argument('ids', nargs='+', type=board_id)
     sub = add('update', 'change items: title, priority, labels (not queue: or for:), parent, item settings', update_command)

@@ -443,10 +443,20 @@ def dates(b: Board, left: list[str]) -> list[Step]:
     return steps
 
 
+def rule_board(b: Board):
+    """The board as bin/board's rules read it (one rule set, nixes-pn847): its records with the old wait spellings as the wait they become."""
+    records = [{**issue, 'dependencies': [{**dep, 'type': 'blocks' if dep.get('type') in OLD_WAITS else dep.get('type')} for dep in issue.get('dependencies') or []]}
+               for issue in b.issues.values()]
+    return BOARD_MODULE.Board(records, complete=True)
+
+
 def deferrals(b: Board, left: list[str]) -> list[Step]:
-    """A deferral whose reason named a condition (the words the old check refused) reopens only when it already waits (a blocks link) on an open record.
-    No wait is read out of the note's prose (nixes-gym2j): any other such deferral stays a someday record, listed for the agent to decide with the user."""
+    """A deferral whose reason named a condition (the words the old check refused) reopens only when it already waits (a blocks link) on an open record,
+    and only when the board's rules accept the reopened record (`undefer` would: nothing it or its items wait on is deferred, and no other wait problem
+    check reports; N8). No wait is read out of the note's prose (nixes-gym2j): any other such deferral stays a someday record with its links, listed
+    for the agent to decide with the user."""
     steps = []
+    deck = rule_board(b)
     for issue in b.live():
         item_id = issue['id']
         reason = str(issue.get('notes') or '')
@@ -456,11 +466,17 @@ def deferrals(b: Board, left: list[str]) -> list[Step]:
         live = lambda record: record.get('status') not in (None, 'closed', 'deferred')  # an item of a deferred change request is set aside with it
         waits = [target for target, kind in links if kind in ('blocks', *OLD_WAITS) and live(b.issues.get(target, {}))
                  and all(live(b.issues.get(parent, {})) for parent in b.parents.get(target, []) if b.issues.get(parent, {}).get('issue_type') == 'change-request')]
+        conflicts = []
         if waits:
-            steps.append((f'{item_id}: the deferral already waits on {", ".join(waits)}: open again', update(item_id, '--status', 'open')))
-            continue
+            reopened = BOARD_MODULE.post_state(deck, {item_id: {'status': 'open'}})
+            conflicts = [f'{one} {problem}' for (_, one, _), (problem, _, _) in BOARD_MODULE.new_problems(deck, reopened, [item_id]).items()]
+            if not conflicts:
+                steps.append((f'{item_id}: the deferral already waits on {", ".join(waits)}: open again', update(item_id, '--status', 'open')))
+                deck = reopened  # a later reopen sees this one
+                continue
         named = [i for i in dict.fromkeys(re.findall(r'[a-z][a-z0-9]*-[a-z0-9]{3,}(?:\.\d+)*', reason)) if i in b.issues and i != item_id]
-        left.append(f'{item_id}: deferred on a condition ("{reason[:100]}"), no wait on an open record; candidates named in the note: {", ".join(named) or "none"}; links: '
+        why = f'opened again it would break a wait rule ({"; ".join(conflicts)})' if conflicts else 'no wait on an open record'
+        left.append(f'{item_id}: deferred on a condition ("{reason[:100]}"), {why}; candidates named in the note: {", ".join(named) or "none"}; links: '
                     f'{", ".join(f"{kind} {target}" for target, kind in links) or "none"}. Right after --mark decide it with the user: `agents board wait {item_id} --on <target> --for "<input>"` '
                     f'then `agents board undefer {item_id}`, or leave it someday')
     return steps

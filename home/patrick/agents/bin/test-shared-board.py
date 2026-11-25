@@ -2092,6 +2092,76 @@ def t_scenarios() -> None:
           'scenario 11: the duplicate closes as dropped, the original stays open, the link stays', err)
 
 
+def t_record() -> None:
+    """nixes-ymay1 on a real board: `ruling record --unratified --waits-on --answers` writes an away ruling, its premise wait and the close of the
+    question it answers in one call and releases its hold last. N1: no planner can plan the ruling before its premise wait stands. N2: the
+    question waiting on an in-force premise closes superseded, what waited on it waits on the ruling, and a stop leaves the ruling held and the
+    call rerunnable."""
+    settle('a', 'b')
+    draft = ROOT / 'record-premise.md'
+    draft.write_text('## Question\nq\n## Alternatives Considered\na\n## Decision\nd\n## Rationale\nr\n## Rule owner\no\n')
+    away = ROOT / 'record-away.md'
+    away.write_text(draft.read_text() + '## Reversal\nRevise the ruling; reopen the question it answered.\n')
+
+    def row(item: str) -> dict:
+        return items('a')[item]
+
+    def waits_on(item: str) -> set[str]:
+        return {d['depends_on_id'] for d in row(item).get('dependencies') or [] if d.get('type') == 'blocks'}
+
+    premise = create('a', 'record: the premise', '-t', 'decision', kind='decision')
+    check(run('a', 'claim', premise)[0] == 0 and run('a', 'ruling', 'record', premise, str(draft))[0] == 0
+          and run('a', 'ruling', 'release', premise)[0] == 0 and row(premise)['status'] == 'in_force', 'record: the premise is in force')
+
+    def world(tag: str) -> tuple[str, str, str]:
+        """An open question waiting on the in-force premise, a task waiting on the question, and the new ruling the autopilot holds."""
+        question = create('a', f'record {tag}: the question', '-t', 'decision', kind='decision')
+        task = create('a', f'record {tag}: the work', '--no-commit', kind='task')
+        ruling = create('a', f'record {tag}: the ruling', '-t', 'decision', kind='decision')
+        check(run('a', 'wait', question, '--on', premise)[0] == 0 and run('a', 'wait', task, '--on', question, '--for', 'the rule')[0] == 0
+              and run('a', 'claim', ruling, role='autopilot')[0] == 0, f'record {tag}: question, work and held ruling set up')
+        return question, task, ruling
+
+    question, task, ruling = world('one')
+    rc, out, err, _ = run('a', 'ruling', 'record', ruling, str(away), '--unratified', '--waits-on', premise, '--answers', question, role='autopilot')
+    got = row(ruling)
+    check(rc == 0 and got['status'] == 'in_force' and not got.get('assignee') and waits_on(ruling) == {premise},
+          'N1: one call records the ruling in force, waiting on its premise, and releases the hold last', err + out)
+    check(row(question)['status'] == 'closed' and (row(question).get('metadata') or {}).get('outcome') == 'superseded',
+          'N2: the question waiting on an in-force premise closes superseded', row(question))
+    check(ruling in waits_on(task), 'N2: what waited on the question waits on the ruling', row(task).get('dependencies'))
+    rc, _, err, _ = run('a', 'claim', ruling, role='lead')  # a second planner, right after the call
+    check(rc != 0 and row(ruling)['status'] == 'in_force' and not row(ruling).get('assignee'),
+          'N1: a second planner cannot plan the ruling while its premise is in force', err)
+
+    # A stop inside the call (bd refuses the answered question's close once): the ruling stays held, the rerun finishes.
+    question, task, ruling = world('two')
+    shim = ROOT / 'shim'
+    shim.mkdir(exist_ok=True)
+    marker = ROOT / 'shim-stopped'
+    (shim / 'bd').write_text(f"""#!{sys.executable}
+import os, shutil, sys
+here = {str(shim)!r}
+real = shutil.which('bd', path=os.pathsep.join(p for p in os.environ['PATH'].split(os.pathsep) if os.path.realpath(p) != os.path.realpath(here)))
+if 'close' in sys.argv[1:] and {question!r} in sys.argv and not os.path.exists({str(marker)!r}):
+    open({str(marker)!r}, 'w').close()
+    print('injected stop', file=sys.stderr)
+    sys.exit(1)
+os.execv(real, [real, *sys.argv[1:]])
+""")
+    (shim / 'bd').chmod(0o755)
+    env = {**base_env('a'), 'CLAUDE_CODE_SESSION_ID': session('a', 'autopilot'), 'PATH': f"{shim}{os.pathsep}{os.environ['PATH']}"}
+    argv = ['ruling', 'record', ruling, str(away), '--unratified', '--waits-on', premise, '--answers', question]
+    stopped = subprocess.run([sys.executable, '-B', BOARD, *argv], cwd=ROOT / 'a', capture_output=True, text=True, env=env, input='', timeout=200)
+    got = row(ruling)
+    check(stopped.returncode != 0 and marker.exists() and got['status'] == 'in_force' and got.get('assignee') and waits_on(ruling) == {premise}
+          and row(question)['status'] != 'closed', 'N2: a stop leaves the ruling in force, waiting on its premise and still held', stopped.stderr + stopped.stdout)
+    check(run('a', 'claim', ruling, role='autopilot')[0] == 0, "N2: the rerun's claim keeps its own hold")
+    rc, out, err, _ = run('a', *argv, role='autopilot')
+    check(rc == 0 and row(question)['status'] == 'closed' and not row(ruling).get('assignee') and ruling in waits_on(task),
+          'N2: the rerun closes the question and releases the ruling', err + out)
+
+
 def t_move() -> None:
     """board relocate (beads-setup.md#history) to a local fresh repository, a stale clone told, its rejoin, a new joiner."""
     settle('a', 'b')
@@ -2350,6 +2420,13 @@ def t_migrate() -> None:
     make('cond_none', 'conditional deferral with no link', *no_commit)
     update('cond_none', '--notes', f"revisit after {ids['target']} lands")
     raw(side, 'defer', ids['cond_none'])
+    make('cond_mixed', 'conditional deferral that also waits on a someday task', *no_commit)  # nixes-tpbjs N8: undefer would refuse it
+    make('someday', 'someday task', *no_commit)
+    update('cond_mixed', '--notes', f"revisit after {ids['target']} lands")
+    link('cond_mixed', 'target', 'blocks')
+    link('cond_mixed', 'someday', 'blocks')
+    raw(side, 'defer', ids['someday'])
+    raw(side, 'defer', ids['cond_mixed'])
     make('rule_a', 'in-force ruling that waits on an in-force ruling', kind='decision')
     update('rule_a', '--status', 'released')
     make('rule_b', 'in-force ruling the other waits on', kind='decision')
@@ -2526,6 +2603,10 @@ def t_migrate() -> None:
     check(all(row(name)['status'] == 'deferred' and not any(kind == 'blocks' for _, kind in deps(name)) and any(f"{ids[name]}:" in line for line in first_apply.splitlines())
               for name in ('cond_rel', 'cond_none')) and (ids['target'], 'relates-to') in deps('cond_rel'),
           'migrate: a condition-worded deferral with no wait stays deferred, gets no wait from its note, and is listed', [(row(n)['status'], deps(n)) for n in ('cond_rel', 'cond_none')])
+    check(row('cond_mixed')['status'] == 'deferred' and {(ids['target'], 'blocks'), (ids['someday'], 'blocks')} <= deps('cond_mixed')
+          and any(f"{ids['cond_mixed']}:" in line and ids['someday'] in line for line in first_apply.splitlines()),
+          'migrate: a condition-worded deferral that also waits on a deferred record stays deferred, both waits kept, and is listed (N8)',
+          (row('cond_mixed')['status'], deps('cond_mixed'), first_apply[-600:]))
     check((ids['rule_b'], 'blocks') in deps('rule_a') and (ids['rule_b'], 'relates-to') not in deps('rule_a'), 'migrate: an in-force ruling keeps its wait on an in-force ruling', deps('rule_a'))
     gates = [i for i in now.values() if i['issue_type'] == 'gate' and i['status'] == 'open' and i.get('await_type') == 'human']
     gates = [g for g in gates if any((g['id'], 'supersedes') in {(d['depends_on_id'], d['type']) for d in i.get('dependencies') or []} for i in now.values() if i['status'] == 'closed')]  # the old record is superseded by the gate
@@ -2711,7 +2792,7 @@ def t_cleanup() -> None:
             shutil.rmtree(folder, ignore_errors=True)
 
 
-ORDER = ('unshared', 'share_join', 'setup', 'child_ids', 'queues', 'moves', 'inbox', 'cr', 'writers', 'scenarios', 'window', 'pull', 'manual_and_dead_wait', 'soak', 'stopped', 'held_elsewhere', 'store', 'move', 'migrate', 'cleanup')
+ORDER = ('unshared', 'share_join', 'setup', 'child_ids', 'queues', 'moves', 'inbox', 'cr', 'writers', 'scenarios', 'window', 'pull', 'manual_and_dead_wait', 'soak', 'stopped', 'held_elsewhere', 'store', 'move', 'record', 'migrate', 'cleanup')
 only = {name for name in options.only.split(',') if name}
 stop_dead_servers()
 for signum in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):

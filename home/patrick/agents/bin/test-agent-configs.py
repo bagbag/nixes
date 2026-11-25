@@ -3958,7 +3958,8 @@ def validate_board(root: Path) -> None:
             closes = [args for args in fake.writes() if args[0] == "close"]
             if code != 1 or closes != [["close", cache, "--reason", f"Answered by released {store}", "--force"],
                                        ["close", spike, "--reason", f"Answered by released {store}", "--force"]] \
-                    or fake.writes()[0][:3] != ["update", store, "--status"] or f"{loose}: left open, blocked by {ready}" not in errors \
+                    or [w[:3] for w in fake.writes() if w[0] != "comments"][:2] != [["batch", "-m", f"board: {ids['Wire caller']} waits on {store}"], ["update", store, "--status"]] \
+                    or f"{loose}: left open, blocked by {ready}" not in errors \
                     or sum("outcome=superseded" in w for w in fake.writes() if w[0] == "update") != 2 \
                     or f"closed {cache}: answered by released {store}" not in output:
                 raise ValueError(f"board ruling release --closes: {fake.writes()}\n{output}\n{errors}")
@@ -5483,6 +5484,26 @@ def validate_board(root: Path) -> None:
             mixed = readiness(cr_issue("s", "passed"), cr_issue("c", "passed"), cr_issue("w", blocks=("s",)), cr_item("w.i", "w", blocks=("c",)), cr_item("w.k", "w"))["w"]
             if mixed != ("implement", ([], ["s"])):
                 raise ValueError(f"a CR stacks on its own base; an item's other base holds only that item: {mixed}")
+            # nixes-tpbjs N6: a CR whose branch already stacks on passed B keeps that stack when a second item waits on passed C: the item on B
+            # is ready, the item on C waits.
+            stacked = [cr_issue("b", "passed"), cr_issue("c", "passed"), cr_issue("w", base="b"), cr_item("w.i", "w", blocks=("b",)), cr_item("w.j", "w", blocks=("c",))]
+            deck = bare_deck(stacked, False)
+            if readiness_of(deck, stacked)["w"] != ("implement", ([], ["b"])) or deck.cr_stuck(deck.by_id["w"]):
+                raise ValueError(f"a CR keeps the base its branch stacks on: {readiness_of(deck, stacked)['w']} {deck.cr_stuck(deck.by_id['w'])}")
+            # N9: a CR's stack is chosen once per evaluation, not once per item.
+            many = [cr_issue("w"), *(cr_item(f"w.{n}", "w") for n in range(30))]
+            deck = bare_deck(many, False)
+            with patch.object(board.Board, "cr_wait_parts", autospec=True, side_effect=board.Board.cr_wait_parts) as parts:
+                deck.cr_stuck(deck.by_id["w"])
+            if parts.call_count != 1:
+                raise ValueError(f"cr_stuck chooses the stack base once, not per item: {parts.call_count} calls")
+            # N7: an item waiting on passed B and passed C: delivering B leaves C the one candidate, so the projection frees the CR, as a rebuilt board does.
+            both = [cr_issue("b", "passed"), cr_issue("c", "passed"), cr_issue("w"), cr_item("w.i", "w", blocks=("b", "c"))]
+            deck = bare_deck(both, True)
+            landed = bare_deck([{**both[0], "status": "closed", "metadata": {"outcome": "landed"}}, *both[1:]], True)
+            if deck.claimable(deck.by_id["w"]) is not None or landed.claimable(landed.by_id["w"]) != "implement" \
+                    or "w" not in deck.unlocks.release(["b"])[0]:
+                raise ValueError(f"delivering a base re-chooses the stack in the projection: {deck.unlocks.release(['b'])} {landed.claimable(landed.by_id['w'])}")
             # nixes-dl0ru F4: a task outside any CR cannot stack, so its wait on a done item of an unlanded CR holds until that CR lands, in a
             # complete snapshot and in a status one whose closed child comes from the closed list.
             probe = {"id": "p", "title": "probe", "issue_type": "task", "status": "open", "priority": 2, "description": "d", "metadata": {"no_commit": True},
@@ -6505,7 +6526,7 @@ def validate_board(root: Path) -> None:
                     raise ValueError(f"board reopen must refuse a change request: {code} {errors!r} {writes}")
                 terminal = subprocess.run(["git", "config", "user.name"], capture_output=True, text=True).stdout.strip() or os.environ.get("USER", "")  # a person's terminal closes as bd's own actor: the forced close takes the record
                 for argv, want in ((["defer", "t-a", "t-b", "t-l", "--reason", "revisit with the cache ruling", "--until", "2026-12-01"],
-                                    [w for one in ("t-a", "t-b", "t-l") for w in (
+                                    [w for one in ("t-b", "t-l", "t-a") for w in (  # t-l waits on t-a: the waiter is set aside first (nixes-pn847 N4)
                                         ["update", one, "--status", "deferred", "--assignee", "", "--if-assignee", "", "--if-status", "open",
                                          "--set-metadata", "deferred_by=user", "--set-metadata", "revisit=2026-12-01", "--json"],
                                         ["comments", "add", one, "board defer: revisit with the cache ruling"])]),
@@ -6556,7 +6577,7 @@ def validate_board(root: Path) -> None:
                 # Nothing waits on a deferred record, and a deferred change request holds its items' waiters too: the target resolves to its change request.
                 other_cr = [cr_issue("t-c1"), cr_item("t-c1.i", "t-c1"), cr_issue("t-c2"), cr_item("t-c2.i", "t-c2", blocks=("t-c1.i",))]
                 code, _, errors, writes = verb(["defer", "t-c1", "--reason", "set aside with its item waited on"], other_cr)
-                if code != 2 or "t-c2.i would hang on it deferred" not in errors or writes:
+                if code != 2 or "yet t-c2.i waits on it" not in errors or writes:
                     raise ValueError(f"deferring a change request must see the waits on its items: {code} {errors!r} {writes}")
                 code, _, errors, writes = verb(["defer", "t-c1", "t-c2", "--reason", "both set aside together"], other_cr)
                 if code or len(writes) != 4:
@@ -10678,15 +10699,14 @@ def validate_protocol(root: Path, part: str) -> None:
             board_calls = calls()
             records = Path(str(log) + ".records").read_text(encoding="utf-8")
             # fx-b rests on fx-a (waitsOn), decided, not in force: a person's answer is recorded decided and waits on it (nixes-rzfij).
-            # Each record: claimed, recorded, then linked (nixes-dl0ru F8).
+            # Each record: claimed, then recorded with its premise waits in the one call (nixes-ymay1), then linked.
             expected = [["claim", "fx-a"], ["ruling", "record", "fx-a"], ["show", "fx-a", "--json", "--field", "status"],
-                        ["claim", "fx-b"], ["ruling", "record", "fx-b"],
-                        ["wait", "fx-b", "--on", "fx-a"], ["bd", "list", "--external-ref"], ["ruling", "revise", "fx-old", "--title", "Pasted point", "--body-file"],
+                        ["claim", "fx-b"], ["ruling", "record", "fx-b"], ["bd", "list", "--external-ref"], ["ruling", "revise", "fx-old", "--title", "Pasted point", "--body-file"],
                         ["claim", "fx-rev1"], ["ruling", "record", "fx-rev1"],
                         ["show", "fx-rev1", "--json", "--field", "dependencies"], ["link", "fx-rev1", "fx-rel", "--type", "relates-to"],
                         ["health", "--json", "--items", "decided"]]  # one Record writes all three
             if [c["args"][:len(want)] for c, want in zip(board_calls, expected)] != expected or len(board_calls) != len(expected) \
-                    or board_calls[7]["args"][-2:] != ["--holds", "none"] \
+                    or board_calls[6]["args"][-2:] != ["--holds", "none"] or board_calls[4]["args"][-2:] != ["--waits-on", "fx-a"] \
                     or 'User (chat), ' not in records or '"keep   it,\nfinal"' not in records or "## Decision\nKeep the point." not in records \
                     or "Board: 3 open questions, 1 decided awaiting release, 0 in force to plan (2 wait), 0 to review, 1 to accept, 1 waiting on the user." not in out \
                     or "Held for a later round" in out:
@@ -13695,13 +13715,13 @@ def validate_protocol(root: Path, part: str) -> None:
             recorded = Path(str(log) + ".records").read_text(encoding="utf-8")
             links = [c["args"] for c in made if c["args"][0] in ("link", "wait")]
             if [engine_verb(c) for c in made if c["args"][0] not in ("bd", "show", "create", "link", "wait")] != ["claim", "record", "claim", "record", "health"] \
-                    or links != [["link", "fx-new1", "fx-rel", "--type", "relates-to"], ["wait", "fx-w", "--on", "fx-new1"],
-                                 ["wait", "fx-new1", "--on", "fx-y", "--for", "fx-new1 waits on fx-y as the items it settles did."]] \
-                    or ["show", "fx-a", "fx-b", "fx-new1", "--json", "--field", "dependencies"] not in [c["args"] for c in made] \
+                    or links != [["link", "fx-new1", "fx-rel", "--type", "relates-to"], ["link", "fx-new1", "fx-w", "--type", "relates-to"]] \
+                    or not any(c["args"][:3] == ["ruling", "record", "fx-new1"] and c["args"][-2:] == ["--waits-on", "fx-y"] for c in made) \
+                    or ["show", "fx-a", "fx-b", "--json", "--field", "dependencies"] not in [c["args"] for c in made] \
                     or any(c["args"][0] == "unclaim" for c in made) \
                     or next(c["args"] for c in made if c["args"][:2] == ["create", "--graph"])[-2:] != ["--holds", "fx-w,fx-y"] \
                     or "fx-a (the old store)" not in recorded or "Round " not in out:
-                raise ValueError(f"protocol Record of a rule question: inherited waits through board link and wait, settled items stay held:\n{made}\n{out}")
+                raise ValueError(f"protocol Record of a rule question: its premise through ruling record --waits-on (what waits on fx-a, fx-b the release hands on), settled items stay held:\n{made}\n{out}")
             # The release closes the settled items by the rule record, pre-filled into the answers check.
             patch_config(items={**board_items, "fx-new1": {"status": "decided", "issue_type": "decision", "title": "Rule record"}})
             calls()
@@ -14483,10 +14503,9 @@ def validate_protocol(root: Path, part: str) -> None:
             proto("step", stdin={"records": {rule: {"rationale": "Took it, for fx-a and fx-b.", "ruleOwner": "docs/x.md", "reversal": "Revise the ruling."}}}, **away)
             acted = [c["args"] for c in calls()]
             reversal = records_file.read_text(encoding="utf-8")
-            close_calls = [args for args in acted if args[:1] == ["close"]]
-            closes = [args[1] for args in close_calls]
-            if closes != ["fx-a", "fx-b"] \
-                    or any(args[args.index("--reason") + 1] != "Settled by released away ruling fx-rule" for args in close_calls) \
+            recording = [args for args in acted if args[:2] == ["ruling", "record"]]  # one call records it and closes what it answers (nixes-ymay1)
+            if len(recording) != 1 or recording[0][-2:] != ["--answers", "fx-a,fx-b"] or "--unratified" not in recording[0] \
+                    or any(args[:1] in (["close"], ["wait"]) for args in acted) \
                     or "`agents board reopen fx-a fx-b`" not in reversal \
                     or any(args[0] == "unclaim" and ("fx-a" in args or "fx-b" in args) for args in acted):
                 raise ValueError(f"an away ruling closes what it settles, and its reversal reopens them:\n{acted}\n{reversal}")
@@ -14562,15 +14581,12 @@ def validate_protocol(root: Path, part: str) -> None:
             recorded = [args[2] for args in made if args[:2] == ["ruling", "record"]]
             if recorded != ["fx-p", "fx-rule2"]:
                 raise ValueError(f"away answers are recorded premise first: {recorded}")
-            # nixes-dl0ru F8: the new ruling is claimed, recorded, then given the settled item's wait on the premise now in force: a wait
-            # written on the open record first would hand its claim back (board wait) or keep the claim from taking it (waits on fx-p).
-            at = lambda head: next((n for n, args in enumerate(made) if args[:len(head)] == head), None)
-            order = [at(["claim", "fx-rule2"]), at(["ruling", "record", "fx-rule2"]), at(["wait", "fx-rule2", "--on", "fx-p"])]
-            if None in order or order != sorted(order):
-                raise ValueError(f"Record claims a new ruling, records it, then writes its inherited waits: {order}\n{made}")
-            # nixes-dl0ru F11: the question an away ruling answers closes superseded, as the attended release closes it.
-            if not any(args[:2] == ["close", "fx-c"] and args[-2:] == ["--outcome", "superseded"] for args in made):
-                raise ValueError(f"an away ruling closes the question it settles as superseded:\n{made}")
+            # nixes-ymay1 (N1, N2): one board call records the new ruling with the settled item's wait on the premise now in force and the
+            # close of the question it answers, and releases the hold last; the engine writes no wait or close of its own around it.
+            recording = [args for args in made if args[:3] == ["ruling", "record", "fx-rule2"]]
+            if len(recording) != 1 or not {"--waits-on", "fx-p", "--answers", "fx-c", "--unratified"} <= set(recording[0]) \
+                    or any(args[:1] in (["wait"], ["close"]) for args in made):
+                raise ValueError(f"Record writes an away ruling, its premise wait and the answered close in one ruling record:\n{made}")
 
             # D: the check cap while away: no cap dialog, the unsettled questions park.
             patch_config(health={"counts": counts, "items": {"questions": [
@@ -15149,6 +15165,9 @@ def validate_board_rules(root: Path) -> None:
     def node(key="n", kind="task", **fields):
         return {"key": key, "title": key, "type": kind, "description": "d", **fields}
 
+    def done_in(item_id, cr):
+        return record(item_id, "task", status="closed", parent=cr, metadata={"outcome": "done"})
+
     def holding(item_id, actor):
         return {item_id.replace("-", "_"): {"assignee": actor}}
 
@@ -15569,7 +15588,19 @@ def validate_board_rules(root: Path) -> None:
                                                refused(["ruling", "record", "r-dec", str(body), "--unratified"], "revises it", issues=W(("r-q", "r-dec", "tracks")), actor=lead)),
         ("ruling release", "any"): every(refused(["ruling", "release", "r-dec"], "waits on r-q", issues=W(("r-dec", "r-q", "blocks")), actor=lead),
                                          refused(["ruling", "release", "r-dec"], "revises it", issues=W(("r-q", "r-dec", "tracks")), actor=lead))})
-    add("status.release", {("ruling release", "any"): refused(["ruling", "release", "r-dec", "--closes", "r-qheld=r-dec"], "hand it off", actor=lead)})
+    RECORD = ["ruling", "record", "r-dec", str(body)]  # nixes-ymay1: the record's premises and the questions it answers, in the one call
+    add("status.release", {("ruling release", "any"): refused(["ruling", "release", "r-dec", "--closes", "r-qheld=r-dec"], "hand it off", actor=lead),
+                           ("ruling record", "answers"): refused([*RECORD, "--unratified", "--answers", "r-qheld"], "hand it off", actor=lead)})
+    add("blocks.writers", {("ruling record", "waits-on"): wrote([*RECORD, "--unratified", "--waits-on", "r-rule"], batch_has("dep add r-dec r-rule blocks"), actor=lead),
+                           ("ruling record", "answers"): wrote([*RECORD, "--unratified", "--answers", "r-q"], batch_has("dep add r-t r-dec blocks"),
+                                                               issues=W(("r-t", "r-q", "blocks")), actor=lead)})
+    add("blocks.target", {("ruling record", "waits-on"): refused([*RECORD, "--waits-on", "r-qd"], "deferred", actor=lead)})
+    add("blocks.waiter", {("ruling record", "waits-on"): refused([*RECORD, "--unratified", "--waits-on", "r-tdone"], "planning", actor=lead)})
+    add("blocks.cycle", {("ruling record", "waits-on"): refused([*RECORD, "--waits-on", "r-q"], "cycle", issues=W(("r-q", "r-dec", "blocks")), actor=lead),
+                         ("ruling record", "answers"): refused([*RECORD, "--unratified", "--answers", "r-q"], "cycle", actor=lead,
+                                                               issues=W(("r-t", "r-q", "blocks"), ("r-dec", "r-rule", "blocks"), ("r-rule", "r-t", "blocks")))})
+    add("blocks.pair", {("ruling record", "waits-on"): wrote([*RECORD, "--waits-on", "r-q"], batch_has("dep remove r-dec r-q"), issues=W(("r-dec", "r-q", "relates-to")), actor=lead)})
+    add("status.release-holds", {("ruling record", "waits-on"): refused([*RECORD, "--unratified", "--waits-on", "r-q"], "r-q", actor=lead)})
     add("tracks.revisable", {("ruling revise", "any"): refused(["ruling", "revise", "r-q", "--title", "t", "--body-file", str(body), "--holds", "none"], "not yet a ruling", actor=lead),
                              ("ruling record", "replaces"): refused(["ruling", "record", "r-dec", str(body), "--replaces", "r-q"], "not decided or released", actor=lead)})
     add("status.items-closed", {("handover", "any"): refused(["handover", "r-held", "evidence"], "items still open", actor=solo),
@@ -15648,6 +15679,159 @@ def validate_board_rules(root: Path) -> None:
     if problems:
         raise ValueError("model.md Write rules and their cases disagree:\n  " + "\n  ".join(problems))
     # The cases run real git (main_root, worktree lookups) in the process cwd: a throwaway repository on branch main, as validate_board does.
+    class Applying(Rules):
+        """Rules' bd with its writes applied (update, close, batch dep add/remove, comments), so a sequence of verbs runs on one board."""
+        def __call__(self, command, **kwargs):
+            args = command[1:] if command[0] == "bd" else []
+            by_id = {issue["id"]: issue for issue in self.issues}
+            if args[:1] == ["update"]:
+                ids = [a for a in args[1:] if not a.startswith("-")][:1]
+                at = args.index(ids[0]) + 1 if ids else 1
+                while at < len(args) and not args[at].startswith("-"):
+                    ids.append(args[at])
+                    at += 1
+                flags, pairs = args[at:], []
+                while flags:
+                    flag = flags.pop(0)
+                    pairs.append((flag, None if flag == "--json" else flags.pop(0)))
+                for item_id in ids:
+                    issue = by_id[item_id]
+                    for flag, value in pairs:
+                        if flag == "--if-assignee" and (issue.get("assignee") or "") != value or flag == "--if-status" and issue["status"] != value:
+                            return subprocess.CompletedProcess(command, 13, "", "changed meanwhile")
+                for item_id in ids:
+                    issue = by_id[item_id]
+                    for flag, value in pairs:
+                        if flag == "--status":
+                            issue["status"] = value
+                        elif flag == "--assignee":
+                            issue["assignee"] = value or None
+                        elif flag == "--set-metadata":
+                            key, _, given = value.partition("=")
+                            issue["metadata"] = {**(issue.get("metadata") or {}), key: given}
+                        elif flag == "--unset-metadata":
+                            issue["metadata"] = {k: v for k, v in (issue.get("metadata") or {}).items() if k != value}
+                        elif flag == "--parent":
+                            issue["dependencies"] = [d for d in issue["dependencies"] if d["type"] != "parent-child"] + [{"issue_id": item_id, "depends_on_id": value, "type": "parent-child"}]
+            elif args[:1] == ["list"] and "--status" in args and args[args.index("--status") + 1] == "closed":  # bd_closed
+                self.calls.append((args, None))
+                return subprocess.CompletedProcess(command, 0, json.dumps([i for i in self.issues if i["status"] == "closed"]), "")
+            elif args[:1] == ["close"]:
+                by_id[args[1]]["status"] = "closed"
+            elif args[:1] == ["batch"]:
+                for line in (kwargs.get("input") or "").splitlines():
+                    words = line.split()
+                    if words[:2] == ["dep", "remove"]:
+                        by_id[words[2]]["dependencies"] = [d for d in by_id[words[2]]["dependencies"] if d["depends_on_id"] != words[3]]
+                    elif words[:2] == ["dep", "add"]:
+                        by_id[words[2]]["dependencies"].append({"issue_id": words[2], "depends_on_id": words[3], "type": words[4]})
+            return super().__call__(command, **kwargs)
+
+    def sequence_world(rng):
+        """A small board: change requests (open, passed, deferred) with items, a done item of each, standalone tasks (open, deferred), questions,
+        in-force rulings and a gate. No waits: the sequence makes them through the verbs."""
+        issues = []
+        for n, status in enumerate(("open", "open", "open", "passed", "passed", "deferred")):
+            cr = f"s-cr{n}"
+            issues.append(record(cr, "change-request", status=status, metadata={"deferred_by": "user"} if status == "deferred" else {}))
+            issues += [record(f"{cr}-i{k}", "task", parent=cr) for k in range(rng.randint(1, 2))]
+            issues.append(record(f"{cr}-done", "task", status="closed", parent=cr, metadata={"outcome": "done"}))
+        issues += [record(f"s-t{n}", "task", metadata=NC) for n in range(3)] + [record("s-td", "task", status="deferred", metadata={**NC, "deferred_by": "user"})]
+        issues += [record(f"s-q{n}", "decision") for n in range(2)] + [record("s-rule", "decision", status="in_force")] + [record("s-gate", "gate", await_type="human")]
+        return issues
+
+    def sequence_command(rng, issues):
+        live = [i["id"] for i in issues if i["status"] != "closed"]
+        every = [i["id"] for i in issues]
+        crs = [i["id"] for i in issues if i["issue_type"] == "change-request" and i["status"] != "closed"]
+        pick = lambda pool, k=1: [rng.choice(pool) for _ in range(k)]
+        kind = rng.choice(("wait", "wait", "wait", "unlink", "defer", "undefer", "undefer", "close", "reopen", "move"))
+        if kind == "wait":
+            return ["wait", rng.choice(live), "--on", rng.choice(every), "--for", "x"]
+        if kind == "unlink":
+            linked = [(i["id"], d["depends_on_id"]) for i in issues for d in i["dependencies"] if d["type"] == "blocks"]
+            return ["unlink", *rng.choice(linked)] if linked else ["unlink", *pick(every, 2)]
+        if kind == "defer":
+            return ["defer", *pick(live, rng.randint(1, 3)), "--reason", "set aside"]
+        if kind == "undefer":
+            deferred = [i["id"] for i in issues if i["status"] == "deferred"] or live
+            return ["undefer", *pick(deferred, rng.randint(1, 3))]
+        if kind == "close":
+            return ["close", *pick(live, rng.randint(1, 2)), "--reason", "closed in the random sequence", "--outcome", rng.choice(("done", "dropped"))]
+        if kind == "reopen":
+            closed = [i["id"] for i in issues if i["status"] == "closed" and i["issue_type"] != "change-request"] or every
+            return ["reopen", rng.choice(closed)]
+        return ["move", rng.choice([i["id"] for i in issues if i["issue_type"] == "task"]), "--to", rng.choice(crs)]
+
+    def ready_units(deck):
+        """Readiness as the board's own readers decide it (`cr_waits`, `cr_stuck`, `planning_blockers`), for the units the projection ranks."""
+        found = set()
+        for unit in deck.unlocks.delivers:
+            issue = deck.by_id[unit]
+            if issue["issue_type"] == "change-request":
+                if issue["status"] == "open" and not deck.cr_waits(issue)[0] and not deck.cr_stuck(issue) \
+                        or issue["status"] == "passed" and not deck.cr_waits(issue)[0] and not board.live_parent(deck, issue):  # its Accept or landing
+                    found.add(unit)
+            elif not deck.planning_blockers(issue):
+                found.add(unit)
+        return found
+
+    def delivered(issues, unit):
+        """The board once `unit` delivers: a change request lands with its items, any other record closes done (a decision: planned)."""
+        outcome = {"change-request": "landed", "decision": "planned", "gate": "resolved"}
+        rows = []
+        for issue in issues:
+            parent = next((d["depends_on_id"] for d in issue["dependencies"] if d["type"] == "parent-child"), None)
+            if issue["id"] == unit or parent == unit and issue["status"] != "closed":
+                issue = {**issue, "status": "closed", "metadata": {**(issue.get("metadata") or {}), "outcome": outcome.get(issue["issue_type"], "done")}}
+            rows.append(issue)
+        return rows
+
+    def rule_sequences(seeds=(1, 2, 3, 4), steps=40):
+        """nixes-pn847's oracle: seeded random verb sequences on one in-memory board. After every accepted write check reports no wait problem
+        (wait_problems over every record); readiness from a status snapshot equals the complete board's; and each ready unit's projected first
+        unlock wave (WorkUnlocks.release) equals what readiness says once that unit is delivered on a rebuilt board."""
+        import random
+        found, accepted = [], 0
+        for seed in seeds:
+            rng = random.Random(seed)
+            fake = Applying(sequence_world(rng))
+            for step in range(steps):
+                argv = sequence_command(rng, fake.issues)
+                actor = rng.choice((None, "lead0001"))
+                fake.error, fake.built = None, []
+                board._prefix.clear()
+                with patch.object(board, "report_error", lambda error: None):
+                    code, _, err, _ = run_in(argv, fake, io.StringIO(), io.StringIO(), lambda error: None, actor, "", None, None)
+                if code != 0:
+                    continue
+                accepted += 1
+                where = f"seed {seed} step {step} {argv}"
+                with patch.object(board.subprocess, "run", fake):
+                    whole = board.Board(json.loads(json.dumps(fake.issues)))
+                    whole.settings.update(target="")
+                    if problems := board.wait_problems(whole, list(whole.by_id)):
+                        found.append(f"{where}: check reports {sorted(problems)}")
+                        break
+                    status = board.Board([json.loads(json.dumps(i)) for i in fake.issues if i["status"] != "closed"], complete=False)
+                    status.settings.update(target="")
+                    if (a := ready_units(status)) != (b := ready_units(whole)):
+                        found.append(f"{where}: readiness from a status read {sorted(a)} differs from the whole board's {sorted(b)}")
+                        break
+                    before = ready_units(whole)
+                    for unit in sorted(before):
+                        wave, breadth = whole.unlocks.release([unit])
+                        rebuilt = board.Board(delivered(fake.issues, unit))
+                        rebuilt.settings.update(target="")
+                        freed = (ready_units(rebuilt) & set(whole.unlocks.delivers)) - before - {unit}
+                        if set(wave[:breadth]) != freed:
+                            found.append(f"{where}: delivering {unit} frees {sorted(freed)} on a rebuilt board, the projection {sorted(wave[:breadth])}")
+                            break
+                if found and found[-1].startswith(where):
+                    break
+        print(f"board rules: random sequences, seeds {list(seeds)}, {steps} steps each: {accepted} writes accepted")
+        return found
+
     scratch_repo = tempfile.TemporaryDirectory()
     git_env = {**os.environ, "GIT_CONFIG_GLOBAL": "/dev/null", "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@e", "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@e"}
     for command in (["init", "-q", "-b", "main"], ["commit", "-q", "--allow-empty", "-m", "init"]):
@@ -15675,12 +15859,29 @@ def validate_board_rules(root: Path) -> None:
                 "F10 a read on a board of another model finishes no landing": wrote(["queue"], lambda w, f: not w, issues=landed_world, actor=solo,
                                                                                      patches=(*landed_git, (board, "MODEL", "2"), (board, "beads_dir", lambda *a: Path(Rules.project) / ".beads"))),
                 "F12 defer --until refuses a day the calendar lacks": refused(["defer", "r-t", "--reason", "set aside", "--until", "2027-02-31"], "calendar", actor=None),
-                "F12 defer --until takes a leap day": wrote(["defer", "r-t", "--reason", "set aside", "--until", "2028-02-29"], update_has("r-t", "revisit=2028-02-29"), actor=None)}
+                "F12 defer --until takes a leap day": wrote(["defer", "r-t", "--reason", "set aside", "--until", "2028-02-29"], update_has("r-t", "revisit=2028-02-29"), actor=None),
+                # nixes-tpbjs (one rule set, nixes-pn847): N3 a done item of a deferred CR is a deferred target, named itself in the unlink
+                "N3 undefer refuses a wait on a done item of a deferred CR": refused(["undefer", "r-tdef"], "unlink r-tdef r-crd-done", cell="blocks.target", actor=None,
+                                                                                      issues=[*W(("r-tdef", "r-crd-done", "blocks")), done_in("r-crd-done", "r-crd")]),
+                # N4: a repeated id is one write, and what a record waits on is undeferred before it
+                "N4 undefer writes the target first, each id once": wrote(["undefer", "r-tdef", "r-tdef", "r-tdef2"], lambda w, f: [x[1] for x in w if x[:1] == ["update"]] == ["r-tdef2", "r-tdef"],
+                                                                          issues=[*W(("r-tdef", "r-tdef2", "blocks")), record("r-tdef2", "task", status="deferred", metadata={**NC, "deferred_by": "user"})], actor=None),
+                # The undefer target rule stays stricter than check: a wait on a deferred question is refused too
+                "undefer refuses a wait on a deferred question": refused(["undefer", "r-tdef"], "r-qd", cell="blocks.target", actor=None, issues=W(("r-tdef", "r-qd", "blocks"))),
+                # nixes-ymay1 on the attended path: what waits on an answered question waits on the ruling before the release puts it in force
+                "release writes the answered question's waiters before the ruling's status": wrote(
+                    ["ruling", "release", "r-dec", "--closes", "r-q=r-dec"], lambda w, f: (at := [n for n, x in enumerate(f.calls) if x[0][:1] == ["batch"] and "dep add r-t r-dec" in (x[1] or "")])
+                    and at[0] < next(n for n, x in enumerate(f.calls) if x[0][:2] == ["update", "r-dec"] and "in_force" in x[0]), issues=W(("r-t", "r-q", "blocks")), actor=lead),
+                # N5: a cycle lifted through a done item of a live CR (A1 waits on B1, done in open B; B2 would wait on A1)
+                "N5 a lifted cycle through a done item is refused": refused(["wait", "r-cr2-item", "--on", "r-cr-item", "--for", "x"], "cycle", cell="blocks.cycle", actor=solo,
+                                                                            issues=[*W(("r-cr-item", "r-cr2-done", "blocks")), done_in("r-cr2-done", "r-cr2"), record("r-cr2-item", "task", parent="r-cr2")])}
             for name, check in repros.items():
                 try:
                     check()
                 except Exception as error:
                     failures.append(f"{name}: {str(error)[:600]}")
+            sequences = rule_sequences()
+            failures += sequences
         if failures:
             raise ValueError(f"{len(failures)} of {len(registered) + len(repros)} write-rule cases and repros fail:\n  " + "\n  ".join(failures))
     os.chdir(previous_cwd)
