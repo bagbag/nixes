@@ -15198,6 +15198,13 @@ def validate_board_rules(root: Path) -> None:
             by_id[waiter]["dependencies"] = [*by_id[waiter]["dependencies"], {"issue_id": waiter, "depends_on_id": target, "type": kind}]
         return issues
 
+    def record_stops_on_failed_transfer():
+        def broken(*args, **kwargs):
+            raise board.fault("bd failed")
+        code, _, _, fake = run(["ruling", "record", "r-dec", str(body), "--unratified", "--replaces", "r-rule"], W(("r-t", "r-rule", "blocks")), lead, patches=((board, "wait_one", broken),))
+        if code == 0 or any(x[:2] == ["update", "r-rule"] or x[:2] == ["update", "r-dec"] and "--assignee" in x and "in_force" not in x for x in fake.writes()):
+            raise ValueError(f"a failed wait transfer must stop the record before it supersedes or releases: {code} {fake.writes()}")
+
     def no_write_of(argv, text, issues, actor):
         """The call writes nothing that contains `text` (it may be refused or end early)."""
         def check(case_cell=None):
@@ -15899,6 +15906,10 @@ def validate_board_rules(root: Path) -> None:
                 # nixes-ymay1 on the attended path: what waits on an answered question waits on the ruling when the question closes (nixes-3eqxa P4)
                 "release hands the waiters of a question it closes to the ruling": wrote(
                     ["ruling", "release", "r-dec", "--closes", "r-q=r-dec"], lambda w, f: any(x[0][:1] == ["batch"] and "dep add r-t r-dec" in (x[1] or "") for x in f.calls), issues=W(("r-t", "r-q", "blocks")), actor=lead),
+                "R3 release closes a question that waits on another it closes, past the ruling just carried to it": wrote(
+                    ["ruling", "release", "r-dec", "--closes", "r-q=r-dec", "--closes", "r-q2=r-dec"], lambda w, f: [x for x in w if x[0] == "close" and x[1] == "r-q2"] and "--force" in [x for x in w if x[0] == "close" and x[1] == "r-q2"][0],
+                    issues=[*W(), record("r-q2", "decision", waits=["r-q"])], actor=lead),
+                "R1 record stops before superseding when a replaced record's waiter cannot be moved": lambda case_cell=None: record_stops_on_failed_transfer(),
                 "P4 release leaves a question it cannot close, and its waiters, alone": no_write_of(
                     ["ruling", "release", "r-dec", "--closes", "r-q2=r-dec"], "dep add r-t r-dec",
                     [*W(("r-t", "r-q2", "blocks")), record("r-q2", "decision", waits=["r-q"])], lead),

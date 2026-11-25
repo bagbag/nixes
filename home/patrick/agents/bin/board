@@ -7418,8 +7418,8 @@ def wait_one(board: Board, item_id: str, blocker: str, reason: str | None, actor
     return result
 
 
-def wait_items(board: Board, ids: list[str], blocker: str, reason: str | None, actor: str | None) -> list[str]:
-    """Makes each item wait, one sentence each; the ids that could not wait."""
+def wait_items(board: Board, ids: list[str], blocker: str, reason: str | None, actor: str | None, strict: bool = False) -> list[str]:
+    """Makes each item wait, one sentence each; the ids a rule refused (`strict`: a failed write raises)."""
     failed = []
     for item_id in ids:
         try:
@@ -7428,6 +7428,8 @@ def wait_items(board: Board, ids: list[str], blocker: str, reason: str | None, a
             require_open(board, [item_id])
             print(wait_one(board, item_id, blocker, reason, actor))
         except BoardError as error:
+            if strict and error.cell is None:
+                raise
             failed.append(item_id)
             print(combined([error], f'{item_id}: does not wait: {error}'), file=sys.stderr)
     return failed
@@ -7806,7 +7808,9 @@ def close_answered(board: Board, closes: list[tuple[str, list[str]]], released: 
             if any(b not in released and b not in closed for b in board.unsettled_blockers(question)):
                 continue
             pending.remove((question, records))
-            carry_waits(board, answer_waits(board, [(question, records)]))
+            carried = answer_waits(board, [(question, records)])
+            carry_waits(board, carried)
+            board = post_state(board, adds=[wait for wait, _ in carried], removes=[edge for _, edges in carried for edge in edges])  # the next question sees them
             result = move(board.by_id[question], 'close', board=board, reason=f"Answered by released {', '.join(records)}", force=bool(blockers), check=False,
                           outcome='superseded')
             if result.returncode != 0:
@@ -7902,7 +7906,10 @@ def supersede_pair(board: Board, old: str, new: str, rule: str | None, actor: st
     items = sorted(i for i in board.related.get(old, set()) | set(board.dependents.get(old, []))
                    if i != new and board.is_open(i) and not (board.by_id[i].get('issue_type') == 'decision' and board.by_id[i]['status'] == 'in_force')  # an in-force ruling waits only for its planning
                    and all(kind == 'relates-to' for _, _, kind in board.between(i, new)))
-    failed = wait_items(board, items, new, f'supersedes {old}; replan against it', actor)
+    try:  # a failed write stops here: the old record stays live and the new one held, so a retry installs the missing wait and finishes
+        failed = wait_items(board, items, new, f'supersedes {old}; replan against it', actor, strict=True)
+    except BoardError as error:
+        raise fault(f'{error}; {old} is not superseded: run this again') from None
     move(board.by_id[old], 'supersede', board=board, via='supersede', reason=new)
     print(f"superseded {old} by {new}; blocked {', '.join(i for i in items if i not in failed) or 'none'}"
           + (f"; revision of {', '.join(board.revises(old))} now pending on {new}" if carried else ''))
